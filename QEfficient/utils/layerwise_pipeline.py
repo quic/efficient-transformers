@@ -2,6 +2,7 @@
 import argparse
 import os
 import re
+import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Tuple
@@ -9,8 +10,6 @@ from typing import List, Tuple
 import onnx
 import onnx_ir
 from onnx import external_data_helper
-import shutil
-from typing import List, Tuple
 
 from QEfficient.base.onnx_transforms import CustomOpTransform, RemovePrefix
 
@@ -113,7 +112,13 @@ def split_layer_graph(
     return True
 
 
-def run_split_pipeline(exported_path: str, num_layers: int = 61, start_layer: int = 0, windows: list[tuple[int, int]] = [], verbose: bool = False) -> None:
+def run_split_pipeline(
+    exported_path: str,
+    num_layers: int = 61,
+    start_layer: int = 0,
+    windows: list[tuple[int, int]] = [],
+    verbose: bool = False,
+) -> None:
     windows = _discover_layer_windows(exported_path, start_layer=start_layer)
     for shard_idx, (layer_start, layer_end) in enumerate(windows):
         split_layer_graph(shard_idx, len(windows), exported_path, layer_start, layer_end)
@@ -125,13 +130,15 @@ def run_split_pipeline(exported_path: str, num_layers: int = 61, start_layer: in
 # STAGE 2: PREFIX + DELETION
 # ============================================================
 
+
 def delete_layer_dirs(exported_path: str, layer_windows: List[Tuple[int, int]]) -> None:
     for layer_start, layer_end in layer_windows:
         layer_dir = f"{exported_path}/onnx_layerwise_tmp/layer_{layer_start}_{layer_end}"
-        
+
         if os.path.isdir(layer_dir):
             shutil.rmtree(layer_dir)  # deletes entire directory
-            
+
+
 def rewrite_tensors_with_prefix(
     model: onnx.ModelProto,
     prefix: str,
@@ -211,9 +218,9 @@ def run_prefix_pipeline(
             for f in as_completed(futures):
                 f.result()
         _ = time.time() - t0
-        
+
         delete_layer_dirs(exported_path, chunk_windows)
-        
+
     if verbose:
         print(f"[DONE] prefix+deletion pipeline complete ({len(windows)} windows)")
 
@@ -370,7 +377,11 @@ def merge_models(m1, m2, io_map):
 
 
 def run_merge_pipeline(
-    exported_path: str, num_layers: int = 61, final_data_dir: str = "final_data", windows: list[tuple[int, int]] = [], verbose: bool = False
+    exported_path: str,
+    num_layers: int = 61,
+    final_data_dir: str = "final_data",
+    windows: list[tuple[int, int]] = [],
+    verbose: bool = False,
 ) -> str:
     if len(windows) < 1:
         raise ValueError("Need at least one discovered shard to merge")
@@ -407,13 +418,10 @@ def run_merge_pipeline(
         if not decoder_nodes:
             raise RuntimeError(f"DecoderLayer node not found in {m1_path}")
         decoder_output = list(decoder_nodes[-1].output)
-        selected_output = next(
-            (x for x in decoder_output if "RetainedState" not in x),
-            None
-        )
+        selected_output = next((x for x in decoder_output if "RetainedState" not in x), None)
         if selected_output is None:
             raise RuntimeError(f"No decoder output found without 'RetainedState'. Outputs: {decoder_output}")
-        
+
         merged_model = merge_models(
             m1_pref,
             m2_pref,

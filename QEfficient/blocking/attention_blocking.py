@@ -13,15 +13,15 @@ from typing import Any, Callable, Dict, Optional
 
 import torch
 from transformers.cache_utils import Cache
-import QEfficient
+
 from QEfficient.blocking.blocked_attention_forwards import (
     blocked_bhqkv_attention_forward,
     blocked_h_attention_forward,
     blocked_h_mla_attention_forward,
     blocked_hqkv_attention_forward,
     blocked_kv_attention_forward,
-    blocked_kv_mla_attention_forward,
     blocked_kv_par_mla_attention_forward,
+    blocked_kv_par_prefill_only_online_mla_attention_forward,
     blocked_q_attention_forward,
     blocked_qkv_attention_forward,
 )
@@ -30,12 +30,13 @@ from QEfficient.blocking.blocked_attention_forwards import (
 class BlockingMode(str, Enum):
     NONE = ""
     KV = "kv"
-    PAR = "par"
+    PARKV = "parkv"
     Q = "q"
     H = "h"
     QKV = "qkv"
     HQKV = "hqkv"
     BHQKV = "bhqkv"
+    PQPARKV = "pqparkv"  # prefill blocked KV with Q, KV online parallel softmax for deepseek
 
 
 @dataclass
@@ -64,8 +65,9 @@ _STRATEGIES: Dict[BlockingMode, Callable] = {
 
 _STRATEGIES_MLA: Dict[BlockingMode, Callable] = {
     BlockingMode.KV: blocked_kv_par_mla_attention_forward,
-    BlockingMode.PAR: blocked_kv_par_mla_attention_forward,
+    BlockingMode.PARKV: blocked_kv_par_mla_attention_forward,
     BlockingMode.H: blocked_h_mla_attention_forward,
+    BlockingMode.PQPARKV: blocked_kv_par_prefill_only_online_mla_attention_forward,
 }
 
 

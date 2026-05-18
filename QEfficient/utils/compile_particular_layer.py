@@ -234,7 +234,9 @@ def run_compile_layerwise(base_onnx_dir: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compile layerwise ONNX windows into QPC artifacts.")
     parser.add_argument("--base-onnx-dir", required=True, help="Export root containing onnx_layerwise_tmp/")
-    parser.add_argument("--num-devices", type=int, default=1, help="Number of devices to use (e.g., 2 -> device_group=0,1)")
+    parser.add_argument(
+        "--num-devices", type=int, default=1, help="Number of devices to use (e.g., 2 -> device_group=0,1)"
+    )
 
     args = parser.parse_args()
 

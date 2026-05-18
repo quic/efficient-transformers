@@ -3099,6 +3099,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         if enable_chunking
                         else seq_len
                     )
+                else:
+                    seq_len = max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+                    self.hash_params["chunking_seq_len"] = seq_len
+
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
                 self.hash_params.pop("prefill_only", None)

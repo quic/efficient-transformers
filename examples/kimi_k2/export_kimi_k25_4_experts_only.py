@@ -33,8 +33,10 @@ mla_absorption = {"cache_compressed": True, "absorption": False, "online": False
 qaic_config = {
     "mla_absorption": mla_absorption,
     "enable_blocking": True,
-    "blocking_mode": "kv",
+    "blocking_mode": "par",
     "num_kv_heads_repeat": TS,
+    "num_kv_blocks": 8,
+    "par_num_split": 4
 }  # for KV blocking with kv head replication
 # qaic_config = { "mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "h", "num_kv_heads_repeat": TS}
 # for h blocking, it internally sets head_block_size equal to num_devices/num_kv_heads_repeat
@@ -43,7 +45,7 @@ qaic_config = { "mla_absorption": mla_absorption, "enable_blocking": True, "bloc
 
 
 MODEL_PATH = Path(
-    "/home/huggingface_hub/models--moonshotai--Kimi-K2.5/snapshots/54383e83fa343a1331754112fb9e3410c55efa2f"
+    "/home/ubuntu/huggingface_hub/models--moonshotai--Kimi-K2.5/snapshots/4d01dfe0332d63057c186e0b262165819efb6611/"
 )
 NUM_HIDDEN_LAYERS = 2
 LOADED_EXPERT_IDS = (0, 1, 2, 3)

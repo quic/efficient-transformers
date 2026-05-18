@@ -309,6 +309,7 @@ def build_transformer_blocking_config_for_transform(
     bs: Optional[int] = 1,
     num_devices: Optional[int] = 1,
     qaic_config: Optional[dict] = None,
+    prefill_only: Optional[bool] = False,
     **compile_options,
 ) -> Dict[str, Any]:
     if qaic_config:
@@ -343,8 +344,8 @@ def build_transformer_blocking_config_for_transform(
         if qaic_config.get("num_batch_blocks", False) and enable_blocking and "b" in blocking_mode:
             mode_from_config = "b" + mode_from_config
             blocking_config.num_batch_blocks = _get_valid_num_blocks(qaic_config, "num_batch_blocks")
-        if qaic_config.get("par_num_split", False) and qaic_config.get("num_kv_blocks", False) and enable_blocking and "par" in blocking_mode:
-            mode_from_config = "par" + mode_from_config
+        if qaic_config.get("par_num_split", False) and qaic_config.get("num_kv_blocks", False) and enable_blocking:
+            mode_from_config = "par" + mode_from_config if not prefill_only else "pqpar" + mode_from_config
             blocking_config.num_kv_blocks = _get_valid_num_blocks(qaic_config, "num_kv_blocks")
             blocking_config.par_num_split = _get_valid_num_blocks(qaic_config, "par_num_split")
 

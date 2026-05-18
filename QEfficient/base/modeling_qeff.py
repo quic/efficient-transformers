@@ -446,6 +446,7 @@ class QEFFBaseModel(ABC):
             seq_len=seq_len,
             bs=bs,
             qaic_config=qaic_config,
+            prefill_only=prefill_only,
             **compiler_options,
         )
 
@@ -459,6 +460,7 @@ class QEFFBaseModel(ABC):
         bs: Optional[int] = 1,
         num_devices: int = 1,
         qaic_config: Optional[dict] = None,
+        prefill_only: Optional[bool] = False,
         **compiler_options,
     ):
         # Apply the transformations that are dependent on compilation parameters
@@ -486,6 +488,7 @@ class QEFFBaseModel(ABC):
                 bs=bs,
                 num_devices=num_devices,
                 qaic_config=qaic_config,
+                prefill_only=prefill_only,
                 **compiler_options,
             )
         else:

@@ -21,15 +21,15 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxGatherBlockedKV,
     CtxGatherFunc,
     CtxGatherFunc3D,
+    CtxGatherFunc3DGeneralized,
     CtxGatherFuncBlockedKV,
     CtxScatter,
     CtxScatter3D,
+    CtxScatter3DInt,
     CtxScatterFunc,
     CtxScatterFunc3D,
-    CtxScatter3DInt,
-    CtxScatterFunc3DInt,
     CtxScatterFunc3DGeneralized,
-    CtxGatherFunc3DGeneralized,
+    CtxScatterFunc3DInt,
 )
 from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxGatherBlockedKVCB,
@@ -107,7 +107,7 @@ class CustomOpTransform(BaseOnnxTransform):
         "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
         "CastToUInt4": (CastToUInt4Func, CastToUInt4),
         "CtxScatterFunc3DInt": (CtxScatterFunc3DInt, CtxScatter3DInt),
-        "CtxScatterFunc3DGeneralized":(CtxScatterFunc3DGeneralized, CtxScatter3D),
+        "CtxScatterFunc3DGeneralized": (CtxScatterFunc3DGeneralized, CtxScatter3D),
         "CtxGatherFunc3DGeneralized": (CtxGatherFunc3DGeneralized, CtxGather3D),
     }
 

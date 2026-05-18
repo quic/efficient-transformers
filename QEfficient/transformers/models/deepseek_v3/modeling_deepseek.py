@@ -342,9 +342,9 @@ class QEffDeepseekV3Attention(nn.Module):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
+        # -- KV compression (write to cache) ----------------------------------
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
         compressed_kv = compressed_kv.view(bsz, q_len, -1, self.kv_lora_rank + self.qk_rope_head_dim).transpose(1, 2)
-
         kva = compressed_kv[:, :, :, : self.kv_lora_rank]
         k_pe = compressed_kv[:, :, :, self.kv_lora_rank :]
 
@@ -354,17 +354,15 @@ class QEffDeepseekV3Attention(nn.Module):
 
         kva = self.kv_a_layernorm(kva)
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
-
-        ## Write Only
         if compressed_kvs is not None:
             compressed_kvs.write_only_ckv(kva, self.layer_idx, cache_kwargs)
 
         cos, sin = self.rotary_emb(hidden_states, seq_len=32 * 1024)
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
-
         if compressed_kvs is not None:
             compressed_kvs.write_only_k_pe(k_pe, self.layer_idx, cache_kwargs)
 
+        # -- Build query in absorption space -----------------------------------
         if mla_absorption is not None:
             absorption = mla_absorption.get("absorption", False)
             online = mla_absorption.get("online", False)
@@ -377,16 +375,13 @@ class QEffDeepseekV3Attention(nn.Module):
                 dq_qup_kupT = torch.matmul(q_a_proj_out, qup_kupT)
             else:
                 dq_qup_kupT = torch.matmul(q_a_proj_out, self.fusedqk)
-            qkupTrope_nope = torch.cat((dq_qup_kupT, q_pe), dim=-1)
-            query = qkupTrope_nope
+            query = torch.cat((dq_qup_kupT, q_pe), dim=-1)  # [B, num_heads, q_len, d_abs]
         else:
             q_nope = torch.bmm(q_a_proj_out, self.q_up)
             q_nope = q_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
-            qnope_rope = torch.cat((q_nope, q_pe), dim=-1)
-            query = qnope_rope
+            query = torch.cat((q_nope, q_pe), dim=-1)
 
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
-
         attn_output, attn_weights = generic_blocked_mla_attention_interface(
             module=self,
             query=query,
@@ -457,7 +452,7 @@ class QEffDeepseekV3Attention(nn.Module):
                 dq_qup_kupT = torch.matmul(q_a_proj_out, qup_kupT)
             else:
                 dq_qup_kupT = torch.matmul(q_a_proj_out, self.fusedqk)
-            query = torch.cat((dq_qup_kupT, q_pe), dim=-1)   # [B, num_heads, q_len, d_abs]
+            query = torch.cat((dq_qup_kupT, q_pe), dim=-1)  # [B, num_heads, q_len, d_abs]
         else:
             q_nope = torch.bmm(q_a_proj_out, self.q_up)
             q_nope = q_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
@@ -651,7 +646,7 @@ class QEffDeepseekV3Attention(nn.Module):
                 mla_absorption,
                 **kwargs,
             )
-        elif getattr(blocking_config, "mode", None) == "par":
+        elif getattr(blocking_config, "mode", None) in ["parkv", "pqparkv"]:
             return self.fused_forward_par_kv_blocking(
                 hidden_states,
                 position_embeddings,
@@ -899,7 +894,9 @@ class QEffDeepseekMoEGate(nn.Module):
         if self.topk_method == "noaux_tc":
             assert not self.training
             scores_for_choice = scores.view(bsz * seq_len, -1) + self.e_score_correction_bias.unsqueeze(0)
-            group_scores = torch.einsum("abc->ab", scores_for_choice.view(bsz * seq_len, self.n_group, -1).topk(2, dim=-1)[0])  # [n, n_group]
+            group_scores = torch.einsum(
+                "abc->ab", scores_for_choice.view(bsz * seq_len, self.n_group, -1).topk(2, dim=-1)[0]
+            )  # [n, n_group]
             group_idx = torch.topk(group_scores, k=self.topk_group, dim=-1, sorted=False)[1]  # [n, top_k_group]
             group_mask = torch.zeros_like(group_scores)  # [n, n_group]
             group_mask.scatter_(1, group_idx, 1)  # [n, n_group]
@@ -958,9 +955,8 @@ class QEffDeepseekV3MoE(nn.Module):
             requires_grad=False,
         )
         self.all_gate_scales = torch.nn.Parameter(
-            torch.stack([exp.gate_proj.scales for exp in self.experts], dim=0).reshape(
-                -1, self.out_features_gate, self.in_features_gate // self.group_size
-            )
+            torch.stack([exp.gate_proj.scales for exp in self.experts], dim=0)
+            .reshape(-1, self.out_features_gate, self.in_features_gate // self.group_size)
             .to(torch.float16),
             requires_grad=False,
         )
@@ -982,10 +978,9 @@ class QEffDeepseekV3MoE(nn.Module):
             requires_grad=False,
         )
         self.all_up_scales = torch.nn.Parameter(
-            torch.stack([exp.up_proj.scales for exp in self.experts], dim=0).reshape(
-                -1, self.out_features_up, self.in_features_up // self.group_size
-                )
-                .to(torch.float16),
+            torch.stack([exp.up_proj.scales for exp in self.experts], dim=0)
+            .reshape(-1, self.out_features_up, self.in_features_up // self.group_size)
+            .to(torch.float16),
             requires_grad=False,
         )
         self.all_up_qzeros = torch.nn.Parameter(
@@ -1005,10 +1000,9 @@ class QEffDeepseekV3MoE(nn.Module):
             requires_grad=False,
         )
         self.all_down_scales = torch.nn.Parameter(
-            torch.stack([exp.down_proj.scales for exp in self.experts], dim=0).reshape(
-                -1, self.out_features_down, self.in_features_down // self.group_size
-                )
-                .to(torch.float16),
+            torch.stack([exp.down_proj.scales for exp in self.experts], dim=0)
+            .reshape(-1, self.out_features_down, self.in_features_down // self.group_size)
+            .to(torch.float16),
             requires_grad=False,
         )
         self.all_down_qzeros = torch.nn.Parameter(
@@ -1200,7 +1194,7 @@ class QEffDeepseekV3MoE(nn.Module):
         expert_in = (
             hidden_states.unsqueeze(1).expand(-1, self.gate.top_k, -1).contiguous().view(-1, 1, self.in_features_gate)
         )
-        
+
         gate_out = torch.bmm(expert_in, gate_proj_dq.transpose(1, 2).to(expert_in.dtype))
         up_out = torch.bmm(expert_in, up_proj_dq.transpose(1, 2).to(expert_in.dtype))
         hidden = self.act_fn(gate_out) * up_out
@@ -1257,9 +1251,9 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             requires_grad=False,
         )
         self.all_gate_scales = torch.nn.Parameter(
-            torch.stack([exp.gate_proj.scales for exp in self.experts], dim=0).reshape(
-                -1, self.out_features_gate, self.in_features_gate // self.group_size
-            ).to(torch.float16),
+            torch.stack([exp.gate_proj.scales for exp in self.experts], dim=0)
+            .reshape(-1, self.out_features_gate, self.in_features_gate // self.group_size)
+            .to(torch.float16),
             requires_grad=False,
         )
         # TODO: Since we know qzeros is always 8 -> Just embed this once into the operator as parameter -> explore this later
@@ -1280,9 +1274,9 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             requires_grad=False,
         )
         self.all_up_scales = torch.nn.Parameter(
-            torch.stack([exp.up_proj.scales for exp in self.experts], dim=0).reshape(
-                -1, self.out_features_up, self.in_features_up // self.group_size
-            ).to(torch.float16),
+            torch.stack([exp.up_proj.scales for exp in self.experts], dim=0)
+            .reshape(-1, self.out_features_up, self.in_features_up // self.group_size)
+            .to(torch.float16),
             requires_grad=False,
         )
         self.all_up_qzeros = torch.nn.Parameter(
@@ -1302,9 +1296,9 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             requires_grad=False,
         )
         self.all_down_scales = torch.nn.Parameter(
-            torch.stack([exp.down_proj.scales for exp in self.experts], dim=0).reshape(
-                -1, self.out_features_down, self.in_features_down // self.group_size
-            ).to(torch.float16),
+            torch.stack([exp.down_proj.scales for exp in self.experts], dim=0)
+            .reshape(-1, self.out_features_down, self.in_features_down // self.group_size)
+            .to(torch.float16),
             requires_grad=False,
         )
         self.all_down_qzeros = torch.nn.Parameter(
@@ -1395,10 +1389,10 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
                 down_proj_unpacked, slot_down_scales, down_zeros_unpacked, self.group_size
             )
 
-            gate_out = torch.bmm(x_chunk, gate_proj_dq.transpose(1, 2))
-            up_out = torch.bmm(x_chunk, up_proj_dq.transpose(1, 2))
+            gate_out = torch.bmm(x_chunk, gate_proj_dq.transpose(1, 2).to(x_chunk.dtype))
+            up_out = torch.bmm(x_chunk, up_proj_dq.transpose(1, 2).to(x_chunk.dtype))
             hidden = self.act_fn(gate_out) * up_out
-            down_out = torch.bmm(hidden, down_proj_dq.transpose(1, 2).to(expert_out.dtype))
+            down_out = torch.bmm(hidden, down_proj_dq.transpose(1, 2).to(x_chunk.dtype))
 
             rw_chunk = CtxGatherFunc3DGeneralized.apply(rw_expanded, chunk_matched_idx)
             down_chunk = down_out * rw_chunk

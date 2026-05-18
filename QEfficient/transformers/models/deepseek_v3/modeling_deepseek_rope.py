@@ -636,7 +636,12 @@ class QEffDeepseekV3Attention(nn.Module):
         window_cache_layer_idx = self.layer_idx - getattr(QEffDeepseekV3Model, "_start", 0)
 
         if past_key_value is not None:
-            cache_kwargs = {"sin": sin_cached, "cos": cos_cached, "batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {
+                "sin": sin_cached,
+                "cos": cos_cached,
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+            }
             key_states, value_states = past_key_value.update(
                 key_states, value_states, window_cache_layer_idx, cache_kwargs
             )
@@ -874,9 +879,8 @@ class QEffDeepseekV3MoE(nn.Module):
             requires_grad=False,
         )
         self.all_gate_scales = torch.nn.Parameter(
-            torch.stack([exp.gate_proj.scales for exp in self.experts], dim=0).reshape(
-                -1, self.out_features_gate, self.in_features_gate // self.group_size
-            )
+            torch.stack([exp.gate_proj.scales for exp in self.experts], dim=0)
+            .reshape(-1, self.out_features_gate, self.in_features_gate // self.group_size)
             .to(torch.float16),
             requires_grad=False,
         )
@@ -898,10 +902,9 @@ class QEffDeepseekV3MoE(nn.Module):
             requires_grad=False,
         )
         self.all_up_scales = torch.nn.Parameter(
-            torch.stack([exp.up_proj.scales for exp in self.experts], dim=0).reshape(
-                -1, self.out_features_up, self.in_features_up // self.group_size
-                )
-                .to(torch.float16),
+            torch.stack([exp.up_proj.scales for exp in self.experts], dim=0)
+            .reshape(-1, self.out_features_up, self.in_features_up // self.group_size)
+            .to(torch.float16),
             requires_grad=False,
         )
         self.all_up_qzeros = torch.nn.Parameter(
@@ -921,10 +924,9 @@ class QEffDeepseekV3MoE(nn.Module):
             requires_grad=False,
         )
         self.all_down_scales = torch.nn.Parameter(
-            torch.stack([exp.down_proj.scales for exp in self.experts], dim=0).reshape(
-                -1, self.out_features_down, self.in_features_down // self.group_size
-                )
-                .to(torch.float16),
+            torch.stack([exp.down_proj.scales for exp in self.experts], dim=0)
+            .reshape(-1, self.out_features_down, self.in_features_down // self.group_size)
+            .to(torch.float16),
             requires_grad=False,
         )
         self.all_down_qzeros = torch.nn.Parameter(
@@ -1116,7 +1118,7 @@ class QEffDeepseekV3MoE(nn.Module):
         expert_in = (
             hidden_states.unsqueeze(1).expand(-1, self.gate.top_k, -1).contiguous().view(-1, 1, self.in_features_gate)
         )
-        
+
         gate_out = torch.bmm(expert_in, gate_proj_dq.transpose(1, 2).to(expert_in.dtype))
         up_out = torch.bmm(expert_in, up_proj_dq.transpose(1, 2).to(expert_in.dtype))
         hidden = self.act_fn(gate_out) * up_out
@@ -1328,17 +1330,65 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
 
         expert_out = x.new_zeros((num_nsp, T, H))
 
-        local_gate_qweight = self.all_gate_qweight.view(local_experts, num_nsp, self.out_features_gate, self.in_features_gate // 2).transpose(0, 1).contiguous()
-        local_gate_scales = self.all_gate_scales.view(local_experts, num_nsp, self.out_features_gate, self.in_features_gate // self.group_size).transpose(0, 1).contiguous()
-        local_gate_qzeros = self.all_gate_qzeros.view(local_experts, num_nsp, self.out_features_gate, self.in_features_gate // (self.group_size * 2)).transpose(0, 1).contiguous()
+        local_gate_qweight = (
+            self.all_gate_qweight.view(local_experts, num_nsp, self.out_features_gate, self.in_features_gate // 2)
+            .transpose(0, 1)
+            .contiguous()
+        )
+        local_gate_scales = (
+            self.all_gate_scales.view(
+                local_experts, num_nsp, self.out_features_gate, self.in_features_gate // self.group_size
+            )
+            .transpose(0, 1)
+            .contiguous()
+        )
+        local_gate_qzeros = (
+            self.all_gate_qzeros.view(
+                local_experts, num_nsp, self.out_features_gate, self.in_features_gate // (self.group_size * 2)
+            )
+            .transpose(0, 1)
+            .contiguous()
+        )
 
-        local_up_qweight = self.all_up_qweight.view(local_experts, num_nsp, self.out_features_up, self.in_features_up // 2).transpose(0, 1).contiguous()
-        local_up_scales = self.all_up_scales.view(local_experts, num_nsp, self.out_features_up, self.in_features_up // self.group_size).transpose(0, 1).contiguous()
-        local_up_qzeros = self.all_up_qzeros.view(local_experts, num_nsp, self.out_features_up, self.in_features_up // (self.group_size * 2)).transpose(0, 1).contiguous()
+        local_up_qweight = (
+            self.all_up_qweight.view(local_experts, num_nsp, self.out_features_up, self.in_features_up // 2)
+            .transpose(0, 1)
+            .contiguous()
+        )
+        local_up_scales = (
+            self.all_up_scales.view(
+                local_experts, num_nsp, self.out_features_up, self.in_features_up // self.group_size
+            )
+            .transpose(0, 1)
+            .contiguous()
+        )
+        local_up_qzeros = (
+            self.all_up_qzeros.view(
+                local_experts, num_nsp, self.out_features_up, self.in_features_up // (self.group_size * 2)
+            )
+            .transpose(0, 1)
+            .contiguous()
+        )
 
-        local_down_qweight = self.all_down_qweight.view(local_experts, num_nsp, self.out_features_down, self.in_features_down // 2).transpose(0, 1).contiguous()
-        local_down_scales = self.all_down_scales.view(local_experts, num_nsp, self.out_features_down, self.in_features_down // self.group_size).transpose(0, 1).contiguous()
-        local_down_qzeros = self.all_down_qzeros.view(local_experts, num_nsp, self.out_features_down, self.in_features_down // (self.group_size * 2)).transpose(0, 1).contiguous()
+        local_down_qweight = (
+            self.all_down_qweight.view(local_experts, num_nsp, self.out_features_down, self.in_features_down // 2)
+            .transpose(0, 1)
+            .contiguous()
+        )
+        local_down_scales = (
+            self.all_down_scales.view(
+                local_experts, num_nsp, self.out_features_down, self.in_features_down // self.group_size
+            )
+            .transpose(0, 1)
+            .contiguous()
+        )
+        local_down_qzeros = (
+            self.all_down_qzeros.view(
+                local_experts, num_nsp, self.out_features_down, self.in_features_down // (self.group_size * 2)
+            )
+            .transpose(0, 1)
+            .contiguous()
+        )
 
         for slot in range(local_experts):
             routing_weight = rw[:, slot, :]
@@ -1563,7 +1613,7 @@ class QEffDeepseekV3Model(nn.Module):
         next_decoder_cache = None
         sin = self.sin_cached[position_ids].unsqueeze(1)
         cos = self.cos_cached[position_ids].unsqueeze(1)
-        
+
         for layer_idx, decoder_layer in enumerate(self.layers):
             if layer_idx < start or layer_idx >= end:
                 continue
