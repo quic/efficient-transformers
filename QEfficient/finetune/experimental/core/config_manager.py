@@ -556,7 +556,8 @@ class ConfigManager:
         try:
             self.validate_config()
         except Exception as e:
-            logger.log_rank_zero(f"Config validation failed with error: {e}")
+            logger.log_rank_zero(f"Config validation failed with error: {e}", level=logging.ERROR)
+            raise
 
     def _build_cli_parser(self) -> HfArgumentParser:
         return HfArgumentParser(
@@ -852,6 +853,19 @@ class ConfigManager:
             fp16 and bf16,
             "training.fp16 and training.bf16 cannot both be true.",
         )
+        callbacks_cfg = getattr(cfg, "callbacks", {})
+        if isinstance(callbacks_cfg, dict):
+            callback_dict = {}
+            nested_callbacks = callbacks_cfg.get("callbacks")
+            if isinstance(nested_callbacks, dict):
+                callback_dict.update(nested_callbacks)
+            callback_dict.update({k: v for k, v in callbacks_cfg.items() if k != "callbacks"})
+            self._push(
+                errors,
+                fp16 and isinstance(callback_dict, dict) and "qaic_op_by_op_verifier_callback" in callback_dict,
+                "qaic_op_by_op_verifier_callback is not compatible with training.fp16=true. "
+                "Set training.fp16=false when using this callback.",
+            )
 
         # Batch sizes
         self._push(

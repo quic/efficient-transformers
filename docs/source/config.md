@@ -258,6 +258,11 @@ Callbacks allow custom actions during training, such as logging, early stopping,
 | `QAICProfilerCallback` | Profiles QAIC devices over a specified training step range. |
 | `QAICOpByOpVerifierCallback` | Verifies QAIC operations step-by-step for correctness and debugging. |
 
+**QAIC callback usage recommendations**
+
+- Use `qaic_profiler_callback` for only `1-3` steps.
+- Use `qaic_op_by_op_verifier_callback` with `training.fp16: false` and `model.torch_dtype: fp32`, for only `1-3` steps.
+
 **References to some commonly used Hugging Face callbacks**:
 https://huggingface.co/docs/transformers/en/main_classes/callback
 ***

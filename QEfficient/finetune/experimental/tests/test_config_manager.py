@@ -245,11 +245,8 @@ def test_torch_dtype_invalid():
     # Create config with invalid model torch_dtype
     model_config = ModelConfig(torch_dtype="invalid_dtype")
     master_config = MasterConfig(model=model_config)
-    config_manager = ConfigManager(config=master_config)
-
-    # Validation should fail
     with pytest.raises(ValueError) as exc_info:
-        config_manager.validate_config()
+        ConfigManager(config=master_config)
 
     assert "torch_dtype must be one of" in str(exc_info.value)
 
@@ -257,9 +254,19 @@ def test_torch_dtype_invalid():
 def test_fp16_bf16_mutually_exclusive():
     training_config = TrainingConfig(fp16=True, bf16=True)
     master_config = MasterConfig(training=training_config)
+    with pytest.raises(ValueError) as exc_info:
+        ConfigManager(config=master_config)
+
+    assert "training.fp16 and training.bf16 cannot both be true" in str(exc_info.value)
+
+
+def test_qaic_op_by_op_verifier_disallowed_with_fp16():
+    training_config = TrainingConfig(fp16=True, bf16=False)
+    master_config = MasterConfig(training=training_config)
     config_manager = ConfigManager(config=master_config)
+    config_manager.update_config({"callbacks": {"qaic_op_by_op_verifier_callback": {"start_step": 0, "end_step": 1}}})
 
     with pytest.raises(ValueError) as exc_info:
         config_manager.validate_config()
 
-    assert "training.fp16 and training.bf16 cannot both be true" in str(exc_info.value)
+    assert "qaic_op_by_op_verifier_callback is not compatible with training.fp16=true" in str(exc_info.value)
