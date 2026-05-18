@@ -441,13 +441,12 @@ class TestTLMForwardExecution:
         # The anchor logit must be numerically identical regardless of K
         assert torch.allclose(logit_k0, logit_kK_anchor, atol=1e-5), (
             f"Causal property violated: anchor logit differs between seq_len=1 and "
-            f"seq_len={num_spec_tokens+1}: "
+            f"seq_len={num_spec_tokens + 1}: "
             f"max_diff={(logit_k0 - logit_kK_anchor).abs().max().item():.2e}"
         )
         # Accepted token (greedy argmax) must also be identical
         assert logit_k0.argmax(dim=-1).eq(logit_kK_anchor.argmax(dim=-1)).all(), (
-            "Accepted token differs between seq_len=1 and seq_len=K+1 — "
-            "causal property violated in raw model"
+            "Accepted token differs between seq_len=1 and seq_len=K+1 — causal property violated in raw model"
         )
 
 
