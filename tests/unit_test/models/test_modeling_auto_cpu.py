@@ -1019,7 +1019,9 @@ class TestTLMMultiSpecSpecializations:
         qeff = QEFFAutoModelForCausalLM(model)
         qeff.is_tlm = True
         for k in [0, 1, 3, 7]:
-            spec = qeff._build_decode_spec_for_k(k=k, ctx_len=128, batch_size=1, kv_cache_batch_size=1, prefill_seq_len=32)
+            spec = qeff._build_decode_spec_for_k(
+                k=k, ctx_len=128, batch_size=1, kv_cache_batch_size=1, prefill_seq_len=32
+            )
             assert spec is not None
             assert spec["seq_len"] == k + 1
 
@@ -1029,7 +1031,9 @@ class TestTLMMultiSpecSpecializations:
         qeff = QEFFAutoModelForCausalLM(model)
         qeff.is_tlm = True
         for k in [0, 1, 3]:
-            spec = qeff._build_decode_spec_for_k(k=k, ctx_len=128, batch_size=1, kv_cache_batch_size=1, prefill_seq_len=32)
+            spec = qeff._build_decode_spec_for_k(
+                k=k, ctx_len=128, batch_size=1, kv_cache_batch_size=1, prefill_seq_len=32
+            )
             assert spec["num_logits_to_keep"] == k + 1
 
     def test_build_decode_spec_for_k_returns_none_when_duplicate_prefill(self):
@@ -1047,7 +1051,9 @@ class TestTLMMultiSpecSpecializations:
         qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
         qeff.is_tlm = True
         # k=0 → seq_len=1 == prefill_seq_len=1, but CB is True → should not be None
-        spec = qeff._build_decode_spec_for_k(k=0, ctx_len=128, batch_size=1, kv_cache_batch_size=2, full_batch_size=2, prefill_seq_len=1)
+        spec = qeff._build_decode_spec_for_k(
+            k=0, ctx_len=128, batch_size=1, kv_cache_batch_size=2, full_batch_size=2, prefill_seq_len=1
+        )
         assert spec is not None
 
     # ---- compile() specialization count via mock ----
@@ -1060,7 +1066,13 @@ class TestTLMMultiSpecSpecializations:
         qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
         captured = {}
 
-        with patch.object(type(qeff), "_compile", side_effect=lambda *args, **kw: captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"):
+        with patch.object(
+            type(qeff),
+            "_compile",
+            side_effect=lambda *args, **kw: (
+                captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"
+            ),
+        ):
             qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=[0, 3])
 
         assert captured.get("specializations") is not None, "_compile was not reached"
@@ -1076,7 +1088,13 @@ class TestTLMMultiSpecSpecializations:
         qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
         captured = {}
 
-        with patch.object(type(qeff), "_compile", side_effect=lambda *args, **kw: captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"):
+        with patch.object(
+            type(qeff),
+            "_compile",
+            side_effect=lambda *args, **kw: (
+                captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"
+            ),
+        ):
             qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=[3, 3, 3])
 
         assert captured.get("specializations") is not None, "_compile was not reached"
@@ -1093,7 +1111,13 @@ class TestTLMMultiSpecSpecializations:
         qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
         captured = {}
 
-        with patch.object(type(qeff), "_compile", side_effect=lambda *args, **kw: captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"):
+        with patch.object(
+            type(qeff),
+            "_compile",
+            side_effect=lambda *args, **kw: (
+                captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"
+            ),
+        ):
             qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=[3, 1, 2])
 
         assert captured.get("specializations") is not None, "_compile was not reached"
@@ -1111,7 +1135,13 @@ class TestTLMMultiSpecSpecializations:
         qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
         captured = {}
 
-        with patch.object(type(qeff), "_compile", side_effect=lambda *args, **kw: captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"):
+        with patch.object(
+            type(qeff),
+            "_compile",
+            side_effect=lambda *args, **kw: (
+                captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"
+            ),
+        ):
             qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=3)
 
         assert captured.get("specializations") is not None, "_compile was not reached"
@@ -1119,4 +1149,3 @@ class TestTLMMultiSpecSpecializations:
         decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
         assert len(decode_specs) == 1, f"Expected 1 decode spec for int input, got: {decode_specs}"
         assert decode_specs[0]["seq_len"] == 4  # k=3 → seq_len=4
-

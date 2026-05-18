@@ -513,8 +513,10 @@ def test_multi_spec_structure(model_id, decode_ks):
             prefill_seq_len=prefill_seq_len,
         )
         assert spec is not None, f"_build_decode_spec_for_k returned None for k={k}"
-        assert spec["seq_len"] == k + 1, f"Expected seq_len={k+1}, got {spec['seq_len']}"
-        assert spec["num_logits_to_keep"] == k + 1, f"Expected num_logits_to_keep={k+1}, got {spec['num_logits_to_keep']}"
+        assert spec["seq_len"] == k + 1, f"Expected seq_len={k + 1}, got {spec['seq_len']}"
+        assert spec["num_logits_to_keep"] == k + 1, (
+            f"Expected num_logits_to_keep={k + 1}, got {spec['num_logits_to_keep']}"
+        )
         assert spec["ctx_len"] == ctx_len
         specs.append(spec)
 
@@ -548,4 +550,3 @@ def test_select_k(actual_proposals, decode_ks, expected_k):
 
     result = _select_k(actual_proposals, decode_ks)
     assert result == expected_k, f"Expected {expected_k}, got {result} for proposals={actual_proposals}, ks={decode_ks}"
-

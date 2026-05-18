@@ -415,10 +415,12 @@ def _collect_vanilla_reference(session, first_token, start_pos, vocab_size, n_st
     ph = np.zeros((1, 1, vocab_size), dtype=np.float32)
     session.set_buffers({"logits": ph})
     for step in range(n_steps):
-        out = session.run({
-            "input_ids": np.array([[ref_tokens[-1]]], dtype=np.int64),
-            "position_ids": np.array([[start_pos + step]], dtype=np.int64),
-        })
+        out = session.run(
+            {
+                "input_ids": np.array([[ref_tokens[-1]]], dtype=np.int64),
+                "position_ids": np.array([[start_pos + step]], dtype=np.int64),
+            }
+        )
         logit = out["logits"][0, 0, :].copy()
         ref_logits.append(logit)
         ref_tokens.append(int(logit.argmax()))
@@ -443,15 +445,15 @@ def _verify_tlm_spec(tlm_session, k, ref_tokens, ref_logits, start_pos, vocab_si
     n_assertions = 0
     n_chunks = len(ref_logits) // seq_len
     for chunk in range(n_chunks):
-        chunk_tokens = ref_tokens[chunk * seq_len: chunk * seq_len + seq_len]
-        chunk_positions = np.array(
-            [[start_pos + chunk * seq_len + i for i in range(seq_len)]], dtype=np.int64
+        chunk_tokens = ref_tokens[chunk * seq_len : chunk * seq_len + seq_len]
+        chunk_positions = np.array([[start_pos + chunk * seq_len + i for i in range(seq_len)]], dtype=np.int64)
+        out = tlm_session.run(
+            {
+                "input_ids": np.array([chunk_tokens], dtype=np.int64),
+                "position_ids": chunk_positions,
+                "num_logits_to_keep": n_logits_to_keep,
+            }
         )
-        out = tlm_session.run({
-            "input_ids": np.array([chunk_tokens], dtype=np.int64),
-            "position_ids": chunk_positions,
-            "num_logits_to_keep": n_logits_to_keep,
-        })
         tlm_logits = out["logits"]  # [1, seq_len, vocab]
 
         for i in range(seq_len):
@@ -478,9 +480,9 @@ def _verify_tlm_spec(tlm_session, k, ref_tokens, ref_logits, start_pos, vocab_si
 @pytest.mark.parametrize(
     "decode_ks",
     [
-        [0],        # fallback-only (seq_len=1)
-        [3],        # full-K only  (seq_len=4)
-        [0, 3],     # fallback + full-K (typical PLD config)
+        [0],  # fallback-only (seq_len=1)
+        [3],  # full-K only  (seq_len=4)
+        [0, 3],  # fallback + full-K (typical PLD config)
         [1, 2, 3],  # suffix-decoding range
     ],
 )
@@ -583,4 +585,3 @@ def test_multi_spec_qpc_logit_correctness(decode_ks, manual_cleanup):
 
     assert total_assertions > 0
     manual_cleanup([vanilla.onnx_path, tlm.onnx_path])
-
