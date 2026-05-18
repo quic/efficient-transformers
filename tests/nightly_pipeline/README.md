@@ -120,15 +120,30 @@ Example:
 pytest tests/nightly_pipeline/causal_lm_models/test_generate.py
 ```
 
+### Phase 3: Validate Results
+
+- input: current artifact JSON files and previous nightly artifact JSON files
+- action: compare timing, size, performance, and token MAD metrics using configured tolerances
+- output: one validation CSV per model family in the current artifact directory
+
+Example:
+
+```bash
+export NIGHTLY_PIPELINE_PREVIOUS_ARTIFACTS_DIR="$PWD/Nightly_Pipeline/$PREVIOUS_BUILD_ID"
+pytest tests/nightly_pipeline/test_result_validation.py
+```
+
 ## CI-Friendly Command Pattern
 
 For a single nightly run: Currently running as a Freestyle Project in Jenkins, but should be converted to a Pipeline job. The command pattern is:
 
 ```bash
 export NIGHTLY_PIPELINE_ARTIFACTS_DIR="$PWD/Nightly_Pipeline/$BUILD_ID"
+export NIGHTLY_PIPELINE_PREVIOUS_ARTIFACTS_DIR="$PWD/Nightly_Pipeline/$PREVIOUS_BUILD_ID"
 
 pytest -n auto tests/nightly_pipeline/causal_lm_models/test_export_compile.py
 pytest tests/nightly_pipeline/causal_lm_models/test_generate.py
+pytest tests/nightly_pipeline/test_result_validation.py
 ```
 
 ## Config Files
@@ -151,6 +166,7 @@ Defines per-phase execution settings, such as:
 - export parameters
 - compile parameters
 - generation parameters
+- validation tolerances
 
 Use this file when:
 
