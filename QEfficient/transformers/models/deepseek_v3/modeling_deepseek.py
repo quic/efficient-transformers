@@ -81,7 +81,7 @@ class QEffDeepseekV3CustomRMSNormAIC(nn.Module):
 
 
 class DeepseekV3RotaryEmbedding(nn.Module):
-    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
+    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None, dtype=torch.get_default_dtype()):
         super().__init__()
 
         self.dim = dim
@@ -94,7 +94,7 @@ class DeepseekV3RotaryEmbedding(nn.Module):
         self._set_cos_sin_cache(
             seq_len=max_position_embeddings,
             device=self.inv_freq.device,
-            dtype=torch.get_default_dtype(),
+            dtype=dtype,
         )
         self.max_seq_len_cached = None
 
@@ -122,6 +122,7 @@ class DeepseekV3RotaryEmbedding(nn.Module):
 class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
     def __init__(
         self,
+        dtype,
         dim,
         max_position_embeddings=2048,
         base=10000,
@@ -139,7 +140,7 @@ class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
         self.beta_slow = beta_slow
         self.mscale = mscale
         self.mscale_all_dim = mscale_all_dim
-        super().__init__(dim, max_position_embeddings, base, device)
+        super().__init__(dim, max_position_embeddings, base, device, dtype)
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
@@ -987,6 +988,7 @@ class QEffDeepseekV3Model(nn.Module):
             if key in self.config.rope_scaling
         }
         self.rotary_emb = DeepseekV3YarnRotaryEmbedding(
+            self.config.torch_dtype,
             self.config.qk_rope_head_dim,
             max_position_embeddings=MAX_POSITION_EMBEDDINGS,
             scaling_factor=scaling_factor,
