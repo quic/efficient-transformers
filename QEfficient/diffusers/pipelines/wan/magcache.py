@@ -252,9 +252,7 @@ class WanMagCacheRuntime:
         )
         if should_skip:
             self.skipped_calls += 1
-            self._debug_print(
-                f"[MagCache] stream={stream_name} diff<{self.threshold:.6f}; skipping this step for now."
-            )
+            self._debug_print(f"[MagCache] stream={stream_name} diff<{self.threshold:.6f}; skipping this step for now.")
             return True
 
         state.reset_accumulators()
