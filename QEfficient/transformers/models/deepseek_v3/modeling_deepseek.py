@@ -87,7 +87,9 @@ class DeepseekV3RotaryEmbedding(nn.Module):
         if dtype is None:
             dtype = torch.get_default_dtype()
         if not isinstance(dtype, torch.dtype):
-            raise TypeError(f"dtype must be a torch.dtype, got {type(dtype)}")
+            raise TypeError(
+                f"DeepseekV3RotaryEmbedding: dtype must be a torch.dtype, got {type(dtype).__name__} with value {dtype}"
+            )
 
         self.dim = dim
         self.max_position_embeddings = max_position_embeddings
@@ -145,8 +147,7 @@ class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
         self.beta_slow = beta_slow
         self.mscale = mscale
         self.mscale_all_dim = mscale_all_dim
-        self.dtype = dtype if dtype is not None else torch.get_default_dtype()
-        super().__init__(dim, max_position_embeddings, base, device, self.dtype)
+        super().__init__(dim, max_position_embeddings, base, device, dtype)
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
