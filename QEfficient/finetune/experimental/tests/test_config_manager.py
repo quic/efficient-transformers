@@ -229,10 +229,10 @@ def test_config(config_path):
 
 def test_torch_dtype_validation():
     """Test that torch_dtype validation works correctly."""
-    # Test with default config - should have torch_dtype set to fp16 by default
+    # Test with default config - should have model torch_dtype set to float16 by default
     config_manager = ConfigManager()
-    training_config = config_manager.get_training_config()
-    assert training_config.get("torch_dtype") == "fp16"
+    model_config = config_manager.get_model_config()
+    assert model_config.get("torch_dtype") == "float16"
 
     # Validation should pass with default config
     config_manager.validate_config()  # Should not raise
@@ -240,11 +240,11 @@ def test_torch_dtype_validation():
 
 def test_torch_dtype_invalid():
     """Test that invalid torch_dtype raises validation error."""
-    from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
+    from QEfficient.finetune.experimental.core.config_manager import MasterConfig, ModelConfig
 
-    # Create config with invalid torch_dtype
-    training_config = TrainingConfig(torch_dtype="invalid_dtype")
-    master_config = MasterConfig(training=training_config)
+    # Create config with invalid model torch_dtype
+    model_config = ModelConfig(torch_dtype="invalid_dtype")
+    master_config = MasterConfig(model=model_config)
     config_manager = ConfigManager(config=master_config)
 
     # Validation should fail
@@ -252,3 +252,14 @@ def test_torch_dtype_invalid():
         config_manager.validate_config()
 
     assert "torch_dtype must be one of" in str(exc_info.value)
+
+
+def test_fp16_bf16_mutually_exclusive():
+    training_config = TrainingConfig(fp16=True, bf16=True)
+    master_config = MasterConfig(training=training_config)
+    config_manager = ConfigManager(config=master_config)
+
+    with pytest.raises(ValueError) as exc_info:
+        config_manager.validate_config()
+
+    assert "training.fp16 and training.bf16 cannot both be true" in str(exc_info.value)

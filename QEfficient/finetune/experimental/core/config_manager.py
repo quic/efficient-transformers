@@ -265,6 +265,13 @@ class ModelConfig:
         default=None,
         metadata={"help": "The device map to use for model distribution (e.g., 'auto')."},
     )
+    torch_dtype: Optional[str] = field(
+        default="float16",
+        metadata={
+            "help": "Torch dtype passed to model.from_pretrained "
+            "(e.g., 'float16', 'bfloat16', 'float32', or 'auto')."
+        },
+    )
 
 
 @dataclass
@@ -418,9 +425,13 @@ class TrainingConfig:
         default="qaic",
         metadata={"help": "The device to use for training ('cuda', 'cpu', etc.)."},
     )
-    torch_dtype: str = field(
-        default="fp16",
-        metadata={"help": "The torch data type to use for model weights (e.g., 'fp32', 'fp16', 'bf16')."},
+    fp16: bool = field(
+        default=True,
+        metadata={"help": "Whether to enable fp16 mixed precision in training arguments."},
+    )
+    bf16: bool = field(
+        default=False,
+        metadata={"help": "Whether to enable bf16 mixed precision in training arguments."},
     )
     torch_compile: bool = field(
         default=False,
@@ -819,19 +830,28 @@ class ConfigManager:
         self._push(errors, not dataset.get("dataset_name"), "dataset.dataset_name is required.")
         self._push(errors, not dataset.get("tokenizer_name"), "dataset.tokenizer_name is required.")
 
-        # ---------- Training ----------
+        # ---------- Model ----------
         # torch_dtype validation
-        torch_dtype = training.get("torch_dtype")
-        valid_dtypes = {"fp16", "bf16", "fp32"}
+        torch_dtype = model.get("torch_dtype")
+        valid_dtypes = {"float16", "bfloat16", "float32", "auto", "fp16", "bf16", "fp32"}
         self._push(
             errors,
             not torch_dtype,
-            "training.torch_dtype is required.",
+            "model.torch_dtype is required.",
         )
         self._push(
             errors,
             torch_dtype and torch_dtype not in valid_dtypes,
-            f"training.torch_dtype must be one of {valid_dtypes}.",
+            f"model.torch_dtype must be one of {valid_dtypes}.",
+        )
+
+        # ---------- Training ----------
+        fp16 = bool(training.get("fp16", False))
+        bf16 = bool(training.get("bf16", False))
+        self._push(
+            errors,
+            fp16 and bf16,
+            "training.fp16 and training.bf16 cannot both be true.",
         )
 
         # Batch sizes
@@ -912,21 +932,12 @@ class ConfigManager:
     def get_model_config(self) -> Dict[str, Any]:
         """
         Get model configuration as dictionary.
-
-        Automatically handles torch_dtype conversion from training config if not set in model config.
         """
-        model_config = self.config.model
-
-        # Get torch_dtype from training config and convert
-        # To do: check if it can be moved from training config to model config instead
-        if model_config.get("torch_dtype") is None:
-            training_config = self.get_training_config()
-            training_dtype = training_config.get("torch_dtype")
-            if training_dtype:
-                # Convert from training format (fp16/bf16) to model format (float16/bfloat16)
-                dtype_mapping = dtype_mapping = constants.DTYPE_MAPPING
-                model_config["torch_dtype"] = dtype_mapping.get(training_dtype, "auto")
-
+        model_config = dict(self.config.model)
+        dtype_mapping = constants.DTYPE_MAPPING
+        torch_dtype = model_config.get("torch_dtype")
+        if torch_dtype in dtype_mapping:
+            model_config["torch_dtype"] = dtype_mapping[torch_dtype]
         return model_config
 
     def to_dict(self) -> Dict[str, Any]:

@@ -275,9 +275,7 @@ class FineTuningPipeline:
         # Clean up training config: remove fields that shouldn't be passed to TrainingArguments
         training_config.pop("device", None)
         training_config.pop("log_file_name", None)
-        # Note: torch_dtype was already converted to fp16/bf16 flag in prepare_training_config
         training_config.pop("deepspeed_config", None)
-        training_config.pop("torch_dtype", None)
         # Remove PP-specific fields as they're handled via device_map in model loading
         training_config.pop("pp_degree", None)
 
