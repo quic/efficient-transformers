@@ -344,6 +344,7 @@ def eager_attention_forward(
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     #
+    # MIN_MASKED_ATTENTION_VALUE = -10000
     if attention_mask is not None:
         attn_weights = torch.where(
             attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
@@ -551,8 +552,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         qkv_zeros = torch.zeros(key.shape, dtype=key.dtype, device=key.device)
         key = torch.where(mask.unsqueeze(-1), key, qkv_zeros)
-        # query = torch.where(mask.unsqueeze(-1), query, qkv_zeros)
-        # value = torch.where(mask.unsqueeze(-1), value, qkv_zeros)
+        query = torch.where(mask.unsqueeze(-1), query, qkv_zeros)
+        value = torch.where(mask.unsqueeze(-1), value, qkv_zeros)
 
         batch_size, num_heads, sequence_length, k_head_dim = key.shape
         v_head_dim = value.shape[-1]
@@ -1683,12 +1684,14 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         **kwargs,
     ):
         inputs_shapes = {}
-        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+
+        dummy_seq_len = 128
+        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, dummy_seq_len)
 
         inputs_shapes["position_ids"] = (
             3,
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
-            constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+            dummy_seq_len,
         )
         inputs_shapes["pixel_values"] = (11008, 1536)
         inputs_shapes["image_grid_thw"] = (
@@ -1712,8 +1715,8 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
         lang_inputs["position_ids"] = (
             (
-                torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
-                .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+                torch.arange(dummy_seq_len, dtype=torch.int64)
+                .view(1, dummy_seq_len)
                 .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
             )
             .unsqueeze(0)
@@ -1728,13 +1731,13 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         # kv_cache_shape = get_padding_shape_from_config(
         #     config=self.model.config.text_config,
         #     batch_size=fbs if continuous_batching else bs,
-        #     seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+        #     seq_len=dummy_seq_len,
         # )
 
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
             batch_size=fbs if continuous_batching else bs,
-            seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+            seq_len=dummy_seq_len,
         )
 
         linear_batch_size = fbs if continuous_batching else bs
