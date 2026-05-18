@@ -8,10 +8,11 @@
 from types import SimpleNamespace
 
 import pytest
+import torch
 from transformers import TrainerCallback
 
 from QEfficient.finetune.experimental.core import callbacks as callbacks_module
-from QEfficient.finetune.experimental.core.callbacks import QAICProfilerCallback
+from QEfficient.finetune.experimental.core.callbacks import QAICOpByOpVerifierCallback, QAICProfilerCallback
 from QEfficient.finetune.experimental.core.component_registry import ComponentFactory, registry
 
 
@@ -236,3 +237,112 @@ def test_qaic_profiler_resolves_rank_at_start_time(monkeypatch):
     callback.on_step_begin(args=None, state=SimpleNamespace(global_step=0), control=None)
 
     assert calls == [(True, "qaic:11", "/tmp/hw-trace")]
+
+
+def test_qaic_op_by_op_verifier_on_step_end_without_initialized_ctx():
+    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=5, trace_dir="/tmp/op-trace")
+    state = SimpleNamespace(global_step=1)
+
+    # Should not raise when on_step_end is hit before any context is initialized.
+    callback.on_step_end(args=None, state=state, control=None)
+
+
+def test_qaic_op_by_op_verifier_casts_numeric_config(monkeypatch):
+    captured = {}
+
+    class _DummyCtx:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def _mock_get_op_verifier_ctx(**kwargs):
+        captured.update(kwargs)
+        return _DummyCtx()
+
+    monkeypatch.setattr(callbacks_module, "get_op_verifier_ctx", _mock_get_op_verifier_ctx)
+
+    callback = QAICOpByOpVerifierCallback(
+        start_step="0",
+        end_step="2",
+        trace_dir="/tmp/op-trace",
+        atol="0.1",
+        rtol="1e-5",
+    )
+    callback.on_step_begin(args=None, state=SimpleNamespace(global_step=0), control=None)
+
+    assert isinstance(captured["atol"], float)
+    assert isinstance(captured["rtol"], float)
+    assert captured["atol"] == 0.1
+    assert captured["rtol"] == 1e-5
+
+
+@pytest.mark.parametrize(
+    "args,expected_dtype",
+    [
+        (SimpleNamespace(fp16=True, bf16=False), torch.float16),
+        (SimpleNamespace(fp16=False, bf16=True), torch.bfloat16),
+        (SimpleNamespace(fp16=False, bf16=False), torch.float32),
+    ],
+)
+def test_qaic_op_by_op_verifier_uses_training_precision_for_ref_dtype(monkeypatch, args, expected_dtype):
+    captured = {}
+
+    class _DummyCtx:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def _mock_get_op_verifier_ctx(**kwargs):
+        captured.update(kwargs)
+        return _DummyCtx()
+
+    monkeypatch.setattr(callbacks_module, "get_op_verifier_ctx", _mock_get_op_verifier_ctx)
+
+    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=2, trace_dir="/tmp/op-trace")
+    callback.on_step_begin(args=args, state=SimpleNamespace(global_step=0), control=None)
+
+    assert captured["ref_dtype"] == expected_dtype
+
+
+def test_qaic_op_by_op_verifier_rejects_fp16_mode():
+    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=2, trace_dir="/tmp/op-trace")
+
+    with pytest.raises(RuntimeError, match="not supported with fp16/GradScaler"):
+        callback.on_step_begin(
+            args=SimpleNamespace(fp16=True, bf16=False),
+            state=SimpleNamespace(global_step=0),
+            control=None,
+        )
+
+
+def test_qaic_op_by_op_verifier_exits_ctx_when_global_step_reaches_end_step(monkeypatch):
+    events = []
+
+    class _DummyCtx:
+        def __enter__(self):
+            events.append("enter")
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            events.append("exit")
+            return False
+
+    monkeypatch.setattr(callbacks_module, "get_op_verifier_ctx", lambda **kwargs: _DummyCtx())
+
+    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=2, trace_dir="/tmp/op-trace")
+
+    # Enter at step 1 (still inside [start_step, end_step) ).
+    callback.on_step_begin(
+        args=SimpleNamespace(fp16=False, bf16=False),
+        state=SimpleNamespace(global_step=1),
+        control=None,
+    )
+    # At on_step_end, HF Trainer may already report global_step == end_step.
+    callback.on_step_end(args=None, state=SimpleNamespace(global_step=2), control=None)
+
+    assert events == ["enter", "exit"]
+    assert callback.op_verifier_ctx_step is None

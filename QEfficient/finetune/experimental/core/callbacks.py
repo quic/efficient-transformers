@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import torch
 from transformers import (
     DefaultFlowCallback,
     EarlyStoppingCallback,
@@ -388,11 +389,28 @@ class QAICOpByOpVerifierCallback(TrainerCallback):
         """ "
         Initialize QAIC Op-by-Op verifier callback with profiling and tolerance settings.
         """
-        self.start_step = kwargs.get("start_step", -1)
-        self.end_step = kwargs.get("end_step", -1)
+        try:
+            self.start_step = int(kwargs.get("start_step", -1))
+            self.end_step = int(kwargs.get("end_step", -1))
+            self.atol = float(kwargs.get("atol", 1e-1))
+            self.rtol = float(kwargs.get("rtol", 1e-5))
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                "qaic_op_by_op_verifier_callback expects numeric values for "
+                "start_step, end_step, atol, and rtol."
+            ) from e
         self.trace_dir = kwargs.get("trace_dir", "qaic_op_by_op_traces")
-        self.atol = kwargs.get("atol", 1e-1)
-        self.rtol = kwargs.get("rtol", 1e-5)
+        self.op_verifier_ctx_step = None
+
+    @staticmethod
+    def _resolve_ref_dtype(args: TrainingArguments) -> torch.dtype:
+        # Keep reference dtype aligned with training precision to avoid type mismatches
+        # in ops that require matching input/grad dtypes (e.g. embedding backward).
+        if getattr(args, "bf16", False):
+            return torch.bfloat16
+        if getattr(args, "fp16", False):
+            return torch.float16
+        return torch.float32
 
     def on_step_begin(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
         """
@@ -400,11 +418,18 @@ class QAICOpByOpVerifierCallback(TrainerCallback):
         several inputs.
         """
         if self.start_step <= state.global_step < self.end_step:
+            if getattr(args, "fp16", False):
+                raise RuntimeError(
+                    "qaic_op_by_op_verifier_callback is not supported with fp16/GradScaler training. "
+                    "Set training.fp16=false (and optionally training.bf16=true if supported) "
+                    "when using this callback."
+                )
             self.op_verifier_ctx_step = get_op_verifier_ctx(
                 use_op_by_op_verifier=True,
                 device_type="qaic",
                 dump_dir=self.trace_dir,
                 step=state.global_step,
+                ref_dtype=self._resolve_ref_dtype(args),
                 atol=self.atol,
                 rtol=self.rtol,
             )
@@ -415,9 +440,11 @@ class QAICOpByOpVerifierCallback(TrainerCallback):
         Event called at the end of a training step. If using gradient accumulation, one training step might take
         several inputs.
         """
-        if self.start_step <= state.global_step < self.end_step:
-            if self.op_verifier_ctx_step is not None:
-                self.op_verifier_ctx_step.__exit__(None, None, None)
+        # Always close a previously-entered verifier context, even when the
+        # post-step global_step moved to end_step.
+        if self.op_verifier_ctx_step is not None:
+            self.op_verifier_ctx_step.__exit__(None, None, None)
+            self.op_verifier_ctx_step = None
 
 
 def replace_progress_callback(trainer: Any, callbacks: list[Any], logger: Any = None) -> None:
