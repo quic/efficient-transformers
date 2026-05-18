@@ -1253,7 +1253,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         self.all_gate_qweight = torch.nn.Parameter(
             torch.stack([exp.gate_proj.qweight for exp in self.experts], dim=0).reshape(
                 -1, self.out_features_gate, self.in_features_gate // 2
-            ),
+            ).to(torch.float16),
             requires_grad=False,
         )
         self.all_gate_scales = torch.nn.Parameter(
@@ -1282,7 +1282,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         self.all_up_scales = torch.nn.Parameter(
             torch.stack([exp.up_proj.scales for exp in self.experts], dim=0).reshape(
                 -1, self.out_features_up, self.in_features_up // self.group_size
-            ),
+            ).to(torch.float16),
             requires_grad=False,
         )
         self.all_up_qzeros = torch.nn.Parameter(
@@ -1298,7 +1298,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         self.all_down_qweight = torch.nn.Parameter(
             torch.stack([exp.down_proj.qweight for exp in self.experts], dim=0).reshape(
                 -1, self.out_features_down, self.in_features_down // 2
-            ),
+            ).to(torch.float16),
             requires_grad=False,
         )
         self.all_down_scales = torch.nn.Parameter(
