@@ -21,18 +21,34 @@ class ModelSummaryCallback(TrainerCallback):
 
 
 # Setup test data
-CALLBACK_CONFIGS = {
-    "early_stopping": {
-        "name": "early_stopping",
-        "early_stopping_patience": 3,
-        "early_stopping_threshold": 0.001,
-    },
-    "tensorboard": {"name": "tensorboard", "tb_writer": "SummaryWriter"},
-    "model_summary": {
-        "name": "model_summary",
-        "max_depth": 1,
-    },
-}
+CALLBACK_CONFIGS = [
+    pytest.param(
+        {
+            "name": "early_stopping",
+            "early_stopping_patience": 3,
+            "early_stopping_threshold": 0.001,
+        },
+        id="early_stopping",
+    ),
+    pytest.param({"name": "tensorboard", "tb_writer": "SummaryWriter"}, id="tensorboard"),
+    pytest.param(
+        {
+            "name": "model_summary",
+            "max_depth": 1,
+        },
+        id="model_summary",
+    ),
+    pytest.param(
+        {
+            "name": "qaic_profiler_callback",
+            "start_step": 0,
+            "end_step": 1,
+            "trace_dir": "/tmp/hw-trace",
+            "device_ids": [0],
+        },
+        id="qaic_profiler",
+    ),
+]
 
 REGISTRY_CALLBACK_CONFIGS = {
     "model_summary": {
@@ -43,11 +59,10 @@ REGISTRY_CALLBACK_CONFIGS = {
 }
 
 
-@pytest.mark.parametrize("callback_name", CALLBACK_CONFIGS.keys())
-def test_callbacks(callback_name):
+@pytest.mark.parametrize("config", CALLBACK_CONFIGS)
+def test_callbacks(config):
     """Test that registered callbacks that can be created with their configs."""
     # Create callbacks using the factory
-    config = CALLBACK_CONFIGS[callback_name]
     try:
         callback_inst = ComponentFactory.create_callback(**config)
     except ValueError as e:
@@ -168,5 +183,56 @@ def test_qaic_profiler_maps_rank_to_device_id(monkeypatch):
 
     callback = QAICProfilerCallback(start_step=5, trace_dir="/tmp/hw-trace", device_ids=[10, 11])
     callback.on_step_begin(args=None, state=SimpleNamespace(global_step=5), control=None)
+
+    assert calls == [(True, "qaic:11", "/tmp/hw-trace")]
+
+
+def test_qaic_profiler_invalid_step_range_raises():
+    with pytest.raises(ValueError, match="end_step .* must be >= start_step"):
+        QAICProfilerCallback(start_step=10, end_step=5)
+
+
+def test_qaic_profiler_stops_only_started_devices(monkeypatch):
+    start_calls = []
+    stop_calls = []
+
+    monkeypatch.setattr(callbacks_module, "get_local_rank", lambda: 0)
+    monkeypatch.setattr(callbacks_module, "get_world_size", lambda: 1)
+
+    def _mock_start(use_profiler, device_type, trace_dir=None):
+        start_calls.append((use_profiler, device_type, trace_dir))
+        if device_type == "qaic:1":
+            raise RuntimeError("start failure")
+
+    monkeypatch.setattr(callbacks_module, "init_qaic_profiling", _mock_start)
+    monkeypatch.setattr(
+        callbacks_module,
+        "stop_qaic_profiling",
+        lambda use_profiler, device_type: stop_calls.append((use_profiler, device_type)),
+    )
+
+    callback = QAICProfilerCallback(start_step=0, end_step=1, trace_dir="/tmp/hw-trace", device_ids=[0, 1])
+    callback.on_step_begin(args=None, state=SimpleNamespace(global_step=0), control=None)
+    callback.on_step_end(args=None, state=SimpleNamespace(global_step=1), control=None)
+
+    assert start_calls == [(True, "qaic:0", "/tmp/hw-trace"), (True, "qaic:1", "/tmp/hw-trace")]
+    assert stop_calls == [(True, "qaic:0")]
+
+
+def test_qaic_profiler_resolves_rank_at_start_time(monkeypatch):
+    calls = []
+    rank_state = {"local_rank": 0}
+
+    monkeypatch.setattr(callbacks_module, "get_local_rank", lambda: rank_state["local_rank"])
+    monkeypatch.setattr(callbacks_module, "get_world_size", lambda: 2)
+    monkeypatch.setattr(
+        callbacks_module,
+        "init_qaic_profiling",
+        lambda use_profiler, device_type, trace_dir=None: calls.append((use_profiler, device_type, trace_dir)),
+    )
+
+    callback = QAICProfilerCallback(start_step=0, trace_dir="/tmp/hw-trace", device_ids=[10, 11])
+    rank_state["local_rank"] = 1
+    callback.on_step_begin(args=None, state=SimpleNamespace(global_step=0), control=None)
 
     assert calls == [(True, "qaic:11", "/tmp/hw-trace")]

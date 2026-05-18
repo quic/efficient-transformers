@@ -46,7 +46,7 @@ def get_op_verifier_ctx(
     Returns:
         ContextManager: Instance of context manager used to verify the operators.
     """
-    if (not use_op_by_op_verifier) or ("qaic" in device_type):
+    if (not use_op_by_op_verifier) or ("qaic" not in device_type):
         return nullcontext()
 
     # Lazily imported qaic_debug when it is actually needed.

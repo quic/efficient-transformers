@@ -280,11 +280,14 @@ class QAICProfilerCallback(TrainerCallback):
         """
         self.start_step = kwargs.get("start_step", -1)
         self.end_step = kwargs.get("end_step", -1)
+        if self.start_step >= 0 and self.end_step >= 0 and self.end_step < self.start_step:
+            raise ValueError(f"end_step ({self.end_step}) must be >= start_step ({self.start_step})")
         self.trace_dir = kwargs.get(
             "trace_dir",
             os.path.join(os.environ.get("OUTPUT_DIR", "."), "hw-trace"),
         )
         self.device_ids = kwargs.get("device_ids")
+        self._started_device_ids: list[int] = []
         self._profile_started = False
         self._stop_attempted = False
         self._warned_start_failure = False
@@ -306,10 +309,11 @@ class QAICProfilerCallback(TrainerCallback):
         return ids
 
     def _start_profiling(self, device_ids: list[int]) -> None:
+        started_device_ids: list[int] = []
         for device_id in device_ids:
             try:
                 init_qaic_profiling(True, f"qaic:{device_id}", trace_dir=self.trace_dir)
-                self._profile_started = True
+                started_device_ids.append(device_id)
             except Exception as e:
                 if not self._warned_start_failure:
                     logger.log_rank_zero(
@@ -317,6 +321,8 @@ class QAICProfilerCallback(TrainerCallback):
                         level=logging.WARNING,
                     )
                     self._warned_start_failure = True
+        self._started_device_ids = started_device_ids
+        self._profile_started = bool(started_device_ids)
 
     def _stop_profiling(self, device_ids: list[int], reason: str) -> None:
         for device_id in device_ids:
@@ -329,6 +335,7 @@ class QAICProfilerCallback(TrainerCallback):
                         level=logging.WARNING,
                     )
                     self._warned_stop_failure = True
+        self._started_device_ids = []
         self._profile_started = False
 
     # -------------------------------------------------------------------------
@@ -343,8 +350,7 @@ class QAICProfilerCallback(TrainerCallback):
         **kwargs,
     ):
         if self.start_step >= 0 and state.global_step == self.start_step and not self._profile_started:
-            device_ids = self._resolve_device_ids_for_rank()
-            self._start_profiling(device_ids)
+            self._start_profiling(self._resolve_device_ids_for_rank())
 
     def on_step_end(
         self,
@@ -360,8 +366,7 @@ class QAICProfilerCallback(TrainerCallback):
             and not self._stop_attempted
         ):
             self._stop_attempted = True
-            device_ids = self._resolve_device_ids_for_rank()
-            self._stop_profiling(device_ids, f"at end_step={self.end_step}")
+            self._stop_profiling(self._started_device_ids, f"at end_step={self.end_step}")
 
     def on_train_end(
         self,
@@ -372,8 +377,7 @@ class QAICProfilerCallback(TrainerCallback):
     ):
         if self._profile_started and not self._stop_attempted:
             self._stop_attempted = True
-            device_ids = self._resolve_device_ids_for_rank()
-            self._stop_profiling(device_ids, "on train end")
+            self._stop_profiling(self._started_device_ids, "on train end")
 
 
 @registry.callback("qaic_op_by_op_verifier_callback")
