@@ -1511,7 +1511,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
                 packed_chunk_size=EXPERT_BLOCKING_PACKED_CHUNK_SIZE,
                 num_q_ffn_blocks=num_q_ffn_blocks,
             )
-         return torch.einsum("bij->ij", expert_out)
+        return torch.einsum("bij->ij", expert_out)
 
     def forward(
         self, hidden_states: torch.Tensor, num_q_ffn_blocks: Optional[int] = None
