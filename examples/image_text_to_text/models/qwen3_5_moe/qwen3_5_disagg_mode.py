@@ -22,8 +22,8 @@ model_id = "Qwen/Qwen3.6-35B-A3B"
 config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
-config.vision_config.depth = 4
-config.text_config.num_hidden_layers = 2
+# config.vision_config.depth = 5
+# config.text_config.num_hidden_layers = 5
 config.torch_dtype = "float32"
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -32,7 +32,7 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
-PREFILL_SEQ_LEN = 32
+PREFILL_SEQ_LEN = 128
 CTX_LEN = 4096
 BS = 1
 
@@ -43,7 +43,7 @@ qaic_config = {"blocking_mode": "kv", "num_kv_blocks": 2, "skip_kv": True}
 
 enable_blocking = False  ## By default it is false
 
-generation_len = 128
+generation_len = 256
 
 skip_vision = False
 
@@ -78,7 +78,8 @@ prefill_qpc_path = qeff_model.compile(
     retain_full_kv=True,
     split_model_io=True,  # This should be used for disagg serving via VLLM
     mos=1,
-    aic_enable_depth_first=True,
+    user_tiled=True,
+    aic_enable_depth_first=False,
     prefill_only=True,
     enable_chunking=True,
     skip_vision=True,
@@ -217,6 +218,7 @@ if vision_inputs:
     vision_outputs = vision_session.run(vision_inputs)
 vision_end = perf_counter()
 
+# import ipdb; ipdb.set_trace()
 lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 if "position_ids" in inputs:
     lang_inputs["position_ids"] = inputs["position_ids"]
