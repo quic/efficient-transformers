@@ -875,7 +875,7 @@ def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
     scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
     # Once the compiler fix for ConstantOfShape(INT32_MAX) is available, this
     # can be switched back to ``torch.full_like(token_idx, int32_max)``.
-    matched_idx = torch.full_like(token_idx, int32_max)
+    matched_idx = int32_max_scalar.expand_as(token_idx)
     matched_idx = CtxScatterFunc3DInt.apply(
         matched_idx.unsqueeze(-1),
         scatter_pos,
@@ -1253,13 +1253,13 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         self.all_gate_qweight = torch.nn.Parameter(
             torch.stack([exp.gate_proj.qweight for exp in self.experts], dim=0).reshape(
                 -1, self.out_features_gate, self.in_features_gate // 2
-            ).to(torch.float16),
+            ),
             requires_grad=False,
         )
         self.all_gate_scales = torch.nn.Parameter(
             torch.stack([exp.gate_proj.scales for exp in self.experts], dim=0).reshape(
                 -1, self.out_features_gate, self.in_features_gate // self.group_size
-            ),
+            ).to(torch.float16),
             requires_grad=False,
         )
         # TODO: Since we know qzeros is always 8 -> Just embed this once into the operator as parameter -> explore this later
@@ -1298,13 +1298,13 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         self.all_down_qweight = torch.nn.Parameter(
             torch.stack([exp.down_proj.qweight for exp in self.experts], dim=0).reshape(
                 -1, self.out_features_down, self.in_features_down // 2
-            ).to(torch.float16),
+            ),
             requires_grad=False,
         )
         self.all_down_scales = torch.nn.Parameter(
             torch.stack([exp.down_proj.scales for exp in self.experts], dim=0).reshape(
                 -1, self.out_features_down, self.in_features_down // self.group_size
-            ),
+            ).to(torch.float16),
             requires_grad=False,
         )
         self.all_down_qzeros = torch.nn.Parameter(
