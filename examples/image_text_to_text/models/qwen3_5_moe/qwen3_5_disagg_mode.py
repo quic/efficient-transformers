@@ -23,7 +23,7 @@ config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
 # config.vision_config.depth = 5
-# config.text_config.num_hidden_layers = 5
+# config.text_config.num_hidden_layers = 2
 config.torch_dtype = "float32"
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -32,7 +32,7 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
-PREFILL_SEQ_LEN = 128
+PREFILL_SEQ_LEN = 512
 CTX_LEN = 4096
 BS = 1
 
@@ -45,7 +45,7 @@ enable_blocking = False  ## By default it is false
 
 generation_len = 256
 
-skip_vision = False
+skip_vision = True
 
 if not skip_vision:
     vision_qpc_path = qeff_model.compile(

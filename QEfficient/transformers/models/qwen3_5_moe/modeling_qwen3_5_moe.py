@@ -1685,7 +1685,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
     ):
         inputs_shapes = {}
 
-        dummy_seq_len = 128
+        dummy_seq_len = 32
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, dummy_seq_len)
 
         inputs_shapes["position_ids"] = (
