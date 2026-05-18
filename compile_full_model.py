@@ -20,7 +20,7 @@ NUM_DEVICES = 1  # default, will be overridden by CLI
 MXFP6 = True
 MXINT8_KV_CACHE = True
 
-COMPILER = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw"]
+COMPILER = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw", "-sub-functions"]
 # =====================================================
 # DISCOVERY
 # =====================================================
@@ -92,6 +92,7 @@ def build_compile_command(
     command = [
         COMPILER[0],
         COMPILER[1],
+        COMPILER[2],
         f"-aic-hw-version={aic_version}",
         f"-m={onnx_path}",
         f"-network-specialization-config={specialization_json}",
