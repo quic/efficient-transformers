@@ -485,8 +485,8 @@ class TestSFTTrainerWithModel:
         trainer_info = registry.get_trainer_module("sft")
         trainer_cls = trainer_info["trainer_cls"]
 
-        # Attempt to instantiate without dataset should raise TypeError
-        with pytest.raises(TypeError, match="'NoneType' object is not iterable"):
+        # Attempt to instantiate without dataset should raise ValueError
+        with pytest.raises(ValueError, match="`train_dataset` is required"):
             trainer_cls(
                 model=model,
                 args=sft_config,

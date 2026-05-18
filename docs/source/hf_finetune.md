@@ -45,10 +45,10 @@ For TRL-based supervised finetuning -`SFTTrainer`, see the [TRL SFTTrainer docs]
 
 | Package | Version |
 |---|---|
-| `trl` | 0.22.0 |
+| `trl` | 1.2.0 |
 | `transformers` | 4.57.3 |
-| `peft` | 0.17.0 |
-| `datasets` | 4.5.0 |
+| `peft` | 0.19.1 |
+| `datasets` | 4.8.5 |
 | `accelerate` | 1.10.1 |
 | `torch` | 2.9.1 |
 
@@ -112,11 +112,11 @@ pip install --index-url https://download.pytorch.org/whl/cpu \
 "torch==2.9.1+cpu" \
 "torchvision==0.24.1+cpu" \
 "torchaudio==2.9.1+cpu"
-pip install trl==0.22.0
+pip install trl==1.2.0
 cd .. && git clone https://github.com/quic-akuruvil/transformers.git
 cd transformers
 git checkout version-4.57.3 && pip install -e .
-pip install datasets==4.5.0
+pip install datasets==4.8.5
 cd .. && cd efficient-transformers
 QAIC_VISIBLE_DEVICES=0 python QEfficient/cloud/finetune_experimental.py \
 QEfficient/finetune/experimental/configs/sft_single_device_gsm8k_config.yaml
@@ -133,11 +133,11 @@ git checkout ft_experimental_v1  # Can remove this once merged to mainline
 pip install -e .
 pip install torch==2.9.1 torchvision==0.24.1 \
 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu130
-pip install trl==0.22.0
+pip install trl==1.2.0
 cd .. && git clone https://github.com/quic-akuruvil/transformers.git
 cd transformers
 git checkout version-4.57.3 && pip install -e .
-pip install datasets==4.5.0
+pip install datasets==4.8.5
 cd .. && cd efficient-transformers
 CUDA_VISIBLE_DEVICES=0 torchrun --nproc-per-node 1 -m QEfficient.cloud.finetune_experimental \
   --device cuda --num_epochs 1 --model_name meta-llama/Llama-3.2-3B \
