@@ -396,10 +396,15 @@ class QAICOpByOpVerifierCallback(TrainerCallback):
             self.rtol = float(kwargs.get("rtol", 1e-5))
         except (TypeError, ValueError) as e:
             raise ValueError(
-                "qaic_op_by_op_verifier_callback expects numeric values for "
-                "start_step, end_step, atol, and rtol."
+                "qaic_op_by_op_verifier_callback expects numeric values for start_step, end_step, atol, and rtol."
             ) from e
-        self.trace_dir = kwargs.get("trace_dir", "qaic_op_by_op_traces")
+        trace_dir = kwargs.get("trace_dir", "qaic_op_by_op_traces")
+        expanded_trace_dir = os.path.expanduser(trace_dir)
+        if os.path.isabs(expanded_trace_dir):
+            self.trace_dir = os.path.abspath(expanded_trace_dir)
+        else:
+            output_dir = os.environ.get("OUTPUT_DIR", ".")
+            self.trace_dir = os.path.abspath(os.path.join(output_dir, expanded_trace_dir))
         self.op_verifier_ctx_step = None
 
     @staticmethod
@@ -424,6 +429,12 @@ class QAICOpByOpVerifierCallback(TrainerCallback):
                     "Set training.fp16=false (and optionally training.bf16=true if supported) "
                     "when using this callback."
                 )
+            logger.log_rank_zero(
+                "QAIC OpByOp verifier active: "
+                f"step={state.global_step}, "
+                f"window=[{self.start_step}, {self.end_step}), "
+                f"dump_dir={self.trace_dir}/mismatches/step_{state.global_step}"
+            )
             self.op_verifier_ctx_step = get_op_verifier_ctx(
                 use_op_by_op_verifier=True,
                 device_type="qaic",

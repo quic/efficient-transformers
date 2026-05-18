@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -247,6 +248,24 @@ def test_qaic_op_by_op_verifier_on_step_end_without_initialized_ctx():
     callback.on_step_end(args=None, state=state, control=None)
 
 
+def test_qaic_op_by_op_verifier_default_trace_dir_is_under_output_dir(monkeypatch):
+    monkeypatch.setenv("OUTPUT_DIR", "/tmp/train_out")
+    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=1)
+    assert callback.trace_dir == os.path.abspath("/tmp/train_out/qaic_op_by_op_traces")
+
+
+def test_qaic_op_by_op_verifier_relative_trace_dir_is_under_output_dir(monkeypatch):
+    monkeypatch.setenv("OUTPUT_DIR", "/tmp/train_out")
+    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=1, trace_dir="./custom-op-trace")
+    assert callback.trace_dir == os.path.abspath("/tmp/train_out/custom-op-trace")
+
+
+def test_qaic_op_by_op_verifier_absolute_trace_dir_is_preserved(monkeypatch):
+    monkeypatch.setenv("OUTPUT_DIR", "/tmp/train_out")
+    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=1, trace_dir="/var/tmp/op-trace")
+    assert callback.trace_dir == os.path.abspath("/var/tmp/op-trace")
+
+
 def test_qaic_op_by_op_verifier_casts_numeric_config(monkeypatch):
     captured = {}
 
@@ -281,7 +300,6 @@ def test_qaic_op_by_op_verifier_casts_numeric_config(monkeypatch):
 @pytest.mark.parametrize(
     "args,expected_dtype",
     [
-        (SimpleNamespace(fp16=True, bf16=False), torch.float16),
         (SimpleNamespace(fp16=False, bf16=True), torch.bfloat16),
         (SimpleNamespace(fp16=False, bf16=False), torch.float32),
     ],

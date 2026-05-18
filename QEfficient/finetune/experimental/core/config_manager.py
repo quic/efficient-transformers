@@ -268,8 +268,7 @@ class ModelConfig:
     torch_dtype: Optional[str] = field(
         default="float16",
         metadata={
-            "help": "Torch dtype passed to model.from_pretrained "
-            "(e.g., 'float16', 'bfloat16', 'float32', or 'auto')."
+            "help": "Torch dtype passed to model.from_pretrained (e.g., 'float16', 'bfloat16', 'float32', or 'auto')."
         },
     )
 
