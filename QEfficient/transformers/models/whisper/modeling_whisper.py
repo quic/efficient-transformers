@@ -792,9 +792,10 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
 
     def get_dummy_inputs(
         self,
+        **kwargs,
     ):
         bs = 1
-        seq_len = 32
+        seq_len = int(kwargs.get("prefill_seq_len", 32))
         encoder_seq_len = self.config.max_source_positions
         encoder_feature_count = self.config.num_mel_bins
         num_key_value_heads = self.config.decoder_attention_heads

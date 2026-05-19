@@ -168,6 +168,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         continuous_batching: bool = False,
         **kwargs,
     ):
+        prefill_seq_len = int(kwargs.get("prefill_seq_len", SEQ_LEN))
         num_layers = self.config.text_config.num_hidden_layers
         num_key_value_heads = self.config.text_config.num_key_value_heads
         head_dim = self.config.text_config.hidden_size // self.config.text_config.num_attention_heads
@@ -182,11 +183,11 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             "pixel_values": torch.zeros((BS, NUM_CHANNEL, img_size, img_size), dtype=self.config.torch_dtype),
         }
         lang_inputs = {
-            "input_ids": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
+            "input_ids": torch.ones((BS, prefill_seq_len), dtype=torch.int64),
             "vision_embeds": torch.ones(
                 (BS, vision_size, self.model.language_model.config.hidden_size), dtype=self.config.torch_dtype
             ),
-            "attention_mask": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
+            "attention_mask": torch.ones((BS, prefill_seq_len), dtype=torch.int64),
             "image_idx": torch.zeros((1, 1), dtype=torch.int64),
         }
         lang_inputs["position_ids"] = lang_inputs.pop("attention_mask").cumsum(1)

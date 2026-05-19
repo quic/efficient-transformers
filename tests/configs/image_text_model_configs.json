@@ -5,7 +5,7 @@
       "model_type": "llava",
       "batch_size": 1,
       "prompt_len": 784,
-      "ctx_len": 2048,
+      "ctx_len": 1024,
       "img_size": 336,
       "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
       "text_prompt": "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",

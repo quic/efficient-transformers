@@ -5,7 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
-import argparse
+"""Core AI100 reranker implementation for Qwen3-VL reranker models."""
+
 import os
 from typing import Dict, List, Tuple
 
@@ -495,61 +496,3 @@ class QEffQwen3VLReranker:
             scores.append(score)
 
         return scores
-
-
-def main():
-    # Keep CLI simple: just allow model id/path override.
-    parser = argparse.ArgumentParser(description="Qwen3-VL reranker example.")
-    parser.add_argument("--model-name", type=str, default=DEFAULT_MODEL_NAME)
-    parser.add_argument("--ctx-len", type=int, default=DEFAULT_CTX_LEN, help="Context length used at compile time.")
-    parser.add_argument("--num-cores", type=int, default=DEFAULT_NUM_CORES, help="Number of AI100 cores.")
-    parser.add_argument("--num-devices", type=int, default=DEFAULT_NUM_DEVICES, help="Number of AI100 devices.")
-    parser.add_argument(
-        "--mxfp6-matmul",
-        action="store_true",
-        help="Enable MXFP6 matmul during compile (default: disabled).",
-    )
-    parser.add_argument(
-        "--compile-prefill-seq-len",
-        type=int,
-        default=None,
-        help=(
-            "Optional fixed prefill sequence length for compile/padding. "
-            "Must be >= max prompt length of the current request."
-        ),
-    )
-    args = parser.parse_args()
-
-    model = QEffQwen3VLReranker(
-        model_name_or_path=args.model_name,
-        ctx_len=args.ctx_len,
-        num_cores=args.num_cores,
-        num_devices=args.num_devices,
-        mxfp6_matmul=args.mxfp6_matmul,
-        compile_prefill_seq_len=args.compile_prefill_seq_len,
-    )
-
-    # Example input payload matching the HF reranker schema.
-    inputs = {
-        "instruction": "Retrieve images or text relevant to the user's query.",
-        "query": {"text": "A woman playing with her dog on a beach at sunset."},
-        "documents": [
-            {
-                "text": "A woman shares a joyful moment with her golden retriever on a sun-drenched beach at sunset, as the dog offers its paw in a heartwarming display of companionship and trust."
-            },
-            {"image": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg"},
-            {
-                "text": "A woman shares a joyful moment with her golden retriever on a sun-drenched beach at sunset, as the dog offers its paw in a heartwarming display of companionship and trust.",
-                "image": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
-            },
-        ],
-        "fps": 1.0,
-    }
-
-    # Print one score per document in the same order as inputs["documents"].
-    scores = model.process(inputs)
-    print(scores)
-
-
-if __name__ == "__main__":
-    main()
