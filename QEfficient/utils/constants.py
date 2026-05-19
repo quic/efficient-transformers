@@ -104,6 +104,9 @@ COMPILER = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw"]
 DEFAULT_AIC_HW_VERSION = "ai100"
 ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL = 100
 
+EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "2"))
+EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
+
 # InternVL constants
 # Fixing the feature size with reference to OpenGVLab/InternVL2_5-1B, OpenGVLab/InternVL2_5-38B and OpenGVLab/InternVL2_5-78B
 INTERN_FEATURE_SIZE = 256
