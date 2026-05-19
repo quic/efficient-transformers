@@ -43,7 +43,9 @@ def test_validate_nightly_results(model_class, artifact_filename, csv_filename, 
     tolerances = load_validation_tolerances(get_pipeline_config, model_class)
     assert isinstance(tolerances, ValidationTolerances)
 
-    rows = validate_artifact_file(current_artifact_file, previous_artifact_file, output_csv_file, tolerances)
+    rows = validate_artifact_file(
+        current_artifact_file, previous_artifact_file, output_csv_file, model_class, tolerances
+    )
 
     assert output_csv_file.exists(), f"Validation CSV was not created: {output_csv_file}"
     assert all_rows_passed(rows), _failure_summary(model_class, rows)

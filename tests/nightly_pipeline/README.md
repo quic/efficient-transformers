@@ -91,7 +91,8 @@ tests/nightly_pipeline/
 └── sequence_models/
 ```
 
-Current implementation is centered on `causal_lm`, and the same phase contract is intended to be extended to the other model families.
+Current implementation is centered on `causal_lm`, and the same phase contract is intended to be extended to
+the other model families.
 
 ## Execution Flow
 
@@ -123,8 +124,11 @@ pytest tests/nightly_pipeline/causal_lm_models/test_generate.py
 ### Phase 3: Validate Results
 
 - input: current artifact JSON files and previous nightly artifact JSON files
-- action: compare timing, size, performance, and token MAD metrics using configured tolerances
-- output: one validation CSV per model family in the current artifact directory
+- action: compare timing, size, family-specific outputs, and performance metrics using configured tolerances
+- output: one family-specific validation CSV per model family in the current artifact directory
+
+The validator uses MAD when `generated_ids` or `embedding` is available, and falls back to exact text/value
+assertions for families such as audio embedding and sequence classification.
 
 Example:
 
@@ -135,7 +139,8 @@ pytest tests/nightly_pipeline/test_result_validation.py
 
 ## CI-Friendly Command Pattern
 
-For a single nightly run: Currently running as a Freestyle Project in Jenkins, but should be converted to a Pipeline job. The command pattern is:
+For a single nightly run: Currently running as a Freestyle Project in Jenkins, but should be converted to a
+Pipeline job. The command pattern is:
 
 ```bash
 export NIGHTLY_PIPELINE_ARTIFACTS_DIR="$PWD/Nightly_Pipeline/$BUILD_ID"

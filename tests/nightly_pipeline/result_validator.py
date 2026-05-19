@@ -15,45 +15,44 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-CSV_COLUMNS = [
+COMMON_COLUMNS = [
     "model_name",
     "status",
     "failure_reason",
     "export_time_before",
     "export_time_after",
-    "export_time_pct_diff",
     "compile_time_before",
     "compile_time_after",
-    "compile_time_pct_diff",
     "onnx_qpc_size_before",
     "onnx_qpc_size_after",
-    "onnx_qpc_size_pct_diff",
-    "prefill_before",
-    "prefill_after",
-    "prefill_pct_diff",
-    "decode_before",
-    "decode_after",
-    "decode_pct_diff",
-    "total_before",
-    "total_after",
-    "total_pct_diff",
+]
+
+PERF_COLUMNS = [
+    "prefill_time_before",
+    "prefill_time_after",
+    "prefill_time_pct_diff",
+    "decode_perf_before",
+    "decode_perf_after",
+    "decode_perf_pct_diff",
+    "total_perf_before",
+    "total_perf_after",
+    "total_perf_pct_diff",
     "total_time_before",
     "total_time_after",
     "total_time_pct_diff",
-    "tokens_mad",
 ]
 
 LOWER_IS_BETTER_METRICS = {
     "export_time_pct_diff",
     "compile_time_pct_diff",
     "onnx_qpc_size_pct_diff",
-    "prefill_pct_diff",
+    "prefill_time_pct_diff",
     "total_time_pct_diff",
 }
 
 HIGHER_IS_BETTER_METRICS = {
-    "decode_pct_diff",
-    "total_pct_diff",
+    "decode_perf_pct_diff",
+    "total_perf_pct_diff",
 }
 
 SIZE_UNITS = {
@@ -64,11 +63,52 @@ SIZE_UNITS = {
     "TB": 1024**4,
 }
 
+FAMILY_SPECS = {
+    "audio_embedding_model_configs": {
+        "text_column": "transcription",
+        "text_key": "transcription",
+    },
+    "audio_model_configs": {
+        "text_column": "transcription",
+        "text_key": "transcription",
+        "mad_column": "generated_ids",
+        "mad_key": "generated_ids",
+        "mad_tolerance": "token_mad_tolerance",
+        "include_perf": True,
+    },
+    "causal_pipeline_configs": {
+        "text_column": "generated_text",
+        "text_key": "generated_texts",
+        "mad_column": "generated_ids",
+        "mad_key": "generated_ids",
+        "mad_tolerance": "token_mad_tolerance",
+        "include_perf": True,
+    },
+    "image_text_to_text_model_configs": {
+        "text_column": "generated_text",
+        "text_key": "generated_text",
+        "mad_column": "generated_ids",
+        "mad_key": "generated_ids",
+        "mad_tolerance": "token_mad_tolerance",
+        "include_perf": True,
+    },
+    "embedding_model_configs": {
+        "mad_column": "embedding",
+        "mad_key": "embedding",
+        "mad_tolerance": "embedding_mad_tolerance",
+    },
+    "sequence_model_configs": {
+        "text_column": "prediction",
+        "text_key": "Prediction",
+    },
+}
+
 
 @dataclass(frozen=True)
 class ValidationTolerances:
     percentage_tolerance: float = 5.0
     token_mad_tolerance: float = 1e-2
+    embedding_mad_tolerance: float = 1e-2
 
 
 def load_json(filepath: Path) -> dict[str, Any]:
@@ -83,10 +123,12 @@ def load_validation_tolerances(pipeline_configs: dict[str, Any], model_class: st
     class_config = model_class_configs.get(model_class, {})
     default_percentage_tolerance = default_config.get("percentage_tolerance", 5.0)
     default_token_mad_tolerance = default_config.get("token_mad_tolerance", 1e-2)
+    default_embedding_mad_tolerance = default_config.get("embedding_mad_tolerance", 1e-2)
 
     return ValidationTolerances(
         percentage_tolerance=float(class_config.get("percentage_tolerance", default_percentage_tolerance)),
         token_mad_tolerance=float(class_config.get("token_mad_tolerance", default_token_mad_tolerance)),
+        embedding_mad_tolerance=float(class_config.get("embedding_mad_tolerance", default_embedding_mad_tolerance)),
     )
 
 
@@ -94,35 +136,62 @@ def validate_artifact_file(
     current_artifact_file: Path,
     previous_artifact_file: Path,
     output_csv_file: Path,
+    model_class: str,
     tolerances: ValidationTolerances,
 ) -> list[dict[str, Any]]:
-    rows = validate_artifacts(load_json(current_artifact_file), load_json(previous_artifact_file), tolerances)
-    write_validation_csv(output_csv_file, rows)
+    rows = validate_artifacts(
+        load_json(current_artifact_file), load_json(previous_artifact_file), model_class, tolerances
+    )
+    write_validation_csv(output_csv_file, model_class, rows)
     return rows
 
 
 def validate_artifacts(
     current_artifacts: dict[str, Any],
     previous_artifacts: dict[str, Any],
+    model_class: str,
     tolerances: ValidationTolerances,
 ) -> list[dict[str, Any]]:
     rows = []
     for model_name, current_payload in sorted(current_artifacts.items()):
         previous_payload = previous_artifacts.get(model_name)
         if previous_payload is None:
-            rows.append(_missing_previous_model_row(model_name))
+            rows.append(_current_only_model_row(model_name, current_payload, model_class))
             continue
-        rows.append(_validate_model(model_name, current_payload, previous_payload, tolerances))
+        rows.append(_validate_model(model_name, current_payload, previous_payload, model_class, tolerances))
     return rows
 
 
-def write_validation_csv(output_csv_file: Path, rows: list[dict[str, Any]]) -> None:
+def write_validation_csv(output_csv_file: Path, model_class: str, rows: list[dict[str, Any]]) -> None:
     output_csv_file.parent.mkdir(parents=True, exist_ok=True)
+    columns = get_csv_columns(model_class)
     with output_csv_file.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=CSV_COLUMNS)
+        writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
         for row in rows:
-            writer.writerow({column: _format_csv_value(row.get(column, "N/A")) for column in CSV_COLUMNS})
+            writer.writerow({column: _format_csv_value(row.get(column, "N/A")) for column in columns})
+
+
+def get_csv_columns(model_class: str) -> list[str]:
+    spec = _get_family_spec(model_class)
+    columns = list(COMMON_COLUMNS)
+
+    text_column = spec.get("text_column")
+    if text_column:
+        columns.extend([f"{text_column}_before", f"{text_column}_after"])
+        columns.append(f"{text_column}_assertion")
+
+    mad_column = spec.get("mad_column")
+    if mad_column:
+        if mad_column == "generated_ids":
+            columns.append(f"{mad_column}_mad")
+        else:
+            columns.extend([f"{mad_column}_before", f"{mad_column}_after", f"{mad_column}_mad"])
+
+    if spec.get("include_perf"):
+        columns.extend(PERF_COLUMNS)
+
+    return columns
 
 
 def all_rows_passed(rows: list[dict[str, Any]]) -> bool:
@@ -133,43 +202,56 @@ def _validate_model(
     model_name: str,
     current_payload: dict[str, Any],
     previous_payload: dict[str, Any],
+    model_class: str,
     tolerances: ValidationTolerances,
 ) -> dict[str, Any]:
-    row = {column: "N/A" for column in CSV_COLUMNS}
+    columns = get_csv_columns(model_class)
+    spec = _get_family_spec(model_class)
+    row = {column: "N/A" for column in columns}
     row["model_name"] = model_name
 
     _add_percentage_metric(row, "export_time", previous_payload.get("export_time"), current_payload.get("export_time"))
     _add_percentage_metric(
         row, "compile_time", previous_payload.get("compile_time"), current_payload.get("compile_time")
     )
-    _add_percentage_metric(
-        row, "onnx_qpc_size", _extract_total_size_bytes(previous_payload), _extract_total_size_bytes(current_payload)
-    )
+    _add_size_metric(row, previous_payload, current_payload)
 
-    previous_perf = previous_payload.get("perf_metrics", {}) or {}
-    current_perf = current_payload.get("perf_metrics", {}) or {}
-    _add_percentage_metric(row, "prefill", previous_perf.get("prefill_time"), current_perf.get("prefill_time"))
-    _add_percentage_metric(row, "decode", previous_perf.get("decode_perf"), current_perf.get("decode_perf"))
-    _add_percentage_metric(row, "total", previous_perf.get("total_perf"), current_perf.get("total_perf"))
-    _add_percentage_metric(row, "total_time", previous_perf.get("total_time"), current_perf.get("total_time"))
+    if spec.get("include_perf"):
+        _add_perf_metrics(row, previous_payload, current_payload)
 
-    row["tokens_mad"] = _tokens_mad(previous_payload.get("generated_ids"), current_payload.get("generated_ids"))
+    text_assertion_required = "mad_column" not in spec
+    mad_result = _add_mad_comparison(row, spec, previous_payload, current_payload)
+    if mad_result == "N/A" and spec.get("text_column"):
+        text_assertion_required = True
 
-    failures = _collect_failures(row, tolerances)
+    if spec.get("text_column"):
+        _add_text_values(row, spec, previous_payload, current_payload, text_assertion_required)
+
+    failures = _collect_failures(row, spec, tolerances)
     row["status"] = "failed" if failures else "passed"
     row["failure_reason"] = "; ".join(failures) if failures else ""
     return row
 
 
-def _missing_previous_model_row(model_name: str) -> dict[str, Any]:
-    row = {column: "N/A" for column in CSV_COLUMNS}
-    row.update(
-        {
-            "model_name": model_name,
-            "status": "failed",
-            "failure_reason": "Model not found in previous nightly results.",
-        }
-    )
+def _current_only_model_row(model_name: str, current_payload: dict[str, Any], model_class: str) -> dict[str, Any]:
+    spec = _get_family_spec(model_class)
+    row = {column: "N/A" for column in get_csv_columns(model_class)}
+    row["model_name"] = model_name
+
+    _add_percentage_metric(row, "export_time", None, current_payload.get("export_time"))
+    _add_percentage_metric(row, "compile_time", None, current_payload.get("compile_time"))
+    _add_size_metric(row, None, current_payload)
+
+    if spec.get("include_perf"):
+        _add_perf_metrics(row, {}, current_payload)
+
+    _add_mad_comparison(row, spec, {}, current_payload)
+
+    if spec.get("text_column"):
+        _add_text_values(row, spec, {}, current_payload, assertion_required=False)
+
+    row["status"] = "passed"
+    row["failure_reason"] = "Previous model artifact not found; comparison skipped."
     return row
 
 
@@ -182,13 +264,76 @@ def _add_percentage_metric(row: dict[str, Any], column_prefix: str, before: Any,
     row[f"{column_prefix}_pct_diff"] = _percentage_difference(before_value, after_value)
 
 
+def _add_size_metric(
+    row: dict[str, Any], previous_payload: dict[str, Any] | None, current_payload: dict[str, Any]
+) -> None:
+    before_size = _extract_total_size_bytes(previous_payload or {})
+    after_size = _extract_total_size_bytes(current_payload)
+
+    row["onnx_qpc_size_before"] = _human_readable_size(before_size) if before_size is not None else "N/A"
+    row["onnx_qpc_size_after"] = _human_readable_size(after_size) if after_size is not None else "N/A"
+    row["onnx_qpc_size_pct_diff"] = _percentage_difference(before_size, after_size)
+
+
+def _add_perf_metrics(row: dict[str, Any], previous_payload: dict[str, Any], current_payload: dict[str, Any]) -> None:
+    previous_perf = previous_payload.get("perf_metrics", {}) or {}
+    current_perf = current_payload.get("perf_metrics", {}) or {}
+    _add_percentage_metric(row, "prefill_time", previous_perf.get("prefill_time"), current_perf.get("prefill_time"))
+    _add_percentage_metric(row, "decode_perf", previous_perf.get("decode_perf"), current_perf.get("decode_perf"))
+    _add_percentage_metric(row, "total_perf", previous_perf.get("total_perf"), current_perf.get("total_perf"))
+    _add_percentage_metric(row, "total_time", previous_perf.get("total_time"), current_perf.get("total_time"))
+
+
+def _add_text_values(
+    row: dict[str, Any],
+    spec: dict[str, Any],
+    previous_payload: dict[str, Any],
+    current_payload: dict[str, Any],
+    assertion_required: bool,
+) -> None:
+    text_column = spec["text_column"]
+    text_key = spec["text_key"]
+    previous_text = previous_payload.get(text_key)
+    current_text = current_payload.get(text_key)
+    row[f"{text_column}_before"] = previous_text if previous_text is not None else "N/A"
+    row[f"{text_column}_after"] = current_text if current_text is not None else "N/A"
+
+    assertion_column = f"{text_column}_assertion"
+    if assertion_column not in row:
+        return
+    if not assertion_required:
+        row[assertion_column] = "not_applicable"
+        return
+    row[assertion_column] = "passed" if _values_equal(previous_text, current_text) else "failed"
+
+
+def _add_mad_comparison(
+    row: dict[str, Any],
+    spec: dict[str, Any],
+    previous_payload: dict[str, Any],
+    current_payload: dict[str, Any],
+) -> float | str:
+    mad_column = spec.get("mad_column")
+    if not mad_column:
+        return "N/A"
+
+    mad_key = spec["mad_key"]
+    previous_value = previous_payload.get(mad_key)
+    current_value = current_payload.get(mad_key)
+    row[f"{mad_column}_before"] = previous_value if previous_value is not None else "N/A"
+    row[f"{mad_column}_after"] = current_value if current_value is not None else "N/A"
+    mad_value = _numeric_mad(previous_value, current_value)
+    row[f"{mad_column}_mad"] = mad_value
+    return mad_value
+
+
 def _percentage_difference(before: float | None, after: float | None) -> float | str:
     if before is None or after is None or before == 0:
         return "N/A"
     return ((after - before) / before) * 100
 
 
-def _collect_failures(row: dict[str, Any], tolerances: ValidationTolerances) -> list[str]:
+def _collect_failures(row: dict[str, Any], spec: dict[str, Any], tolerances: ValidationTolerances) -> list[str]:
     failures = []
     percentage_tolerance = tolerances.percentage_tolerance
 
@@ -202,11 +347,38 @@ def _collect_failures(row: dict[str, Any], tolerances: ValidationTolerances) -> 
         if isinstance(pct_diff, (int, float)) and pct_diff < -percentage_tolerance:
             failures.append(f"{metric} regression {pct_diff:.2f}% exceeds {percentage_tolerance:.2f}% tolerance")
 
-    tokens_mad = row.get("tokens_mad")
-    if isinstance(tokens_mad, (int, float)) and tokens_mad > tolerances.token_mad_tolerance:
-        failures.append(f"tokens_mad {tokens_mad:.6f} exceeds {tolerances.token_mad_tolerance:.6f} tolerance")
-
+    _collect_mad_failures(failures, row, spec, tolerances)
+    _collect_assertion_failures(failures, row, spec)
     return failures
+
+
+def _collect_mad_failures(
+    failures: list[str], row: dict[str, Any], spec: dict[str, Any], tolerances: ValidationTolerances
+) -> None:
+    mad_column = spec.get("mad_column")
+    if not mad_column:
+        return
+
+    mad_value = row.get(f"{mad_column}_mad")
+    tolerance_name = spec["mad_tolerance"]
+    tolerance_value = getattr(tolerances, tolerance_name)
+    if isinstance(mad_value, (int, float)):
+        if mad_value > tolerance_value:
+            failures.append(f"{mad_column}_mad {mad_value:.6f} exceeds {tolerance_value:.6f} tolerance")
+        return
+
+    if not spec.get("text_column"):
+        failures.append(f"{mad_column}_mad is unavailable")
+
+
+def _collect_assertion_failures(failures: list[str], row: dict[str, Any], spec: dict[str, Any]) -> None:
+    text_column = spec.get("text_column")
+    if not text_column:
+        return
+
+    assertion_value = row.get(f"{text_column}_assertion")
+    if assertion_value == "failed":
+        failures.append(f"{text_column}_assertion failed")
 
 
 def _extract_total_size_bytes(payload: dict[str, Any]) -> float | None:
@@ -242,9 +414,17 @@ def _parse_size_bytes(value: Any) -> float | None:
     return amount * SIZE_UNITS[unit]
 
 
-def _tokens_mad(previous_tokens: Any, current_tokens: Any) -> float | str:
-    previous_flat = _flatten_numeric_tokens(previous_tokens)
-    current_flat = _flatten_numeric_tokens(current_tokens)
+def _human_readable_size(size_bytes: float) -> str:
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size_bytes < 1024 or unit == "TB":
+            return f"{size_bytes:.2f} {unit}"
+        size_bytes /= 1024
+    return f"{size_bytes:.2f} TB"
+
+
+def _numeric_mad(previous_value: Any, current_value: Any) -> float | str:
+    previous_flat = _flatten_numeric_values(previous_value)
+    current_flat = _flatten_numeric_values(current_value)
     common_length = min(len(previous_flat), len(current_flat))
     if common_length == 0:
         return "N/A"
@@ -253,17 +433,17 @@ def _tokens_mad(previous_tokens: Any, current_tokens: Any) -> float | str:
     return total_difference / common_length
 
 
-def _flatten_numeric_tokens(tokens: Any) -> list[float]:
+def _flatten_numeric_values(value: Any) -> list[float]:
     flattened = []
-    if isinstance(tokens, bool):
+    if isinstance(value, bool):
         return flattened
-    if isinstance(tokens, (int, float)):
-        if math.isfinite(tokens):
-            flattened.append(float(tokens))
+    if isinstance(value, (int, float)):
+        if math.isfinite(value):
+            flattened.append(float(value))
         return flattened
-    if isinstance(tokens, (list, tuple)):
-        for item in tokens:
-            flattened.extend(_flatten_numeric_tokens(item))
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            flattened.extend(_flatten_numeric_values(item))
     return flattened
 
 
@@ -275,7 +455,27 @@ def _to_float(value: Any) -> float | None:
     return None
 
 
+def _values_equal(previous_value: Any, current_value: Any) -> bool:
+    if previous_value is None or current_value is None:
+        return False
+    return _normalize_for_assertion(previous_value) == _normalize_for_assertion(current_value)
+
+
+def _normalize_for_assertion(value: Any) -> str:
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, sort_keys=True)
+    return str(value).strip()
+
+
 def _format_csv_value(value: Any) -> Any:
     if isinstance(value, float):
         return f"{value:.6f}"
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value)
     return value
+
+
+def _get_family_spec(model_class: str) -> dict[str, Any]:
+    if model_class not in FAMILY_SPECS:
+        raise KeyError(f"Unknown nightly model class: {model_class}")
+    return FAMILY_SPECS[model_class]
