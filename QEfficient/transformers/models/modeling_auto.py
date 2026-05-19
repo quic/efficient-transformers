@@ -53,7 +53,6 @@ from QEfficient.transformers.models.pytorch_transforms import (
     PrefillOnlyChunkedTransform,
     PrefillOnlyExternalModuleMapperTransform,
     PrefillOnlyTransform,
-    ReplicateKVHeadTransform,
     RevertPrefillKeepAttentionTransform,
     RevertPrefillOnlyExternalModuleMapperTransform,
     RevertPrefillOnlyTransform,
@@ -1239,7 +1238,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             self.ccl_enabled = qaic_config.get("ccl_enabled", False)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.input_shapes, self.output_names = None, None
-        self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(self.model, **kwargs)
+        # self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(self.model, **kwargs)
         # ---Sampling---
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
@@ -2041,7 +2040,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                 self.model.config.text_config.use_cache = True
             else:
                 self.model.config.use_cache = True
-        self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(self.model, **kwargs)
+        # self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(self.model, **kwargs)
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
         self.ccl_enabled = False
         if qaic_config:
@@ -2876,7 +2875,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 setattr(self.model, "mla_absorption", mla_absorption)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.hash_params["max_seq_len_cached"] = max_seq_len_cached
-        self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(self.model, **kwargs)
+        # self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(self.model, **kwargs)
 
         # ---Sampling---
         # Note: SamplerTransform should be applied after all other transforms

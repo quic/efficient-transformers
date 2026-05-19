@@ -346,13 +346,16 @@ def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_o
             manual_cleanup=manual_cleanup,
         )
 
+
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 @pytest.mark.regular
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True, False])
 def test_custom_replicate_kv_pytorch_vs_ai100(
-    model_name, kv_offload
+    model_name,
+    kv_offload,
+    manual_cleanup,
 ):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
@@ -365,8 +368,6 @@ def test_custom_replicate_kv_pytorch_vs_ai100(
     if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
         pytest.skip("These models require kv_offload=True for testing.")
 
-    img_size = model_config_dict[model_name].get("img_size")
-
     hf_config = None
     model_type = model_config_dict[model_name].get("model_type", None)
     if model_name in ModelConfig.STANDARD_VLM_MODELS and model_type is not None:
@@ -376,19 +377,13 @@ def test_custom_replicate_kv_pytorch_vs_ai100(
     if model_name in ModelConfig.REPEAT_KV_TEST_MODELS:
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             model_name=model_name,
-            prompt_len=model_config_dict[model_name]["prompt_len"],
-            ctx_len=model_config_dict[model_name]["ctx_len"],
-            max_gen_len=NEW_GENERATION_TOKENS,
-            img_size=img_size,
-            img_url=model_config_dict[model_name]["img_url"],
-            query=model_config_dict[model_name]["text_prompt"],
-            n_layer=model_config_dict[model_name]["num_layers"],
-            batch_size=model_config_dict[model_name]["batch_size"],
             kv_offload=kv_offload,
             test_kv_replicate=True,
+            manual_cleanup=manual_cleanup,
         )
     else:
         pytest.skip(f"Skipping replicate KV test for {model_name} as it's not in REPEAT_KV_TEST_MODELS")
+
 
 ################################ QNN Tests ################################
 
