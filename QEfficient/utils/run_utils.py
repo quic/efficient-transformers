@@ -108,6 +108,10 @@ class ApiRunner:
         """
         model_inputs = self.input_handler.tokenizer(self.input_handler.prompt[0], return_tensors="pt")
 
+        # TODO: vbaddi; Specific to GLM4 kind of models.
+        if "token_type_ids" in model_inputs:
+            model_inputs.pop("token_type_ids")
+
         input_len = model_inputs["input_ids"].shape[-1]
 
         with torch.inference_mode():

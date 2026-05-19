@@ -523,8 +523,6 @@ class QEFFBaseModel(ABC):
         onnx_path = Path(
             onnx_path
             if onnx_path
-            else self.onnx_path
-            if self.onnx_path
             else self.get_onnx_path(
                 prefill_only,
                 enable_chunking,

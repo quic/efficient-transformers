@@ -1,0 +1,141 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
+import copy
+import os
+from collections import Counter
+
+import torch
+from transformers import AutoConfig, AutoModelForCausalLM
+
+os.environ.setdefault("EXPERT_BLOCKING_NUM_NSP", "2")
+os.environ.setdefault("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256")
+
+from QEfficient import QEFFAutoModelForCausalLM
+
+MODEL_KWARGS = {"attn_implementation": "eager"}
+
+GLM4_MOE_CFG = dict(
+    max_position_embeddings=1024,
+    num_hidden_layers=2,
+    num_attention_heads=4,
+    hidden_size=64,
+    intermediate_size=128,
+    moe_intermediate_size=32,
+    vocab_size=127,
+    num_key_value_heads=2,
+    n_routed_experts=4,
+    num_experts_per_tok=2,
+    first_k_dense_replace=0,
+    n_group=1,
+    topk_group=1,
+    head_dim=16,
+)
+
+
+def test_glm4_moe_blocked_prefill_forward_parity():
+    from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
+        QEffGlm4MoeMoE,
+        QEffPrefillChunkedGlm4MoeMoE,
+    )
+
+    config = AutoConfig.for_model("glm4_moe", **GLM4_MOE_CFG)
+    model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
+    block = next(module for module in model.modules() if module.__class__.__name__ == "Glm4MoeMoE")
+
+    qeff_block = copy.deepcopy(block)
+    qeff_block.__class__ = QEffGlm4MoeMoE
+    qeff_block.__qeff_init__()
+
+    chunked_block = copy.deepcopy(block)
+    chunked_block.__class__ = QEffPrefillChunkedGlm4MoeMoE
+    chunked_block.__qeff_init__()
+
+    x = torch.randn(1, 8, config.hidden_size)
+    with torch.no_grad():
+        orig = qeff_block(x)
+        blocked = chunked_block(x)
+
+    assert orig.shape == blocked.shape
+    assert torch.allclose(orig, blocked, atol=1e-4, rtol=1e-4)
+
+
+def test_glm4_moe_decode_export(tmp_path):
+    config = AutoConfig.for_model("glm4_moe", **GLM4_MOE_CFG)
+    model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
+    qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
+    qeff.export(tmp_path / "decode")
+    assert qeff.onnx_path.is_file()
+
+
+def test_glm4_moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(tmp_path):
+    import onnx
+
+    config = AutoConfig.for_model("glm4_moe", **GLM4_MOE_CFG)
+    model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
+    qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
+    onnx_path = qeff.export(
+        tmp_path / "prefill-subfunction",
+        prefill_only=True,
+        prefill_seq_len=512,
+        enable_chunking=True,
+        use_onnx_subfunctions=True,
+        offload_pt_weights=False,
+    )
+
+    onnx_model = onnx.load(str(onnx_path), load_external_data=False)
+    decoder_functions = [func for func in onnx_model.functions if func.name.startswith("QEffGlm4MoeDecoderLayer")]
+    assert len(decoder_functions) == config.num_hidden_layers
+
+    for function_proto in decoder_functions:
+        op_counts = Counter(node.op_type for node in function_proto.node)
+        assert op_counts["Sin"] == 0
+        assert op_counts["Cos"] == 0
+        # prefill_seq_len=512 and packed_chunk_size=256 gives two packed chunks.
+        # With n_routed_experts=4 and EXPERT_BLOCKING_NUM_NSP=2, each layer has two expert slots.
+        assert op_counts["CtxGather3D"] == 12
+        assert op_counts["CtxScatter3D"] == 4
+        assert op_counts["CtxScatter3DInt"] == 2
+
+
+def test_glm4_moe_kv_blocking_transform_and_prefill_export(tmp_path):
+    import onnx
+
+    from QEfficient.blocking.attention_blocking import BlockingMode
+    from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeAttention
+
+    config = AutoConfig.for_model("glm4_moe", **GLM4_MOE_CFG)
+    model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
+    qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
+    qeff.transform(
+        ctx_len=1024,
+        seq_len=512,
+        qaic_config={"enable_blocking": True, "blocking_mode": "kv", "num_kv_blocks": 2},
+    )
+
+    attn_modules = [module for module in qeff.model.modules() if isinstance(module, QEffGlm4MoeAttention)]
+    assert attn_modules
+    for attn_module in attn_modules:
+        blocking_config = getattr(attn_module, "attn_blocking_config", None)
+        assert blocking_config is not None
+        assert blocking_config.mode == BlockingMode.KV
+        assert blocking_config.num_kv_blocks == 2
+
+    onnx_path = qeff.export(
+        tmp_path / "prefill-kv-blocked",
+        prefill_only=True,
+        prefill_seq_len=512,
+        enable_chunking=True,
+        use_onnx_subfunctions=True,
+        offload_pt_weights=False,
+    )
+    onnx_model = onnx.load(str(onnx_path), load_external_data=False)
+    decoder_functions = [func for func in onnx_model.functions if func.name.startswith("QEffGlm4MoeDecoderLayer")]
+    assert len(decoder_functions) == config.num_hidden_layers
+    for function_proto in decoder_functions:
+        op_counts = Counter(node.op_type for node in function_proto.node)
+        assert op_counts["CtxGatherBlockedKV"] == 4
