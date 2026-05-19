@@ -29,6 +29,7 @@ from QEfficient.base import (
     QEFFCommonLoader,
 )
 from QEfficient.compile.compile_helper import compile
+from QEfficient.diffusers.pipelines.pipeline_diffusion import QEffDiffusionPipeline
 from QEfficient.diffusers.pipelines.flux.pipeline_flux import QEffFluxPipeline
 from QEfficient.diffusers.pipelines.wan.pipeline_wan import QEffWanPipeline
 from QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v import QEffWanImageToVideoPipeline
@@ -58,6 +59,7 @@ __all__ = [
     "QEFFAutoModelForSequenceClassification",
     "QEFFAutoModelForSpeechSeq2Seq",
     "QEFFCommonLoader",
+    "QEffDiffusionPipeline",
     "QEffFluxPipeline",
     "QEffWanPipeline",
     "QEffWanImageToVideoPipeline",

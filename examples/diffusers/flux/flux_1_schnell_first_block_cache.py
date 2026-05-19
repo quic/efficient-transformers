@@ -10,9 +10,10 @@ FLUX.1-schnell first-block-cache example.
 
 import torch
 
-from QEfficient import QEffFluxPipeline
+from QEfficient import QEffDiffusionPipeline
 
-pipeline = QEffFluxPipeline.from_pretrained(
+# Auto-dispatch resolves this model id to QEffFluxPipeline.
+pipeline = QEffDiffusionPipeline.from_pretrained(
     "black-forest-labs/FLUX.1-schnell",
     enable_first_block_cache=True,
     # Hidden-dimension downsampling used for first-block residual similarity check.

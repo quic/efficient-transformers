@@ -25,16 +25,17 @@ from diffusers.loaders.lora_conversion_utils import _convert_non_diffusers_wan_l
 from diffusers.utils import export_to_video
 from huggingface_hub import hf_hub_download
 
-from QEfficient import QEffWanPipeline
+from QEfficient import QEffDiffusionPipeline
 
 # ============================================================================
 # PIPELINE INITIALIZATION WITH CUSTOM PARAMETERS
 # ============================================================================
 
 # Option 1: Basic initialization with default parameters
-pipeline = QEffWanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers")
+# Auto-dispatch resolves this model id to QEffWanPipeline.
+pipeline = QEffDiffusionPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers")
 # Option 2: Non-unified mode (separate high/low transformers)
-# pipeline = QEffWanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers", use_unified=False)
+# pipeline = QEffDiffusionPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers", use_unified=False)
 
 # ============================================================================
 # LORA ADAPTER LOADING FOR LIGHTNING MODEL
