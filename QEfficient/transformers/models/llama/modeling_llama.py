@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+from dataclasses import dataclass
 from typing import List, Optional, Tuple, Type, Union
 
 import torch
@@ -34,6 +35,11 @@ from QEfficient.blocking.attention_blocking import (
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+
+
+@dataclass
+class QEffCausalLMOutputWithPast(CausalLMOutputWithPast):
+    output_embeds: Optional[torch.FloatTensor] = None
 
 
 class QEffLlamaRotaryEmbedding(LlamaRotaryEmbedding):
@@ -289,10 +295,14 @@ class QEffLlamaModel(LlamaModel):
         sin = self.sin_cached[position_ids].unsqueeze(1)
         cos = self.cos_cached[position_ids].unsqueeze(1)
 
-        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+        self.target_layer_ids = getattr(self, "target_layer_ids", None)
+        target_hidden_list = []
+
+        for idx, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
-
+            if self.target_layer_ids and idx in self.target_layer_ids:
+                target_hidden_list.append(hidden_states)
             hidden_states = decoder_layer(
                 hidden_states,
                 attention_mask=causal_mask,
@@ -315,6 +325,16 @@ class QEffLlamaModel(LlamaModel):
 
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
+
+        if self.target_layer_ids:
+            target_hidden = torch.cat(target_hidden_list, dim=-1)
+            target_hidden_fc = self.fc(target_hidden)
+            target_hidden_final = self.hidden_norm(target_hidden_fc)
+            return BaseModelOutputWithPast(
+                last_hidden_state=hidden_states,
+                past_key_values=past_key_values,
+                hidden_states=target_hidden_final,
+            )
 
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
@@ -354,6 +374,10 @@ class QEffLlamaForCausalLM(LlamaForCausalLM):
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
+
+        if getattr(self.model, "target_layer_ids", None):
+            output_hidden_states = False
+
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model(
             input_ids=input_ids,
@@ -371,6 +395,22 @@ class QEffLlamaForCausalLM(LlamaForCausalLM):
 
         # Cast to INT32 to avoid issue while running in ONNXRT
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+
+        if getattr(self.model, "target_layer_ids", None):
+            target_hidden = outputs.hidden_states
+            hidden_states = outputs.last_hidden_state
+            logits = self.lm_head(hidden_states).float()
+            predicted_token_ids = logits.argmax(dim=-1).to(torch.int32)
+            output_embed = self.model.embed_tokens(predicted_token_ids)
+            return QEffCausalLMOutputWithPast(
+                loss=None,
+                logits=predicted_token_ids,
+                past_key_values=outputs.past_key_values,
+                hidden_states=target_hidden,
+                attentions=outputs.attentions,
+                output_embeds=output_embed,
+            )
+
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states).float()
 

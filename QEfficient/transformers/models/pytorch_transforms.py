@@ -456,6 +456,18 @@ from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
     QEffQwen3ForCausalLM,
     QEffQwen3Model,
 )
+from QEfficient.transformers.models.qwen3.modeling_qwen3_dflash_draft import (
+    QEffQwen3Attention as QEffQwen3DFlashAttention,
+)
+from QEfficient.transformers.models.qwen3.modeling_qwen3_dflash_draft import (
+    QEffQwen3DecoderLayer as QEffQwen3DFlashDecoderLayer,
+)
+from QEfficient.transformers.models.qwen3.modeling_qwen3_dflash_draft import (
+    QEffQwen3ForCausalLM as QEffQwen3DFlashForCausalLM,
+)
+from QEfficient.transformers.models.qwen3.modeling_qwen3_dflash_draft import (
+    QEffQwen3Model as QEffQwen3DFlashModel,
+)
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffPrefillChunkedQwen3MoeSparseMoeBlock,
     QEffQwen3MoeAttention,
@@ -949,6 +961,138 @@ class SamplerTransform:
         else:
             raise NotImplementedError(f"Model class {model_class} does not support on device sampling.")
         return model, transformed
+
+
+class DFlashTransform(ModuleMappingTransform):
+    """
+    Replaces standard QEff Qwen3 modules with DFlash-specialized versions when dflash_dlm=True.
+    Applied after KVCacheTransform so it operates on already-transformed QEff modules.
+    """
+
+    _module_mapping = {
+        QEffQwen3Attention: QEffQwen3DFlashAttention,
+        QEffQwen3DecoderLayer: QEffQwen3DFlashDecoderLayer,
+        QEffQwen3Model: QEffQwen3DFlashModel,
+        QEffQwen3ForCausalLM: QEffQwen3DFlashForCausalLM,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
+        if not (qaic_config and qaic_config.get("dflash_dlm", False)):
+            return model, False
+        return super().apply(model)
+
+
+class DFlashTLMTransform:
+    """
+    Adds fc and hidden_norm layers to the inner model, loads their weights from the TLM
+    checkpoint, and sets target_layer_ids — activating the TLM hidden-state collection
+    path in QEffQwen3Model / QEffLlamaModel forward.
+
+    Triggered when target_layer_ids is present in qaic_config.
+    Works without modifying the transformers library: weights that were silently dropped
+    as unexpected keys during from_pretrained are re-read here from the checkpoint.
+    """
+
+    @classmethod
+    def _load_tlm_weights(cls, checkpoint_path: str) -> dict:
+        """Read only fc and hidden_norm weights from a local checkpoint directory."""
+        from pathlib import Path
+
+        import torch
+
+        path = Path(checkpoint_path)
+        target_keys = {"model.fc.weight", "model.hidden_norm.weight"}
+        dlm_model_weights: dict = {}
+
+        # safetensors (preferred modern format)
+        sf_files = sorted(path.glob("*.safetensors"))
+        if sf_files:
+            try:
+                from safetensors import safe_open
+
+                for sf in sf_files:
+                    with safe_open(str(sf), framework="pt", device="cpu") as f:
+                        for key in f.keys():
+                            if key in target_keys and key not in dlm_model_weights:
+                                dlm_model_weights[key] = f.get_tensor(key)
+                    if len(dlm_model_weights) == len(target_keys):
+                        break
+                return dlm_model_weights
+            except ImportError:
+                warnings.warn("safetensors not installed; falling back to .bin loading.")
+
+        # pytorch .bin fallback
+        bin_files = sorted(path.glob("pytorch_model*.bin"))
+        for bf in bin_files:
+            sd = torch.load(str(bf), map_location="cpu", weights_only=True)
+            for key in target_keys:
+                if key in sd and key not in dlm_model_weights:
+                    dlm_model_weights[key] = sd[key]
+            if len(dlm_model_weights) == len(target_keys):
+                break
+
+        return dlm_model_weights
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
+        target_layer_ids = qaic_config.get("target_layer_ids", None) if qaic_config else None
+        if not target_layer_ids:
+            return model, False
+
+        n = len(target_layer_ids)
+        inner = model.model  # QEffQwen3Model or QEffLlamaModel
+        hidden_size = model.config.hidden_size
+        model_type = getattr(model.config, "model_type", "")
+
+        # --- add fc and hidden_norm only if not already present ---
+        # tlm_maker.py (and similar scripts) inject weights before calling the
+        # constructor directly; in that case we must not overwrite them.
+        layers_already_present = hasattr(inner, "fc") and hasattr(inner, "hidden_norm")
+
+        if not layers_already_present:
+            # add fc
+            inner.fc = nn.Linear(n * hidden_size, hidden_size, bias=False)
+
+            # add hidden_norm using the same RMSNorm class as the model
+            if "qwen3" in model_type:
+                from transformers.models.qwen3.modeling_qwen3 import Qwen3RMSNorm
+
+                inner.hidden_norm = Qwen3RMSNorm(hidden_size, eps=model.config.rms_norm_eps)
+            elif "llama" in model_type:
+                from transformers.models.llama.modeling_llama import LlamaRMSNorm
+
+                inner.hidden_norm = LlamaRMSNorm(hidden_size, eps=model.config.rms_norm_eps)
+            else:
+                warnings.warn(
+                    f"DFlashTLMTransform: unknown model_type '{model_type}'. Using nn.RMSNorm as hidden_norm fallback."
+                )
+                inner.hidden_norm = nn.RMSNorm(hidden_size, eps=getattr(model.config, "rms_norm_eps", 1e-6))
+
+            # load fc / hidden_norm weights from checkpoint
+            # pretrained_model_name_or_path is stored in qaic_config by from_pretrained
+            ckpt_path = (qaic_config or {}).get("pretrained_model_name_or_path", None)
+            if ckpt_path:
+                weights = cls._load_tlm_weights(ckpt_path)
+                if "model.fc.weight" in weights:
+                    inner.fc.weight.data.copy_(weights["model.fc.weight"])
+                if "model.hidden_norm.weight" in weights:
+                    inner.hidden_norm.weight.data.copy_(weights["model.hidden_norm.weight"])
+                if not weights:
+                    warnings.warn(
+                        "DFlashTLMTransform: fc/hidden_norm weights not found in checkpoint "
+                        f"at '{ckpt_path}'. Layers are randomly initialized."
+                    )
+            else:
+                warnings.warn(
+                    "DFlashTLMTransform: no checkpoint path available — "
+                    "use QEFFAutoModelForCausalLM.from_pretrained() so the path is "
+                    "stored automatically, or set qaic_config['pretrained_model_name_or_path']."
+                )
+
+        # --- activate TLM collection path in forward ---
+        inner.target_layer_ids = target_layer_ids
+        return model, True
 
 
 class VlmKVOffloadTransform(ModuleMappingTransform):
