@@ -10,6 +10,7 @@ Qwen Image is a text-to-image diffusion model. These examples demonstrate end-to
 
 - **`qwen_image_example.py`** - Basic image generation example
 - **`qwen_image_custom.py`** - Advanced example with customization options
+- **`qwen_image_magcache.py`** - Image generation with optional MagCache runtime
 - **`qwen_config.json`** - Configuration file for transformer and VAE modules
 
 ## Quick Start
@@ -41,6 +42,18 @@ Run the basic example:
 
 ```bash
 python qwen_image_example.py
+```
+
+Run with MagCache:
+
+```bash
+python qwen_image_magcache.py --use-magcache --magcache-verbose
+```
+
+Run with MagCache disabled:
+
+```bash
+python qwen_image_magcache.py
 ```
 
 ## Advanced Customization
@@ -161,6 +174,11 @@ python qwen_image_custom.py
 - **`generator`**: Seeded torch generator for reproducibility
 - **`parallel_compile`**: Compile multiple modules in parallel
 - **`use_onnx_subfunctions`**: Enable ONNX modular export (experimental)
+- **`use_magcache`**: Enable runtime MagCache skip/reuse logic
+- **`magcache_thresh`**: Accumulated skip-error threshold
+- **`magcache_K`**: Maximum consecutive skipped calls per stream
+- **`magcache_retention_ratio`**: Warmup/retention ratio before skipping is considered
+- **`magcache_verbose`**: Print per-call diff/decision logs (`skipping this step for now` when skipped)
 
 ## Output
 

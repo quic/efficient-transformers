@@ -38,7 +38,9 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     config_manager,
     set_execute_params,
 )
+from QEfficient.diffusers.pipelines.qwen_image.magcache import QwenImageMagCacheRuntime
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.utils.logging_utils import logger
 
 
 class QEffQwenImagePipeline:
@@ -384,6 +386,12 @@ class QEffQwenImagePipeline:
         custom_config_path: Optional[str] = None,
         parallel_compile: bool = False,
         use_onnx_subfunctions: bool = False,
+        use_magcache: bool = False,
+        magcache_thresh: float = 0.06,
+        magcache_K: int = 2,
+        magcache_retention_ratio: float = 0.2,
+        magcache_ratios: Optional[List[float]] = None,
+        magcache_verbose: bool = False,
     ):
         """
         Generate images from text prompts with the QEfficient Qwen Image pipeline.
@@ -417,6 +425,12 @@ class QEffQwenImagePipeline:
             custom_config_path (`str`, *optional*): JSON config path used by compile/config manager.
             parallel_compile (`bool`, *optional*, defaults to `False`): Whether to compile modules in parallel.
             use_onnx_subfunctions (`bool`, *optional*, defaults to `False`): Whether to enable ONNX subfunction export.
+            use_magcache (bool, optional): Enable Qwen Image MagCache skip/reuse logic. Default: False.
+            magcache_thresh (float, optional): MagCache accumulated error threshold. Default: 0.06.
+            magcache_K (int, optional): Maximum consecutive skipped calls per stream. Default: 2.
+            magcache_retention_ratio (float, optional): Retention ratio in [0, 1]. Default: 0.2.
+            magcache_ratios (Optional[List[float]], optional): Optional custom MagCache ratio profile.
+            magcache_verbose (bool, optional): Emit per-call MagCache decisions. Default: False.
 
         Returns:
             Union[QwenImagePipelineOutput, Tuple]:
@@ -484,6 +498,29 @@ class QEffQwenImagePipeline:
             negative_prompt_embeds is not None and negative_prompt_embeds_mask is not None
         )
         do_true_cfg = true_cfg_scale > 1 and has_neg_prompt
+        if isinstance(use_magcache, str):
+            lowered = use_magcache.strip().lower()
+            if lowered in {"1", "true", "yes", "on"}:
+                use_magcache = True
+            elif lowered in {"0", "false", "no", "off"}:
+                use_magcache = False
+            else:
+                raise ValueError(
+                    f"Invalid string value for `use_magcache`: {use_magcache!r}. "
+                    "Use one of: true/false, 1/0, yes/no, on/off."
+                )
+        elif not isinstance(use_magcache, bool):
+            use_magcache = bool(use_magcache)
+            logger.warning(f"Coerced non-bool `use_magcache` to {use_magcache}.")
+
+        if not use_magcache and (
+            magcache_verbose
+            or magcache_ratios is not None
+            or magcache_thresh != 0.06
+            or magcache_K != 2
+            or magcache_retention_ratio != 0.2
+        ):
+            logger.warning("Ignoring MagCache knobs because `use_magcache=False`.")
 
         # 3: Encode prompts with both text encoders
         prompt_embeds, prompt_embeds_mask = self.encode_prompt(
@@ -541,7 +578,18 @@ class QEffQwenImagePipeline:
         self._num_timesteps = len(timesteps)
 
         txt_seq_lens = [max_sequence_length]
-        negative_txt_seq_lens = [max_sequence_length]
+
+        magcache_runtime = None
+        if use_magcache:
+            magcache_runtime = QwenImageMagCacheRuntime(
+                num_inference_steps=num_inference_steps,
+                do_classifier_free_guidance=do_true_cfg,
+                threshold=magcache_thresh,
+                max_skip_steps=magcache_K,
+                retention_ratio=magcache_retention_ratio,
+                ratios=magcache_ratios,
+                verbose=magcache_verbose,
+            )
 
         # # Initialize transformer session
         if self.transformer.qpc_session is None:
@@ -576,13 +624,29 @@ class QEffQwenImagePipeline:
                     "txt_rotary_emb": txt_rotary_emb.detach().numpy().astype(np.float32),
                     "timestep": timestep,
                 }
-                # Run transformer inference and measure time
-                start_transformer_step_time = time.perf_counter()
-                noise_pred = self.transformer.qpc_session.run(transformer_inputs)
-                end_transformer_step_time = time.perf_counter()
-                transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
 
-                noise_pred = torch.tensor(noise_pred["output"])
+                def _run_qwen_step(
+                    stream_name: str,
+                    inputs: Dict[str, np.ndarray],
+                    perf_bucket: List[float],
+                ) -> torch.Tensor:
+                    if magcache_runtime is not None and magcache_runtime.should_skip(stream_name):
+                        cached_residual = magcache_runtime.get_cached_residual(stream_name)
+                        magcache_runtime.complete_skip(stream_name)
+                        return latents.to(cached_residual.dtype) + cached_residual
+
+                    start_step_time = time.perf_counter()
+                    outputs = self.transformer.qpc_session.run(inputs)
+                    end_step_time = time.perf_counter()
+                    perf_bucket.append(end_step_time - start_step_time)
+                    noise_pred_step = torch.from_numpy(outputs["output"])
+
+                    if magcache_runtime is not None:
+                        residual = noise_pred_step - latents.to(noise_pred_step.dtype)
+                        magcache_runtime.complete_call(stream_name, residual)
+                    return noise_pred_step
+
+                noise_pred = _run_qwen_step("cond", transformer_inputs, transformer_perf)
 
                 if do_true_cfg:
                     # Unconditional pass
@@ -594,13 +658,7 @@ class QEffQwenImagePipeline:
                         "txt_rotary_emb": txt_rotary_emb.detach().numpy().astype(np.float32),
                         "timestep": timestep,
                     }
-
-                    start_cfg_step_time = time.perf_counter()
-                    neg_noise_pred = self.transformer.qpc_session.run(transformer_inputs_uncond)
-                    end_cfg_step_time = time.perf_counter()
-                    cfg_perf.append(end_cfg_step_time - start_cfg_step_time)
-
-                    neg_noise_pred = torch.tensor(neg_noise_pred["output"])
+                    neg_noise_pred = _run_qwen_step("uncond", transformer_inputs_uncond, cfg_perf)
 
                     comb_pred = neg_noise_pred + true_cfg_scale * (noise_pred - neg_noise_pred)
                     cond_norm = torch.norm(noise_pred, dim=-1, keepdim=True)
