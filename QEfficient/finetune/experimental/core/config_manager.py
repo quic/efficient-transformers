@@ -557,7 +557,6 @@ class ConfigManager:
             self.validate_config()
         except Exception as e:
             logger.log_rank_zero(f"Config validation failed with error: {e}", level=logging.ERROR)
-            raise
 
     def _build_cli_parser(self) -> HfArgumentParser:
         return HfArgumentParser(

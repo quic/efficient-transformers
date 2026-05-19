@@ -6,6 +6,8 @@
 # -----------------------------------------------------------------------------
 
 import os
+import shutil
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +17,13 @@ from transformers import TrainerCallback
 from QEfficient.finetune.experimental.core import callbacks as callbacks_module
 from QEfficient.finetune.experimental.core.callbacks import QAICOpByOpVerifierCallback, QAICProfilerCallback
 from QEfficient.finetune.experimental.core.component_registry import ComponentFactory, registry
+
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+OUTPUT_DIR = PROJECT_ROOT / "training_results"
+QAIC_PROFILER_TRACE_DIR = OUTPUT_DIR / "hw-trace"
+QAIC_OP_TRACE_DIR = OUTPUT_DIR / "qaic_op_by_op_traces"
+QAIC_CUSTOM_OP_TRACE_DIR = OUTPUT_DIR / "custom-op-trace"
+QAIC_ABSOLUTE_OP_TRACE_DIR = OUTPUT_DIR / "absolute-op-trace"
 
 
 class ModelSummaryCallback(TrainerCallback):
@@ -45,7 +54,7 @@ CALLBACK_CONFIGS = [
             "name": "qaic_profiler_callback",
             "start_step": 0,
             "end_step": 1,
-            "trace_dir": "/tmp/hw-trace",
+            "trace_dir": str(QAIC_PROFILER_TRACE_DIR),
             "device_ids": [0],
         },
         id="qaic_profiler",
@@ -59,6 +68,22 @@ REGISTRY_CALLBACK_CONFIGS = {
         "callback_class": ModelSummaryCallback,
     },
 }
+
+
+@pytest.fixture(autouse=True, scope="module")
+def setup_training_output_dir():
+    prev_output_dir = os.environ.get("OUTPUT_DIR")
+    shutil.rmtree(OUTPUT_DIR, ignore_errors=True)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    os.environ["OUTPUT_DIR"] = str(OUTPUT_DIR)
+    try:
+        yield
+    finally:
+        if prev_output_dir is None:
+            os.environ.pop("OUTPUT_DIR", None)
+        else:
+            os.environ["OUTPUT_DIR"] = prev_output_dir
+        shutil.rmtree(OUTPUT_DIR, ignore_errors=True)
 
 
 @pytest.mark.parametrize("config", CALLBACK_CONFIGS)
@@ -84,8 +109,8 @@ def test_callbacks_registery(callback_name, callback_class):
 
 
 def test_qaic_profiler_uses_user_trace_dir():
-    callback = QAICProfilerCallback(trace_dir="~/my_custom_hw_trace")
-    assert callback.trace_dir == "~/my_custom_hw_trace"
+    callback = QAICProfilerCallback(trace_dir=str(QAIC_PROFILER_TRACE_DIR))
+    assert callback.trace_dir == str(QAIC_PROFILER_TRACE_DIR)
 
 
 def test_qaic_profiler_starts_with_trace_dir(monkeypatch):
@@ -99,13 +124,13 @@ def test_qaic_profiler_starts_with_trace_dir(monkeypatch):
 
     monkeypatch.setattr(callbacks_module, "init_qaic_profiling", _mock_start)
 
-    callback = QAICProfilerCallback(start_step=3, end_step=9, trace_dir="/tmp/hw-trace", device_ids=[2])
+    callback = QAICProfilerCallback(start_step=3, end_step=9, trace_dir=str(QAIC_PROFILER_TRACE_DIR), device_ids=[2])
     state = SimpleNamespace(global_step=3)
 
     callback.on_step_begin(args=None, state=state, control=None)
 
     assert callback._profile_started is True
-    assert calls == [(True, "qaic:2", "/tmp/hw-trace")]
+    assert calls == [(True, "qaic:2", str(QAIC_PROFILER_TRACE_DIR))]
 
 
 def test_qaic_profiler_stops_once_at_end_step(monkeypatch):
@@ -125,7 +150,7 @@ def test_qaic_profiler_stops_once_at_end_step(monkeypatch):
         lambda use_profiler, device_type: stop_calls.append((use_profiler, device_type)),
     )
 
-    callback = QAICProfilerCallback(start_step=1, end_step=2, trace_dir="/tmp/hw-trace", device_ids=[0])
+    callback = QAICProfilerCallback(start_step=1, end_step=2, trace_dir=str(QAIC_PROFILER_TRACE_DIR), device_ids=[0])
 
     callback.on_step_begin(args=None, state=SimpleNamespace(global_step=1), control=None)
     callback.on_step_end(args=None, state=SimpleNamespace(global_step=2), control=None)
@@ -166,10 +191,10 @@ def test_qaic_profiler_uses_local_rank_when_device_ids_not_set(monkeypatch):
         lambda use_profiler, device_type, trace_dir=None: calls.append((use_profiler, device_type, trace_dir)),
     )
 
-    callback = QAICProfilerCallback(start_step=0, trace_dir="/tmp/hw-trace")
+    callback = QAICProfilerCallback(start_step=0, trace_dir=str(QAIC_PROFILER_TRACE_DIR))
     callback.on_step_begin(args=None, state=SimpleNamespace(global_step=0), control=None)
 
-    assert calls == [(True, "qaic:3", "/tmp/hw-trace")]
+    assert calls == [(True, "qaic:3", str(QAIC_PROFILER_TRACE_DIR))]
 
 
 def test_qaic_profiler_maps_rank_to_device_id(monkeypatch):
@@ -183,10 +208,10 @@ def test_qaic_profiler_maps_rank_to_device_id(monkeypatch):
         lambda use_profiler, device_type, trace_dir=None: calls.append((use_profiler, device_type, trace_dir)),
     )
 
-    callback = QAICProfilerCallback(start_step=5, trace_dir="/tmp/hw-trace", device_ids=[10, 11])
+    callback = QAICProfilerCallback(start_step=5, trace_dir=str(QAIC_PROFILER_TRACE_DIR), device_ids=[10, 11])
     callback.on_step_begin(args=None, state=SimpleNamespace(global_step=5), control=None)
 
-    assert calls == [(True, "qaic:11", "/tmp/hw-trace")]
+    assert calls == [(True, "qaic:11", str(QAIC_PROFILER_TRACE_DIR))]
 
 
 def test_qaic_profiler_invalid_step_range_raises():
@@ -213,11 +238,14 @@ def test_qaic_profiler_stops_only_started_devices(monkeypatch):
         lambda use_profiler, device_type: stop_calls.append((use_profiler, device_type)),
     )
 
-    callback = QAICProfilerCallback(start_step=0, end_step=1, trace_dir="/tmp/hw-trace", device_ids=[0, 1])
+    callback = QAICProfilerCallback(start_step=0, end_step=1, trace_dir=str(QAIC_PROFILER_TRACE_DIR), device_ids=[0, 1])
     callback.on_step_begin(args=None, state=SimpleNamespace(global_step=0), control=None)
     callback.on_step_end(args=None, state=SimpleNamespace(global_step=1), control=None)
 
-    assert start_calls == [(True, "qaic:0", "/tmp/hw-trace"), (True, "qaic:1", "/tmp/hw-trace")]
+    assert start_calls == [
+        (True, "qaic:0", str(QAIC_PROFILER_TRACE_DIR)),
+        (True, "qaic:1", str(QAIC_PROFILER_TRACE_DIR)),
+    ]
     assert stop_calls == [(True, "qaic:0")]
 
 
@@ -233,37 +261,34 @@ def test_qaic_profiler_resolves_rank_at_start_time(monkeypatch):
         lambda use_profiler, device_type, trace_dir=None: calls.append((use_profiler, device_type, trace_dir)),
     )
 
-    callback = QAICProfilerCallback(start_step=0, trace_dir="/tmp/hw-trace", device_ids=[10, 11])
+    callback = QAICProfilerCallback(start_step=0, trace_dir=str(QAIC_PROFILER_TRACE_DIR), device_ids=[10, 11])
     rank_state["local_rank"] = 1
     callback.on_step_begin(args=None, state=SimpleNamespace(global_step=0), control=None)
 
-    assert calls == [(True, "qaic:11", "/tmp/hw-trace")]
+    assert calls == [(True, "qaic:11", str(QAIC_PROFILER_TRACE_DIR))]
 
 
 def test_qaic_op_by_op_verifier_on_step_end_without_initialized_ctx():
-    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=5, trace_dir="/tmp/op-trace")
+    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=5, trace_dir=str(QAIC_OP_TRACE_DIR))
     state = SimpleNamespace(global_step=1)
 
     # Should not raise when on_step_end is hit before any context is initialized.
     callback.on_step_end(args=None, state=state, control=None)
 
 
-def test_qaic_op_by_op_verifier_default_trace_dir_is_under_output_dir(monkeypatch):
-    monkeypatch.setenv("OUTPUT_DIR", "/tmp/train_out")
+def test_qaic_op_by_op_verifier_default_trace_dir_is_under_output_dir():
     callback = QAICOpByOpVerifierCallback(start_step=0, end_step=1)
-    assert callback.trace_dir == os.path.abspath("/tmp/train_out/qaic_op_by_op_traces")
+    assert callback.trace_dir == os.path.abspath(str(OUTPUT_DIR / "qaic_op_by_op_traces"))
 
 
-def test_qaic_op_by_op_verifier_relative_trace_dir_is_under_output_dir(monkeypatch):
-    monkeypatch.setenv("OUTPUT_DIR", "/tmp/train_out")
+def test_qaic_op_by_op_verifier_relative_trace_dir_is_under_output_dir():
     callback = QAICOpByOpVerifierCallback(start_step=0, end_step=1, trace_dir="./custom-op-trace")
-    assert callback.trace_dir == os.path.abspath("/tmp/train_out/custom-op-trace")
+    assert callback.trace_dir == os.path.abspath(str(QAIC_CUSTOM_OP_TRACE_DIR))
 
 
-def test_qaic_op_by_op_verifier_absolute_trace_dir_is_preserved(monkeypatch):
-    monkeypatch.setenv("OUTPUT_DIR", "/tmp/train_out")
-    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=1, trace_dir="/var/tmp/op-trace")
-    assert callback.trace_dir == os.path.abspath("/var/tmp/op-trace")
+def test_qaic_op_by_op_verifier_absolute_trace_dir_is_preserved():
+    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=1, trace_dir=str(QAIC_ABSOLUTE_OP_TRACE_DIR))
+    assert callback.trace_dir == os.path.abspath(str(QAIC_ABSOLUTE_OP_TRACE_DIR))
 
 
 def test_qaic_op_by_op_verifier_casts_numeric_config(monkeypatch):
@@ -285,7 +310,7 @@ def test_qaic_op_by_op_verifier_casts_numeric_config(monkeypatch):
     callback = QAICOpByOpVerifierCallback(
         start_step="0",
         end_step="2",
-        trace_dir="/tmp/op-trace",
+        trace_dir=str(QAIC_OP_TRACE_DIR),
         atol="0.1",
         rtol="1e-5",
     )
@@ -320,14 +345,14 @@ def test_qaic_op_by_op_verifier_uses_training_precision_for_ref_dtype(monkeypatc
 
     monkeypatch.setattr(callbacks_module, "get_op_verifier_ctx", _mock_get_op_verifier_ctx)
 
-    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=2, trace_dir="/tmp/op-trace")
+    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=2, trace_dir=str(QAIC_OP_TRACE_DIR))
     callback.on_step_begin(args=args, state=SimpleNamespace(global_step=0), control=None)
 
     assert captured["ref_dtype"] == expected_dtype
 
 
 def test_qaic_op_by_op_verifier_rejects_fp16_mode():
-    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=2, trace_dir="/tmp/op-trace")
+    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=2, trace_dir=str(QAIC_OP_TRACE_DIR))
 
     with pytest.raises(RuntimeError, match="not supported with fp16/GradScaler"):
         callback.on_step_begin(
@@ -351,7 +376,7 @@ def test_qaic_op_by_op_verifier_exits_ctx_when_global_step_reaches_end_step(monk
 
     monkeypatch.setattr(callbacks_module, "get_op_verifier_ctx", lambda **kwargs: _DummyCtx())
 
-    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=2, trace_dir="/tmp/op-trace")
+    callback = QAICOpByOpVerifierCallback(start_step=0, end_step=2, trace_dir=str(QAIC_OP_TRACE_DIR))
 
     # Enter at step 1 (still inside [start_step, end_step) ).
     callback.on_step_begin(
