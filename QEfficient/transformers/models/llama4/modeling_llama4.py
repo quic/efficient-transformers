@@ -1186,8 +1186,13 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         return past_key_values
 
     def get_dummy_inputs(
-        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        **kwargs,
     ):
+        prefill_seq_len = int(kwargs.get("prefill_seq_len", constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN))
         if vis_cfg := getattr(self.config, "vision_config", None):
             img_size = getattr(vis_cfg, "image_size", 336)
         else:
@@ -1195,7 +1200,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
 
         # Define shapes
         inputs_shapes = {}
-        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, prefill_seq_len)
         max_num_tiles = 17
         downsample_ratio = int(round(1.0 / (self.config.vision_config.pixel_shuffle_ratio**2)))
         num_features_per_tile = int(
@@ -1211,7 +1216,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         )
         inputs_shapes["position_ids"] = (
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
-            constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+            prefill_seq_len,
         )
         inputs_shapes["pixel_values"] = (
             max_num_tiles,  # constants.INTERN_NUM_PATCHES,
@@ -1227,8 +1232,8 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=self.config.torch_dtype)
         lang_inputs["position_ids"] = (
-            torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
-            .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+            torch.arange(prefill_seq_len, dtype=torch.int64)
+            .view(1, prefill_seq_len)
             .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
@@ -1240,7 +1245,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
         past_key_values = self.get_dummy_pkv_cache(
             config=self.language_model.config,
             batch_size=fbs if continuous_batching else bs,
-            seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+            seq_len=prefill_seq_len,
         )
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.language_model.config.num_hidden_layers)]

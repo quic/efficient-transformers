@@ -21,28 +21,29 @@ Supported models:
 pip install "qwen-vl-utils>=0.0.14"
 ```
 
-## Script
+## Scripts
 
 - `qwen3_vl_reranker.py`
+- `reranker_model.py`
 
 ## Run
 
 ```bash
-python examples/image_text_to_text/models/qwen3vl/reranker/qwen3_vl_reranker.py \
+python examples/reranker/qwen3vl/qwen3_vl_reranker.py \
   --model-name Qwen/Qwen3-VL-Reranker-2B
 ```
 
 Or run with 8B:
 
 ```bash
-python examples/image_text_to_text/models/qwen3vl/reranker/qwen3_vl_reranker.py \
+python examples/reranker/qwen3vl/qwen3_vl_reranker.py \
   --model-name Qwen/Qwen3-VL-Reranker-8B
 ```
 
 With compile parameters:
 
 ```bash
-python examples/image_text_to_text/models/qwen3vl/reranker/qwen3_vl_reranker.py \
+python examples/reranker/qwen3vl/qwen3_vl_reranker.py \
   --model-name Qwen/Qwen3-VL-Reranker-2B \
   --ctx-len 2048 \
   --num-cores 16 \
