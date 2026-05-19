@@ -158,7 +158,7 @@ class QEffMolmoRotaryEmbedding(nn.Module):
         self.inv_freq = 1.0 / (config.rope_theta ** (torch.arange(0, dim, 2, device=device, dtype=torch.float) / dim))
         self.original_max_seq_len = config.max_position_embeddings or config.max_sequence_length
         self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len, device=_non_meta_init_device(config), dtype=torch.get_default_dtype()
+            seq_len=self.original_max_seq_len, device=_non_meta_init_device(config), dtype=config.torch_dtype
         )
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
