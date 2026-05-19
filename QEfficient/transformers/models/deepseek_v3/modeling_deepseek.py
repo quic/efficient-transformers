@@ -1395,18 +1395,10 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             down_out = torch.bmm(hidden, down_proj_dq.transpose(1, 2).to(x_chunk.dtype))
 
             rw_chunk = CtxGatherFunc3DGeneralized.apply(rw_expanded, chunk_matched_idx)
-            down_chunk = down_out * rw_chunk
-
-            expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
-            updated_chunk = expert_out_chunk + down_chunk
-
-            x = valid_rows - packed_start
-            x = torch.where(x < 0, torch.zeros_like(x), x)
-            chunk_valid_rows = torch.where(x > packed_chunk_size, packed_chunk_size, x)
-            updated_chunk = torch.where(
-                (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
-            )
-            expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
+            current_expert_out = torch.where(chunk_matched_idx.unsqueeze(-1) != torch.iinfo(torch.int32).max, down_out, torch.zeros_like(down_out)) * rw_chunk
+            reorg_expert_out = torch.zeros_like(expert_out)
+            reorg_expert_out = CtxScatterFunc3DGeneralized.apply(reorg_expert_out, chunk_matched_idx, current_expert_out)
+            expert_out +=reorg_expert_out
 
         return expert_out
 
