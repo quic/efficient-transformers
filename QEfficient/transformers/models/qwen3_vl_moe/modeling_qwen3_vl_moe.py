@@ -388,7 +388,6 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
-        breakpoint()
         if use_blocking:
             attn_output, attn_weights = generic_blocked_attention_interface(
                 module=self,
@@ -794,8 +793,8 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         x = deepstack_features.reshape(num_features, bs * split_size, C)
         deepstack_features_expanded = x[:, indices1, :]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-        # inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
-        inputs_embeds = image_input_embeds
+        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
+        # inputs_embeds = image_input_embeds
 
         image_mask = selected.clone()
 
