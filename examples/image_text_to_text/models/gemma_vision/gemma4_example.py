@@ -7,7 +7,7 @@ from gemma4_utils import (
     remove_fp16clip_transform_if_disabled,
     resolve_npi_mode,
 )
-from transformers import AutoProcessor
+from transformers import AutoConfig, AutoProcessor
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
@@ -25,7 +25,8 @@ ENABLE_FP16_CLIP = True
 PREFILL_SEQ_LEN = 128
 CTX_LEN = 2048
 GENERATION_LEN = 1920
-
+NUM_LANG_HIDDEN_LAYER = 2
+NUM_VISION_HIDDEN_LAYER = 2
 NUM_CORES = 16
 NUM_DEVICES = 2
 MOS = 1
@@ -50,21 +51,45 @@ compiler_kwargs = {
 }
 
 
+def _apply_reduced_layer_config(config, num_lang_layers: int, num_vision_layers: int):
+    config.text_config.num_hidden_layers = num_lang_layers
+    config.vision_config.num_hidden_layers = num_vision_layers
+
+    if hasattr(config.text_config, "layer_types") and config.text_config.layer_types:
+        config.text_config.layer_types = config.text_config.layer_types[:num_lang_layers]
+
+    if hasattr(config.text_config, "num_kv_shared_layers"):
+        # Gemma4 init assumes at least one non-shared layer exists when computing
+        # per-type full-length KV ownership. For reduced-layer experiments, disable
+        # KV sharing to avoid invalid first_kv_shared_layer_idx=0 edge cases.
+        config.text_config.num_kv_shared_layers = 0
+
+    return config
+
+
 def main():
     processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
     tokenizer = processor.tokenizer
     chat_template = (
         getattr(processor, "chat_template", None) or getattr(tokenizer, "chat_template", None) or CHAT_TEMPLATE
     )
+    config = AutoConfig.from_pretrained(MODEL_ID)
+    config = _apply_reduced_layer_config(
+        config,
+        num_lang_layers=NUM_LANG_HIDDEN_LAYER,
+        num_vision_layers=NUM_VISION_HIDDEN_LAYER,
+    )
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         MODEL_ID,
+        config=config,
         trust_remote_code=True,
         dtype="float32",
         kv_offload=True,
         skip_vision=SKIP_VISION,
+        ignore_mismatched_sizes=True,
     )
-
+    print(qeff_model.config)
     if SKIP_VISION:
         messages = build_messages(SYSTEM_PROMPT, TEXT_PROMPT, use_image=False)
         text_inputs = processor.apply_chat_template(
