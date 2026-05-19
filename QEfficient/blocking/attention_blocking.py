@@ -20,6 +20,7 @@ from QEfficient.blocking.blocked_attention_forwards import (
     blocked_h_mla_attention_forward,
     blocked_hqkv_attention_forward,
     blocked_kv_attention_forward,
+    blocked_kv_attention_forward_headpar_offline,
     blocked_kv_mla_attention_forward,
     blocked_q_attention_forward,
     blocked_qkv_attention_forward,
@@ -46,6 +47,7 @@ class AttentionBlockingConfig:
     head_block_size: Optional[int] = None
     skip_kv: Optional[bool] = True
     num_batch_blocks: Optional[int] = None
+    kv_blocking_headpar_split: Optional[int] = None
 
 
 def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
@@ -61,6 +63,12 @@ _STRATEGIES: Dict[BlockingMode, Callable] = {
     BlockingMode.HKV: blocked_hqkv_attention_forward,
     BlockingMode.HQKV: blocked_hqkv_attention_forward,
     BlockingMode.BHQKV: blocked_bhqkv_attention_forward,
+}
+
+# replace just the KV blocking strategy with headpar version
+_STRATEGIES_HEADPAR: Dict[BlockingMode, Callable] = {
+    **_STRATEGIES,
+    BlockingMode.KV: blocked_kv_attention_forward_headpar_offline,
 }
 
 _STRATEGIES_MLA: Dict[BlockingMode, Callable] = {
@@ -150,7 +158,10 @@ def generic_blocked_attention_interface(
                 sliding_window=sliding_window,
             )
 
-    strategy = _STRATEGIES.get(blocking_config.mode)
+    if blocking_config.kv_blocking_headpar_split is not None:
+        strategy = _STRATEGIES_HEADPAR.get(blocking_config.mode)
+    else:
+        strategy = _STRATEGIES.get(blocking_config.mode)
     attn_output, attn_weights = strategy(
         module=module,
         query=query,
@@ -165,6 +176,7 @@ def generic_blocked_attention_interface(
         num_q_blocks=blocking_config.num_q_blocks,
         head_block_size=blocking_config.head_block_size,
         num_batch_blocks=blocking_config.num_batch_blocks,
+        configured_split=blocking_config.kv_blocking_headpar_split,
         score_mod=score_mod,
         position_bias=position_bias,
         sinks=sinks,
