@@ -552,11 +552,8 @@ class ConfigManager:
             logger.log_rank_zero("Using default configuration...")
         self.config = asdict(self.config)
         self.config = MasterConfig(**self.config)
-        # Validate loaded config
-        try:
-            self.validate_config()
-        except Exception as e:
-            logger.log_rank_zero(f"Config validation failed with error: {e}", level=logging.ERROR)
+
+        self.validate_config()
 
     def _build_cli_parser(self) -> HfArgumentParser:
         return HfArgumentParser(
@@ -788,7 +785,7 @@ class ConfigManager:
         self._push(errors, not model.get("model_name"), "model.model_name is required.")
         # Device
         valid_devices = ["cpu", "cuda", "qaic"]
-        training_device = model.get("device", "qaic")
+        training_device = training.get("device", "qaic")
         if training_device not in valid_devices:
             self._push(errors, training_device not in valid_devices, f"training.device must be one of {valid_devices}.")
         if training_device == "qaic":

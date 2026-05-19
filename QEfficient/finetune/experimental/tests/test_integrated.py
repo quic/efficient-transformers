@@ -22,6 +22,7 @@ import pytest
 import torch
 
 from QEfficient.cloud.finetune_experimental import FineTuningPipeline
+from QEfficient.finetune.experimental.core import config_manager as config_manager_module
 from QEfficient.finetune.experimental.core.config_manager import (
     ConfigManager,
     DatasetConfig,
@@ -71,6 +72,11 @@ logger = Logger(__name__)
 # ============================================================================
 # Test Configuration Dataclasses
 # ============================================================================
+
+
+@pytest.fixture(autouse=True)
+def bypass_nsp_free_check(monkeypatch):
+    monkeypatch.setattr(config_manager_module, "is_nsp_free", lambda: None)
 
 
 def clean_up(path):
