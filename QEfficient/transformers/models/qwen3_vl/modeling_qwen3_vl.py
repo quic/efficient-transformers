@@ -313,7 +313,7 @@ class QEffQwen3VLVisionAttention(Qwen3VLVisionAttention):
         block_mask = row_mask & col_mask  # shape: (num_blocks, seq_len, seq_len)
 
         # Combine all blocks into one mask
-        final_mask = torch.ones((seq_len, seq_len), dtype=torch.float32)
+        final_mask = torch.ones((seq_len, seq_len), dtype=self.config.dtype)
         final_mask[block_mask.any(dim=0)] = 0
 
         final_mask = torch.where(final_mask == 1.0, torch.finfo(q.dtype).min, final_mask)
@@ -1196,5 +1196,9 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         return [
             IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
-            IOInfo(name="pixel_values", datatype=torch.float32, shape=("batch_size", 3, "image_size", "image_size")),
+            IOInfo(
+                name="pixel_values",
+                datatype=self.config.torch_dtype,
+                shape=("batch_size", 3, "image_size", "image_size"),
+            ),
         ]
