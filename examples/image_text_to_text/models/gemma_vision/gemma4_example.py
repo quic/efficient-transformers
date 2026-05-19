@@ -59,8 +59,6 @@ def _apply_reduced_layer_config(config, num_lang_layers: int, num_vision_layers:
         config.text_config.layer_types = config.text_config.layer_types[:num_lang_layers]
 
     if hasattr(config.text_config, "num_kv_shared_layers"):
-        # Gemma4 init assumes at least one non-shared layer exists when computing
-        # per-type full-length KV ownership. For reduced-layer experiments, disable
         # KV sharing to avoid invalid first_kv_shared_layer_idx=0 edge cases.
         config.text_config.num_kv_shared_layers = 0
 
@@ -89,7 +87,7 @@ def main():
         skip_vision=SKIP_VISION,
         ignore_mismatched_sizes=True,
     )
-    print(qeff_model.config)
+
     if SKIP_VISION:
         messages = build_messages(SYSTEM_PROMPT, TEXT_PROMPT, use_image=False)
         text_inputs = processor.apply_chat_template(
