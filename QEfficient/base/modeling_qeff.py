@@ -9,15 +9,18 @@ import gc
 import inspect
 import logging
 import re
+import re
 import shutil
 import subprocess
 import warnings
 from abc import ABC, abstractmethod
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import onnx
 import torch
+from onnx import TensorProto
 from onnx import TensorProto
 
 from QEfficient.base.onnx_transforms import (
@@ -309,7 +312,7 @@ class QEFFBaseModel(ABC):
 
         # Return early if ONNX already exists
         if onnx_path.is_file():
-            _cleanup_stale_external_tensor_files(
+             _cleanup_stale_external_tensor_files(
                 export_dir,
                 keep_files={onnx_path.name, "hashed_export_params.json"} | _get_model_external_data_files(onnx_path),
             )
@@ -566,6 +569,17 @@ class QEFFBaseModel(ABC):
             create_json(str(mdp_ts_json_path), mdp_ts_json)
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
+        # supported_options = _qaic_supported_options()
+        # if supported_options:
+        #     filtered_compiler_options = {}
+        #     for key, value in compiler_options.items():
+        #         option = "-" + key.replace("_", "-")
+        #         if option not in supported_options:
+        #             logger.warning("Skipping unsupported qaic-compile option: %s", option)
+        #             continue
+        #         filtered_compiler_options[key] = value
+        #     compiler_options = filtered_compiler_options    
+
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
             if isinstance(value, bool):
@@ -607,6 +621,7 @@ class QEFFBaseModel(ABC):
             specializations_json = compile_dir / "specializations.json"
             specializations_data = {
                 "specializations": to_named_specializations(specializations, module_name=specialization_module_name)
+                #  "specializations": [{k: str(v) for k, v in spec.items()} for spec in specializations]
             }
             create_json(str(specializations_json), specializations_data)
             command.append(f"-network-specialization-config={specializations_json}")
