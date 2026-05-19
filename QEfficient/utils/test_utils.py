@@ -288,12 +288,14 @@ def load_qeff_model_with_sampler(
 
     return qeff_model
 
+
 def get_text_config(config):
     if hasattr(config, "text_config"):
         return config.text_config
     elif hasattr(config, "llm_config"):
         return config.llm_config
     return config
+
 
 # Processor class for InternVL models
 class InternProcessor:

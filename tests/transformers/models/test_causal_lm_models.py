@@ -310,6 +310,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
     assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
 
+
 def check_kv_repeat_causal_lm_pytorch_vs_ai100(
     model_name: str,
     prompt_len: int = Constants.PROMPT_LEN,
@@ -349,7 +350,9 @@ def check_kv_repeat_causal_lm_pytorch_vs_ai100(
         pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
 
     # Generate num_kv_heads_repeat from config so that divisibility error doesn't occur.
-    num_kv_heads_repeat = getattr(config, "num_attention_heads", getattr(config, "n_head", 1)) // getattr(config, "num_key_value_heads", getattr(config, "n_head", 1))
+    num_kv_heads_repeat = getattr(config, "num_attention_heads", getattr(config, "n_head", 1)) // getattr(
+        config, "num_key_value_heads", getattr(config, "n_head", 1)
+    )
     breakpoint()
     qeff_model = QEFFAutoModelForCausalLM(
         copy.deepcopy(model_hf),
@@ -373,6 +376,7 @@ def check_kv_repeat_causal_lm_pytorch_vs_ai100(
         "Tokens don't match for Pytorch HF output and Cloud AI 100 output."
     )
     assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
+
 
 def check_causal_lm_pytorch_vs_kv_vs_ai100(
     model_name: str,
@@ -548,6 +552,7 @@ def test_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer)
 
+
 @pytest.mark.nightly
 @pytest.mark.on_qaic
 @pytest.mark.parametrize("model_name", test_models_causal)
@@ -566,6 +571,7 @@ def test_check_kv_repeat_custom_causal_lm_pytorch_vs_ai100(model_name):
             check_kv_repeat_causal_lm_pytorch_vs_ai100(model_name, config=hf_config)
     else:
         pytest.skip(f"Skipping {model_name} as it is not in REPEAT_KV_TEST_MODELS")
+
 
 @pytest.mark.nightly
 @pytest.mark.on_qaic

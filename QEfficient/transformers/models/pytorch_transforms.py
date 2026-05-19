@@ -970,6 +970,7 @@ class RevertPrefillOnlyTransform(ModuleMappingTransform):
         **{v: k for k, v in PrefillOnlyChunkedTransform._module_mapping.items()},
     }
 
+
 class ReplicateKVHeadTransform(ModuleMutatorTransform):
     """
     Replicates KV heads in attention modules to match the number of KV heads in the target model.
@@ -1008,7 +1009,27 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
     }
     _module_string_mapping = {
         "InternVLChatModel",
-        "MolmoForCausalLM,"
+        "MolmoForCausalLM,",
+        "QEffGemma3DecoderWrapper",
+        "QEffGemma3EncoderWrapper",
+        "QEffInternDecoderWrapper",
+        "QEffInternEncoderWrapper",
+        "QEffLlama4DecoderWrapper",
+        "QEffLlama4EncoderWrapper",
+        "QEFFLlavaDecoderWrapper",
+        "QEFFLlavaEncoderWrapper",
+        "QEffLlavaNextDecoderWrapper",
+        "QEffLlavaNextEncoderWrapper",
+        "QEFFMistral3DecoderWrapper",
+        "QEFFMistral3EncoderWrapper",
+        "QEffMolmoDecoderWrapper",
+        "QEffMolmoEncoderWrapper",
+        "QEffQwen_2_5_vl_DecoderWrapper",
+        "QEffQwen_2_5_vl_EncoderWrapper",
+        "QEffQwen3VLDecoderWrapper",
+        "QEffQwen3VLEncoderWrapper",
+        "QEffQwen3VLDecoderWrapper",
+        "QEffQwen3VLEncoderWrapper",
     }
 
     def _duplicate_weights_for_linear_layer(
@@ -1056,9 +1077,9 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
                 layer.weight.data.view(orig_kv_heads, head_dim, hidden_size), repeat, 0
             ).view(new_kv_heads * head_dim, hidden_size)
         if layer.bias is not None:
-            layer.bias.data = torch.repeat_interleave(
-                layer.bias.data.view(orig_kv_heads, head_dim), repeat, 0
-            ).view(new_kv_heads * head_dim)
+            layer.bias.data = torch.repeat_interleave(layer.bias.data.view(orig_kv_heads, head_dim), repeat, 0).view(
+                new_kv_heads * head_dim
+            )
 
     def _get_text_model(model):
         """
@@ -1110,12 +1131,8 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
             attn.num_key_value_heads = new_kv_heads
             attn.num_key_value_groups = num_attention_heads // new_kv_heads
 
-            cls._duplicate_weights_for_linear_layer(
-                attn.k_proj, orig_kv_heads, n_repeat, attn.head_dim, hidden_size
-            )
-            cls._duplicate_weights_for_linear_layer(
-                attn.v_proj, orig_kv_heads, n_repeat, attn.head_dim, hidden_size
-            )
+            cls._duplicate_weights_for_linear_layer(attn.k_proj, orig_kv_heads, n_repeat, attn.head_dim, hidden_size)
+            cls._duplicate_weights_for_linear_layer(attn.v_proj, orig_kv_heads, n_repeat, attn.head_dim, hidden_size)
 
         return original_module
 
@@ -1138,75 +1155,6 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
             else:
                 raise NotImplementedError(
                     f"Model class {model.__class__.__name__} is not supported for KV head replication."
-                )
-        return model, transformed
-
-class ReplicateKVHeadTransform:
-    """
-    Replicates KV heads in attention modules to match the number of KV heads in the target model.
-    This transform is used when the source model has fewer KV heads than required in target model.
-    """
-
-    def _duplicate_weights_for_linear_layer(
-        layer: nn.Module, orig_kv_heads: int, repeat: int, dim: int, hidden_size: int
-    ):
-        new_kv_heads = repeat  # for mla
-
-        layer.weight.data = torch.repeat_interleave(
-            layer.weight.data.view(orig_kv_heads, dim, hidden_size), repeat, 0
-        ).view(new_kv_heads * dim, hidden_size)
-
-        if layer.bias is not None:
-            layer.bias.data = torch.repeat_interleave(layer.bias.data.view(orig_kv_heads, dim), repeat, 0).view(
-                new_kv_heads * dim
-            )
-
-    def _get_text_model(model):
-        """
-        Determine and return the appropriate text_model from a given model object.
-        """
-        # Check for VLMs
-        if hasattr(model, "language_model"):
-            if hasattr(model.language_model, "model"):
-                return model.language_model.model
-            else:
-                return model.language_model
-        # Check for CausalLMs
-        if hasattr(model, "model"):
-            return model.model
-
-        raise AttributeError("No suitable text model found in the provided model.")
-
-    @classmethod
-    def apply(cls, model: nn.Module, num_kv_heads_repeat: int = 1) -> nn.Module:
-        """
-        Replicates KV heads in attention modules based on provided multiplier.
-
-        Args:
-            model: The model to apply the transform to.
-            num_kv_heads_repeat: The number of times to repeat the KV heads.
-        """
-        transformed = False
-        if num_kv_heads_repeat is not None and num_kv_heads_repeat > 1:
-            text_model = cls._get_text_model(model)
-
-            orig_kv_heads = 1  # for mla #text_model.config.num_key_value_heads
-            new_kv_heads = num_kv_heads_repeat * orig_kv_heads
-            text_model.config.orig_kv_heads = orig_kv_heads
-            text_model.config.num_key_value_heads = new_kv_heads
-
-            hidden_size = text_model.config.hidden_size
-
-            logger.warning(f"Original KV heads: {orig_kv_heads}")
-            logger.warning(f"Modified KV heads: {new_kv_heads}")
-            transformed = True
-            for block in text_model.layers:
-                attn = getattr(block, "cross_attn", getattr(block, "self_attn", None))
-                attn.num_key_value_heads = new_kv_heads
-                head_dim = attn.kv_lora_rank + attn.qk_rope_head_dim
-
-                cls._duplicate_weights_for_linear_layer(
-                    attn.kv_a_proj_with_mqa, orig_kv_heads, num_kv_heads_repeat, head_dim, hidden_size
                 )
         return model, transformed
 
