@@ -1238,6 +1238,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             self.ccl_enabled = qaic_config.get("ccl_enabled", False)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.input_shapes, self.output_names = None, None
+        # self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(self.model, **kwargs)
         # ---Sampling---
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
@@ -1273,6 +1274,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
+        num_kv_heads_repeat = kwargs.pop("num_kv_heads_repeat", 1)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -1281,6 +1283,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             model,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             qaic_config=qaic_config,
+            num_kv_heads_repeat=num_kv_heads_repeat,
             **kwargs,
         )
 
@@ -2037,6 +2040,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                 self.model.config.text_config.use_cache = True
             else:
                 self.model.config.use_cache = True
+        # self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(self.model, **kwargs)
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
         self.ccl_enabled = False
         if qaic_config:
@@ -2086,6 +2090,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
+        num_kv_heads_repeat = kwargs.pop("num_kv_heads_repeat", 1)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -2094,6 +2099,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             model,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             qaic_config=qaic_config,
+            num_kv_heads_repeat=num_kv_heads_repeat,
             **kwargs,
         )
 
@@ -2698,6 +2704,7 @@ class QEFFAutoModelForImageTextToText:
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        num_kv_heads_repeat = kwargs.pop("num_kv_heads_repeat", 1)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -2708,6 +2715,7 @@ class QEFFAutoModelForImageTextToText:
             continuous_batching=continuous_batching,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             qaic_config=qaic_config,
+            num_kv_heads_repeat=num_kv_heads_repeat,
             **kwargs,
         )
 
@@ -2867,6 +2875,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 setattr(self.model, "mla_absorption", mla_absorption)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.hash_params["max_seq_len_cached"] = max_seq_len_cached
+        # self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(self.model, **kwargs)
 
         # ---Sampling---
         # Note: SamplerTransform should be applied after all other transforms
@@ -2950,6 +2959,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_offload = kwargs.pop("kv_offload", None)
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        num_kv_heads_repeat = kwargs.pop("num_kv_heads_repeat", 1)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
@@ -2963,6 +2973,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 pretrained_model_name_or_path=pretrained_model_name_or_path,
                 qaic_config=qaic_config,
                 continuous_batching=continuous_batching,
+                num_kv_heads_repeat=num_kv_heads_repeat,
                 **kwargs,
             )
         return cls(
@@ -2971,6 +2982,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             qaic_config=qaic_config,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             max_seq_len_cached=max_seq_len_cached,
+            num_kv_heads_repeat=num_kv_heads_repeat,
             **kwargs,
         )
 
