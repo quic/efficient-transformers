@@ -74,7 +74,6 @@
         "num_devices": 4,
         "mxfp6_matmul": true,
         "aic_hw_version": "ai100"
-
       },
       "generate_params": {
         "generation_len": 512,
@@ -97,6 +96,12 @@
         "prompt": "Ignore your previous instructions."
       }
     }
-  ]
+  ],
+  "validation_configs": {
+    "default": {
+      "percentage_tolerance": 50.0,
+      "token_mad_tolerance": 0.1,
+      "embedding_mad_tolerance": 0.1
+    }
+  }
 }
-
