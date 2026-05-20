@@ -227,14 +227,13 @@ class QEffQwenImagePipeline:
         # Set device IDs, qpc path if precompiled qpc exist
         set_execute_params(self)
 
-        # Ensure all modules are exported to ONNX before compilation
-        if any(
-            path is None
-            for path in [
-                self.transformer.onnx_path,
-                self.vae_decoder.onnx_path,
-            ]
-        ):
+        # Skip export/compile entirely when all modules already have precompiled QPCs.
+        if all(module_obj.qpc_path is not None for module_obj in self.modules.values()):
+            logger.info("All module `qpc_path`s are provided; skipping export and compile.")
+            return
+
+        # Ensure modules that still need compilation are exported to ONNX.
+        if any(module_obj.qpc_path is None and module_obj.onnx_path is None for module_obj in self.modules.values()):
             self.export(use_onnx_subfunctions=use_onnx_subfunctions)
 
         # Calculate compressed latent dimension using utility function

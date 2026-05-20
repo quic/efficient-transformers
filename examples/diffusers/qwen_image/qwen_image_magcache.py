@@ -4,62 +4,65 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ----------------------------------------------------------------------------
-"""Qwen-Image generation example with optional MagCache runtime."""
+"""
+Qwen-Image MagCache Example
 
-import argparse
+This example demonstrates how to enable/disable runtime MagCache for Qwen-Image
+while using a custom config file that can point to precompiled QPC paths.
+"""
 
 import torch
 
 from QEfficient import QEffQwenImagePipeline
 
+# Initialize the Qwen Image pipeline from pretrained weights
+pipe = QEffQwenImagePipeline.from_pretrained("Qwen/Qwen-Image")
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate a Qwen image with optional MagCache.")
-    parser.add_argument("--prompt", type=str, default="A cinematic photo of a coffee shop street in rain")
-    parser.add_argument("--negative-prompt", type=str, default="low quality, blurry")
-    parser.add_argument("--width", type=int, default=1664)
-    parser.add_argument("--height", type=int, default=928)
-    parser.add_argument("--num-inference-steps", type=int, default=50)
-    parser.add_argument("--true-cfg-scale", type=float, default=4.0)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--max-sequence-length", type=int, default=128)
-    parser.add_argument("--use-magcache", action="store_true", help="Enable MagCache runtime.")
-    parser.add_argument("--magcache-thresh", type=float, default=0.06)
-    parser.add_argument("--magcache-K", type=int, default=2)
-    parser.add_argument("--magcache-retention-ratio", type=float, default=0.2)
-    parser.add_argument(
-        "--magcache-verbose",
-        action="store_true",
-        help="Print per-call MagCache diff/decision logs.",
-    )
-    parser.add_argument("--output", type=str, default="qwen_image_magcache.png")
-    return parser.parse_args()
+positive_magic = {
+    "en": ", Ultra HD, 4K, cinematic composition.",
+}
 
+prompt = """A coffee shop entrance features a chalkboard sign reading "Qwen Coffee 😊 $2 per cup," with a neon light beside it displaying "通义千问". Next to it hangs a poster showing a beautiful Chinese woman, and beneath the poster is written "π≈3.1415926-53589793-23846264-33832795-02384197"."""
+negative_prompt = ""
 
-def main() -> None:
-    args = parse_args()
+# Common Qwen image aspect ratios
+aspect_ratios = {
+    "1:1": (1328, 1328),
+    "16:9": (1664, 928),
+    "9:16": (928, 1664),
+    "4:3": (1472, 1140),
+    "3:4": (1140, 1472),
+    "3:2": (1584, 1056),
+    "2:3": (1056, 1584),
+}
 
-    pipe = QEffQwenImagePipeline.from_pretrained("Qwen/Qwen-Image")
-    output = pipe(
-        prompt=args.prompt,
-        negative_prompt=args.negative_prompt,
-        width=args.width,
-        height=args.height,
-        num_inference_steps=args.num_inference_steps,
-        true_cfg_scale=args.true_cfg_scale,
-        generator=torch.Generator(device="cpu").manual_seed(args.seed),
-        parallel_compile=True,
-        max_sequence_length=args.max_sequence_length,
-        use_magcache=args.use_magcache,
-        magcache_thresh=args.magcache_thresh,
-        magcache_K=args.magcache_K,
-        magcache_retention_ratio=args.magcache_retention_ratio,
-        magcache_verbose=args.magcache_verbose,
-    )
+width, height = aspect_ratios["16:9"]
 
-    output.images[0].save(args.output)
-    print(output)
+# MagCache knobs
+use_magcache = True
+magcache_thresh = 0.06
+magcache_K = 2
+magcache_retention_ratio = 0.2
+magcache_verbose = True
 
+output = pipe(
+    prompt=prompt + positive_magic["en"],
+    negative_prompt=negative_prompt,
+    width=width,
+    height=height,
+    num_inference_steps=50,
+    true_cfg_scale=4.0,
+    generator=torch.Generator(device="cpu").manual_seed(42),
+    custom_config_path="examples/diffusers/qwen_image/qwen_config.json",
+    parallel_compile=True,
+    max_sequence_length=128,
+    use_magcache=use_magcache,
+    magcache_thresh=magcache_thresh,
+    magcache_K=magcache_K,
+    magcache_retention_ratio=magcache_retention_ratio,
+    magcache_verbose=magcache_verbose,
+)
 
-if __name__ == "__main__":
-    main()
+image = output.images[0]
+image.save("qwen_image_magcache.png")
+print(output)

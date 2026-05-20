@@ -47,14 +47,20 @@ python qwen_image_example.py
 Run with MagCache:
 
 ```bash
-python qwen_image_magcache.py --use-magcache --magcache-verbose
+python qwen_image_magcache.py
 ```
 
 Run with MagCache disabled:
 
 ```bash
+# Edit qwen_image_magcache.py and set:
+# use_magcache = False
 python qwen_image_magcache.py
 ```
+
+If you already have compiled QPCs, set their paths in `examples/diffusers/qwen_image/qwen_config.json`
+and keep `custom_config_path=\"examples/diffusers/qwen_image/qwen_config.json\"` in the script;
+the pipeline will skip export/compile.
 
 ## Advanced Customization
 
