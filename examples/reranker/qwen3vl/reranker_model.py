@@ -5,17 +5,13 @@
 #
 # ----------------------------------------------------------------------------
 
-"""Qwen3-VL-specific reranker helpers for AI100 runtime.
+"""Core AI100 reranker implementation for Qwen3-VL reranker models.
 
 The tokenization/scoring flow is adapted from the official Qwen reference:
 https://huggingface.co/Qwen/Qwen3-VL-Reranker-2B/blob/main/scripts/qwen3_vl_reranker.py
 
-This module intentionally keeps only Qwen3-VL-specific reranker logic
-(prompt construction, multimodal tokenization, yes/no score computation,
-and AI100 runtime orchestration with compiled QPC paths).
-
-Model loading (`from_pretrained`) and model compilation (`compile`) are exposed
-in `qwen3_vl_reranker.py` so users can directly see QEff API usage.
+This module isolates AI100 dual-QPC runtime details so the user-facing example
+script (`qwen3_vl_reranker.py`) remains focused on simple API usage.
 """
 
 from typing import Dict, List, Tuple

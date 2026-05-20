@@ -23,11 +23,8 @@ pip install "qwen-vl-utils>=0.0.14"
 
 ## Scripts
 
-- `qwen3_vl_reranker.py` - runnable example that explicitly shows:
-  - `QEFFAutoModelForImageTextToText.from_pretrained(...)`
-  - `model.compile(...)` arguments for QPC generation
-  - AI100 scoring call flow
-- `reranker_model.py` - Qwen3-VL-specific helper logic (prompting/tokenization/scoring/runtime glue) adapted from the official Qwen reranker reference:
+- `qwen3_vl_reranker.py` - simple runnable API usage example.
+- `reranker_model.py` - AI100 dual-QPC implementation adapted from the official Qwen reranker reference:
   https://huggingface.co/Qwen/Qwen3-VL-Reranker-2B/blob/main/scripts/qwen3_vl_reranker.py
 
 ## Run
