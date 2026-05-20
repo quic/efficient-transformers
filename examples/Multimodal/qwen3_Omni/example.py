@@ -74,7 +74,13 @@ if skip_vision:
     )
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
     streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, generation_len=100)
+    output = qeff_model.generate(
+        inputs=inputs,
+        generation_len=100,
+        device_ids=[0, 1, 2, 3],
+        vision_device_ids=[0],
+        audio_device_ids=[2],
+    )
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
@@ -120,7 +126,7 @@ else:
             "role": "user",
             "content": [
                 {"type": "image", "image": image},
-                {"type": "audio", "audio": "/home/mohisoni/omni/cough.wav"},
+                {"type": "audio", "audio": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen3-Omni/demo/cough.wav"},
                 {"type": "text", "text": "What can you see and hear? Answer in one short sentence."},
             ],
         },
@@ -147,7 +153,13 @@ else:
 
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
     streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, generation_len=100)
+    output = qeff_model.generate(
+        inputs=inputs,
+        generation_len=100,
+        device_ids=[0, 1, 2, 3],
+        vision_device_ids=[0],
+        audio_device_ids=[2],
+    )
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)

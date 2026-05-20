@@ -1696,7 +1696,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 specializations=specializations["vision"],
                 convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
                 mxfp6_matmul=constants.VISION_MXFP6_MATMUL,
-                mdp_ts_num_devices=num_devices,
+                mdp_ts_num_devices=1,  # TODO Make it configurable
                 aic_num_cores=num_cores,
                 custom_io=custom_io_vision,
                 mxint8_kv_cache=mxint8_kv_cache,
@@ -1764,6 +1764,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         prompts: List[str] = None,
         streamer: Optional[TextStreamer] = None,
         device_ids: List[int] = None,
+        vision_device_ids: List[int] = None,
+        audio_device_ids: List[int] = None,
         runtime_ai100: bool = True,
         generation_len: Optional[int] = None,
         image_height: Optional[int] = None,
@@ -1846,7 +1848,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         # Fallback to kv_offload_generate for direct inputs (backward compatibility)
         return self.kv_offload_generate(
-            inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
+            inputs=inputs,
+            device_ids=device_ids,
+            vision_device_ids=vision_device_ids,
+            audio_device_ids=audio_device_ids,
+            streamer=streamer,
+            generation_len=generation_len,
         )
 
     def kv_offload_generate(
@@ -1854,6 +1861,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         inputs: List[str] = None,
         streamer: Optional[TextStreamer] = None,
         device_ids: List[int] = None,
+        vision_device_ids: List[int] = None,
+        audio_device_ids: List[int] = None,
         generation_len: int = None,
     ):
         """
@@ -2510,7 +2519,7 @@ class _QEFFAutoModelForMultimodalLMMultiQPC:
                 specializations=specializations["vision"],
                 convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
                 mxfp6_matmul=constants.VISION_MXFP6_MATMUL,
-                mdp_ts_num_devices=num_devices,
+                mdp_ts_num_devices=1,  # TODO Make it configurable
                 aic_num_cores=num_cores,
                 custom_io=custom_io_vision,
                 mxint8_kv_cache=mxint8_kv_cache,
@@ -2547,7 +2556,7 @@ class _QEFFAutoModelForMultimodalLMMultiQPC:
                 specializations=audio_specializations,
                 convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
                 mxfp6_matmul=constants.VISION_MXFP6_MATMUL,
-                mdp_ts_num_devices=num_devices,
+                mdp_ts_num_devices=1,
                 aic_num_cores=num_cores,
                 custom_io=custom_io_audio,
                 mxint8_kv_cache=mxint8_kv_cache,
@@ -2623,6 +2632,8 @@ class _QEFFAutoModelForMultimodalLMMultiQPC:
         prompts: List[str] = None,
         streamer: Optional[TextStreamer] = None,
         device_ids: List[int] = None,
+        vision_device_ids: List[int] = None,
+        audio_device_ids: List[int] = None,
         runtime_ai100: bool = True,
         generation_len: Optional[int] = None,
         image_height: Optional[int] = None,
@@ -2705,7 +2716,12 @@ class _QEFFAutoModelForMultimodalLMMultiQPC:
 
         # Fallback to kv_offload_generate for direct inputs (backward compatibility)
         return self.kv_offload_generate(
-            inputs=inputs, device_ids=device_ids, streamer=streamer, generation_len=generation_len
+            inputs=inputs,
+            device_ids=device_ids,
+            vision_device_ids=vision_device_ids,
+            audio_device_ids=audio_device_ids,
+            streamer=streamer,
+            generation_len=generation_len,
         )
 
     def kv_offload_generate(
@@ -2713,6 +2729,8 @@ class _QEFFAutoModelForMultimodalLMMultiQPC:
         inputs: List[str] = None,
         streamer: Optional[TextStreamer] = None,
         device_ids: List[int] = None,
+        vision_device_ids: List[int] = None,
+        audio_device_ids: List[int] = None,
         generation_len: int = None,
     ):
         """
@@ -2747,12 +2765,19 @@ class _QEFFAutoModelForMultimodalLMMultiQPC:
         if not self.lang_model.qpc_path:
             raise TypeError("Please run compile API for language model first!")
 
+        if device_ids is None:
+            device_ids = [0]
+        if vision_device_ids is None:
+            vision_device_ids = device_ids
+        if audio_device_ids is None:
+            audio_device_ids = device_ids
+
         lang_session = QAICInferenceSession(self.lang_model.qpc_path, device_ids, activate=False)
 
         if self.vision_model.qpc_path:
-            vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
+            vision_session = QAICInferenceSession(self.vision_model.qpc_path, vision_device_ids)
         if self.audio_model is not None and self.audio_model.qpc_path:
-            audio_session = QAICInferenceSession(self.audio_model.qpc_path, device_ids)
+            audio_session = QAICInferenceSession(self.audio_model.qpc_path, audio_device_ids)
 
         batch_size, ctx_len, fbs = get_compilation_dims(self.lang_model.qpc_path)
 
