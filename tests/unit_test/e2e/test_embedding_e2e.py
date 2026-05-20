@@ -334,3 +334,58 @@ class TestEmbeddingORTAccuracy:
             pt_top = int(pt_mean.argmax(-1))
             ort_top = int(ort_mean.argmax(-1))
             assert pt_top == ort_top, f"Mean-pooled embedding argmax mismatch: QEff={pt_top}, ORT={ort_top}"
+
+
+@pytest.mark.embedding
+@pytest.mark.onnx
+@pytest.mark.slow
+class TestEmbeddingOnnxExternalData:
+    """
+    Regression for QRANIUMSW-60769:
+
+    Embedding models >2 GB (e.g. BAAI/bge-reranker-v2-m3, intfloat/multilingual-e5-large)
+    produced a PooledModel.onnx whose weights were inlined into the protobuf, so the
+    AIC compiler's 2 GB ModelProto parser rejected it with
+    ``MODEL_LOADER_INVALID_PROTOBUF / Failed to parse ModelProto``.
+
+    The fix re-adds ``SplitTensorsTransform`` to ``QEFFAutoModel._onnx_transforms`` so
+    initializers above ``SIZE_THRESHOLD_DEFAULT`` (1024 bytes) are spilled to sidecar
+    ``*.onnx.data`` files.
+
+    Tiny BERT still has multi-KB initializers (e.g. the vocab embedding is
+    ``VOCAB_SIZE * HIDDEN_SIZE * 4`` bytes = 128 KB), so the split is observable on
+    CPU without downloading any large model.
+    """
+
+    def test_embedding_onnx_spills_weights_to_external_data(self, tmp_export_dir):
+        import pathlib
+
+        import onnx
+        from onnx import TensorProto
+
+        model, _ = make_tiny_bert()
+        qeff_model = QEFFAutoModel(model)
+        onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
+
+        loaded = onnx.load(str(onnx_path), load_external_data=False)
+        external_inits = [init for init in loaded.graph.initializer if init.data_location == TensorProto.EXTERNAL]
+        assert external_inits, (
+            "QEFFAutoModel export should spill large initializers to external data "
+            "(SplitTensorsTransform missing from _onnx_transforms). See QRANIUMSW-60769."
+        )
+
+        export_root = pathlib.Path(str(onnx_path)).parent
+        sidecar_files = list(export_root.glob("*.onnx.data"))
+        assert sidecar_files, (
+            f"Expected at least one *.onnx.data sidecar next to {onnx_path}, "
+            f"found only: {sorted(p.name for p in export_root.iterdir())}"
+        )
+
+    def test_embedding_auto_model_declares_split_tensors_transform(self):
+        """Guard: the class-level transform list must include SplitTensorsTransform."""
+        from QEfficient.base.onnx_transforms import SplitTensorsTransform
+
+        assert SplitTensorsTransform in QEFFAutoModel._onnx_transforms, (
+            "QEFFAutoModel._onnx_transforms must include SplitTensorsTransform so that "
+            ">2 GB embedding exports stay under the AIC compiler's ModelProto parse limit."
+        )

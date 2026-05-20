@@ -937,6 +937,7 @@ class SamplerTransform:
         QEffPhi3ForCausalLM,
         QEffQwen2ForCausalLM,
         QEffQwen_2_5_vl_DecoderWrapper,
+        QEffQwen3ForCausalLM,
     }
 
     @classmethod

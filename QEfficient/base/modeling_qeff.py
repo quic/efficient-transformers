@@ -95,9 +95,6 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
-        if self.config.torch_dtype == torch.bfloat16:
-            logger.warning("BFloat16 dtype is not yet supported; converting to float16 precision!")
-
     def _normalize_torch_dtype(self):
         """
         Normalizes torch_dtype across all nested configs to match the top-level config.
@@ -287,7 +284,6 @@ class QEFFBaseModel(ABC):
         """
         # TODO: Hack for retain_full_kv, handle this outside
         export_kwargs.pop("retain_full_kv", None)
-        export_kwargs.pop("mla_absorption", None)
         onnx_path = export_dir / f"{self.model_name}.onnx"
 
         # Return early if ONNX already exists
@@ -392,7 +388,6 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         use_onnx_subfunctions: Optional[bool] = False,
         retain_full_kv: Optional[bool] = False,
-        mla_absorption: Optional[Dict[str, bool]] = None,
         qaic_config: Optional[dict] = None,
         **compiler_options,
     ):
@@ -400,7 +395,6 @@ class QEFFBaseModel(ABC):
             "offload_pt_weights": offload_pt_weights,
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "retain_full_kv": retain_full_kv,
-            "mla_absorption": mla_absorption,
         }
 
         if prefill_only:
@@ -498,7 +492,6 @@ class QEFFBaseModel(ABC):
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = None,
-        mla_absorption: Optional[Dict[str, bool]] = None,
         qaic_config: Optional[dict] = None,
         specialization_module_name: Optional[str] = None,
         **compiler_options,
@@ -539,7 +532,6 @@ class QEFFBaseModel(ABC):
                 offload_pt_weights,
                 use_onnx_subfunctions,
                 retain_full_kv,
-                mla_absorption,
                 num_devices=mdp_ts_num_devices,
                 qaic_config=qaic_config,
                 **compiler_options,
@@ -649,7 +641,7 @@ class QEFFBaseModel(ABC):
         # Write custom_io.yaml file
         model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
         pkv_in_bfloat16 = (custom_io is not None) and any(
-            "past_" in key and "bfloat16" in value for key, value in custom_io.items()
+            ("past_" in key or "pixel_values" in key) and "bfloat16" in value for key, value in custom_io.items()
         )
         if custom_io is not None:
             custom_io_yaml = compile_dir / "custom_io.yaml"

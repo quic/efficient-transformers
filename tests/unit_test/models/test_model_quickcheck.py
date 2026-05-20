@@ -395,7 +395,7 @@ def test_text_embedding_fp16_clip_transform_and_export(tmp_path):
     transform_names = {transform.__name__ for transform in qeff_model._onnx_transforms}
 
     assert "FP16ClipTransform" in transform_names
-    assert "SplitTensorsTransform" not in transform_names
+    assert "SplitTensorsTransform" in transform_names
 
     inputs = tokenizer("hello world", return_tensors="pt")
     onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "embedding-ai100"))
@@ -675,7 +675,7 @@ def test_proxy_toggle_onnx_transform_policy_for_embedding():
         _skip_on_model_fetch_error(exc, model_id)
 
     _assert_proxy_only_onnx_transform_policy(
-        qeff_default, enable_proxy=False, always_on_transforms={"FP16ClipTransform"}
+        qeff_default, enable_proxy=False, always_on_transforms={"FP16ClipTransform", "SplitTensorsTransform"}
     )
     _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
 

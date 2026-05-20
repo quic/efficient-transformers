@@ -32,6 +32,8 @@ class BlockingMode(str, Enum):
     Q = "q"
     H = "h"
     QKV = "qkv"
+    HQ = "hq"
+    HKV = "hkv"
     HQKV = "hqkv"
     BHQKV = "bhqkv"
 
@@ -42,7 +44,7 @@ class AttentionBlockingConfig:
     num_kv_blocks: Optional[int] = None
     num_q_blocks: Optional[int] = None
     head_block_size: Optional[int] = None
-    skip_kv: Optional[bool] = False
+    skip_kv: Optional[bool] = True
     num_batch_blocks: Optional[int] = None
 
 
@@ -55,6 +57,8 @@ _STRATEGIES: Dict[BlockingMode, Callable] = {
     BlockingMode.Q: blocked_q_attention_forward,
     BlockingMode.H: blocked_h_attention_forward,
     BlockingMode.QKV: blocked_qkv_attention_forward,
+    BlockingMode.HQ: blocked_hqkv_attention_forward,
+    BlockingMode.HKV: blocked_hqkv_attention_forward,
     BlockingMode.HQKV: blocked_hqkv_attention_forward,
     BlockingMode.BHQKV: blocked_bhqkv_attention_forward,
 }
