@@ -774,7 +774,11 @@ class QEffGlmOcrForConditionalGeneration(GlmOcrForConditionalGeneration):
 
         next_image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         image_idx = torch.where(image_idx < next_image_idx, next_image_idx, image_idx)
-        return logits, pixel_values, image_idx, outputs.past_key_values
+        # Note: pixel_values is NOT returned as a retained state — the compiler DCEs the
+        # vision encoder in the decode spec (unused output), which would make
+        # pixel_values_RetainedState inconsistent between specs.  The runtime re-uploads
+        # pixel_values from host on every decode call (slightly less efficient, but correct).
+        return logits, image_idx, outputs.past_key_values
 
     # ------------------------------------------------------------------
     # QEff interface: dummy inputs, specializations, dynamic axes, etc.
@@ -980,6 +984,11 @@ class QEffGlmOcrForConditionalGeneration(GlmOcrForConditionalGeneration):
         else:
             merged = {**vision_dynamic_axes, **lang_dynamic_axes}
             merged.pop("vision_embeds", None)
+            # pixel_values and image_grid_thw shapes are baked as ONNX constants
+            # (via .item() in QEffGlmOcrVisionModel.forward) — removing them from
+            # dynamic axes prevents the "Inconsistent retained state" compiler error.
+            merged.pop("pixel_values", None)
+            merged.pop("image_grid_thw", None)
             return merged
 
     def get_output_names(self, kv_offload: bool = False) -> Union[List[str], Dict[str, List[str]]]:
@@ -994,8 +1003,8 @@ class QEffGlmOcrForConditionalGeneration(GlmOcrForConditionalGeneration):
             lang_outputs.insert(2, "image_idx_output")
             return {"vision": vision_outputs, "lang": lang_outputs}
         else:
-            lang_outputs.insert(1, "pixel_values_RetainedState")
-            lang_outputs.insert(2, "image_idx_output")
+            # Single-QPC: no pixel_values_RetainedState (compiler DCE causes inconsistency)
+            lang_outputs.insert(1, "image_idx_output")
             return lang_outputs
 
     def get_inputs_info(self) -> List[IOInfo]:
