@@ -793,8 +793,8 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         x = deepstack_features.reshape(num_features, bs * split_size, C)
         deepstack_features_expanded = x[:, indices1, :]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
-        # inputs_embeds = image_input_embeds
+        # inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
+        inputs_embeds = image_input_embeds
 
         image_mask = selected.clone()
 
