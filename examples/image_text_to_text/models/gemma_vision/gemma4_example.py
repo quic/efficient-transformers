@@ -17,7 +17,8 @@ from transformers import AutoConfig, AutoProcessor
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-MODEL_ID = "google/gemma-4-E2B-it"
+# MODEL_ID = "google/gemma-4-E2B-it"
+MODEL_ID = "google/gemma-4-26B-A4B-it"
 SYSTEM_PROMPT = "You are a helpful assistant."
 TEXT_PROMPT = "Tell me about Taj Mahal?"
 IMAGE_PROMPT = "Can you Describe this image in detail?"
@@ -44,16 +45,15 @@ LANG_USE_ONNX_SUBFUNCTIONS = False
 MXFP6_MATMUL = True
 MXINT8_KV_CACHE = True
 AIC_ENABLE_DEPTH_FIRST = True
+
+split_model_io = True
 compiler_kwargs = {
     "NUM_CORES": NUM_CORES,
     "NUM_DEVICES": NUM_DEVICES,
-    "MXFP6_MATMUL": MXFP6_MATMUL,
-    "MXINT8_KV_CACHE": MXINT8_KV_CACHE,
-    "AIC_ENABLE_DEPTH_FIRST": AIC_ENABLE_DEPTH_FIRST,
-    "MOS": MOS,
     "USE_ONNX_SUBFUNCTIONS": USE_ONNX_SUBFUNCTIONS,
     "VISION_USE_ONNX_SUBFUNCTIONS": VISION_USE_ONNX_SUBFUNCTIONS,
     "LANG_USE_ONNX_SUBFUNCTIONS": LANG_USE_ONNX_SUBFUNCTIONS,
+    "split_model_io": split_model_io,
 }
 
 
@@ -161,6 +161,7 @@ def main():
         effective_ctx_len=effective_ctx_len,
         skip_vision=SKIP_VISION,
         npi_mode=npi_mode,
+        skip_model_io=True,
         **compiler_kwargs,
     )
     qeff_model.compile(**compile_kwargs)

@@ -301,6 +301,7 @@ from QEfficient.transformers.models.gemma4.modeling_gemma4 import (
     QEffGemma4CustomRMSNormAIC,
     QEffGemma4ForCausalLM,
     QEffGemma4ForConditionalGeneration,
+    QEffGemma4PrefillChunkedGemma4TextExperts,
     QEffGemma4TextAttention,
     QEffGemma4TextDecoderLayer,
     QEffGemma4TextExperts,
@@ -785,6 +786,7 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
         # Qwen3 VL Moe
         QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
+        QEffGemma4TextExperts: QEffGemma4PrefillChunkedGemma4TextExperts,
     }
 
 
@@ -798,6 +800,7 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
         # Qwen3Moe
         QEffPrefillChunkedQwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
+        QEffGemma4PrefillChunkedGemma4TextExperts: QEffGemma4TextExperts,
     }
 
 
