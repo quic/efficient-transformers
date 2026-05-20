@@ -1,3 +1,9 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
 import numpy as np
 
 from QEfficient.base.onnx_transforms import FP16ClipTransform

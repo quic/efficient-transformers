@@ -1,3 +1,9 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
 from gemma4_utils import (
     CHAT_TEMPLATE,
     build_compile_kwargs,
@@ -72,11 +78,13 @@ def main():
         getattr(processor, "chat_template", None) or getattr(tokenizer, "chat_template", None) or CHAT_TEMPLATE
     )
     config = AutoConfig.from_pretrained(MODEL_ID)
-    config = _apply_reduced_layer_config(
-        config,
-        num_lang_layers=NUM_LANG_HIDDEN_LAYER,
-        num_vision_layers=NUM_VISION_HIDDEN_LAYER,
-    )
+
+    # For Testing Purpose Only 
+    # config = _apply_reduced_layer_config(
+    #     config,
+    #     num_lang_layers=NUM_LANG_HIDDEN_LAYER,
+    #     num_vision_layers=NUM_VISION_HIDDEN_LAYER,
+    # )
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         MODEL_ID,
