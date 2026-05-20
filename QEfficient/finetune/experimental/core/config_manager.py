@@ -786,8 +786,7 @@ class ConfigManager:
         # Device
         valid_devices = ["cpu", "cuda", "qaic"]
         training_device = training.get("device", "qaic")
-        if training_device not in valid_devices:
-            self._push(errors, training_device not in valid_devices, f"training.device must be one of {valid_devices}.")
+        self._push(errors, training_device not in valid_devices, f"training.device must be one of {valid_devices}.")
         if training_device == "qaic":
             try:
                 import torch_qaic  # noqa: F401
