@@ -5,7 +5,14 @@
 #
 # -----------------------------------------------------------------------------
 
-"""Core AI100 reranker implementation for Qwen3-VL reranker models."""
+"""Core AI100 reranker implementation for Qwen3-VL reranker models.
+
+The tokenization/scoring flow is adapted from the official Qwen reference:
+https://huggingface.co/Qwen/Qwen3-VL-Reranker-2B/blob/main/scripts/qwen3_vl_reranker.py
+
+This module isolates AI100 dual-QPC runtime details so the user-facing example
+script (`qwen3_vl_reranker.py`) remains focused on simple API usage.
+"""
 
 import os
 from typing import Dict, List, Tuple

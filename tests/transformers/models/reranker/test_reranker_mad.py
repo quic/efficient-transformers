@@ -20,7 +20,7 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForImageTextToText
 from QEfficient.utils.test_utils import load_vlm_model, set_num_layers_vlm
 
-CONFIG_PATH = "tests/configs/image_text_model_configs.json"
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
 
 PT_AI100_MAD_MAX = 5e-3
 MAX_LENGTH = 8192
