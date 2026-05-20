@@ -151,6 +151,38 @@ pytest tests/nightly_pipeline/causal_lm_models/test_generate.py
 pytest tests/nightly_pipeline/test_result_validation.py
 ```
 
+### Runtime Model Skips
+
+Freestyle jobs can skip selected models without editing `validated_models.json` by passing comma-separated model names
+through family-specific environment variables:
+
+- `SKIP_CAUSAL_LM_MODELS`
+- `SKIP_IMAGE_TEXT_MODELS`
+- `SKIP_EMBEDDING_MODELS`
+- `SKIP_AUDIO_MODELS`
+- `SKIP_AUDIO_EMBEDDING_MODELS`
+- `SKIP_SEQUENCE_MODELS`
+
+Example:
+
+```bash
+export SKIP_CAUSAL_LM_MODELS="meta-llama/Llama-3.2-3B,hpcai-tech/grok-1,meta-llama/Llama-3.2-1B"
+export SKIP_AUDIO_MODELS="openai/whisper-base"
+```
+
+When running inside Docker, pass these variables through `docker exec`:
+
+```bash
+sudo docker exec \
+  -e SKIP_CAUSAL_LM_MODELS="${SKIP_CAUSAL_LM_MODELS:-}" \
+  -e SKIP_IMAGE_TEXT_MODELS="${SKIP_IMAGE_TEXT_MODELS:-}" \
+  -e SKIP_EMBEDDING_MODELS="${SKIP_EMBEDDING_MODELS:-}" \
+  -e SKIP_AUDIO_MODELS="${SKIP_AUDIO_MODELS:-}" \
+  -e SKIP_AUDIO_EMBEDDING_MODELS="${SKIP_AUDIO_EMBEDDING_MODELS:-}" \
+  -e SKIP_SEQUENCE_MODELS="${SKIP_SEQUENCE_MODELS:-}" \
+  "${BUILD_NAME}" bash -lc "pytest tests/nightly_pipeline/causal_lm_models/test_export_compile.py -n 4"
+```
+
 ## Config Files
 
 ### `configs/validated_models.json`
