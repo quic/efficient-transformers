@@ -14,7 +14,7 @@ from transformers import AutoConfig, AutoProcessor, TextStreamer
 from QEfficient import QEFFAutoModelForImageTextToText
 
 ## For AWQ model update pytorch version to 2.8.*
-model_id = "Qwen/Qwen2.5-VL-3B-Instruct"
+model_id = "Qwen/Qwen2.5-VL-32B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 config.text_config.num_hidden_layers = 2
 
@@ -25,7 +25,7 @@ tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
 ### use skip_vision=Ture, if want to run only text, ow false ###
-skip_vision = False
+skip_vision = True
 
 if skip_vision:
     ## Only Text ##
@@ -76,8 +76,6 @@ if skip_vision:
 else:
     batch_size = 1
     ## Vision + Text ##
-    import time
-    start = time.time()
     qeff_model.compile(
         batch_size=batch_size,
         prefill_seq_len=128,
@@ -90,11 +88,7 @@ else:
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
         mos=1,
-        use_onnx_subfunctions=True,
     )
-    end = time.time()
-    print("Compilation Time:", end - start)
-
 
     ### IMAGE + TEXT ###
     image_url = "https://picsum.photos/id/237/536/354"
@@ -137,10 +131,7 @@ else:
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
 
     streamer = TextStreamer(tokenizer)
-    start = time.time()
     output = qeff_model.generate(inputs=inputs, generation_len=100)
-    end = time.time()
-    print("Generation Time:", end - start)
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
     print(output)
