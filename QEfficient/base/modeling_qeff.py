@@ -134,9 +134,7 @@ class QEFFBaseModel(ABC):
         """Clear PyTorch model weights to reduce memory usage after ONNX export."""
         if offload_pt_weights and not self._is_weights_offloaded:
             try:
-                # Clear plain tensor attributes that are not registered as parameters
-                # or buffers (e.g. stacked expert weights in MoE models). These are not
-                # handled by to_empty().
+                # Clear plain tensor attrs (not registered as params/buffers)
                 param_data_ptrs = {p.data_ptr() for p in self.model.parameters()}
                 buf_data_ptrs = {b.data_ptr() for b in self.model.buffers()}
                 registered_ptrs = param_data_ptrs | buf_data_ptrs
@@ -146,8 +144,36 @@ class QEFFBaseModel(ABC):
                         if isinstance(attr, torch.Tensor) and attr.data_ptr() not in registered_ptrs:
                             setattr(module, attr_name, torch.empty_like(attr, device="meta"))
 
-                # Move all parameters and buffers to meta device with empty storage.
-                self.model.to_empty(device="meta")
+                # Swap each parameter/buffer with a meta tensor of the same
+                # shape, in place — so external Parameter refs also become meta.
+                with torch.no_grad():
+                    for p in self.model.parameters():
+                        new_p = torch.nn.Parameter(
+                            torch.empty(p.shape, dtype=p.dtype, device="meta"),
+                            requires_grad=p.requires_grad,
+                        )
+                        torch.utils.swap_tensors(p, new_p)
+                    for b in self.model.buffers():
+                        new_b = torch.empty(b.shape, dtype=b.dtype, device="meta")
+                        torch.utils.swap_tensors(b, new_b)
+
+                # Drop storage from any remaining large non-meta tensor
+                # in the gc graph. This handles refs held by torch.onnx.export's
+                # trace cache and similar external retainers.
+                large_tensors = []
+                for o in gc.get_objects():
+                    if isinstance(o, torch.Tensor) and not o.is_meta:
+                        try:
+                            if o.numel() * o.element_size() >= 1024 * 1024:
+                                large_tensors.append(o)
+                        except Exception:
+                            pass
+                for t in large_tensors:
+                    try:
+                        with torch.no_grad():
+                            t.set_(torch.empty(0, dtype=t.dtype))
+                    except Exception:
+                        pass
                 gc.collect()
 
                 self._is_weights_offloaded = True
