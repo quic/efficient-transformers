@@ -179,7 +179,7 @@ class QEffGemma4TextExperts(Gemma4TextExperts):
 
         down_proj_t = self.down_proj.transpose(1, 2)
         experts_out = torch.matmul(activated.permute(1, 0, 2), down_proj_t).permute(1, 0, 2)
-
+        # breakpoint()
         expert_weights = torch.zeros(
             hidden_states.shape[0],
             self.num_experts,
@@ -203,7 +203,6 @@ class QEffPrefillChunckedGemma4TextExperts(Gemma4TextExperts):
         local_experts = self.num_experts // num_nsp
         rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
         gate_proj_w, gate_up_w = self.gate_up_proj.chunk(2, dim=-1)
-        # breakpoint()
         W_g = gate_proj_w.reshape(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
         W_u = gate_up_w.reshape(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
         W_d = self.down_proj.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
@@ -256,7 +255,6 @@ class QEffPrefillChunckedGemma4TextExperts(Gemma4TextExperts):
         # Accumulate expert outputs
         if self.num_experts % EXPERT_BLOCKING_NUM_NSP == 0:
             out = self._forward_expert_blocked(x=x, routing_weights=expert_weights)
-            # breakpoint()
             return out
         out = x.new_zeros((T, H))
         for e in range(self.num_experts):
@@ -357,7 +355,7 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
 
 
 EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
-EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "288"))
+EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "296"))
 
 
 def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:

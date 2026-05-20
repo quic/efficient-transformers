@@ -29,11 +29,11 @@ ENABLE_NPI = True
 DISABLE_NPI = False
 ENABLE_FP16_CLIP = True
 
-PREFILL_SEQ_LEN = 128
+PREFILL_SEQ_LEN = 1
 CTX_LEN = 2048
 GENERATION_LEN = 1920
-NUM_LANG_HIDDEN_LAYER = 2
-NUM_VISION_HIDDEN_LAYER = 2
+NUM_LANG_HIDDEN_LAYER = 27
+NUM_VISION_HIDDEN_LAYER = 30
 NUM_CORES = 16
 NUM_DEVICES = 2
 MOS = 1
@@ -50,6 +50,10 @@ split_model_io = True
 compiler_kwargs = {
     "NUM_CORES": NUM_CORES,
     "NUM_DEVICES": NUM_DEVICES,
+    "MXFP6_MATMUL": MXFP6_MATMUL,
+    "MXINT8_KV_CACHE": MXINT8_KV_CACHE,
+    "AIC_ENABLE_DEPTH_FIRST": AIC_ENABLE_DEPTH_FIRST,
+    "MOS": MOS,
     "USE_ONNX_SUBFUNCTIONS": USE_ONNX_SUBFUNCTIONS,
     "VISION_USE_ONNX_SUBFUNCTIONS": VISION_USE_ONNX_SUBFUNCTIONS,
     "LANG_USE_ONNX_SUBFUNCTIONS": LANG_USE_ONNX_SUBFUNCTIONS,
@@ -161,9 +165,12 @@ def main():
         effective_ctx_len=effective_ctx_len,
         skip_vision=SKIP_VISION,
         npi_mode=npi_mode,
+        # prefill_only=True,
+        # enable_chunking=True,
         skip_model_io=True,
         **compiler_kwargs,
     )
+    breakpoint()
     qeff_model.compile(**compile_kwargs)
 
     output = qeff_model.generate(

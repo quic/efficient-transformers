@@ -87,6 +87,8 @@ def build_compile_kwargs(
         "vision_use_onnx_subfunctions": kwargs["VISION_USE_ONNX_SUBFUNCTIONS"],
         "lang_use_onnx_subfunctions": kwargs["LANG_USE_ONNX_SUBFUNCTIONS"],
         "split_model_io": kwargs.get("split_model_io", True),
+        # "enable_chunking": kwargs.get("enable_chunking", True),
+        # "prefill_only": kwargs.get("prefill_only", True),
     }
 
     if skip_vision:
