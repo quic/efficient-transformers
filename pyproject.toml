@@ -93,6 +93,7 @@ markers = [
     "diffusion_models: marks tests for diffusion models",
     "wan: marks tests for WAN model",
     "flux: marks tests for Flux model",
+    "qwen_image: marks tests for Qwen Image model",
     "regular: marks regular tests",
     "nightly: marks nightly tests",
     "multimodal: marks multimodal tests",
