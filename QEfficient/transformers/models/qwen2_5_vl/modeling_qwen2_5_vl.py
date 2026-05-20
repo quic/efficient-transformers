@@ -26,7 +26,6 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLTextModel,
     Qwen2_5_VLVisionAttention,
     Qwen2_5_VLVisionBlock,
-    apply_rotary_pos_emb_vision,
     repeat_kv,
     rotate_half,
 )
@@ -82,6 +81,19 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin):
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
 
+def qeff_apply_rotary_pos_emb_vision(
+    q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    orig_q_dtype = q.dtype
+    orig_k_dtype = k.dtype
+    q, k = q.float(), k.float()
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    q_embed = q_embed.to(orig_q_dtype)
+    k_embed = k_embed.to(orig_k_dtype)
+    return q_embed, k_embed
+
+
 class QEffQwen2_5_VLAttentionMask(nn.Module):
     """Builds the windowed attention mask used by the vision blocks.
 
@@ -92,22 +104,28 @@ class QEffQwen2_5_VLAttentionMask(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor, cu_seqlens: torch.Tensor) -> torch.Tensor:
         seq_len = hidden_states.shape[0]
-        device = hidden_states.device
         dtype = hidden_states.dtype
         min_val = torch.finfo(dtype).min
 
-        # Map each token position to its segment id in cu_seqlens.
-        # This avoids constructing an intermediate tensor of shape
-        # (num_blocks, seq_len, seq_len), which is a major RAM hotspot.
-        cu_seqlens = cu_seqlens.to(device=device)
-        token_idx = torch.arange(seq_len, device=device)
-        segment_ids = torch.bucketize(token_idx, cu_seqlens[1:], right=False)
+        # Create index grids
+        rows = torch.arange(seq_len).view(1, -1)
+        cols = torch.arange(seq_len).view(-1, 1)
 
-        same_segment = segment_ids.unsqueeze(0) == segment_ids.unsqueeze(1)
-        final_mask = torch.full((1, seq_len, seq_len), min_val, dtype=dtype, device=device)
-        final_mask.masked_fill_(same_segment.unsqueeze(0), 0)
+        # Prepare start and end indices
+        start = cu_seqlens[:-1].view(-1, 1, 1)
+        end = cu_seqlens[1:].view(-1, 1, 1)
 
-        return final_mask
+        # Create block masks using broadcasting
+        row_mask = (rows >= start) & (rows < end)
+        col_mask = (cols >= start) & (cols < end)
+        block_mask = row_mask & col_mask
+
+        # Combine all blocks into one mask
+        final_mask = torch.ones((seq_len, seq_len), dtype=dtype)
+        final_mask[block_mask.any(dim=0)] = 0
+        final_mask = torch.where(final_mask == 1.0, min_val, final_mask)
+
+        return final_mask.unsqueeze(0)
 
 
 class QEffQwen2_5_VLVisionAttention(Qwen2_5_VLVisionAttention):
@@ -139,7 +157,7 @@ class QEffQwen2_5_VLVisionAttention(Qwen2_5_VLVisionAttention):
             sin = emb.sin()
         else:
             cos, sin = position_embeddings
-        q, k = apply_rotary_pos_emb_vision(q, k, cos, sin)
+        q, k = qeff_apply_rotary_pos_emb_vision(q, k, cos, sin)
 
         q = q.transpose(0, 1)
         k = k.transpose(0, 1)
@@ -331,19 +349,13 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
 
         cu_seqlens = torch.cat([torch.tensor([0], dtype=cu_seqlens.dtype), cu_seqlens])
 
-        full_attention_mask = None
-        window_attention_mask = None
+        full_attention_mask = self.attention_mask_builder(hidden_states, cu_seqlens)
+        window_attention_mask = self.attention_mask_builder(hidden_states, cu_window_seqlens)
 
         for layer_num, blk in enumerate(self.blocks):
-            if layer_num == 2:
-                break
             if layer_num in self.fullatt_block_indexes:
-                if full_attention_mask is None:
-                    full_attention_mask = self.attention_mask_builder(hidden_states, cu_seqlens)
                 attention_mask_now = full_attention_mask
             else:
-                if window_attention_mask is None:
-                    window_attention_mask = self.attention_mask_builder(hidden_states, cu_window_seqlens)
                 attention_mask_now = window_attention_mask
 
             hidden_states = blk(
@@ -694,7 +706,6 @@ class QEffQwen2_5_VLModel(Qwen2_5_VLModel):
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
-        
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
