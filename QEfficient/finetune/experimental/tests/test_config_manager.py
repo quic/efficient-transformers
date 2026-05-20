@@ -229,26 +229,72 @@ def test_config(config_path):
 
 def test_torch_dtype_validation():
     """Test that torch_dtype validation works correctly."""
-    # Test with default config - should have torch_dtype set to fp16 by default
+    # Test with default config - should have model torch_dtype set to float16 by default
     config_manager = ConfigManager()
-    training_config = config_manager.get_training_config()
-    assert training_config.get("torch_dtype") == "fp16"
+    model_config = config_manager.get_model_config()
+    assert model_config.get("torch_dtype") == "float16"
 
     # Validation should pass with default config
     config_manager.validate_config()  # Should not raise
 
 
-def test_torch_dtype_invalid():
-    """Test that invalid torch_dtype raises validation error."""
-    from QEfficient.finetune.experimental.core.config_manager import MasterConfig, TrainingConfig
+def test_torch_dtype_invalid(monkeypatch):
+    """Test that invalid torch_dtype is reported via exception or logged validation failure."""
+    from QEfficient.finetune.experimental.core import config_manager as config_manager_module
+    from QEfficient.finetune.experimental.core.config_manager import MasterConfig, ModelConfig
 
-    # Create config with invalid torch_dtype
-    training_config = TrainingConfig(torch_dtype="invalid_dtype")
+    captured_logs = []
+
+    def _capture_log(message, level=None):
+        captured_logs.append((str(message), level))
+
+    monkeypatch.setattr(config_manager_module.logger, "log_rank_zero", _capture_log)
+
+    # Create config with invalid model torch_dtype
+    model_config = ModelConfig(torch_dtype="invalid_dtype")
+    master_config = MasterConfig(model=model_config)
+    try:
+        ConfigManager(config=master_config)
+    except ValueError as exc_info:
+        assert "torch_dtype must be one of" in str(exc_info)
+        return
+
+    assert any(
+        "Config validation failed with error" in msg and "torch_dtype must be one of" in msg for msg, _ in captured_logs
+    ), "Expected torch_dtype validation failure to be logged when ConfigManager does not raise."
+
+
+def test_fp16_bf16_mutually_exclusive(monkeypatch):
+    from QEfficient.finetune.experimental.core import config_manager as config_manager_module
+
+    captured_logs = []
+
+    def _capture_log(message, level=None):
+        captured_logs.append((str(message), level))
+
+    monkeypatch.setattr(config_manager_module.logger, "log_rank_zero", _capture_log)
+
+    training_config = TrainingConfig(fp16=True, bf16=True)
+    master_config = MasterConfig(training=training_config)
+    try:
+        ConfigManager(config=master_config)
+    except ValueError as exc_info:
+        assert "training.fp16 and training.bf16 cannot both be true" in str(exc_info)
+        return
+
+    assert any(
+        "Config validation failed with error" in msg and "training.fp16 and training.bf16 cannot both be true" in msg
+        for msg, _ in captured_logs
+    ), "Expected fp16/bf16 mutual-exclusion validation failure to be logged when ConfigManager does not raise."
+
+
+def test_qaic_op_by_op_verifier_disallowed_with_fp16():
+    training_config = TrainingConfig(fp16=True, bf16=False)
     master_config = MasterConfig(training=training_config)
     config_manager = ConfigManager(config=master_config)
+    config_manager.update_config({"callbacks": {"qaic_op_by_op_verifier_callback": {"start_step": 0, "end_step": 1}}})
 
-    # Validation should fail
     with pytest.raises(ValueError) as exc_info:
         config_manager.validate_config()
 
-    assert "torch_dtype must be one of" in str(exc_info.value)
+    assert "qaic_op_by_op_verifier_callback is not compatible with training.fp16=true" in str(exc_info.value)

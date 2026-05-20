@@ -31,17 +31,7 @@ def prepare_training_config(
     # Get training config as dict and create mutable copy to avoid mutating original
     training_config = dict(config_manager.get_training_config())
 
-    # Handle dtype conversion
-    # To do: (For Tanisha) Check if torch_dtype should rather be added directly in model_config only in config_manager.py
-
-    torch_dtype = training_config.pop("torch_dtype", None)
-    if torch_dtype is None:
-        raise ValueError("'torch_dtype' field is required in training configuration. Expected one of: ['fp16', 'bf16']")
-    training_config[torch_dtype] = True
     training_config["data_seed"] = training_config.get("seed")
-
-    # Restoring the "torch_dtype" after torch_dtype conversion using the saved value
-    training_config["torch_dtype"] = torch_dtype
 
     # Handle scheduler configuration
     scheduler_config = config_manager.get_scheduler_config()
