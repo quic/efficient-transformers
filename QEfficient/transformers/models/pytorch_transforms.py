@@ -363,12 +363,12 @@ from QEfficient.transformers.models.gemma4.modeling_gemma4 import (
     QEffGemma4CustomRMSNormAIC,
     QEffGemma4ForCausalLM,
     QEffGemma4ForConditionalGeneration,
-    QEffGemma4PrefillChunkedGemma4TextExperts,
     QEffGemma4TextAttention,
     QEffGemma4TextDecoderLayer,
     QEffGemma4TextExperts,
     QEffGemma4TextModel,
     QEffGemma4TextRouter,
+    QEffPrefillChunckedGemma4TextExperts,
 )
 from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2Attention,
