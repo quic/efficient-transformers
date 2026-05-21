@@ -107,6 +107,9 @@ class ApiRunner:
             :numpy.ndarray: Generated output tokens
         """
         model_inputs = self.input_handler.tokenizer(self.input_handler.prompt[0], return_tensors="pt")
+        # token_type_ids is returned by some PreTrainedTokenizerFast instances but is not a
+        # valid kwarg for decoder-only causal-LMs; drop it to avoid _validate_model_kwargs errors.
+        model_inputs.pop("token_type_ids", None)
 
         input_len = model_inputs["input_ids"].shape[-1]
 
