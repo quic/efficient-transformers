@@ -92,6 +92,7 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
     alpha: float,
     T: int,
     packed_chunk_size: int,
+    num_expert_chunks: Optional[int] = None,
 ) -> torch.Tensor:
     """Cumsum-scatter-gather-update expert helper for GPT-OSS NSP-blocked dispatch.
 
@@ -109,16 +110,26 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
         expert_out      : [num_nsp, T, H]         (accumulator, in-out)
     """
     batch_size, seq_len = T2Ei.shape
-    packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
+    # num_expert_chunks controls loop iteration count (unrolled at trace time).
+    # packed_chunk_size = seq_len // num_expert_chunks is computed via ONNX
+    # Shape+Div ops → DYNAMIC at runtime (scales with actual seq_len).
+    # Trace time: seq_len=32 → pcs=16 (valid slice)
+    # Runtime:    seq_len=512 → pcs=256 (correct size) ✅
+    if num_expert_chunks is not None:
+        packed_chunk_size = seq_len // num_expert_chunks
+    else:
+        packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
+        num_expert_chunks = seq_len // packed_chunk_size
 
     matched_idx = _build_matched_idx_from_cumsum(T2Ei)
     valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
-    row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
     rw_expanded = routing_weight.unsqueeze(-1)
 
-    for packed_start in range(0, seq_len, packed_chunk_size):
-        packed_stop = packed_start + packed_chunk_size
+    for chunk_idx in range(num_expert_chunks):
+        packed_start = chunk_idx * packed_chunk_size
+        packed_stop  = packed_start + packed_chunk_size if chunk_idx < num_expert_chunks - 1 else seq_len
+        chunk_size   = packed_stop - packed_start
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
         x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
@@ -137,13 +148,8 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
         expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
         updated_chunk = expert_out_chunk + down_chunk
 
-        rows_remaining = valid_rows - packed_start
-        chunk_valid_rows = torch.where(rows_remaining < 0, torch.zeros_like(rows_remaining), rows_remaining)
-        chunk_valid_rows = torch.where(
-            chunk_valid_rows > packed_chunk_size,
-            torch.ones_like(chunk_valid_rows) * packed_chunk_size,
-            chunk_valid_rows,
-        )
+        row_range = torch.arange(chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
+        chunk_valid_rows = torch.clamp(valid_rows - packed_start, min=0, max=chunk_size)
         updated_chunk = torch.where(
             (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
         )
@@ -153,7 +159,9 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
 
 
 class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
-    def _forward_expert_blocked(self, x: torch.Tensor, routing_weights: torch.Tensor) -> torch.Tensor:
+    def _forward_expert_blocked(
+        self, x: torch.Tensor, routing_weights: torch.Tensor, num_expert_chunks: Optional[int] = None
+    ) -> torch.Tensor:
         T, H = x.shape
         num_nsp = EXPERT_BLOCKING_NUM_NSP
         num_experts = self.experts.num_experts
@@ -191,6 +199,7 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
                 alpha=self.experts.alpha,
                 T=T,
                 packed_chunk_size=EXPERT_BLOCKING_PACKED_CHUNK_SIZE,
+                num_expert_chunks=num_expert_chunks,
             )
 
         return torch.einsum("ijk->jk", expert_out)
@@ -214,7 +223,10 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         routing_weights = masked_logits
 
         if self.experts.num_experts % EXPERT_BLOCKING_NUM_NSP == 0:
-            expert_out = self._forward_expert_blocked(x=hidden, routing_weights=routing_weights)
+            num_expert_chunks = getattr(self, "_num_expert_chunks", None)
+            expert_out = self._forward_expert_blocked(
+                x=hidden, routing_weights=routing_weights, num_expert_chunks=num_expert_chunks
+            )
             return expert_out.view(B, S, H), router_logits
 
         # ────────────────── allocate the output tensor ─────
