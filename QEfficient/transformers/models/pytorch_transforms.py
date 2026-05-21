@@ -839,6 +839,8 @@ class ReplicateKVHeadTransform:
             transformed = True
             for block in text_model.layers:
                 attn = getattr(block, "cross_attn", getattr(block, "self_attn", None))
+                if not attn:
+                    continue
                 attn.num_key_value_heads = new_kv_heads
                 head_dim = attn.kv_lora_rank + attn.qk_rope_head_dim
 

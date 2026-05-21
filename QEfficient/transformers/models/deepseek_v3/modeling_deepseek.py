@@ -1353,8 +1353,8 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             num_q_ffn_blocks = seq_len // packed_chunk_size
 
         matched_idx = _build_matched_idx_from_cumsum(T2Ei)
-        valid_rows = torch.einsum("bi->b", T2Ei.to(torch.int32)).unsqueeze(1)
-        row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
+        # valid_rows = torch.einsum("bi->b", T2Ei.to(torch.int32)).unsqueeze(1)
+        # row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
         x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
         rw_expanded = routing_weight.unsqueeze(-1)
 
@@ -1395,10 +1395,17 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             down_out = torch.bmm(hidden, down_proj_dq.transpose(1, 2).to(x_chunk.dtype))
 
             rw_chunk = CtxGatherFunc3DGeneralized.apply(rw_expanded, chunk_matched_idx)
-            current_expert_out = torch.where(chunk_matched_idx.unsqueeze(-1) != torch.iinfo(torch.int32).max, down_out, torch.zeros_like(down_out)) * rw_chunk
-            reorg_expert_out = torch.zeros_like(expert_out)
-            reorg_expert_out = CtxScatterFunc3DGeneralized.apply(reorg_expert_out, chunk_matched_idx, current_expert_out)
-            expert_out +=reorg_expert_out
+            old_expert_out = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
+            current_expert_out = (
+                torch.where(
+                    chunk_matched_idx.unsqueeze(-1) != torch.iinfo(torch.int32).max,
+                    down_out,
+                    torch.zeros_like(down_out),
+                )
+                * rw_chunk
+            )
+            updated_chunk = old_expert_out + current_expert_out
+            expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
 
         return expert_out
 

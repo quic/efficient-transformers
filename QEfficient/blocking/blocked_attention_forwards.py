@@ -1180,14 +1180,23 @@ def blocked_kv_par_mla_attention_forward(
     #                   → fold: Hkv = module.num_key_value_heads, n_rep = NQH // Hkv
     # absorption=False: each query head has its own K = ckv @ k_up_h
     #                   → cannot fold across heads; treat as Hkv=NQH, n_rep=1
+    print("using super fast attn")
     if mla_absorption.get("absorption", False):
         Hkv = getattr(module, "num_key_value_heads", 1)
         n_rep = NQH // Hkv
     else:
         Hkv = NQH
         n_rep = 1
-
     # ── Q fold: reshape + unsqueeze + expand (GQA style) ─────────────────────
+    rem_heads = NQH % Hkv
+    old_NQH = None
+    if rem_heads != 0:
+        n_rep = n_rep + 1
+        old_NQH = NQH
+        ideal_heads = n_rep * Hkv - NQH
+        pad_zeros = torch.zeros(B, ideal_heads, QL, D_abs)
+        query = torch.cat([query, pad_zeros], dim=1)
+        NQH = n_rep * Hkv
     q_fold = query.reshape(B, Hkv, QL * n_rep, D_abs)
     Q_5d = q_fold.unsqueeze(2).expand(B, Hkv, split, QL * n_rep, D_abs)
 
@@ -1315,7 +1324,10 @@ def blocked_kv_par_mla_attention_forward(
 
     # ── Unfold + v_up (GQA style) ─────────────────────────────────────────────
     # [B, Hkv, QL*n_rep, kv_lora_rank] → [B, NQH, QL, kv_lora_rank]
+    output = output.view(B, Hkv, n_rep, QL, kv_lora_rank)
     output = output.view(B, Hkv, n_rep, QL, kv_lora_rank).reshape(B, NQH, QL, kv_lora_rank)
+    if rem_heads != 0:
+        output = output[:, :old_NQH, :, :]
     attn_output = torch.matmul(output, per_head_v_up)  # [B, NQH, QL, v_head_dim]
     attn_output = attn_output.transpose(1, 2).contiguous()  # [B, QL, NQH, v_head_dim]
 
