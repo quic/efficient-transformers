@@ -149,7 +149,13 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
         updated_chunk = expert_out_chunk + down_chunk
 
         row_range = torch.arange(chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
-        chunk_valid_rows = torch.clamp(valid_rows - packed_start, min=0, max=chunk_size)
+        rows_remaining = valid_rows - packed_start
+        chunk_valid_rows = torch.where(rows_remaining < 0, torch.zeros_like(rows_remaining), rows_remaining)
+        chunk_valid_rows = torch.where(
+            chunk_valid_rows > chunk_size,
+            torch.ones_like(chunk_valid_rows) * chunk_size,
+            chunk_valid_rows,
+        )
         updated_chunk = torch.where(
             (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
         )
