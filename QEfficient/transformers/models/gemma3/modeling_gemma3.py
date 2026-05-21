@@ -971,7 +971,10 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         continuous_batching: bool = False,
         **kwargs,
     ):
-        prefill_seq_len = int(kwargs.get("prefill_seq_len", constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN))
+        prefill_seq_len = kwargs.get("prefill_seq_len")
+        if prefill_seq_len is None:
+            prefill_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        prefill_seq_len = int(prefill_seq_len)
         if vis_cfg := getattr(self.config, "vision_config", None):
             img_size = getattr(vis_cfg, "image_size", 896)
         else:
