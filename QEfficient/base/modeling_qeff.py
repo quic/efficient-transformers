@@ -640,20 +640,24 @@ class QEFFBaseModel(ABC):
 
         # Write custom_io.yaml file
         model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
-        pkv_in_bfloat16 = (custom_io is not None) and any(
-            ("past_" in key or "pixel_values" in key) and "bfloat16" in value for key, value in custom_io.items()
-        )
+
+        # Filter out bfloat16 entries from custom_io
+        if custom_io is not None:
+            custom_io = {k: v for k, v in custom_io.items() if "bfloat16" not in v}
+            if not custom_io:
+                custom_io = None
+
+        if model_in_bfloat16 and custom_io is None:
+            logger.warning(
+                "Model and Past KV types are both bfloat16. Custom IO list file will be ignored during compile."
+            )
+
         if custom_io is not None:
             custom_io_yaml = compile_dir / "custom_io.yaml"
             with open(custom_io_yaml, "w") as fp:
                 for io_name, dtype in custom_io.items():
                     fp.write(f" - IOName: {io_name}\n   Precision: {dtype}\n\n")
-            if model_in_bfloat16 and pkv_in_bfloat16:
-                logger.warning(
-                    "Model and Past KV types are both bfloat16. Custom IO list file will be ignored during compile."
-                )
-            else:
-                command.append(f"-custom-IO-list-file={custom_io_yaml}")
+            command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
