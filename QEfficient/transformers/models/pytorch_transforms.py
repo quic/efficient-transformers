@@ -237,6 +237,23 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperPositionalEmbedding,
 )
 
+# U6: seed_oss landed in transformers ~2025; guard against older pinned versions
+try:
+    from transformers.models.seed_oss.modeling_seed_oss import (
+        SeedOssAttention,
+        SeedOssDecoderLayer,
+        SeedOssForCausalLM,
+        SeedOssModel,
+        SeedOssRMSNorm,
+        SeedOssRotaryEmbedding,
+    )
+
+    _HAS_SEED_OSS = True
+except ImportError:
+    SeedOssAttention = SeedOssDecoderLayer = SeedOssForCausalLM = None
+    SeedOssModel = SeedOssRMSNorm = SeedOssRotaryEmbedding = None
+    _HAS_SEED_OSS = False
+
 from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform, ModuleMappingTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
@@ -506,6 +523,13 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
 )
+from QEfficient.transformers.models.seed_oss.modeling_seed_oss import (
+    QEffSeedOssAttention,
+    QEffSeedOssDecoderLayer,
+    QEffSeedOssForCausalLM,
+    QEffSeedOssModel,
+    QEffSeedOssRotaryEmbedding,
+)
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
 from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
@@ -734,6 +758,16 @@ class KVCacheTransform(ModuleMappingTransform):
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
         return model, transformed
+
+
+# U6: SeedOss is recent (~2025); register only when the HF classes are importable
+if _HAS_SEED_OSS:
+    KVCacheTransform._module_mapping[SeedOssAttention] = QEffSeedOssAttention
+    KVCacheTransform._module_mapping[SeedOssDecoderLayer] = QEffSeedOssDecoderLayer
+    KVCacheTransform._module_mapping[SeedOssModel] = QEffSeedOssModel
+    KVCacheTransform._module_mapping[SeedOssForCausalLM] = QEffSeedOssForCausalLM
+    KVCacheTransform._module_mapping[SeedOssRotaryEmbedding] = QEffSeedOssRotaryEmbedding
+    CustomOpsTransform._module_mapping[SeedOssRMSNorm] = CustomRMSNormAIC
 
 
 class PrefillOnlyTransform(ModuleMappingTransform):

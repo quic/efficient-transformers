@@ -40,6 +40,18 @@
       }
     },
     {
+      "model_name": "ByteDance-Seed/Seed-OSS-36B-Instruct",
+      "model_type": "seed_oss",
+      "additional_params": {
+        "num_hidden_layers": 1,
+        "hidden_size": 64,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "intermediate_size": 256,
+        "head_dim": 16
+      }
+    },
+    {
       "model_name": "Salesforce/codegen-350M-mono",
       "model_type": "codegen",
       "additional_params": {
