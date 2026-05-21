@@ -795,7 +795,10 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
         **kwargs,
     ):
         bs = 1
-        seq_len = int(kwargs.get("prefill_seq_len", ONNX_EXPORT_EXAMPLE_SEQ_LEN))
+        seq_len = kwargs.get("prefill_seq_len")
+        if seq_len is None:
+            seq_len = 32
+        seq_len = int(seq_len)
         encoder_seq_len = self.config.max_source_positions
         encoder_feature_count = self.config.num_mel_bins
         num_key_value_heads = self.config.decoder_attention_heads
