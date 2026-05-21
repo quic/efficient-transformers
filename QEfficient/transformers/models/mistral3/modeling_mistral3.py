@@ -277,8 +277,9 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         continuous_batching: bool = False,
         **kwargs,
     ):
+        prefill_seq_len = int(kwargs.get("prefill_seq_len", constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN))
         inputs_shapes = {}
-        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, prefill_seq_len)
         height = self.config.vision_config.image_size
         width = self.config.vision_config.image_size
         patch_size = self.config.vision_config.patch_size
@@ -294,7 +295,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         )
         inputs_shapes["position_ids"] = (
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
-            constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+            prefill_seq_len,
         )
         inputs_shapes["pixel_values"] = (
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
@@ -311,8 +312,8 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=self.config.torch_dtype)
         lang_inputs["position_ids"] = (
-            torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
-            .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+            torch.arange(prefill_seq_len, dtype=torch.int64)
+            .view(1, prefill_seq_len)
             .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
@@ -324,7 +325,7 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
             batch_size=fbs if continuous_batching else bs,
-            seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+            seq_len=prefill_seq_len,
         )
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.language_model.config.num_hidden_layers)]

@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import inspect
 import os
 import warnings
 from pathlib import Path
@@ -1327,23 +1328,36 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         List[str]
             A list containing the paths to the generated ONNX graph files for both components.
         """
-        # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
-        try:
-            inputs = self.model.get_dummy_inputs(
-                kv_offload=True,
-                continuous_batching=self.continuous_batching,
-                comp_ctx_lengths=self.comp_ctx_lengths_decode,
-            )
-            dynamic_axes = self.model.get_onnx_dynamic_axes(
-                kv_offload=True,
-                continuous_batching=self.continuous_batching,
-                comp_ctx_lengths=self.comp_ctx_lengths_decode,
-            )
-        except TypeError:
-            inputs = self.model.get_dummy_inputs(kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode)
-            dynamic_axes = self.model.get_onnx_dynamic_axes(
-                kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
-            )
+
+        # Backward compatibility:
+        # Newer VLMs accept `continuous_batching` / `prefill_seq_len`, while
+        # some legacy implementations still use older method signatures.
+        # Filter kwargs based on each model's callable signature so we avoid
+        # exception-driven fallbacks and preserve legacy defaults.
+        def _filter_supported_kwargs(fn, kwargs):
+            signature = inspect.signature(fn)
+            parameters = signature.parameters.values()
+            if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters):
+                return kwargs
+            return {key: value for key, value in kwargs.items() if key in signature.parameters}
+
+        dummy_inputs_kwargs = {
+            "kv_offload": True,
+            "continuous_batching": self.continuous_batching,
+            "comp_ctx_lengths": self.comp_ctx_lengths_decode,
+            "prefill_seq_len": prefill_seq_len,
+        }
+        dynamic_axes_kwargs = {
+            "kv_offload": True,
+            "continuous_batching": self.continuous_batching,
+            "comp_ctx_lengths": self.comp_ctx_lengths_decode,
+        }
+        inputs = self.model.get_dummy_inputs(
+            **_filter_supported_kwargs(self.model.get_dummy_inputs, dummy_inputs_kwargs)
+        )
+        dynamic_axes = self.model.get_onnx_dynamic_axes(
+            **_filter_supported_kwargs(self.model.get_onnx_dynamic_axes, dynamic_axes_kwargs)
+        )
         output_names = self.model.get_output_names(kv_offload=True)
         if self.lang_model.model.qaic_config is not None and self.lang_model.model.qaic_config.get(
             "include_sampler", False
