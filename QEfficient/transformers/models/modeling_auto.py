@@ -1208,6 +1208,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         str
             Path to the compiled QPC package for the language decoder.
         """
+        breakpoint()
         return self._compile(
             compile_dir=compile_dir,
             specializations=specializations,
@@ -1422,7 +1423,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
         self.model = model
         self.config = model.config
-
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, qaic_config=qaic_config, **kwargs)
         self.vision_model = (
             QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
@@ -1812,24 +1812,24 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if not skip_vision and self.vision_model is None:
             raise ValueError("Vision encoder wrapper is unavailable for this model. Use skip_vision=True.")
 
-        need_export_vision = (
-            not skip_vision
-            and self.vision_model is not None
-            and self.vision_model.onnx_path is None
-            and vision_onnx_path is None
+        # need_export_vision = (
+        #     not skip_vision
+        #     and self.vision_model is not None
+        #     and self.vision_model.onnx_path is None
+        #     and vision_onnx_path is None
+        # )
+        # need_export_lang = self.lang_model.onnx_path is None and lang_onnx_path is None
+        # if need_export_vision or need_export_lang:
+        self.export(
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            skip_vision=skip_vision,
+            vision_use_onnx_subfunctions=vision_use_onnx_subfunctions,
+            lang_use_onnx_subfunctions=lang_use_onnx_subfunctions,
+            skip_lang=skip_lang,
+            prefill_only=prefill_only,
+            enable_chunking=enable_chunking,
+            prefill_seq_len=prefill_seq_len,
         )
-        need_export_lang = self.lang_model.onnx_path is None and lang_onnx_path is None
-        if need_export_vision or need_export_lang:
-            self.export(
-                use_onnx_subfunctions=use_onnx_subfunctions,
-                skip_vision=skip_vision,
-                vision_use_onnx_subfunctions=vision_use_onnx_subfunctions,
-                lang_use_onnx_subfunctions=lang_use_onnx_subfunctions,
-                skip_lang=skip_lang,
-                prefill_only=prefill_only,
-                enable_chunking=enable_chunking,
-                prefill_seq_len=prefill_seq_len,
-            )
 
         # TODO this hould be removed once the continous batching is supported for all the models.
         if vision_node_precision_info is True:
