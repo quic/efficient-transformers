@@ -7,7 +7,13 @@
 
 import torch
 from transformers.quantizers.quantizer_awq import AwqQuantizer
-from transformers.utils.quantization_config import AwqBackendPackingMethod, AwqConfig, AWQLinearVersion
+from transformers.utils.quantization_config import AwqConfig
+
+try:
+    from transformers.utils.quantization_config import AwqBackend, AwqFormat
+except ImportError:
+    from transformers.utils.quantization_config import AwqBackendPackingMethod as AwqBackend
+    from transformers.utils.quantization_config import AWQLinearVersion as AwqFormat
 
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.quantizer_utils import (
@@ -24,17 +30,23 @@ class QEffAwqConfig(AwqConfig):
         Safety checker that arguments are correct
         """
 
-        if self.backend not in [AwqBackendPackingMethod.AUTOAWQ]:
+        auto_backend = getattr(AwqBackend, "AUTOAWQ", None)
+        if auto_backend is None:
+            auto_backend = getattr(AwqBackend, "AUTO", None)
+        if self.backend not in [auto_backend]:
             raise ValueError(
-                f"Only quantization backend {AwqBackendPackingMethod.AUTOAWQ} is supported - not recognized backend {self.backend}"
+                f"Only quantization backend {auto_backend} is supported - not recognized backend {self.backend}"
             )
 
-        if isinstance(self.version, str):
-            self.version = AWQLinearVersion.from_str(self.version)
-        if self.version not in [AWQLinearVersion.GEMM]:
-            raise ValueError(
-                f"Only {AWQLinearVersion.GEMM} version in supported - not recognized version {self.version}"
-            )
+        fmt = getattr(self, "format", getattr(self, "version", None))
+        if isinstance(fmt, str):
+            normalized_fmt = fmt.lower()
+        else:
+            normalized_fmt = getattr(fmt, "value", fmt)
+
+        gemm_format = getattr(AwqFormat, "GEMM", None)
+        if normalized_fmt != getattr(gemm_format, "value", gemm_format):
+            raise ValueError(f"Only {gemm_format} version in supported - not recognized version {fmt}")
 
         do_fuse = getattr(self, "do_fuse", None)
         fuse_max_seq_len = getattr(self, "fuse_max_seq_len", None)

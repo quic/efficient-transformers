@@ -1,0 +1,27 @@
+FP32NodeInstanceNames:
+  # First-pass Gemma4 text NPI for subfunction export on QAic.
+  # Targets the named decoder handoff tensors plus stable function-local
+  # attention/router/expert tensors observed in the tiny dense/moe graphs.
+  - /lm_head/MatMul_output_0
+  - /model/layers.0/QEffGemma4TextDecoderLayer.1_output_4
+  - /model/layers.1/QEffGemma4TextDecoderLayer_output_4
+  - /model/layers.1/QEffGemma4TextDecoderLayer.3_output_4
+  - /model/layers.2/QEffGemma4TextDecoderLayer.2_output_2
+  - /model/layers.3/QEffGemma4TextDecoderLayer_output_2
+  - /model/layers.3/QEffGemma4TextDecoderLayer.3_output_2
+  - attn_weights
+  - attn_weights.3
+  - attn_weights.7
+  - attn_weights.11
+  - attn_weights.15
+  - attn_weights.19
+  - attn_weights.23
+  - attn_weights.27
+  - top_k_weights
+  - top_k_weights.3
+  - top_k_weights.7
+  - top_k_weights.11
+  - experts_out
+  - experts_out.3
+  - experts_out.7
+  - experts_out.11
