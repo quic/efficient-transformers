@@ -69,6 +69,10 @@ class QEFFBaseModel(ABC):
         super().__init__()
         self.model = model
         self.config = model.config
+        _dtype = kwargs.get("torch_dtype") or kwargs.get("dtype")
+        if isinstance(_dtype, str):
+            _dtype = getattr(torch, _dtype, None)
+        self.torch_dtype = _dtype
         self.hash_params = create_model_params(self, **kwargs)
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
@@ -94,6 +98,10 @@ class QEFFBaseModel(ABC):
             warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
+
+        if self.config.torch_dtype == torch.bfloat16:
+            fallback_dtype = self.torch_dtype if self.torch_dtype not in (None, torch.bfloat16) else torch.float16
+            logger.warning(f"BFloat16 dtype is not yet supported; converting to {fallback_dtype} precision!")
 
     def _normalize_torch_dtype(self):
         """
