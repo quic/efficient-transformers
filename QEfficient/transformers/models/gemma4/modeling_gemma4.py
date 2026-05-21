@@ -179,7 +179,7 @@ class QEffGemma4TextExperts(Gemma4TextExperts):
 
         down_proj_t = self.down_proj.transpose(1, 2)
         experts_out = torch.matmul(activated.permute(1, 0, 2), down_proj_t).permute(1, 0, 2)
-        # breakpoint()
+        breakpoint()
         expert_weights = torch.zeros(
             hidden_states.shape[0],
             self.num_experts,
@@ -251,7 +251,7 @@ class QEffPrefillChunckedGemma4TextExperts(Gemma4TextExperts):
         )
         expert_weights.scatter_add_(1, top_k_index, top_k_weights)
         expert_weights = expert_weights.to(x.dtype)
-
+        breakpoint()
         # Accumulate expert outputs
         if self.num_experts % EXPERT_BLOCKING_NUM_NSP == 0:
             out = self._forward_expert_blocked(x=x, routing_weights=expert_weights)
