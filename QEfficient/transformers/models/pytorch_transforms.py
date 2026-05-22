@@ -203,7 +203,6 @@ from transformers.models.qwen3.modeling_qwen3 import (
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5Attention,
     Qwen3_5DecoderLayer,
-    Qwen3_5DynamicCache,
     Qwen3_5ForConditionalGeneration,
     Qwen3_5GatedDeltaNet,
     Qwen3_5Model,
@@ -214,7 +213,6 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     Qwen3_5MoeAttention,
     Qwen3_5MoeDecoderLayer,
-    Qwen3_5MoeDynamicCache,
     Qwen3_5MoeForCausalLM,
     Qwen3_5MoeForConditionalGeneration,
     Qwen3_5MoeGatedDeltaNet,
@@ -522,7 +520,6 @@ from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
 from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import (
     QEffQwen3_5Attention,
     QEffQwen3_5DecoderLayer,
-    QEffQwen3_5DynamicCache,
     QEffQwen3_5ForConditionalGeneration,
     QEffQwen3_5GatedDeltaNet,
     QEffQwen3_5GatedDeltaNetCustomRMSNormAIC,
@@ -533,7 +530,6 @@ from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
     QEffQwen3_5MoeAttention,
     QEffQwen3_5MoeDecoderLayer,
-    QEffQwen3_5MoeDynamicCache,
     QEffQwen3_5MoeForCausalLM,
     QEffQwen3_5MoeForConditionalGeneration,
     QEffQwen3_5MoeGatedDeltaNet,
@@ -810,7 +806,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3Model: QEffQwen3Model,
         Qwen3ForCausalLM: QEffQwen3ForCausalLM,
         # Qwen3_5
-        Qwen3_5DynamicCache: QEffQwen3_5DynamicCache,
         Qwen3_5GatedDeltaNet: QEffQwen3_5GatedDeltaNet,
         Qwen3_5DecoderLayer: QEffQwen3_5DecoderLayer,
         Qwen3_5TextModel: QEffQwen3_5TextModel,
@@ -818,7 +813,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3_5ForConditionalGeneration: QEffQwen3_5ForConditionalGeneration,
         Qwen3_5Attention: QEffQwen3_5Attention,
         # Qwen3_5_Moe
-        Qwen3_5MoeDynamicCache: QEffQwen3_5MoeDynamicCache,
         Qwen3_5MoeGatedDeltaNet: QEffQwen3_5MoeGatedDeltaNet,
         Qwen3_5MoeDecoderLayer: QEffQwen3_5MoeDecoderLayer,
         Qwen3_5MoeTextModel: QEffQwen3_5MoeTextModel,

@@ -168,8 +168,7 @@ class QEffQwen3_5MoeDynamicCache(Cache):
             raise ValueError(f"Layer {layer_idx} is not a full_attention layer")
         return layer.write_only(key_states, value_states, cache_kwargs)
 
-    @property
-    def has_previous_state(self) -> bool:
+    def has_previous_state(self, layer_idx=None) -> bool:
         if self.last_linear_layer is None:
             return False
         return self.conv_states[self.last_linear_layer] is not None
@@ -910,7 +909,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         causal_mask = _create_causal_mask(
             position_ids=position_ids[0], target_length=target_length, sliding_window=None
         )
-        linear_attn_mask = self._update_linear_attn_mask(attention_mask, cache_position)
+        linear_attn_mask = self._update_linear_attn_mask(attention_mask, past_key_values)
 
         hidden_states = inputs_embeds
 
