@@ -43,15 +43,18 @@ def main():
 
     # Load tokenizer and model
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, num_hidden_layers=2)
 
     if args.compare_non_blocking:
+        model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
+
+        model._offload_model_weights(True)
+
         # Compile the model
         qpc_path = model.compile(
             prefill_seq_len=args.prefill_seq_len,
             ctx_len=args.ctx_len,
             num_cores=args.num_cores,
-            num_devices=1,
+            num_devices=16,
         )
         print(f"Model compiled to: {qpc_path}")
 
@@ -66,15 +69,17 @@ def main():
         print(f"Generated: {exec_info.generated_texts[0]}")
 
     # setup qaic config to enable blocking, ensure 4 or more device ids are passed
-    qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode, "num_q_blocks": 2}
+    qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode, "kv_blocking_headpar_split": 0}
     model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
+
+    # model_blocked._offload_model_weights(True)
 
     # Compile the model
     qpc_path_blocked = model_blocked.compile(
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
-        num_devices=1,
+        num_devices=16,
         qaic_config=qaic_config,
     )
     print(f"Model compiled to: {qpc_path_blocked}")
