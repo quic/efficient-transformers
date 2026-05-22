@@ -42,6 +42,14 @@ def _infer_data_bytes(compile_config: Dict[str, Any]) -> int:
 
 def _normalize_attention_mode(raw_mode: str) -> str:
     mode = raw_mode.lower()
+    if "h" in mode and "q" in mode and "kv" in mode:
+        return "hqkv"
+    if "h" in mode and "q" in mode:
+        return "hq"
+    if "h" in mode and "kv" in mode:
+        return "hkv"
+    if "h" in mode:
+        return "h"
     if "q" in mode and "kv" in mode:
         return "qkv"
     if "kv" in mode:
@@ -61,6 +69,10 @@ def _resolve_effective_blocking_mode(attention_cfg: Dict[str, Any], requested_mo
 
     if head_block_size > 1 and num_q_blocks == 1 and num_kv_blocks == 1:
         return "h"
+    if head_block_size > 1 and num_q_blocks > 1:
+        return "hq"
+    if head_block_size > 1 and num_kv_blocks > 1:
+        return "hkv"
     if head_block_size > 1:
         return "hqkv"
     if num_q_blocks > 1 and num_kv_blocks > 1:
@@ -215,16 +227,20 @@ def attention_configurator(
         best_config["q_kv_ratio"] = q_kv_ratio
         best_config["vtcm_footprint"] = footprint
 
+    kv_metrics = []
+    for num_kv_blocks in num_kv_blocks_list:
+        kv_cl_per_nsp = math.ceil(ctx_len / num_kv_blocks)
+        kv_size_per_nsp = num_heads_per_iter * bs * kv_cl_per_nsp * head_dim * data_bytes
+        kv_metrics.append((num_kv_blocks, kv_cl_per_nsp, kv_size_per_nsp))
+
     for num_q_blocks in num_q_blocks_list:
-        for num_kv_blocks in num_kv_blocks_list:
-            q_sl_per_nsp = math.ceil(seq_len / num_nsps / num_q_blocks)
-            q_size_per_nsp = num_heads_per_iter * bs * q_sl_per_nsp * head_dim * data_bytes
+        q_sl_per_nsp = math.ceil(seq_len / num_nsps / num_q_blocks)
+        q_size_per_nsp = num_heads_per_iter * bs * q_sl_per_nsp * head_dim * data_bytes
 
-            kv_cl_per_nsp = math.ceil(ctx_len / num_kv_blocks)
-            kv_size_per_nsp = num_heads_per_iter * bs * kv_cl_per_nsp * head_dim * data_bytes
-
+        for num_kv_blocks, kv_cl_per_nsp, kv_size_per_nsp in kv_metrics:
             qk_size_per_nsp = num_heads_per_iter * bs * q_sl_per_nsp * kv_cl_per_nsp * data_bytes
             vtcm_footprint = q_size_per_nsp + kv_size_per_nsp + qk_size_per_nsp
+
             q_kv_ratio = max(q_size_per_nsp / kv_size_per_nsp, kv_size_per_nsp / q_size_per_nsp)
             num_total_blocks = num_q_blocks * num_kv_blocks
 
@@ -295,7 +311,7 @@ def build_transformer_blocking_config(
     effective_mode = _resolve_effective_blocking_mode(attention_cfg, resolved_mode)
 
     return AttentionBlockingConfig(
-        mode=effective_mode,
+        mode=BlockingMode(effective_mode),
         num_kv_blocks=attention_cfg["num_kv_blocks"],
         num_q_blocks=attention_cfg["num_q_blocks"],
         head_block_size=attention_cfg["head_block_size"],

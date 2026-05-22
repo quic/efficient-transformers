@@ -64,7 +64,6 @@ def check_blockedKV_onnx_function_count_with_subfunction(
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_full_blockedKV_onnx_function_count_with_subfunction(model_name, manual_cleanup):
-
     # Keep model small for test runtime, and avoid CB path (not needed for function count).
     check_blockedKV_onnx_function_count_with_subfunction(model_name, manual_cleanup=manual_cleanup)
 
@@ -73,7 +72,6 @@ def test_full_blockedKV_onnx_function_count_with_subfunction(model_name, manual_
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_few_blockedKV_onnx_function_count_with_subfunction(model_name, manual_cleanup):
-
     # Keep model small for test runtime, and avoid CB path (not needed for function count).
     n_layer = get_custom_n_layers(model_name)
 
@@ -84,7 +82,6 @@ def test_few_blockedKV_onnx_function_count_with_subfunction(model_name, manual_c
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_dummy_blockedKV_onnx_function_count_with_subfunction(model_name, manual_cleanup):
-
     # Keep model small for test runtime, and avoid CB path (not needed for function count).
     hf_config = AutoConfig.from_pretrained(
         model_name,

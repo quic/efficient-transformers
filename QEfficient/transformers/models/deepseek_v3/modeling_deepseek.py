@@ -81,8 +81,15 @@ class QEffDeepseekV3CustomRMSNormAIC(nn.Module):
 
 
 class DeepseekV3RotaryEmbedding(nn.Module):
-    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
+    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None, dtype=torch.get_default_dtype()):
         super().__init__()
+
+        if dtype is None:
+            dtype = torch.get_default_dtype()
+        if not isinstance(dtype, torch.dtype):
+            raise TypeError(
+                f"DeepseekV3RotaryEmbedding: dtype must be a torch.dtype, got {type(dtype).__name__} with value {dtype}"
+            )
 
         self.dim = dim
         self.max_position_embeddings = max_position_embeddings
@@ -94,7 +101,7 @@ class DeepseekV3RotaryEmbedding(nn.Module):
         self._set_cos_sin_cache(
             seq_len=max_position_embeddings,
             device=self.inv_freq.device,
-            dtype=torch.get_default_dtype(),
+            dtype=dtype,
         )
         self.max_seq_len_cached = None
 
@@ -122,6 +129,7 @@ class DeepseekV3RotaryEmbedding(nn.Module):
 class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
     def __init__(
         self,
+        dtype,
         dim,
         max_position_embeddings=2048,
         base=10000,
@@ -139,7 +147,7 @@ class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
         self.beta_slow = beta_slow
         self.mscale = mscale
         self.mscale_all_dim = mscale_all_dim
-        super().__init__(dim, max_position_embeddings, base, device)
+        super().__init__(dim, max_position_embeddings, base, device, dtype)
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
@@ -470,12 +478,7 @@ class QEffDeepseekV3Attention(nn.Module):
             k_pe_expanded = k_pe_expanded[:, :q_heads, :, :]
         else:
             kva_expanded = kva
-            num_heads_to_repeat = math.ceil(q_heads / k_heads)
-            k_pe_expanded = (
-                k_pe.unsqueeze(2)
-                .expand(-1, -1, num_heads_to_repeat, -1, -1)
-                .reshape(bsz, num_heads_to_repeat * k_heads, -1, self.config.qk_rope_head_dim)
-            )
+            k_pe_expanded = k_pe
 
         v_up_per_head = self.v_up.squeeze(0).view(self.kv_lora_rank, self.num_heads, self.v_head_dim).permute(1, 0, 2)
         value_states = torch.matmul(kva_expanded, v_up_per_head)
@@ -500,6 +503,12 @@ class QEffDeepseekV3Attention(nn.Module):
                 self.k_up.squeeze(0).view(self.kv_lora_rank, self.num_heads, self.qk_nope_head_dim).permute(1, 0, 2)
             )
             k_nope = torch.matmul(kva_expanded, k_up_per_head)
+            if k_heads <= 1:
+                k_pe_expanded = (
+                    k_pe_expanded.unsqueeze(1)
+                    .expand(-1, self.num_heads, -1, -1, -1)
+                    .reshape(bsz, self.num_heads, -1, self.qk_rope_head_dim)
+                )
             key_states = torch.cat((k_nope, k_pe_expanded), dim=-1)
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
@@ -986,6 +995,7 @@ class QEffDeepseekV3Model(nn.Module):
             if key in self.config.rope_scaling
         }
         self.rotary_emb = DeepseekV3YarnRotaryEmbedding(
+            self.config.torch_dtype,
             self.config.qk_rope_head_dim,
             max_position_embeddings=MAX_POSITION_EMBEDDINGS,
             scaling_factor=scaling_factor,

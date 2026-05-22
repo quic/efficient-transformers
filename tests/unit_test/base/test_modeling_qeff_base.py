@@ -180,6 +180,14 @@ class TestQEFFBaseModelWeightOffloading:
 
 
 @pytest.mark.cpu_only
+def _get_any_attn_blocking_config(model):
+    for m in model.modules():
+        if hasattr(m, "attn_blocking_config"):
+            return m.attn_blocking_config
+    return None
+
+
+@pytest.mark.cpu_only
 class TestQEFFBaseModelHashParams:
     """Test hash_params initialization."""
 
@@ -202,6 +210,64 @@ class TestQEFFBaseModelHashParams:
         qeff = QEFFAutoModelForCausalLM(model, pretrained_model_name_or_path="test-model")
         assert "pretrained_model_name_or_path" in qeff.hash_params
         assert qeff.hash_params["pretrained_model_name_or_path"] == "test-model"
+
+
+@pytest.mark.cpu_only
+class TestQEFFBaseModelTransformBlocking:
+    """Tests for QEFFBaseModel.transform() attention blocking behavior."""
+
+    @pytest.mark.parametrize("blocking_mode", ["kv", "q", "qkv", "hq", "hkv", "hqkv"])
+    def test_transform_enable_blocking_runs_auto_configurator(self, blocking_mode):
+        # Use a slightly larger head count here to make it possible for "h" mode to result in head blocking
+        # when num_devices > 1.
+        cfg = LlamaConfig(
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            hidden_size=64,
+            intermediate_size=128,
+            vocab_size=VOCAB_SIZE,
+            max_position_embeddings=CTX_LEN,
+        )
+        model = LlamaForCausalLM(cfg).eval()
+        qeff = QEFFAutoModelForCausalLM(model)
+
+        high_cl = 131072
+        qaic_config = {
+            "enable_blocking": True,
+            "blocking_mode": blocking_mode,
+            # Do not specify num_kv_blocks/num_q_blocks/head_block_size, so auto configurator is used.
+        }
+
+        qeff.transform(
+            ctx_len=high_cl,
+            seq_len=high_cl,
+            bs=1,
+            num_devices=2,
+            qaic_config=qaic_config,
+            aic_num_cores=16,
+            convert_to_fp16=False,
+        )
+
+        cfg = _get_any_attn_blocking_config(qeff.model)
+        assert cfg is not None, (
+            "Expected BlockingAttentionTransform to attach attn_blocking_config to attention modules"
+        )
+
+        decided_mode = cfg.mode.value
+        requested_mode = blocking_mode
+
+        # If the configurator decides blocking is not needed, decided_mode can be "".
+        # Otherwise, the decided mode should be a substring of the requested mode.
+        assert decided_mode in requested_mode
+
+        # For each kind of blocking that was decided, ensure it actually enabled >1 blocks.
+        if "kv" in decided_mode:
+            assert cfg.num_kv_blocks is not None and cfg.num_kv_blocks > 1
+        if "q" in decided_mode:
+            assert cfg.num_q_blocks is not None and cfg.num_q_blocks > 1
+        if "h" in decided_mode:
+            assert cfg.head_block_size is not None and cfg.head_block_size > 1
 
 
 @pytest.mark.cpu_only

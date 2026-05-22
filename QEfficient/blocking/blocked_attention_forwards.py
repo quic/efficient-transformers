@@ -931,6 +931,12 @@ def blocked_kv_mla_attention_forward(
             )  # [1, 64, q_len, kv_block_size] X [1, 1, kv_block_size, 512] -> [1, 64, q_len, 512]
         else:
             knope = torch.matmul(compressed_kv_block, per_head_k_up_normal)
+            if k_heads == 1:
+                k_pe_block = (
+                    k_pe_block.unsqueeze(1)
+                    .expand(-1, num_heads, -1, -1, -1)
+                    .reshape(batch_size, num_heads, -1, module.config.qk_rope_head_dim)
+                )
             krope_nope = torch.cat((knope, k_pe_block), dim=-1)
             attn_weights_block = torch.matmul(query, krope_nope.transpose(2, 3)) * scaling
             attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
