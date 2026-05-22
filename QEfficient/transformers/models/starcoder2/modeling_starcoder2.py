@@ -110,7 +110,7 @@ class QEffStarcoder2Attention(Starcoder2Attention):
                 past_seen_tokens=past_seen_tokens,
             )
         else:
-            key_states, value_states, _ = past_key_value_update(
+            key_states, value_states, attention_mask, _ = past_key_value_update(
                 module=self,
                 key=key_states,
                 value=value_states,

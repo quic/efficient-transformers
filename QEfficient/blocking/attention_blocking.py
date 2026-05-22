@@ -94,7 +94,7 @@ def past_key_value_update(
             attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
             cache_kwargs["CCL"] = attention_mask.shape[-1]
         key, value = past_key_value.update(key, value, module.layer_idx, cache_kwargs)
-    return key, value, cache_kwargs
+    return key, value, attention_mask, cache_kwargs
 
 
 def generic_blocked_attention_interface(
@@ -138,7 +138,7 @@ def generic_blocked_attention_interface(
                 )
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
         else:
-            key, value, cache_kwargs = past_key_value_update(
+            key, value, attention_mask, cache_kwargs = past_key_value_update(
                 module=module,
                 key=key,
                 value=value,
