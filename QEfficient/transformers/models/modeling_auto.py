@@ -3059,6 +3059,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         str
             Path to the generated ONNX graph file.
         """
+        if kwargs.pop("decode_only", False):
+            raise NotImplementedError(
+                "decode_only=True is not supported by QEFFAutoModelForCausalLM.export(). "
+                "Use the default non-prefill export path for standard CausalLM decode graphs."
+            )
+
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
@@ -3076,6 +3082,15 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
         enable_chunking = kwargs.get("enable_chunking", False)
+        if (
+            kwargs.get("retain_full_kv", False)
+            and self.model.config.model_type not in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH
+        ):
+            logger.warning(
+                "retain_full_kv=True is only supported for specialized disaggregated serving models "
+                f"{sorted(SPECIALIZED_DISAGG_SERVING_MODEL_ARCH)}; ignoring it for model_type "
+                f"'{self.model.config.model_type}'."
+            )
 
         # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
@@ -3307,7 +3322,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if full_batch_size:
             spec["full_batch_exec_size"] = exec_batch_size
         result = {k: v for k, v in spec.items() if v is not None}
-        result["_graph_name"] = "Prefill"
+        result["_graph_name"] = "Decode" if prefill_seq_len == 1 and kwargs.get("prefill_only") is False else "Prefill"
         return result
 
     def build_decode_specialization(
@@ -3544,6 +3559,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         ):
             raise ValueError("Currently, sampler does not support `num_speculative_tokens` > 0.")
 
+        if retain_full_kv and self.model.config.model_type not in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
+            logger.warning(
+                "retain_full_kv=True is only supported for specialized disaggregated serving models "
+                f"{sorted(SPECIALIZED_DISAGG_SERVING_MODEL_ARCH)}; ignoring it for model_type "
+                f"'{self.model.config.model_type}'."
+            )
+            retain_full_kv = False
+
         # --- Specializations ---
         specializations = []
         if prefill_only is None or prefill_only or prefill_seq_len == 1:
@@ -3560,6 +3583,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                             batch_size=batch_size,
                             kv_cache_batch_size=kv_cache_batch_size,
                             full_batch_size=full_batch_size,
+                            prefill_only=prefill_only,
                         )
                     )
 
