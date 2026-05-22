@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 from typing import Any, Callable, Dict, Optional, Tuple
+import copy
 
 import torch
 from torch import nn
@@ -45,7 +46,7 @@ def _normalize_int(value: Optional[torch.Tensor | int]) -> int:
 def _get_headpar_split(configured_split: int, num_kv_groups: int) -> int:
     # configured split = 0 used as the case to default to num_kv_groups, so whenever kv_blocking_headpar_split is passed, we know to do headpar
     if configured_split == 0:
-        configured_split = None
+        configured_split = num_kv_groups
     return max(1, int(configured_split if configured_split is not None else num_kv_groups))
 
 

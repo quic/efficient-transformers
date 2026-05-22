@@ -3756,11 +3756,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # increase seq_len if using a larger number of blocks
         if self.hash_params.get("blocking_kwargs", None):
             max_blocks = -1
-            for num_blocks in self.hash_params.get("blocking_kwargs").__dict__.values():
+            for blocking_param, num_blocks in self.hash_params.get("blocking_kwargs").__dict__.items():
+                if "head_block_size" in blocking_param:
+                    continue
                 if isinstance(num_blocks, int):
                     max_blocks = max(max_blocks, num_blocks)
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
+            seq_len = 192 # for head par export, figure out a better way than hardcoding this
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         kv_cache_shape = get_padding_shape_from_config(
