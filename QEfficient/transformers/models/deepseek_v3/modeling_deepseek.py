@@ -1356,7 +1356,6 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         # valid_rows = torch.einsum("bi->b", T2Ei.to(torch.int32)).unsqueeze(1)
         # row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
         x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
-        rw_expanded = routing_weight.unsqueeze(-1)
 
         for chunk_idx in range(num_q_ffn_blocks):
             print("executing chunk", chunk_idx)
@@ -1394,7 +1393,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             hidden = self.act_fn(gate_out) * up_out
             down_out = torch.bmm(hidden, down_proj_dq.transpose(1, 2).to(x_chunk.dtype))
 
-            rw_chunk = CtxGatherFunc3DGeneralized.apply(rw_expanded, chunk_matched_idx)
+            rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
             old_expert_out = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
             current_expert_out = (
                 torch.where(
@@ -1420,7 +1419,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             )
         local_experts = len(self.experts) // num_nsp
         rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-
+        routing_weights_unsqueezed = rw.unsqueeze(-1)
         expert_out = x.new_zeros((num_nsp, T, H))
 
         local_gate_qweight = (
@@ -1482,11 +1481,9 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             .transpose(0, 1)
             .contiguous()
         )
-
         for slot in range(local_experts):
             print(f"executing slot {slot}")
-            routing_weight = rw[:, slot, :]
-            T2Ei = routing_weight > 0
+            T2Ei = rw[:, slot, :] > 0
             expert_out = self._cumsum_scatter_gather_update_expert_blocked(
                 x=x,
                 T2Ei=T2Ei,
@@ -1499,7 +1496,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
                 slot_down_qweight=local_down_qweight[:, slot],
                 slot_down_scales=local_down_scales[:, slot],
                 slot_down_qzeros=local_down_qzeros[:, slot],
-                routing_weight=routing_weight,
+                routing_weight=routing_weights_unsqueezed[:, slot],
                 expert_out=expert_out,
                 packed_chunk_size=EXPERT_BLOCKING_PACKED_CHUNK_SIZE,
                 num_q_ffn_blocks=num_q_ffn_blocks,

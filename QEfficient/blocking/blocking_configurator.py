@@ -362,7 +362,7 @@ def build_transformer_blocking_config_for_transform(
         else:
             blocking_config.mode = BlockingMode(mode_from_config)
 
-        if qaic_config.get("skip_kv", False) and enable_blocking:
+        if qaic_config.get("skip_kv", True) and enable_blocking:
             blocking_config.skip_kv = qaic_config.get("skip_kv")
 
     return blocking_config

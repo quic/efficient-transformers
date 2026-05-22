@@ -13,8 +13,9 @@ from transformers import AutoConfig, AutoTokenizer
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 import QEfficient
-from QEfficient import QEFFAutoModelForCausalLM
 from compile_full_model import run_full_model_compile
+from QEfficient import QEFFAutoModelForCausalLM
+
 
 def _build_qaic_config(
     mla_absorption_cfg: dict,
@@ -24,6 +25,7 @@ def _build_qaic_config(
     num_kv_blocks: int,
     head_block_size: int,
     par_num_split: Optional[int],
+    skip_kv: Optional[bool] = True,
 ):
     return {
         "mla_absorption": mla_absorption_cfg,
@@ -33,6 +35,7 @@ def _build_qaic_config(
         "num_kv_blocks": num_kv_blocks,
         "head_block_size": head_block_size,
         "par_num_split": par_num_split,
+        "skip_kv": skip_kv,
     }
 
 
@@ -182,7 +185,9 @@ def _resolve_export_root(onnx_path: Path) -> Path:
 
 def _parse_args():
     parser = argparse.ArgumentParser(description="Compile Kimi text-only model layer windows with QEfficient.")
-    parser.add_argument("--model_path", dest="model_path", type=Path, required=True, help="Path to the downloaded Kimi model")
+    parser.add_argument(
+        "--model_path", dest="model_path", type=Path, required=True, help="Path to the downloaded Kimi model"
+    )
     parser.add_argument("--aic_hw_version", dest="aic_hw_version", type=str, default="ai100")
     parser.add_argument("--window_size", dest="window_size", type=int, default=1)
     parser.add_argument("--layerwise_mode", dest="layerwise_mode", type=str, default="single_qpc")
@@ -192,7 +197,9 @@ def _parse_args():
     parser.add_argument("--seq_len", type=int, default=1, help="Prefill/compile sequence length.")
     parser.add_argument("--ctx_len", type=int, default=128, help="Context length for compile stages.")
     parser.add_argument("--num_cores", type=int, default=16, help="Number of accelerator cores.")
-    parser.add_argument("--mxfp6", dest="mxfp6", action="store_true", default=True, help="Enable mxfp6 compile flag (default: True)")
+    parser.add_argument(
+        "--mxfp6", dest="mxfp6", action="store_true", default=True, help="Enable mxfp6 compile flag (default: True)"
+    )
     parser.add_argument("--no-mxfp6", dest="mxfp6", action="store_false", help="Disable mxfp6 compile flag")
     parser.add_argument(
         "--enable_blocking",
@@ -238,6 +245,13 @@ def _parse_args():
         help="Enable or disable MLA absorption.",
     )
     parser.add_argument(
+        "--no_skip_kv",
+        dest="no_skip_kv",
+        action="store_true",
+        default=False,
+        help="Enable or disable MLA absorption.",
+    )
+    parser.add_argument(
         "--online",
         dest="online",
         action="store_true",
@@ -277,7 +291,7 @@ def main():
     num_kv_blocks = args.num_kv_blocks
     head_block_size = args.head_block_size
     par_num_split = args.par_num_split
-    
+
     mla_absorption_cfg = {
         "cache_compressed": True,
         "absorption": args.absorption,
@@ -293,7 +307,7 @@ def main():
     window_size = args.window_size
     layerwise_mode = args.layerwise_mode
     total_layers = resolved_total_layers
-    
+
     windows = _build_layer_windows(total_layers=total_layers, window_size=window_size)
     first_onnx_path = None
     for start, end in windows:
@@ -308,7 +322,6 @@ def main():
         QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers = total_layers
         model, tokenizer = load_text_only_kimi(model_path, num_hidden_layers=end - start)
         model.config.num_hidden_layers = total_layers
-        
         qaic_config = _build_qaic_config(
             mla_absorption_cfg=mla_absorption_cfg,
             enable_blocking=enable_blocking,
@@ -317,6 +330,7 @@ def main():
             num_kv_blocks=num_kv_blocks,
             head_block_size=head_block_size,
             par_num_split=par_num_split,
+            skip_kv=not args.no_skip_kv,
         )
         qeff_model = QEFFAutoModelForCausalLM(
             model, num_kv_heads_repeat=num_kv_heads_repeat, qaic_config=qaic_config, torch_dtype=torch.float16

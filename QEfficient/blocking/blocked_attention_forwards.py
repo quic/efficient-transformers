@@ -1286,6 +1286,7 @@ def blocked_kv_par_mla_attention_forward(
         # Causal mask: offsets within block vs query position
         off = kv_offsets if T_h == T_h_nom else kv_offsets[:, :, :, :, :T_h]
         causal_mask = off > (position_ids - start_index)[:, None, None, :, None]
+        causal_mask = causal_mask.repeat(1, 1, 1, n_rep, 1)
         attn = attn.masked_fill(causal_mask, -3.0e4)
 
         m_blk = attn.max(dim=-1).values  # [B, Hkv, split, QL*n_rep]
