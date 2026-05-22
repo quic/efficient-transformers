@@ -85,13 +85,13 @@ def main() -> None:
     model_source = resolve_model_source(args.model_name)
 
     # 1) Load config + processor + QEff model through public QEff/HF APIs.
-    config = AutoConfig.from_pretrained(model_source, trust_remote_code=True)
+    config = AutoConfig.from_pretrained(model_source, trust_remote_code=True, padding=True)
     if hasattr(config, "use_cache"):
         config.use_cache = True
     if hasattr(config, "text_config") and hasattr(config.text_config, "use_cache"):
         config.text_config.use_cache = True
 
-    processor = AutoProcessor.from_pretrained(model_source, trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(model_source, trust_remote_code=True, padding=True)
     model = QEFFAutoModelForImageTextToText.from_pretrained(
         model_source,
         kv_offload=True,
