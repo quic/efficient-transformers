@@ -829,7 +829,7 @@ class QEffTextGenerationBase:
 
         if self.comp_ctx_lengths_prefill is not None:
             self.list_of_comp_ctx_lengths_prefill = [
-                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_prefill
+                np.zeros(length, dtype=np.int64) for length in self.comp_ctx_lengths_prefill
             ]
             prefill_ccl_id = 0
             inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
@@ -862,7 +862,7 @@ class QEffTextGenerationBase:
 
     def initialize_ccl(self, decode_inputs):
         self.list_of_comp_ctx_lengths_decode = [
-            np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_decode
+            np.zeros(length, dtype=np.int64) for length in self.comp_ctx_lengths_decode
         ]
         max_ccl_id = len(self.comp_ctx_lengths_decode) - 1
         max_position_id = np.max(decode_inputs["position_ids"])
