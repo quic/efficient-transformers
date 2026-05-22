@@ -1028,8 +1028,6 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
         "QEffQwen_2_5_vl_EncoderWrapper",
         "QEffQwen3VLDecoderWrapper",
         "QEffQwen3VLEncoderWrapper",
-        "QEffQwen3VLDecoderWrapper",
-        "QEffQwen3VLEncoderWrapper",
     }
 
     def _duplicate_weights_for_linear_layer(
@@ -1081,26 +1079,67 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
                 new_kv_heads * head_dim
             )
 
+    def _is_valid_text_model(candidate: nn.Module) -> bool:
+        """
+        Validate whether a candidate object looks like a text stack suitable for KV replication.
+        """
+        if candidate is None:
+            return False
+        cfg = getattr(candidate, "config", None)
+        layers = getattr(candidate, "layers", None)
+        return (
+            cfg is not None
+            and layers is not None
+            and hasattr(cfg, "num_key_value_heads")
+            and hasattr(cfg, "num_attention_heads")
+            and hasattr(cfg, "hidden_size")
+        )
+
     def _get_text_model(model):
         """
         Determine and return the appropriate text_model from a given model object.
-        """
-        # Check for VLMs
-        if hasattr(model, "language_model"):
-            if hasattr(model.language_model, "model"):
-                return model.language_model.model
-            else:
-                return model.language_model
-        if hasattr(model, "model"):
-            return model.model
-        if hasattr(model, "transformer"):
-            return model.transformer
-        if hasattr(model, "llm"):
-            return model.llm
-        if hasattr(model, "backbone"):
-            return model.backbone
 
-        raise AttributeError("No suitable text model found in the provided model.")
+        Some VLM wrappers expose multiple nested text attributes (e.g. `language_model`,
+        `language_model.model`, `model.language_model`). We pick the first valid module
+        that has both `config` and `layers` required for KV head replication.
+        """
+        candidate_paths = (
+            ("language_model",),
+            ("language_model", "model"),
+            ("model", "language_model"),
+            ("model", "language_model", "model"),
+            ("model",),
+            ("model", "model"),
+            ("transformer",),
+            ("transformer", "model"),
+            ("llm",),
+            ("llm", "model"),
+            ("backbone",),
+        )
+
+        for path in candidate_paths:
+            candidate = model
+            valid_path = True
+            for attr in path:
+                if not hasattr(candidate, attr):
+                    valid_path = False
+                    break
+                candidate = getattr(candidate, attr)
+            if valid_path and ReplicateKVHeadTransform._is_valid_text_model(candidate):
+                return candidate
+
+        raise AttributeError(
+            f"No suitable text model found in the provided model ({model.__class__.__name__}). "
+            "Expected a module with `layers` and text `config` attributes."
+        )
+
+    def _get_replication_root(model: nn.Module) -> nn.Module:
+        """
+        Return a shared root module for wrapper and non-wrapper models so KV replication
+        can be applied once across encoder/decoder components of the same model.
+        """
+        candidate = getattr(model, "model", None)
+        return candidate if isinstance(candidate, nn.Module) else model
 
     @classmethod
     def mutate(cls, original_module: nn.Module, parent_module: nn.Module, n_repeat: int) -> nn.Module:
@@ -1115,6 +1154,11 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
         Returns:
             The mutated module (same object, modified in-place).
         """
+        replication_root = cls._get_replication_root(original_module)
+        if getattr(replication_root, "_qeff_kv_replication_applied", False):
+            logger.warning("KV head replication already applied for this model instance; skipping.")
+            return original_module
+
         text_model = cls._get_text_model(original_module)
         orig_kv_heads = text_model.config.num_key_value_heads
         new_kv_heads = n_repeat * orig_kv_heads
@@ -1134,6 +1178,7 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
             cls._duplicate_weights_for_linear_layer(attn.k_proj, orig_kv_heads, n_repeat, attn.head_dim, hidden_size)
             cls._duplicate_weights_for_linear_layer(attn.v_proj, orig_kv_heads, n_repeat, attn.head_dim, hidden_size)
 
+        setattr(replication_root, "_qeff_kv_replication_applied", True)
         return original_module
 
     @classmethod

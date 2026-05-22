@@ -1436,7 +1436,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if prefill_only and prefill_seq_len > 1:
             offload_pt_weights = False  # to keep weight for decode onnx
         else:
-            offload_pt_weights = kwargs.get("offload_pt_weights", True)
+            num_kv_heads_repeat = (
+                (self.lang_model.model.qaic_config or {}).get("num_kv_heads_repeat", 1)
+                if hasattr(self.lang_model.model, "qaic_config")
+                else 1
+            )
+            offload_pt_weights = kwargs.get("offload_pt_weights", num_kv_heads_repeat <= 1)
 
         if not skip_lang and self.lang_model.onnx_path is None:
             self.lang_model.export(
