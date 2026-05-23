@@ -41,7 +41,7 @@ class QEffOlmo2RotaryEmbedding(Olmo2RotaryEmbedding):
         super().__init__(config=config)
 
         self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=config.torch_dtype
         )
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):

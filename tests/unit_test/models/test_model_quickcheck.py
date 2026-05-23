@@ -395,7 +395,7 @@ def test_text_embedding_fp16_clip_transform_and_export(tmp_path):
     transform_names = {transform.__name__ for transform in qeff_model._onnx_transforms}
 
     assert "FP16ClipTransform" in transform_names
-    assert "SplitTensorsTransform" not in transform_names
+    assert "SplitTensorsTransform" in transform_names
 
     inputs = tokenizer("hello world", return_tensors="pt")
     onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "embedding-ai100"))
@@ -675,7 +675,7 @@ def test_proxy_toggle_onnx_transform_policy_for_embedding():
         _skip_on_model_fetch_error(exc, model_id)
 
     _assert_proxy_only_onnx_transform_policy(
-        qeff_default, enable_proxy=False, always_on_transforms={"FP16ClipTransform"}
+        qeff_default, enable_proxy=False, always_on_transforms={"FP16ClipTransform", "SplitTensorsTransform"}
     )
     _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
 
@@ -708,6 +708,54 @@ def test_proxy_toggle_onnx_transform_policy_for_vlm():
 
     _assert_proxy_only_onnx_transform_policy(qeff_default, enable_proxy=False)
     _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
+
+
+class TestCausalLMFlagDiagnostics:
+    """Unsupported/ignored CausalLM flags should fail or warn clearly."""
+
+    def _tiny_llama(self):
+        try:
+            return QEFFAutoModelForCausalLM.from_pretrained(
+                CAUSAL_RUNTIME_MODEL_IDS["llama"],
+                continuous_batching=True,
+                num_hidden_layers=2,
+                **MODEL_KWARGS,
+            )
+        except Exception as exc:
+            _skip_on_model_fetch_error(exc, CAUSAL_RUNTIME_MODEL_IDS["llama"])
+
+    def test_export_decode_only_rejected_for_standard_causal_lm(self, tmp_path):
+        qeff_model = self._tiny_llama()
+
+        with pytest.raises(NotImplementedError, match="decode_only=True is not supported"):
+            qeff_model.export(tmp_path / "decode-only", decode_only=True)
+
+    def test_compile_retain_full_kv_ignored_for_llama(self, tmp_path, monkeypatch, caplog):
+        qeff_model = self._tiny_llama()
+        onnx_path = tmp_path / "model.onnx"
+        onnx_path.write_bytes(b"fake")
+        captured_kwargs = {}
+
+        def fake_compile(**kwargs):
+            captured_kwargs.update(kwargs)
+            return tmp_path / "qpc"
+
+        monkeypatch.setattr(qeff_model, "_compile", fake_compile)
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff_model.compile(
+            onnx_path=str(onnx_path),
+            compile_dir=str(tmp_path),
+            prefill_seq_len=1,
+            ctx_len=128,
+            full_batch_size=1,
+            prefill_only=False,
+            retain_full_kv=True,
+        )
+
+        assert captured_kwargs["retain_full_kv"] is False
+        assert captured_kwargs["specializations"][0]["_graph_name"] == "Decode"
+        assert "retain_full_kv=True is only supported" in caplog.text
 
 
 # ---------------------------------------------------------------------------
