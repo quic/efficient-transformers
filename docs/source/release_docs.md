@@ -1,3 +1,63 @@
+# Efficient Transformer Library - 1.21.6 Release Notes
+
+Welcome to the official release of **Efficient Transformer Library v1.21.6**! This targeted release builds on the v1.21 line with multi-resolution Vision Language Model workflows, Qwen3-VL stability fixes, on-device sampling enablement, and compatibility updates for newer model and framework APIs.
+
+> ✅ The exact release content is available on the [`release/v1.21.6`](https://github.com/quic/efficient-transformers/tree/release/v1.21.6) branch. The package version for this branch is `1.21.6.0`.
+
+---
+
+## Branch Summary
+
+- **Release branch**: [`release/v1.21.6`](https://github.com/quic/efficient-transformers/tree/release/v1.21.6)
+- **Release head**: `25e7c53` (`Updated release version to 1.21.6.0`)
+- **Mainline comparison**: Reviewed against `upstream/main`; the release branch contains 11 release commits from merge base `d02f717`.
+
+---
+
+## Key Features & Enhancements
+
+- **Multi-specialization vision compilation for Qwen VLMs**
+  - Qwen2.5-VL, Qwen3-VL Dense, and Qwen3-VL-MoE can compile multiple vision resolution and frame configurations in one pass.
+  - `height`, `width`, and `num_frames` can be supplied as lists when building specializations.
+  - Runtime generation can select the matching specialization through the multi-frame generation path.
+  - New example scripts are available for [Qwen2.5-VL](https://github.com/quic/efficient-transformers/tree/release/v1.21.6/examples/image_text_to_text/models/qwen2_5_vl), [Qwen3-VL Dense](https://github.com/quic/efficient-transformers/tree/release/v1.21.6/examples/image_text_to_text/models/qwen3vl), and [Qwen3-VL-MoE](https://github.com/quic/efficient-transformers/tree/release/v1.21.6/examples/image_text_to_text/models/qwen3_vl_moe).
+
+- **Qwen3-VL Dense on-device sampling**
+  - Registers Qwen3-VL Dense with the sampler transform path.
+  - Handles Qwen3-VL Dense deepstack feature inputs and outputs for on-device sampling.
+  - Adds sampler coverage to validate the new transform behavior.
+
+- **Large embedding export robustness**
+  - Adds `SplitTensorsTransform` to `QEFFAutoModel` ONNX transforms so large initializers are emitted as `*.onnx.data` sidecar files.
+  - Prevents ONNX ModelProto parser failures when exports exceed the 2 GB protobuf limit.
+  - Adds regression coverage for large embedding and reranker model export flows.
+
+- **Qwen VLM runtime stability**
+  - Fixes RoPE handling for Qwen3-VL-MoE disaggregated mode.
+  - Fixes Qwen3-VL Dense continuous batching with multi-image, multi-prompt inputs by preserving the complete hidden-state tensor during broadcast.
+  - Handles multi-resolution `vision_embeds` edge cases for Qwen2.5-VL, Qwen3-VL Dense, and Qwen3-VL-MoE.
+  - Moves Qwen2.5-VL examples into a dedicated `qwen2_5_vl` example directory.
+
+- **Gemma3 configuration compatibility**
+  - Updates Gemma3 cache handling for the newer `_sliding_window_pattern` config field.
+  - Preserves sliding-window behavior for Gemma3 models using updated Transformers configs.
+
+- **Llama4 compatibility with Transformers `4.57.3`**
+  - Adds `**kwargs` support to `QEffLlama4VisionModel.forward()`.
+  - Accepts `vision_feature_layer` and `vision_feature_select_strategy` forwarded by newer Transformers Llama4 APIs.
+  - Fixes ONNX export failures for Llama4 vision models while remaining backward compatible.
+
+---
+
+## Validation & Quality Updates
+
+- Added tests for Qwen3-VL Dense on-device sampling transformations.
+- Added regression tests that verify large ONNX initializers are split into external data files.
+- Updated image-text model configs and Qwen3-VL examples for continuous batching and multi-specialization workflows.
+- Reverted a temporary Qwen VLM multi-image test/config change before landing the stable Qwen3-VL Dense continuous batching fix.
+
+---
+
 # Efficient Transformer Library - 1.21.0 Release Notes
 
 Welcome to the official release of **Efficient Transformer Library v1.21.0**! This release introduces advanced attention mechanisms, expanded model support, optimized serving capabilities, and significant improvements to fine-tuning and deployment workflows.
