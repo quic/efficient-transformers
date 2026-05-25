@@ -15,32 +15,39 @@ import transformers
 from gemma4_utils import (
     CHAT_TEMPLATE,
     build_messages,
+    remove_fp16clip_transform_if_disabled,
+    resolve_npi_mode,
 )
 from transformers import AutoConfig, AutoProcessor
 
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-# model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 model_id = "google/gemma-4-26B-A4B-it"
 config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
+# config.text_config.num_hidden_layers = 2
+# config.vision_config.num_hidden_layers = 2
 
-config.text_config.num_hidden_layers = 2
-config.vision_config.num_hidden_layers = 2
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config, dtype="float32", trust_remote_code=True
 )
-# breakpoint()
+
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
-PREFILL_SEQ_LEN = 288
+ENABLE_NPI = True
+DISABLE_NPI = False
+ENABLE_FP16_CLIP = True
+remove_fp16clip_transform_if_disabled(qeff_model, ENABLE_FP16_CLIP)
+npi_mode = resolve_npi_mode(ENABLE_NPI, DISABLE_NPI)
+breakpoint()
+PREFILL_SEQ_LEN = 296
 CTX_LEN = 4096
 BS = 1
 
-skip_vision = True
+skip_vision = False
 if not skip_vision:
     vision_qpc_path = qeff_model.compile(
         batch_size=BS,
@@ -52,11 +59,9 @@ if not skip_vision:
         mxfp6_matmul=True,
         aic_enable_depth_first=True,
         skip_vision=skip_vision,
-        # split_retained_state_io=True,
         split_model_io=True,
         skip_lang=True,
     )
-# breakpoint()
 prefill_qpc_path = qeff_model.compile(
     batch_size=BS,
     prefill_seq_len=PREFILL_SEQ_LEN,
@@ -67,13 +72,13 @@ prefill_qpc_path = qeff_model.compile(
     mxint8_kv_cache=True,
     retain_full_kv=True,
     split_model_io=True,
+    # node_precision_info=True,
     mos=1,
     aic_enable_depth_first=True,
     prefill_only=True,
     enable_chunking=True,
     skip_vision=True,
 )
-# breakpoint()
 decode_qpc_path = qeff_model.compile(
     batch_size=BS,
     prefill_seq_len=1,
@@ -84,11 +89,11 @@ decode_qpc_path = qeff_model.compile(
     mxint8_kv_cache=True,
     split_model_io=True,
     mos=1,
+    # node_precision_info=True,
     aic_enable_depth_first=True,
     prefill_only=False,
     skip_vision=True,
 )
-# breakpoint()
 if skip_vision:
     lang_prefill_session = QAICInferenceSession(prefill_qpc_path)
     lang_decode_session = QAICInferenceSession(decode_qpc_path)
@@ -122,18 +127,15 @@ else:
         return_dict=True,
         return_tensors="pt",
     )
-    # breakpoint()
     vision_session = QAICInferenceSession(vision_qpc_path)
 pad_token_id = 1
 input_len = inputs["attention_mask"].sum(1, keepdims=True)
 input_ids_length = inputs["input_ids"].shape[1]
 num_chunks = -(input_ids_length // -PREFILL_SEQ_LEN)  # ceil divide without float
 padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
-# generation_len = CTX_LEN - input_len.max()
-generation_len = 100
+generation_len = 200
 print(f"generation_len : {generation_len}")
 generated_ids = np.full((BS, generation_len + 1), pad_token_id)
-# breakpoint()
 inputs["input_ids"] = torch.nn.functional.pad(
     inputs["input_ids"],
     (0, padded_len - input_ids_length),
@@ -146,11 +148,19 @@ inputs["attention_mask"] = torch.nn.functional.pad(
 
 for k, v in inputs.items():
     inputs[k] = np.array(v)
-# breakpoint()
 vision_inputs = {
     k: v
     for k, v in inputs.items()
-    if k in {"pixel_values", "image_masks", "image_input_idx", "valid_idx", "aspect_ratio_ids", "aspect_ratio_mask"}
+    if k
+    in {
+        "pixel_values",
+        "image_position_ids",
+        "image_masks",
+        "image_input_idx",
+        "valid_idx",
+        "aspect_ratio_ids",
+        "aspect_ratio_mask",
+    }
 }
 vision_inputs_fp16 = {"pixel_values", "image_masks"}
 vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
@@ -174,7 +184,6 @@ lang_inputs["image_idx"] = np.array([[0]])
 # breakpoint()
 if not skip_vision:
     lang_inputs["vision_embeds"] = vision_outputs["vision_embeds"]
-    # lang_inputs["deepstack_features"] = vision_outputs["deepstack_features"]
 
 # RUN prefill
 lang_start = perf_counter()
@@ -184,6 +193,7 @@ chunk_inputs = lang_inputs.copy()
 for i in range(num_chunks):
     chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
     chunk_inputs["position_ids"] = lang_inputs["position_ids"][..., i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
+    breakpoint()
     outputs = lang_prefill_session.run(chunk_inputs)
     for i in range(config.text_config.num_hidden_layers):
         chunk_inputs[f"past_key.{i}"] = outputs[f"past_key.{i}_RetainedState"]
@@ -236,4 +246,3 @@ for i in range(generation_len - 2):
 ft = perf_counter()
 print(f"decode tok/sec={(generation_len - 2) / (ft - st)}")
 print(f"\noutput\n{tokenizer.decode(all_outputs)}")
-# breakpoint()
