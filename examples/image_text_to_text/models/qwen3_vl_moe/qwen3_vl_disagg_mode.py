@@ -118,6 +118,7 @@ else:
             "content": [
                 {"type": "image", "image": image},
                 {"type": "text", "text": "Describe all the colors seen in the image."},
+                # {"type": "text", "text": "Can you describe the image in detail?"},
             ],
         },
     ]
@@ -217,9 +218,6 @@ for i in range(config.text_config.num_hidden_layers):
     decode_inputs[f"past_key.{i}"] = outputs[f"past_key.{i}_RetainedState"]
     decode_inputs[f"past_value.{i}"] = outputs[f"past_value.{i}_RetainedState"]
 
-decode_inputs["image_idx"] = outputs["image_idx_output"]
-decode_inputs["vision_embeds"] = outputs["vision_embeds_RetainedState"]
-decode_inputs["deepstack_features"] = outputs["deepstack_features_RetainedState"]
 
 st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
@@ -235,9 +233,6 @@ loop_decode_inputs = {
 for i in range(config.text_config.num_hidden_layers):
     loop_decode_inputs[f"past_key.{i}"] = decode_out[f"past_key.{i}_RetainedState"]
     loop_decode_inputs[f"past_value.{i}"] = decode_out[f"past_value.{i}_RetainedState"]
-loop_decode_inputs["image_idx"] = decode_out["image_idx_output"]
-loop_decode_inputs["vision_embeds"] = decode_out["vision_embeds_RetainedState"]
-loop_decode_inputs["deepstack_features"] = decode_out["deepstack_features_RetainedState"]
 
 
 st = perf_counter()
