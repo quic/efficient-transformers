@@ -28,7 +28,7 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
-        self.model.vision_model = self.model.vision_tower
+        self.model.vision_model = self.model.model.vision_tower
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
@@ -37,13 +37,13 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.vision_tower.vision_model.encoder.layers[0].__class__}
+        return {self.model.model.vision_tower.vision_model.encoder.layers[0].__class__}
 
     def forward(self, pixel_values, image_sizes):
         if pixel_values.dim() == constants.GRANITEVISION_PIXEL_VALUE_DIM:
             pixel_values_new = pixel_values.squeeze(0)
 
-        image_feature = self.model.vision_tower(pixel_values_new, output_hidden_states=True)
+        image_feature = self.model.model.vision_tower(pixel_values_new, output_hidden_states=True)
         if isinstance(self.model.config.vision_feature_layer, int):
             selected_image_feature = image_feature.hidden_states[self.model.config.vision_feature_layer]
         else:
@@ -57,7 +57,7 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
             selected_image_feature = selected_image_feature
         else:
             raise ValueError(f"Unexpected select feature strategy: {self.model.config.vision_feature_select_strategy}")
-        image_features = self.model.multi_modal_projector(selected_image_feature)
+        image_features = self.model.model.multi_modal_projector(selected_image_feature)
         image_features = torch.split(image_features, [image_features.shape[0]], dim=0)
         new_image_features = []
 
@@ -134,7 +134,7 @@ class QEffLlavaNextDecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.config = self.model.config
-        self.language_model = self.model.language_model
+        self.language_model = self.model.model.language_model
         self.lm_head = self.model.lm_head
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
@@ -144,7 +144,7 @@ class QEffLlavaNextDecoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.language_model.layers[0].__class__}
+        return {self.model.model.language_model.layers[0].__class__}
 
     def forward(
         self,
@@ -231,7 +231,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
                 (
                     constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
                     vision_size,
-                    self.language_model.config.hidden_size,
+                    self.model.language_model.config.hidden_size,
                 ),
                 dtype=self.config.torch_dtype,
             ),
@@ -473,7 +473,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]
         lang_output_names = ["logits"]
-        for i in range(self.language_model.config.num_hidden_layers):
+        for i in range(self.model.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_output_names.append(f"past_{kv}.{i}_RetainedState")
 
