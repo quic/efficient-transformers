@@ -16,7 +16,8 @@ from transformers import AutoConfig
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils._utils import load_hf_tokenizer
-from QEfficient.utils.constants import Constants
+from QEfficient.utils.config_utils import get_first_config_value
+from QEfficient.utils.constants import ATTENTION_HEAD_CONFIG_KEYS, KV_HEAD_CONFIG_KEYS, Constants
 from QEfficient.utils.run_utils import ApiRunner
 from QEfficient.utils.test_utils import ModelConfig, load_hf_causal_lm_model
 
@@ -58,9 +59,21 @@ def check_kv_repeat_causal_lm_pytorch_vs_ai100(
     else:
         model_config = config
 
-    num_attention_heads = getattr(model_config, "num_attention_heads", getattr(model_config, "n_head", 1))
-    num_key_value_heads = getattr(model_config, "num_key_value_heads", num_attention_heads)
-    num_kv_heads_repeat = max(1, num_attention_heads // max(1, num_key_value_heads))
+    num_attention_heads = get_first_config_value(model_config, ATTENTION_HEAD_CONFIG_KEYS, default=1, cast_int=True)
+    num_key_value_heads = get_first_config_value(model_config, KV_HEAD_CONFIG_KEYS, default=None, cast_int=True)
+    if num_key_value_heads is None:
+        num_key_value_heads = num_attention_heads
+    if num_attention_heads < 1 or num_key_value_heads < 1:
+        raise ValueError(
+            f"Invalid heads in config for RepeatKV: "
+            f"num_attention_heads={num_attention_heads}, num_key_value_heads={num_key_value_heads}"
+        )
+    if num_attention_heads % num_key_value_heads != 0:
+        raise ValueError(
+            f"Invalid heads in config for RepeatKV: num_attention_heads ({num_attention_heads}) "
+            f"is not divisible by num_key_value_heads ({num_key_value_heads})."
+        )
+    num_kv_heads_repeat = num_attention_heads // num_key_value_heads
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,

@@ -140,6 +140,11 @@ def get_default_aic_hw_version() -> str:
 DEFAULT_AIC_HW_VERSION = get_default_aic_hw_version()
 ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL = 100
 
+# Generic config key aliases used across model families.
+ATTENTION_HEAD_CONFIG_KEYS = ("num_attention_heads", "n_head", "n_heads", "num_heads")
+KV_HEAD_CONFIG_KEYS = ("num_key_value_heads", "n_kv_heads", "num_kv_heads", "effective_n_kv_heads")
+HIDDEN_SIZE_CONFIG_KEYS = ("hidden_size", "n_embd", "d_model")
+
 # InternVL constants
 # Fixing the feature size with reference to OpenGVLab/InternVL2_5-1B, OpenGVLab/InternVL2_5-38B and OpenGVLab/InternVL2_5-78B
 INTERN_FEATURE_SIZE = 256

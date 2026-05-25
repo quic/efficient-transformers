@@ -637,6 +637,13 @@ from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
 from QEfficient.transformers.quantizers.quantizer_compressed_tensors import FP8DeQuantLinear
 from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
+from QEfficient.utils.config_utils import (
+    resolve_attention_heads,
+    resolve_hidden_size,
+    resolve_kv_heads,
+    set_kv_head_aliases,
+)
+from QEfficient.utils.constants import ATTENTION_HEAD_CONFIG_KEYS, HIDDEN_SIZE_CONFIG_KEYS, KV_HEAD_CONFIG_KEYS
 from QEfficient.utils.logging_utils import logger
 
 SPD_TARGET = "target"
@@ -1008,6 +1015,7 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
         QEffOlmo2ForCausalLM,
     }
     _module_string_mapping = {
+        "DeepseekV3ForCausalLM",
         "InternVLChatModel",
         "MolmoForCausalLM,",
         "QEffGemma3DecoderWrapper",
@@ -1029,6 +1037,51 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
         "QEffQwen3VLDecoderWrapper",
         "QEffQwen3VLEncoderWrapper",
     }
+
+    @classmethod
+    def _get_attention_module(cls, block: nn.Module) -> nn.Module:
+        for attr in ("cross_attn", "self_attn", "attention", "attn"):
+            attn = getattr(block, attr, None)
+            if attn is not None:
+                return attn
+        raise AttributeError(f"No attention module found in block type {block.__class__.__name__}")
+
+    @staticmethod
+    def _get_projection_layer(attn: nn.Module, names: tuple) -> nn.Module:
+        for name in names:
+            layer = getattr(attn, name, None)
+            if layer is not None:
+                return layer
+        raise AttributeError(f"Missing projection layer in {attn.__class__.__name__}; expected one of {names}")
+
+    @staticmethod
+    def _is_mla_attention(attn: nn.Module) -> bool:
+        return (
+            hasattr(attn, "kv_a_proj_with_mqa") and hasattr(attn, "kv_lora_rank") and hasattr(attn, "qk_rope_head_dim")
+        )
+
+    @classmethod
+    def _is_mla_model(cls, text_model: nn.Module) -> bool:
+        for block in getattr(text_model, "layers", []):
+            try:
+                attn = cls._get_attention_module(block)
+            except AttributeError:
+                continue
+            if cls._is_mla_attention(attn):
+                return True
+        return False
+
+    @staticmethod
+    def _duplicate_weights_for_mla_layer(layer: nn.Module, orig_kv_heads: int, repeat: int, dim: int, hidden_size: int):
+        new_kv_heads = repeat * orig_kv_heads
+        layer.weight.data = torch.repeat_interleave(
+            layer.weight.data.view(orig_kv_heads, dim, hidden_size), repeat, 0
+        ).view(new_kv_heads * dim, hidden_size)
+
+        if layer.bias is not None:
+            layer.bias.data = torch.repeat_interleave(layer.bias.data.view(orig_kv_heads, dim), repeat, 0).view(
+                new_kv_heads * dim
+            )
 
     def _duplicate_weights_for_linear_layer(
         layer: nn.Module, orig_kv_heads: int, repeat: int, head_dim: int, hidden_size: int
@@ -1087,12 +1140,15 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
             return False
         cfg = getattr(candidate, "config", None)
         layers = getattr(candidate, "layers", None)
+        attn_heads = resolve_attention_heads(cfg) if cfg is not None else None
+        kv_heads = resolve_kv_heads(cfg) if cfg is not None else None
+        hidden_size = resolve_hidden_size(cfg) if cfg is not None else None
         return (
             cfg is not None
             and layers is not None
-            and hasattr(cfg, "num_key_value_heads")
-            and hasattr(cfg, "num_attention_heads")
-            and hasattr(cfg, "hidden_size")
+            and attn_heads is not None
+            and kv_heads is not None
+            and hidden_size is not None
         )
 
     def _get_text_model(model):
@@ -1160,29 +1216,76 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
             return original_module
 
         text_model = cls._get_text_model(original_module)
-        orig_kv_heads = text_model.config.num_key_value_heads
-        new_kv_heads = n_repeat * orig_kv_heads
-        text_model.config.orig_kv_heads = orig_kv_heads
-        text_model.config.num_key_value_heads = new_kv_heads
+        cfg = text_model.config
+        orig_kv_heads = resolve_kv_heads(cfg)
+        num_attention_heads = resolve_attention_heads(cfg)
+        hidden_size = resolve_hidden_size(cfg)
+        is_mla_model = cls._is_mla_model(text_model)
 
-        num_attention_heads = text_model.config.num_attention_heads
-        hidden_size = text_model.config.hidden_size
+        if orig_kv_heads is None or num_attention_heads is None or hidden_size is None:
+            raise ValueError(
+                "Unable to resolve attention/KV heads or hidden size from config for RepeatKV transform. "
+                f"Supported attention keys={ATTENTION_HEAD_CONFIG_KEYS}, kv keys={KV_HEAD_CONFIG_KEYS}, "
+                f"hidden size keys={HIDDEN_SIZE_CONFIG_KEYS}."
+            )
+        if orig_kv_heads < 1 or num_attention_heads < 1:
+            raise ValueError(
+                f"Invalid head values for RepeatKV transform: "
+                f"num_attention_heads={num_attention_heads}, num_key_value_heads={orig_kv_heads}"
+            )
+        if is_mla_model:
+            # Legacy MLA path treats compressed-KV projection as single KV head.
+            orig_kv_heads = 1
+
+        new_kv_heads = n_repeat * orig_kv_heads
+        if (not is_mla_model) and (new_kv_heads > num_attention_heads or (num_attention_heads % new_kv_heads) != 0):
+            raise ValueError(
+                f"Invalid RepeatKV configuration: num_attention_heads={num_attention_heads}, "
+                f"orig_kv_heads={orig_kv_heads}, num_kv_heads_repeat={n_repeat}, new_kv_heads={new_kv_heads}. "
+                "Expected new_kv_heads <= num_attention_heads and divisibility."
+            )
+
+        cfg.orig_kv_heads = orig_kv_heads
+        set_kv_head_aliases(cfg, new_kv_heads)
 
         logger.warning(f"Original KV heads: {orig_kv_heads}")
         logger.warning(f"Modified KV heads: {new_kv_heads}")
         for block in text_model.layers:
-            attn = getattr(block, "cross_attn", getattr(block, "self_attn", None))
-            attn.num_key_value_heads = new_kv_heads
-            attn.num_key_value_groups = num_attention_heads // new_kv_heads
+            attn = cls._get_attention_module(block)
+            if hasattr(attn, "num_key_value_heads"):
+                attn.num_key_value_heads = new_kv_heads
+            if hasattr(attn, "n_kv_heads"):
+                attn.n_kv_heads = new_kv_heads
 
-            cls._duplicate_weights_for_linear_layer(attn.k_proj, orig_kv_heads, n_repeat, attn.head_dim, hidden_size)
-            cls._duplicate_weights_for_linear_layer(attn.v_proj, orig_kv_heads, n_repeat, attn.head_dim, hidden_size)
+            if cls._is_mla_attention(attn):
+                # Legacy MLA support: KV compression projection is organized as
+                # [kv_heads, kv_lora_rank + qk_rope_head_dim, hidden_size].
+                mla_orig_kv_heads = 1
+                mla_head_dim = int(attn.kv_lora_rank + attn.qk_rope_head_dim)
+                cls._duplicate_weights_for_mla_layer(
+                    attn.kv_a_proj_with_mqa,
+                    mla_orig_kv_heads,
+                    n_repeat,
+                    mla_head_dim,
+                    hidden_size,
+                )
+            else:
+                n_kv_groups = num_attention_heads // new_kv_heads
+                if hasattr(attn, "num_key_value_groups"):
+                    attn.num_key_value_groups = n_kv_groups
+                if hasattr(attn, "n_kv_groups"):
+                    attn.n_kv_groups = n_kv_groups
+                head_dim = getattr(attn, "head_dim", hidden_size // num_attention_heads)
+                k_proj = cls._get_projection_layer(attn, ("k_proj", "key_proj"))
+                v_proj = cls._get_projection_layer(attn, ("v_proj", "value_proj"))
+                cls._duplicate_weights_for_linear_layer(k_proj, orig_kv_heads, n_repeat, head_dim, hidden_size)
+                cls._duplicate_weights_for_linear_layer(v_proj, orig_kv_heads, n_repeat, head_dim, hidden_size)
 
         setattr(replication_root, "_qeff_kv_replication_applied", True)
         return original_module
 
     @classmethod
-    def apply(cls, model: nn.Module, **kwargs) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, num_kv_heads_repeat: Optional[int] = None, **kwargs) -> Tuple[nn.Module, bool]:
         """
         Replicates KV heads in attention modules based on provided multiplier.
 
@@ -1191,7 +1294,11 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
             kwargs: Additional arguments for the transformation. Includes:
                 - num_kv_heads_repeat: The number of times to repeat the KV heads.
         """
-        n_repeat = kwargs.pop("num_kv_heads_repeat", 1)
+        if num_kv_heads_repeat is None:
+            n_repeat = kwargs.pop("num_kv_heads_repeat", 1)
+        else:
+            kwargs.pop("num_kv_heads_repeat", None)
+            n_repeat = num_kv_heads_repeat
         transformed = False
         if n_repeat is not None and n_repeat > 1:
             if (model.__class__ in cls._module_mapping) or (model.__class__.__name__ in cls._module_string_mapping):
