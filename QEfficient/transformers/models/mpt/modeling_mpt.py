@@ -93,7 +93,7 @@ class QEffMptAttention(MptAttention):
             attn_output = self.out_proj(context_states)
             return attn_output, attn_weights, past_key_value
 
-        key_states, value_states, _ = past_key_value_update(
+        key_states, value_states, attention_mask, _ = past_key_value_update(
             module=self,
             key=key_states,
             value=value_states,
