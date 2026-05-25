@@ -115,16 +115,6 @@ class DeepseekV3RotaryEmbedding(nn.Module):
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        if self.max_seq_len_cached is None or seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype),
-            self.sin_cached[:seq_len].to(dtype=x.dtype),
-        )
-
 
 class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
     def __init__(
@@ -183,7 +173,7 @@ class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
 
 
 # Copied from transformers.models.llama.modeling_llama.apply_rotary_pos_emb
-def orig_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
+def orig_apply_rotary_pos_emb(q, k, cos, sin):
     """Applies Rotary Position Embedding to the query and key tensors.
 
     Args:
@@ -204,8 +194,6 @@ def orig_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
-    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
 
     b, h, s, d = q.shape
     q = q.view(b, h, s, d // 2, 2).transpose(4, 3).reshape(b, h, s, d)
@@ -271,6 +259,8 @@ class QEffDeepseekV3Attention(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -292,8 +282,7 @@ class QEffDeepseekV3Attention(nn.Module):
         if compressed_kvs is not None:
             kva = compressed_kvs.update_ckv(kva, self.layer_idx, cache_kwargs)
 
-        cos, sin = self.rotary_emb(kva, seq_len=32 * 1024)
-        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached)
 
         if compressed_kvs is not None:
             k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
@@ -338,6 +327,8 @@ class QEffDeepseekV3Attention(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -357,8 +348,7 @@ class QEffDeepseekV3Attention(nn.Module):
         if compressed_kvs is not None:
             compressed_kvs.write_only_ckv(kva, self.layer_idx, cache_kwargs)
 
-        cos, sin = self.rotary_emb(hidden_states, seq_len=32 * 1024)
-        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached)
         if compressed_kvs is not None:
             compressed_kvs.write_only_k_pe(k_pe, self.layer_idx, cache_kwargs)
 
@@ -415,6 +405,8 @@ class QEffDeepseekV3Attention(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -434,8 +426,7 @@ class QEffDeepseekV3Attention(nn.Module):
         if compressed_kvs is not None:
             compressed_kvs.write_only_ckv(kva, self.layer_idx, cache_kwargs)
 
-        cos, sin = self.rotary_emb(hidden_states, seq_len=32 * 1024)
-        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached)
         if compressed_kvs is not None:
             compressed_kvs.write_only_k_pe(k_pe, self.layer_idx, cache_kwargs)
 
@@ -493,6 +484,8 @@ class QEffDeepseekV3Attention(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -524,8 +517,7 @@ class QEffDeepseekV3Attention(nn.Module):
             absorption = False
 
         # ---- Rotary ----
-        cos, sin = self.rotary_emb(q_pe, seq_len=32 * 1024)  # Doesn't need q_pe as head_dim is initialized
-        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached)
 
         if compressed_kvs is not None:
             k_pe = compressed_kvs.update_k_pe(k_pe, self.layer_idx, cache_kwargs)
@@ -612,6 +604,8 @@ class QEffDeepseekV3Attention(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
@@ -629,6 +623,8 @@ class QEffDeepseekV3Attention(nn.Module):
                 use_cache,
                 cache_position,
                 mla_absorption,
+                cos_cached,
+                sin_cached,
                 **kwargs,
             )
         elif getattr(blocking_config, "mode", None) == "kv":
@@ -644,6 +640,8 @@ class QEffDeepseekV3Attention(nn.Module):
                 use_cache,
                 cache_position,
                 mla_absorption,
+                cos_cached,
+                sin_cached,
                 **kwargs,
             )
         elif getattr(blocking_config, "mode", None) in ["parkv", "pqparkv"]:
@@ -659,6 +657,8 @@ class QEffDeepseekV3Attention(nn.Module):
                 use_cache,
                 cache_position,
                 mla_absorption,
+                cos_cached,
+                sin_cached,
                 **kwargs,
             )
         else:
@@ -674,6 +674,8 @@ class QEffDeepseekV3Attention(nn.Module):
                 use_cache,
                 cache_position,
                 mla_absorption,
+                cos_cached,
+                sin_cached,
                 **kwargs,
             )
 
@@ -688,6 +690,8 @@ class QEffDeepseekV3Attention(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -715,8 +719,7 @@ class QEffDeepseekV3Attention(nn.Module):
         k_nope = kv[:, :, :, : self.qk_nope_head_dim]
         value_states = kv[:, :, :, self.qk_nope_head_dim :]
 
-        cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
-        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached)
 
         query_states = torch.cat((q_nope, q_pe), -1)
         k_pe_new = k_pe.expand(-1, self.num_heads, -1, -1)
@@ -724,7 +727,12 @@ class QEffDeepseekV3Attention(nn.Module):
         window_cache_layer_idx = self.layer_idx - getattr(QEffDeepseekV3Model, "_start", 0)
 
         if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {
+                "sin": sin_cached,
+                "cos": cos_cached,
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+            }
             key_states, value_states = past_key_value.update(
                 key_states, value_states, window_cache_layer_idx, cache_kwargs
             )
@@ -756,6 +764,8 @@ class QEffDeepseekV3Attention(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
@@ -786,8 +796,7 @@ class QEffDeepseekV3Attention(nn.Module):
         k_nope = kv[:, :, :, : self.qk_nope_head_dim]
         value_states = kv[:, :, :, self.qk_nope_head_dim :]
 
-        cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
-        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
+        q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached)
 
         query_states = torch.cat((q_nope, q_pe), -1)
         k_pe_new = k_pe.expand(-1, self.num_heads, -1, -1)
@@ -824,6 +833,8 @@ class QEffDeepseekV3Attention(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
@@ -838,6 +849,8 @@ class QEffDeepseekV3Attention(nn.Module):
                 output_attentions,
                 use_cache,
                 cache_position,
+                cos_cached,
+                sin_cached,
                 **kwargs,
             )
         else:
@@ -851,6 +864,8 @@ class QEffDeepseekV3Attention(nn.Module):
                 output_attentions,
                 use_cache,
                 cache_position,
+                cos_cached,
+                sin_cached,
                 **kwargs,
             )
 
@@ -1551,6 +1566,8 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
         num_q_ffn_blocks: Optional[int] = None,
+        sin_cached=None,
+        cos_cached=None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
@@ -1573,6 +1590,8 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
                 use_cache=use_cache,
                 cache_position=cache_position,
                 mla_absorption=mla_absorption,
+                sin_cached=sin_cached,
+                cos_cached=cos_cached,
                 **kwargs,
             )
         else:
@@ -1586,6 +1605,8 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                sin_cached=sin_cached,
+                cos_cached=cos_cached,
                 **kwargs,
             )
         hidden_states = residual + hidden_states
@@ -1638,6 +1659,8 @@ class QEffDeepseekV3Model(nn.Module):
             base=self.config.rope_theta,
             **kwargs,
         )
+        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached.to(torch.float16))
+        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached.to(torch.float16))
 
     def forward(
         self,
@@ -1705,7 +1728,9 @@ class QEffDeepseekV3Model(nn.Module):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
         next_decoder_cache = None
-
+        
+        sin = self.sin_cached[position_ids].unsqueeze(1)
+        cos = self.cos_cached[position_ids].unsqueeze(1)
         num_q_ffn_blocks = getattr(self, "num_q_blocks_ffn", None)
         for layer_idx, decoder_layer in enumerate(self.layers):
             if layer_idx < start or layer_idx >= end:
@@ -1728,6 +1753,8 @@ class QEffDeepseekV3Model(nn.Module):
                 position_embeddings=position_embeddings,
                 mla_absorption=mla_absorption,
                 num_q_ffn_blocks=num_q_ffn_blocks,
+                sin_cached=sin,
+                cos_cached=cos,
                 **kwargs,
             )
 
