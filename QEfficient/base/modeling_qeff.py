@@ -157,23 +157,6 @@ class QEFFBaseModel(ABC):
                         new_b = torch.empty(b.shape, dtype=b.dtype, device="meta")
                         torch.utils.swap_tensors(b, new_b)
 
-                # Drop storage from any remaining large non-meta tensor
-                # in the gc graph. This handles refs held by torch.onnx.export's
-                # trace cache and similar external retainers.
-                large_tensors = []
-                for o in gc.get_objects():
-                    if isinstance(o, torch.Tensor) and not o.is_meta:
-                        try:
-                            if o.numel() * o.element_size() >= 1024 * 1024:
-                                large_tensors.append(o)
-                        except Exception:
-                            pass
-                for t in large_tensors:
-                    try:
-                        with torch.no_grad():
-                            t.set_(torch.empty(0, dtype=t.dtype))
-                    except Exception:
-                        pass
                 gc.collect()
 
                 self._is_weights_offloaded = True
