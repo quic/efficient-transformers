@@ -156,7 +156,7 @@ class QEffLlamaAttention(LlamaAttention):
                 past_seen_tokens=past_seen_tokens,
             )
         else:
-            key, value, _ = past_key_value_update(
+            key, value, attention_mask, _ = past_key_value_update(
                 module=self,
                 key=key_states,
                 value=value_states,

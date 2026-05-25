@@ -175,6 +175,7 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLModel,
     Qwen2_5_VLTextModel,
     Qwen2_5_VLVisionAttention,
+    Qwen2_5_VLVisionBlock,
 )
 
 try:
@@ -464,6 +465,7 @@ from QEfficient.transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     QEffQwen2_5_VLModel,
     QEffQwen2_5_VLTextModel,
     QEffQwen2_5_VLVisionAttention,
+    QEffQwen2_5_VLVisionBlock,
     QEffQwen_2_5_vl_DecoderWrapper,
     QEffQwen_2_5_vl_ForConditionalGeneration,
 )
@@ -733,6 +735,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen2_5_VLDecoderLayer: QEffQwen2_5_VLDecoderLayer,
         Qwen2_5_VisionTransformerPretrainedModel: QEffQwen2_5_VisionTransformerPretrainedModel,
         Qwen2_5_VLVisionAttention: QEffQwen2_5_VLVisionAttention,
+        Qwen2_5_VLVisionBlock: QEffQwen2_5_VLVisionBlock,
         Qwen2_5_VLTextModel: QEffQwen2_5_VLTextModel,
         # Starcoder2
         Starcoder2Attention: QEffStarcoder2Attention,

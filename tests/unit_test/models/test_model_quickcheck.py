@@ -730,6 +730,54 @@ def test_proxy_toggle_onnx_transform_policy_for_vlm():
     _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
 
 
+class TestCausalLMFlagDiagnostics:
+    """Unsupported/ignored CausalLM flags should fail or warn clearly."""
+
+    def _tiny_llama(self):
+        try:
+            return QEFFAutoModelForCausalLM.from_pretrained(
+                CAUSAL_RUNTIME_MODEL_IDS["llama"],
+                continuous_batching=True,
+                num_hidden_layers=2,
+                **MODEL_KWARGS,
+            )
+        except Exception as exc:
+            _skip_on_model_fetch_error(exc, CAUSAL_RUNTIME_MODEL_IDS["llama"])
+
+    def test_export_decode_only_rejected_for_standard_causal_lm(self, tmp_path):
+        qeff_model = self._tiny_llama()
+
+        with pytest.raises(NotImplementedError, match="decode_only=True is not supported"):
+            qeff_model.export(tmp_path / "decode-only", decode_only=True)
+
+    def test_compile_retain_full_kv_ignored_for_llama(self, tmp_path, monkeypatch, caplog):
+        qeff_model = self._tiny_llama()
+        onnx_path = tmp_path / "model.onnx"
+        onnx_path.write_bytes(b"fake")
+        captured_kwargs = {}
+
+        def fake_compile(**kwargs):
+            captured_kwargs.update(kwargs)
+            return tmp_path / "qpc"
+
+        monkeypatch.setattr(qeff_model, "_compile", fake_compile)
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff_model.compile(
+            onnx_path=str(onnx_path),
+            compile_dir=str(tmp_path),
+            prefill_seq_len=1,
+            ctx_len=128,
+            full_batch_size=1,
+            prefill_only=False,
+            retain_full_kv=True,
+        )
+
+        assert captured_kwargs["retain_full_kv"] is False
+        assert captured_kwargs["specializations"][0]["_graph_name"] == "Decode"
+        assert "retain_full_kv=True is only supported" in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # Tests for the named-specializations format (backend team feature request)
 # ---------------------------------------------------------------------------
