@@ -44,10 +44,13 @@ from QEfficient.utils.logging_utils import logger
 
 class QEffGptOssExperts(GptOssExperts):
     def __qeff_init__(self):
-        self.gate_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_size, self.expert_dim))
-        self.up_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_size, self.expert_dim))
-        self.gate_proj_bias = nn.Parameter(torch.empty(self.num_experts, self.expert_dim))
-        self.up_proj_bias = nn.Parameter(torch.empty(self.num_experts, self.expert_dim))
+        # transformers>=5 uses fused gate_up projections. Keep backward-compatible
+        # aliases expected by existing QEff paths.
+        self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-1] // 2)
+        self.gate_proj = nn.Parameter(self.gate_up_proj[:, :, : self.expert_dim].detach().clone())
+        self.up_proj = nn.Parameter(self.gate_up_proj[:, :, self.expert_dim :].detach().clone())
+        self.gate_proj_bias = nn.Parameter(self.gate_up_proj_bias[:, : self.expert_dim].detach().clone())
+        self.up_proj_bias = nn.Parameter(self.gate_up_proj_bias[:, self.expert_dim :].detach().clone())
 
 
 class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
@@ -520,7 +523,7 @@ class QEffGptOssRotaryEmbedding(GptOssRotaryEmbedding):
         super().__init__(config=config)
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=config.torch_dtype
         )
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
@@ -879,7 +882,7 @@ class QEffGptOssAttention(GptOssAttention):
                 sinks=self.sinks,
             )
         else:
-            key_states, value_states, _ = past_key_value_update(
+            key_states, value_states, attention_mask, _ = past_key_value_update(
                 module=self,
                 key=key_states,
                 value=value_states,

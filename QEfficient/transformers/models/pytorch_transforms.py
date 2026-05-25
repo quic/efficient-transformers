@@ -74,6 +74,7 @@ from transformers.models.granite.modeling_granite import (
 )
 from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeAttention,
+    GraniteMoeDecoderLayer,
     GraniteMoeForCausalLM,
     GraniteMoeModel,
     GraniteMoeMoE,
@@ -174,10 +175,14 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLModel,
     Qwen2_5_VLTextModel,
     Qwen2_5_VLVisionAttention,
+    Qwen2_5_VLVisionBlock,
 )
-from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
-    Qwen2RMSNorm as Qwen2_5RMSNorm,
-)
+
+try:
+    from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2RMSNorm as Qwen2_5RMSNorm
+except ImportError:
+    from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLRMSNorm as Qwen2_5RMSNorm
+from transformers.models.bert.modeling_bert import BertModel
 from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3Attention,
     Qwen3DecoderLayer,
@@ -217,6 +222,7 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeVisionAttention,
     Qwen3VLMoeVisionModel,
 )
+from transformers.models.roberta.modeling_roberta import RobertaModel
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
     Starcoder2DecoderLayer,
@@ -226,6 +232,11 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
 from transformers.models.t5.modeling_t5 import (
     T5Attention,
     T5LayerNorm,
+    T5Stack,
+)
+from transformers.models.wav2vec2.modeling_wav2vec2 import (
+    Wav2Vec2Encoder,
+    Wav2Vec2EncoderStableLayerNorm,
 )
 from transformers.models.whisper.modeling_whisper import (
     WhisperAttention,
@@ -236,10 +247,16 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperModel,
     WhisperPositionalEmbedding,
 )
+from transformers.models.xlm_roberta.modeling_xlm_roberta import XLMRobertaModel
 
 from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform, ModuleMappingTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
+from QEfficient.transformers.models.bert.modeling_bert import (
+    QEffBertModel,
+    QEffRobertaModel,
+    QEffXLMRobertaModel,
+)
 from QEfficient.transformers.models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QEffCodeGenBlock,
@@ -324,6 +341,7 @@ from QEfficient.transformers.models.granite.modeling_granite import (
 )
 from QEfficient.transformers.models.granitemoe.modeling_granitemoe import (
     QEffGraniteMoeAttention,
+    QEffGraniteMoeDecoderLayer,
     QEffGraniteMoeForCausalLM,
     QEffGraniteMoeModel,
     QEffGraniteMoeMoE,
@@ -447,6 +465,7 @@ from QEfficient.transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     QEffQwen2_5_VLModel,
     QEffQwen2_5_VLTextModel,
     QEffQwen2_5_VLVisionAttention,
+    QEffQwen2_5_VLVisionBlock,
     QEffQwen_2_5_vl_DecoderWrapper,
     QEffQwen_2_5_vl_ForConditionalGeneration,
 )
@@ -496,6 +515,11 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
 from QEfficient.transformers.models.t5.modeling_t5 import (
     QEffT5Attention,
     QEffT5LayerNorm,
+    QEffT5Stack,
+)
+from QEfficient.transformers.models.wav2vec2.modeling_wav2vec2 import (
+    QEffWav2Vec2Encoder,
+    QEffWav2Vec2EncoderStableLayerNorm,
 )
 from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperAttention,
@@ -537,6 +561,13 @@ class CustomOpsTransform(ModuleMappingTransform):
         Olmo2RMSNorm: CustomRMSNormAIC,
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
+        Wav2Vec2Encoder: QEffWav2Vec2Encoder,
+        Wav2Vec2EncoderStableLayerNorm: QEffWav2Vec2EncoderStableLayerNorm,
+        # BERT-family: replace _create_attention_masks (uses create_bidirectional_mask,
+        # which breaks ONNX tracing) with an ONNX-safe _prepare_4d_attention_mask version.
+        BertModel: QEffBertModel,
+        RobertaModel: QEffRobertaModel,
+        XLMRobertaModel: QEffXLMRobertaModel,
     }
 
 
@@ -619,12 +650,11 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma2DecoderLayer: QEffGemma2DecoderLayer,
         Gemma2Model: QEffGemma2Model,
         Gemma2ForCausalLM: QEffGemma2ForCausalLM,
-        # Gemma3
         Gemma3Attention: QEffGemma3Attention,
         Gemma3DecoderLayer: QEffGemma3DecoderLayer,
         Gemma3TextModel: QEffGemma3TextModel,
-        Gemma3ForCausalLM: QEffGemma3ForCausalLMModel,
         Gemma3ForConditionalGeneration: QEffGemma3ForConditionalGeneration,
+        Gemma3ForCausalLM: QEffGemma3ForCausalLMModel,
         # GPT_OSS
         GptOssAttention: QEffGptOssAttention,
         GptOssDecoderLayer: QEffGptOssDecoderLayer,
@@ -645,6 +675,7 @@ class KVCacheTransform(ModuleMappingTransform):
         GraniteMoeParallelExperts: QEffGraniteMoeParallelExperts,
         GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
         GraniteMoeMoE: QEffGraniteMoeMoE,
+        GraniteMoeDecoderLayer: QEffGraniteMoeDecoderLayer,
         # mllama
         MllamaTextRMSNorm: CustomRMSNormAIC,
         MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
@@ -704,6 +735,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen2_5_VLDecoderLayer: QEffQwen2_5_VLDecoderLayer,
         Qwen2_5_VisionTransformerPretrainedModel: QEffQwen2_5_VisionTransformerPretrainedModel,
         Qwen2_5_VLVisionAttention: QEffQwen2_5_VLVisionAttention,
+        Qwen2_5_VLVisionBlock: QEffQwen2_5_VLVisionBlock,
         Qwen2_5_VLTextModel: QEffQwen2_5_VLTextModel,
         # Starcoder2
         Starcoder2Attention: QEffStarcoder2Attention,
@@ -1081,6 +1113,7 @@ class T5ModelTransform(ModuleMappingTransform):
     _module_mapping = {
         T5Attention: QEffT5Attention,
         T5LayerNorm: QEffT5LayerNorm,
+        T5Stack: QEffT5Stack,
     }
 
 

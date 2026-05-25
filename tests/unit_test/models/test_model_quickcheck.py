@@ -77,11 +77,18 @@ CAUSAL_RUNTIME_MODEL_IDS = {
     "olmo2": "hf-internal-testing/tiny-random-Olmo2ForCausalLM",
     "gpt_oss": "tiny-random/gpt-oss-bf16",
 }
+
+#   In PyTorch ≤2.3 (used with transformers v4.57.3), torch.onnx.export with
+#   export_modules_as_functions created one ONNX function definition per module instance — so a Mixtral
+#   model with 2 decoder layers produced 2 separate QeffMixtralDecoderLayer function definitions in the
+#   ONNX.
+#   In PyTorch 2.7 (used with transformers v5.5.4), the same export creates one shared function
+#   definition per module class, called once per instance. So 2 decoder layers → 1 function definition
+#   called 2 times.
 CAUSAL_MULTI_SUBFUNCTION_MODEL_TYPES = {
     "codegen",
     "phi",
     "starcoder2",
-    "mixtral",
     "gpt_oss",
     # "granitemoe" is intentionally not listed in CAUSAL_RUNTIME_MODEL_IDS yet.
 }
@@ -472,7 +479,9 @@ def test_whisper_export_smoke(tmp_path):
 @pytest.mark.llm_model
 def test_causal_subfunction_export_smoke(tmp_path):
     model_id = CAUSAL_RUNTIME_MODEL_IDS["gpt2"]
-    model_hf = AutoModelForCausalLM.from_pretrained(model_id, **MODEL_KWARGS, low_cpu_mem_usage=False)
+    model_hf = AutoModelForCausalLM.from_pretrained(
+        model_id, **MODEL_KWARGS, low_cpu_mem_usage=False, torch_dtype=torch.float32
+    )
     model_hf.eval()
     qeff_model = QEFFAutoModelForCausalLM(model_hf)
 
@@ -500,7 +509,9 @@ def test_causal_subfunction_export_smoke(tmp_path):
 def test_causal_compile_with_subfunctions_all_models(model_type, model_id, tmp_path):
     del model_type
     try:
-        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True)
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+            model_id, trust_remote_code=True, torch_dtype=torch.float32
+        )
     except Exception as exc:
         _skip_on_model_fetch_error(exc, model_id)
 
@@ -608,6 +619,7 @@ def test_causal_subfunction_and_proxy_export_smoke_gpt2(tmp_path):
             model_id,
             trust_remote_code=True,
             enable_proxy=True,
+            torch_dtype=torch.float32,
         )
     except Exception as exc:
         _skip_on_model_fetch_error(exc, model_id)
@@ -622,7 +634,9 @@ def test_causal_subfunction_and_proxy_export_smoke_gpt2(tmp_path):
 
 @pytest.mark.llm_model
 def test_prefix_caching_continuous_batching_export_and_ort_smoke(tmp_path):
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(PREFIX_CACHING_MODEL_ID, continuous_batching=True)
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        PREFIX_CACHING_MODEL_ID, continuous_batching=True, torch_dtype=torch.float32
+    )
     onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "prefix-caching"))
     onnx_model = onnx.load(onnx_path, load_external_data=False)
 
@@ -639,7 +653,9 @@ def test_prefix_caching_continuous_batching_export_and_ort_smoke(tmp_path):
 def test_awq_export_smoke(tmp_path):
     replace_transformers_quantizers()
     try:
-        model_hf = AutoModelForCausalLM.from_pretrained(TINY_AWQ_MODEL_ID, low_cpu_mem_usage=False)
+        model_hf = AutoModelForCausalLM.from_pretrained(
+            TINY_AWQ_MODEL_ID, low_cpu_mem_usage=False, torch_dtype=torch.float32
+        )
     except Exception as exc:
         _skip_on_model_fetch_error(exc, TINY_AWQ_MODEL_ID)
     model_hf.eval()
@@ -656,8 +672,12 @@ def test_awq_export_smoke(tmp_path):
 def test_proxy_toggle_onnx_transform_policy_for_causal_lm():
     model_id = CAUSAL_RUNTIME_MODEL_IDS["gpt2"]
     try:
-        qeff_default = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True)
-        qeff_proxy = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True, enable_proxy=True)
+        qeff_default = QEFFAutoModelForCausalLM.from_pretrained(
+            model_id, trust_remote_code=True, torch_dtype=torch.float32
+        )
+        qeff_proxy = QEFFAutoModelForCausalLM.from_pretrained(
+            model_id, trust_remote_code=True, enable_proxy=True, torch_dtype=torch.float32
+        )
     except Exception as exc:
         _skip_on_model_fetch_error(exc, model_id)
 
@@ -708,6 +728,54 @@ def test_proxy_toggle_onnx_transform_policy_for_vlm():
 
     _assert_proxy_only_onnx_transform_policy(qeff_default, enable_proxy=False)
     _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
+
+
+class TestCausalLMFlagDiagnostics:
+    """Unsupported/ignored CausalLM flags should fail or warn clearly."""
+
+    def _tiny_llama(self):
+        try:
+            return QEFFAutoModelForCausalLM.from_pretrained(
+                CAUSAL_RUNTIME_MODEL_IDS["llama"],
+                continuous_batching=True,
+                num_hidden_layers=2,
+                **MODEL_KWARGS,
+            )
+        except Exception as exc:
+            _skip_on_model_fetch_error(exc, CAUSAL_RUNTIME_MODEL_IDS["llama"])
+
+    def test_export_decode_only_rejected_for_standard_causal_lm(self, tmp_path):
+        qeff_model = self._tiny_llama()
+
+        with pytest.raises(NotImplementedError, match="decode_only=True is not supported"):
+            qeff_model.export(tmp_path / "decode-only", decode_only=True)
+
+    def test_compile_retain_full_kv_ignored_for_llama(self, tmp_path, monkeypatch, caplog):
+        qeff_model = self._tiny_llama()
+        onnx_path = tmp_path / "model.onnx"
+        onnx_path.write_bytes(b"fake")
+        captured_kwargs = {}
+
+        def fake_compile(**kwargs):
+            captured_kwargs.update(kwargs)
+            return tmp_path / "qpc"
+
+        monkeypatch.setattr(qeff_model, "_compile", fake_compile)
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        qeff_model.compile(
+            onnx_path=str(onnx_path),
+            compile_dir=str(tmp_path),
+            prefill_seq_len=1,
+            ctx_len=128,
+            full_batch_size=1,
+            prefill_only=False,
+            retain_full_kv=True,
+        )
+
+        assert captured_kwargs["retain_full_kv"] is False
+        assert captured_kwargs["specializations"][0]["_graph_name"] == "Decode"
+        assert "retain_full_kv=True is only supported" in caplog.text
 
 
 # ---------------------------------------------------------------------------
