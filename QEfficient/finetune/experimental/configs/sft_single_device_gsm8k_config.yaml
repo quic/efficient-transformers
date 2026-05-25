@@ -9,6 +9,7 @@ model:
   model_type: "hf"  # Hugging Face model
   auto_class_name: "AutoModelForCausalLM" # Auto class to load the model with
   model_name: "HuggingFaceTB/SmolLM-135M"  # Pretrained model name
+  torch_dtype: "float16"
   use_peft: true # Enable PEFT (Parameter Efficient Fine-Tuning)
   peft_config:
     lora_r: 8 # LoRA rank
@@ -44,6 +45,8 @@ training:
   per_device_train_batch_size: 1  # Batch size per device during training
   num_train_epochs: 1
   torch_compile: False # Whether to use torch.compile
+  fp16: true
+  bf16: false
 
 # Optimizer configuration
 optimizers:
@@ -57,3 +60,5 @@ callbacks:
   early_stopping:
     early_stopping_patience: 3 # Number of epochs to wait before stopping training
     early_stopping_threshold: 0.001 # Minimum change in metric to qualify as improvement
+
+

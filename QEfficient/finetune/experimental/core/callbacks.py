@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import torch
 from transformers import (
     DefaultFlowCallback,
     EarlyStoppingCallback,
@@ -28,6 +29,10 @@ from transformers.trainer_callback import TrainerCallback, TrainerControl, Train
 from QEfficient.finetune.experimental.core.component_registry import ComponentFactory, registry
 from QEfficient.finetune.experimental.core.config_manager import ConfigManager
 from QEfficient.finetune.experimental.core.logger import Logger
+from QEfficient.finetune.experimental.core.utils.dist_utils import (
+    get_local_rank,
+    get_world_size,
+)
 from QEfficient.finetune.experimental.core.utils.profiler_utils import (
     get_op_verifier_ctx,
     init_qaic_profiling,
@@ -272,24 +277,108 @@ class QAICProfilerCallback(TrainerCallback):
 
     def __init__(self, *args, **kwargs):
         """
-        Initialize QAIC profiler settings (start/end steps and target device IDs).
+        Initialize QAIC profiler settings (start/end steps, trace directory and target device IDs).
         """
-
         self.start_step = kwargs.get("start_step", -1)
         self.end_step = kwargs.get("end_step", -1)
-        self.device_ids = kwargs.get("device_ids", [0])
+        if self.start_step >= 0 and self.end_step >= 0 and self.end_step < self.start_step:
+            raise ValueError(f"end_step ({self.end_step}) must be >= start_step ({self.start_step})")
+        self.trace_dir = kwargs.get(
+            "trace_dir",
+            os.path.join(os.environ.get("OUTPUT_DIR", "."), "hw-trace"),
+        )
+        self.device_ids = kwargs.get("device_ids")
+        self._started_device_ids: list[int] = []
+        self._profile_started = False
+        self._stop_attempted = False
+        self._warned_start_failure = False
+        self._warned_stop_failure = False
 
-    def on_step_begin(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
-        """
-        Event called at the beginning of a training step. If using gradient accumulation, one training step might take
-        several inputs.
-        """
-        if state.global_step == self.start_step:
-            for device_id in self.device_ids:
-                init_qaic_profiling(True, f"qaic:{device_id}")
-        elif state.global_step == self.end_step:
-            for device_id in self.device_ids:
+    def _resolve_device_ids_for_rank(self) -> list[int]:
+        local_rank = get_local_rank()
+        world_size = get_world_size()
+
+        if not self.device_ids:
+            return [local_rank]
+
+        ids = list(self.device_ids)
+
+        # One device-per-rank mapping.
+        if world_size > 1 and len(ids) == world_size:
+            return [ids[local_rank % len(ids)]]
+
+        return ids
+
+    def _start_profiling(self, device_ids: list[int]) -> None:
+        started_device_ids: list[int] = []
+        for device_id in device_ids:
+            try:
+                init_qaic_profiling(True, f"qaic:{device_id}", trace_dir=self.trace_dir)
+                started_device_ids.append(device_id)
+            except Exception as e:
+                if not self._warned_start_failure:
+                    logger.log_rank_zero(
+                        f"failed to START profiling on qaic:{device_id}: {e}",
+                        level=logging.WARNING,
+                    )
+                    self._warned_start_failure = True
+        self._started_device_ids = started_device_ids
+        self._profile_started = bool(started_device_ids)
+
+    def _stop_profiling(self, device_ids: list[int], reason: str) -> None:
+        for device_id in device_ids:
+            try:
                 stop_qaic_profiling(True, f"qaic:{device_id}")
+            except Exception as e:
+                if not self._warned_stop_failure:
+                    logger.log_rank_zero(
+                        f"failed to STOP profiling ({reason}) on qaic:{device_id}: {e}",
+                        level=logging.WARNING,
+                    )
+                    self._warned_stop_failure = True
+        self._started_device_ids = []
+        self._profile_started = False
+
+    # -------------------------------------------------------------------------
+    # TrainerCallback hooks
+    # -------------------------------------------------------------------------
+
+    def on_step_begin(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs,
+    ):
+        if self.start_step >= 0 and state.global_step == self.start_step and not self._profile_started:
+            self._start_profiling(self._resolve_device_ids_for_rank())
+
+    def on_step_end(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs,
+    ):
+        if (
+            self.end_step >= 0
+            and state.global_step >= self.end_step
+            and self._profile_started
+            and not self._stop_attempted
+        ):
+            self._stop_attempted = True
+            self._stop_profiling(self._started_device_ids, f"at end_step={self.end_step}")
+
+    def on_train_end(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs,
+    ):
+        if self._profile_started and not self._stop_attempted:
+            self._stop_attempted = True
+            self._stop_profiling(self._started_device_ids, "on train end")
 
 
 @registry.callback("qaic_op_by_op_verifier_callback")
@@ -300,11 +389,33 @@ class QAICOpByOpVerifierCallback(TrainerCallback):
         """ "
         Initialize QAIC Op-by-Op verifier callback with profiling and tolerance settings.
         """
-        self.start_step = kwargs.get("start_step", -1)
-        self.end_step = kwargs.get("end_step", -1)
-        self.trace_dir = kwargs.get("trace_dir", "qaic_op_by_op_traces")
-        self.atol = kwargs.get("atol", 1e-1)
-        self.rtol = kwargs.get("rtol", 1e-5)
+        try:
+            self.start_step = int(kwargs.get("start_step", -1))
+            self.end_step = int(kwargs.get("end_step", -1))
+            self.atol = float(kwargs.get("atol", 1e-1))
+            self.rtol = float(kwargs.get("rtol", 1e-5))
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                "qaic_op_by_op_verifier_callback expects numeric values for start_step, end_step, atol, and rtol."
+            ) from e
+        trace_dir = kwargs.get("trace_dir", "qaic_op_by_op_traces")
+        expanded_trace_dir = os.path.expanduser(trace_dir)
+        if os.path.isabs(expanded_trace_dir):
+            self.trace_dir = os.path.abspath(expanded_trace_dir)
+        else:
+            output_dir = os.environ.get("OUTPUT_DIR", ".")
+            self.trace_dir = os.path.abspath(os.path.join(output_dir, expanded_trace_dir))
+        self.op_verifier_ctx_step = None
+
+    @staticmethod
+    def _resolve_ref_dtype(args: TrainingArguments) -> torch.dtype:
+        # Keep reference dtype aligned with training precision to avoid type mismatches
+        # in ops that require matching input/grad dtypes (e.g. embedding backward).
+        if getattr(args, "bf16", False):
+            return torch.bfloat16
+        if getattr(args, "fp16", False):
+            return torch.float16
+        return torch.float32
 
     def on_step_begin(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
         """
@@ -312,11 +423,24 @@ class QAICOpByOpVerifierCallback(TrainerCallback):
         several inputs.
         """
         if self.start_step <= state.global_step < self.end_step:
+            if getattr(args, "fp16", False):
+                raise RuntimeError(
+                    "qaic_op_by_op_verifier_callback is not supported with fp16/GradScaler training. "
+                    "Set training.fp16=false (and optionally training.bf16=true if supported) "
+                    "when using this callback."
+                )
+            logger.log_rank_zero(
+                "QAIC OpByOp verifier active: "
+                f"step={state.global_step}, "
+                f"window=[{self.start_step}, {self.end_step}), "
+                f"dump_dir={self.trace_dir}/mismatches/step_{state.global_step}"
+            )
             self.op_verifier_ctx_step = get_op_verifier_ctx(
                 use_op_by_op_verifier=True,
                 device_type="qaic",
                 dump_dir=self.trace_dir,
                 step=state.global_step,
+                ref_dtype=self._resolve_ref_dtype(args),
                 atol=self.atol,
                 rtol=self.rtol,
             )
@@ -327,9 +451,11 @@ class QAICOpByOpVerifierCallback(TrainerCallback):
         Event called at the end of a training step. If using gradient accumulation, one training step might take
         several inputs.
         """
-        if self.start_step <= state.global_step < self.end_step:
-            if self.op_verifier_ctx_step is not None:
-                self.op_verifier_ctx_step.__exit__(None, None, None)
+        # Always close a previously-entered verifier context, even when the
+        # post-step global_step moved to end_step.
+        if self.op_verifier_ctx_step is not None:
+            self.op_verifier_ctx_step.__exit__(None, None, None)
+            self.op_verifier_ctx_step = None
 
 
 def replace_progress_callback(trainer: Any, callbacks: list[Any], logger: Any = None) -> None:
