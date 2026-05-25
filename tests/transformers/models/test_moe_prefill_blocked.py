@@ -179,7 +179,7 @@ def test_qwen3moe_blocked_forward_parity():
     blocks = [
         m
         for _, m in model.named_modules()
-        if hasattr(m, "experts") and hasattr(m, "gate")
+        if hasattr(m, "experts") and hasattr(m, "gate") and hasattr(m.gate, "num_experts")
     ]
     assert blocks
 
@@ -192,7 +192,7 @@ def test_qwen3moe_blocked_forward_parity():
     with torch.no_grad():
         orig, _ = chunked.orig_forward(x)
         chunked.expert_blocking_num_nsp = 2
-        chunked.expert_blocking_num_packed_chunks = 1
+        chunked.expert_blocking_packed_chunk_size = 256
         blocked, _ = chunked.forward(x)
 
     assert orig.shape == blocked.shape
@@ -217,15 +217,18 @@ def test_qwen3moe_prefill_chunked_export(tmp_path):
 
 def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(tmp_path):
     import onnx
+    from onnx import numpy_helper
 
-    config = AutoConfig.for_model("qwen3_moe", **QWEN3_MOE_CFG)
+    config = AutoConfig.for_model("qwen3_moe", **{**QWEN3_MOE_CFG, "max_position_embeddings": 1024})
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
     onnx_path = qeff.export(
         tmp_path / "prefill-subfunction",
         prefill_only=True,
         enable_chunking=True,
+        prefill_seq_len=512,
         num_cores=2,
+        moe_prefill_packed_chunk_size=256,
         use_onnx_subfunctions=True,
         offload_pt_weights=False,
     )
@@ -233,8 +236,18 @@ def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
     onnx_model = onnx.load(str(onnx_path), load_external_data=False)
     function_names = {func.name for func in onnx_model.functions}
     used_op_types = {node.op_type for node in onnx_model.graph.node}
+    slice_starts = []
     for function_proto in onnx_model.functions:
-        used_op_types.update(node.op_type for node in function_proto.node)
+        constants = {}
+        for node in function_proto.node:
+            used_op_types.add(node.op_type)
+            if node.op_type == "Constant":
+                for attr in node.attribute:
+                    if attr.name == "value":
+                        constants[node.output[0]] = numpy_helper.to_array(attr.t).flatten().tolist()
+        for node in function_proto.node:
+            if node.op_type == "Slice" and len(node.input) > 1 and node.input[1] in constants:
+                slice_starts.append(constants[node.input[1]])
 
     assert "CtxScatter3DInt" in function_names
     assert "CtxScatter3D" in function_names
@@ -242,6 +255,7 @@ def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
     assert "CtxScatter3DInt" in used_op_types
     assert "CtxScatter3D" in used_op_types
     assert "CtxGather3D" in used_op_types
+    assert [256] in slice_starts
 
 
 # ── GPT-OSS ───────────────────────────────────────────────────────────────────
@@ -269,7 +283,7 @@ def test_gptoss_blocked_forward_parity():
     blocks_chunked = [m for _, m in qeff.model.named_modules() if isinstance(m, QEffPrefillOnlyChunkedGptOssMLP)]
     assert blocks_chunked
     blocks_chunked[0].expert_blocking_num_nsp = 2
-    blocks_chunked[0].expert_blocking_num_packed_chunks = 1
+    blocks_chunked[0].expert_blocking_packed_chunk_size = 256
 
     with torch.no_grad():
         blocked, _ = blocks_chunked[0].forward(x)
@@ -307,13 +321,14 @@ def test_gptoss_prefill_chunked_export_traces_packed_chunks(tmp_path):
         enable_chunking=True,
         prefill_seq_len=512,
         num_cores=2,
+        moe_prefill_packed_chunk_size=256,
         use_onnx_subfunctions=True,
         offload_pt_weights=False,
     )
 
     onnx_model = onnx.load(str(onnx_path), load_external_data=False)
-    dynamic_slice_starts = 0
     op_types = []
+    slice_starts = []
     for nodes in [onnx_model.graph.node] + [function.node for function in onnx_model.functions]:
         constants = {}
         for node in nodes:
@@ -323,8 +338,8 @@ def test_gptoss_prefill_chunked_export_traces_packed_chunks(tmp_path):
                     if attr.name == "value":
                         constants[node.output[0]] = numpy_helper.to_array(attr.t).flatten().tolist()
         for node in nodes:
-            if node.op_type == "Slice" and len(node.input) > 1 and node.input[1] not in constants:
-                dynamic_slice_starts += 1
+            if node.op_type == "Slice" and len(node.input) > 1 and node.input[1] in constants:
+                slice_starts.append(constants[node.input[1]])
 
-    assert dynamic_slice_starts > 0
+    assert [256] in slice_starts
     assert op_types.count("CtxGather3D") >= 2 * op_types.count("CtxScatter3DInt")

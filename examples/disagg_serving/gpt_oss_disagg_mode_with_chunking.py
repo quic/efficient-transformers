@@ -31,7 +31,7 @@ The path to the treasure was not an easy one. Alex had to navigate through dense
 # Run prefill
 config = AutoConfig.from_pretrained(model_id)
 tokenizer = AutoTokenizer.from_pretrained(model_id)
-PREFILL_SEQ_LEN = 128
+PREFILL_SEQ_LEN = 512
 CTX_LEN = 8192
 NUM_CORES = 16
 MOE_PREFILL_PACKED_CHUNK_SIZE = 256
@@ -71,7 +71,7 @@ prefill_qpc_path = qeff_model.compile(
     num_speculative_tokens=None,
     prefill_only=True,
     enable_chunking=True,
-    use_onnx_subfunctions=True,
+    use_onnx_subfunctions=False,
     # split_retained_state_io=True,  # This should be used for disagg serving via VLLM
     node_precision_info=subfunc_npi_file_path,
 )

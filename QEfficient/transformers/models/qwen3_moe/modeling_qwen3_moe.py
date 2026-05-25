@@ -135,7 +135,12 @@ def _cumsum_scatter_gather_update_expert_blocked(
     act_fn,
     packed_chunk_size: int,
 ) -> torch.Tensor:
-    """Cumsum-scatter-gather-update expert helper for NSP-blocked dispatch."""
+    """Cumsum-scatter-gather-update expert helper for NSP-blocked dispatch.
+
+    Accumulates one local expert's contribution in-place onto ``expert_out``.
+    Uses a packed/cumsum layout so the MLP runs only over active rows, then
+    scatters the weighted output back to original token positions.
+    """
     batch_size, seq_len = T2Ei.shape
     packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
 

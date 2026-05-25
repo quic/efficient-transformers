@@ -21,9 +21,9 @@ Explain quantum computing in simple terms.
 """
 config = AutoConfig.from_pretrained(model_id)
 tokenizer = AutoTokenizer.from_pretrained(model_id)
-PREFILL_SEQ_LEN = 256
+PREFILL_SEQ_LEN = 512
 CTX_LEN = PREFILL_SEQ_LEN * 3
-NUM_CORES = 16
+NUM_CORES = 4
 MOE_PREFILL_PACKED_CHUNK_SIZE = 256
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
@@ -60,7 +60,7 @@ prefill_qpc_path = qeff_model.compile(
     num_speculative_tokens=None,
     prefill_only=True,
     enable_chunking=True,
-    use_onnx_subfunctions=True,
+    use_onnx_subfunctions=False,
 )
 
 
