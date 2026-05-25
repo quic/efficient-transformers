@@ -286,11 +286,8 @@ class QEffFalconModel(FalconModel):
         alibi = None
         causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
 
-        # Prepare head mask if needed
-        # 1.0 in head_mask indicate we keep the head
-        # attention_probs has shape batch_size x num_heads x N x N
-        # head_mask has shape n_layer x batch x num_heads x N x N
-        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
+        if head_mask is None:
+            head_mask = [None] * self.config.num_hidden_layers
         hidden_states = inputs_embeds
 
         all_self_attentions = () if output_attentions else None

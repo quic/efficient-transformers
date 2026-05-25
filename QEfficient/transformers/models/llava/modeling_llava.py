@@ -28,7 +28,7 @@ class QEFFLlavaEncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
-        self.model.vision_model = self.model.vision_tower
+        self.model.vision_model = self.model.model.vision_tower
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
@@ -37,11 +37,11 @@ class QEFFLlavaEncoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.vision_tower.vision_model.encoder.layers[0].__class__}
+        return {self.model.model.vision_tower.vision_model.encoder.layers[0].__class__}
 
     def forward(self, pixel_values):
         # Image features
-        image_outputs = self.model.vision_tower(pixel_values, output_hidden_states=True)
+        image_outputs = self.model.model.vision_tower(pixel_values, output_hidden_states=True)
         selected_image_feature = image_outputs.hidden_states[self.model.config.vision_feature_layer]
         vision_feature_select_strategy = self.model.config.vision_feature_select_strategy
         if vision_feature_select_strategy == "default":
@@ -50,7 +50,7 @@ class QEFFLlavaEncoderWrapper(nn.Module):
             selected_image_feature = selected_image_feature
         else:
             raise ValueError(f"Unexpected select feature strategy: {self.model.config.vision_feature_select_strategy}")
-        vision_embeds = self.model.multi_modal_projector(selected_image_feature)
+        vision_embeds = self.model.model.multi_modal_projector(selected_image_feature)
 
         return vision_embeds
 
@@ -60,7 +60,7 @@ class QEFFLlavaDecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.config = self.model.config
-        self.language_model = self.model.language_model
+        self.language_model = self.model.model.language_model
         self.lm_head = self.model.lm_head
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
@@ -91,7 +91,7 @@ class QEFFLlavaDecoderWrapper(nn.Module):
         vision_embeds_expanded = vision_embeds[indices0, indices1]
         vision_embeds_expanded = torch.where(mask.unsqueeze(-1), vision_embeds_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, vision_embeds_expanded)
-        outputs = self.language_model(
+        outputs = self.model.model.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
             past_key_values=past_key_values,
@@ -126,7 +126,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
     ):
         inputs_embeds = self.get_input_embeddings()(input_ids)
         # Image features
-        image_outputs = self.vision_tower(pixel_values, output_hidden_states=True)
+        image_outputs = self.model.vision_tower(pixel_values, output_hidden_states=True)
         selected_image_feature = image_outputs.hidden_states[self.config.vision_feature_layer]
         vision_feature_select_strategy = self.config.vision_feature_select_strategy
         if vision_feature_select_strategy == "default":
@@ -135,7 +135,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
             selected_image_feature = selected_image_feature
         else:
             raise ValueError(f"Unexpected select feature strategy: {self.config.vision_feature_select_strategy}")
-        vision_embeds = self.multi_modal_projector(selected_image_feature)
+        vision_embeds = self.model.multi_modal_projector(selected_image_feature)
         vision_embeds = vision_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
         mask = input_ids == self.config.image_token_index
         indices1 = mask.to(torch.int64).cumsum(1) - 1
@@ -145,7 +145,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         image_embeds = torch.where(mask.unsqueeze(-1), vision_embeds_expanded, inputs_embeds)
         # *where to skip image encoder for decode*
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_embeds)
-        outputs = self.language_model(
+        outputs = self.model.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
             past_key_values=past_key_values,
@@ -184,7 +184,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
         lang_inputs = {
             "input_ids": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
             "vision_embeds": torch.ones(
-                (BS, vision_size, self.language_model.config.hidden_size), dtype=self.config.torch_dtype
+                (BS, vision_size, self.model.language_model.config.hidden_size), dtype=self.config.torch_dtype
             ),
             "attention_mask": torch.ones((BS, SEQ_LEN), dtype=torch.int64),
             "image_idx": torch.zeros((1, 1), dtype=torch.int64),
@@ -382,7 +382,7 @@ class QEffLlavaForConditionalGeneration(LlavaForConditionalGeneration):
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]
         lang_output_names = ["logits"]
-        for i in range(self.language_model.config.num_hidden_layers):
+        for i in range(self.model.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_output_names.append(f"past_{kv}.{i}_RetainedState")
 

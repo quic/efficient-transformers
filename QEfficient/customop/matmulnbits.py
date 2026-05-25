@@ -55,7 +55,7 @@ def dequantize_blockwise_bits(quant_values, scale, zero_point, bits, group_size,
         except RuntimeError:
             expand_zero_point = expand_zero_point.reshape(quant_values.shape[0], -1, 1)
             expand_zero_point = expand_zero_point[:, : quant_values.shape[1]]
-    if g_idx is not None and g_idx[:32].sum().item() != 0:
+    if g_idx is not None and (not getattr(g_idx, "is_meta", False)) and g_idx[:32].sum().item() != 0:
         float_values = (
             (expand_quant_value.reshape(expand_quant_value.shape[0], -1) - expand_zero_point[:, g_idx, 0])
             * aligned_scale[:, g_idx, 0]
@@ -117,7 +117,10 @@ class QuantLinearORT(nn.Module):
             raise ValueError("only 4bit is supported by ONNXRUNTIME for now.")
 
         # Order of groups
-        self.act_order = self.g_idx[: self.group_size // self.bits].sum().item() != 0
+        if getattr(self.g_idx, "is_meta", False):
+            self.act_order = False
+        else:
+            self.act_order = self.g_idx[: self.group_size // self.bits].sum().item() != 0
 
         intzeros_pt = int_zeros.T if int_zeros.dtype == self.scales.dtype else int_zeros.T.byte()
         scales_pt = self.scales.T.to(int_weight.device)
