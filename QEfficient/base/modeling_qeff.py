@@ -394,6 +394,7 @@ class QEFFBaseModel(ABC):
         retain_full_kv: Optional[bool] = False,
         mla_absorption: Optional[Dict[str, bool]] = None,
         qaic_config: Optional[dict] = None,
+        moe_prefill_packed_chunk_size: Optional[int] = None,
         **compiler_options,
     ):
         kwargs = {
@@ -409,6 +410,10 @@ class QEFFBaseModel(ABC):
                     "prefill_only": prefill_only,
                     "prefill_seq_len": specializations[0].get("seq_len"),
                     "enable_chunking": enable_chunking,
+                    "num_cores": compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES),
+                    "moe_prefill_packed_chunk_size": constants.MOE_PREFILL_PACKED_CHUNK_SIZE
+                    if moe_prefill_packed_chunk_size is None
+                    else moe_prefill_packed_chunk_size,
                 }
             )
 
@@ -527,11 +532,12 @@ class QEFFBaseModel(ABC):
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
 
+        moe_prefill_packed_chunk_size = compiler_options.pop("moe_prefill_packed_chunk_size", None)
         onnx_path = Path(
             onnx_path
             if onnx_path
-            # else self.onnx_path
-            # if self.onnx_path
+            else self.onnx_path
+            if self.onnx_path
             else self.get_onnx_path(
                 prefill_only,
                 enable_chunking,
@@ -542,6 +548,7 @@ class QEFFBaseModel(ABC):
                 mla_absorption,
                 num_devices=mdp_ts_num_devices,
                 qaic_config=qaic_config,
+                moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                 **compiler_options,
             )
         )

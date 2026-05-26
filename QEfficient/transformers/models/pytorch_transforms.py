@@ -775,6 +775,8 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         # GraniteMoe
         QEffPrefillChunkedGraniteMoeMoE: QEffGraniteMoeMoE,
         QEffPrefillChunkedGraniteMoeAttention: QEffGraniteMoeAttention,
+        # Qwen3 VL Moe
+        QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
     }
 
 

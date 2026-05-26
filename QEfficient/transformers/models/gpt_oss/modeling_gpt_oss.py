@@ -55,9 +55,6 @@ class QEffGptOssExperts(GptOssExperts):
         self.up_proj_bias = nn.Parameter(torch.empty(self.num_experts, self.expert_dim))
 
 
-EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
-EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
-
 
 def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
     """Build packed->original token index"""
@@ -165,14 +162,16 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
 
 
 class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
+    supports_moe_prefill_blocking = True
+
     def _forward_expert_blocked(
         self, x: torch.Tensor, routing_weights: torch.Tensor, num_expert_chunks: Optional[int] = None
     ) -> torch.Tensor:
         T, H = x.shape
-        num_nsp = EXPERT_BLOCKING_NUM_NSP
+        num_nsp = self.expert_blocking_num_nsp
         num_experts = self.experts.num_experts
         if num_experts % num_nsp != 0:
-            raise ValueError(f"num_experts ({num_experts}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})")
+            raise ValueError(f"num_experts ({num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})")
 
         local_experts = num_experts // num_nsp
         expert_dim = self.experts.expert_dim
@@ -204,8 +203,8 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
                 limit=self.experts.limit,
                 alpha=self.experts.alpha,
                 T=T,
-                packed_chunk_size=EXPERT_BLOCKING_PACKED_CHUNK_SIZE,
-                num_expert_chunks=num_expert_chunks,
+                packed_chunk_size=self.expert_blocking_packed_chunk_size,
+                num_expert_chunks=self.expert_blocking_num_packed_chunks,
             )
 
         return torch.einsum("ijk->jk", expert_out)
@@ -228,11 +227,8 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         # Routing weights for each expert [T, E]
         routing_weights = masked_logits
 
-        if self.experts.num_experts % EXPERT_BLOCKING_NUM_NSP == 0:
-            num_expert_chunks = getattr(self, "_num_expert_chunks", None)
-            expert_out = self._forward_expert_blocked(
-                x=hidden, routing_weights=routing_weights, num_expert_chunks=num_expert_chunks
-            )
+        if getattr(self, "supports_moe_prefill_blocking", False) and hasattr(self, "expert_blocking_num_nsp") and self.experts.num_experts % self.expert_blocking_num_nsp == 0:
+            expert_out = self._forward_expert_blocked(x=hidden, routing_weights=routing_weights)
             return expert_out.view(B, S, H), router_logits
 
         # ────────────────── allocate the output tensor ─────

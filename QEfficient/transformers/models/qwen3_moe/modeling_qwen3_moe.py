@@ -106,9 +106,6 @@ def eager_attention_forward(
     return attn_output, attn_weights
 
 
-EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
-EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
-
 
 def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
     """Build packed->original token index"""
@@ -207,6 +204,8 @@ def _cumsum_scatter_gather_update_expert_blocked(
 
 
 class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
+    supports_moe_prefill_blocking = True
+
     def __qeff_init__(self):
         self.gate_proj_w = []
         self.up_proj_w = []
@@ -224,10 +223,10 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         self, x: torch.Tensor, routing_weights: torch.Tensor, num_expert_chunks: Optional[int] = None
     ) -> torch.Tensor:
         T, H = x.shape
-        num_nsp = EXPERT_BLOCKING_NUM_NSP
+        num_nsp = self.expert_blocking_num_nsp
         if self.num_experts % num_nsp != 0:
             raise ValueError(
-                f"num_experts ({self.num_experts}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})"
+                f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})"
             )
         local_experts = self.num_experts // num_nsp
         rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
@@ -248,8 +247,8 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
                 expert_out=expert_out,
                 act_fn=self.experts[0].act_fn,
                 T=T,
-                packed_chunk_size=EXPERT_BLOCKING_PACKED_CHUNK_SIZE,
-                num_expert_chunks=num_expert_chunks,
+                packed_chunk_size=self.expert_blocking_packed_chunk_size,
+                num_expert_chunks=self.expert_blocking_num_packed_chunks,
             )
         return torch.einsum("ijk->jk", expert_out)
 
@@ -290,11 +289,8 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         routing_weights = torch.zeros_like(router_logits)
         routing_weights.scatter_(1, top_i, top_w)
 
-        if self.num_experts % EXPERT_BLOCKING_NUM_NSP == 0:
-            num_expert_chunks = getattr(self, "_num_expert_chunks", None)
-            expert_out = self._forward_expert_blocked(
-                x=x, routing_weights=routing_weights, num_expert_chunks=num_expert_chunks
-            )
+        if getattr(self, "supports_moe_prefill_blocking", False) and hasattr(self, "expert_blocking_num_nsp") and self.num_experts % self.expert_blocking_num_nsp == 0:
+            expert_out = self._forward_expert_blocked(x=x, routing_weights=routing_weights)
             return expert_out.view(B, S, H), router_logits
 
         return self.orig_forward(hidden_states)
