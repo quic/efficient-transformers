@@ -4,6 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+from typing import Optional
+
 import numpy as np
 
 from QEfficient.base.onnx_transforms import FP16ClipTransform
@@ -64,10 +66,7 @@ def build_messages(system_prompt: str, user_prompt: str, use_image: bool):
     return messages
 
 
-def resolve_npi_mode(enable_npi: bool, disable_npi: bool) -> str:
-    if enable_npi and disable_npi:
-        print("Warning: both ENABLE_NPI and DISABLE_NPI are set; defaulting to auto NPI mode.")
-        return "auto"
+def resolve_npi_mode(enable_npi: bool, disable_npi: Optional[bool] = False) -> str:
     return "enabled" if enable_npi else "disabled" if disable_npi else "auto"
 
 
@@ -84,8 +83,6 @@ def build_compile_kwargs(
         "aic_enable_depth_first": kwargs["AIC_ENABLE_DEPTH_FIRST"],
         "mos": kwargs["MOS"],
         "use_onnx_subfunctions": kwargs["USE_ONNX_SUBFUNCTIONS"],
-        "vision_use_onnx_subfunctions": kwargs["VISION_USE_ONNX_SUBFUNCTIONS"],
-        "lang_use_onnx_subfunctions": kwargs["LANG_USE_ONNX_SUBFUNCTIONS"],
         "split_model_io": kwargs.get("split_model_io", True),
         # "enable_chunking": kwargs.get("enable_chunking", True),
         # "prefill_only": kwargs.get("prefill_only", True),
@@ -101,9 +98,6 @@ def build_compile_kwargs(
             kwargs["node_precision_info"] = True
     elif npi_mode == "disabled":
         kwargs["node_precision_info"] = False
-        if not skip_vision:
-            kwargs["vision_node_precision_info"] = False
-
     return kwargs
 
 
