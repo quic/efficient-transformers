@@ -1194,7 +1194,7 @@ def blocked_kv_par_mla_attention_forward(
         n_rep = n_rep + 1
         old_NQH = NQH
         ideal_heads = n_rep * Hkv - NQH
-        pad_zeros = torch.zeros(B, ideal_heads, QL, D_abs)
+        pad_zeros = torch.zeros(B, ideal_heads, QL, D_abs, dtype=query.dtype)
         query = torch.cat([query, pad_zeros], dim=1)
         NQH = n_rep * Hkv
     q_fold = query.reshape(B, Hkv, QL * n_rep, D_abs)
