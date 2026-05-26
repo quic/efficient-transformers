@@ -6,14 +6,10 @@
 # -----------------------------------------------------------------------------
 
 import copy
-import os
 from collections import Counter
 
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM
-
-os.environ.setdefault("EXPERT_BLOCKING_NUM_NSP", "2")
-os.environ.setdefault("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256")
 
 from QEfficient import QEFFAutoModelForCausalLM
 
@@ -54,6 +50,8 @@ def test_glm4_moe_blocked_prefill_forward_parity():
     chunked_block = copy.deepcopy(block)
     chunked_block.__class__ = QEffPrefillChunkedGlm4MoeMoE
     chunked_block.__qeff_init__()
+    chunked_block.expert_blocking_num_nsp = 2
+    chunked_block.expert_blocking_packed_chunk_size = 256
 
     x = torch.randn(1, 8, config.hidden_size)
     with torch.no_grad():
@@ -83,6 +81,8 @@ def test_glm4_moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
         prefill_only=True,
         prefill_seq_len=512,
         enable_chunking=True,
+        num_cores=2,
+        moe_prefill_packed_chunk_size=256,
         use_onnx_subfunctions=True,
         offload_pt_weights=False,
     )
@@ -96,7 +96,7 @@ def test_glm4_moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
         assert op_counts["Sin"] == 0
         assert op_counts["Cos"] == 0
         # prefill_seq_len=512 and packed_chunk_size=256 gives two packed chunks.
-        # With n_routed_experts=4 and EXPERT_BLOCKING_NUM_NSP=2, each layer has two expert slots.
+        # With n_routed_experts=4 and num_cores=2, each layer has two expert slots.
         assert op_counts["CtxGather3D"] == 12
         assert op_counts["CtxScatter3D"] == 4
         assert op_counts["CtxScatter3DInt"] == 2
@@ -131,6 +131,8 @@ def test_glm4_moe_kv_blocking_transform_and_prefill_export(tmp_path):
         prefill_seq_len=512,
         enable_chunking=True,
         use_onnx_subfunctions=True,
+        num_cores=2,
+        moe_prefill_packed_chunk_size=256,
         offload_pt_weights=False,
     )
     onnx_model = onnx.load(str(onnx_path), load_external_data=False)
