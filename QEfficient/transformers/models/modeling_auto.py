@@ -2521,11 +2521,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         inputs["attention_mask"] = torch.nn.functional.pad(
             inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
         )
-        if "mm_token_type_ids" in inputs:
-            inputs["mm_token_type_ids"] = torch.nn.functional.pad(
-                inputs["mm_token_type_ids"], (0, padded_len - input_ids_length), "constant", 0
-            )
-
         if "cross_attention_mask" in inputs:
             inputs["cross_attention_mask"] = torch.nn.functional.pad(
                 inputs["cross_attention_mask"], (0, 0, 0, 0, 0, padded_len - input_ids_length)
