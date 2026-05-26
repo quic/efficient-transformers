@@ -1083,6 +1083,7 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
                 new_kv_heads * dim
             )
 
+    @staticmethod
     def _duplicate_weights_for_linear_layer(
         layer: nn.Module, orig_kv_heads: int, repeat: int, head_dim: int, hidden_size: int
     ):
@@ -1299,6 +1300,12 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
         else:
             kwargs.pop("num_kv_heads_repeat", None)
             n_repeat = num_kv_heads_repeat
+        # Validate n_repeat is a positive integer
+        if not isinstance(n_repeat, int) or n_repeat < 1:
+            raise ValueError(
+                f"num_kv_heads_repeat must be a positive integer, got: {n_repeat} (type: {type(n_repeat).__name__})"
+            )
+
         transformed = False
         if n_repeat is not None and n_repeat > 1:
             if (model.__class__ in cls._module_mapping) or (model.__class__.__name__ in cls._module_string_mapping):
