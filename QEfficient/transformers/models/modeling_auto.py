@@ -3822,7 +3822,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         else:
             spec["batch_size"] = kv_cache_batch_size
         result = {k: v for k, v in spec.items() if v is not None}
-        # result["_graph_name"] = "Decode"
+        result["_graph_name"] = "Decode"
         return result
 
     def compile(
