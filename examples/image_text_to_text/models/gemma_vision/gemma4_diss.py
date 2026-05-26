@@ -27,12 +27,13 @@ model_id = "google/gemma-4-26B-A4B-it"
 config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
-# config.text_config.num_hidden_layers = 2
-# config.vision_config.num_hidden_layers = 2
+config.text_config.num_hidden_layers = 2
+config.vision_config.num_hidden_layers = 2
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config, dtype="float32", trust_remote_code=True
 )
+
 
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -79,6 +80,7 @@ prefill_qpc_path = qeff_model.compile(
     enable_chunking=True,
     skip_vision=True,
 )
+
 decode_qpc_path = qeff_model.compile(
     batch_size=BS,
     prefill_seq_len=1,
@@ -94,12 +96,37 @@ decode_qpc_path = qeff_model.compile(
     prefill_only=False,
     skip_vision=True,
 )
-if skip_vision:
-    lang_prefill_session = QAICInferenceSession(prefill_qpc_path)
-    lang_decode_session = QAICInferenceSession(decode_qpc_path)
-else:
-    lang_prefill_session = QAICInferenceSession(prefill_qpc_path[1])
-    lang_decode_session = QAICInferenceSession(decode_qpc_path[1])
+
+
+def _resolve_lang_qpc_path(qpc_obj, preferred_keys):
+    if isinstance(qpc_obj, dict):
+        for key in preferred_keys:
+            if key in qpc_obj:
+                return qpc_obj[key]
+        raise KeyError(f"Could not find any of {preferred_keys} in compile output keys: {list(qpc_obj.keys())}")
+    if isinstance(qpc_obj, (list, tuple)):
+        # Backward-compat: some codepaths return (vision_qpc, lang_qpc)
+        return qpc_obj[1]
+    return qpc_obj
+
+
+def _resolve_vision_qpc_path(qpc_obj, preferred_keys=("vision_qpc_path",)):
+    if isinstance(qpc_obj, dict):
+        for key in preferred_keys:
+            if key in qpc_obj:
+                return qpc_obj[key]
+        raise KeyError(f"Could not find any of {preferred_keys} in compile output keys: {list(qpc_obj.keys())}")
+    if isinstance(qpc_obj, (list, tuple)):
+        # Backward-compat: some codepaths return (vision_qpc, lang_qpc)
+        return qpc_obj[0]
+    return qpc_obj
+
+
+lang_prefill_qpc = _resolve_lang_qpc_path(prefill_qpc_path, ("lang_prefill_qpc_path", "lang_qpc_path"))
+lang_decode_qpc = _resolve_lang_qpc_path(decode_qpc_path, ("lang_decode_qpc_path", "lang_qpc_path"))
+
+lang_prefill_session = QAICInferenceSession(lang_prefill_qpc)
+lang_decode_session = QAICInferenceSession(lang_decode_qpc)
 MODEL_ID = "google/gemma-4-26B-A4B-it"
 SYSTEM_PROMPT = "You are a helpful assistant."
 TEXT_PROMPT = "Tell me about Taj Mahal?"
@@ -127,7 +154,9 @@ else:
         return_dict=True,
         return_tensors="pt",
     )
-    vision_session = QAICInferenceSession(vision_qpc_path)
+
+    vision_qpc = _resolve_vision_qpc_path(vision_qpc_path)
+    vision_session = QAICInferenceSession(vision_qpc)
 pad_token_id = 1
 input_len = inputs["attention_mask"].sum(1, keepdims=True)
 input_ids_length = inputs["input_ids"].shape[1]
@@ -136,6 +165,7 @@ padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 generation_len = 200
 print(f"generation_len : {generation_len}")
 generated_ids = np.full((BS, generation_len + 1), pad_token_id)
+
 inputs["input_ids"] = torch.nn.functional.pad(
     inputs["input_ids"],
     (0, padded_len - input_ids_length),
@@ -148,6 +178,7 @@ inputs["attention_mask"] = torch.nn.functional.pad(
 
 for k, v in inputs.items():
     inputs[k] = np.array(v)
+
 vision_inputs = {
     k: v
     for k, v in inputs.items()

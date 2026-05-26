@@ -22,7 +22,6 @@ from transformers import (
     AutoModelForImageTextToText,
     AutoModelForSequenceClassification,
     AutoModelForSpeechSeq2Seq,
-    AutoProcessor,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
     TextStreamer,
@@ -276,7 +275,6 @@ class QEFFAutoModel(QEFFTransformersBase):
 
     _hf_auto_class = AutoModel
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
     # FP16Clip inlines external weights; without Split the saved protobuf exceeds 2GB for large embedders.
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
@@ -681,7 +679,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
 
     _hf_auto_class = AutoModelForSequenceClassification
     _pytorch_transforms = [CustomOpsTransform, TextClassificationTransform]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = []
 
     def __init__(self, model: nn.Module, **kwargs):
         """
@@ -932,7 +930,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         KVCacheTransform,
         KVCacheExternalModuleMapperTransform,
     ]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = []
 
     def __init__(self, model: nn.modules, **kwargs):
         """
@@ -945,8 +943,7 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
-        enable_proxy = kwargs.pop("enable_proxy", False)
-        _configure_proxy_for_model(self, enable_proxy)
+        _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_vision_encoder()
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -1070,7 +1067,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         VlmKVOffloadTransform,
         SplitGateUpWeightsTransform,
     ]
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
+    _onnx_transforms = []
 
     def __init__(self, model, qaic_config: Optional[dict] = None, **kwargs):
         """
@@ -1086,8 +1083,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         **kwargs :
             Additional keyword arguments passed to the base class constructor.
         """
-        enable_proxy = kwargs.pop("enable_proxy", False)
-        _configure_proxy_for_model(self, enable_proxy)
+        _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.model.qaic_config = qaic_config
@@ -1208,7 +1204,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         str
             Path to the compiled QPC package for the language decoder.
         """
-        breakpoint()
         return self._compile(
             compile_dir=compile_dir,
             specializations=specializations,
@@ -1234,156 +1229,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         if hasattr(self.model, "language_model"):
             return self.model.language_model.config.__dict__
         return self.model.config.__dict__
-
-
-class _QEffAutoModelForImageTextToTextLanguageOnlyCompat:
-    """
-    Language-only compatibility wrapper for conditional-generation models that expose
-    image-text APIs but currently execute only the text path in QEfficient.
-
-    This is used for Gemma4 `skip_vision=True` onboarding so the image-text auto class
-    reuses the already-validated causal-LM export/compile/runtime path instead of
-    maintaining a separate multimodal generation implementation for text-only prompts.
-    """
-
-    def __init__(
-        self,
-        model: nn.Module,
-        continuous_batching: bool = False,
-        qaic_config: Optional[dict] = None,
-        **kwargs,
-    ):
-        self.model = model
-        self.config = model.config
-        self.vision_model = None
-        self.continuous_batching = continuous_batching
-        self._processor = None
-
-        trust_remote_code = kwargs.get("trust_remote_code", False)
-        text_model = QEFFAutoModelForCausalLM._normalize_hf_causal_lm_model(
-            model,
-            pretrained_model_name_or_path=getattr(model, "name_or_path", None),
-            trust_remote_code=trust_remote_code,
-        )
-        self.lang_model = QEFFAutoModelForCausalLM(
-            text_model,
-            continuous_batching=continuous_batching,
-            qaic_config=qaic_config,
-            **kwargs,
-        )
-
-    @property
-    def onnx_path(self):
-        return self.lang_model.onnx_path
-
-    @property
-    def qpc_path(self):
-        return self.lang_model.qpc_path
-
-    def _get_tokenizer(
-        self,
-        tokenizer: Optional[Union[PreTrainedTokenizerFast, PreTrainedTokenizer]] = None,
-        processor: Optional[AutoProcessor] = None,
-    ):
-        if tokenizer is not None:
-            return tokenizer
-        if processor is not None:
-            return processor.tokenizer
-        if self._processor is None:
-            model_name_or_path = getattr(
-                self.model,
-                "name_or_path",
-                getattr(getattr(self.model, "config", None), "_name_or_path", None),
-            )
-            self._processor = AutoProcessor.from_pretrained(
-                model_name_or_path,
-                trust_remote_code=True,
-            )
-        return self._processor.tokenizer
-
-    def _decode_prompts_from_inputs(
-        self,
-        inputs,
-        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
-    ) -> List[str]:
-        input_ids = inputs["input_ids"].detach().cpu()
-        attention_mask = inputs.get("attention_mask")
-        attention_mask = attention_mask.detach().cpu() if attention_mask is not None else None
-
-        prompts = []
-        for batch_idx in range(input_ids.shape[0]):
-            if attention_mask is None:
-                prompt_ids = input_ids[batch_idx]
-            else:
-                prompt_len = int(attention_mask[batch_idx].sum().item())
-                prompt_ids = input_ids[batch_idx, :prompt_len]
-            prompts.append(
-                tokenizer.decode(
-                    prompt_ids.tolist(),
-                    skip_special_tokens=False,
-                    clean_up_tokenization_spaces=False,
-                )
-            )
-        return prompts
-
-    def export(self, export_dir: Optional[str] = None, **kwargs):
-        kwargs.pop("skip_vision", None)
-        kwargs.pop("skip_lang", None)
-        lang_use_onnx_subfunctions = kwargs.pop("lang_use_onnx_subfunctions", None)
-        kwargs.pop("vision_use_onnx_subfunctions", None)
-        if lang_use_onnx_subfunctions is not None:
-            kwargs["use_onnx_subfunctions"] = lang_use_onnx_subfunctions
-        kwargs.setdefault("offload_pt_weights", False)
-        return self.lang_model.export(export_dir=export_dir, **kwargs)
-
-    def compile(
-        self,
-        onnx_path: Optional[str] = None,
-        compile_dir: Optional[str] = None,
-        **kwargs,
-    ):
-        kwargs.pop("skip_vision", None)
-        skip_lang = kwargs.pop("skip_lang", False)
-        if skip_lang:
-            raise ValueError("Language-only Gemma4 wrapper cannot compile with skip_lang=True.")
-        lang_use_onnx_subfunctions = kwargs.pop("lang_use_onnx_subfunctions", None)
-        kwargs.pop("vision_use_onnx_subfunctions", None)
-        if lang_use_onnx_subfunctions is not None:
-            kwargs["use_onnx_subfunctions"] = lang_use_onnx_subfunctions
-        if onnx_path is None:
-            export_kwargs = dict(kwargs)
-            export_kwargs.setdefault("offload_pt_weights", False)
-            onnx_path = self.lang_model.export(export_dir=compile_dir, **export_kwargs)
-        return self.lang_model.compile(onnx_path=onnx_path, compile_dir=compile_dir, **kwargs)
-
-    def generate(
-        self,
-        inputs: Optional[torch.Tensor] = None,
-        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer] = None,
-        processor: Optional[AutoProcessor] = None,
-        images: List[str] = None,
-        prompts: List[str] = None,
-        streamer: Optional[TextStreamer] = None,
-        device_ids: List[int] = None,
-        runtime_ai100: bool = True,
-        generation_len: Optional[int] = None,
-        **kwargs,
-    ):
-        if images is not None:
-            raise ValueError("Gemma4 language-only compatibility path does not accept images with skip_vision=True.")
-        tokenizer = self._get_tokenizer(tokenizer=tokenizer, processor=processor)
-        if prompts is None:
-            if inputs is None:
-                raise ValueError("Expected either `prompts` or `inputs` for generation.")
-            prompts = self._decode_prompts_from_inputs(inputs, tokenizer)
-        return self.lang_model.generate(
-            tokenizer=tokenizer,
-            prompts=prompts,
-            device_id=device_ids,
-            runtime_ai100=runtime_ai100,
-            generation_len=generation_len,
-            **kwargs,
-        )
 
 
 class _QEffAutoModelForImageTextToTextDualQPC:
@@ -1423,12 +1268,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
         self.model = model
         self.config = model.config
+
+        self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, qaic_config=qaic_config, **kwargs)
-        self.vision_model = (
-            QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
-            if hasattr(model, "get_qeff_vision_encoder")
-            else None
-        )
         self.continuous_batching = continuous_batching
         self.ccl_enabled = False
         if qaic_config:
@@ -1492,34 +1334,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         List[str]
             A list containing the ONNX paths of the vision model and the language model.
         """
-        if self.vision_model is None:
-            return self.lang_model.onnx_path
         return [self.vision_model.onnx_path, self.lang_model.onnx_path]
-
-    @property
-    def qpc_path(self):
-        """
-        Get the QPC paths for the vision and language model components.
-
-        Returns
-        -------
-        Union[List[str], str, None]
-            A list containing both QPC paths if both are compiled, or just one if only one is,
-            or None if neither is compiled.
-        """
-        if self.vision_model is not None and self.vision_model.qpc_path and self.lang_model.qpc_path:
-            return [self.vision_model.qpc_path, self.lang_model.qpc_path]
-        elif self.vision_model is not None and self.vision_model.qpc_path:
-            return self.vision_model.qpc_path
-        else:
-            return self.lang_model.qpc_path
 
     def export(
         self,
         export_dir: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
-        vision_use_onnx_subfunctions: Optional[bool] = None,
-        lang_use_onnx_subfunctions: Optional[bool] = None,
         skip_vision: Optional[bool] = False,
         skip_lang: Optional[bool] = False,
         prefill_seq_len: Optional[int] = None,
@@ -1583,21 +1403,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 vocab_size=self.model.language_model.config.vocab_size,
                 qaic_config=self.lang_model.model.qaic_config,
             )
-        if vision_use_onnx_subfunctions is None:
-            vision_use_onnx_subfunctions = use_onnx_subfunctions
-        if lang_use_onnx_subfunctions is None:
-            lang_use_onnx_subfunctions = use_onnx_subfunctions
-
         if not skip_vision:
-            if self.vision_model is None:
-                raise ValueError("Vision encoder wrapper is unavailable for this model. Use skip_vision=True.")
             self.vision_model.export(
                 inputs["vision"],
                 output_names["vision"],
                 dynamic_axes["vision"],
                 export_dir=export_dir,
                 offload_pt_weights=False,
-                use_onnx_subfunctions=vision_use_onnx_subfunctions,
+                use_onnx_subfunctions=use_onnx_subfunctions,
             )
 
         if prefill_only and prefill_seq_len > 1:
@@ -1612,7 +1425,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 dynamic_axes["lang"],
                 export_dir=export_dir,
                 offload_pt_weights=offload_pt_weights,
-                use_onnx_subfunctions=lang_use_onnx_subfunctions,
+                use_onnx_subfunctions=use_onnx_subfunctions,
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 prefill_seq_len=prefill_seq_len,
@@ -1667,8 +1480,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         skip_vision: Optional[bool] = False,
         skip_lang: Optional[bool] = False,
         use_onnx_subfunctions: bool = False,
-        vision_use_onnx_subfunctions: Optional[bool] = None,
-        lang_use_onnx_subfunctions: Optional[bool] = None,
         prefill_only=None,
         enable_chunking=False,
         qaic_config: Optional[dict] = None,
@@ -1730,13 +1541,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         """
         if skip_lang and skip_vision:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
-        if vision_use_onnx_subfunctions is None:
-            vision_use_onnx_subfunctions = use_onnx_subfunctions
-        if lang_use_onnx_subfunctions is None:
-            lang_use_onnx_subfunctions = use_onnx_subfunctions
-
-        vision_node_precision_info = compiler_options.pop("vision_node_precision_info", None)
-        lang_node_precision_info = compiler_options.get("node_precision_info", None)
 
         if self.continuous_batching and full_batch_size is None:
             raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
@@ -1804,54 +1608,33 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 custom_io_vision[output_name] = CUSTOM_IO_DTYPE_MAP[target_dtype]
 
         if vision_onnx_path:
-            if self.vision_model is None:
-                raise ValueError("Vision encoder wrapper is unavailable for this model. Use skip_vision=True.")
             self.vision_model.onnx_path = vision_onnx_path
         if lang_onnx_path:
             self.lang_model.onnx_path = lang_onnx_path
-        if not skip_vision and self.vision_model is None:
-            raise ValueError("Vision encoder wrapper is unavailable for this model. Use skip_vision=True.")
 
-        # need_export_vision = (
-        #     not skip_vision
-        #     and self.vision_model is not None
-        #     and self.vision_model.onnx_path is None
-        #     and vision_onnx_path is None
-        # )
-        # need_export_lang = self.lang_model.onnx_path is None and lang_onnx_path is None
-        # if need_export_vision or need_export_lang:
-        self.export(
-            use_onnx_subfunctions=use_onnx_subfunctions,
-            skip_vision=skip_vision,
-            vision_use_onnx_subfunctions=vision_use_onnx_subfunctions,
-            lang_use_onnx_subfunctions=lang_use_onnx_subfunctions,
-            skip_lang=skip_lang,
-            prefill_only=prefill_only,
-            enable_chunking=enable_chunking,
-            prefill_seq_len=prefill_seq_len,
-        )
+        if vision_onnx_path is None or lang_onnx_path is None:
+            self.export(
+                use_onnx_subfunctions=use_onnx_subfunctions,
+                skip_vision=skip_vision,
+                skip_lang=skip_lang,
+                prefill_only=prefill_only,
+                enable_chunking=enable_chunking,
+                prefill_seq_len=prefill_seq_len,
+            )
 
         # TODO this hould be removed once the continous batching is supported for all the models.
-        if vision_node_precision_info is True:
-            if not hasattr(self.model, "generate_vision_npi_file"):
-                raise ValueError("Automatic vision NPI generation is not supported for this model.")
-            if self.vision_model is None or self.vision_model.onnx_path is None:
-                raise ValueError("Vision ONNX path is required to generate a vision NPI file.")
-            vision_node_precision_info = self.model.generate_vision_npi_file(self.vision_model.onnx_path)
-        if lang_node_precision_info is True:
-            if not hasattr(self.model, "generate_npi_file"):
-                raise ValueError("Automatic language NPI generation is not supported for this model.")
-            if self.lang_model.onnx_path is None:
-                raise ValueError("Language ONNX path is required to generate a language NPI file.")
+
+        if not hasattr(self.model, "generate_npi_file"):
+            raise ValueError("Automatic language NPI generation is not supported for this model.")
+        if self.lang_model.onnx_path is None and not skip_lang:
+            raise ValueError("Language ONNX path is required to generate a language NPI file.")
+        if self.lang_model.onnx_path:
             compiler_options["node_precision_info"] = self.model.generate_npi_file(self.lang_model.onnx_path)
         compiler_options.pop("continuous_batching", None)
         compiler_options.pop("kv_cache_batch_size", None)
         compiler_options.pop("full_batch_size", None)
-        compiler_options.pop("convert_to_fp16", True)
-        vision_compiler_options = compiler_options.copy()
-        vision_compiler_options.pop("node_precision_info", None)
-        if vision_node_precision_info is not None:
-            vision_compiler_options["node_precision_info"] = vision_node_precision_info
+        # compiler_options.pop("node_precision_info", None)
+        self.qpc_paths = {}
         if not skip_vision:
             vision_qpc_path = self.vision_model._compile(
                 onnx_path=self.vision_model.onnx_path,
@@ -1864,9 +1647,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 aic_num_cores=num_cores,
                 custom_io=custom_io_vision,
                 mxint8_kv_cache=mxint8_kv_cache,
-                use_onnx_subfunctions=vision_use_onnx_subfunctions,
-                **vision_compiler_options,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+                **compiler_options,
             )
+            self.qpc_paths["vision_qpc_path"] = vision_qpc_path
 
         # Custom NPI file options
         if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
@@ -1893,10 +1677,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     )
             if prefill_only:
                 specializations = specializations["lang"][:1]
+                qpc_key = "lang_prefill_qpc_path"
             elif prefill_seq_len == 1:
                 specializations = specializations["lang"][-1:]
+                qpc_key = "lang_decode_qpc_path"
             else:
                 specializations = specializations["lang"]
+                qpc_key = "lang_qpc_path"
 
             lang_qpc_path = self.lang_model._compile(
                 onnx_path=self.lang_model.onnx_path,
@@ -1909,11 +1696,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 aic_num_cores=num_cores,
                 custom_io=custom_io_lang,
                 mxint8_kv_cache=mxint8_kv_cache,
-                use_onnx_subfunctions=lang_use_onnx_subfunctions,
+                use_onnx_subfunctions=use_onnx_subfunctions,
                 **compiler_options,
             )
-
-        return self.qpc_path
+            self.qpc_paths.update({qpc_key: lang_qpc_path})
+        return self.qpc_paths
 
     def generate(
         self,
@@ -2050,7 +1837,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         lang_session = QAICInferenceSession(self.lang_model.qpc_path, device_ids, activate=False)
 
-        if self.vision_model is not None and self.vision_model.qpc_path:
+        if self.vision_model.qpc_path:
             vision_session = QAICInferenceSession(self.vision_model.qpc_path, device_ids)
 
         batch_size, ctx_len, fbs = get_compilation_dims(self.lang_model.qpc_path)
@@ -2115,14 +1902,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             if k
             in {
                 "pixel_values",
-                "image_position_ids",
                 "image_masks",
+                "image_position_ids",
                 "image_input_idx",
                 "valid_idx",
                 "aspect_ratio_ids",
                 "aspect_ratio_mask",
             }
         }
+
         vision_inputs_fp16 = {"pixel_values", "image_masks"}
         vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
 
@@ -2150,7 +1938,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         not_mllama = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
         if not_mllama:
             lang_inputs["image_idx"] = np.array([[0]])
-        if self.vision_model is not None and self.vision_model.qpc_path:
+        if self.vision_model.qpc_path:
             vision_session.deactivate()
         lang_session.activate()
 
@@ -2180,7 +1968,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             ]
             if "mm_token_type_ids" in lang_inputs:
                 chunk_inputs["mm_token_type_ids"] = lang_inputs["mm_token_type_ids"][
-                    :, i * prefill_seq_len : (i + 1) * prefill_seq_len
+                    ..., i * prefill_seq_len : (i + 1) * prefill_seq_len
+                ]
+            if "token_type_ids" in lang_inputs:
+                chunk_inputs["token_type_ids"] = lang_inputs["token_type_ids"][
+                    ..., i * prefill_seq_len : (i + 1) * prefill_seq_len
+                ]
+            if "cross_attention_mask" in lang_inputs:
+                chunk_inputs["cross_attention_mask"] = lang_inputs["cross_attention_mask"][
+                    :, i * prefill_seq_len : (i + 1) * prefill_seq_len, :, :
                 ]
             outputs = lang_session.run(chunk_inputs)
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
@@ -2758,6 +2554,11 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         inputs["attention_mask"] = torch.nn.functional.pad(
             inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
         )
+        if "mm_token_type_ids" in inputs:
+            inputs["mm_token_type_ids"] = torch.nn.functional.pad(
+                inputs["mm_token_type_ids"], (0, padded_len - input_ids_length), "constant", 0
+            )
+
         if "cross_attention_mask" in inputs:
             inputs["cross_attention_mask"] = torch.nn.functional.pad(
                 inputs["cross_attention_mask"], (0, 0, 0, 0, 0, padded_len - input_ids_length)
@@ -2945,14 +2746,8 @@ class QEFFAutoModelForImageTextToText:
 
     _hf_auto_class = AutoModelForImageTextToText
 
-    @staticmethod
-    def _should_use_language_only_compat(model: nn.Module, skip_vision: bool = False) -> bool:
-        if not skip_vision:
-            return False
-        return model.__class__.__name__ == "Gemma4ForConditionalGeneration"
-
     def __new__(
-        cls,
+        self,
         model: nn.Module,
         kv_offload: Optional[bool] = True,
         continuous_batching: bool = False,
@@ -2978,13 +2773,6 @@ class QEFFAutoModelForImageTextToText:
         Union[_QEffAutoModelForImageTextToTextDualQPC, _QEFFAutoModelForImageTextToTextSingleQPC]
             The wrapped model instance, configured for either dual or single QPC.
         """
-        if cls._should_use_language_only_compat(model, kwargs.get("skip_vision", False)):
-            return _QEffAutoModelForImageTextToTextLanguageOnlyCompat(
-                model,
-                continuous_batching=continuous_batching,
-                qaic_config=qaic_config,
-                **kwargs,
-            )
         if kv_offload:
             return _QEffAutoModelForImageTextToTextDualQPC(
                 model, continuous_batching, qaic_config=qaic_config, **kwargs
@@ -3032,7 +2820,6 @@ class QEFFAutoModelForImageTextToText:
             If `continuous_batching` is provided as True.
         """
         enable_proxy = kwargs.pop("enable_proxy", False)
-        skip_vision = kwargs.pop("skip_vision", False)
 
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
         if continuous_batching and not kv_offload:
@@ -3057,7 +2844,6 @@ class QEFFAutoModelForImageTextToText:
             continuous_batching=continuous_batching,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             qaic_config=qaic_config,
-            skip_vision=skip_vision,
             **kwargs,
         )
 
@@ -3101,38 +2887,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         KVCacheExternalModuleMapperTransform,
     ]
 
-    _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
-
-    @staticmethod
-    def _normalize_hf_causal_lm_model(
-        model: nn.Module,
-        pretrained_model_name_or_path: str,
-        trust_remote_code: bool,
-    ) -> nn.Module:
-        """
-        Normalize HF auto-loaded Gemma4 text models into a causal-LM-shaped module.
-
-        transformers 5.5.0 can resolve Gemma4 text-only causal LM requests to
-        `Gemma4ForConditionalGeneration`. QEff's causal LM wrapper expects a
-        `*ForCausalLM` / `*LMHeadModel` instance, so unwrap the text path into a
-        `Gemma4ForCausalLM` instance while reusing the already-loaded text
-        modules and lm_head by reference.
-        """
-        if model.__class__.__name__ != "Gemma4ForConditionalGeneration":
-            return model
-
-        text_model = AutoModelForCausalLM.from_config(
-            model.config.text_config,
-            trust_remote_code=trust_remote_code,
-            attn_implementation="eager",
-        )
-        text_model.model = model.model.language_model
-        text_model.lm_head = model.lm_head
-        text_model.name_or_path = getattr(model, "name_or_path", pretrained_model_name_or_path)
-        text_model.config._name_or_path = getattr(model.config, "_name_or_path", pretrained_model_name_or_path)
-        if hasattr(model, "generation_config"):
-            text_model.generation_config = model.generation_config
-        return text_model
+    _onnx_transforms = []
 
     def prefill(
         self,
@@ -3213,8 +2968,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         model_class_name = model.__class__.__name__
         if not (model_class_name.endswith("ForCausalLM") or model_class_name.endswith("LMHeadModel")):
             raise TypeError(f"Required pytorch module for CausalLM or LMHeadModel, got {model_class_name}")
-        enable_proxy = kwargs.pop("enable_proxy", False)
-        _configure_proxy_for_model(self, enable_proxy)
+        _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
 
         # TODO: remove from version 1.20
         if kwargs.pop("full_batch_size", None):
@@ -3330,17 +3084,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kv_offload = kwargs.pop("kv_offload", None)
-        trust_remote_code = kwargs.get("trust_remote_code", False)
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
         _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        model = cls._normalize_hf_causal_lm_model(
-            model,
-            pretrained_model_name_or_path=pretrained_model_name_or_path,
-            trust_remote_code=trust_remote_code,
-        )
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
 
@@ -3576,22 +3324,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             pkv_cache = self.model.get_dummy_pkv_cache(
                 self.model.config, fbs if self.continuous_batching else bs, seq_len
             )
-            layer_pkv_dynamic_axes = (
-                self.model.get_pkv_dynamic_axes(
-                    retain_full_kv=kwargs.get("retain_full_kv", False)
-                    or (prefill_only and kwargs.get("enable_chunking", False)),
-                    continuous_batching=self.continuous_batching,
-                )
-                if hasattr(self.model, "get_pkv_dynamic_axes")
-                else [pkv_dynamic_axes] * self.num_layers
-            )
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
-                    cache_idx = 0 if kv == "key" else 1
                     example_inputs["past_key_values"][i].append(
-                        torch.zeros(pkv_cache[i][cache_idx].shape, dtype=torch.float32)
+                        torch.zeros(pkv_cache[0][0].shape, dtype=self.model.config.torch_dtype)
                     )
-                    dynamic_axes[f"past_{kv}.{i}"] = layer_pkv_dynamic_axes[i]
+                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
         else:
@@ -4161,31 +3899,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[target_dtype]
         # --- Compilation ---
         custom_io = {}
-        effective_onnx_path = onnx_path or self.onnx_path
-
-        if (
-            effective_onnx_path is None
-            and hasattr(self.model, "generate_npi_file")
-            and "node_precision_info" not in compiler_options
-        ):
-            effective_onnx_path = self.export(
-                prefill_only=prefill_only,
-                prefill_seq_len=prefill_seq_len,
-                use_onnx_subfunctions=use_onnx_subfunctions,
-                offload_pt_weights=offload_pt_weights,
-                enable_chunking=enable_chunking,
-                retain_full_kv=retain_full_kv,
-            )
-            onnx_path = effective_onnx_path
-
-        if hasattr(self.model, "generate_npi_file") and "node_precision_info" not in compiler_options:
-            compiler_options["node_precision_info"] = self.model.generate_npi_file(
-                onnx_path=effective_onnx_path,
-                model_name=self.model.name_or_path,
-            )
-        elif hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
-            compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
-
         if not cache_compressed:
             for suffix in ["", "_RetainedState"]:
                 for i in range(self.num_layers):
@@ -4889,8 +4602,6 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         ]
 
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
-        convert_to_fp16 = CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"
-        print(convert_to_fp16)
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
