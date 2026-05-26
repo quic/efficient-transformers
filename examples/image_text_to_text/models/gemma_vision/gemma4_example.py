@@ -11,7 +11,7 @@ from transformers import AutoProcessor
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-MODEL_ID = "google/gemma-4-26B-A4B-it"
+MODEL_ID = "google/gemma-4-E2B-it"
 SYSTEM_PROMPT = "You are a helpful assistant."
 TEXT_PROMPT = "Tell me about Taj Mahal?"
 IMAGE_PROMPT = "Can you Describe this image in detail?"
@@ -27,8 +27,7 @@ CTX_LEN = 2048
 GENERATION_LEN = 1920
 
 NUM_CORES = 16
-NUM_DEVICES = 4
-DEVICE_IDS = [0, 1, 2, 3]
+NUM_DEVICES = 2
 MOS = 1
 
 USE_ONNX_SUBFUNCTIONS = False
@@ -138,7 +137,6 @@ def main():
     output = qeff_model.generate(
         inputs=inputs,
         generation_len=GENERATION_LEN,
-        device_ids=DEVICE_IDS,
     )
     qeff_ids = normalize_generated_ids(output.generated_ids)[:, :GENERATION_LEN]
     print(tokenizer.batch_decode(qeff_ids, skip_special_tokens=True))

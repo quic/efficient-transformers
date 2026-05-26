@@ -84,7 +84,6 @@ def build_compile_kwargs(
 
     if skip_vision:
         kwargs["skip_vision"] = True
-        kwargs["convert_to_fp16"] = True
 
     if npi_mode == "enabled":
         if skip_vision:
