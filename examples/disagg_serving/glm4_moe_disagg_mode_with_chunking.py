@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import os
 import time
 
 import numpy as np
@@ -15,9 +14,6 @@ from transformers import AutoConfig, AutoTokenizer
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-os.environ.setdefault("EXPERT_BLOCKING_NUM_NSP", "2")
-os.environ.setdefault("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256")
-
 model_id = "tiny-random/glm-4-moe"
 prompt = """
 Explain quantum computing in simple terms.
@@ -26,12 +22,14 @@ config = AutoConfig.from_pretrained(model_id)
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 PREFILL_SEQ_LEN = 512
 CTX_LEN = 1024
+NUM_CORES = 4
+MOE_PREFILL_PACKED_CHUNK_SIZE = 256
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
 decode_qpc_path = qeff_model.compile(
     prefill_seq_len=1,
     ctx_len=CTX_LEN,
-    num_cores=16,
+    num_cores=NUM_CORES,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     num_devices=1,
@@ -48,7 +46,7 @@ decode_qpc_path = qeff_model.compile(
 prefill_qpc_path = qeff_model.compile(
     prefill_seq_len=PREFILL_SEQ_LEN,
     ctx_len=CTX_LEN,
-    num_cores=16,
+    num_cores=NUM_CORES,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     num_devices=1,
@@ -58,6 +56,7 @@ prefill_qpc_path = qeff_model.compile(
     user_tiled=True,
     num_speculative_tokens=None,
     prefill_only=True,
+    moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
     enable_chunking=True,
     use_onnx_subfunctions=True,
     qaic_config={"enable_blocking": True, "blocking_mode": "kv", "num_kv_blocks": 2},
