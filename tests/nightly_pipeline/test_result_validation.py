@@ -30,15 +30,15 @@ MODEL_ARTIFACTS = [
 @pytest.mark.parametrize("model_class, artifact_filename, csv_filename", MODEL_ARTIFACTS)
 def test_validate_nightly_results(model_class, artifact_filename, csv_filename, artifacts_dir, get_pipeline_config):
     previous_artifacts_dir = os.environ.get("NIGHTLY_PIPELINE_PREVIOUS_ARTIFACTS_DIR")
-    if previous_artifacts_dir is None:
-        pytest.skip("NIGHTLY_PIPELINE_PREVIOUS_ARTIFACTS_DIR is required for nightly result validation.")
-
     current_artifact_file = artifacts_dir / artifact_filename
-    previous_artifact_file = Path(previous_artifacts_dir).expanduser().resolve() / artifact_filename
+    previous_artifact_file = None
+    if previous_artifacts_dir is not None:
+        previous_artifact_file = Path(previous_artifacts_dir).expanduser().resolve() / artifact_filename
     output_csv_file = artifacts_dir / csv_filename
 
     assert current_artifact_file.exists(), f"Current nightly artifact file is missing: {current_artifact_file}"
-    assert previous_artifact_file.exists(), f"Previous nightly artifact file is missing: {previous_artifact_file}"
+    if previous_artifact_file is not None:
+        assert previous_artifact_file.exists(), f"Previous nightly artifact file is missing: {previous_artifact_file}"
 
     tolerances = load_validation_tolerances(get_pipeline_config, model_class)
     assert isinstance(tolerances, ValidationTolerances)

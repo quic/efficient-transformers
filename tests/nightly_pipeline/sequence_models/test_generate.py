@@ -51,6 +51,7 @@ def test_generate_sequence_model(model_name, get_pipeline_config, sequence_model
         {
             "onnx_and_qpc_dir": onnx_and_qpc_dir,
             "size": size,
+            "generated_ids": logits.tolist(),
             "Prediction": qeff_model.model.config.id2label[predicted_class_id],
         }
     )

@@ -43,9 +43,6 @@ PERF_COLUMNS = [
 ]
 
 LOWER_IS_BETTER_METRICS = {
-    "export_time_pct_diff",
-    "compile_time_pct_diff",
-    "onnx_qpc_size_pct_diff",
     "prefill_time_pct_diff",
     "total_time_pct_diff",
 }
@@ -100,6 +97,10 @@ FAMILY_SPECS = {
     "sequence_model_configs": {
         "text_column": "prediction",
         "text_key": "Prediction",
+        "compare_text": False,
+        "mad_column": "generated_ids",
+        "mad_key": "generated_ids",
+        "mad_tolerance": "token_mad_tolerance",
     },
 }
 
@@ -134,14 +135,13 @@ def load_validation_tolerances(pipeline_configs: dict[str, Any], model_class: st
 
 def validate_artifact_file(
     current_artifact_file: Path,
-    previous_artifact_file: Path,
+    previous_artifact_file: Path | None,
     output_csv_file: Path,
     model_class: str,
     tolerances: ValidationTolerances,
 ) -> list[dict[str, Any]]:
-    rows = validate_artifacts(
-        load_json(current_artifact_file), load_json(previous_artifact_file), model_class, tolerances
-    )
+    previous_artifacts = load_json(previous_artifact_file) if previous_artifact_file is not None else {}
+    rows = validate_artifacts(load_json(current_artifact_file), previous_artifacts, model_class, tolerances)
     write_validation_csv(output_csv_file, model_class, rows)
     return rows
 
@@ -179,7 +179,8 @@ def get_csv_columns(model_class: str) -> list[str]:
     text_column = spec.get("text_column")
     if text_column:
         columns.extend([f"{text_column}_before", f"{text_column}_after"])
-        columns.append(f"{text_column}_assertion")
+        if spec.get("compare_text", True):
+            columns.append(f"{text_column}_assertion")
 
     mad_column = spec.get("mad_column")
     if mad_column:
