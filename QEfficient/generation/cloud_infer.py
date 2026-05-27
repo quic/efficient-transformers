@@ -104,9 +104,13 @@ class QAICInferenceSession:
         # Create and load Program
         prog_properties = qaicrt.QAicProgramProperties()
         prog_properties.dataPathTimeoutMs = 60_000
-        if device_ids and len(device_ids) > 1:
-            prog_properties.devMapping = ":".join(map(str, device_ids))
-        self.program = qaicrt.Program(self.context, None, qpc, prog_properties)
+        dev_id_non_mq = None
+        if device_ids:
+            if len(device_ids) == 1:
+                dev_id_non_mq = device_ids[0]
+            elif len(device_ids) > 1:
+                prog_properties.devMapping = ":".join(map(str, device_ids))
+        self.program = qaicrt.Program(self.context, dev_id_non_mq, qpc, prog_properties)
         if self.program.load() != qaicrt.QStatus.QS_SUCCESS:
             raise RuntimeError("Failed to load program")
         self.is_active = False
