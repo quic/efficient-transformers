@@ -3071,6 +3071,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         export_dir: Optional[str] = None,
         prefill_only: Optional[bool] = False,
         prefill_seq_len: Optional[int] = None,
+        num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         **kwargs,
     ) -> str:
         """
@@ -3123,8 +3125,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
                         prefill_seq_len=prefill_seq_len,
                         enable_chunking=enable_chunking,
-                        num_cores=compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES),
-                        moe_prefill_packed_chunk_size=kwargs.get("moe_prefill_packed_chunk_size", constants.MOE_PREFILL_PACKED_CHUNK_SIZE),
+                        num_cores=num_cores,
+                        moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                     )
                     kv_cache_shape[2] = (
                         seq_len
