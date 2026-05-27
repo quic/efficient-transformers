@@ -342,7 +342,7 @@ class QEFFBaseModel(ABC):
                 keep_files={onnx_path.name, "hashed_export_params.json"} | _get_model_external_data_files(onnx_path),
             )
             self.onnx_path = onnx_path
-        return onnx_path
+            return onnx_path
 
         # check if the model is in meta state or weights are offloaded
         self._model_offloaded_check()
@@ -368,14 +368,10 @@ class QEFFBaseModel(ABC):
         for param in inspect.signature(self.model.forward).parameters:
             if param in example_inputs:
                 if param == "past_key_values":
-                    pkv_layers = _resolve_pkv_layers(example_inputs["past_key_values"])
-                    if pkv_layers is None:
-                        input_names.append(param)
-                        continue
-                    for i in range(len(pkv_layers)):
-                        if len(pkv_layers[0]) == 2:
+                    for i in range(len(example_inputs["past_key_values"])):
+                        if len(example_inputs["past_key_values"][0]) == 2:
                             input_names.extend([f"past_key.{i}", f"past_value.{i}"])
-                        elif len(pkv_layers[0]) == 4:
+                        elif len(example_inputs["past_key_values"][0]) == 4:
                             input_names.extend(
                                 [
                                     f"past_key_self.{i}",
@@ -386,8 +382,20 @@ class QEFFBaseModel(ABC):
                             )
                         else:
                             raise ValueError(
-                                f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(pkv_layers[0])}"
+                                f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(example_inputs['past_key_values'][0])}"
                             )
+                elif param == "compressed_kvs":
+                    for i in range(len(example_inputs["compressed_kvs"])):
+                        input_names.extend(
+                            [
+                                f"compressed_kv.{i}",
+                            ]
+                        )
+                        input_names.extend(
+                            [
+                                f"k_pe.{i}",
+                            ]
+                        )
                 else:
                     input_names.append(param)
 
@@ -775,4 +783,4 @@ class QEFFBaseModel(ABC):
         logger.info("Hashed parameters exported successfully.")
 
         self.qpc_path = qpc_path
-    return qpc_path
+        return qpc_path
