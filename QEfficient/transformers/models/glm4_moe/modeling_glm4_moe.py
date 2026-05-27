@@ -390,7 +390,7 @@ class QEffGlm4MoeAttention(Glm4MoeAttention):
                     past_seen_tokens=past_seen_tokens,
                 )
             else:
-                key_states, value_states, _ = past_key_value_update(
+                key_states, value_states, attention_mask, _ = past_key_value_update(
                     module=self,
                     key=key_states,
                     value=value_states,
@@ -629,6 +629,15 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
     def __qeff_init__(
         self,
     ):
+        if hasattr(self.experts, "gate_up_proj"):
+            gate_proj, up_proj = self.experts.gate_up_proj.chunk(2, dim=1)
+            self.all_gate_proj = torch.nn.Parameter(gate_proj.transpose(1, 2).contiguous())
+            self.all_up_proj = torch.nn.Parameter(up_proj.transpose(1, 2).contiguous())
+            self.all_down_proj = torch.nn.Parameter(self.experts.down_proj.transpose(1, 2).contiguous())
+            self.act_fn = self.experts.act_fn
+            self.num_experts = self.experts.num_experts
+            return
+
         self.all_gate_proj = torch.nn.Parameter(
             torch.cat([exp.gate_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
         )
@@ -639,6 +648,7 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
             torch.cat([exp.down_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
         )
         self.act_fn = self.experts[0].act_fn
+        self.num_experts = len(self.experts)
 
     def orig_moe(self, hidden_states: torch.Tensor, topk_indices: torch.Tensor, topk_weights: torch.Tensor):
         r"""
@@ -647,10 +657,13 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
         """
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
-        expert_mask = torch.nn.functional.one_hot(topk_indices, num_classes=len(self.experts))
+        if hasattr(self.experts, "gate_up_proj"):
+            return self.experts(hidden_states, topk_indices, topk_weights)
+
+        expert_mask = torch.nn.functional.one_hot(topk_indices, num_classes=self.num_experts)
         expert_mask = expert_mask.permute(2, 0, 1)
 
-        for expert_idx in range(len(self.experts)):
+        for expert_idx in range(self.num_experts):
             expert = self.experts[expert_idx]
             mask = expert_mask[expert_idx]
             token_indices, weight_indices = torch.where(mask)
@@ -699,7 +712,11 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
         """
         residuals = hidden_states
         orig_shape = hidden_states.shape
-        topk_indices, topk_weights = self.gate(hidden_states)
+        router_output = self.gate(hidden_states)
+        if isinstance(router_output, tuple):
+            topk_indices, topk_weights = router_output
+        else:
+            topk_indices, topk_weights = self.route_tokens_to_experts(router_output)
         hidden_states = self.moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
         hidden_states = hidden_states + self.shared_experts(residuals)
         return hidden_states
@@ -715,7 +732,7 @@ class QEffPrefillChunkedGlm4MoeMoE(QEffGlm4MoeMoE):
         topk_weights: torch.Tensor,
     ) -> torch.Tensor:
         T, H = hidden_states.shape
-        num_experts = len(self.experts)
+        num_experts = self.num_experts
         num_nsp = self.expert_blocking_num_nsp
         if num_experts % num_nsp != 0:
             raise ValueError(f"num_experts ({num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})")
@@ -749,7 +766,11 @@ class QEffPrefillChunkedGlm4MoeMoE(QEffGlm4MoeMoE):
     def forward(self, hidden_states):
         residuals = hidden_states
         orig_shape = hidden_states.shape
-        topk_indices, topk_weights = self.gate(hidden_states)
+        router_output = self.gate(hidden_states)
+        if isinstance(router_output, tuple):
+            topk_indices, topk_weights = router_output
+        else:
+            topk_indices, topk_weights = self.route_tokens_to_experts(router_output)
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
 
         hidden_states = self._forward_expert_blocked(hidden_states, topk_indices, topk_weights).view(*orig_shape)
