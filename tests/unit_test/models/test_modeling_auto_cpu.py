@@ -648,10 +648,27 @@ class TestQEFFAutoModel:
         assert qeff is not None
 
     def test_init_sets_use_cache_true(self):
-        """__init__ sets model.base_model.config.use_cache=True."""
+        """__init__ sets use_cache based on model architecture.
+
+        Decoder or encoder-decoder models (is_decoder=True or is_encoder_decoder=True)
+        require KV-cache and therefore get use_cache=True.
+        Encoder-only models (e.g. BERT) do not use a KV-cache, so use_cache is
+        explicitly set to None to avoid forcing cache mode on architectures that
+        do not support it (needed after the transformers upgrade that added RoBERTa
+        support alongside BERT).
+        """
+        # --- Encoder-only model (BERT): use_cache must be None ---
         model, cfg = make_tiny_bert()
         qeff = QEFFAutoModel(model)
-        assert qeff.model.base_model.config.use_cache is True
+        # BERT has is_decoder=False and is_encoder_decoder=False, so cache mode
+        # is intentionally disabled.
+        assert qeff.model.base_model.config.use_cache is None
+
+        # --- Decoder model: use_cache must be True ---
+        decoder_model, decoder_cfg = make_tiny_bert()
+        decoder_model.config.is_decoder = True
+        qeff_decoder = QEFFAutoModel(decoder_model)
+        assert qeff_decoder.model.base_model.config.use_cache is True
 
     def test_get_model_config_returns_dict(self):
         """get_model_config returns the model's config as a dict."""

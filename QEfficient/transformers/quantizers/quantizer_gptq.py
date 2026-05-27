@@ -80,8 +80,8 @@ class QEffGPTQQuantizer(HfQuantizer):
             :torch.dtype: The updated torch data type.
         """
         if torch_dtype not in [None, torch.float32]:
-            logger.warning(f"Requested dtype {torch_dtype} is not supported, overriding to None")
-        return None
+            logger.warning(f"Requested dtype {torch_dtype} is not supported, overriding to float32")
+        return torch.float32
 
     def _process_model_before_weight_loading(self, model, **kwargs):
         """

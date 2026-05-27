@@ -134,18 +134,31 @@ class QEFFBaseModel(ABC):
         """Clear PyTorch model weights to reduce memory usage after ONNX export."""
         if offload_pt_weights and not self._is_weights_offloaded:
             try:
-                for param in self.model.parameters():
-                    if param.storage():
-                        param.storage().resize_(0)
-                for buffer in self.model.buffers():
-                    if buffer.storage():
-                        buffer.storage().resize_(0)
+                # Clear plain tensor attrs (not registered as params/buffers)
+                param_data_ptrs = {p.data_ptr() for p in self.model.parameters()}
+                buf_data_ptrs = {b.data_ptr() for b in self.model.buffers()}
+                registered_ptrs = param_data_ptrs | buf_data_ptrs
+                for module in self.model.modules():
+                    for attr_name in list(vars(module).keys()):
+                        attr = getattr(module, attr_name, None)
+                        if isinstance(attr, torch.Tensor) and attr.data_ptr() not in registered_ptrs:
+                            setattr(module, attr_name, torch.empty_like(attr, device="meta"))
 
-                meta_model = self.model.to("meta")
-                del self.model
+                # Swap each parameter/buffer with a meta tensor of the same
+                # shape, in place — so external Parameter refs also become meta.
+                with torch.no_grad():
+                    for p in self.model.parameters():
+                        new_p = torch.nn.Parameter(
+                            torch.empty(p.shape, dtype=p.dtype, device="meta"),
+                            requires_grad=p.requires_grad,
+                        )
+                        torch.utils.swap_tensors(p, new_p)
+                    for b in self.model.buffers():
+                        new_b = torch.empty(b.shape, dtype=b.dtype, device="meta")
+                        torch.utils.swap_tensors(b, new_b)
+
                 gc.collect()
 
-                self.model = meta_model
                 self._is_weights_offloaded = True
                 return True
             except Exception as e:
@@ -296,15 +309,33 @@ class QEFFBaseModel(ABC):
 
         export_dir.mkdir(parents=True, exist_ok=True)
 
+        def _resolve_pkv_layers(pkv_obj):
+            if isinstance(pkv_obj, (list, tuple)):
+                return pkv_obj
+            if hasattr(pkv_obj, "to_legacy_cache"):
+                return pkv_obj.to_legacy_cache()
+            if hasattr(pkv_obj, "layers"):
+                layers = []
+                for layer in pkv_obj.layers:
+                    keys = getattr(layer, "keys", None)
+                    values = getattr(layer, "values", None)
+                    layers.append((keys, values))
+                return tuple(layers)
+            return None
+
         # Create input_names from example_inputs
         input_names = []
         for param in inspect.signature(self.model.forward).parameters:
             if param in example_inputs:
                 if param == "past_key_values":
-                    for i in range(len(example_inputs["past_key_values"])):
-                        if len(example_inputs["past_key_values"][0]) == 2:
+                    pkv_layers = _resolve_pkv_layers(example_inputs["past_key_values"])
+                    if pkv_layers is None:
+                        input_names.append(param)
+                        continue
+                    for i in range(len(pkv_layers)):
+                        if len(pkv_layers[0]) == 2:
                             input_names.extend([f"past_key.{i}", f"past_value.{i}"])
-                        elif len(example_inputs["past_key_values"][0]) == 4:
+                        elif len(pkv_layers[0]) == 4:
                             input_names.extend(
                                 [
                                     f"past_key_self.{i}",
@@ -315,7 +346,7 @@ class QEFFBaseModel(ABC):
                             )
                         else:
                             raise ValueError(
-                                f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(example_inputs['past_key_values'][0])}"
+                                f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(pkv_layers[0])}"
                             )
                 elif param == "compressed_kvs":
                     for i in range(len(example_inputs["compressed_kvs"])):
@@ -335,8 +366,9 @@ class QEFFBaseModel(ABC):
         try:
             torch.onnx.export(
                 self.model,
-                (example_inputs,),
+                (),
                 str(onnx_path),
+                kwargs=example_inputs,
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
