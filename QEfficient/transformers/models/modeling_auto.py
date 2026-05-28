@@ -3083,13 +3083,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
             if prefill_only:
-                if not enable_chunking and self.continuous_batching:
-                    raise NotImplementedError(
-                        "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
-                    )
                 self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
                 self.hash_params.pop("retain_full_kv", None)
                 if "DeepseekV3ForCausalLM" not in (getattr(self.model.config, "architectures", None) or []):
+                    if not enable_chunking and self.continuous_batching:
+                        raise NotImplementedError(
+                            "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
+                        )
                     seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
                         prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
                     )
@@ -3210,8 +3210,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     example_inputs["compressed_kvs"][i].append(
                         torch.zeros(pkv_cache[0][1].shape, dtype=self.model.config.torch_dtype)
                     )
-                    dynamic_axes[f"compressed_kv.{i}"] = {0: "batch_size", 2: "ctx_len"}
-                    dynamic_axes[f"k_pe.{i}"] = {0: "batch_size", 2: "ctx_len"}
+                    dynamic_axes[f"compressed_kv.{i}"] = {
+                        0: "full_batch_size" if self.continuous_batching else "batch_size",
+                        2: "ctx_len",
+                    }
+                    dynamic_axes[f"k_pe.{i}"] = {
+                        0: "full_batch_size" if self.continuous_batching else "batch_size",
+                        2: "ctx_len",
+                    }
                     output_names.append(f"compressed_kv.{i}_RetainedState")
                     output_names.append(f"k_pe.{i}_RetainedState")
             else:

@@ -44,8 +44,11 @@ def write_custom_io_yaml(path: Path, indices):
 
 
 
-def create_specializations_json(path: Path, batch_size: int, seq_len: int, ctx_len: int) -> Path:
+def create_specializations_json(path: Path, batch_size: int, seq_len: int, ctx_len: int,
+                                kv_cache_batch_size:int = None, cb: bool=False, prefill_only:bool=False) -> Path:
     payload = {"specializations": [{"batch_size": str(batch_size), "seq_len": str(seq_len), "ctx_len": str(ctx_len)}]}
+    if prefill_only and cb and kv_cache_batch_size is not None:
+        payload['specializations'][0]['full_batch_size'] = str(kv_cache_batch_size)
     path.write_text(json.dumps(payload, indent=2))
     return path
 
@@ -121,6 +124,9 @@ def run_full_model_compile(
     mxfp6: bool = True,
     mxint8_kv_cache: bool = True,
     aic_version: str = "ai100",
+    kv_cache_batch_size: int = None,
+    cb: bool = False,
+    prefill_only:bool=False
 ):
     onnx_path = Path(onnx_path)
     qpc_binaries_dir = onnx_path.parent / "qpc_binaries"
@@ -131,6 +137,9 @@ def run_full_model_compile(
         batch_size=batch_size,
         seq_len=seq_len,
         ctx_len=ctx_len,
+        kv_cache_batch_size=kv_cache_batch_size,
+        cb=cb,
+        prefill_only=prefill_only,
     )
     custom_io_file = create_custom_io_yaml(
         qpc_binaries_dir / "custom_io_fp16.yaml",

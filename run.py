@@ -208,6 +208,16 @@ def _parse_args():
         default=False,
         help="Enable or disable blocking.",
     )
+    parser.add_argument(
+        "--cb",
+        dest="cb",
+        action="store_true",
+        default=False,
+        help="Enable or disable Continuous batching for prefix caching.",
+    )
+    parser.add_argument(
+        "--kv_cache_batch_size", type=int, default=None, help="KV cache batch size used only when --cb is enabled"
+    )
     parser.add_argument("--blocking_mode", dest="blocking_mode", type=str, default="kv", help="Blocking mode.")
     parser.add_argument(
         "--num_kv_heads_repeat",
@@ -303,7 +313,15 @@ def main():
         resolved_total_layers = getattr(text_config, "num_hidden_layers", None)
     if resolved_total_layers is None:
         raise ValueError("Could not resolve `num_hidden_layers` from text_config.")
-
+    if args.cb:
+        assert args.prefill_only, "CB works only on prefill model"
+        assert args.kv_cache_batch_size is not None, (
+            "You are trying to do prefix-caching please pass kv_cache_batch_size"
+        )
+    if not args.prefill_only:
+        assert args.seq_len == 1, "pass prefill_only, looks like you are trying to get prefill model"
+        assert not args.cb, "cb is not suported for decode-only model"
+        assert args.kv_cache_batch_size is None, "doesn't support cb in decode mode1"
     window_size = args.window_size
     layerwise_mode = args.layerwise_mode
     total_layers = resolved_total_layers
@@ -333,7 +351,11 @@ def main():
             skip_kv=not args.no_skip_kv,
         )
         qeff_model = QEFFAutoModelForCausalLM(
-            model, num_kv_heads_repeat=num_kv_heads_repeat, qaic_config=qaic_config, torch_dtype=torch.float16
+            model,
+            num_kv_heads_repeat=num_kv_heads_repeat,
+            qaic_config=qaic_config,
+            continuous_batching=args.cb,
+            torch_dtype=torch.float16,
         )
         onnx_path = qeff_model.compile(
             prefill_seq_len=args.seq_len,
@@ -344,6 +366,7 @@ def main():
             num_cores=args.num_cores,
             qaic_config=qaic_config,
             prefill_only=args.prefill_only,
+            kv_cache_batch_size=args.kv_cache_batch_size if args.cb else None,
             use_onnx_subfunctions=True,
         )
         if first_onnx_path is None:
@@ -357,7 +380,7 @@ def main():
         QEfficient.utils.compile_layerwise(str(export_root))
         QEfficient.utils.inference_pipeline(str(export_root))
     else:
-        final_onnx_path = QEfficient.utils.layerwise_pipeline(str(export_root))
+        final_onnx_path = QEfficient.utils.layerwise_pipeline(str(export_root), cb=args.cb)
         if final_onnx_path is None:
             raise RuntimeError("QEfficient.utils.layerwise_pipeline returned an empty ONNX path.")
         compile_num_layers = total_layers
@@ -372,6 +395,9 @@ def main():
             "mxfp6": args.mxfp6,
             "mxint8_kv_cache": args.mxint8_kv_cache,
             "aic_version": args.aic_hw_version,
+            "kv_cache_batch_size": args.kv_cache_batch_size,
+            "cb": args.cb,
+            "prefill_only": args.prefill_only,
         }
         optional_compile_kwargs = {
             "qaic_config": qaic_config,

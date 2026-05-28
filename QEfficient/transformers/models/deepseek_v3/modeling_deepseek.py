@@ -297,6 +297,7 @@ class QEffDeepseekV3Attention(nn.Module):
             q_pe=q_pe,
             kva=kva,
             k_pe=k_pe,
+            batch_index=batch_index,
             per_head_q_up=self.per_head_q_up,
             per_head_k_up=self.per_head_k_up,
             per_head_v_up=self.per_head_v_up,
@@ -378,6 +379,7 @@ class QEffDeepseekV3Attention(nn.Module):
             per_head_k_up_normal=self.per_head_k_up_normal,
             per_head_v_up=self.per_head_v_up,
             attention_mask=attention_mask,
+            batch_index=batch_index,
             scaling=self.softmax_scale,
             layer_idx=self.layer_idx,
             compressed_kvs=compressed_kvs,
@@ -459,6 +461,7 @@ class QEffDeepseekV3Attention(nn.Module):
             attention_mask=attention_mask,
             scaling=self.softmax_scale,
             cache_kwargs=cache_kwargs,
+            batch_index=batch_index,
             layer_idx=self.layer_idx,
             compressed_kvs=compressed_kvs,
             mla_absorption=mla_absorption,
@@ -1728,7 +1731,7 @@ class QEffDeepseekV3Model(nn.Module):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
         next_decoder_cache = None
-        
+
         sin = self.sin_cached[position_ids].unsqueeze(1)
         cos = self.cos_cached[position_ids].unsqueeze(1)
         num_q_ffn_blocks = getattr(self, "num_q_blocks_ffn", None)
@@ -1801,8 +1804,8 @@ class QEffDeepseekV3ForCausalLM(nn.Module):
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        batch_index: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         compressed_kvs: Optional[List[torch.FloatTensor]] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
         labels: Optional[torch.LongTensor] = None,

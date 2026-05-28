@@ -59,11 +59,7 @@ def _window_paths(exported_path: str, layer_start: int, layer_end: int) -> Tuple
 # STAGE 1: SPLITTING
 # ============================================================
 def split_layer_graph(
-    shard_idx: int,
-    total_shards: int,
-    exported_path: str,
-    layer_start: int,
-    layer_end: int,
+    shard_idx: int, total_shards: int, exported_path: str, layer_start: int, layer_end: int, cb: bool = False
 ) -> bool:
     base_dir, onnx_path, out_path = _window_paths(exported_path, layer_start, layer_end)
 
@@ -93,12 +89,18 @@ def split_layer_graph(
     else:
         preferred_inputs = ["inputs_embeds", "position_ids"]
 
+    if cb:
+        preferred_inputs += ["batch_index"]
+
     cache_inputs = sorted([n for n in graph_inputs if n.startswith("compressed_kv.") or n.startswith("k_pe.")])
     input_names = [n for n in preferred_inputs if n in graph_inputs] + cache_inputs
 
     output_names = list(graph_outputs)
-    if shard_idx != total_shards - 1 and "position_ids" in graph_inputs and "position_ids" not in output_names:
-        output_names.append("position_ids")
+    if shard_idx != total_shards - 1:
+        if "position_ids" in graph_inputs and "position_ids" not in output_names:
+            output_names.append("position_ids")
+        if cb and "batch_index" in graph_inputs and "batch_index" not in output_names:
+            output_names.append("batch_index")
 
     model_ir.graph = onnx_ir.convenience.extract(
         model_ir.graph,
@@ -118,10 +120,11 @@ def run_split_pipeline(
     start_layer: int = 0,
     windows: list[tuple[int, int]] = [],
     verbose: bool = False,
+    cb: bool = False,
 ) -> None:
     windows = _discover_layer_windows(exported_path, start_layer=start_layer)
     for shard_idx, (layer_start, layer_end) in enumerate(windows):
-        split_layer_graph(shard_idx, len(windows), exported_path, layer_start, layer_end)
+        split_layer_graph(shard_idx, len(windows), exported_path, layer_start, layer_end, cb=cb)
     if verbose:
         print(f"[DONE] split pipeline complete ({len(windows)} windows)")
 
@@ -382,6 +385,7 @@ def run_merge_pipeline(
     final_data_dir: str = "final_data",
     windows: list[tuple[int, int]] = [],
     verbose: bool = False,
+    cb: bool = False,
 ) -> str:
     if len(windows) < 1:
         raise ValueError("Need at least one discovered shard to merge")
@@ -422,13 +426,16 @@ def run_merge_pipeline(
         if selected_output is None:
             raise RuntimeError(f"No decoder output found without 'RetainedState'. Outputs: {decoder_output}")
 
+        io_map = [
+            (selected_output, f"layer_{right}/inputs_embeds"),
+            (f"layer_{left}/position_ids", f"layer_{right}/position_ids"),
+        ]
+        if cb:
+            io_map += [(f"layer_{left}/batch_index", f"layer_{right}/batch_index")]
         merged_model = merge_models(
             m1_pref,
             m2_pref,
-            io_map=[
-                (selected_output, f"layer_{right}/inputs_embeds"),
-                (f"layer_{left}/position_ids", f"layer_{right}/position_ids"),
-            ],
+            io_map=io_map,
         )
 
         if idx == len(shard_starts) - 2:
@@ -456,6 +463,7 @@ def run_sequential_pipeline(
     chunk_size: int = 8,
     final_data_dir: str = "final_data",
     verbose: bool = False,
+    cb: bool = False,
 ) -> str:
     windows = _discover_layer_windows(exported_path, start_layer=0)
     run_split_pipeline(
@@ -464,6 +472,7 @@ def run_sequential_pipeline(
         start_layer=start_layer,
         windows=windows,
         verbose=verbose,
+        cb=cb,
     )
 
     run_prefix_pipeline(
@@ -481,6 +490,7 @@ def run_sequential_pipeline(
         final_data_dir=final_data_dir,
         windows=windows,
         verbose=verbose,
+        cb=cb,
     )
     return final_path
 
@@ -492,6 +502,7 @@ def layerwise_pipeline(
     chunk_size: int = 8,
     final_data_dir: str = "final_data",
     verbose: bool = False,
+    cb: bool = False,
 ) -> str:
     return run_sequential_pipeline(
         exported_path=exported_path,
@@ -500,6 +511,7 @@ def layerwise_pipeline(
         chunk_size=chunk_size,
         final_data_dir=final_data_dir,
         verbose=verbose,
+        cb=cb,
     )
 
 
