@@ -642,6 +642,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         #     Apow = Apow @ Apow  # square for next power
 
         # attn = L
+<<<<<<< HEAD
 
         # Horners Method
         # A = attn.masked_fill(mask, 0)
@@ -656,6 +657,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         #     S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
 
         # attn = S64.to(A.dtype)
+=======
+>>>>>>> 96c08084 (updating to original factorization method and minor fixes)
 
         value = attn @ v_beta
         k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))
