@@ -27,6 +27,9 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5ModelOutputWithPast,
     Qwen3_5TextModel,
     Qwen3_5TextRotaryEmbedding,
+    Qwen3_5VisionAttention,
+    Qwen3_5VisionModel,
+    apply_rotary_pos_emb_vision,
     l2norm,
     repeat_kv,
     rotate_half,
@@ -588,11 +591,11 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         decay_mask = decay_mask * (~mask_strict).float()  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
-        # for i in range(1, chunk_size):
-        #     row = attn[..., i, :i].clone()
-        #     sub = attn[..., :i, :i].clone()
-        #     attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
-        # attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
+        for i in range(1, chunk_size):
+            row = attn[..., i, :i].clone()
+            sub = attn[..., :i, :i].clone()
+            attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
+        attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
 
         ## Approximation code ##
         # A = attn
@@ -1385,7 +1388,10 @@ class QEffQwen3_5EncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
+<<<<<<< HEAD
         self.config = model.config
+=======
+>>>>>>> 99fc86f1 (Adding vision part in qwen3_5)
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         if hasattr(self.model.model, "visual") and hasattr(self.model.model.visual, "blocks"):
