@@ -47,7 +47,7 @@ class QEffLlamaRotaryEmbedding(LlamaRotaryEmbedding):
         super().__init__(config=config)
 
         self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=config.torch_dtype
         )
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
@@ -156,7 +156,7 @@ class QEffLlamaAttention(LlamaAttention):
                 past_seen_tokens=past_seen_tokens,
             )
         else:
-            key, value, _ = past_key_value_update(
+            key, value, attention_mask, _ = past_key_value_update(
                 module=self,
                 key=key_states,
                 value=value_states,
