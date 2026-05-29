@@ -1624,6 +1624,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.qpc_paths = {}
         if not skip_vision:
             vision_qpc_path = self.vision_model._compile(
+                onnx_path=self.vision_model.onnx_path,
                 compile_dir=compile_dir,
                 specializations=specializations["vision"],
                 specialization_module_name="Vision",
@@ -1672,6 +1673,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 qpc_key = "lang_qpc_path"
 
             lang_qpc_path = self.lang_model._compile(
+                onnx_path=self.lang_model.onnx_path,
                 compile_dir=compile_dir,
                 retained_state=True,
                 specializations=specializations,
