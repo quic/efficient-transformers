@@ -596,11 +596,11 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         decay_mask = decay_mask * (~mask_strict).float()  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
-        # for i in range(1, chunk_size):
-        #     row = attn[..., i, :i].clone()
-        #     sub = attn[..., :i, :i].clone()
-        #     attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
-        # attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
+        for i in range(1, chunk_size):
+            row = attn[..., i, :i].clone()
+            sub = attn[..., :i, :i].clone()
+            attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
+        attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
 
         ## Approximation code ##
         # A = attn
@@ -615,16 +615,16 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # attn = L
 
         ## Factorized Approximation code ##
-        eye = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)  #
-        L = eye.clone()
-        Apow = attn
+        # eye = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)  #
+        # L = eye.clone()
+        # Apow = attn
 
-        K = 32
-        for _ in range(int(math.log2(K))):
-            L = L @ (eye + Apow)
-            Apow = Apow @ Apow  # square for next power
+        # K = 32
+        # for _ in range(int(math.log2(K))):
+        #     L = L @ (eye + Apow)
+        #     Apow = Apow @ Apow  # square for next power
 
-        attn = L
+        # attn = L
 
         value = attn @ v_beta
         k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))

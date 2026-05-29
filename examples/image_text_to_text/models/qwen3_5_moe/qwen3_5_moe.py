@@ -43,7 +43,7 @@ if skip_vision:
     batch_size = 1
     qeff_model.compile(
         batch_size=batch_size,
-        prefill_seq_len=32,
+        prefill_seq_len=64,
         ctx_len=4096,
         num_cores=16,
         num_devices=1,
@@ -113,7 +113,7 @@ else:
     ## Vision + Text ##
     qeff_model.compile(
         batch_size=batch_size,
-        prefill_seq_len=32,
+        prefill_seq_len=64,
         ctx_len=4096,
         num_cores=16,
         num_devices=1,

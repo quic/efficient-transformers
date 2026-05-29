@@ -32,7 +32,7 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
-PREFILL_SEQ_LEN = 512
+PREFILL_SEQ_LEN = 64
 CTX_LEN = 4096
 BS = 1
 
