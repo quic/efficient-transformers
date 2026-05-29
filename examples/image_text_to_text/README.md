@@ -100,6 +100,8 @@ Some models have specialized examples demonstrating advanced features:
 |-------|----------|
 | **Llama-4**  | [models/llama4/](models/llama4/) |
 | **Qwen** |  [models/qwen_vl/](models/qwen_vl/) |
+| **Qwen 3.5** | [models/qwen3_5/](models/qwen3_5/) |
+| **Qwen 3.5 MoE** | [models/qwen3_5_moe/](models/qwen3_5_moe/) |
 | **Mistral** | [models/mistral_vision/](models/mistral_vision/) |
 | **Gemma** | [models/gemma_vision/](models/gemma_vision/) |
 | **Granite** | [models/granite_vision/](models/granite_vision/) |

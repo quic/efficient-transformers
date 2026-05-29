@@ -25,6 +25,9 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5ModelOutputWithPast,
     Qwen3_5TextModel,
     Qwen3_5TextRotaryEmbedding,
+    Qwen3_5VisionAttention,
+    Qwen3_5VisionModel,
+    apply_rotary_pos_emb_vision,
     l2norm,
     repeat_kv,
     rotate_half,
@@ -41,6 +44,7 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.logging_utils import logger
 
 
 class QEffQwen3_5GatedDeltaNetCustomRMSNormAIC(nn.Module):
@@ -532,12 +536,12 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         zeros = torch.zeros(g.shape, dtype=g.dtype, device=g.device)
 
         g = torch.where(mask, g, zeros)
-        # beta = torch.where(mask, beta, zeros)
+        beta = torch.where(mask, beta, zeros)
 
         qkv_zeros = torch.zeros(key.shape, dtype=key.dtype, device=key.device)
         key = torch.where(mask.unsqueeze(-1), key, qkv_zeros)
-        # query = torch.where(mask.unsqueeze(-1), query, qkv_zeros)
-        # value = torch.where(mask.unsqueeze(-1), value, qkv_zeros)
+        query = torch.where(mask.unsqueeze(-1), query, qkv_zeros)
+        value = torch.where(mask.unsqueeze(-1), value, qkv_zeros)
 
         batch_size, num_heads, sequence_length, k_head_dim = key.shape
         v_head_dim = value.shape[-1]
@@ -581,11 +585,11 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         decay_mask = decay_mask * (~mask_strict).float()  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
-        # for i in range(1, chunk_size):
-        #     row = attn[..., i, :i].clone()
-        #     sub = attn[..., :i, :i].clone()
-        #     attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
-        # attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
+        for i in range(1, chunk_size):
+            row = attn[..., i, :i].clone()
+            sub = attn[..., :i, :i].clone()
+            attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
+        attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
 
         ## Approximation code ##
         # A = attn
@@ -600,16 +604,31 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         # attn = L
 
         ## Factorized Approximation code ##
-        eye = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)  #
-        L = eye.clone()
-        Apow = attn
+        # eye = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)  #
+        # L = eye.clone()
+        # Apow = attn
 
-        K = 32
-        for _ in range(int(math.log2(K))):
-            L = L @ (eye + Apow)
-            Apow = Apow @ Apow  # square for next power
+        # K = 32
+        # for _ in range(int(math.log2(K))):
+        #     L = L @ (eye + Apow)
+        #     Apow = Apow @ Apow  # square for next power
 
-        attn = L
+        # attn = L
+
+        ## Horners method
+
+        # A = attn.masked_fill(mask, 0)
+        # acc_dtype = torch.float32
+        # A64 = A.to(acc_dtype)
+        # I64 = torch.eye(chunk_size, device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        # strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+
+        # K = chunk_size - 1
+        # S64 = I64.clone()
+        # for _ in range(K):
+        #     S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
+
+        # attn = S64
 
         value = attn @ v_beta
         k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))
@@ -1124,7 +1143,274 @@ class QEffQwen3_5Model(Qwen3_5Model):
         )
 
 
+class QEffQwen3_5VisionModel(Qwen3_5VisionModel):
+    def rot_pos_emb(self, grid_thw: torch.Tensor) -> torch.Tensor:
+        merge_size = self.spatial_merge_size
+        max_hw = max(grid_thw.shape)
+        freq_table = self.rotary_pos_emb(max_hw)
+        device = freq_table.device
+        bs, num_frames, height, width = grid_thw.shape
+        grid_thw = (torch.tensor(grid_thw.shape, dtype=torch.int64)).unsqueeze(0)
+
+        total_tokens = int(torch.prod(grid_thw, dim=1).sum().item())
+        pos_ids = torch.empty((total_tokens, 2), dtype=torch.long, device=device)
+
+        merged_h, merged_w = height // merge_size, width // merge_size
+
+        block_rows = torch.arange(merged_h, device=device)
+        block_cols = torch.arange(merged_w, device=device)
+        intra_row = torch.arange(merge_size, device=device)
+        intra_col = torch.arange(merge_size, device=device)
+
+        row_idx = block_rows[:, None, None, None] * merge_size + intra_row[None, None, :, None]
+        col_idx = block_cols[None, :, None, None] * merge_size + intra_col[None, None, None, :]
+
+        row_idx = row_idx.expand(merged_h, merged_w, merge_size, merge_size).reshape(-1)
+        col_idx = col_idx.expand(merged_h, merged_w, merge_size, merge_size).reshape(-1)
+
+        coords = torch.stack((row_idx, col_idx), dim=-1)
+
+        if num_frames > 1:
+            coords = coords.repeat(num_frames, 1)
+
+        pos_ids = coords
+        embeddings = freq_table[pos_ids]
+        embeddings = embeddings.flatten(1)
+        return embeddings
+
+    def fast_pos_embed_interpolate(self, grid_thw):
+        bs, t, h, w = grid_thw.shape
+        h_idxs = torch.linspace(0, self.num_grid_per_side - 1, h)
+        w_idxs = torch.linspace(0, self.num_grid_per_side - 1, w)
+
+        h_idxs_floor = h_idxs.int()
+        w_idxs_floor = w_idxs.int()
+        max_t = torch.tensor(self.num_grid_per_side - 1, device=h_idxs.device)
+
+        h_idxs_ceil = torch.minimum(h_idxs_floor + 1, max_t)
+        w_idxs_ceil = torch.minimum(w_idxs_floor + 1, max_t)
+
+        dh = h_idxs - h_idxs_floor
+        dw = w_idxs - w_idxs_floor
+
+        base_h = h_idxs_floor * self.num_grid_per_side
+        base_h_ceil = h_idxs_ceil * self.num_grid_per_side
+
+        indices = [
+            (base_h[None].T + w_idxs_floor[None]).flatten(),
+            (base_h[None].T + w_idxs_ceil[None]).flatten(),
+            (base_h_ceil[None].T + w_idxs_floor[None]).flatten(),
+            (base_h_ceil[None].T + w_idxs_ceil[None]).flatten(),
+        ]
+
+        weights = [
+            ((1 - dh)[None].T * (1 - dw)[None]).flatten(),
+            ((1 - dh)[None].T * dw[None]).flatten(),
+            (dh[None].T * (1 - dw)[None]).flatten(),
+            (dh[None].T * dw[None]).flatten(),
+        ]
+
+        idx_tensor = torch.stack(indices, dim=0).to(dtype=torch.long, device=self.pos_embed.weight.device)
+
+        weight_tensor = torch.stack(weights, dim=0).to(
+            dtype=self.pos_embed.weight.dtype, device=self.pos_embed.weight.device
+        )
+        pos_embeds = self.pos_embed(idx_tensor) * weight_tensor[:, :, None]
+        patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
+
+        patch_pos_embeds = patch_pos_embeds.split([h * w])
+
+        patch_pos_embeds_permute = []
+        merge_size = self.config.spatial_merge_size
+        pos_embed = patch_pos_embeds[0]
+        pos_embed = pos_embed.repeat(t, 1)
+
+        pos_embed = (
+            pos_embed.view(t, h // merge_size, merge_size, w // merge_size, merge_size, -1)
+            .permute(0, 1, 3, 2, 4, 5)
+            .flatten(0, 4)
+        )
+        patch_pos_embeds_permute.append(pos_embed)
+        patch_pos_embeds = torch.cat(patch_pos_embeds_permute)
+        x_expanded = patch_pos_embeds.unsqueeze(0)
+        x_expanded = x_expanded.expand(bs, -1, -1)
+        patch_pos_embeds = x_expanded.reshape(-1, patch_pos_embeds.size(1))
+        return patch_pos_embeds
+
+    def forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor) -> torch.Tensor:
+        hidden_states = self.patch_embed(hidden_states)
+        pos_embeds = self.fast_pos_embed_interpolate(grid_thw)
+        hidden_states = hidden_states + pos_embeds
+
+        rotary_pos_emb = self.rot_pos_emb(grid_thw)
+
+        seq_len, _ = hidden_states.size()
+        hidden_states = hidden_states.reshape(seq_len, -1)
+        rotary_pos_emb = rotary_pos_emb.reshape(seq_len, -1)
+        emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
+        position_embeddings = (emb.cos(), emb.sin())
+        bs, t, h, w = grid_thw.shape
+
+        t = torch.arange(t, t + 1).squeeze().expand(bs)
+        h = torch.arange(h, h + 1).squeeze().expand(bs)
+        w = torch.arange(w, w + 1).squeeze().expand(bs)
+
+        cu_seqlens = (h * w).cumsum(
+            dim=0,
+            dtype=torch.int32,
+        )
+        cu_seqlens = torch.cat([torch.tensor([0], dtype=cu_seqlens.dtype), cu_seqlens])
+
+        for blk in self.blocks:
+            hidden_states = blk(
+                hidden_states,
+                cu_seqlens=cu_seqlens,
+                position_embeddings=position_embeddings,
+            )
+        hidden_states = self.merger(hidden_states)
+        return hidden_states
+
+
+class QEffQwen3_5VisionAttention(Qwen3_5VisionAttention):
+    def __init__(self, dim: int, num_heads: int = 16) -> None:
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.qkv = nn.Linear(dim, dim * 3, bias=True)
+        self.proj = nn.Linear(dim, dim)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        rotary_pos_emb: Optional[torch.Tensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+    ) -> torch.Tensor:
+        seq_length = hidden_states.shape[0]
+        q, k, v = self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+        if position_embeddings is None:
+            logger.warning_once(
+                "The attention layers in this model are transitioning from computing the RoPE embeddings internally "
+                "through `rotary_pos_emb` (2D tensor of RoPE theta values), to using externally computed "
+                "`position_embeddings` (Tuple of tensors, containing cos and sin). In v4.54 `rotary_pos_emb` will be "
+                "removed and `position_embeddings` will be mandatory."
+            )
+            emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
+            cos = emb.cos()
+            sin = emb.sin()
+        else:
+            cos, sin = position_embeddings
+        q, k = apply_rotary_pos_emb_vision(q, k, cos, sin)
+
+        attention_mask = torch.full(
+            [1, seq_length, seq_length], torch.finfo(q.dtype).min, device=q.device, dtype=q.dtype
+        )
+        seq_len = attention_mask.shape[-1]
+        rows = torch.arange(seq_len).view(1, -1)
+        cols = torch.arange(seq_len).view(-1, 1)
+
+        start = cu_seqlens[:-1].view(-1, 1, 1)
+        end = cu_seqlens[1:].view(-1, 1, 1)
+        row_mask = (rows >= start) & (rows < end)
+        col_mask = (cols >= start) & (cols < end)
+        block_mask = row_mask & col_mask
+
+        final_mask = torch.ones((seq_len, seq_len), dtype=torch.float32)
+        final_mask[block_mask.any(dim=0)] = 0
+        final_mask = torch.where(final_mask == 1.0, torch.finfo(q.dtype).min, final_mask)
+        attention_mask[0] = final_mask
+
+        q = q.transpose(0, 1)
+        k = k.transpose(0, 1)
+        v = v.transpose(0, 1)
+        attn_weights = torch.matmul(q, k.transpose(1, 2)) / math.sqrt(self.head_dim)
+        attn_weights = attn_weights + attention_mask
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
+        attn_output = torch.matmul(attn_weights, v)
+        attn_output = attn_output.transpose(0, 1)
+        attn_output = attn_output.reshape(seq_length, -1)
+        attn_output = self.proj(attn_output)
+        return attn_output
+
+
+class QEffQwen3_5EncoderWrapper(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        if hasattr(self.model.model, "visual") and hasattr(self.model.model.visual, "blocks"):
+            return {self.model.model.visual.blocks[0].__class__}
+        if hasattr(self.model.model, "vision_model") and hasattr(self.model.model.vision_model, "blocks"):
+            return {self.model.model.vision_model.blocks[0].__class__}
+        return set()
+
+    def forward(self, pixel_values, image_grid_thw):
+        if hasattr(self.model.model, "visual"):
+            image_outputs = self.model.model.visual(pixel_values, grid_thw=image_grid_thw)
+            image_embeds = image_outputs[0] if isinstance(image_outputs, tuple) else image_outputs
+        else:
+            image_outputs: BaseModelOutputWithPooling = self.model.model.get_image_features(
+                pixel_values, image_grid_thw, return_dict=True
+            )
+            image_embeds = image_outputs.pooler_output
+            image_embeds = torch.cat(image_embeds, dim=0).to(pixel_values.device, pixel_values.dtype)
+        bs = image_grid_thw.shape[0]
+        split_size = torch.floor_divide(torch.tensor(image_embeds.size(0)), bs)
+        image_embeds = image_embeds.reshape(bs, split_size, image_embeds.size(1))
+        return image_embeds
+
+
+class QEffQwen3_5DecoderWrapper(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+        self.language_model = self.model.model.language_model
+
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        return {QEffQwen3_5DecoderLayer}
+
+    def forward(
+        self,
+        input_ids,
+        vision_embeds,
+        position_ids,
+        image_idx,
+        past_key_values,
+        batch_index: Optional[torch.LongTensor] = None,
+        comp_ctx_lengths: Optional[List[int]] = None,
+    ):
+        inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
+        _, _, channel_size = inputs_embeds.shape
+        selected = input_ids == self.model.config.image_token_id
+        indices1 = selected.to(torch.int64).cumsum(1) - 1
+        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
+        indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+        image_features_expanded = vision_embeds.reshape(-1, channel_size).unsqueeze(0)[indices0, indices1]
+        image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
+        inputs_embeds = image_input_embeds
+        outputs = self.language_model(
+            inputs_embeds=inputs_embeds,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
+            use_cache=True,
+        )
+        logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+        logits = self.model.lm_head(hidden_states)
+        image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        return logits, vision_embeds, image_idx, outputs.past_key_values[: len(past_key_values)]
+
+
 class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
+    def get_qeff_vision_encoder(self):
+        return QEffQwen3_5EncoderWrapper(self)
+
+    def get_qeff_language_decoder(self):
+        return QEffQwen3_5DecoderWrapper(self)
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -1225,58 +1511,152 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         prefill_seq_len: int,
         ctx_len: int,
         img_size: None,
+        height: int = None,
+        width: int = None,
+        time: int = 1,
+        num_frames: int = 1,
         kv_offload: bool = False,
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
-        comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)  # noqa: F841
-        comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)  # noqa: F841
+        comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
+        comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
 
-        lang_prefill = {
-            "batch_size": 1 if continuous_batching else batch_size,
-            "seq_len": prefill_seq_len,
-            "ctx_len": ctx_len,
-        }
+        if height is None or width is None:
+            height = constants.QWEN3_VL_HEIGHT
+            width = constants.QWEN3_VL_WIDTH
+            logger.warning(
+                f"Setting height and width to be {height} and {width} respectively, as it was neither passed nor found in vision_config"
+            )
 
-        lang_decode = {
-            "batch_size": full_batch_size if continuous_batching else batch_size,
-            "seq_len": 1,
-            "ctx_len": ctx_len,
-        }
+        prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
+        ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
+        kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
+        channel = 3
+        patch_size = self.config.vision_config.patch_size
+        temporal_patch_size = getattr(self.config.vision_config, "temporal_patch_size", 1)
+
+        image_factor = 32
+        min_pixels = 64 * 32 * 32
+        max_pixels = 16384 * 32 * 32
+        max_ratio = 200
+
+        def round_by_factor(number: int, factor: int) -> int:
+            return round(number / factor) * factor
+
+        def ceil_by_factor(number: int, factor: int) -> int:
+            return math.ceil(number / factor) * factor
+
+        def floor_by_factor(number: int, factor: int) -> int:
+            return math.floor(number / factor) * factor
+
+        def smart_resize(
+            height: int,
+            width: int,
+            factor: int = image_factor,
+            min_pixels: int = min_pixels,
+            max_pixels: int = max_pixels,
+        ) -> tuple[int, int]:
+            if max(height, width) / min(height, width) > max_ratio:
+                raise ValueError(
+                    f"absolute aspect ratio must be smaller than {max_ratio}, got {max(height, width) / min(height, width)}"
+                )
+            h_bar = max(factor, round_by_factor(height, factor))
+            w_bar = max(factor, round_by_factor(width, factor))
+            if h_bar * w_bar > max_pixels:
+                beta = math.sqrt((height * width) / max_pixels)
+                h_bar = floor_by_factor(height / beta, factor)
+                w_bar = floor_by_factor(width / beta, factor)
+            elif h_bar * w_bar < min_pixels:
+                beta = math.sqrt(min_pixels / (height * width))
+                h_bar = ceil_by_factor(height * beta, factor)
+                w_bar = ceil_by_factor(width * beta, factor)
+            return h_bar, w_bar
+
+        resized_height, resized_width = smart_resize(height=height, width=width)
+        grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+        grid_height = grid_h * grid_w
+        grid_width = patch_size * patch_size * temporal_patch_size * channel
+        vision_size = (grid_height // 4) * num_frames * time
+        grid_height = grid_height * time * batch_size
+
+        vision = [
+            {
+                "batch_size": batch_size,
+                "vision_size": vision_size,
+                "grid_height": grid_height,
+                "grid_width": grid_width,
+                "time": time,
+                "grid_h": grid_h,
+                "grid_w": grid_w,
+            }
+        ]
+
+        def _build_lang_spec(seq_len_val, comp_ctx_len=None):
+            spec = {
+                "batch_size": full_batch_size
+                if (continuous_batching and seq_len_val == 1)
+                else (1 if continuous_batching else batch_size),
+                "seq_len": seq_len_val,
+                "ctx_len": ctx_len,
+            }
+            if kv_offload:
+                spec["vision_size"] = vision_size
+                spec["vision_batch_size"] = batch_size
+            if comp_ctx_len is not None:
+                spec["comp_ctx_lengths"] = comp_ctx_len
+            if continuous_batching:
+                spec["full_batch_size"] = kv_cache_batch_size
+            else:
+                spec["batch_size"] = kv_cache_batch_size
+            if full_batch_size and seq_len_val != 1:
+                spec["full_batch_exec_size"] = full_batch_size
+            return spec
 
         lang = []
-        lang.append(lang_prefill)
-        lang.append(lang_decode)
+        if comp_ctx_lengths_prefill is not None:
+            for comp_ctx in comp_ctx_lengths_prefill:
+                lang.append(_build_lang_spec(prefill_seq_len, comp_ctx_len=comp_ctx))
+            for comp_ctx in comp_ctx_lengths_decode or []:
+                lang.append(_build_lang_spec(1, comp_ctx_len=comp_ctx))
+        else:
+            lang.append(_build_lang_spec(prefill_seq_len))
+            lang.append(_build_lang_spec(1))
+
+        if kv_offload:
+            return {"vision": vision, "lang": lang}, compiler_options
+
+        for spec in lang:
+            spec.pop("vision_size", None)
+            spec.pop("vision_batch_size", None)
         return lang, compiler_options
 
     def get_onnx_dynamic_axes(
         self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
     ):
-        # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
+        batch_axis_name = "full_batch_size" if continuous_batching else "batch_size"
 
         vision_dynamic_axes = {
             "pixel_values": {0: "grid_height", 1: "grid_width"},
-            "image_grid_thw": {0: "batch_size", 2: "grid_h", 3: "grid_w"},
+            "image_grid_thw": {0: "batch_size", 1: "time", 2: "grid_h", 3: "grid_w"},
         }
 
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {1: "batch_size", 2: "seq_len"},
+            "vision_embeds": {0: "vision_batch_size", 1: "vision_size"},
         }
 
         for i in range(num_layers):
             if self.config.text_config.layer_types[i] == "full_attention":
-                lang_dynamic_axes[f"past_key.{i}"] = {
-                    0: "full_batch_size" if continuous_batching else "batch_size",
-                    2: "ctx_len",
-                }
-                lang_dynamic_axes[f"past_value.{i}"] = {
-                    0: "full_batch_size" if continuous_batching else "batch_size",
-                    2: "ctx_len",
-                }
+                lang_dynamic_axes[f"past_key.{i}"] = {0: batch_axis_name, 2: "ctx_len"}
+                lang_dynamic_axes[f"past_value.{i}"] = {0: batch_axis_name, 2: "ctx_len"}
+            else:
+                lang_dynamic_axes[f"past_key.{i}"] = {0: batch_axis_name}
+                lang_dynamic_axes[f"past_value.{i}"] = {0: batch_axis_name}
 
         if continuous_batching:
             lang_dynamic_axes["batch_index"] = {0: "batch_size"}
@@ -1290,8 +1670,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
             dynamic_axes["vision"] = vision_dynamic_axes
             dynamic_axes["lang"] = lang_dynamic_axes
         else:
-            # lang_dynamic_axes.pop("vision_embeds")
-            dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
+            lang_dynamic_axes.pop("vision_embeds")
             dynamic_axes = lang_dynamic_axes
 
         return dynamic_axes
@@ -1304,46 +1683,53 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         **kwargs,
     ):
         inputs_shapes = {}
-        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+
+        dummy_seq_len = 32
+        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, dummy_seq_len)
 
         inputs_shapes["position_ids"] = (
             3,
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
-            constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+            dummy_seq_len,
         )
+        inputs_shapes["pixel_values"] = (11008, 1536)
+        inputs_shapes["image_grid_thw"] = (
+            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            1,
+            86,
+            128,
+        )
+        inputs_shapes["vision_embeds"] = (
+            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            2752,
+            self.model.config.text_config.hidden_size,
+        )
+        inputs_shapes["image_idx"] = (1, 1)
 
-        # Define inputs
         vision_inputs = {}
         lang_inputs = {}
-        # vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
-        # vision_inputs["image_grid_thw"] = torch.zeros((inputs_shapes["image_grid_thw"]), dtype=torch.int64)
+        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
+        vision_inputs["image_grid_thw"] = torch.zeros((inputs_shapes["image_grid_thw"]), dtype=torch.int64)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
-        # lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
+        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
         lang_inputs["position_ids"] = (
             (
-                torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
-                .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+                torch.arange(dummy_seq_len, dtype=torch.int64)
+                .view(1, dummy_seq_len)
                 .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
             )
             .unsqueeze(0)
             .repeat(4, 1, 1)
         )
-        # lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
+        lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
 
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
-        # Add data for KV
-        # kv_cache_shape = get_padding_shape_from_config(
-        #     config=self.model.config.text_config,
-        #     batch_size=fbs if continuous_batching else bs,
-        #     seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
-        # )
-
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
             batch_size=fbs if continuous_batching else bs,
-            seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+            seq_len=dummy_seq_len,
         )
 
         linear_batch_size = fbs if continuous_batching else bs
@@ -1372,6 +1758,8 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
             inputs["vision"] = vision_inputs
             inputs["lang"] = lang_inputs
         else:
+            lang_inputs.pop("vision_embeds")
+            lang_inputs.pop("image_idx")
             inputs = lang_inputs
 
         return inputs
@@ -1402,16 +1790,15 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
             # IOInfo(name="pixel_values", datatype=torch.float32, shape=("batch_size", 3, "image_size", "image_size")),
         ]
 
-    def prepare_inputs_for_generation(self, inputs, prefill_seq_len=128, batch_size=1):
+    def prepare_inputs_for_generation(self, inputs, prefill_seq_len=32, batch_size=1):
+
         input_ids_length = inputs["input_ids"].shape[1]
-
         inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
-
         pos_ids, rope_deltas = self.model.get_rope_index(
             inputs["input_ids"],
+            inputs["mm_token_type_ids"],
             None if "image_grid_thw" not in inputs else inputs["image_grid_thw"],
             video_grid_thw=None,
-            second_per_grid_ts=None,
             attention_mask=inputs["attention_mask"],
         )
 
@@ -1425,5 +1812,5 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         )
 
         inputs.pop("image_grid_thw", None)
-
+        inputs.pop("mm_token_type_ids")
         return inputs

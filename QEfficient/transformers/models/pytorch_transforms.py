@@ -209,6 +209,8 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5RMSNorm,
     Qwen3_5RMSNormGated,
     Qwen3_5TextModel,
+    Qwen3_5VisionAttention,
+    Qwen3_5VisionModel,
 )
 from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     Qwen3_5MoeAttention,
@@ -525,6 +527,8 @@ from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import (
     QEffQwen3_5GatedDeltaNetCustomRMSNormAIC,
     QEffQwen3_5Model,
     QEffQwen3_5TextModel,
+    QEffQwen3_5VisionAttention,
+    QEffQwen3_5VisionModel,
 )
 from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
@@ -812,6 +816,8 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3_5Model: QEffQwen3_5Model,
         Qwen3_5ForConditionalGeneration: QEffQwen3_5ForConditionalGeneration,
         Qwen3_5Attention: QEffQwen3_5Attention,
+        Qwen3_5VisionAttention: QEffQwen3_5VisionAttention,
+        Qwen3_5VisionModel: QEffQwen3_5VisionModel,
         # Qwen3_5_Moe
         Qwen3_5MoeGatedDeltaNet: QEffQwen3_5MoeGatedDeltaNet,
         Qwen3_5MoeDecoderLayer: QEffQwen3_5MoeDecoderLayer,
