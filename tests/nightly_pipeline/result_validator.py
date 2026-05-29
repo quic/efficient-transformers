@@ -36,20 +36,13 @@ PERF_COLUMNS = [
     "decode_perf_pct_diff",
     "total_perf_before",
     "total_perf_after",
-    "total_perf_pct_diff",
     "total_time_before",
     "total_time_after",
-    "total_time_pct_diff",
 ]
 
-LOWER_IS_BETTER_METRICS = {
+PERF_VALIDATION_METRICS = {
     "prefill_time_pct_diff",
-    "total_time_pct_diff",
-}
-
-HIGHER_IS_BETTER_METRICS = {
     "decode_perf_pct_diff",
-    "total_perf_pct_diff",
 }
 
 SIZE_UNITS = {
@@ -108,6 +101,7 @@ FAMILY_SPECS = {
 @dataclass(frozen=True)
 class ValidationTolerances:
     percentage_tolerance: float = 5.0
+    perf_delta_tolerance: float = 0.1
     token_mad_tolerance: float = 1e-2
     embedding_mad_tolerance: float = 1e-2
 
@@ -123,11 +117,13 @@ def load_validation_tolerances(pipeline_configs: dict[str, Any], model_class: st
     model_class_configs = validation_configs.get("model_class_tolerances", {})
     class_config = model_class_configs.get(model_class, {})
     default_percentage_tolerance = default_config.get("percentage_tolerance", 5.0)
+    default_perf_delta_tolerance = default_config.get("perf_delta_tolerance", 0.1)
     default_token_mad_tolerance = default_config.get("token_mad_tolerance", 1e-2)
     default_embedding_mad_tolerance = default_config.get("embedding_mad_tolerance", 1e-2)
 
     return ValidationTolerances(
         percentage_tolerance=float(class_config.get("percentage_tolerance", default_percentage_tolerance)),
+        perf_delta_tolerance=float(class_config.get("perf_delta_tolerance", default_perf_delta_tolerance)),
         token_mad_tolerance=float(class_config.get("token_mad_tolerance", default_token_mad_tolerance)),
         embedding_mad_tolerance=float(class_config.get("embedding_mad_tolerance", default_embedding_mad_tolerance)),
     )
@@ -220,10 +216,8 @@ def _validate_model(
     if spec.get("include_perf"):
         _add_perf_metrics(row, previous_payload, current_payload)
 
-    text_assertion_required = "mad_column" not in spec
-    mad_result = _add_mad_comparison(row, spec, previous_payload, current_payload)
-    if mad_result == "N/A" and spec.get("text_column"):
-        text_assertion_required = True
+    text_assertion_required = "mad_column" not in spec and spec.get("compare_text", True)
+    _add_mad_comparison(row, spec, previous_payload, current_payload)
 
     if spec.get("text_column"):
         _add_text_values(row, spec, previous_payload, current_payload, text_assertion_required)
@@ -265,6 +259,14 @@ def _add_percentage_metric(row: dict[str, Any], column_prefix: str, before: Any,
     row[f"{column_prefix}_pct_diff"] = _percentage_difference(before_value, after_value)
 
 
+def _add_value_metric(row: dict[str, Any], column_prefix: str, before: Any, after: Any) -> None:
+    before_value = _to_float(before)
+    after_value = _to_float(after)
+
+    row[f"{column_prefix}_before"] = before_value if before_value is not None else "N/A"
+    row[f"{column_prefix}_after"] = after_value if after_value is not None else "N/A"
+
+
 def _add_size_metric(
     row: dict[str, Any], previous_payload: dict[str, Any] | None, current_payload: dict[str, Any]
 ) -> None:
@@ -281,8 +283,8 @@ def _add_perf_metrics(row: dict[str, Any], previous_payload: dict[str, Any], cur
     current_perf = current_payload.get("perf_metrics", {}) or {}
     _add_percentage_metric(row, "prefill_time", previous_perf.get("prefill_time"), current_perf.get("prefill_time"))
     _add_percentage_metric(row, "decode_perf", previous_perf.get("decode_perf"), current_perf.get("decode_perf"))
-    _add_percentage_metric(row, "total_perf", previous_perf.get("total_perf"), current_perf.get("total_perf"))
-    _add_percentage_metric(row, "total_time", previous_perf.get("total_time"), current_perf.get("total_time"))
+    _add_value_metric(row, "total_perf", previous_perf.get("total_perf"), current_perf.get("total_perf"))
+    _add_value_metric(row, "total_time", previous_perf.get("total_time"), current_perf.get("total_time"))
 
 
 def _add_text_values(
@@ -336,21 +338,36 @@ def _percentage_difference(before: float | None, after: float | None) -> float |
 
 def _collect_failures(row: dict[str, Any], spec: dict[str, Any], tolerances: ValidationTolerances) -> list[str]:
     failures = []
-    percentage_tolerance = tolerances.percentage_tolerance
 
-    for metric in sorted(LOWER_IS_BETTER_METRICS):
-        pct_diff = row.get(metric)
-        if isinstance(pct_diff, (int, float)) and pct_diff > percentage_tolerance:
-            failures.append(f"{metric} regression {pct_diff:.2f}% exceeds {percentage_tolerance:.2f}% tolerance")
-
-    for metric in sorted(HIGHER_IS_BETTER_METRICS):
-        pct_diff = row.get(metric)
-        if isinstance(pct_diff, (int, float)) and pct_diff < -percentage_tolerance:
-            failures.append(f"{metric} regression {pct_diff:.2f}% exceeds {percentage_tolerance:.2f}% tolerance")
+    for metric in sorted(PERF_VALIDATION_METRICS):
+        _collect_perf_metric_failure(failures, row, metric, tolerances)
 
     _collect_mad_failures(failures, row, spec, tolerances)
     _collect_assertion_failures(failures, row, spec)
     return failures
+
+
+def _collect_perf_metric_failure(
+    failures: list[str], row: dict[str, Any], metric: str, tolerances: ValidationTolerances
+) -> None:
+    pct_diff = row.get(metric)
+    if not isinstance(pct_diff, (int, float)):
+        return
+
+    metric_prefix = metric.removesuffix("_pct_diff")
+    before_value = row.get(f"{metric_prefix}_before")
+    after_value = row.get(f"{metric_prefix}_after")
+    if not isinstance(before_value, (int, float)) or not isinstance(after_value, (int, float)):
+        return
+
+    delta = after_value - before_value
+    if abs(pct_diff) <= tolerances.percentage_tolerance or abs(delta) < tolerances.perf_delta_tolerance:
+        return
+
+    failures.append(
+        f"{metric} diff {abs(pct_diff):.2f}% and delta {abs(delta):.6f} exceed "
+        f"{tolerances.percentage_tolerance:.2f}%/{tolerances.perf_delta_tolerance:.6f} tolerances"
+    )
 
 
 def _collect_mad_failures(
@@ -368,8 +385,7 @@ def _collect_mad_failures(
             failures.append(f"{mad_column}_mad {mad_value:.6f} exceeds {tolerance_value:.6f} tolerance")
         return
 
-    if not spec.get("text_column"):
-        failures.append(f"{mad_column}_mad is unavailable")
+    failures.append(f"{mad_column}_mad is unavailable")
 
 
 def _collect_assertion_failures(failures: list[str], row: dict[str, Any], spec: dict[str, Any]) -> None:

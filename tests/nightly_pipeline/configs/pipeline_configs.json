@@ -99,40 +99,47 @@
   ],
   "validation_configs": {
     "default": {
-      "percentage_tolerance": 50.0,
+      "percentage_tolerance": 5.0,
       "token_mad_tolerance": 0.1,
-      "embedding_mad_tolerance": 0.1
+      "embedding_mad_tolerance": 0.1,
+      "perf_delta_tolerance": 0.1
     },
     "model_class_tolerances": {
       "causal_pipeline_configs": {
-        "percentage_tolerance": 50.0,
+        "percentage_tolerance": 5.0,
         "token_mad_tolerance": 0.1,
-        "embedding_mad_tolerance": 0.1
+        "embedding_mad_tolerance": 0.1,
+        "perf_delta_tolerance": 0.1
       },
       "embedding_model_configs": {
-        "percentage_tolerance": 50.0,
+        "percentage_tolerance": 5.0,
         "token_mad_tolerance": 0.1,
-        "embedding_mad_tolerance": 0.1
+        "embedding_mad_tolerance": 0.1,
+        "perf_delta_tolerance": 0.1
       },
       "audio_model_configs": {
-        "percentage_tolerance": 50.0,
+        "percentage_tolerance": 5.0,
         "token_mad_tolerance": 0.1,
-        "embedding_mad_tolerance": 0.1
+        "embedding_mad_tolerance": 0.1,
+        "perf_delta_tolerance": 0.1
       },
       "audio_embedding_model_configs": {
-        "percentage_tolerance": 50.0,
+        "percentage_tolerance": 5.0,
         "token_mad_tolerance": 0.1,
-        "embedding_mad_tolerance": 0.1
+        "embedding_mad_tolerance": 0.1,
+        "perf_delta_tolerance": 0.1
       },
       "image_text_to_text_model_configs": {
-        "percentage_tolerance": 50.0,
+        "percentage_tolerance": 5.0,
         "token_mad_tolerance": 0.1,
-        "embedding_mad_tolerance": 0.1
+        "embedding_mad_tolerance": 0.1,
+        "perf_delta_tolerance": 0.1
       },
       "sequence_model_configs": {
-        "percentage_tolerance": 50.0,
+        "percentage_tolerance": 5.0,
         "token_mad_tolerance": 0.1,
-        "embedding_mad_tolerance": 0.1
+        "embedding_mad_tolerance": 0.1,
+        "perf_delta_tolerance": 0.1
       }
     }
   }
