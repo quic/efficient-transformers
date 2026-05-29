@@ -529,6 +529,7 @@ def blocked_qkv_attention_forward(
     sinks: Optional[torch.Tensor] = None,
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    kwargs.pop("head_block_size", None)
     return blocked_hqkv_attention_forward(
         module=module,
         query=query,

@@ -558,9 +558,10 @@ class QEFFBaseModel(ABC):
         """
 
         moe_prefill_packed_chunk_size = compiler_options.pop("moe_prefill_packed_chunk_size", None)
+        existing_onnx_path = onnx_path or self.onnx_path
         onnx_path = Path(
-            onnx_path
-            if onnx_path
+            existing_onnx_path
+            if existing_onnx_path
             else self.get_onnx_path(
                 prefill_only,
                 enable_chunking,
