@@ -674,19 +674,21 @@ class QEFFBaseModel(ABC):
             architectures = getattr(model_config, "architectures", None) or []
             is_deepseek_v3 = "DeepseekV3ForCausalLM" in architectures
             if qaic_config:
-                if is_deepseek_v3 and (qaic_config.get("blocking_mode", None) == "h"):
+                if qaic_config.get("blocking_mode", None) == "h":
                     qaic_config["head_block_size"] = qaic_config.get("head_block_size", num_devices)
                 num_kv_heads_repeat = qaic_config.get("num_kv_heads_repeat", 1)
                 transform_root = _transform_tracking_root(self.model)
                 applied_transforms = getattr(transform_root, "_qeff_runtime_transforms_applied", set())
-
-                if ReplicateKVHeadTransform.__name__ in applied_transforms:
+                should_apply_repeat_kv = is_deepseek_v3 or (num_kv_heads_repeat is not None and num_kv_heads_repeat > 1)
+                if not should_apply_repeat_kv:
+                    replicate_kv_transformed = False
+                elif ReplicateKVHeadTransform.__name__ in applied_transforms:
                     replicate_kv_transformed = False
                     logger.warning("Skipping RepeatKVTransform: already applied on this model instance.")
                 else:
                     self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(
                         self.model,
-                        num_kv_heads_repeat=num_kv_heads_repeat,
+                        num_kv_heads_repeat,
                     )
                     if replicate_kv_transformed:
                         applied_transforms.add(ReplicateKVHeadTransform.__name__)
