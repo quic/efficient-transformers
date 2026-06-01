@@ -7,6 +7,8 @@
 
 """PyTorch Mllama model."""
 
+import sys
+import warnings
 from typing import List, Optional, Tuple, Type, Union
 
 import torch
@@ -44,6 +46,15 @@ from QEfficient.transformers.modeling_utils import (
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+
+_MLLAMA_DEPRECATION_MSG = (
+    "Support for Mllama (Llama 3.2 Vision) in QEfficient is deprecated and will be removed in a future release. "
+    "Please migrate to Llama-4 (meta-llama/Llama-4-Scout-17B-16E-Instruct) which provides equivalent "
+    "vision-language capabilities with continued support."
+)
+
+warnings.warn(_MLLAMA_DEPRECATION_MSG, DeprecationWarning, stacklevel=2)
+sys.exit(1)
 
 MAX_NUM_IMG = 1
 NUM_CHANNEL = 3
