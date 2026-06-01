@@ -1909,7 +1909,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         if self.comp_ctx_lengths_prefill is not None:
             list_of_comp_ctx_lengths_prefill = [
-                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_prefill
+                np.zeros(length, dtype=np.int64) for length in self.comp_ctx_lengths_prefill
             ]
             prefill_ccl_id = 0
             lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
@@ -1961,7 +1961,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if self.comp_ctx_lengths_decode is not None:
             max_ccl_id = len(self.comp_ctx_lengths_decode) - 1
             list_of_comp_ctx_lengths_decode = [
-                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_decode
+                np.zeros(length, dtype=np.int64) for length in self.comp_ctx_lengths_decode
             ]
             max_position_id = np.max(lang_inputs["position_ids"])
             ccl_id_initial = 0
@@ -2478,7 +2478,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
         if self.comp_ctx_lengths_prefill is not None:
             list_of_comp_ctx_lengths_prefill = [
-                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_prefill
+                np.zeros(length, dtype=np.int64) for length in self.comp_ctx_lengths_prefill
             ]
             prefill_ccl_id = 0
             inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
@@ -2525,7 +2525,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         # Decode loop
         if self.comp_ctx_lengths_decode is not None:
             list_of_comp_ctx_lengths_decode = [
-                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_decode
+                np.zeros(length, dtype=np.int64) for length in self.comp_ctx_lengths_decode
             ]
             max_ccl_id = len(self.comp_ctx_lengths_decode) - 1
             max_position_id = np.max(inputs["position_ids"])
@@ -3176,7 +3176,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
         if self.ccl_enabled:
-            example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (512,), dtype=torch.int8)
+            example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (512,), dtype=torch.int64)
             dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
 
         if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
