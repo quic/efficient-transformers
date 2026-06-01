@@ -12,12 +12,31 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pytest
 import torch
-from huggingface_hub import snapshot_download
-from qwen_vl_utils import process_vision_info
 from transformers import AutoConfig, AutoProcessor
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForImageTextToText
+from QEfficient.transformers.models.qwen3_vl._reranker_utils import (
+    format_mm_content as _shared_format_mm_content,
+)
+from QEfficient.transformers.models.qwen3_vl._reranker_utils import (
+    format_mm_instruction as _shared_format_mm_instruction,
+)
+from QEfficient.transformers.models.qwen3_vl._reranker_utils import (
+    get_yes_no_token_ids as _shared_get_yes_no_token_ids,
+)
+from QEfficient.transformers.models.qwen3_vl._reranker_utils import (
+    resolve_model_source as _shared_resolve_model_source,
+)
+from QEfficient.transformers.models.qwen3_vl._reranker_utils import (
+    score_from_logits as _shared_score_from_logits,
+)
+from QEfficient.transformers.models.qwen3_vl._reranker_utils import (
+    tokenize_pair as _shared_tokenize_pair,
+)
+from QEfficient.transformers.models.qwen3_vl._reranker_utils import (
+    truncate_tokens_optimized as _shared_truncate_tokens_optimized,
+)
 from QEfficient.utils.test_utils import load_vlm_model, set_num_layers_vlm
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
@@ -49,176 +68,52 @@ reranker_model_config_dict = {model["model_name"]: model for model in reranker_m
 
 
 def _resolve_model_source(model_name_or_path: str) -> str:
-    if os.path.isdir(model_name_or_path):
-        return model_name_or_path
-    return snapshot_download(repo_id=model_name_or_path)
+    return _shared_resolve_model_source(model_name_or_path)
 
 
 def _format_mm_content(text, image, video, prefix: str) -> List[Dict]:
-    content = [{"type": "text", "text": prefix}]
-
-    if not text and not image and not video:
-        content.append({"type": "text", "text": "NULL"})
-        return content
-
-    if video:
-        raise ValueError("Video input is not supported in this test.")
-
-    if image:
-        if isinstance(image, str):
-            image_content = image if image.startswith(("http", "oss")) else "file://" + image
-        else:
-            image_content = image
-        content.append(
-            {
-                "type": "image",
-                "image": image_content,
-                "min_pixels": MIN_PIXELS,
-                "max_pixels": MAX_PIXELS,
-            }
-        )
-
-    if text:
-        content.append({"type": "text", "text": text})
-
-    return content
+    return _shared_format_mm_content(
+        text=text,
+        image=image,
+        video=video,
+        prefix=prefix,
+        min_pixels=MIN_PIXELS,
+        max_pixels=MAX_PIXELS,
+        unsupported_video_error="Video input is not supported in this test.",
+    )
 
 
 def _format_mm_instruction(instruction: str, query: Dict, document: Dict) -> List[Dict]:
-    contents = [{"type": "text", "text": "<Instruct>: " + instruction}]
-
-    contents.extend(
-        _format_mm_content(
-            query.get("text"),
-            query.get("image"),
-            query.get("video"),
-            prefix="<Query>:",
-        )
+    return _shared_format_mm_instruction(
+        instruction=instruction,
+        query=query,
+        document=document,
+        min_pixels=MIN_PIXELS,
+        max_pixels=MAX_PIXELS,
+        unsupported_video_error="Video input is not supported in this test.",
     )
-    contents.extend(
-        _format_mm_content(
-            document.get("text"),
-            document.get("image"),
-            document.get("video"),
-            prefix="\n<Document>:",
-        )
-    )
-
-    return [
-        {
-            "role": "system",
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        "Judge whether the Document meets the requirements based on the Query and the Instruct "
-                        'provided. Note that the answer can only be "yes" or "no".'
-                    ),
-                }
-            ],
-        },
-        {"role": "user", "content": contents},
-    ]
 
 
 def _truncate_tokens_optimized(tokens: List[int], max_length: int, special_tokens: List[int]) -> List[int]:
-    if len(tokens) <= max_length:
-        return tokens
-
-    special_tokens_set = set(special_tokens)
-    num_special = sum(1 for token in tokens if token in special_tokens_set)
-    num_non_special_to_keep = max_length - num_special
-
-    final_tokens = []
-    non_special_kept_count = 0
-    for token in tokens:
-        if token in special_tokens_set:
-            final_tokens.append(token)
-        elif non_special_kept_count < num_non_special_to_keep:
-            final_tokens.append(token)
-            non_special_kept_count += 1
-    return final_tokens
+    return _shared_truncate_tokens_optimized(tokens, max_length, special_tokens)
 
 
 def _tokenize_pair(processor, pair: List[Dict]) -> Dict:
-    pairs = [pair]
-    text = processor.apply_chat_template(pairs, tokenize=False, add_generation_prompt=True)
-
-    images, videos, video_kwargs = process_vision_info(
-        pairs,
-        image_patch_size=16,
-        return_video_kwargs=True,
-        return_video_metadata=True,
-    )
-
-    if videos is not None:
-        videos, video_metadatas = zip(*videos)
-        videos = list(videos)
-        video_metadatas = list(video_metadatas)
-    else:
-        video_metadatas = None
-
-    inputs = processor(
-        text=text,
-        images=images,
-        videos=videos,
-        video_metadata=video_metadatas,
-        truncation=False,
-        padding=False,
-        do_resize=False,
-        **video_kwargs,
-    )
-
-    for i, input_ids in enumerate(inputs["input_ids"]):
-        inputs["input_ids"][i] = (
-            _truncate_tokens_optimized(
-                input_ids[:-5],
-                MAX_LENGTH,
-                processor.tokenizer.all_special_ids,
-            )
-            + input_ids[-5:]
-        )
-
-    padded = processor.tokenizer.pad(
-        {"input_ids": inputs["input_ids"]},
-        padding=True,
-        return_tensors="pt",
-        max_length=MAX_LENGTH,
-    )
-    for key in padded:
-        inputs[key] = padded[key]
-
-    if "pixel_values" in inputs:
-        inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
-
-    return inputs
+    return _shared_tokenize_pair(processor, pair, MAX_LENGTH)
 
 
 def _get_yes_no_token_ids(tokenizer) -> Tuple[int, int]:
-    vocab = tokenizer.get_vocab()
-    if "yes" not in vocab or "no" not in vocab:
-        raise ValueError("Could not resolve tokenizer ids for exact tokens 'yes' and 'no'.")
-    return vocab["yes"], vocab["no"]
+    return _shared_get_yes_no_token_ids(tokenizer)
 
 
 def _score_from_logits(logits, yes_token_id: int, no_token_id: int) -> np.ndarray:
-    if isinstance(logits, np.ndarray):
-        logits_tensor = torch.from_numpy(logits)
-    else:
-        logits_tensor = logits.detach().cpu()
-
-    if logits_tensor.ndim == 3:
-        logits_tensor = logits_tensor[:, -1, :]
-    elif logits_tensor.ndim != 2:
-        raise ValueError(f"Unsupported logits rank for score conversion: {logits_tensor.ndim}")
-
-    score = torch.sigmoid(logits_tensor[:, yes_token_id] - logits_tensor[:, no_token_id])
+    score = _shared_score_from_logits(logits, yes_token_id, no_token_id)
     return score.detach().cpu().numpy().astype(np.float64)
 
 
 def _score_from_last_hidden(last_hidden_state: torch.Tensor, score_linear: torch.nn.Linear) -> np.ndarray:
     score = torch.sigmoid(score_linear(last_hidden_state[:, -1])).squeeze(-1)
-    return score.detach().cpu().numpy().astype(np.float64)
+    return score.detach().to(torch.float32).cpu().numpy().astype(np.float64)
 
 
 def _make_score_linear(model_hf, yes_token_id: int, no_token_id: int) -> torch.nn.Linear:

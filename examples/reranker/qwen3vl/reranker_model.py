@@ -18,15 +18,23 @@ Model loading (`from_pretrained`) and model compilation (`compile`) are exposed
 in `qwen3_vl_reranker.py` so users can directly see QEff API usage.
 """
 
-import os
 from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
-from huggingface_hub import snapshot_download
-from qwen_vl_utils import process_vision_info
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.transformers.models.qwen3_vl._reranker_utils import (
+    format_mm_content,
+    format_mm_instruction,
+    get_yes_no_token_ids,
+    score_from_logits,
+    tokenize_pair,
+    truncate_tokens_optimized,
+)
+from QEfficient.transformers.models.qwen3_vl._reranker_utils import (
+    resolve_model_source as _resolve_model_source,
+)
 
 # Max token budget used by this example's manual truncation/padding flow.
 MAX_LENGTH = 8192
@@ -44,9 +52,7 @@ def resolve_model_source(model_name_or_path: str) -> str:
     Some transformers versions can fail when resolving chat templates from
     repo-id mode for this model. Using a local snapshot path avoids that path.
     """
-    if os.path.isdir(model_name_or_path):
-        return model_name_or_path
-    return snapshot_download(repo_id=model_name_or_path)
+    return _resolve_model_source(model_name_or_path)
 
 
 class QEffQwen3VLReranker:
@@ -73,10 +79,7 @@ class QEffQwen3VLReranker:
     @staticmethod
     def _get_yes_no_token_ids(tokenizer) -> Tuple[int, int]:
         """Resolve tokenizer ids for the exact tokens 'yes' and 'no'."""
-        vocab = tokenizer.get_vocab()
-        if "yes" not in vocab or "no" not in vocab:
-            raise ValueError("Could not resolve tokenizer ids for exact tokens 'yes' and 'no'.")
-        return vocab["yes"], vocab["no"]
+        return get_yes_no_token_ids(tokenizer)
 
     @staticmethod
     def _score_from_logits(logits, yes_token_id: int, no_token_id: int) -> float:
@@ -85,152 +88,40 @@ class QEffQwen3VLReranker:
         Score formula:
             sigmoid(logit_yes - logit_no)
         """
-        logits_tensor = torch.from_numpy(logits) if isinstance(logits, np.ndarray) else logits.detach().cpu()
-        if logits_tensor.ndim == 3:
-            logits_tensor = logits_tensor[:, -1, :]
-        score = torch.sigmoid(logits_tensor[:, yes_token_id] - logits_tensor[:, no_token_id])
+        score = score_from_logits(logits, yes_token_id, no_token_id)
         return float(score[0].item())
 
     @staticmethod
     def _truncate_tokens_optimized(tokens: List[int], max_length: int, special_tokens: List[int]) -> List[int]:
         """Truncate while preserving all special tokens in sequence order."""
-        if len(tokens) <= max_length:
-            return tokens
-
-        special_tokens_set = set(special_tokens)
-        num_special = sum(1 for token in tokens if token in special_tokens_set)
-        num_non_special_to_keep = max_length - num_special
-
-        final_tokens = []
-        non_special_kept_count = 0
-        for token in tokens:
-            if token in special_tokens_set:
-                final_tokens.append(token)
-            elif non_special_kept_count < num_non_special_to_keep:
-                final_tokens.append(token)
-                non_special_kept_count += 1
-        return final_tokens
+        return truncate_tokens_optimized(tokens, max_length, special_tokens)
 
     def _format_mm_content(self, text, image, video, prefix: str) -> List[Dict]:
         """Build one multimodal content block (prefix + optional image + optional text)."""
-        content = [{"type": "text", "text": prefix}]
-
-        if not text and not image and not video:
-            content.append({"type": "text", "text": "NULL"})
-            return content
-
-        if video:
-            raise ValueError("Video input is not supported in this AI100-only example.")
-
-        if image:
-            if isinstance(image, str):
-                image_content = image if image.startswith(("http", "oss")) else "file://" + image
-            else:
-                image_content = image
-            content.append(
-                {
-                    "type": "image",
-                    "image": image_content,
-                    "min_pixels": MIN_PIXELS,
-                    "max_pixels": MAX_PIXELS,
-                }
-            )
-
-        if text:
-            content.append({"type": "text", "text": text})
-
-        return content
+        return format_mm_content(
+            text=text,
+            image=image,
+            video=video,
+            prefix=prefix,
+            min_pixels=MIN_PIXELS,
+            max_pixels=MAX_PIXELS,
+            unsupported_video_error="Video input is not supported in this AI100-only example.",
+        )
 
     def _format_mm_instruction(self, instruction: str, query: Dict, document: Dict) -> List[Dict]:
         """Create the chat payload for one query-document pair."""
-        contents = [{"type": "text", "text": "<Instruct>: " + instruction}]
-
-        contents.extend(
-            self._format_mm_content(
-                query.get("text"),
-                query.get("image"),
-                query.get("video"),
-                prefix="<Query>:",
-            )
+        return format_mm_instruction(
+            instruction=instruction,
+            query=query,
+            document=document,
+            min_pixels=MIN_PIXELS,
+            max_pixels=MAX_PIXELS,
+            unsupported_video_error="Video input is not supported in this AI100-only example.",
         )
-        contents.extend(
-            self._format_mm_content(
-                document.get("text"),
-                document.get("image"),
-                document.get("video"),
-                prefix="\n<Document>:",
-            )
-        )
-
-        return [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": (
-                            "Judge whether the Document meets the requirements based on the Query and the Instruct "
-                            'provided. Note that the answer can only be "yes" or "no".'
-                        ),
-                    }
-                ],
-            },
-            {"role": "user", "content": contents},
-        ]
 
     def _tokenize_pair(self, pair: List[Dict]) -> Dict:
         """Tokenize a query-document pair with the exact HF multimodal pipeline."""
-        pairs = [pair]
-        text = self.processor.apply_chat_template(pairs, tokenize=False, add_generation_prompt=True)
-
-        images, videos, video_kwargs = process_vision_info(
-            pairs,
-            image_patch_size=16,
-            return_video_kwargs=True,
-            return_video_metadata=True,
-        )
-
-        if videos is not None:
-            videos, video_metadatas = zip(*videos)
-            videos = list(videos)
-            video_metadatas = list(video_metadatas)
-        else:
-            video_metadatas = None
-
-        inputs = self.processor(
-            text=text,
-            images=images,
-            videos=videos,
-            video_metadata=video_metadatas,
-            truncation=False,
-            padding=False,
-            do_resize=False,
-            **video_kwargs,
-        )
-
-        for i, input_ids in enumerate(inputs["input_ids"]):
-            inputs["input_ids"][i] = (
-                self._truncate_tokens_optimized(
-                    input_ids[:-5],
-                    self.max_length,
-                    self.processor.tokenizer.all_special_ids,
-                )
-                + input_ids[-5:]
-            )
-
-        padded = self.processor.tokenizer.pad(
-            {"input_ids": inputs["input_ids"]},
-            padding=True,
-            return_tensors="pt",
-            max_length=self.max_length,
-        )
-        for key in padded:
-            inputs[key] = padded[key]
-
-        if "pixel_values" in inputs:
-            inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
-
-        return inputs
+        return tokenize_pair(self.processor, pair, self.max_length)
 
     def _prepare_inputs(self, tokenized_inputs: Dict, prefill_seq_len: int):
         """Prepare model inputs for dual-QPC prefill execution."""
