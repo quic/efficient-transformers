@@ -696,12 +696,12 @@ def _cumsum_scatter_gather_update_granitemoe_expert_blocked(
 class QEffPrefillChunkedGraniteMoeMoE(GraniteMoeMoE):
     """NSP-blocked prefill dispatch for GraniteMoE.
 
-    supports_moe_prefill_blocking = True
-
     Replaces the per-expert loop in QEffGraniteMoeMoE with a
     cumsum-scatter-gather-update strategy that only runs the MLP on active
     tokens, mirroring the Qwen3-MoE implementation.
     """
+
+    supports_moe_prefill_blocking = True
 
     def __qeff_init__(self):
         W_gate_up = self.input_linear.weight   # [E, 2I, H]
@@ -723,10 +723,10 @@ class QEffPrefillChunkedGraniteMoeMoE(GraniteMoeMoE):
         local_experts = num_experts // num_nsp
         I = self._W_g.shape[2]
 
-        rw = routing_weights.transpose(0, 1).contiguous().view(num_nsp, local_experts, T)
-        W_g = self._W_g.view(num_nsp, local_experts, H, I)
-        W_u = self._W_u.view(num_nsp, local_experts, H, I)
-        W_d = self._W_d.view(num_nsp, local_experts, I, H)
+        rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
+        W_g = self._W_g.view(local_experts, num_nsp, H, I).transpose(0, 1).contiguous()
+        W_u = self._W_u.view(local_experts, num_nsp, H, I).transpose(0, 1).contiguous()
+        W_d = self._W_d.view(local_experts, num_nsp, I, H).transpose(0, 1).contiguous()
 
         expert_out = x.new_zeros((num_nsp, T, H))
         for slot in range(local_experts):

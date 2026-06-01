@@ -1078,6 +1078,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         prefill_only: bool = False,
         enable_chunking: bool = False,
         num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
+        moe_prefill_num_nsp: Optional[int] = None,
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         **kwargs,
     ):
@@ -1119,10 +1120,11 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
                 num_packed_chunks = max(1, -(-compile_seq_len // moe_prefill_packed_chunk_size))
                 for module in self.model.modules():
                     if getattr(module, "supports_moe_prefill_blocking", False):
-                        module.expert_blocking_num_nsp = num_cores
-                        module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
-                        module.expert_blocking_num_packed_chunks = num_packed_chunks
-                self.hash_params["moe_prefill_num_nsp"] = num_cores
+                        if moe_prefill_num_nsp is not None:
+                            module.expert_blocking_num_nsp = moe_prefill_num_nsp
+                            module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
+                            module.expert_blocking_num_packed_chunks = num_packed_chunks
+                self.hash_params["moe_prefill_num_nsp"] = moe_prefill_num_nsp
                 self.hash_params["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
                 self.hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
         else:
@@ -1399,6 +1401,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 enable_chunking=enable_chunking,
                 prefill_seq_len=prefill_seq_len,
                 num_cores=kwargs.get("num_cores", constants.DEFAULT_AIC_NUM_CORES),
+                moe_prefill_num_nsp=kwargs.get("moe_prefill_num_nsp", None),
                 moe_prefill_packed_chunk_size=kwargs.get("moe_prefill_packed_chunk_size", constants.MOE_PREFILL_PACKED_CHUNK_SIZE),
             )
         return self.onnx_path
@@ -1453,6 +1456,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         use_onnx_subfunctions: bool = False,
         prefill_only=None,
         enable_chunking=False,
+        moe_prefill_num_nsp: Optional[int] = None,
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         qaic_config: Optional[dict] = None,
         **compiler_options,
@@ -1593,6 +1597,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 enable_chunking=enable_chunking,
                 prefill_seq_len=prefill_seq_len,
                 num_cores=num_cores,
+                moe_prefill_num_nsp=moe_prefill_num_nsp,
                 moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
             )
 
@@ -3010,6 +3015,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         prefill_seq_len: Optional[int] = None,
         enable_chunking=False,
         num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
+        moe_prefill_num_nsp: Optional[int] = None,
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
     ) -> int:
         self.hash_params["prefill_only"] = True
@@ -3019,10 +3025,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             num_packed_chunks = max(1, -(-compile_seq_len // moe_prefill_packed_chunk_size))
             for module in self.model.modules():
                 if getattr(module, "supports_moe_prefill_blocking", False):
-                    module.expert_blocking_num_nsp = num_cores
-                    module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
-                    module.expert_blocking_num_packed_chunks = num_packed_chunks
-            self.hash_params["moe_prefill_num_nsp"] = num_cores
+                    if moe_prefill_num_nsp is not None:
+                        module.expert_blocking_num_nsp = moe_prefill_num_nsp
+                        module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
+                        module.expert_blocking_num_packed_chunks = num_packed_chunks
+            self.hash_params["moe_prefill_num_nsp"] = moe_prefill_num_nsp
             self.hash_params["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
             self.hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
             return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
@@ -3072,6 +3079,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         prefill_only: Optional[bool] = False,
         prefill_seq_len: Optional[int] = None,
         num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
+        moe_prefill_num_nsp: Optional[int] = None,
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         **kwargs,
     ) -> str:
@@ -3126,11 +3134,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         prefill_seq_len=prefill_seq_len,
                         enable_chunking=enable_chunking,
                         num_cores=num_cores,
+                        moe_prefill_num_nsp=moe_prefill_num_nsp,
                         moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                     )
                     kv_cache_shape[2] = (
                         seq_len
-                        + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
+                        + (getattr(self.model.config, 'sliding_window', None) or 0)
                         if enable_chunking
                         else seq_len
                     )
@@ -3146,7 +3155,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("moe_prefill_num_packed_chunks", None)
                 if kwargs.get("retain_full_kv", False):
                     kv_cache_shape[2] = seq_len + (
-                        self.model.config.sliding_window if self.model.config.sliding_window is not None else 0
+                        (getattr(self.model.config, 'sliding_window', None) or 0)
                     )
                     self.hash_params["retain_full_kv"] = True
 
@@ -3432,6 +3441,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         use_onnx_subfunctions: bool = False,
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
+        moe_prefill_num_nsp: Optional[int] = None,
+        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         retain_full_kv: Optional[bool] = None,
         **compiler_options,
     ) -> str:
@@ -3681,6 +3692,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             offload_pt_weights=offload_pt_weights,
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,
+            moe_prefill_num_nsp=moe_prefill_num_nsp,
+            moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
             **compiler_options,
         )
 
