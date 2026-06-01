@@ -879,7 +879,7 @@ class QEffGptOssAttention(GptOssAttention):
                 sinks=self.sinks,
             )
         else:
-            key_states, value_states, _ = past_key_value_update(
+            key_states, value_states, attention_mask, _ = past_key_value_update(
                 module=self,
                 key=key_states,
                 value=value_states,
