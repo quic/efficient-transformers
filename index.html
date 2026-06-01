@@ -76,8 +76,6 @@
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="source/finetune.html">Finetune Infra</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -155,6 +153,10 @@
 <li class="toctree-l3"><a class="reference internal" href="source/validate.html#text-embedding-task">Text Embedding Task</a></li>
 </ul>
 </li>
+<li class="toctree-l2"><a class="reference internal" href="source/validate.html#sequence-classification-models">Sequence Classification Models</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="source/validate.html#text-classification-task">Text Classification Task</a></li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="source/validate.html#multimodal-language-models">Multimodal Language Models</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="source/validate.html#vision-language-models-text-image-generation">Vision-Language Models (Text + Image Generation)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="source/validate.html#audio-models">Audio Models</a></li>
@@ -162,7 +164,11 @@
 </li>
 <li class="toctree-l2"><a class="reference internal" href="source/validate.html#diffusion-models">Diffusion Models</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="source/validate.html#image-generation-models">Image Generation Models</a></li>
-<li class="toctree-l3"><a class="reference internal" href="source/validate.html#video-generation-models">Video Generation Models</a></li>
+<li class="toctree-l3"><a class="reference internal" href="source/validate.html#video-generation-models">Video Generation Models</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="source/validate.html#text-to-video-generation-models">Text to Video Generation Models</a></li>
+<li class="toctree-l4"><a class="reference internal" href="source/validate.html#image-to-video-generation-models">Image to Video Generation Models</a></li>
+</ul>
+</li>
 </ul>
 </li>
 </ul>
@@ -243,8 +249,18 @@
 </li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="source/qeff_autoclasses.html#qeffautopeftmodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM</span></code></a><ul>
+<li class="toctree-l2"><a class="reference internal" href="source/qeff_autoclasses.html#qeffautomodelforsequenceclassification"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSequenceClassification</span></code></a><ul>
 <li class="toctree-l3"><a class="reference internal" href="source/qeff_autoclasses.html#id5">High-Level API</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.from_pretrained"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSequenceClassification.from_pretrained()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.export"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSequenceClassification.export()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.compile"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSequenceClassification.compile()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.generate"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSequenceClassification.generate()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="source/qeff_autoclasses.html#qeffautopeftmodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="source/qeff_autoclasses.html#id7">High-Level API</a><ul>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.from_pretrained"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM.from_pretrained()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.export"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM.export()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.compile"><code class="docutils literal notranslate"><span class="pre">QEffAutoPeftModelForCausalLM.compile()</span></code></a></li>
@@ -254,7 +270,7 @@
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="source/qeff_autoclasses.html#qeffautoloramodelforcausallm"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="source/qeff_autoclasses.html#id7">High-Level API</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="source/qeff_autoclasses.html#id9">High-Level API</a><ul>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.from_pretrained"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM.from_pretrained()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.export"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM.export()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.compile"><code class="docutils literal notranslate"><span class="pre">QEffAutoLoraModelForCausalLM.compile()</span></code></a></li>
@@ -264,14 +280,14 @@
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="source/qeff_autoclasses.html#qeffautomodelforimagetexttotext"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForImageTextToText</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="source/qeff_autoclasses.html#id9">High-Level API</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="source/qeff_autoclasses.html#id11">High-Level API</a><ul>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText.from_pretrained"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForImageTextToText.from_pretrained()</span></code></a></li>
 </ul>
 </li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="source/qeff_autoclasses.html#qeffautomodelforspeechseq2seq"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSpeechSeq2Seq</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="source/qeff_autoclasses.html#id11">High-Level API</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="source/qeff_autoclasses.html#id13">High-Level API</a><ul>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.from_pretrained"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSpeechSeq2Seq.from_pretrained()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.export"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSpeechSeq2Seq.export()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.compile"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForSpeechSeq2Seq.compile()</span></code></a></li>
@@ -281,7 +297,7 @@
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="source/qeff_autoclasses.html#qeffautomodelforctc"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCTC</span></code></a><ul>
-<li class="toctree-l3"><a class="reference internal" href="source/qeff_autoclasses.html#id13">High-Level API</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="source/qeff_autoclasses.html#id15">High-Level API</a><ul>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.from_pretrained"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCTC.from_pretrained()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.export"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCTC.export()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.compile"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCTC.compile()</span></code></a></li>
@@ -321,6 +337,10 @@
 <li class="toctree-l4"><a class="reference internal" href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline"><code class="docutils literal notranslate"><span class="pre">QEffWanPipeline</span></code></a></li>
 </ul>
 </li>
+<li class="toctree-l3"><a class="reference internal" href="source/diffuser_classes.html#qeffwanimagetovideopipeline"><code class="docutils literal notranslate"><span class="pre">QEffWanImageToVideoPipeline</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline"><code class="docutils literal notranslate"><span class="pre">QEffWanImageToVideoPipeline</span></code></a></li>
+</ul>
+</li>
 <li class="toctree-l3"><a class="reference internal" href="source/diffuser_classes.html#qefffluxpipeline"><code class="docutils literal notranslate"><span class="pre">QEffFluxPipeline</span></code></a><ul>
 <li class="toctree-l4"><a class="reference internal" href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.flux.pipeline_flux.QEffFluxPipeline"><code class="docutils literal notranslate"><span class="pre">QEffFluxPipeline</span></code></a></li>
 </ul>
@@ -349,13 +369,13 @@
 <li class="toctree-l2"><a class="reference internal" href="source/finetune.html#usage">Usage</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="source/finetune.html#single-soc-finetuning-on-qaic">Single SOC finetuning on QAIC</a></li>
 <li class="toctree-l3"><a class="reference internal" href="source/finetune.html#distributed-training-ddp-on-qaic">Distributed training(DDP) on QAIC</a></li>
-<li class="toctree-l3"><a class="reference internal" href="source/finetune.html#multi-node-across-multiple-servers-finetuning-on-qaic">Multi Node(across multiple servers) finetuning on QAIC</a></li>
+<li class="toctree-l3"><a class="reference internal" href="source/finetune.html#multi-node-across-multiple-servers-finetuning-on-qaic">Multi Node(across multiple servers) finetuning on QAIC</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="source/finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
+<li class="toctree-l4"><a class="reference internal" href="source/finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 </li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="source/finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/finetune.html#start-docker-container">Start Docker container</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="source/finetune.html#visualization">Visualization</a></li>
 <li class="toctree-l2"><a class="reference internal" href="source/finetune.html#some-features-functionalities-of-fine-tuning-stack">Some features/functionalities of fine-tuning stack:</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="source/finetune.html#steps-to-fine-tune-with-a-custom-dataset">🔧 Steps to Fine-Tune with a Custom Dataset</a></li>
@@ -410,7 +430,7 @@
       </div>
     </section>
   </div>
-  <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+    <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
     <span class="rst-current-version" data-toggle="rst-current-version">
       Version: Main
       <span class="fa fa-caret-down"></span>
@@ -423,6 +443,7 @@
         <dd><a href="source/release/v1.19/index.html">release/v1.19</a></dd>
         <dd><a href="source/release/v1.20/index.html">release/v1.20</a></dd>
         <dd><a href="source/release/v1.21/index.html">release/v1.21</a></dd>
+        <dd><a href="source/release/v1.21.6/index.html">release/v1.21.6</a></dd>
       </dl>
     </div>
 </div><script>

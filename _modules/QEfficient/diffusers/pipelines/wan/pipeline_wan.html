@@ -74,8 +74,6 @@
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../../../source/finetune.html">Finetune Infra</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../source/finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../source/finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -130,13 +128,17 @@
 
 <span class="sd">This module provides an optimized implementation of the WAN pipeline</span>
 <span class="sd">for high-performance text-to-video generation on Qualcomm AI hardware.</span>
-<span class="sd">The pipeline supports WAN 2.2 architectures with unified transformer.</span>
+<span class="sd">The pipeline supports WAN 2.2 architectures in:</span>
+<span class="sd">1) unified mode (single transformer module with stage routing), and</span>
+<span class="sd">2) non-unified mode (separate high/low transformer modules).</span>
 
 <span class="sd">TODO: 1. Update umt5 to Qaic; present running on cpu</span>
 <span class="sd">&quot;&quot;&quot;</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">types</span><span class="w"> </span><span class="kn">import</span> <span class="n">SimpleNamespace</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Union</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
@@ -144,12 +146,16 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">diffusers</span><span class="w"> </span><span class="kn">import</span> <span class="n">WanPipeline</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">tqdm</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.diffusers.pipelines.pipeline_module</span><span class="w"> </span><span class="kn">import</span> <span class="n">QEffVAE</span><span class="p">,</span> <span class="n">QEffWanUnifiedTransformer</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.diffusers.first_block_cache.wan</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">enable_wan_first_block_cache</span><span class="p">,</span>
+    <span class="n">run_wan_non_unified_first_block_cache_denoise</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.diffusers.models.transformers.transformer_wan</span><span class="w"> </span><span class="kn">import</span> <span class="n">QEffWanUnifiedWrapper</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.diffusers.pipelines.pipeline_module</span><span class="w"> </span><span class="kn">import</span> <span class="n">QEffVAE</span><span class="p">,</span> <span class="n">QEffWanTransformer</span><span class="p">,</span> <span class="n">QEffWanUnifiedTransformer</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.diffusers.pipelines.pipeline_utils</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">ONNX_SUBFUNCTION_MODULE</span><span class="p">,</span>
     <span class="n">ModulePerf</span><span class="p">,</span>
     <span class="n">QEffPipelineOutput</span><span class="p">,</span>
-    <span class="n">QEffWanUnifiedWrapper</span><span class="p">,</span>
     <span class="n">calculate_latent_dimensions_with_frames</span><span class="p">,</span>
     <span class="n">compile_modules_parallel</span><span class="p">,</span>
     <span class="n">compile_modules_sequential</span><span class="p">,</span>
@@ -178,8 +184,10 @@
 
 <span class="sd">    Attributes:</span>
 <span class="sd">        text_encoder: UMT5 text encoder for semantic text understanding (TODO: QEfficient optimization)</span>
-<span class="sd">        unified_wrapper (QEffWanUnifiedWrapper): Wrapper combining transformer stages</span>
-<span class="sd">        transformer (QEffWanUnifiedTransformer): Optimized unified transformer for denoising</span>
+<span class="sd">        unified_wrapper (QEffWanUnifiedWrapper): Wrapper combining transformer stages (unified mode)</span>
+<span class="sd">        transformer (QEffWanUnifiedTransformer): Optimized unified transformer for denoising (unified mode)</span>
+<span class="sd">        transformer_high (QEffWanTransformer): High-noise transformer module (non-unified mode)</span>
+<span class="sd">        transformer_low (QEffWanTransformer): Low-noise transformer module (non-unified mode)</span>
 <span class="sd">        vae_decode: VAE decoder for latent-to-video conversion</span>
 <span class="sd">        modules (Dict[str, Any]): Dictionary of pipeline modules for batch operations</span>
 <span class="sd">        model (WanPipeline): Original HuggingFace WAN model reference</span>
@@ -202,7 +210,14 @@
 
     <span class="n">_hf_auto_class</span> <span class="o">=</span> <span class="n">WanPipeline</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">model</span><span class="p">,</span>
+        <span class="n">use_unified</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">enable_first_block_cache</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">first_block_cache_downsample_factor</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+    <span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Initialize the QEfficient WAN pipeline.</span>
 
@@ -213,25 +228,72 @@
 
 <span class="sd">        Args:</span>
 <span class="sd">            model: Pre-loaded WanPipeline model with transformer and transformer_2 components</span>
+<span class="sd">            use_unified (bool): If True, use a unified transformer module that internally</span>
+<span class="sd">                selects high/low stage by `tsp`. If False, keep high/low transformers as</span>
+<span class="sd">                separate compiled modules and dispatch explicitly at runtime.</span>
+<span class="sd">            enable_first_block_cache (bool): Enable retained-state first-block-cache path.</span>
+<span class="sd">                Supported only for non-unified mode.</span>
+<span class="sd">            first_block_cache_downsample_factor (int): Downsample factor for the first-block</span>
+<span class="sd">                residual cache key. Used only when first-block-cache is enabled.</span>
 <span class="sd">            **kwargs: Additional keyword arguments including configuration parameters</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="c1"># Store original model and configuration</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">use_unified</span> <span class="o">=</span> <span class="n">use_unified</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">enable_first_block_cache</span> <span class="o">=</span> <span class="n">enable_first_block_cache</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">first_block_cache_downsample_factor</span> <span class="o">=</span> <span class="n">first_block_cache_downsample_factor</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">kwargs</span> <span class="o">=</span> <span class="n">kwargs</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">custom_config</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_first_block_cache</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_unified</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;First-block-cache is currently supported only for non-unified WAN (`use_unified=False`).&quot;</span><span class="p">)</span>
 
         <span class="c1"># Text encoder (TODO: Replace with QEfficient UMT5 optimization)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">text_encoder</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">text_encoder</span>
 
-        <span class="c1"># Create unified transformer wrapper combining dual-stage models(high, low noise DiTs)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">unified_wrapper</span> <span class="o">=</span> <span class="n">QEffWanUnifiedWrapper</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">transformer</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">transformer_2</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span> <span class="o">=</span> <span class="n">QEffWanUnifiedTransformer</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">unified_wrapper</span><span class="p">)</span>
+        <span class="c1"># Build transformer modules based on selected architecture mode.</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_unified</span><span class="p">:</span>
+            <span class="c1"># Unified mode: one wrapper containing both stages.</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">unified_wrapper</span> <span class="o">=</span> <span class="n">QEffWanUnifiedWrapper</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">transformer</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">transformer_2</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span> <span class="o">=</span> <span class="n">QEffWanUnifiedTransformer</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">unified_wrapper</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">modules</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;transformer&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="p">}</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_denoise_impl</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_denoise_loop_unified</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Non-unified mode: independent high/low modules.</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">unified_wrapper</span> <span class="o">=</span> <span class="kc">None</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">transformer_high</span> <span class="o">=</span> <span class="n">QEffWanTransformer</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">transformer</span><span class="p">,</span> <span class="n">module_name</span><span class="o">=</span><span class="s2">&quot;transformer_high&quot;</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">transformer_low</span> <span class="o">=</span> <span class="n">QEffWanTransformer</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">transformer_2</span><span class="p">,</span> <span class="n">module_name</span><span class="o">=</span><span class="s2">&quot;transformer_low&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_first_block_cache</span><span class="p">:</span>
+                <span class="n">enable_wan_first_block_cache</span><span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">transformer_high</span><span class="p">,</span>
+                    <span class="n">downsample_factor</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">first_block_cache_downsample_factor</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="n">enable_wan_first_block_cache</span><span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">transformer_low</span><span class="p">,</span>
+                    <span class="n">downsample_factor</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">first_block_cache_downsample_factor</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">modules</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">&quot;transformer_high&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer_high</span><span class="p">,</span>
+                <span class="s2">&quot;transformer_low&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer_low</span><span class="p">,</span>
+            <span class="p">}</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_denoise_impl</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">partial</span><span class="p">(</span><span class="n">run_wan_non_unified_first_block_cache_denoise</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_first_block_cache</span>
+                <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_denoise_loop_non_unified</span>
+            <span class="p">)</span>
+            <span class="c1"># Keep a lightweight compatibility handle for existing scripts that access</span>
+            <span class="c1"># `pipeline.transformer.model.transformer_high/low` to attach LoRA adapters.</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span> <span class="o">=</span> <span class="n">SimpleNamespace</span><span class="p">(</span>
+                <span class="n">model</span><span class="o">=</span><span class="n">SimpleNamespace</span><span class="p">(</span>
+                    <span class="n">transformer_high</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">transformer_high</span><span class="o">.</span><span class="n">model</span><span class="p">,</span>
+                    <span class="n">transformer_low</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">transformer_low</span><span class="o">.</span><span class="n">model</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="p">)</span>
 
         <span class="c1"># VAE decoder for latent-to-video conversion</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">vae_decoder</span> <span class="o">=</span> <span class="n">QEffVAE</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">vae</span><span class="p">,</span> <span class="s2">&quot;decoder&quot;</span><span class="p">)</span>
-        <span class="c1"># Store all modules in a dictionary for easy iteration during export/compile</span>
         <span class="c1"># TODO: add text encoder on QAIC</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">modules</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;transformer&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="p">,</span> <span class="s2">&quot;vae_decoder&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">vae_decoder</span><span class="p">}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">modules</span><span class="p">[</span><span class="s2">&quot;vae_decoder&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">vae_decoder</span>
 
         <span class="c1"># Copy tokenizers and scheduler from the original model</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">tokenizer</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">tokenizer</span>
@@ -244,7 +306,7 @@
 
         <span class="bp">self</span><span class="o">.</span><span class="n">vae_decoder</span><span class="o">.</span><span class="n">get_onnx_params</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">vae_decoder</span><span class="o">.</span><span class="n">get_video_onnx_params</span>
         <span class="c1"># Extract patch dimensions from transformer configuration</span>
-        <span class="n">_</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">patch_height</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">patch_width</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">patch_size</span>
+        <span class="n">_</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">patch_height</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">patch_width</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">patch_size</span>
 
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">do_classifier_free_guidance</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
@@ -260,6 +322,9 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">from_pretrained</span><span class="p">(</span>
         <span class="bp">cls</span><span class="p">,</span>
         <span class="n">pretrained_model_name_or_path</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">os</span><span class="o">.</span><span class="n">PathLike</span><span class="p">]],</span>
+        <span class="n">use_unified</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">enable_first_block_cache</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">first_block_cache_downsample_factor</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
     <span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -273,6 +338,13 @@
 <span class="sd">            pretrained_model_name_or_path (str or os.PathLike): Either a HuggingFace model identifier</span>
 <span class="sd">                or a local path to a saved WAN model directory. Should contain transformer, transformer_2,</span>
 <span class="sd">                text_encoder, and VAE components.</span>
+<span class="sd">            use_unified (bool, optional): Selects WAN execution architecture.</span>
+<span class="sd">                - True: unified high/low transformer module</span>
+<span class="sd">                - False: separate high and low transformer modules</span>
+<span class="sd">            enable_first_block_cache (bool, optional): Enables retained-state first-block-cache</span>
+<span class="sd">                for non-unified mode.</span>
+<span class="sd">            first_block_cache_downsample_factor (int, optional): Downsample factor for first-block</span>
+<span class="sd">                cache key when cache is enabled.</span>
 <span class="sd">            **kwargs: Additional keyword arguments passed to WanPipeline.from_pretrained().</span>
 
 <span class="sd">        Returns:</span>
@@ -286,7 +358,7 @@
 
 <span class="sd">        Example:</span>
 <span class="sd">            &gt;&gt;&gt; # Load from HuggingFace Hub</span>
-<span class="sd">            &gt;&gt;&gt; pipeline = QEffWanPipeline.from_pretrained(&quot;path/to/wan/model&quot;)</span>
+<span class="sd">            &gt;&gt;&gt; pipeline = QEffWanPipeline.from_pretrained(&quot;Wan-AI/Wan2.2-T2V-A14B-Diffusers&quot;)</span>
 <span class="sd">            &gt;&gt;&gt;</span>
 <span class="sd">            &gt;&gt;&gt; # Load from local path</span>
 <span class="sd">            &gt;&gt;&gt; pipeline = QEffWanPipeline.from_pretrained(&quot;/local/path/to/wan&quot;)</span>
@@ -306,6 +378,9 @@
         <span class="p">)</span>
         <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span>
             <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+            <span class="n">use_unified</span><span class="o">=</span><span class="n">use_unified</span><span class="p">,</span>
+            <span class="n">enable_first_block_cache</span><span class="o">=</span><span class="n">enable_first_block_cache</span><span class="p">,</span>
+            <span class="n">first_block_cache_downsample_factor</span><span class="o">=</span><span class="n">first_block_cache_downsample_factor</span><span class="p">,</span>
             <span class="n">pretrained_model_name_or_path</span><span class="o">=</span><span class="n">pretrained_model_name_or_path</span><span class="p">,</span>
             <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
         <span class="p">)</span></div>
@@ -340,7 +415,7 @@
 <span class="sd">            ValueError: If module configurations are invalid</span>
 
 <span class="sd">        Example:</span>
-<span class="sd">            &gt;&gt;&gt; pipeline = QEffWanPipeline.from_pretrained(&quot;path/to/wan/model&quot;)</span>
+<span class="sd">            &gt;&gt;&gt; pipeline = QEffWanPipeline.from_pretrained(&quot;Wan-AI/Wan2.2-T2V-A14B-Diffusers&quot;)</span>
 <span class="sd">            &gt;&gt;&gt; export_path = pipeline.export(</span>
 <span class="sd">            ...     export_dir=&quot;/path/to/export&quot;,</span>
 <span class="sd">            ...     use_onnx_subfunctions=True</span>
@@ -367,22 +442,22 @@
             <span class="k">if</span> <span class="n">module_obj</span><span class="o">.</span><span class="n">qpc_path</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
                 <span class="n">module_obj</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="o">**</span><span class="n">export_params</span><span class="p">)</span></div>
 
-<div class="viewcode-block" id="QEffWanPipeline.get_default_config_path"><a class="viewcode-back" href="../../../../../source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.get_default_config_path">[docs]</a>    <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">get_default_config_path</span><span class="p">():</span>
+<div class="viewcode-block" id="QEffWanPipeline.get_default_config_path"><a class="viewcode-back" href="../../../../../source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.get_default_config_path">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_default_config_path</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Get the default configuration file path for WAN pipeline.</span>
 
 <span class="sd">        Returns:</span>
 <span class="sd">            str: Path to the default WAN configuration JSON file.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)),</span> <span class="s2">&quot;configs/wan_config.json&quot;</span><span class="p">)</span></div>
+        <span class="n">config_name</span> <span class="o">=</span> <span class="s2">&quot;wan_config.json&quot;</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_unified</span> <span class="k">else</span> <span class="s2">&quot;wan_non_unified_config.json&quot;</span>
+        <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)),</span> <span class="sa">f</span><span class="s2">&quot;configs/</span><span class="si">{</span><span class="n">config_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
 
 <div class="viewcode-block" id="QEffWanPipeline.compile"><a class="viewcode-back" href="../../../../../source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.compile">[docs]</a>    <span class="k">def</span><span class="w"> </span><span class="nf">compile</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">compile_config</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">parallel</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
-        <span class="n">height</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">WAN_ONNX_EXPORT_HEIGHT_180P</span><span class="p">,</span>
-        <span class="n">width</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">WAN_ONNX_EXPORT_WIDTH_180P</span><span class="p">,</span>
+        <span class="n">height</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">WAN_ONNX_EXPORT_HEIGHT_45P</span><span class="p">,</span>
+        <span class="n">width</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">WAN_ONNX_EXPORT_WIDTH_45P</span><span class="p">,</span>
         <span class="n">num_frames</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">WAN_ONNX_EXPORT_FRAMES</span><span class="p">,</span>
         <span class="n">use_onnx_subfunctions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
@@ -412,7 +487,7 @@
 <span class="sd">            OSError: If there are issues with file I/O during compilation</span>
 
 <span class="sd">        Example:</span>
-<span class="sd">            &gt;&gt;&gt; pipeline = QEffWanPipeline.from_pretrained(&quot;path/to/wan/model&quot;)</span>
+<span class="sd">            &gt;&gt;&gt; pipeline = QEffWanPipeline.from_pretrained(&quot;Wan-AI/Wan2.2-T2V-A14B-Diffusers&quot;)</span>
 <span class="sd">            &gt;&gt;&gt; # Sequential compilation with default config</span>
 <span class="sd">            &gt;&gt;&gt; pipeline.compile(height=480, width=832, num_frames=81)</span>
 <span class="sd">            &gt;&gt;&gt;</span>
@@ -432,13 +507,8 @@
         <span class="n">set_execute_params</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
 
         <span class="c1"># Ensure all modules are exported to ONNX before compilation</span>
-        <span class="k">if</span> <span class="nb">any</span><span class="p">(</span>
-            <span class="n">path</span> <span class="ow">is</span> <span class="kc">None</span>
-            <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">[</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">onnx_path</span><span class="p">,</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">vae_decoder</span><span class="o">.</span><span class="n">onnx_path</span><span class="p">,</span>
-            <span class="p">]</span>
-        <span class="p">):</span>
+        <span class="n">onnx_paths</span> <span class="o">=</span> <span class="p">[</span><span class="n">module</span><span class="o">.</span><span class="n">onnx_path</span> <span class="k">for</span> <span class="n">module</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">modules</span><span class="o">.</span><span class="n">values</span><span class="p">()]</span>
+        <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">path</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="n">onnx_paths</span><span class="p">):</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="n">use_onnx_subfunctions</span><span class="o">=</span><span class="n">use_onnx_subfunctions</span><span class="p">)</span>
 
         <span class="c1"># Configure pipeline dimensions and calculate compressed latent parameters</span>
@@ -451,37 +521,365 @@
             <span class="bp">self</span><span class="o">.</span><span class="n">patch_height</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">patch_width</span><span class="p">,</span>
         <span class="p">)</span>
-        <span class="c1"># Prepare dynamic specialization updates based on video dimensions</span>
-        <span class="n">specialization_updates</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="s2">&quot;transformer&quot;</span><span class="p">:</span> <span class="p">[</span>
-                <span class="c1"># high noise</span>
-                <span class="p">{</span>
-                    <span class="s2">&quot;cl&quot;</span><span class="p">:</span> <span class="n">cl</span><span class="p">,</span>  <span class="c1"># Compressed latent dimension</span>
-                    <span class="s2">&quot;latent_height&quot;</span><span class="p">:</span> <span class="n">latent_height</span><span class="p">,</span>  <span class="c1"># Latent space height</span>
-                    <span class="s2">&quot;latent_width&quot;</span><span class="p">:</span> <span class="n">latent_width</span><span class="p">,</span>  <span class="c1"># Latent space width</span>
-                    <span class="s2">&quot;latent_frames&quot;</span><span class="p">:</span> <span class="n">latent_frames</span><span class="p">,</span>  <span class="c1"># Latent frames</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_unified</span><span class="p">:</span>
+            <span class="c1"># Unified mode: one transformer module with two model_type specializations.</span>
+            <span class="n">specialization_updates</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">&quot;transformer&quot;</span><span class="p">:</span> <span class="p">[</span>
+                    <span class="p">{</span>
+                        <span class="s2">&quot;cl&quot;</span><span class="p">:</span> <span class="n">cl</span><span class="p">,</span>
+                        <span class="s2">&quot;latent_height&quot;</span><span class="p">:</span> <span class="n">latent_height</span><span class="p">,</span>
+                        <span class="s2">&quot;latent_width&quot;</span><span class="p">:</span> <span class="n">latent_width</span><span class="p">,</span>
+                        <span class="s2">&quot;latent_frames&quot;</span><span class="p">:</span> <span class="n">latent_frames</span><span class="p">,</span>
+                    <span class="p">},</span>
+                    <span class="p">{</span>
+                        <span class="s2">&quot;cl&quot;</span><span class="p">:</span> <span class="n">cl</span><span class="p">,</span>
+                        <span class="s2">&quot;latent_height&quot;</span><span class="p">:</span> <span class="n">latent_height</span><span class="p">,</span>
+                        <span class="s2">&quot;latent_width&quot;</span><span class="p">:</span> <span class="n">latent_width</span><span class="p">,</span>
+                        <span class="s2">&quot;latent_frames&quot;</span><span class="p">:</span> <span class="n">latent_frames</span><span class="p">,</span>
+                    <span class="p">},</span>
+                <span class="p">],</span>
+                <span class="s2">&quot;vae_decoder&quot;</span><span class="p">:</span> <span class="p">{</span>
+                    <span class="s2">&quot;latent_frames&quot;</span><span class="p">:</span> <span class="n">latent_frames</span><span class="p">,</span>
+                    <span class="s2">&quot;latent_height&quot;</span><span class="p">:</span> <span class="n">latent_height</span><span class="p">,</span>
+                    <span class="s2">&quot;latent_width&quot;</span><span class="p">:</span> <span class="n">latent_width</span><span class="p">,</span>
                 <span class="p">},</span>
-                <span class="c1"># low noise</span>
-                <span class="p">{</span>
-                    <span class="s2">&quot;cl&quot;</span><span class="p">:</span> <span class="n">cl</span><span class="p">,</span>  <span class="c1"># Compressed latent dimension</span>
-                    <span class="s2">&quot;latent_height&quot;</span><span class="p">:</span> <span class="n">latent_height</span><span class="p">,</span>  <span class="c1"># Latent space height</span>
-                    <span class="s2">&quot;latent_width&quot;</span><span class="p">:</span> <span class="n">latent_width</span><span class="p">,</span>  <span class="c1"># Latent space width</span>
-                    <span class="s2">&quot;latent_frames&quot;</span><span class="p">:</span> <span class="n">latent_frames</span><span class="p">,</span>  <span class="c1"># Latent frames</span>
-                <span class="p">},</span>
-            <span class="p">],</span>
-            <span class="s2">&quot;vae_decoder&quot;</span><span class="p">:</span> <span class="p">{</span>
-                <span class="s2">&quot;latent_frames&quot;</span><span class="p">:</span> <span class="n">latent_frames</span><span class="p">,</span>
+            <span class="p">}</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Non-unified mode: independent high/low modules.</span>
+            <span class="n">shared_transformer_spec</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">&quot;cl&quot;</span><span class="p">:</span> <span class="n">cl</span><span class="p">,</span>
                 <span class="s2">&quot;latent_height&quot;</span><span class="p">:</span> <span class="n">latent_height</span><span class="p">,</span>
                 <span class="s2">&quot;latent_width&quot;</span><span class="p">:</span> <span class="n">latent_width</span><span class="p">,</span>
-            <span class="p">},</span>
-        <span class="p">}</span>
+                <span class="s2">&quot;latent_frames&quot;</span><span class="p">:</span> <span class="n">latent_frames</span><span class="p">,</span>
+            <span class="p">}</span>
+            <span class="n">specialization_updates</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">&quot;transformer_high&quot;</span><span class="p">:</span> <span class="n">shared_transformer_spec</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span>
+                <span class="s2">&quot;transformer_low&quot;</span><span class="p">:</span> <span class="n">shared_transformer_spec</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span>
+                <span class="s2">&quot;vae_decoder&quot;</span><span class="p">:</span> <span class="p">{</span>
+                    <span class="s2">&quot;latent_frames&quot;</span><span class="p">:</span> <span class="n">latent_frames</span><span class="p">,</span>
+                    <span class="s2">&quot;latent_height&quot;</span><span class="p">:</span> <span class="n">latent_height</span><span class="p">,</span>
+                    <span class="s2">&quot;latent_width&quot;</span><span class="p">:</span> <span class="n">latent_width</span><span class="p">,</span>
+                <span class="p">},</span>
+            <span class="p">}</span>
 
         <span class="c1"># Use generic utility functions for compilation</span>
-        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s1">&#39;For VAE compilation use QAIC_COMPILER_OPTS_UNSUPPORTED=&quot;-aic-hmx-conv3d&quot; &#39;</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">parallel</span><span class="p">:</span>
             <span class="n">compile_modules_parallel</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">modules</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">custom_config</span><span class="p">,</span> <span class="n">specialization_updates</span><span class="p">)</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="n">compile_modules_sequential</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">modules</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">custom_config</span><span class="p">,</span> <span class="n">specialization_updates</span><span class="p">)</span></div>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_get_transformer_dtype</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">dtype</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_unified</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">transformer_high</span><span class="o">.</span><span class="n">dtype</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer_high</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">dtype</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_setup_transformer_session</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">module_obj</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">cl</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">module_obj</span><span class="o">.</span><span class="n">qpc_session</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">module_obj</span><span class="o">.</span><span class="n">qpc_session</span> <span class="o">=</span> <span class="n">QAICInferenceSession</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">module_obj</span><span class="o">.</span><span class="n">qpc_path</span><span class="p">),</span> <span class="n">device_ids</span><span class="o">=</span><span class="n">module_obj</span><span class="o">.</span><span class="n">device_ids</span><span class="p">)</span>
+        <span class="n">output_buffer</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span>
+                <span class="n">batch_size</span><span class="p">,</span>
+                <span class="n">cl</span><span class="p">,</span>
+                <span class="n">constants</span><span class="o">.</span><span class="n">WAN_DIT_OUT_CHANNELS</span><span class="p">,</span>
+            <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="p">}</span>
+        <span class="n">module_obj</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">set_buffers</span><span class="p">(</span><span class="n">output_buffer</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">module_obj</span><span class="p">,</span> <span class="s2">&quot;_qeff_first_block_cache_enabled&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
+            <span class="n">module_obj</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">skip_buffers</span><span class="p">(</span>
+                <span class="p">[</span>
+                    <span class="n">tensor_name</span>
+                    <span class="k">for</span> <span class="n">tensor_name</span> <span class="ow">in</span> <span class="p">(</span><span class="n">module_obj</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">input_names</span> <span class="o">+</span> <span class="n">module_obj</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">output_names</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">tensor_name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;prev_&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="n">tensor_name</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">&quot;_RetainedState&quot;</span><span class="p">)</span>
+                <span class="p">]</span>
+            <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_prepare_transformer_sessions</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">cl</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_unified</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_setup_transformer_session</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">cl</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_setup_transformer_session</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">transformer_high</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">cl</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_setup_transformer_session</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">transformer_low</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">cl</span><span class="p">)</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_reshape_noise_prediction</span><span class="p">(</span>
+        <span class="n">outputs</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
+        <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">post_patch_num_frames</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">post_patch_height</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">post_patch_width</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">p_t</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">p_h</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">p_w</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="n">hidden_states</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">outputs</span><span class="p">[</span><span class="s2">&quot;output&quot;</span><span class="p">])</span>
+        <span class="n">hidden_states</span> <span class="o">=</span> <span class="n">hidden_states</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span>
+            <span class="n">batch_size</span><span class="p">,</span> <span class="n">post_patch_num_frames</span><span class="p">,</span> <span class="n">post_patch_height</span><span class="p">,</span> <span class="n">post_patch_width</span><span class="p">,</span> <span class="n">p_t</span><span class="p">,</span> <span class="n">p_h</span><span class="p">,</span> <span class="n">p_w</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span>
+        <span class="p">)</span>
+        <span class="n">hidden_states</span> <span class="o">=</span> <span class="n">hidden_states</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">6</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">hidden_states</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="mi">7</span><span class="p">)</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_run_denoise_loop_unified</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">latents</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">timesteps</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">guidance_scale</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">guidance_scale_2</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">boundary_timestep</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">],</span>
+        <span class="n">transformer_dtype</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
+        <span class="n">prompt_embeds</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">negative_prompt_embeds</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">],</span>
+        <span class="n">mask</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">num_inference_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">num_warmup_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">callback_on_step_end</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">],</span>
+        <span class="n">callback_on_step_end_tensor_inputs</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+        <span class="n">cache_threshold_high</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">cache_threshold_low</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="n">transformer_perf</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">progress_bar</span><span class="p">(</span><span class="n">total</span><span class="o">=</span><span class="n">num_inference_steps</span><span class="p">)</span> <span class="k">as</span> <span class="n">progress_bar</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">timesteps</span><span class="p">):</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_interrupt</span><span class="p">:</span>
+                    <span class="k">continue</span>
+
+                <span class="bp">self</span><span class="o">.</span><span class="n">_current_timestep</span> <span class="o">=</span> <span class="n">t</span>
+
+                <span class="k">if</span> <span class="n">boundary_timestep</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">t</span> <span class="o">&gt;=</span> <span class="n">boundary_timestep</span><span class="p">:</span>
+                    <span class="n">current_model</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">transformer_high</span>
+                    <span class="n">current_guidance_scale</span> <span class="o">=</span> <span class="n">guidance_scale</span>
+                    <span class="n">model_type</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">current_model</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">transformer_low</span>
+                    <span class="n">current_guidance_scale</span> <span class="o">=</span> <span class="n">guidance_scale_2</span>
+                    <span class="n">model_type</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+
+                <span class="n">latent_model_input</span> <span class="o">=</span> <span class="n">latents</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">transformer_dtype</span><span class="p">)</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">expand_timesteps</span><span class="p">:</span>
+                    <span class="n">temp_ts</span> <span class="o">=</span> <span class="p">(</span><span class="n">mask</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">][:,</span> <span class="p">::</span><span class="mi">2</span><span class="p">,</span> <span class="p">::</span><span class="mi">2</span><span class="p">]</span> <span class="o">*</span> <span class="n">t</span><span class="p">)</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span>
+                    <span class="n">timestep</span> <span class="o">=</span> <span class="n">temp_ts</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">latents</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">timestep</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">latents</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+
+                <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">latent_frames</span><span class="p">,</span> <span class="n">latent_height</span><span class="p">,</span> <span class="n">latent_width</span> <span class="o">=</span> <span class="n">latents</span><span class="o">.</span><span class="n">shape</span>
+                <span class="n">p_t</span><span class="p">,</span> <span class="n">p_h</span><span class="p">,</span> <span class="n">p_w</span> <span class="o">=</span> <span class="n">current_model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">patch_size</span>
+                <span class="n">post_patch_num_frames</span> <span class="o">=</span> <span class="n">latent_frames</span> <span class="o">//</span> <span class="n">p_t</span>
+                <span class="n">post_patch_height</span> <span class="o">=</span> <span class="n">latent_height</span> <span class="o">//</span> <span class="n">p_h</span>
+                <span class="n">post_patch_width</span> <span class="o">=</span> <span class="n">latent_width</span> <span class="o">//</span> <span class="n">p_w</span>
+
+                <span class="n">rotary_emb</span> <span class="o">=</span> <span class="n">current_model</span><span class="o">.</span><span class="n">rope</span><span class="p">(</span><span class="n">latent_model_input</span><span class="p">)</span>
+                <span class="n">rotary_emb</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">rotary_emb</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+                <span class="n">timestep</span> <span class="o">=</span> <span class="n">timestep</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span>
+
+                <span class="n">temb</span><span class="p">,</span> <span class="n">timestep_proj</span><span class="p">,</span> <span class="n">encoder_hidden_states</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">current_model</span><span class="o">.</span><span class="n">condition_embedder</span><span class="p">(</span>
+                    <span class="n">timestep</span><span class="p">,</span> <span class="n">prompt_embeds</span><span class="p">,</span> <span class="n">encoder_hidden_states_image</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">timestep_seq_len</span><span class="o">=</span><span class="kc">None</span>
+                <span class="p">)</span>
+
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">do_classifier_free_guidance</span><span class="p">:</span>
+                    <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">encoder_hidden_states_neg</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">current_model</span><span class="o">.</span><span class="n">condition_embedder</span><span class="p">(</span>
+                        <span class="n">timestep</span><span class="p">,</span>
+                        <span class="n">negative_prompt_embeds</span><span class="p">,</span>
+                        <span class="n">encoder_hidden_states_image</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+                        <span class="n">timestep_seq_len</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+                    <span class="p">)</span>
+
+                <span class="n">timestep_proj</span> <span class="o">=</span> <span class="n">timestep_proj</span><span class="o">.</span><span class="n">unflatten</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span>
+                <span class="n">inputs_aic</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="s2">&quot;hidden_states&quot;</span><span class="p">:</span> <span class="n">latents</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                    <span class="s2">&quot;encoder_hidden_states&quot;</span><span class="p">:</span> <span class="n">encoder_hidden_states</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                    <span class="s2">&quot;rotary_emb&quot;</span><span class="p">:</span> <span class="n">rotary_emb</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                    <span class="s2">&quot;temb&quot;</span><span class="p">:</span> <span class="n">temb</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                    <span class="s2">&quot;timestep_proj&quot;</span><span class="p">:</span> <span class="n">timestep_proj</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                    <span class="s2">&quot;tsp&quot;</span><span class="p">:</span> <span class="n">model_type</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                <span class="p">}</span>
+
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">do_classifier_free_guidance</span><span class="p">:</span>
+                    <span class="n">inputs_aic2</span> <span class="o">=</span> <span class="p">{</span>
+                        <span class="s2">&quot;hidden_states&quot;</span><span class="p">:</span> <span class="n">latents</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                        <span class="s2">&quot;encoder_hidden_states&quot;</span><span class="p">:</span> <span class="n">encoder_hidden_states_neg</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                        <span class="s2">&quot;rotary_emb&quot;</span><span class="p">:</span> <span class="n">rotary_emb</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                        <span class="s2">&quot;temb&quot;</span><span class="p">:</span> <span class="n">temb</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                        <span class="s2">&quot;timestep_proj&quot;</span><span class="p">:</span> <span class="n">timestep_proj</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                        <span class="s2">&quot;tsp&quot;</span><span class="p">:</span> <span class="n">model_type</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                    <span class="p">}</span>
+
+                <span class="k">with</span> <span class="n">current_model</span><span class="o">.</span><span class="n">cache_context</span><span class="p">(</span><span class="s2">&quot;cond&quot;</span><span class="p">):</span>
+                    <span class="n">start_transformer_step_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+                    <span class="n">outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">inputs_aic</span><span class="p">)</span>
+                    <span class="n">end_transformer_step_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+                    <span class="n">transformer_perf</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">end_transformer_step_time</span> <span class="o">-</span> <span class="n">start_transformer_step_time</span><span class="p">)</span>
+                    <span class="n">noise_pred</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reshape_noise_prediction</span><span class="p">(</span>
+                        <span class="n">outputs</span><span class="p">,</span>
+                        <span class="n">batch_size</span><span class="p">,</span>
+                        <span class="n">post_patch_num_frames</span><span class="p">,</span>
+                        <span class="n">post_patch_height</span><span class="p">,</span>
+                        <span class="n">post_patch_width</span><span class="p">,</span>
+                        <span class="n">p_t</span><span class="p">,</span>
+                        <span class="n">p_h</span><span class="p">,</span>
+                        <span class="n">p_w</span><span class="p">,</span>
+                    <span class="p">)</span>
+
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">do_classifier_free_guidance</span><span class="p">:</span>
+                    <span class="k">with</span> <span class="n">current_model</span><span class="o">.</span><span class="n">cache_context</span><span class="p">(</span><span class="s2">&quot;uncond&quot;</span><span class="p">):</span>
+                        <span class="n">start_transformer_step_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+                        <span class="n">outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">inputs_aic2</span><span class="p">)</span>
+                        <span class="n">end_transformer_step_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+                        <span class="n">transformer_perf</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">end_transformer_step_time</span> <span class="o">-</span> <span class="n">start_transformer_step_time</span><span class="p">)</span>
+                        <span class="n">noise_uncond</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reshape_noise_prediction</span><span class="p">(</span>
+                            <span class="n">outputs</span><span class="p">,</span>
+                            <span class="n">batch_size</span><span class="p">,</span>
+                            <span class="n">post_patch_num_frames</span><span class="p">,</span>
+                            <span class="n">post_patch_height</span><span class="p">,</span>
+                            <span class="n">post_patch_width</span><span class="p">,</span>
+                            <span class="n">p_t</span><span class="p">,</span>
+                            <span class="n">p_h</span><span class="p">,</span>
+                            <span class="n">p_w</span><span class="p">,</span>
+                        <span class="p">)</span>
+                        <span class="n">noise_pred</span> <span class="o">=</span> <span class="n">noise_uncond</span> <span class="o">+</span> <span class="n">current_guidance_scale</span> <span class="o">*</span> <span class="p">(</span><span class="n">noise_pred</span> <span class="o">-</span> <span class="n">noise_uncond</span><span class="p">)</span>
+
+                <span class="n">latents</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">scheduler</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">noise_pred</span><span class="p">,</span> <span class="n">t</span><span class="p">,</span> <span class="n">latents</span><span class="p">,</span> <span class="n">return_dict</span><span class="o">=</span><span class="kc">False</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+
+                <span class="k">if</span> <span class="n">callback_on_step_end</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="n">callback_kwargs</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="nb">locals</span><span class="p">()[</span><span class="n">k</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">callback_on_step_end_tensor_inputs</span><span class="p">}</span>
+                    <span class="n">callback_outputs</span> <span class="o">=</span> <span class="n">callback_on_step_end</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="n">t</span><span class="p">,</span> <span class="n">callback_kwargs</span><span class="p">)</span>
+                    <span class="n">latents</span> <span class="o">=</span> <span class="n">callback_outputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;latents&quot;</span><span class="p">,</span> <span class="n">latents</span><span class="p">)</span>
+                    <span class="n">prompt_embeds</span> <span class="o">=</span> <span class="n">callback_outputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;prompt_embeds&quot;</span><span class="p">,</span> <span class="n">prompt_embeds</span><span class="p">)</span>
+                    <span class="n">negative_prompt_embeds</span> <span class="o">=</span> <span class="n">callback_outputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;negative_prompt_embeds&quot;</span><span class="p">,</span> <span class="n">negative_prompt_embeds</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">i</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">timesteps</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span> <span class="ow">or</span> <span class="p">((</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">num_warmup_steps</span> <span class="ow">and</span> <span class="p">(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">scheduler</span><span class="o">.</span><span class="n">order</span> <span class="o">==</span> <span class="mi">0</span><span class="p">):</span>
+                    <span class="n">progress_bar</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="n">latents</span><span class="p">,</span> <span class="n">transformer_perf</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_run_denoise_loop_non_unified</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">latents</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">timesteps</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">guidance_scale</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">guidance_scale_2</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">boundary_timestep</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">],</span>
+        <span class="n">transformer_dtype</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
+        <span class="n">prompt_embeds</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">negative_prompt_embeds</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">],</span>
+        <span class="n">mask</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">num_inference_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">num_warmup_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">callback_on_step_end</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">],</span>
+        <span class="n">callback_on_step_end_tensor_inputs</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+        <span class="n">cache_threshold_high</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">cache_threshold_low</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="n">transformer_perf</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">progress_bar</span><span class="p">(</span><span class="n">total</span><span class="o">=</span><span class="n">num_inference_steps</span><span class="p">)</span> <span class="k">as</span> <span class="n">progress_bar</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">timesteps</span><span class="p">):</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_interrupt</span><span class="p">:</span>
+                    <span class="k">continue</span>
+
+                <span class="bp">self</span><span class="o">.</span><span class="n">_current_timestep</span> <span class="o">=</span> <span class="n">t</span>
+
+                <span class="k">if</span> <span class="n">boundary_timestep</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">t</span> <span class="o">&gt;=</span> <span class="n">boundary_timestep</span><span class="p">:</span>
+                    <span class="n">current_transformer_module</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer_high</span>
+                    <span class="n">current_guidance_scale</span> <span class="o">=</span> <span class="n">guidance_scale</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">current_transformer_module</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer_low</span>
+                    <span class="n">current_guidance_scale</span> <span class="o">=</span> <span class="n">guidance_scale_2</span>
+                <span class="n">current_model</span> <span class="o">=</span> <span class="n">current_transformer_module</span><span class="o">.</span><span class="n">model</span>
+
+                <span class="n">latent_model_input</span> <span class="o">=</span> <span class="n">latents</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">transformer_dtype</span><span class="p">)</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">expand_timesteps</span><span class="p">:</span>
+                    <span class="n">temp_ts</span> <span class="o">=</span> <span class="p">(</span><span class="n">mask</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">][:,</span> <span class="p">::</span><span class="mi">2</span><span class="p">,</span> <span class="p">::</span><span class="mi">2</span><span class="p">]</span> <span class="o">*</span> <span class="n">t</span><span class="p">)</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span>
+                    <span class="n">timestep</span> <span class="o">=</span> <span class="n">temp_ts</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">latents</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">timestep</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">latents</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+
+                <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">latent_frames</span><span class="p">,</span> <span class="n">latent_height</span><span class="p">,</span> <span class="n">latent_width</span> <span class="o">=</span> <span class="n">latents</span><span class="o">.</span><span class="n">shape</span>
+                <span class="n">p_t</span><span class="p">,</span> <span class="n">p_h</span><span class="p">,</span> <span class="n">p_w</span> <span class="o">=</span> <span class="n">current_model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">patch_size</span>
+                <span class="n">post_patch_num_frames</span> <span class="o">=</span> <span class="n">latent_frames</span> <span class="o">//</span> <span class="n">p_t</span>
+                <span class="n">post_patch_height</span> <span class="o">=</span> <span class="n">latent_height</span> <span class="o">//</span> <span class="n">p_h</span>
+                <span class="n">post_patch_width</span> <span class="o">=</span> <span class="n">latent_width</span> <span class="o">//</span> <span class="n">p_w</span>
+
+                <span class="n">rotary_emb</span> <span class="o">=</span> <span class="n">current_model</span><span class="o">.</span><span class="n">rope</span><span class="p">(</span><span class="n">latent_model_input</span><span class="p">)</span>
+                <span class="n">rotary_emb</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">rotary_emb</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+                <span class="n">timestep</span> <span class="o">=</span> <span class="n">timestep</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span>
+
+                <span class="n">temb</span><span class="p">,</span> <span class="n">timestep_proj</span><span class="p">,</span> <span class="n">encoder_hidden_states</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">current_model</span><span class="o">.</span><span class="n">condition_embedder</span><span class="p">(</span>
+                    <span class="n">timestep</span><span class="p">,</span> <span class="n">prompt_embeds</span><span class="p">,</span> <span class="n">encoder_hidden_states_image</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">timestep_seq_len</span><span class="o">=</span><span class="kc">None</span>
+                <span class="p">)</span>
+
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">do_classifier_free_guidance</span><span class="p">:</span>
+                    <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">encoder_hidden_states_neg</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">current_model</span><span class="o">.</span><span class="n">condition_embedder</span><span class="p">(</span>
+                        <span class="n">timestep</span><span class="p">,</span>
+                        <span class="n">negative_prompt_embeds</span><span class="p">,</span>
+                        <span class="n">encoder_hidden_states_image</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+                        <span class="n">timestep_seq_len</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+                    <span class="p">)</span>
+
+                <span class="n">timestep_proj</span> <span class="o">=</span> <span class="n">timestep_proj</span><span class="o">.</span><span class="n">unflatten</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span>
+                <span class="n">inputs_aic</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="s2">&quot;hidden_states&quot;</span><span class="p">:</span> <span class="n">latents</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                    <span class="s2">&quot;encoder_hidden_states&quot;</span><span class="p">:</span> <span class="n">encoder_hidden_states</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                    <span class="s2">&quot;rotary_emb&quot;</span><span class="p">:</span> <span class="n">rotary_emb</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                    <span class="s2">&quot;temb&quot;</span><span class="p">:</span> <span class="n">temb</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                    <span class="s2">&quot;timestep_proj&quot;</span><span class="p">:</span> <span class="n">timestep_proj</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                <span class="p">}</span>
+
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">do_classifier_free_guidance</span><span class="p">:</span>
+                    <span class="n">inputs_aic2</span> <span class="o">=</span> <span class="p">{</span>
+                        <span class="s2">&quot;hidden_states&quot;</span><span class="p">:</span> <span class="n">latents</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                        <span class="s2">&quot;encoder_hidden_states&quot;</span><span class="p">:</span> <span class="n">encoder_hidden_states_neg</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                        <span class="s2">&quot;rotary_emb&quot;</span><span class="p">:</span> <span class="n">rotary_emb</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                        <span class="s2">&quot;temb&quot;</span><span class="p">:</span> <span class="n">temb</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                        <span class="s2">&quot;timestep_proj&quot;</span><span class="p">:</span> <span class="n">timestep_proj</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+                    <span class="p">}</span>
+
+                <span class="k">with</span> <span class="n">current_model</span><span class="o">.</span><span class="n">cache_context</span><span class="p">(</span><span class="s2">&quot;cond&quot;</span><span class="p">):</span>
+                    <span class="n">start_transformer_step_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+                    <span class="n">outputs</span> <span class="o">=</span> <span class="n">current_transformer_module</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">inputs_aic</span><span class="p">)</span>
+                    <span class="n">end_transformer_step_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+                    <span class="n">transformer_perf</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">end_transformer_step_time</span> <span class="o">-</span> <span class="n">start_transformer_step_time</span><span class="p">)</span>
+                    <span class="n">noise_pred</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reshape_noise_prediction</span><span class="p">(</span>
+                        <span class="n">outputs</span><span class="p">,</span>
+                        <span class="n">batch_size</span><span class="p">,</span>
+                        <span class="n">post_patch_num_frames</span><span class="p">,</span>
+                        <span class="n">post_patch_height</span><span class="p">,</span>
+                        <span class="n">post_patch_width</span><span class="p">,</span>
+                        <span class="n">p_t</span><span class="p">,</span>
+                        <span class="n">p_h</span><span class="p">,</span>
+                        <span class="n">p_w</span><span class="p">,</span>
+                    <span class="p">)</span>
+
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">do_classifier_free_guidance</span><span class="p">:</span>
+                    <span class="k">with</span> <span class="n">current_model</span><span class="o">.</span><span class="n">cache_context</span><span class="p">(</span><span class="s2">&quot;uncond&quot;</span><span class="p">):</span>
+                        <span class="n">start_transformer_step_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+                        <span class="n">outputs</span> <span class="o">=</span> <span class="n">current_transformer_module</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">inputs_aic2</span><span class="p">)</span>
+                        <span class="n">end_transformer_step_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+                        <span class="n">transformer_perf</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">end_transformer_step_time</span> <span class="o">-</span> <span class="n">start_transformer_step_time</span><span class="p">)</span>
+                        <span class="n">noise_uncond</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reshape_noise_prediction</span><span class="p">(</span>
+                            <span class="n">outputs</span><span class="p">,</span>
+                            <span class="n">batch_size</span><span class="p">,</span>
+                            <span class="n">post_patch_num_frames</span><span class="p">,</span>
+                            <span class="n">post_patch_height</span><span class="p">,</span>
+                            <span class="n">post_patch_width</span><span class="p">,</span>
+                            <span class="n">p_t</span><span class="p">,</span>
+                            <span class="n">p_h</span><span class="p">,</span>
+                            <span class="n">p_w</span><span class="p">,</span>
+                        <span class="p">)</span>
+                        <span class="n">noise_pred</span> <span class="o">=</span> <span class="n">noise_uncond</span> <span class="o">+</span> <span class="n">current_guidance_scale</span> <span class="o">*</span> <span class="p">(</span><span class="n">noise_pred</span> <span class="o">-</span> <span class="n">noise_uncond</span><span class="p">)</span>
+
+                <span class="n">latents</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">scheduler</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">noise_pred</span><span class="p">,</span> <span class="n">t</span><span class="p">,</span> <span class="n">latents</span><span class="p">,</span> <span class="n">return_dict</span><span class="o">=</span><span class="kc">False</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+
+                <span class="k">if</span> <span class="n">callback_on_step_end</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="n">callback_kwargs</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="nb">locals</span><span class="p">()[</span><span class="n">k</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">callback_on_step_end_tensor_inputs</span><span class="p">}</span>
+                    <span class="n">callback_outputs</span> <span class="o">=</span> <span class="n">callback_on_step_end</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="n">t</span><span class="p">,</span> <span class="n">callback_kwargs</span><span class="p">)</span>
+                    <span class="n">latents</span> <span class="o">=</span> <span class="n">callback_outputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;latents&quot;</span><span class="p">,</span> <span class="n">latents</span><span class="p">)</span>
+                    <span class="n">prompt_embeds</span> <span class="o">=</span> <span class="n">callback_outputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;prompt_embeds&quot;</span><span class="p">,</span> <span class="n">prompt_embeds</span><span class="p">)</span>
+                    <span class="n">negative_prompt_embeds</span> <span class="o">=</span> <span class="n">callback_outputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;negative_prompt_embeds&quot;</span><span class="p">,</span> <span class="n">negative_prompt_embeds</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">i</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">timesteps</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span> <span class="ow">or</span> <span class="p">((</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">num_warmup_steps</span> <span class="ow">and</span> <span class="p">(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">scheduler</span><span class="o">.</span><span class="n">order</span> <span class="o">==</span> <span class="mi">0</span><span class="p">):</span>
+                    <span class="n">progress_bar</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="n">latents</span><span class="p">,</span> <span class="n">transformer_perf</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
@@ -506,6 +904,8 @@
         <span class="n">max_sequence_length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span><span class="p">,</span>
         <span class="n">custom_config_path</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">use_onnx_subfunctions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">cache_threshold_high</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">cache_threshold_low</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">parallel_compile</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
     <span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -548,6 +948,10 @@
 <span class="sd">            custom_config_path (str, optional): Path to custom JSON configuration file for compilation.</span>
 <span class="sd">            use_onnx_subfunctions (bool, optional): Whether to export transformer blocks as ONNX subfunctions.</span>
 <span class="sd">                Default: False.</span>
+<span class="sd">            cache_threshold_high (float, optional): First-block-cache threshold for high-noise stage.</span>
+<span class="sd">                Used only when `enable_first_block_cache=True`.</span>
+<span class="sd">            cache_threshold_low (float, optional): First-block-cache threshold for low-noise stage.</span>
+<span class="sd">                Used only when `enable_first_block_cache=True`.</span>
 <span class="sd">            parallel_compile (bool, optional): Whether to compile modules in parallel. Default: True.</span>
 
 <span class="sd">        Returns:</span>
@@ -574,7 +978,7 @@
 <span class="sd">            &gt;&gt;&gt; # Save generated video</span>
 <span class="sd">            &gt;&gt;&gt; result.images[0].save(&quot;cat_garden.mp4&quot;)</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">device</span> <span class="o">=</span> <span class="s2">&quot;cpu&quot;</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">_execution_device</span>
 
         <span class="c1"># Compile models with custom configuration if needed</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
@@ -612,6 +1016,12 @@
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">boundary_ratio</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">guidance_scale_2</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="n">guidance_scale_2</span> <span class="o">=</span> <span class="n">guidance_scale</span>
 
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_first_block_cache</span> <span class="ow">and</span> <span class="p">(</span><span class="n">cache_threshold_high</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">cache_threshold_low</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">):</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">&quot;Ignoring cache thresholds because first-block-cache is disabled. &quot;</span>
+                <span class="s2">&quot;Set `enable_first_block_cache=True` and `use_unified=False` to enable it.&quot;</span>
+            <span class="p">)</span>
+
         <span class="c1"># Initialize pipeline state</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_guidance_scale</span> <span class="o">=</span> <span class="n">guidance_scale</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_guidance_scale_2</span> <span class="o">=</span> <span class="n">guidance_scale_2</span> <span class="k">if</span> <span class="n">guidance_scale_2</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">guidance_scale</span>
@@ -641,7 +1051,7 @@
         <span class="p">)</span>
 
         <span class="c1"># Convert embeddings to transformer dtype for compatibility</span>
-        <span class="n">transformer_dtype</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">transformer_high</span><span class="o">.</span><span class="n">dtype</span>
+        <span class="n">transformer_dtype</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_transformer_dtype</span><span class="p">()</span>
         <span class="n">prompt_embeds</span> <span class="o">=</span> <span class="n">prompt_embeds</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">transformer_dtype</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">negative_prompt_embeds</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="n">negative_prompt_embeds</span> <span class="o">=</span> <span class="n">negative_prompt_embeds</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">transformer_dtype</span><span class="p">)</span>
@@ -651,7 +1061,7 @@
         <span class="n">timesteps</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">scheduler</span><span class="o">.</span><span class="n">timesteps</span>
 
         <span class="c1"># Step 5: Prepare initial latent variables for video generation</span>
-        <span class="n">num_channels_latents</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">in_channels</span>
+        <span class="n">num_channels_latents</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">in_channels</span>
 
         <span class="n">latents</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">prepare_latents</span><span class="p">(</span>
             <span class="n">batch_size</span> <span class="o">*</span> <span class="n">num_videos_per_prompt</span><span class="p">,</span>
@@ -677,13 +1087,7 @@
         <span class="k">else</span><span class="p">:</span>
             <span class="n">boundary_timestep</span> <span class="o">=</span> <span class="kc">None</span>
 
-        <span class="c1"># Step 7: Initialize QAIC inference session for transformer</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">qpc_session</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">qpc_session</span> <span class="o">=</span> <span class="n">QAICInferenceSession</span><span class="p">(</span>
-                <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">qpc_path</span><span class="p">),</span> <span class="n">device_ids</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">device_ids</span>
-            <span class="p">)</span>
-
-        <span class="c1"># Calculate compressed latent dimension for transformer buffer allocation</span>
+        <span class="c1"># Step 7: Initialize transformer sessions and buffers</span>
         <span class="n">cl</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">calculate_latent_dimensions_with_frames</span><span class="p">(</span>
             <span class="n">height</span><span class="p">,</span>
             <span class="n">width</span><span class="p">,</span>
@@ -693,168 +1097,30 @@
             <span class="bp">self</span><span class="o">.</span><span class="n">patch_height</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">patch_width</span><span class="p">,</span>
         <span class="p">)</span>
-        <span class="c1"># Allocate output buffer for QAIC inference</span>
-        <span class="n">output_buffer</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span>
-                <span class="n">batch_size</span><span class="p">,</span>
-                <span class="n">cl</span><span class="p">,</span>  <span class="c1"># Compressed latent dimension</span>
-                <span class="n">constants</span><span class="o">.</span><span class="n">WAN_DIT_OUT_CHANNELS</span><span class="p">,</span>
-            <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
-        <span class="p">}</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">set_buffers</span><span class="p">(</span><span class="n">output_buffer</span><span class="p">)</span>
-        <span class="n">transformer_perf</span> <span class="o">=</span> <span class="p">[]</span>
-
-        <span class="c1"># Step 8: Denoising loop with dual-stage processing</span>
-        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">progress_bar</span><span class="p">(</span><span class="n">total</span><span class="o">=</span><span class="n">num_inference_steps</span><span class="p">)</span> <span class="k">as</span> <span class="n">progress_bar</span><span class="p">:</span>
-            <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">timesteps</span><span class="p">):</span>
-                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_interrupt</span><span class="p">:</span>
-                    <span class="k">continue</span>
-
-                <span class="bp">self</span><span class="o">.</span><span class="n">_current_timestep</span> <span class="o">=</span> <span class="n">t</span>
-
-                <span class="c1"># Determine which model to use based on boundary timestep</span>
-                <span class="k">if</span> <span class="n">boundary_timestep</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">t</span> <span class="o">&gt;=</span> <span class="n">boundary_timestep</span><span class="p">:</span>
-                    <span class="c1"># High-noise stage</span>
-                    <span class="n">current_model</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">transformer_high</span>
-                    <span class="n">current_guidance_scale</span> <span class="o">=</span> <span class="n">guidance_scale</span>
-                    <span class="n">model_type</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>  <span class="c1"># High-noise model indicator</span>
-                <span class="k">else</span><span class="p">:</span>
-                    <span class="c1"># Low-noise stage</span>
-                    <span class="n">current_model</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">transformer_low</span>
-                    <span class="n">current_guidance_scale</span> <span class="o">=</span> <span class="n">guidance_scale_2</span>
-                    <span class="n">model_type</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>  <span class="c1"># Low-noise model indicator</span>
-
-                <span class="c1"># Prepare latent input with proper dtype</span>
-                <span class="n">latent_model_input</span> <span class="o">=</span> <span class="n">latents</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">transformer_dtype</span><span class="p">)</span>
-
-                <span class="c1"># Handle timestep expansion for temporal consistency</span>
-                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">expand_timesteps</span><span class="p">:</span>
-                    <span class="c1"># Expand timesteps spatially for better temporal modeling</span>
-                    <span class="n">temp_ts</span> <span class="o">=</span> <span class="p">(</span><span class="n">mask</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">][:,</span> <span class="p">::</span><span class="mi">2</span><span class="p">,</span> <span class="p">::</span><span class="mi">2</span><span class="p">]</span> <span class="o">*</span> <span class="n">t</span><span class="p">)</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span>
-                    <span class="n">timestep</span> <span class="o">=</span> <span class="n">temp_ts</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">latents</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
-                <span class="k">else</span><span class="p">:</span>
-                    <span class="c1"># Standard timestep broadcasting</span>
-                    <span class="n">timestep</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span><span class="n">latents</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
-
-                <span class="c1"># Extract dimensions for patch processing</span>
-                <span class="n">batch_size</span><span class="p">,</span> <span class="n">num_channels</span><span class="p">,</span> <span class="n">num_frames</span><span class="p">,</span> <span class="n">height</span><span class="p">,</span> <span class="n">width</span> <span class="o">=</span> <span class="n">latents</span><span class="o">.</span><span class="n">shape</span>
-                <span class="n">p_t</span><span class="p">,</span> <span class="n">p_h</span><span class="p">,</span> <span class="n">p_w</span> <span class="o">=</span> <span class="n">current_model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">patch_size</span>
-                <span class="n">post_patch_num_frames</span> <span class="o">=</span> <span class="n">num_frames</span> <span class="o">//</span> <span class="n">p_t</span>
-                <span class="n">post_patch_height</span> <span class="o">=</span> <span class="n">height</span> <span class="o">//</span> <span class="n">p_h</span>
-                <span class="n">post_patch_width</span> <span class="o">=</span> <span class="n">width</span> <span class="o">//</span> <span class="n">p_w</span>
-
-                <span class="c1"># Generate rotary position embeddings</span>
-                <span class="n">rotary_emb</span> <span class="o">=</span> <span class="n">current_model</span><span class="o">.</span><span class="n">rope</span><span class="p">(</span><span class="n">latent_model_input</span><span class="p">)</span>
-                <span class="n">rotary_emb</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">rotary_emb</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
-                <span class="n">ts_seq_len</span> <span class="o">=</span> <span class="kc">None</span>
-                <span class="n">timestep</span> <span class="o">=</span> <span class="n">timestep</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span>
-
-                <span class="c1"># Generate conditioning embeddings (time + text)</span>
-                <span class="n">temb</span><span class="p">,</span> <span class="n">timestep_proj</span><span class="p">,</span> <span class="n">encoder_hidden_states</span><span class="p">,</span> <span class="n">encoder_hidden_states_image</span> <span class="o">=</span> <span class="p">(</span>
-                    <span class="n">current_model</span><span class="o">.</span><span class="n">condition_embedder</span><span class="p">(</span>
-                        <span class="n">timestep</span><span class="p">,</span> <span class="n">prompt_embeds</span><span class="p">,</span> <span class="n">encoder_hidden_states_image</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">timestep_seq_len</span><span class="o">=</span><span class="n">ts_seq_len</span>
-                    <span class="p">)</span>
-                <span class="p">)</span>
-
-                <span class="c1"># Generate negative conditioning for classifier-free guidance</span>
-                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">do_classifier_free_guidance</span><span class="p">:</span>
-                    <span class="n">temb</span><span class="p">,</span> <span class="n">timestep_proj</span><span class="p">,</span> <span class="n">encoder_hidden_states_neg</span><span class="p">,</span> <span class="n">encoder_hidden_states_image</span> <span class="o">=</span> <span class="p">(</span>
-                        <span class="n">current_model</span><span class="o">.</span><span class="n">condition_embedder</span><span class="p">(</span>
-                            <span class="n">timestep</span><span class="p">,</span>
-                            <span class="n">negative_prompt_embeds</span><span class="p">,</span>
-                            <span class="n">encoder_hidden_states_image</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-                            <span class="n">timestep_seq_len</span><span class="o">=</span><span class="n">ts_seq_len</span><span class="p">,</span>
-                        <span class="p">)</span>
-                    <span class="p">)</span>
-
-                <span class="c1"># Reshape timestep projection for transformer input</span>
-                <span class="n">timestep_proj</span> <span class="o">=</span> <span class="n">timestep_proj</span><span class="o">.</span><span class="n">unflatten</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span>
-
-                <span class="c1"># Prepare inputs for QAIC inference</span>
-                <span class="n">inputs_aic</span> <span class="o">=</span> <span class="p">{</span>
-                    <span class="s2">&quot;hidden_states&quot;</span><span class="p">:</span> <span class="n">latents</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
-                    <span class="s2">&quot;encoder_hidden_states&quot;</span><span class="p">:</span> <span class="n">encoder_hidden_states</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
-                    <span class="s2">&quot;rotary_emb&quot;</span><span class="p">:</span> <span class="n">rotary_emb</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
-                    <span class="s2">&quot;temb&quot;</span><span class="p">:</span> <span class="n">temb</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
-                    <span class="s2">&quot;timestep_proj&quot;</span><span class="p">:</span> <span class="n">timestep_proj</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
-                    <span class="s2">&quot;tsp&quot;</span><span class="p">:</span> <span class="n">model_type</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>  <span class="c1"># Transformer stage pointer</span>
-                <span class="p">}</span>
-
-                <span class="c1"># Prepare negative inputs for classifier-free guidance</span>
-                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">do_classifier_free_guidance</span><span class="p">:</span>
-                    <span class="n">inputs_aic2</span> <span class="o">=</span> <span class="p">{</span>
-                        <span class="s2">&quot;hidden_states&quot;</span><span class="p">:</span> <span class="n">latents</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
-                        <span class="s2">&quot;encoder_hidden_states&quot;</span><span class="p">:</span> <span class="n">encoder_hidden_states_neg</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
-                        <span class="s2">&quot;rotary_emb&quot;</span><span class="p">:</span> <span class="n">rotary_emb</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
-                        <span class="s2">&quot;temb&quot;</span><span class="p">:</span> <span class="n">temb</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
-                        <span class="s2">&quot;timestep_proj&quot;</span><span class="p">:</span> <span class="n">timestep_proj</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
-                    <span class="p">}</span>
-
-                <span class="c1"># Run conditional prediction with caching context</span>
-                <span class="k">with</span> <span class="n">current_model</span><span class="o">.</span><span class="n">cache_context</span><span class="p">(</span><span class="s2">&quot;cond&quot;</span><span class="p">):</span>
-                    <span class="c1"># QAIC inference for conditional prediction</span>
-                    <span class="n">start_transformer_step_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
-                    <span class="n">outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">inputs_aic</span><span class="p">)</span>
-                    <span class="n">end_transformer_step_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
-                    <span class="n">transformer_perf</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">end_transformer_step_time</span> <span class="o">-</span> <span class="n">start_transformer_step_time</span><span class="p">)</span>
-                    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;DIT </span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2"> time </span><span class="si">{</span><span class="n">end_transformer_step_time</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start_transformer_step_time</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> seconds&quot;</span><span class="p">)</span>
-
-                    <span class="c1"># Process transformer output</span>
-                    <span class="n">hidden_states</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">outputs</span><span class="p">[</span><span class="s2">&quot;output&quot;</span><span class="p">])</span>
-
-                    <span class="c1"># Reshape output from patches back to video format</span>
-                    <span class="n">hidden_states</span> <span class="o">=</span> <span class="n">hidden_states</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span>
-                        <span class="n">batch_size</span><span class="p">,</span> <span class="n">post_patch_num_frames</span><span class="p">,</span> <span class="n">post_patch_height</span><span class="p">,</span> <span class="n">post_patch_width</span><span class="p">,</span> <span class="n">p_t</span><span class="p">,</span> <span class="n">p_h</span><span class="p">,</span> <span class="n">p_w</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span>
-                    <span class="p">)</span>
-
-                    <span class="c1"># Permute dimensions to reconstruct video tensor</span>
-                    <span class="n">hidden_states</span> <span class="o">=</span> <span class="n">hidden_states</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">6</span><span class="p">)</span>
-                    <span class="n">noise_pred</span> <span class="o">=</span> <span class="n">hidden_states</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="mi">7</span><span class="p">)</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
-
-                <span class="c1"># Run unconditional prediction for classifier-free guidance</span>
-                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">do_classifier_free_guidance</span><span class="p">:</span>  <span class="c1"># Note: CFG is False for WAN Lightning</span>
-                    <span class="k">with</span> <span class="n">current_model</span><span class="o">.</span><span class="n">cache_context</span><span class="p">(</span><span class="s2">&quot;uncond&quot;</span><span class="p">):</span>
-                        <span class="c1"># QAIC inference for unconditional prediction</span>
-                        <span class="n">start_transformer_step_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
-                        <span class="n">outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">inputs_aic2</span><span class="p">)</span>
-                        <span class="n">end_transformer_step_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
-                        <span class="n">transformer_perf</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">end_transformer_step_time</span> <span class="o">-</span> <span class="n">start_transformer_step_time</span><span class="p">)</span>
-
-                        <span class="c1"># Process unconditional output</span>
-                        <span class="n">hidden_states</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">outputs</span><span class="p">[</span><span class="s2">&quot;output&quot;</span><span class="p">])</span>
-
-                        <span class="c1"># Reshape unconditional output</span>
-                        <span class="n">hidden_states</span> <span class="o">=</span> <span class="n">hidden_states</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span>
-                            <span class="n">batch_size</span><span class="p">,</span> <span class="n">post_patch_num_frames</span><span class="p">,</span> <span class="n">post_patch_height</span><span class="p">,</span> <span class="n">post_patch_width</span><span class="p">,</span> <span class="n">p_t</span><span class="p">,</span> <span class="n">p_h</span><span class="p">,</span> <span class="n">p_w</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span>
-                        <span class="p">)</span>
-
-                        <span class="n">hidden_states</span> <span class="o">=</span> <span class="n">hidden_states</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">6</span><span class="p">)</span>
-                        <span class="n">noise_uncond</span> <span class="o">=</span> <span class="n">hidden_states</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="mi">7</span><span class="p">)</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
-
-                        <span class="c1"># Apply classifier-free guidance</span>
-                        <span class="n">noise_pred</span> <span class="o">=</span> <span class="n">noise_uncond</span> <span class="o">+</span> <span class="n">current_guidance_scale</span> <span class="o">*</span> <span class="p">(</span><span class="n">noise_pred</span> <span class="o">-</span> <span class="n">noise_uncond</span><span class="p">)</span>
-
-                <span class="c1"># Update latents using scheduler (x_t -&gt; x_t-1)</span>
-                <span class="n">latents</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">scheduler</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">noise_pred</span><span class="p">,</span> <span class="n">t</span><span class="p">,</span> <span class="n">latents</span><span class="p">,</span> <span class="n">return_dict</span><span class="o">=</span><span class="kc">False</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
-
-                <span class="c1"># Execute callback if provided</span>
-                <span class="k">if</span> <span class="n">callback_on_step_end</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-                    <span class="n">callback_kwargs</span> <span class="o">=</span> <span class="p">{}</span>
-                    <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">callback_on_step_end_tensor_inputs</span><span class="p">:</span>
-                        <span class="n">callback_kwargs</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="nb">locals</span><span class="p">()[</span><span class="n">k</span><span class="p">]</span>
-                    <span class="n">callback_outputs</span> <span class="o">=</span> <span class="n">callback_on_step_end</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="n">t</span><span class="p">,</span> <span class="n">callback_kwargs</span><span class="p">)</span>
-
-                    <span class="n">latents</span> <span class="o">=</span> <span class="n">callback_outputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;latents&quot;</span><span class="p">,</span> <span class="n">latents</span><span class="p">)</span>
-                    <span class="n">prompt_embeds</span> <span class="o">=</span> <span class="n">callback_outputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;prompt_embeds&quot;</span><span class="p">,</span> <span class="n">prompt_embeds</span><span class="p">)</span>
-                    <span class="n">negative_prompt_embeds</span> <span class="o">=</span> <span class="n">callback_outputs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;negative_prompt_embeds&quot;</span><span class="p">,</span> <span class="n">negative_prompt_embeds</span><span class="p">)</span>
-
-                <span class="c1"># Update progress bar</span>
-                <span class="k">if</span> <span class="n">i</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">timesteps</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span> <span class="ow">or</span> <span class="p">((</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">num_warmup_steps</span> <span class="ow">and</span> <span class="p">(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">scheduler</span><span class="o">.</span><span class="n">order</span> <span class="o">==</span> <span class="mi">0</span><span class="p">):</span>
-                    <span class="n">progress_bar</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_prepare_transformer_sessions</span><span class="p">(</span><span class="n">batch_size</span><span class="p">,</span> <span class="n">cl</span><span class="p">)</span>
+        <span class="n">latents</span><span class="p">,</span> <span class="n">transformer_perf</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_denoise_impl</span><span class="p">(</span>
+            <span class="n">latents</span><span class="o">=</span><span class="n">latents</span><span class="p">,</span>
+            <span class="n">timesteps</span><span class="o">=</span><span class="n">timesteps</span><span class="p">,</span>
+            <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
+            <span class="n">guidance_scale</span><span class="o">=</span><span class="n">guidance_scale</span><span class="p">,</span>
+            <span class="n">guidance_scale_2</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_guidance_scale_2</span><span class="p">,</span>
+            <span class="n">boundary_timestep</span><span class="o">=</span><span class="n">boundary_timestep</span><span class="p">,</span>
+            <span class="n">transformer_dtype</span><span class="o">=</span><span class="n">transformer_dtype</span><span class="p">,</span>
+            <span class="n">prompt_embeds</span><span class="o">=</span><span class="n">prompt_embeds</span><span class="p">,</span>
+            <span class="n">negative_prompt_embeds</span><span class="o">=</span><span class="n">negative_prompt_embeds</span><span class="p">,</span>
+            <span class="n">mask</span><span class="o">=</span><span class="n">mask</span><span class="p">,</span>
+            <span class="n">num_inference_steps</span><span class="o">=</span><span class="n">num_inference_steps</span><span class="p">,</span>
+            <span class="n">num_warmup_steps</span><span class="o">=</span><span class="n">num_warmup_steps</span><span class="p">,</span>
+            <span class="n">callback_on_step_end</span><span class="o">=</span><span class="n">callback_on_step_end</span><span class="p">,</span>
+            <span class="n">callback_on_step_end_tensor_inputs</span><span class="o">=</span><span class="n">callback_on_step_end_tensor_inputs</span><span class="p">,</span>
+            <span class="n">cache_threshold_high</span><span class="o">=</span><span class="n">cache_threshold_high</span><span class="p">,</span>
+            <span class="n">cache_threshold_low</span><span class="o">=</span><span class="n">cache_threshold_low</span><span class="p">,</span>
+        <span class="p">)</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">_current_timestep</span> <span class="o">=</span> <span class="kc">None</span>
 
         <span class="c1"># Step 9: Decode latents to video</span>
+        <span class="n">vae_decoder_perf</span> <span class="o">=</span> <span class="mf">0.0</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="n">output_type</span> <span class="o">==</span> <span class="s2">&quot;latent&quot;</span><span class="p">:</span>
             <span class="c1"># Prepare latents for VAE decoding</span>
             <span class="n">latents</span> <span class="o">=</span> <span class="n">latents</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">vae_decoder</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
@@ -878,7 +1144,7 @@
 
             <span class="c1"># Allocate output buffer for VAE decoder</span>
             <span class="n">output_buffer</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;sample&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">batch_size</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">num_frames</span><span class="p">,</span> <span class="n">height</span><span class="p">,</span> <span class="n">width</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)}</span>
-
+            <span class="bp">self</span><span class="o">.</span><span class="n">vae_decoder</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">set_buffers</span><span class="p">(</span><span class="n">output_buffer</span><span class="p">)</span>
             <span class="n">inputs</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;latent_sample&quot;</span><span class="p">:</span> <span class="n">latents</span><span class="o">.</span><span class="n">numpy</span><span class="p">()}</span>
 
             <span class="n">start_decode_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
@@ -894,7 +1160,7 @@
 
         <span class="c1"># Step 10: Collect performance metrics</span>
         <span class="n">perf_data</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="s2">&quot;transformer&quot;</span><span class="p">:</span> <span class="n">transformer_perf</span><span class="p">,</span>  <span class="c1"># Unified transformer (QAIC)</span>
+            <span class="s2">&quot;transformer&quot;</span><span class="p">:</span> <span class="n">transformer_perf</span><span class="p">,</span>
             <span class="s2">&quot;vae_decoder&quot;</span><span class="p">:</span> <span class="n">vae_decoder_perf</span><span class="p">,</span>
         <span class="p">}</span>
 
@@ -927,7 +1193,7 @@
       </div>
     </section>
   </div>
-  <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+    <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
     <span class="rst-current-version" data-toggle="rst-current-version">
       Version: Main
       <span class="fa fa-caret-down"></span>
@@ -935,8 +1201,12 @@
     <div class="rst-other-versions">
       Versions
       <dl>
-        <dd><a href="../index.html">main</a></dd>
-        <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
+        <dd><a href="../../../../../index.html">main</a></dd>
+        <dd><a href="../../../../../source/release/v1.18/index.html">release/v1.18</a></dd>
+        <dd><a href="../../../../../source/release/v1.19/index.html">release/v1.19</a></dd>
+        <dd><a href="../../../../../source/release/v1.20/index.html">release/v1.20</a></dd>
+        <dd><a href="../../../../../source/release/v1.21/index.html">release/v1.21</a></dd>
+        <dd><a href="../../../../../source/release/v1.21.6/index.html">release/v1.21.6</a></dd>
       </dl>
     </div>
 </div><script>

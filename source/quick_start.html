@@ -98,8 +98,6 @@
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="finetune.html">Finetune Infra</a></li>
-<li class="toctree-l1"><a class="reference internal" href="finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -243,10 +241,15 @@ COMPILER_TIME_PASSES = False
 <ul class="simple">
 <li><p>HuggingFace model files Download → Optimize for Cloud AI 100 → Export to <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> → Compile on Cloud AI 100 → <a class="reference internal" href="cli_api.html#execute-api"><span class="std std-ref">Execute</span></a></p></li>
 <li><p>It skips the export/compile stage based if <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> or <code class="docutils literal notranslate"><span class="pre">qpc</span></code> files are found. If you use infer second time with different compilation arguments, it will automatically skip <code class="docutils literal notranslate"><span class="pre">ONNX</span></code> model creation and directly jump to compile stage.</p></li>
+<li><p>ONNX subfunctions can be enabled explicitly using <code class="docutils literal notranslate"><span class="pre">--use-onnx-subfunctions</span></code>.</p></li>
 </ul>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Check out the options using the help</span>
 python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--help
 python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--model_name<span class="w"> </span>gpt2<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">1</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--mxfp6<span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device_group<span class="w"> </span><span class="o">[</span><span class="m">0</span><span class="o">]</span><span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;My name is&quot;</span><span class="w"> </span>--mos<span class="w"> </span><span class="m">1</span><span class="w"> </span>--aic_enable_depth_first
+</pre></div>
+</div>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Optional: explicitly control ONNX subfunction usage</span>
+python<span class="w"> </span>-m<span class="w"> </span>QEfficient.cloud.infer<span class="w"> </span>--model_name<span class="w"> </span>Qwen/Qwen3-30B-A3B-Instruct-2507<span class="w"> </span>--batch_size<span class="w"> </span><span class="m">1</span><span class="w"> </span>--prompt_len<span class="w"> </span><span class="m">32</span><span class="w"> </span>--ctx_len<span class="w"> </span><span class="m">128</span><span class="w"> </span>--num_cores<span class="w"> </span><span class="m">16</span><span class="w"> </span>--device_group<span class="w"> </span><span class="o">[</span><span class="m">0</span><span class="o">]</span><span class="w"> </span>--prompt<span class="w"> </span><span class="s2">&quot;My name is&quot;</span><span class="w"> </span>--use-onnx-subfunctions
 </pre></div>
 </div>
 <p>If executing for batch size&gt;1,
@@ -390,7 +393,7 @@ Please raise an <a class="reference external" href="https://github.com/quic/effi
       </div>
     </section>
   </div>
-  <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+    <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
     <span class="rst-current-version" data-toggle="rst-current-version">
       Version: Main
       <span class="fa fa-caret-down"></span>
@@ -403,6 +406,7 @@ Please raise an <a class="reference external" href="https://github.com/quic/effi
         <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
         <dd><a href="release/v1.20/index.html">release/v1.20</a></dd>
         <dd><a href="release/v1.21/index.html">release/v1.21</a></dd>
+        <dd><a href="release/v1.21.6/index.html">release/v1.21.6</a></dd>
       </dl>
     </div>
 </div><script>

@@ -74,8 +74,6 @@
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../../../source/finetune.html">Finetune Infra</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../source/finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../../../source/finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -143,6 +141,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion</span><span class="w"> </span><span class="kn">import</span> <span class="n">retrieve_timesteps</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">tqdm</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
 
+<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.diffusers.first_block_cache.flux</span><span class="w"> </span><span class="kn">import</span> <span class="n">enable_flux_first_block_cache</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.diffusers.pipelines.pipeline_module</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">QEffFluxTransformerModel</span><span class="p">,</span>
     <span class="n">QEffTextEncoder</span><span class="p">,</span>
@@ -201,7 +200,14 @@
 
     <span class="n">_hf_auto_class</span> <span class="o">=</span> <span class="n">FluxPipeline</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">model</span><span class="p">,</span>
+        <span class="n">enable_first_block_cache</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">first_block_cache_downsample_factor</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span>
+        <span class="o">*</span><span class="n">args</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+    <span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Initialize the QEfficient Flux pipeline.</span>
 
@@ -212,14 +218,24 @@
 
 <span class="sd">        Args:</span>
 <span class="sd">            model: Pre-loaded FluxPipeline model</span>
+<span class="sd">            enable_first_block_cache (bool): Enable retained-state first-block-cache path.</span>
+<span class="sd">            first_block_cache_downsample_factor (int): Downsample factor for the first-block</span>
+<span class="sd">                residual cache key. Used only when first-block-cache is enabled.</span>
 <span class="sd">            **kwargs: Additional arguments including height and width</span>
 <span class="sd">        &quot;&quot;&quot;</span>
 
         <span class="c1"># Wrap model components with QEfficient optimized versions</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">enable_first_block_cache</span> <span class="o">=</span> <span class="n">enable_first_block_cache</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">first_block_cache_downsample_factor</span> <span class="o">=</span> <span class="n">first_block_cache_downsample_factor</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">text_encoder</span> <span class="o">=</span> <span class="n">QEffTextEncoder</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">text_encoder</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">text_encoder_2</span> <span class="o">=</span> <span class="n">QEffTextEncoder</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">text_encoder_2</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span> <span class="o">=</span> <span class="n">QEffFluxTransformerModel</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">transformer</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_first_block_cache</span><span class="p">:</span>
+            <span class="n">enable_flux_first_block_cache</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="p">,</span>
+                <span class="n">downsample_factor</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">first_block_cache_downsample_factor</span><span class="p">,</span>
+            <span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">vae_decode</span> <span class="o">=</span> <span class="n">QEffVAE</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">vae</span><span class="p">,</span> <span class="s2">&quot;decoder&quot;</span><span class="p">)</span>
 
         <span class="c1"># Store all modules in a dictionary for easy iteration during export/compile</span>
@@ -251,6 +267,8 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">from_pretrained</span><span class="p">(</span>
         <span class="bp">cls</span><span class="p">,</span>
         <span class="n">pretrained_model_name_or_path</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">os</span><span class="o">.</span><span class="n">PathLike</span><span class="p">]],</span>
+        <span class="n">enable_first_block_cache</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">first_block_cache_downsample_factor</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
     <span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -263,6 +281,9 @@
 <span class="sd">        Args:</span>
 <span class="sd">            pretrained_model_name_or_path (str or os.PathLike): Either a HuggingFace model identifier</span>
 <span class="sd">                (e.g., &quot;black-forest-labs/FLUX.1-schnell&quot;) or a local path to a saved model directory.</span>
+<span class="sd">            enable_first_block_cache (bool, optional): Enables retained-state first-block-cache path.</span>
+<span class="sd">            first_block_cache_downsample_factor (int, optional): Downsample factor for the first-block</span>
+<span class="sd">                residual cache key when cache is enabled.</span>
 <span class="sd">            **kwargs: Additional keyword arguments passed to FluxPipeline.from_pretrained().</span>
 
 <span class="sd">        Returns:</span>
@@ -297,6 +318,8 @@
 
         <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span>
             <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+            <span class="n">enable_first_block_cache</span><span class="o">=</span><span class="n">enable_first_block_cache</span><span class="p">,</span>
+            <span class="n">first_block_cache_downsample_factor</span><span class="o">=</span><span class="n">first_block_cache_downsample_factor</span><span class="p">,</span>
             <span class="n">pretrained_model_name_or_path</span><span class="o">=</span><span class="n">pretrained_model_name_or_path</span><span class="p">,</span>
             <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
         <span class="p">)</span></div>
@@ -641,6 +664,8 @@
 <span class="sd">                - encoder_perf_times (List[float]): Performance times [CLIP_time, T5_time]</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">prompt</span> <span class="o">=</span> <span class="p">[</span><span class="n">prompt</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">else</span> <span class="n">prompt</span>
+        <span class="n">text_encoder_perf</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="n">text_encoder_2_perf</span> <span class="o">=</span> <span class="mf">0.0</span>
 
         <span class="k">if</span> <span class="n">prompt_embeds</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="c1"># Use primary prompt for both encoders if secondary not provided</span>
@@ -693,6 +718,7 @@
         <span class="n">custom_config_path</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">parallel_compile</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
         <span class="n">use_onnx_subfunctions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">cache_threshold</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Generate images from text prompts using the QEfficient-optimized Flux pipeline on QAIC hardware.</span>
@@ -728,6 +754,8 @@
 <span class="sd">            custom_config_path (str, optional): Path to custom JSON configuration file for compilation settings.</span>
 <span class="sd">            parallel_compile (bool, optional): Whether to compile modules in parallel. Default: False.</span>
 <span class="sd">            use_onnx_subfunctions (bool, optional): Whether to export transformer blocks as ONNX subfunctions. Default: False.</span>
+<span class="sd">            cache_threshold (float, optional): First-block-cache threshold.</span>
+<span class="sd">                Used only when `enable_first_block_cache=True`.</span>
 
 <span class="sd">        Returns:</span>
 <span class="sd">            QEffPipelineOutput: A dataclass containing:</span>
@@ -783,6 +811,11 @@
 
         <span class="bp">self</span><span class="o">.</span><span class="n">_guidance_scale</span> <span class="o">=</span> <span class="n">guidance_scale</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_interrupt</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_first_block_cache</span> <span class="ow">and</span> <span class="n">cache_threshold</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">&quot;Ignoring cache_threshold because first-block-cache is disabled. &quot;</span>
+                <span class="s2">&quot;Set `enable_first_block_cache=True` to enable it.&quot;</span>
+            <span class="p">)</span>
 
         <span class="c1"># Step 2: Determine batch size from inputs</span>
         <span class="k">if</span> <span class="n">prompt</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
@@ -809,17 +842,15 @@
 
         <span class="c1"># Encode negative prompts if using true classifier-free guidance</span>
         <span class="k">if</span> <span class="n">do_true_cfg</span><span class="p">:</span>
-            <span class="p">(</span>
-                <span class="n">negative_prompt_embeds</span><span class="p">,</span>
-                <span class="n">negative_pooled_prompt_embeds</span><span class="p">,</span>
-                <span class="n">negative_text_ids</span><span class="p">,</span>
-            <span class="p">)</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">encode_prompt</span><span class="p">(</span>
-                <span class="n">prompt</span><span class="o">=</span><span class="n">negative_prompt</span><span class="p">,</span>
-                <span class="n">prompt_2</span><span class="o">=</span><span class="n">negative_prompt_2</span><span class="p">,</span>
-                <span class="n">prompt_embeds</span><span class="o">=</span><span class="n">negative_prompt_embeds</span><span class="p">,</span>
-                <span class="n">pooled_prompt_embeds</span><span class="o">=</span><span class="n">negative_pooled_prompt_embeds</span><span class="p">,</span>
-                <span class="n">num_images_per_prompt</span><span class="o">=</span><span class="n">num_images_per_prompt</span><span class="p">,</span>
-                <span class="n">max_sequence_length</span><span class="o">=</span><span class="n">max_sequence_length</span><span class="p">,</span>
+            <span class="p">(</span><span class="n">negative_prompt_embeds</span><span class="p">,</span> <span class="n">negative_pooled_prompt_embeds</span><span class="p">,</span> <span class="n">negative_text_ids</span><span class="p">,</span> <span class="n">text_encoder_perf_2</span><span class="p">)</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">encode_prompt</span><span class="p">(</span>
+                    <span class="n">prompt</span><span class="o">=</span><span class="n">negative_prompt</span><span class="p">,</span>
+                    <span class="n">prompt_2</span><span class="o">=</span><span class="n">negative_prompt_2</span><span class="p">,</span>
+                    <span class="n">prompt_embeds</span><span class="o">=</span><span class="n">negative_prompt_embeds</span><span class="p">,</span>
+                    <span class="n">pooled_prompt_embeds</span><span class="o">=</span><span class="n">negative_pooled_prompt_embeds</span><span class="p">,</span>
+                    <span class="n">num_images_per_prompt</span><span class="o">=</span><span class="n">num_images_per_prompt</span><span class="p">,</span>
+                    <span class="n">max_sequence_length</span><span class="o">=</span><span class="n">max_sequence_length</span><span class="p">,</span>
+                <span class="p">)</span>
             <span class="p">)</span>
 
         <span class="c1"># Step 4: Prepare timesteps for denoising</span>
@@ -854,6 +885,16 @@
             <span class="s2">&quot;output&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">batch_size</span><span class="p">,</span> <span class="n">cl</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">in_channels</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span>
         <span class="p">}</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">set_buffers</span><span class="p">(</span><span class="n">output_buffer</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_first_block_cache</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">skip_buffers</span><span class="p">(</span>
+                <span class="p">[</span>
+                    <span class="n">tensor_name</span>
+                    <span class="k">for</span> <span class="n">tensor_name</span> <span class="ow">in</span> <span class="p">(</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">input_names</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">output_names</span>
+                    <span class="p">)</span>
+                    <span class="k">if</span> <span class="n">tensor_name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;prev_&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="n">tensor_name</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">&quot;_RetainedState&quot;</span><span class="p">)</span>
+                <span class="p">]</span>
+            <span class="p">)</span>
 
         <span class="n">transformer_perf</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">scheduler</span><span class="o">.</span><span class="n">set_begin_index</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
@@ -902,11 +943,15 @@
                     <span class="s2">&quot;adaln_single_emb&quot;</span><span class="p">:</span> <span class="n">adaln_single_emb</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
                     <span class="s2">&quot;adaln_out&quot;</span><span class="p">:</span> <span class="n">adaln_out</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
                 <span class="p">}</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_first_block_cache</span><span class="p">:</span>
+                    <span class="n">stage_cache_threshold</span> <span class="o">=</span> <span class="mf">0.0</span> <span class="k">if</span> <span class="n">cache_threshold</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">cache_threshold</span>
+                    <span class="n">inputs_aic</span><span class="p">[</span><span class="s2">&quot;cache_threshold&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">stage_cache_threshold</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
 
                 <span class="c1"># Run transformer inference and measure time</span>
                 <span class="n">start_transformer_step_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
                 <span class="n">outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transformer</span><span class="o">.</span><span class="n">qpc_session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">inputs_aic</span><span class="p">)</span>
                 <span class="n">end_transformer_step_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+                <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Time taken&quot;</span><span class="p">,</span> <span class="n">end_transformer_step_time</span> <span class="o">-</span> <span class="n">start_transformer_step_time</span><span class="p">)</span>
                 <span class="n">transformer_perf</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">end_transformer_step_time</span> <span class="o">-</span> <span class="n">start_transformer_step_time</span><span class="p">)</span>
 
                 <span class="n">noise_pred</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">outputs</span><span class="p">[</span><span class="s2">&quot;output&quot;</span><span class="p">])</span>
@@ -996,7 +1041,7 @@
       </div>
     </section>
   </div>
-  <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+    <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
     <span class="rst-current-version" data-toggle="rst-current-version">
       Version: Main
       <span class="fa fa-caret-down"></span>
@@ -1004,8 +1049,12 @@
     <div class="rst-other-versions">
       Versions
       <dl>
-        <dd><a href="../index.html">main</a></dd>
-        <dd><a href="release/v1.18/index.html">release/v1.18</a></dd>
+        <dd><a href="../../../../../index.html">main</a></dd>
+        <dd><a href="../../../../../source/release/v1.18/index.html">release/v1.18</a></dd>
+        <dd><a href="../../../../../source/release/v1.19/index.html">release/v1.19</a></dd>
+        <dd><a href="../../../../../source/release/v1.20/index.html">release/v1.20</a></dd>
+        <dd><a href="../../../../../source/release/v1.21/index.html">release/v1.21</a></dd>
+        <dd><a href="../../../../../source/release/v1.21.6/index.html">release/v1.21.6</a></dd>
       </dl>
     </div>
 </div><script>
