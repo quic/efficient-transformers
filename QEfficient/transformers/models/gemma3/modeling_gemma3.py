@@ -737,7 +737,12 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                 raise ValueError("vision_size must be less than ctx_len")
             vision_size = user_vision_size
         else:
-            vision_size = getattr(self.config, "mm_tokens_per_image", 256)
+            _mm_tokens_per_image = getattr(self.config, "mm_tokens_per_image", None)
+            if _mm_tokens_per_image:
+                logger.warning_once("mm_tokens_per_image is deprecated and will be removed in the next release.")
+                vision_size = _mm_tokens_per_image
+            else:
+                vision_size = 256
 
         vision = [
             {
