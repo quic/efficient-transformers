@@ -105,7 +105,6 @@ def eager_attention_forward(
     return attn_output, attn_weights
 
 
-
 def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
     """Build packed->original token index."""
     batch_size, seq_len = T2Ei.shape
@@ -160,7 +159,6 @@ def _cumsum_scatter_gather_update_expert_blocked(
 
         rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
         down_chunk = down_chunk * rw_chunk
-
         expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
         updated_chunk = expert_out_chunk + down_chunk
 
