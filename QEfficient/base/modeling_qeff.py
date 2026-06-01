@@ -669,14 +669,21 @@ class QEFFBaseModel(ABC):
         # Write specializations.json file
         if specializations is not None:
             specializations_json = compile_dir / "specializations.json"
-            # Strip internal _graph_name tags and write flat format for qaic-compile.
-            # Named format ({"name": ..., "symbols": {...}}) is only required for the
-            # QNN path (already branched off above).  The qaic-compile binary and its
-            # MDP (multi-device partition) firmware support only the flat format:
-            #   {"batch_size": "4", "seq_len": "5", ...}
-            # Using named format for MDP QPCs causes a RuntimeError at ExecObj
-            # creation time ("Failed to create ExecObj") on 4-device tensor-parallel.
-            # All values must be strings — qaic-compile rejects integer values.
+            # Write specializations.json in flat format required by qaic-compile.
+            #
+            # Background: internally, specializations are built as plain dicts that
+            # carry a "_graph_name" tag (e.g. {"_graph_name": "Decode", "seq_len": 5}).
+            # The QNN compilation path uses a different named format with "name" and
+            # "symbols" keys — that branch is already handled above and returns early.
+            #
+            # The qaic-compile binary and the MDP (multi-device partition) tensor-
+            # parallel firmware require only the flat key/value format:
+            #   {"batch_size": "4", "seq_len": "5", "ctx_len": "128"}
+            # Passing anything other than this flat format to a 4-device MDP QPC
+            # causes the runtime to fail at ExecObj creation time:
+            #   RuntimeError: Failed to create ExecObj
+            # All values must also be strings — qaic-compile rejects integer values.
+            # So we strip "_graph_name" and stringify all remaining values here.
             flat_specs = [
                 {key: str(val) for key, val in spec.items() if key != "_graph_name"} for spec in specializations
             ]

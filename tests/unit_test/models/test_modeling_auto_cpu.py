@@ -1014,25 +1014,25 @@ class TestTLMMultiSpecSpecializations:
     # ---- _build_decode_spec_for_k ----
 
     def test_build_decode_spec_for_k_seq_len(self):
-        """_build_decode_spec_for_k sets seq_len = k+1."""
+        """_build_decode_spec_for_k sets seq_len = num_speculative_tokens+1."""
         model, _ = make_tiny_llama()
         qeff = QEFFAutoModelForCausalLM(model)
         qeff.is_tlm = True
         for k in [0, 1, 3, 7]:
             spec = qeff._build_decode_spec_for_k(
-                k=k, ctx_len=128, batch_size=1, kv_cache_batch_size=1, prefill_seq_len=32
+                num_speculative_tokens=k, ctx_len=128, batch_size=1, kv_cache_batch_size=1, prefill_seq_len=32
             )
             assert spec is not None
             assert spec["seq_len"] == k + 1
 
     def test_build_decode_spec_for_k_num_logits_to_keep(self):
-        """_build_decode_spec_for_k sets num_logits_to_keep = k+1."""
+        """_build_decode_spec_for_k sets num_logits_to_keep = num_speculative_tokens+1."""
         model, _ = make_tiny_llama()
         qeff = QEFFAutoModelForCausalLM(model)
         qeff.is_tlm = True
         for k in [0, 1, 3]:
             spec = qeff._build_decode_spec_for_k(
-                k=k, ctx_len=128, batch_size=1, kv_cache_batch_size=1, prefill_seq_len=32
+                num_speculative_tokens=k, ctx_len=128, batch_size=1, kv_cache_batch_size=1, prefill_seq_len=32
             )
             assert spec["num_logits_to_keep"] == k + 1
 
@@ -1041,8 +1041,10 @@ class TestTLMMultiSpecSpecializations:
         model, _ = make_tiny_llama()
         qeff = QEFFAutoModelForCausalLM(model)
         qeff.is_tlm = True
-        # k=0 → seq_len=1 == prefill_seq_len=1 → should be None
-        spec = qeff._build_decode_spec_for_k(k=0, ctx_len=128, batch_size=1, kv_cache_batch_size=1, prefill_seq_len=1)
+        # num_speculative_tokens=0 → seq_len=1 == prefill_seq_len=1 → should be None
+        spec = qeff._build_decode_spec_for_k(
+            num_speculative_tokens=0, ctx_len=128, batch_size=1, kv_cache_batch_size=1, prefill_seq_len=1
+        )
         assert spec is None
 
     def test_build_decode_spec_for_k_not_none_with_continuous_batching(self):
@@ -1050,9 +1052,14 @@ class TestTLMMultiSpecSpecializations:
         model, _ = make_tiny_llama()
         qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
         qeff.is_tlm = True
-        # k=0 → seq_len=1 == prefill_seq_len=1, but CB is True → should not be None
+        # num_speculative_tokens=0 → seq_len=1 == prefill_seq_len=1, but CB is True → should not be None
         spec = qeff._build_decode_spec_for_k(
-            k=0, ctx_len=128, batch_size=1, kv_cache_batch_size=2, full_batch_size=2, prefill_seq_len=1
+            num_speculative_tokens=0,
+            ctx_len=128,
+            batch_size=1,
+            kv_cache_batch_size=2,
+            full_batch_size=2,
+            prefill_seq_len=1,
         )
         assert spec is not None
 
@@ -1149,3 +1156,26 @@ class TestTLMMultiSpecSpecializations:
         decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
         assert len(decode_specs) == 1, f"Expected 1 decode spec for int input, got: {decode_specs}"
         assert decode_specs[0]["seq_len"] == 4  # k=3 → seq_len=4
+
+    def test_compile_int_zero_backward_compat(self):
+        """compile(num_speculative_tokens=0) as plain scalar int still works (treated as [0])."""
+        from unittest.mock import patch
+
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
+        captured = {}
+
+        with patch.object(
+            type(qeff),
+            "_compile",
+            side_effect=lambda *args, **kw: (
+                captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"
+            ),
+        ):
+            qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=0)
+
+        assert captured.get("specializations") is not None, "_compile was not reached"
+        specs = captured["specializations"]
+        decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
+        assert len(decode_specs) == 1, f"Expected 1 decode spec for scalar 0, got: {decode_specs}"
+        assert decode_specs[0]["seq_len"] == 1  # k=0 → seq_len=1

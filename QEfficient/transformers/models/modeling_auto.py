@@ -3504,7 +3504,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     def _build_decode_spec_for_k(
         self,
-        k: int,
+        num_speculative_tokens: int,
         ctx_len: int = 128,
         batch_size: int = 1,
         kv_cache_batch_size: Optional[int] = None,
@@ -3513,13 +3513,20 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         comp_ctx_lengths: Optional[int] = None,
     ):
         """
-        Builds a TLM decode specialization for proposal length *k* (``seq_len = k+1``).
+        Builds one TLM decode specialization for proposal length *num_speculative_tokens*
+        (``seq_len = num_speculative_tokens + 1``).
+
+        This method intentionally does not call ``self.model.get_specializations()``.
+        That interface always returns exactly two entries — ``[0]`` for prefill and
+        ``[1]`` for decode — and cannot express the 1-prefill + N-decode shape that
+        variable-K requires.  ``compile()`` calls this in a loop, once per K value,
+        to build the full set of decode specializations.
 
         Parameters
         ----------
-        k : int
+        num_speculative_tokens : int
             Number of speculative (draft) tokens. ``seq_len`` and ``num_logits_to_keep``
-            are both set to ``k + 1``.
+            are both set to ``num_speculative_tokens + 1``.
         ctx_len : int, optional
             Maximum context length. Default is 128.
         batch_size : int, optional
@@ -3537,7 +3544,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Optional[Dict[str, Union[int, str]]]
             Specialization dict, or ``None`` if it would duplicate the prefill specialization.
         """
-        seq_len = k + 1
+        seq_len = num_speculative_tokens + 1
         if seq_len == prefill_seq_len and not self.continuous_batching:
             return None
         spec = {
@@ -3552,7 +3559,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             spec["full_batch_size"] = kv_cache_batch_size
         else:
             spec["batch_size"] = kv_cache_batch_size
-        return {k_: v for k_, v in spec.items() if v is not None}
+        result = {key: v for key, v in spec.items() if v is not None}
+        result["_graph_name"] = "Decode"
+        return result
 
     def compile(
         self,
@@ -3570,7 +3579,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
-        num_speculative_tokens: Optional[List[int]] = None,
+        num_speculative_tokens: Optional[Union[int, List[int]]] = None,
         prefill_only: Optional[bool] = None,
         use_onnx_subfunctions: bool = False,
         offload_pt_weights: Optional[bool] = True,
@@ -3613,8 +3622,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             Use MXFP6 compression for weights. Default is False.
         mxint8_kv_cache : bool, optional
             Use MXINT8 compression for KV cache. Default is False.
-        num_speculative_tokens : list[int], optional
-            List of proposal lengths for Speculative Decoding Target Language Model.
+        num_speculative_tokens : int or list[int], optional
+            Proposal length(s) for Speculative Decoding Target Language Model.
+            A plain int K is treated as ``[K]`` (backward compatible).
             Each value K generates a decode specialization with seq_len=K+1 and
             num_logits_to_keep=K+1. Include 0 to compile a cheap single-token fallback
             (e.g. ``[0, 3]`` for a fallback + full K=3 decode). Required if the model is
@@ -3807,7 +3817,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     )
                 for k in _decode_ks:
                     spec = self._build_decode_spec_for_k(
-                        k=k,
+                        num_speculative_tokens=k,
                         ctx_len=ctx_len,
                         batch_size=batch_size,
                         kv_cache_batch_size=kv_cache_batch_size,

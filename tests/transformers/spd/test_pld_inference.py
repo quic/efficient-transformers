@@ -505,7 +505,7 @@ def test_multi_spec_structure(model_id, decode_ks):
     specs = []
     for k in sorted(set(decode_ks)):
         spec = target_model._build_decode_spec_for_k(
-            k=k,
+            num_speculative_tokens=k,
             ctx_len=ctx_len,
             batch_size=batch_size,
             kv_cache_batch_size=kv_cache_batch_size,
