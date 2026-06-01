@@ -733,7 +733,8 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             logger.warning("Setting img_size to be 336, as it was neither passed nor found in vision_config")
         user_vision_size = compiler_options.pop("vision_size", None)
         if user_vision_size:
-            assert user_vision_size < ctx_len, "vision_size must be less than ctx_len"
+            if user_vision_size >= ctx_len:
+                raise ValueError("vision_size must be less than ctx_len")
             vision_size = user_vision_size
         else:
             vision_size = getattr(self.config, "mm_tokens_per_image", 256)

@@ -372,7 +372,8 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         kernel_size = self.config.spatial_merge_size
         user_vision_size = compiler_options.pop("vision_size", None)
         if user_vision_size:
-            assert user_vision_size < ctx_len, "vision_size must be less than ctx_len"
+            if user_vision_size >= ctx_len:
+                raise ValueError("vision_size must be less than ctx_len")
             vision_size = user_vision_size
         else:
             vision_size = (
