@@ -1001,7 +1001,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                     "resolution."
                 )
             else:
-                if vision_size * f >= user_vision_size:
+                if vision_size * f > user_vision_size:
                     logger.warning_once(
                         f"Computed vision_size of {vision_size * f} tokens "
                         f"(vision_size={vision_size}, num_frames={f}) for image resolution "
