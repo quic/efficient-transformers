@@ -375,3 +375,213 @@ def test_dummy_spd_inference(model_id, manual_cleanup):
         **model_config_dict[model_id]["additional_params"],
     )
     check_spec_decode_inference(model_id, config=hf_config, manual_cleanup=manual_cleanup)
+
+
+# ---------------------------------------------------------------------------
+# Multi-spec logit correctness — hardware-level QPC test
+# ---------------------------------------------------------------------------
+
+_MULTI_SPEC_MODEL = "JackFram/llama-68m"
+_MULTI_SPEC_NUM_LAYERS = 2
+_MULTI_SPEC_PREFILL_LEN = 32
+_MULTI_SPEC_CTX_LEN = 128
+_MULTI_SPEC_N_STEPS = 8  # decode positions to verify per specialisation
+_MULTI_SPEC_PROMPT = "My name is"
+
+
+def _run_prefill(session, tokenized, vocab_size, num_logits_to_keep=None):
+    """Run chunked prefill and return the logit from the last chunk."""
+    inputs = dict(tokenized)
+    if num_logits_to_keep is not None:
+        inputs["num_logits_to_keep"] = num_logits_to_keep
+    ph = np.zeros((1, 1, vocab_size), dtype=np.float32)
+    session.set_buffers({"logits": ph})
+    out = session.run(inputs)
+    return out["logits"][0, 0, :]  # [vocab]
+
+
+def _collect_vanilla_reference(session, first_token, start_pos, vocab_size, n_steps):
+    """
+    Teacher-forced decode: feed ground-truth tokens one at a time and collect
+    (logit, next_token) at each position.
+
+    Returns:
+        ref_tokens : list[int]  – tokens[i] is fed at position start_pos+i
+        ref_logits : list[ndarray]  – ref_logits[i] is the logit produced after
+                                       feeding tokens[i], shape [vocab]
+    """
+    ref_tokens = [int(first_token)]
+    ref_logits = []
+    ph = np.zeros((1, 1, vocab_size), dtype=np.float32)
+    session.set_buffers({"logits": ph})
+    for step in range(n_steps):
+        out = session.run(
+            {
+                "input_ids": np.array([[ref_tokens[-1]]], dtype=np.int64),
+                "position_ids": np.array([[start_pos + step]], dtype=np.int64),
+            }
+        )
+        logit = out["logits"][0, 0, :].copy()
+        ref_logits.append(logit)
+        ref_tokens.append(int(logit.argmax()))
+    return ref_tokens, ref_logits
+
+
+def _verify_tlm_spec(tlm_session, k, ref_tokens, ref_logits, start_pos, vocab_size):
+    """
+    Run TLM with seq_len=k+1 (teacher-forced in chunks) and assert that every
+    output logit matches the corresponding vanilla reference logit.
+
+    Both the accepted-token (argmax) and the full logit vector (atol=5e-2) are
+    checked.  Chunks are non-overlapping; leftover positions at the end are skipped.
+
+    Returns the number of (position, specialisation) pairs that were asserted.
+    """
+    seq_len = k + 1
+    n_logits_to_keep = np.arange(seq_len, dtype=np.int64).reshape(-1, 1)
+    ph = np.zeros((1, seq_len, vocab_size), dtype=np.float32)
+    tlm_session.set_buffers({"logits": ph})
+
+    n_assertions = 0
+    n_chunks = len(ref_logits) // seq_len
+    for chunk in range(n_chunks):
+        chunk_tokens = ref_tokens[chunk * seq_len : chunk * seq_len + seq_len]
+        chunk_positions = np.array([[start_pos + chunk * seq_len + i for i in range(seq_len)]], dtype=np.int64)
+        out = tlm_session.run(
+            {
+                "input_ids": np.array([chunk_tokens], dtype=np.int64),
+                "position_ids": chunk_positions,
+                "num_logits_to_keep": n_logits_to_keep,
+            }
+        )
+        tlm_logits = out["logits"]  # [1, seq_len, vocab]
+
+        for i in range(seq_len):
+            ref_pos = chunk * seq_len + i
+            ref_logit = ref_logits[ref_pos]
+            tlm_logit = tlm_logits[0, i, :]
+
+            assert np.allclose(tlm_logit, ref_logit, atol=5e-2), (
+                f"K={k}, chunk={chunk}, offset={i} (abs pos {start_pos + ref_pos}): "
+                f"logit mismatch — max_diff={np.abs(tlm_logit - ref_logit).max():.3e}"
+            )
+            assert int(tlm_logit.argmax()) == int(ref_logit.argmax()), (
+                f"K={k}, chunk={chunk}, offset={i} (abs pos {start_pos + ref_pos}): "
+                f"accepted-token mismatch — "
+                f"TLM={int(tlm_logit.argmax())} vs ref={int(ref_logit.argmax())}"
+            )
+            n_assertions += 1
+
+    return n_assertions
+
+
+@pytest.mark.on_qaic
+@pytest.mark.feature
+@pytest.mark.parametrize(
+    "decode_ks",
+    [
+        [0],  # fallback-only (seq_len=1)
+        [3],  # full-K only  (seq_len=4)
+        [0, 3],  # fallback + full-K (typical PLD config)
+        [1, 2, 3],  # suffix-decoding range
+    ],
+)
+def test_multi_spec_qpc_logit_correctness(decode_ks, manual_cleanup):
+    """
+    Verify that every decode specialisation in `decode_ks` produces logits that
+    match the vanilla (DLM) reference at every token position, for ALL output
+    positions of each specialisation.
+
+    Strategy
+    --------
+    1. Compile vanilla model (seq_len=1 decode) → collect ref_logits[pos] at each
+       of _MULTI_SPEC_N_STEPS positions using teacher-forcing with greedy outputs.
+    2. Compile TLM with all K values in decode_ks.
+    3. For each K:  fresh TLM session (resets KV cache) → prefill same prompt →
+       teacher-forced decode in non-overlapping K+1 chunks → assert ALL K+1 output
+       logits per chunk match ref_logits at corresponding positions.
+
+    Scaling: adding K values to decode_ks automatically adds new assertions.
+    """
+    tokenizer = AutoTokenizer.from_pretrained(_MULTI_SPEC_MODEL, padding_side="right")
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+    vocab_size = len(tokenizer)
+
+    # Tokenise prompt (padded to prefill_seq_len)
+    raw = tokenizer(_MULTI_SPEC_PROMPT, return_tensors="np")
+    input_len = int(raw.input_ids.shape[1])
+    pad_len = _MULTI_SPEC_PREFILL_LEN
+    tokenized = tokenizer(
+        _MULTI_SPEC_PROMPT,
+        return_tensors="np",
+        padding="max_length",
+        max_length=pad_len,
+    )
+    position_ids = np.where(
+        tokenized.pop("attention_mask"),
+        np.arange(pad_len),
+        -1,
+    )
+    prefill_inputs = {
+        "input_ids": tokenized["input_ids"],
+        "position_ids": position_ids,
+    }
+
+    # ── 1. Compile vanilla (DLM) model ──────────────────────────────────────
+    vanilla = load_qeff_causal_lm_model(_MULTI_SPEC_MODEL, num_hidden_layers=_MULTI_SPEC_NUM_LAYERS)
+    vanilla_qpc = vanilla.compile(
+        num_cores=2,
+        prefill_seq_len=_MULTI_SPEC_PREFILL_LEN,
+        ctx_len=_MULTI_SPEC_CTX_LEN,
+        aic_enable_depth_first=True,
+    )
+
+    # ── 2. Compile TLM with all decode specialisations ───────────────────────
+    tlm = load_qeff_causal_lm_model(
+        _MULTI_SPEC_MODEL,
+        num_hidden_layers=_MULTI_SPEC_NUM_LAYERS,
+        qaic_config={"speculative_model_type": "target"},
+    )
+    tlm_qpc = tlm.compile(
+        num_cores=2,
+        prefill_seq_len=_MULTI_SPEC_PREFILL_LEN,
+        ctx_len=_MULTI_SPEC_CTX_LEN,
+        aic_enable_depth_first=True,
+        num_speculative_tokens=decode_ks,
+    )
+
+    # ── 3. Collect vanilla reference logits ──────────────────────────────────
+    van_session = QAICInferenceSession(vanilla_qpc)
+    van_session.skip_buffers([x for x in van_session.input_names if x.startswith("past_")])
+    van_session.skip_buffers([x for x in van_session.output_names if x.endswith("_RetainedState")])
+
+    prefill_logit = _run_prefill(van_session, prefill_inputs, vocab_size)
+    first_token = int(prefill_logit.argmax())
+    ref_tokens, ref_logits = _collect_vanilla_reference(
+        van_session, first_token, input_len, vocab_size, _MULTI_SPEC_N_STEPS
+    )
+    assert len(ref_logits) == _MULTI_SPEC_N_STEPS
+
+    # ── 4. Verify each specialisation ────────────────────────────────────────
+    total_assertions = 0
+    for k in sorted(set(decode_ks)):
+        # Fresh TLM session for each K (resets retained KV state)
+        tlm_session = QAICInferenceSession(tlm_qpc)
+        tlm_session.skip_buffers([x for x in tlm_session.input_names if x.startswith("past_")])
+        tlm_session.skip_buffers([x for x in tlm_session.output_names if x.endswith("_RetainedState")])
+
+        # Prefill TLM (num_logits_to_keep=[[1]])
+        _run_prefill(
+            tlm_session,
+            prefill_inputs,
+            vocab_size,
+            num_logits_to_keep=np.ones((1, 1), dtype=np.int64),
+        )
+
+        n = _verify_tlm_spec(tlm_session, k, ref_tokens, ref_logits, input_len, vocab_size)
+        assert n > 0, f"K={k}: no positions were verified — check _MULTI_SPEC_N_STEPS vs seq_len"
+        total_assertions += n
+
+    assert total_assertions > 0
+    manual_cleanup([vanilla.onnx_path, tlm.onnx_path])
