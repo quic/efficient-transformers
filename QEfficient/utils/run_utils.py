@@ -109,6 +109,7 @@ class ApiRunner:
             :numpy.ndarray: Generated output tokens
         """
         model_inputs = self.input_handler.tokenizer(self.input_handler.prompt[0], return_tensors="pt")
+        model_inputs.pop("token_type_ids", None)
 
         input_len = model_inputs["input_ids"].shape[-1]
 
