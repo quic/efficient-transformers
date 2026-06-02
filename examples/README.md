@@ -36,6 +36,15 @@ Sentence and document embeddings.
 
 [See all embedding examples →](embeddings/)
 
+### Reranker
+Multimodal reranker scoring examples.
+
+| Example | Model | Script |
+|---------|-------|--------|
+| Qwen3-VL Reranker | Qwen/Qwen3-VL-Reranker-{2B,8B} | [reranker/qwen3vl/qwen3_vl_reranker.py](reranker/qwen3vl/qwen3_vl_reranker.py) |
+
+[See all reranker examples →](reranker/)
+
 ### Audio
 Speech processing models.
 
