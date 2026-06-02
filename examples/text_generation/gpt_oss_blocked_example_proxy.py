@@ -30,6 +30,12 @@ def main():
         help="Device IDs (comma-separated) e.g. [0,1]",
     )
     parser.add_argument(
+        "--num-layers",
+        type=int,
+        default=None,
+        help="num hidden layers to run",
+    )
+    parser.add_argument(
         "--blocking-mode",
         type=str,
         default="q",
@@ -48,16 +54,17 @@ def main():
     non_subfunc_npi_file_path = os.path.join("examples/disagg_serving/", "non_subfunction_120b_npi.yaml")
 
     if args.compare_non_blocking:
-        model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
-
-        model._offload_model_weights(True)
+        if args.num_layers:
+            model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, num_hidden_layers=args.num_layers, enable_proxy=True)
+        else:
+            model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, enable_proxy=True)
 
         # Compile the model
         qpc_path = model.compile(
             prefill_seq_len=args.prefill_seq_len,
             ctx_len=args.ctx_len,
             num_cores=args.num_cores,
-            num_devices=16,
+            num_devices=8,
         )
         print(f"Model compiled to: {qpc_path}")
 
@@ -72,8 +79,11 @@ def main():
         print(f"Generated: {exec_info.generated_texts[0]}")
 
     # setup qaic config to enable blocking, ensure 4 or more device ids are passed
-    qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode, "kv_blocking_headpar_split": 0}
-    model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
+    qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode, "kv_blocking_headpar_split": 16, "num_kv_blocks": 2}
+    if args.num_layers:
+        model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, num_hidden_layers=args.num_layers, enable_proxy=True)
+    else:
+        model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, enable_proxy=True)
 
     # model_blocked._offload_model_weights(True)
 
@@ -82,7 +92,10 @@ def main():
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
-        num_devices=16,
+        num_devices=8,
+        mxfp6_matmul=True,
+        mxint8_kv_cache=True,
+        use_onnx_subfunctions=False,
         qaic_config=qaic_config,
         user_tiled=True,
         node_precision_info=non_subfunc_npi_file_path,
