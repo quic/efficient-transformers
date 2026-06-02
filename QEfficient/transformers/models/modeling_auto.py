@@ -827,6 +827,9 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
             Use MXFP6 compression for weights. Default is False.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Defaults to False
+        moe_prefill_packed_chunk_size : int, optional
+            Packed rows per expert-blocked MoE chunk for prefill-only chunked export. Applies only when
+            ``prefill_only=True`` and ``enable_chunking=True``. Default is 256.
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -1621,6 +1624,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.qpc_paths = {}
         if not skip_vision:
             vision_qpc_path = self.vision_model._compile(
+                onnx_path=self.vision_model.onnx_path,
                 compile_dir=compile_dir,
                 specializations=specializations["vision"],
                 specialization_module_name="Vision",
@@ -1669,6 +1673,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 qpc_key = "lang_qpc_path"
 
             lang_qpc_path = self.lang_model._compile(
+                onnx_path=self.lang_model.onnx_path,
                 compile_dir=compile_dir,
                 retained_state=True,
                 specializations=specializations,
@@ -3029,11 +3034,27 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         return self.model.config.__dict__
 
     def get_seq_len_and_handle_specialized_prefill_model(
-        self, prefill_seq_len: Optional[int] = None, enable_chunking=False
+        self,
+        prefill_seq_len: Optional[int] = None,
+        enable_chunking=False,
+        num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
     ) -> int:
         self.hash_params["prefill_only"] = True
         if enable_chunking:
             self.hash_params["chunking"] = True
+            compile_seq_len = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+            num_packed_chunks = max(1, -(-compile_seq_len // moe_prefill_packed_chunk_size))
+            for module in self.model.modules():
+                if getattr(module, "supports_moe_prefill_blocking", False):
+                    module.expert_blocking_num_nsp = num_cores
+                    module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
+                    module.expert_blocking_num_packed_chunks = num_packed_chunks
+            self.hash_params["moe_prefill_num_nsp"] = num_cores
+            self.hash_params["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
+            self.hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
+            if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe"}:
+                return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
             return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
         num_q_blocks = (
@@ -3080,6 +3101,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         export_dir: Optional[str] = None,
         prefill_only: Optional[bool] = False,
         prefill_seq_len: Optional[int] = None,
+        num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         **kwargs,
     ) -> str:
         """
@@ -3145,13 +3168,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("retain_full_kv", None)
                 if "DeepseekV3ForCausalLM" not in (getattr(self.model.config, "architectures", None) or []):
                     seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
-                        prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
+                        prefill_seq_len=prefill_seq_len,
+                        enable_chunking=enable_chunking,
+                        num_cores=num_cores,
+                        moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                     )
+                    sliding_window = getattr(self.model.config, "sliding_window", None)
                     kv_cache_shape[2] = (
-                        seq_len
-                        + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
-                        if enable_chunking
-                        else seq_len
+                        seq_len + (sliding_window if sliding_window is not None else 0) if enable_chunking else seq_len
                     )
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
@@ -3160,10 +3184,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("NUM_FFN_BLOCKS", None)
                 self.hash_params.pop("ENABLE_OPT_SWA", None)
                 self.hash_params.pop("chunking", None)
+                self.hash_params.pop("moe_prefill_num_nsp", None)
+                self.hash_params.pop("moe_prefill_packed_chunk_size", None)
+                self.hash_params.pop("moe_prefill_num_packed_chunks", None)
                 if kwargs.get("retain_full_kv", False):
-                    kv_cache_shape[2] = seq_len + (
-                        self.model.config.sliding_window if self.model.config.sliding_window is not None else 0
-                    )
+                    sliding_window = getattr(self.model.config, "sliding_window", None)
+                    kv_cache_shape[2] = seq_len + (sliding_window if sliding_window is not None else 0)
                     self.hash_params["retain_full_kv"] = True
 
         example_inputs = {
@@ -3497,6 +3523,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         use_onnx_subfunctions: bool = False,
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
+        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         retain_full_kv: Optional[bool] = None,
         **compiler_options,
     ) -> str:
@@ -3752,6 +3779,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             mxint8_kv_cache=mxint8_kv_cache,
             use_onnx_subfunctions=use_onnx_subfunctions,
             prefill_only=prefill_only,
+            moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
             offload_pt_weights=offload_pt_weights,
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,

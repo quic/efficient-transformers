@@ -69,6 +69,7 @@ def CtxScatter3D(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates
 
     # Create indices
     batch_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, batch_size, one), [1, 2]), exp_shape)
+    batch_idx = ops.Cast(batch_idx, to=onnxscript.INT32.dtype)
     ctx_idx = ops.Expand(ops.Unsqueeze(position_ids, [2]), exp_shape)
     indices = ops.Concat(batch_idx, ctx_idx, axis=2)
 
@@ -92,9 +93,74 @@ class CtxScatterFunc3D(torch.autograd.Function):
         return g.onnxscript_op(CtxScatter3D, data, position_ids, updates).setTypeAs(data)
 
 
+class CtxScatterFunc3DGeneralized(torch.autograd.Function):
+    """3D scatter variant that leaves INT32_MAX positions untouched."""
+
+    @staticmethod
+    def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+        data = data.clone()
+        valid = position_ids != torch.iinfo(torch.int32).max
+        batch_idx = torch.arange(data.shape[0], device=data.device).view(-1, 1).expand_as(position_ids)
+        data[batch_idx[valid], position_ids[valid].long()] = updates[valid]
+        return data
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
+        return g.onnxscript_op(CtxScatter3D, data, position_ids, updates).setTypeAs(data)
+
+
+@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+def CtxScatter3DInt(
+    data: onnxscript.INT32, position_ids: onnxscript.INT32, updates: onnxscript.INT32
+) -> onnxscript.INT32:
+    # Find dims
+    batch_size = ops.Gather(ops.Shape(data), [0])
+    seq_len = ops.Gather(ops.Shape(position_ids), [1])
+
+    # Expanded shape to create indices
+    zero = ops.Constant(value_ints=[0])
+    one = ops.Constant(value_ints=[1])
+    exp_shape = ops.Concat(batch_size, seq_len, one, axis=0)
+
+    # Create indices
+    batch_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, batch_size, one), [1, 2]), exp_shape)
+    batch_idx = ops.Cast(batch_idx, to=onnxscript.INT32.dtype)
+    ctx_idx = ops.Expand(ops.Unsqueeze(position_ids, [2]), exp_shape)
+    indices = ops.Concat(batch_idx, ctx_idx, axis=2)
+
+    return ops.ScatterND(data, indices, updates)
+
+
+class CtxScatterFunc3DInt(torch.autograd.Function):
+    """Int32 3D scatter used to build packed-to-original index tables."""
+
+    @staticmethod
+    def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+        data = data.clone()
+        valid = position_ids != torch.iinfo(torch.int32).max
+        batch_idx = torch.arange(data.shape[0], device=data.device).view(-1, 1).expand_as(position_ids)
+        data[batch_idx[valid], position_ids[valid].long()] = updates[valid]
+        return data
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
+        return g.onnxscript_op(CtxScatter3DInt, data, position_ids, updates).setTypeAs(data)
+
+
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxGather3D(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
-    ctx_indices = ops.Expand(ctx_indices, ops.Slice(ops.Shape(data), starts=[0], ends=[2], axes=[0]))
+    batch_size = ops.Slice(ops.Shape(data), starts=[0], ends=[1], axes=[0])
+    idx_seq_len = ops.Slice(ops.Shape(ctx_indices), starts=[1], ends=[2], axes=[0])
+    expand_shape = ops.Concat(batch_size, idx_seq_len, axis=0)
+    ctx_indices = ops.Expand(ctx_indices, expand_shape)
     ctx_indices = ops.Unsqueeze(ctx_indices, [-1])
     return ops.GatherND(data, ctx_indices, batch_dims=1)
 
@@ -102,7 +168,8 @@ def CtxGather3D(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxsc
 class CtxGatherFunc3D(torch.autograd.Function):
     @staticmethod
     def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
-        batch_indices = torch.arange(data.shape[0]).view(-1, 1)
+        batch_indices = torch.arange(data.shape[0], device=data.device).view(-1, 1)
+        ctx_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
         return data[batch_indices, ctx_indices]
 
     @staticmethod
@@ -112,6 +179,29 @@ class CtxGatherFunc3D(torch.autograd.Function):
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxGather3D, data, ctx_indices).setTypeAs(data)
+
+
+class CtxGatherFunc3DGeneralized(torch.autograd.Function):
+    """3D gather variant that leaves ONNX output shape inference to the custom op.
+
+    Eager execution intentionally matches ``CtxGatherFunc3D``. During ONNX export,
+    this variant does not call ``setTypeAs(data)`` because GLM MoE packed prefill
+    gathers return an index-shaped output rather than a data-shaped output.
+    """
+
+    @staticmethod
+    def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
+        batch_indices = torch.arange(data.shape[0], device=data.device).view(-1, 1)
+        ctx_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
+        return data[batch_indices, ctx_indices]
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
+        return g.onnxscript_op(CtxGather3D, data, ctx_indices)
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
