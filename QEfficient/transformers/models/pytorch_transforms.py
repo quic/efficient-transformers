@@ -140,19 +140,6 @@ from transformers.models.mixtral.modeling_mixtral import (
     MixtralRMSNorm,
     MixtralSparseMoeBlock,
 )
-from transformers.models.mllama.modeling_mllama import (
-    MllamaCrossAttentionDecoderLayer,
-    MllamaForCausalLM,
-    MllamaForConditionalGeneration,
-    MllamaModel,
-    MllamaRotaryEmbedding,
-    MllamaSelfAttentionDecoderLayer,
-    MllamaTextCrossAttention,
-    MllamaTextModel,
-    MllamaTextRMSNorm,
-    MllamaTextSelfAttention,
-    MllamaVisionModel,
-)
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
 from transformers.models.olmo2.modeling_olmo2 import (
     Olmo2Attention,
@@ -428,19 +415,6 @@ from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
     QEffMixtralModel,
     QEffMixtralSparseMoeBlock,
 )
-from QEfficient.transformers.models.mllama.modeling_mllama import (
-    QEffMllamaCrossAttentionDecoderLayer,
-    QEffMllamaForCausalLM,
-    QEffMllamaForConditionalGeneration,
-    QEffMllamaModel,
-    QEffMllamaRotaryEmbedding,
-    QEffMllamaSelfAttentionDecoderLayer,
-    QEffMllamaTextCrossAttentionSingleQPC,
-    QEffMllamaTextCrossAttentionTwoQPC,
-    QEffMllamaTextModel,
-    QEffMllamaTextSelfAttention,
-    QEffMllamaVisionModel,
-)
 from QEfficient.transformers.models.molmo.modeling_molmo import (
     QEffMolmo,
     QEffMolmoBlock,
@@ -572,7 +546,6 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen2RMSNorm: CustomRMSNormAIC,
         Qwen3RMSNorm: CustomRMSNormAIC,
         Qwen2_5RMSNorm: CustomRMSNormAIC,
-        MllamaTextRMSNorm: CustomRMSNormAIC,
         GraniteRMSNorm: CustomRMSNormAIC,
         PixtralRMSNorm: CustomRMSNormAIC,
         GraniteMoeRMSNorm: CustomRMSNormAIC,
@@ -705,17 +678,6 @@ class KVCacheTransform(ModuleMappingTransform):
         GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
         GraniteMoeMoE: QEffGraniteMoeMoE,
         GraniteMoeDecoderLayer: QEffGraniteMoeDecoderLayer,
-        # mllama
-        MllamaTextRMSNorm: CustomRMSNormAIC,
-        MllamaTextSelfAttention: QEffMllamaTextSelfAttention,
-        MllamaSelfAttentionDecoderLayer: QEffMllamaSelfAttentionDecoderLayer,
-        MllamaModel: QEffMllamaModel,
-        MllamaCrossAttentionDecoderLayer: QEffMllamaCrossAttentionDecoderLayer,
-        MllamaRotaryEmbedding: QEffMllamaRotaryEmbedding,
-        MllamaVisionModel: QEffMllamaVisionModel,
-        MllamaTextModel: QEffMllamaTextModel,
-        MllamaForCausalLM: QEffMllamaForCausalLM,
-        MllamaForConditionalGeneration: QEffMllamaForConditionalGeneration,
         # Mistral
         MistralAttention: QEffMistralAttention,
         MistralDecoderLayer: QEffMistralDecoderLayer,
@@ -1020,7 +982,6 @@ class VlmKVOffloadTransform(ModuleMappingTransform):
     # supported architectures
     _module_mapping = {
         # Llama
-        MllamaTextCrossAttention: QEffMllamaTextCrossAttentionTwoQPC,
     }
 
 
@@ -1028,7 +989,6 @@ class VlmNoKVOffloadTransform(ModuleMappingTransform):
     # supported architectures
     _module_mapping = {
         # Llama
-        MllamaTextCrossAttention: QEffMllamaTextCrossAttentionSingleQPC,
     }
 
 

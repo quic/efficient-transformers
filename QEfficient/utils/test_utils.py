@@ -447,7 +447,6 @@ class ModelConfig:
         "google/gemma-3-4b-it",
         "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
         "Qwen/Qwen2.5-VL-3B-Instruct",
-        "meta-llama/Llama-3.2-11B-Vision-Instruct",
     }
 
     INTERNVL_MODELS = {
@@ -462,7 +461,6 @@ class ModelConfig:
     SKIPPED_MODELS = {
         "meta-llama/Llama-4-Scout-17B-16E-Instruct",
         "allenai/Molmo-7B-D-0924",
-        "meta-llama/Llama-3.2-11B-Vision-Instruct",
         "wtang06/mpt-125m-c4",
         "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
         "OpenGVLab/InternVL2_5-1B",

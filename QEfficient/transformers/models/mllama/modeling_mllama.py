@@ -7,7 +7,6 @@
 
 """PyTorch Mllama model."""
 
-import sys
 import warnings
 from typing import List, Optional, Tuple, Type, Union
 
@@ -54,7 +53,6 @@ _MLLAMA_DEPRECATION_MSG = (
 )
 
 warnings.warn(_MLLAMA_DEPRECATION_MSG, DeprecationWarning, stacklevel=2)
-sys.exit(1)
 
 MAX_NUM_IMG = 1
 NUM_CHANNEL = 3

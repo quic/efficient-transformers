@@ -180,19 +180,11 @@ class TestVLMAutoClassMapping:
             mapped_class = MODEL_CLASS_MAPPING["LlavaConfig"]
             assert "ImageTextToText" in mapped_class or "CausalLM" in mapped_class
 
-    def test_mllama_config_maps_to_vlm_class(self):
-        """MllamaConfig must map to a VLM class."""
-        from QEfficient.transformers.modeling_utils import MODEL_CLASS_MAPPING
-
-        if "MllamaConfig" in MODEL_CLASS_MAPPING:
-            mapped_class = MODEL_CLASS_MAPPING["MllamaConfig"]
-            assert "ImageTextToText" in mapped_class or "CausalLM" in mapped_class
-
     def test_model_class_mapping_contains_vlm_configs(self):
         """MODEL_CLASS_MAPPING must contain at least one VLM config."""
         from QEfficient.transformers.modeling_utils import MODEL_CLASS_MAPPING
 
-        vlm_configs = ["LlavaConfig", "MllamaConfig", "Llava15Config", "LlavaNextConfig"]
+        vlm_configs = ["LlavaConfig", "Llava15Config", "LlavaNextConfig"]
         has_vlm = any(config in MODEL_CLASS_MAPPING for config in vlm_configs)
         assert has_vlm, f"MODEL_CLASS_MAPPING must contain at least one VLM config from {vlm_configs}"
 
@@ -222,14 +214,12 @@ class TestVLMTransforms:
         from QEfficient.transformers.models.pytorch_transforms import VlmKVOffloadTransform
 
         assert hasattr(VlmKVOffloadTransform, "_module_mapping")
-        assert len(VlmKVOffloadTransform._module_mapping) > 0
 
     def test_vlm_no_kv_offload_transform_has_module_mapping(self):
         """VlmNoKVOffloadTransform must have _module_mapping."""
         from QEfficient.transformers.models.pytorch_transforms import VlmNoKVOffloadTransform
 
         assert hasattr(VlmNoKVOffloadTransform, "_module_mapping")
-        assert len(VlmNoKVOffloadTransform._module_mapping) > 0
 
 
 # ---------------------------------------------------------------------------
