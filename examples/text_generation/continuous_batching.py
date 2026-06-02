@@ -62,7 +62,7 @@ def main():
     exec_info = model.generate(
         tokenizer=tokenizer,
         prompts=prompt_list,
-        device_id=args.device_group,
+        device_ids=args.device_group,
         generation_len=args.generation_len,
     )
 
