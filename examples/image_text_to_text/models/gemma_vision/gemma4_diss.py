@@ -43,7 +43,6 @@ DISABLE_NPI = False
 ENABLE_FP16_CLIP = True
 remove_fp16clip_transform_if_disabled(qeff_model, ENABLE_FP16_CLIP)
 npi_mode = resolve_npi_mode(ENABLE_NPI, DISABLE_NPI)
-breakpoint()
 PREFILL_SEQ_LEN = 296
 CTX_LEN = 4096
 BS = 1
@@ -212,7 +211,6 @@ else:
     )  # Need to use -1 as position_ids for invalid tokens
 
 lang_inputs["image_idx"] = np.array([[0]])
-# breakpoint()
 if not skip_vision:
     lang_inputs["vision_embeds"] = vision_outputs["vision_embeds"]
 
@@ -224,7 +222,6 @@ chunk_inputs = lang_inputs.copy()
 for i in range(num_chunks):
     chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
     chunk_inputs["position_ids"] = lang_inputs["position_ids"][..., i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
-    breakpoint()
     outputs = lang_prefill_session.run(chunk_inputs)
     for i in range(config.text_config.num_hidden_layers):
         chunk_inputs[f"past_key.{i}"] = outputs[f"past_key.{i}_RetainedState"]

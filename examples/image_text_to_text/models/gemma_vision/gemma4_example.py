@@ -23,6 +23,7 @@ TEXT_PROMPT = "Tell me about Taj Mahal?"
 IMAGE_PROMPT = "Can you Describe this image in detail?"
 IMAGE_URL = "https://wallup.net/wp-content/uploads/2017/03/28/351036-San_Francisco-USA-bridge-sunset-Golden_Gate_Bridge-lights.jpg"
 SKIP_VISION = False
+BS = 1
 PREFILL_SEQ_LEN = 128
 CTX_LEN = 2048
 GENERATION_LEN = 1920
@@ -31,13 +32,14 @@ NUM_VISION_HIDDEN_LAYER = 2
 
 compiler_kwargs = {
     "NUM_CORES": 16,
-    "NUM_DEVICES": 2,
+    "NUM_DEVICES": 4,
     "MXFP6_MATMUL": True,
     "MXINT8_KV_CACHE": True,
     "AIC_ENABLE_DEPTH_FIRST": True,
     "MOS": 1,
     "USE_ONNX_SUBFUNCTIONS": False,
     "split_model_io": True,
+    "BATCH_SIZE": BS,
 }
 
 
