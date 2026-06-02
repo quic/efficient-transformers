@@ -134,13 +134,7 @@ class QEffInternVLModel(nn.Module):
             raise NotImplementedError("Image Size other than 448 is not supported for Intern models yet.")
 
         per_patch_embed_size = (img_size // self.config.vision_config.patch_size * self.config.downsample_ratio) ** 2
-        user_vision_size = compiler_options.pop("vision_size", None)
-        if user_vision_size:
-            if user_vision_size >= ctx_len:
-                raise ValueError("vision_size must be less than ctx_len")
-            vision_size = user_vision_size
-        else:
-            vision_size = int(batch_size * num_patches * per_patch_embed_size)
+        vision_size = int(batch_size * num_patches * per_patch_embed_size)
         vision = [
             {
                 "batch_size": batch_size,

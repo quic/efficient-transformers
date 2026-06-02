@@ -731,18 +731,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         elif img_size is None:
             img_size = 896  # FIXME based on gemma3 Image size
             logger.warning("Setting img_size to be 336, as it was neither passed nor found in vision_config")
-        user_vision_size = compiler_options.pop("vision_size", None)
-        if user_vision_size:
-            if user_vision_size >= ctx_len:
-                raise ValueError("vision_size must be less than ctx_len")
-            vision_size = user_vision_size
-        else:
-            _mm_tokens_per_image = getattr(self.config, "mm_tokens_per_image", None)
-            if _mm_tokens_per_image:
-                logger.warning_once("mm_tokens_per_image is deprecated and will be removed in the next release.")
-                vision_size = _mm_tokens_per_image
-            else:
-                vision_size = 256
+        mm_tokens_per_image = getattr(self.config, "mm_tokens_per_image", 256)
 
         vision = [
             {
@@ -763,7 +752,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                     "comp_ctx_lengths": comp_ctx_lengths_prefill[i],
                     "sliding_window": self.language_model.config.sliding_window,
                     "img_size": img_size,
-                    "vision_size": vision_size,
+                    "mm_tokens_per_image": mm_tokens_per_image,
                     "vision_batch_size": batch_size,
                 }
                 if continuous_batching:
@@ -782,7 +771,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                     "comp_ctx_lengths": comp_ctx_lengths_decode[i],
                     "sliding_window": self.language_model.config.sliding_window,
                     "img_size": img_size,
-                    "vision_size": vision_size,
+                    "mm_tokens_per_image": mm_tokens_per_image,
                     "vision_batch_size": batch_size,
                 }
                 if continuous_batching:
@@ -798,7 +787,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                 "ctx_len": ctx_len,
                 "sliding_window": self.language_model.config.sliding_window,
                 "img_size": img_size,
-                "vision_size": vision_size,
+                "mm_tokens_per_image": mm_tokens_per_image,
                 "vision_batch_size": batch_size,
             }
             if continuous_batching:
@@ -814,7 +803,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                 "ctx_len": ctx_len,
                 "sliding_window": self.language_model.config.sliding_window,
                 "img_size": img_size,
-                "vision_size": vision_size,
+                "mm_tokens_per_image": mm_tokens_per_image,
                 "vision_batch_size": batch_size,
             }
             if continuous_batching:
@@ -840,7 +829,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         lang_dynamic_axes = {}
         lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
-        lang_dynamic_axes["vision_embeds"] = {0: "vision_batch_size", 1: "vision_size"}
+        lang_dynamic_axes["vision_embeds"] = {0: "vision_batch_size", 1: "mm_tokens_per_image"}
         if continuous_batching:
             lang_dynamic_axes["batch_index"] = {0: "batch_size"}
         vision_dynamic_axes["pixel_values"] = {0: "batch_size", 2: "img_size", 3: "img_size"}
@@ -922,19 +911,13 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         else:
             img_size = 896
 
-        _mm_tokens_per_image = getattr(self.config, "mm_tokens_per_image", None)
-        if _mm_tokens_per_image:
-            logger.warning_once("mm_tokens_per_image is deprecated and will be removed in the next release.")
-            vision_size = _mm_tokens_per_image
-        else:
-            vision_size = 256
-
+        mm_tokens_per_image = getattr(self.config, "mm_tokens_per_image", 256)
         # Define shapes
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
         inputs_shapes["vision_embeds"] = (
             1,  # constants.INTERN_NUM_PATCHES,
-            vision_size,  # constants.INTERN_FEATURE_SIZE,
+            mm_tokens_per_image,  # constants.INTERN_FEATURE_SIZE,
             self.language_model.config.hidden_size,  # 5120
         )
         inputs_shapes["position_ids"] = (
