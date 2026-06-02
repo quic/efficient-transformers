@@ -1011,27 +1011,27 @@ class TestQEFFAutoModelForCTC:
 class TestTLMMultiSpecSpecializations:
     """Tests for the multi-spec decode specialization API (num_speculative_tokens as list)."""
 
-    # ---- _build_decode_spec_for_k ----
+    # ---- build_decode_specialization (multi-spec) ----
 
     def test_build_decode_spec_for_k_seq_len(self):
-        """_build_decode_spec_for_k sets seq_len = num_speculative_tokens+1."""
+        """build_decode_specialization sets seq_len = num_speculative_tokens+1 for TLM."""
         model, _ = make_tiny_llama()
         qeff = QEFFAutoModelForCausalLM(model)
         qeff.is_tlm = True
         for k in [0, 1, 3, 7]:
-            spec = qeff._build_decode_spec_for_k(
+            spec = qeff.build_decode_specialization(
                 num_speculative_tokens=k, ctx_len=128, batch_size=1, kv_cache_batch_size=1, prefill_seq_len=32
             )
             assert spec is not None
             assert spec["seq_len"] == k + 1
 
     def test_build_decode_spec_for_k_num_logits_to_keep(self):
-        """_build_decode_spec_for_k sets num_logits_to_keep = num_speculative_tokens+1."""
+        """build_decode_specialization sets num_logits_to_keep = num_speculative_tokens+1 for TLM."""
         model, _ = make_tiny_llama()
         qeff = QEFFAutoModelForCausalLM(model)
         qeff.is_tlm = True
         for k in [0, 1, 3]:
-            spec = qeff._build_decode_spec_for_k(
+            spec = qeff.build_decode_specialization(
                 num_speculative_tokens=k, ctx_len=128, batch_size=1, kv_cache_batch_size=1, prefill_seq_len=32
             )
             assert spec["num_logits_to_keep"] == k + 1
@@ -1042,7 +1042,7 @@ class TestTLMMultiSpecSpecializations:
         qeff = QEFFAutoModelForCausalLM(model)
         qeff.is_tlm = True
         # num_speculative_tokens=0 → seq_len=1 == prefill_seq_len=1 → should be None
-        spec = qeff._build_decode_spec_for_k(
+        spec = qeff.build_decode_specialization(
             num_speculative_tokens=0, ctx_len=128, batch_size=1, kv_cache_batch_size=1, prefill_seq_len=1
         )
         assert spec is None
@@ -1053,7 +1053,7 @@ class TestTLMMultiSpecSpecializations:
         qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
         qeff.is_tlm = True
         # num_speculative_tokens=0 → seq_len=1 == prefill_seq_len=1, but CB is True → should not be None
-        spec = qeff._build_decode_spec_for_k(
+        spec = qeff.build_decode_specialization(
             num_speculative_tokens=0,
             ctx_len=128,
             batch_size=1,

@@ -483,7 +483,7 @@ def test_dummy_pld_inference(model_id, manual_cleanup):
 @pytest.mark.parametrize("decode_ks", [[3], [0, 3], [1, 2, 3], [0, 1, 2, 3]])
 def test_multi_spec_structure(model_id, decode_ks):
     """
-    Verify that _build_decode_spec_for_k produces correct specializations for each K value.
+    Verify that build_decode_specialization produces correct specializations for each K value.
     No hardware required.
     """
     target_model_name = model_config_dict[model_id]["target_model_name"]
@@ -504,7 +504,7 @@ def test_multi_spec_structure(model_id, decode_ks):
 
     specs = []
     for k in sorted(set(decode_ks)):
-        spec = target_model._build_decode_spec_for_k(
+        spec = target_model.build_decode_specialization(
             num_speculative_tokens=k,
             ctx_len=ctx_len,
             batch_size=batch_size,
@@ -512,7 +512,7 @@ def test_multi_spec_structure(model_id, decode_ks):
             full_batch_size=full_batch_size,
             prefill_seq_len=prefill_seq_len,
         )
-        assert spec is not None, f"_build_decode_spec_for_k returned None for k={k}"
+        assert spec is not None, f"build_decode_specialization returned None for k={k}"
         assert spec["seq_len"] == k + 1, f"Expected seq_len={k + 1}, got {spec['seq_len']}"
         assert spec["num_logits_to_keep"] == k + 1, (
             f"Expected num_logits_to_keep={k + 1}, got {spec['num_logits_to_keep']}"
