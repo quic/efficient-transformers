@@ -102,7 +102,11 @@ pipeline {
                            mkdir -p $PWD/Non_qaic_llm &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic_llm &&
-                           pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log2.xml --durations=10 &&
+                           export QEFF_QAIC_DEVICE_POOL=0,1,2,3 &&
+                           PYTEST_XDIST_ARGS='-n 4 --dist loadscope' &&
+                           export QEFF_ENABLE_QAIC_DEVICE_ALLOCATOR=1 &&
+                           if [ x${TEST_PROFILE} = xfull_layers_model ]; then PYTEST_XDIST_ARGS=''; unset QEFF_ENABLE_QAIC_DEVICE_ALLOCATOR; fi &&
+                           pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline \${PYTEST_XDIST_ARGS} --junitxml=tests/tests_log2.xml --durations=10 &&
                            junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -123,7 +127,11 @@ pipeline {
                     mkdir -p $PWD/Non_qaic_feature &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Non_qaic_feature &&
-                    pytest tests -m '(on_qaic) and (feature) and (not qnn) and ${TEST_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log2_feature.xml --durations=10 &&
+                    export QEFF_QAIC_DEVICE_POOL=0,1,2,3 &&
+                    PYTEST_XDIST_ARGS='-n 4 --dist loadscope' &&
+                    export QEFF_ENABLE_QAIC_DEVICE_ALLOCATOR=1 &&
+                    if [ x${TEST_PROFILE} = xfull_layers_model ]; then PYTEST_XDIST_ARGS=''; unset QEFF_ENABLE_QAIC_DEVICE_ALLOCATOR; fi &&
+                    pytest tests -m '(on_qaic) and (feature) and (not qnn) and ${TEST_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline \${PYTEST_XDIST_ARGS} --junitxml=tests/tests_log2_feature.xml --durations=10 &&
                     junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml &&
                     deactivate"
                     '''
@@ -141,7 +149,11 @@ pipeline {
                     mkdir -p $PWD/Non_cli_qaic_multimodal &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
-                    pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py --junitxml=tests/tests_log6.xml --durations=10 &&
+export QEFF_QAIC_DEVICE_POOL=0,1,2,3 &&
+                    PYTEST_XDIST_ARGS='-n 4 --dist loadscope' &&
+                    export QEFF_ENABLE_QAIC_DEVICE_ALLOCATOR=1 &&
+                    if [ x${TEST_PROFILE} = xfull_layers_model ]; then PYTEST_XDIST_ARGS=''; unset QEFF_ENABLE_QAIC_DEVICE_ALLOCATOR; fi &&
+                    pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py \${PYTEST_XDIST_ARGS} --junitxml=tests/tests_log6.xml --durations=10 &&
                     junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
                     deactivate"
                     '''
@@ -179,7 +191,11 @@ pipeline {
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Non_cli_qaic_diffusion &&
                     export HF_HUB_CACHE=/huggingface_hub &&
-                    pytest tests -m 'diffusion_models' --ignore tests/vllm  --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log_diffusion.xml --durations=10 &&
+                    export QEFF_QAIC_DEVICE_POOL=0,1,2,3 &&
+                    PYTEST_XDIST_ARGS='-n 4 --dist loadscope' &&
+                    export QEFF_ENABLE_QAIC_DEVICE_ALLOCATOR=1 &&
+                    if [ x${TEST_PROFILE} = xfull_layers_model ]; then PYTEST_XDIST_ARGS=''; unset QEFF_ENABLE_QAIC_DEVICE_ALLOCATOR; fi &&
+                    pytest tests -m 'diffusion_models' --ignore tests/vllm  --ignore tests/unit_test --ignore tests/nightly_pipeline \${PYTEST_XDIST_ARGS} --junitxml=tests/tests_log_diffusion.xml --durations=10 &&
                     junitparser merge tests/tests_log_diffusion.xml tests/tests_log.xml &&
                     deactivate"
                     '''
@@ -200,7 +216,10 @@ pipeline {
                     mkdir -p $PWD/cli &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/cli &&
-                    pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log3.xml --durations=10 &&
+                    export QEFF_QAIC_DEVICE_POOL=0,1,2,3 &&
+                    PYTEST_XDIST_ARGS='-n 4 --dist loadscope' &&
+                    export QEFF_ENABLE_QAIC_DEVICE_ALLOCATOR=1 &&
+                    pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline \${PYTEST_XDIST_ARGS} --junitxml=tests/tests_log3.xml --durations=10 &&
                     junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
                     deactivate"
                     '''

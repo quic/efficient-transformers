@@ -7,13 +7,22 @@
 
 import os
 import shutil
+import tempfile
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 from transformers import logging
 
+import QEfficient.utils.cache as qeff_cache
 from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.logging_utils import logger
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - CI runs on Linux.
+    fcntl = None
 
 _QUICKCHECK_FILE = "tests/unit_test/models/test_model_quickcheck.py"
 _QUICKCHECK_SUMMARY = {}
@@ -65,6 +74,68 @@ _QUICKCHECK_META = {
 }
 
 
+def _qaic_device_pool():
+    pool = os.environ.get("QEFF_QAIC_DEVICE_POOL", "0,1,2,3")
+    return [int(device_id) for device_id in pool.split(",") if device_id.strip()]
+
+
+def _qaic_device_lock_dir():
+    return Path(os.environ.get("QEFF_QAIC_DEVICE_LOCK_DIR", tempfile.gettempdir())) / "qeff_qaic_device_locks"
+
+
+@contextmanager
+def _allocated_qaic_device():
+    devices = _qaic_device_pool()
+    if not devices:
+        yield None
+        return
+
+    lock_dir = _qaic_device_lock_dir()
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    locked_file = None
+    try:
+        while True:
+            for device_id in devices:
+                lock_file = open(lock_dir / f"device_{device_id}.lock", "a+", encoding="utf-8")
+                if fcntl is None:
+                    locked_file = lock_file
+                    yield device_id
+                    return
+                try:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    lock_file.close()
+                    continue
+                locked_file = lock_file
+                yield device_id
+                return
+            time.sleep(1)
+    finally:
+        if locked_file is not None:
+            try:
+                if fcntl is not None:
+                    fcntl.flock(locked_file.fileno(), fcntl.LOCK_UN)
+                locked_file.close()
+            except OSError:
+                pass
+
+
+def _configure_worker_qeff_home():
+    global QEFF_HOME
+
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    if not worker_id:
+        return
+
+    base_qeff_home = Path(os.environ.get("QEFF_HOME", str(QEFF_HOME)))
+    worker_qeff_home = base_qeff_home if base_qeff_home.name == worker_id else base_qeff_home / worker_id
+    worker_qeff_home.mkdir(parents=True, exist_ok=True)
+    os.environ["QEFF_HOME"] = str(worker_qeff_home)
+
+    QEFF_HOME = worker_qeff_home
+    qeff_cache.QEFF_HOME = worker_qeff_home
+
+
 def _is_nightly_pipeline_session(session):
     """Check if this is a nightly_pipeline test session"""
     # Check invocation args
@@ -82,7 +153,7 @@ def _is_nightly_pipeline_session(session):
     return False
 
 
-def qeff_models_clean_up(qeff_dir=QEFF_HOME):
+def qeff_models_clean_up(qeff_dir=None):
     """
     Clean up QEFF models and cache.
 
@@ -90,6 +161,9 @@ def qeff_models_clean_up(qeff_dir=QEFF_HOME):
         qeff_dir: Can be a string (file/dir path), PosixPath, or list of strings/PosixPath objects
                  If a file path is provided, its parent directory will be deleted
     """
+    if qeff_dir is None:
+        qeff_dir = QEFF_HOME
+
     if isinstance(qeff_dir, (str, Path)):
         paths = [qeff_dir]
     else:
@@ -117,6 +191,37 @@ def manual_cleanup():
     return qeff_models_clean_up
 
 
+@pytest.fixture(autouse=True)
+def qaic_device_allocator(request, monkeypatch):
+    """Assign one QAIC device per on_qaic test when xdist is enabled in CI.
+
+    The allocator is opt-in so full-layer or multi-device runs can stay on the
+    default runtime behavior. For one-device tests it redirects the implicit
+    default device 0 to the worker's locked device.
+    """
+    if "on_qaic" not in request.keywords or os.environ.get("QEFF_ENABLE_QAIC_DEVICE_ALLOCATOR") != "1":
+        yield
+        return
+
+    with _allocated_qaic_device() as device_id:
+        if device_id is None:
+            yield
+            return
+
+        monkeypatch.setenv("QEFF_QAIC_DEVICE_ID", str(device_id))
+        from QEfficient.generation.cloud_infer import QAICInferenceSession
+
+        original_init = QAICInferenceSession.__init__
+
+        def _init_with_allocated_device(self, qpc_path, device_ids=None, *args, **kwargs):
+            if device_ids is None or device_ids == [0]:
+                device_ids = [device_id]
+            return original_init(self, qpc_path, device_ids, *args, **kwargs)
+
+        monkeypatch.setattr(QAICInferenceSession, "__init__", _init_with_allocated_device)
+        yield
+
+
 def pytest_sessionstart(session):
     logger.info("PYTEST Session Starting ...")
     # Skip cleanup for nightly_pipeline tests
@@ -131,6 +236,7 @@ def pytest_sessionstart(session):
 
 def pytest_configure(config):
     """Register custom markers for test categorization."""
+    _configure_worker_qeff_home()
     config.addinivalue_line("markers", "llm_model: mark test as a pure LLM model inference test")
     config.addinivalue_line(
         "markers", "feature: mark test as a feature-specific test (SPD, sampler, prefix caching, LoRA, etc.)"

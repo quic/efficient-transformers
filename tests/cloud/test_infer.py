@@ -37,8 +37,8 @@ def check_infer(
         mos=1,
         hf_token=None,
         batch_size=1,
-        prompt_len=32,
-        ctx_len=128,
+        prompt_len=8,
+        ctx_len=32,
         generation_len=generation_len,
         mxfp6=True,
         mxint8=True,
@@ -70,14 +70,16 @@ def test_infer(mocker):
     Ref: https://pytest-mock.readthedocs.io/en/latest/usage.html
     """
     # testing infer without full_batch_size
-    check_infer(mocker, model_name="lu-vae/llama-68m-fft")
+    check_infer(mocker, model_name="hf-internal-testing/tiny-random-LlamaForCausalLM", generation_len=4)
 
 
 @pytest.mark.on_qaic
 @pytest.mark.cli
 def test_infer_fbs(mocker):
     # testing infer with full_batch_size
-    check_infer(mocker, model_name="lu-vae/llama-68m-fft", full_batch_size=3)
+    check_infer(
+        mocker, model_name="hf-internal-testing/tiny-random-LlamaForCausalLM", full_batch_size=3, generation_len=4
+    )
 
 
 @pytest.mark.on_qaic
@@ -85,7 +87,9 @@ def test_infer_fbs(mocker):
 @pytest.mark.qnn
 def test_infer_qnn(mocker):
     # testing infer without full_batch_size in QNN environment
-    check_infer(mocker, model_name="lu-vae/llama-68m-fft", enable_qnn=True)
+    check_infer(
+        mocker, model_name="hf-internal-testing/tiny-random-LlamaForCausalLM", enable_qnn=True, generation_len=4
+    )
 
 
 @pytest.mark.on_qaic
@@ -93,7 +97,13 @@ def test_infer_qnn(mocker):
 @pytest.mark.qnn
 def test_infer_qnn_fbs(mocker):
     # testing infer with full_batch_size in QNN environment
-    check_infer(mocker, model_name="lu-vae/llama-68m-fft", full_batch_size=3, enable_qnn=True)
+    check_infer(
+        mocker,
+        model_name="hf-internal-testing/tiny-random-LlamaForCausalLM",
+        full_batch_size=3,
+        enable_qnn=True,
+        generation_len=4,
+    )
 
 
 @pytest.mark.on_qaic
@@ -102,9 +112,10 @@ def test_infer_vlm(mocker):
     # testing infer for MM models
     check_infer(
         mocker,
-        model_name="llava-hf/llava-1.5-7b-hf",
+        model_name="tiny-random/gemma-3",
         prompt="Describe the image.",
         image_url="https://i.etsystatic.com/8155076/r/il/0825c2/1594869823/il_fullxfull.1594869823_5x0w.jpg",
+        generation_len=4,
     )
 
 

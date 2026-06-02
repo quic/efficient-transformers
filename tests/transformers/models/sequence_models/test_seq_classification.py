@@ -85,7 +85,7 @@ def check_seq_classification_pytorch_vs_ai100(
     assert os.path.isfile(qconfig_path), f"qconfig.json not found at {qconfig_path}"
 
     # Run on Cloud AI 100
-    ai100_outputs = qeff_model.generate(inputs=inputs, device_ids=[0])
+    ai100_outputs = qeff_model.generate(inputs=inputs)
     ai100_logits = ai100_outputs["logits"]
     ai100_predicted_class = ai100_logits.argmax().item()
 

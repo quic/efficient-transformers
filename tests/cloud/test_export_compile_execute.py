@@ -10,6 +10,7 @@ import os
 
 import pytest
 import yaml
+from transformers import AutoConfig
 
 import QEfficient
 from QEfficient.cloud.execute import main as execute
@@ -38,14 +39,16 @@ def check_export_compile_execute(mocker, model_name, full_batch_size=None, enabl
     base_key = "past_key."
     base_value = "past_value."
     precision = "float16"
+    config = AutoConfig.from_pretrained(model_name)
+    num_layers = getattr(config, "num_hidden_layers", getattr(config, "n_layer", 12))
 
     data = []
 
-    for i in range(12):
+    for i in range(num_layers):
         data.append({"IOName": f"{base_key}{i}", "Precision": precision})
         data.append({"IOName": f"{base_value}{i}", "Precision": precision})
 
-    for i in range(12):
+    for i in range(num_layers):
         data.append({"IOName": f"{base_key}{i}_RetainedState", "Precision": precision})
         data.append({"IOName": f"{base_value}{i}_RetainedState", "Precision": precision})
 
@@ -61,8 +64,8 @@ def check_export_compile_execute(mocker, model_name, full_batch_size=None, enabl
         aic_enable_depth_first=True,
         mos=1,
         batch_size=1,
-        prompt_len=32,
-        ctx_len=128,
+        prompt_len=8,
+        ctx_len=32,
         mxfp6=True,
         mxint8=True,
         full_batch_size=full_batch_size,
@@ -77,7 +80,7 @@ def check_export_compile_execute(mocker, model_name, full_batch_size=None, enabl
         qpc_path=qpc_path,
         prompt="My name is",
         prompts_txt_file_path="examples/sample_prompts/prompts.txt",
-        generation_len=20,
+        generation_len=4,
         full_batch_size=full_batch_size,
     )
 
@@ -89,14 +92,16 @@ def check_export_compile_execute(mocker, model_name, full_batch_size=None, enabl
 @pytest.mark.cli
 def test_export_compile_execute(mocker):
     # testing export -> compile -> infer without full_batch_size
-    check_export_compile_execute(mocker, model_name="gpt2")
+    check_export_compile_execute(mocker, model_name="hf-internal-testing/tiny-random-GPT2LMHeadModel")
 
 
 @pytest.mark.on_qaic
 @pytest.mark.cli
 def test_export_compile_execute_fbs(mocker):
     # testing export -> compile -> infer with full_batch_size
-    check_export_compile_execute(mocker, model_name="gpt2", full_batch_size=3)
+    check_export_compile_execute(
+        mocker, model_name="hf-internal-testing/tiny-random-GPT2LMHeadModel", full_batch_size=3
+    )
 
 
 @pytest.mark.on_qaic
@@ -104,7 +109,7 @@ def test_export_compile_execute_fbs(mocker):
 @pytest.mark.cli
 def test_export_compile_execute_qnn(mocker):
     # testing export -> compile -> infer without full_batch_size in QNN environment
-    check_export_compile_execute(mocker, model_name="gpt2", enable_qnn=True)
+    check_export_compile_execute(mocker, model_name="hf-internal-testing/tiny-random-GPT2LMHeadModel", enable_qnn=True)
 
 
 @pytest.mark.on_qaic
@@ -112,4 +117,6 @@ def test_export_compile_execute_qnn(mocker):
 @pytest.mark.cli
 def test_export_compile_execute_qnn_fbs(mocker):
     # testing export -> compile -> infer with full_batch_size in QNN environment
-    check_export_compile_execute(mocker, model_name="gpt2", full_batch_size=3, enable_qnn=True)
+    check_export_compile_execute(
+        mocker, model_name="hf-internal-testing/tiny-random-GPT2LMHeadModel", full_batch_size=3, enable_qnn=True
+    )

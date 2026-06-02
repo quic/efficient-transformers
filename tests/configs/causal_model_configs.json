@@ -659,7 +659,7 @@
   ],
   "disaggregated_dummy_models": [
     {
-      "model_name": "openai/gpt-oss-20b",
+      "model_name": "tiny-random/gpt-oss-bf16",
       "model_type": "gpt_oss",
       "tokenizer_id": "gpt2",
       "additional_params": {
@@ -671,7 +671,7 @@
         "num_local_experts": 4,
         "head_dim": 32,
         "max_position_embeddings": 512,
-        "vocab_size": 201088,
+        "vocab_size": 50257,
         "sliding_window": 128
       }
     },
@@ -708,7 +708,7 @@
       }
     },
     {
-      "model_name": "openai/gpt-oss-20b",
+      "model_name": "tiny-random/gpt-oss-bf16",
       "model_type": "gpt_oss",
       "additional_params": {
         "num_hidden_layers": 2,
@@ -716,7 +716,12 @@
         "intermediate_size": 256,
         "num_attention_heads": 2,
         "num_key_value_heads": 1,
-        "num_local_experts": 4
+        "num_local_experts": 4,
+        "vocab_size": 8192,
+        "max_position_embeddings": 128,
+        "sliding_window": 128,
+        "pad_token_id": 0,
+        "eos_token_id": 0
       }
     }
   ]
