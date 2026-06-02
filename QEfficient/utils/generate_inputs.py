@@ -61,10 +61,21 @@ class InputHandler:
                     return self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
             return self.padding_shape
 
+        head_dim = (
+            getattr(self.config, "head_dim", None)
+            or (
+                self.config.hidden_size // self.config.num_attention_heads
+                if getattr(self.config, "hidden_size", None) is not None
+                and getattr(self.config, "num_attention_heads", None) is not None
+                else None
+            )
+            or self.padding_shape[-1]
+        )
+
         layer_type = self.config.layer_types[layer_idx]
         if layer_type == "sliding_attention":
             n_heads = self.config.num_key_value_heads
-            d_head = self.config.head_dim
+            d_head = head_dim
             ctx_len = min(self.config.sliding_window, self.ctx_len)
         else:
             use_alternative_attention = getattr(self.config, "attention_k_eq_v", False)
@@ -73,9 +84,7 @@ class InputHandler:
                 if use_alternative_attention and getattr(self.config, "num_global_key_value_heads", None) is not None
                 else self.config.num_key_value_heads
             )
-            d_head = (
-                self.config.global_head_dim if getattr(self.config, "global_head_dim", None) else self.config.head_dim
-            )
+            d_head = self.config.global_head_dim if getattr(self.config, "global_head_dim", None) else head_dim
             ctx_len = self.ctx_len
 
         batch = self.full_batch_size if self.full_batch_size else self.padding_shape[0]

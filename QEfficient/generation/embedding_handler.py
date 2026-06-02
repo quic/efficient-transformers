@@ -407,17 +407,9 @@ class VisionHandler:
                 logger.warning(f"Could not derive vision output shapes from session: {e}")
 
         # Fallback to default shapes (these were hard-coded in original implementation)
-        if (
-            hasattr(self._qeff_model.model.config, "model_type")
-            and self._qeff_model.model.config.model_type == "gemma4"
-        ):
-            text_config = self._qeff_model.model.config.text_config
-            mm_tokens = getattr(self._qeff_model.model.config, "mm_tokens_per_image", 256)
-            default_shapes = {"vision_embeds": (1, mm_tokens, text_config.hidden_size)}
-        else:
-            default_shapes = {
-                "vision_embeds": (2448, 5120)  # This should be derived from model config
-            }
+        default_shapes = {
+            "vision_embeds": (2448, 5120)  # This should be derived from model config
+        }
 
         logger.warning("Using default vision output shapes. Consider providing shapes in config.")
         self._vision_output_shapes = default_shapes
