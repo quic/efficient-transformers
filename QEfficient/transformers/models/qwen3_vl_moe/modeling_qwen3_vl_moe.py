@@ -310,7 +310,7 @@ class QEffQwen3VLMoeVisionAttention(Qwen3VLMoeVisionAttention):
         block_mask = row_mask & col_mask  # shape: (num_blocks, seq_len, seq_len)
 
         # Combine all blocks into one mask
-        final_mask = torch.ones((seq_len, seq_len), dtype=torch.float32)
+        final_mask = torch.ones((seq_len, seq_len), dtype=self.config.dtype)
         final_mask[block_mask.any(dim=0)] = 0
 
         final_mask = torch.where(final_mask == 1.0, torch.finfo(q.dtype).min, final_mask)
@@ -793,8 +793,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         x = deepstack_features.reshape(num_features, bs * split_size, C)
         deepstack_features_expanded = x[:, indices1, :]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-        # inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
-        inputs_embeds = image_input_embeds
+        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
 
         image_mask = selected.clone()
 
@@ -895,10 +894,14 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
 
         vision_inputs = {}
         lang_inputs = {}
-        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
+        vision_inputs["pixel_values"] = torch.zeros(
+            (inputs_shapes["pixel_values"]), dtype=self.model.config.torch_dtype
+        )
         vision_inputs["image_grid_thw"] = torch.zeros((inputs_shapes["image_grid_thw"]), dtype=torch.int64)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
-        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
+        lang_inputs["vision_embeds"] = torch.zeros(
+            (inputs_shapes["vision_embeds"]), dtype=self.model.config.torch_dtype
+        )
         lang_inputs["position_ids"] = (
             (
                 torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
@@ -909,7 +912,9 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             .repeat(4, 1, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
-        lang_inputs["deepstack_features"] = torch.zeros((inputs_shapes["deepstack_features"]), dtype=torch.float32)
+        lang_inputs["deepstack_features"] = torch.zeros(
+            (inputs_shapes["deepstack_features"]), dtype=self.model.config.torch_dtype
+        )
         # Add data for KV
 
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
@@ -924,7 +929,9 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         for i in range(self.model.config.text_config.num_hidden_layers):
             for kv in ["key", "value"]:
-                lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                lang_inputs["past_key_values"][i].append(
+                    torch.zeros(kv_cache_shape, dtype=self.model.config.torch_dtype)
+                )
 
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
@@ -1225,5 +1232,9 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         return [
             IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
-            IOInfo(name="pixel_values", datatype=torch.float32, shape=("batch_size", 3, "image_size", "image_size")),
+            IOInfo(
+                name="pixel_values",
+                datatype=self.config.torch_dtype,
+                shape=("batch_size", 3, "image_size", "image_size"),
+            ),
         ]
