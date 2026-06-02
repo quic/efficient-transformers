@@ -79,7 +79,7 @@ else:
     ## Vision + Text ##
     qeff_model.compile(
         batch_size=batch_size,
-        prefill_seq_len=1,
+        prefill_seq_len=128,
         ctx_len=4096,
         num_cores=16,
         num_devices=4,
