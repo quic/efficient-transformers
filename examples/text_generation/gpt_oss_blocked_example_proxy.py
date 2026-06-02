@@ -95,7 +95,7 @@ def main():
         num_devices=8,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
-        use_onnx_subfunctions=False,
+        use_onnx_subfunctions=True,
         qaic_config=qaic_config,
         user_tiled=True,
         node_precision_info=non_subfunc_npi_file_path,
