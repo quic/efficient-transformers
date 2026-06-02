@@ -597,7 +597,8 @@ class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
             attentions=outputs.attentions,
         )
 
-    def get_dummy_pkv_cache(self, config, batch_size, seq_len, dtype=torch.float32):
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len, dtype=None):
+        dtype = dtype or getattr(config, "torch_dtype", torch.float32)
         n_heads = config.num_key_value_heads
         d_head = config.head_dim
         layer_switch = (
@@ -672,10 +673,11 @@ class QEffGemma3DecoderWrapper(nn.Module):
     ):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
+        vision_embeds = vision_embeds.to(device=inputs_embeds.device, dtype=inputs_embeds.dtype)
         selected = input_ids == self.model.config.image_token_index
         indices1 = selected.to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-        indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+        indices0 = torch.arange(selected.shape[0], device=selected.device).view(-1, 1)
         image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
@@ -729,10 +731,11 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             image_features = image_features.pooler_output
         inputs_embeds = self.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
+        image_features = image_features.to(device=inputs_embeds.device, dtype=inputs_embeds.dtype)
         selected = input_ids == self.config.image_token_index
         indices1 = selected.to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-        indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+        indices0 = torch.arange(selected.shape[0], device=selected.device).view(-1, 1)
         image_features_expanded = image_features.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
@@ -941,7 +944,8 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             return lang_output_names
         return output_names
 
-    def get_dummy_pkv_cache(self, config, batch_size, seq_len, dtype=torch.float32):
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len, dtype=None):
+        dtype = dtype or getattr(config, "torch_dtype", torch.float32)
         n_heads = config.num_key_value_heads
         d_head = config.head_dim
         layer_switch = (
