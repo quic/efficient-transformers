@@ -234,7 +234,7 @@ class ApiRunner:
         execinfo = TextGeneration(
             tokenizer=self.input_handler.tokenizer,
             qpc_path=qpc_path,
-            device_id=device_group,
+            device_ids=device_group,
             ctx_len=self.input_handler.ctx_len,
             full_batch_size=self.input_handler.full_batch_size,
         ).generate(prompt=self.input_handler.prompt, generation_len=self.gen_len, stream=False)

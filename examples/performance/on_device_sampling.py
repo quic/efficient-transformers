@@ -101,7 +101,7 @@ def main(args, **kwargs):
         tokenizer=load_hf_tokenizer(pretrained_model_name_or_path=args.model_name),
         prompts=args.prompt,
         prompts_txt_file_path=args.prompts_txt_file_path,
-        device_id=args.device_group,
+        device_ids=args.device_group,
         generation_len=args.generation_len,
         include_sampler=include_sampler,
         return_pdfs=return_pdfs,
