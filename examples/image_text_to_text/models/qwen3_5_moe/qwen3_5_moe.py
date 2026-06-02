@@ -37,12 +37,15 @@ enable_blocking = False  ## By default blocking is false
 ### use skip_vision=Ture, if want to run only text, or false ###
 skip_vision = True
 
+BS = 1
+PREFILL_SEQ_LEN = 64
+CTX_LEN = 4096
+
 if skip_vision:
     ## Only Text ##
-    ## Set Batch_Size ##
-    batch_size = 1
+
     qeff_model.compile(
-        batch_size=batch_size,
+        batch_size=BS,
         prefill_seq_len=64,
         ctx_len=4096,
         num_cores=16,
@@ -92,7 +95,7 @@ if skip_vision:
         },
     ]
 
-    messages = [messages] * batch_size
+    messages = [messages] * BS
 
     inputs = processor.apply_chat_template(
         messages,
@@ -101,7 +104,9 @@ if skip_vision:
         return_dict=True,
         return_tensors="pt",
     )
-    inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
+    inputs = qeff_model.model.prepare_inputs_for_generation(
+        inputs=inputs, prefill_seq_len=PREFILL_SEQ_LEN, batch_size=BS
+    )
     streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=1024)
     print(output.generated_ids)
@@ -109,12 +114,12 @@ if skip_vision:
     print(output)
 
 else:
-    batch_size = 1
     ## Vision + Text ##
+
     qeff_model.compile(
-        batch_size=batch_size,
-        prefill_seq_len=64,
-        ctx_len=4096,
+        batch_size=BS,
+        prefill_seq_len=PREFILL_SEQ_LEN,
+        ctx_len=CTX_LEN,
         num_cores=16,
         num_devices=1,
         height=354,
@@ -168,7 +173,7 @@ else:
         },
     ]
 
-    messages = [messages_1] * batch_size
+    messages = [messages_1] * BS
 
     texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
 
@@ -180,7 +185,9 @@ else:
         padding=True,
         return_tensors="pt",
     )
-    inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
+    inputs = qeff_model.model.prepare_inputs_for_generation(
+        inputs=inputs, prefill_seq_len=PREFILL_SEQ_LEN, batch_size=BS
+    )
     streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)

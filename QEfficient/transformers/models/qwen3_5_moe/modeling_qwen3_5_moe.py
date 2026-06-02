@@ -1336,6 +1336,7 @@ class QEffQwen3_5MoeEncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
+        self.config = model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         if hasattr(self.model.model, "visual") and hasattr(self.model.model.visual, "blocks"):
@@ -1365,6 +1366,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.language_model = self.model.model.language_model
+        self.config = model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5MoeDecoderLayer}
