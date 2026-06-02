@@ -250,6 +250,7 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     Qwen3_5MoeTextModel,
     Qwen3_5MoeVisionAttention,
     Qwen3_5MoeVisionModel,
+    Qwen3_5MoeTopKRouter,
 )
 from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     Qwen3MoeAttention,
@@ -597,6 +598,7 @@ from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     QEffQwen3_5MoeTextModel,
     QEffQwen3_5MoeVisionAttention,
     QEffQwen3_5MoeVisionModel,
+    QEffQwen3_5MoeTopKRouter,
 )
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffPrefillChunkedQwen3MoeSparseMoeBlock,

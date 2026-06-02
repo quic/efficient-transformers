@@ -207,7 +207,7 @@ if first_onnx_path is None:
     raise RuntimeError("No ONNX path produced during compilation.")
 export_root = _resolve_export_root(first_onnx_path)
 final_onnx_path = QEfficient.utils.layerwise_pipeline(str(export_root))
-
+print(f"Layer-wise language export completed. Final artifact/root: {final_onnx_path}")
 os.environ["LAYERWISE_EXPORT"] = "False"
 # qpc_path = qeff_model.compile(
 #     onnx_path=final_onnx_path,
@@ -225,8 +225,6 @@ os.environ["LAYERWISE_EXPORT"] = "False"
 #     enable_chunking=True,
 #     use_onnx_subfunctions=True,
 # )
-export_end = time.perf_counter()
-print(f">>>>>>>> Export  time : {export_end - export_start:.2f} secs ")
 # if qeff_model is None:
 #     raise RuntimeError("Failed to initialize QEfficient model.")
 
