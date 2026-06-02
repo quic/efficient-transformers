@@ -50,7 +50,7 @@ if not skip_vision:
         mxfp6_matmul=True,
         aic_enable_depth_first=True,
         skip_vision=skip_vision,
-        split_retained_state_io=True,
+        split_model_io=True,
         skip_lang=True,
         use_onnx_subfunctions=True,
     )
@@ -66,7 +66,7 @@ prefill_qpc_path = qeff_model.compile(
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     retain_full_kv=True,
-    split_retained_state_io=True,  # This should be used for disagg serving via VLLM
+    split_model_io=True,  # This should be used for disagg serving via VLLM
     mos=1,
     aic_enable_depth_first=True,
     prefill_only=True,
@@ -86,8 +86,7 @@ decode_qpc_path = qeff_model.compile(
     num_devices=1,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
-    retain_full_kv=True,
-    split_retained_state_io=True,  # This should be used for disagg serving via VLLM
+    split_model_io=True,  # This should be used for disagg serving via VLLM
     mos=1,
     aic_enable_depth_first=True,
     prefill_only=False,
@@ -118,6 +117,7 @@ else:
             "content": [
                 {"type": "image", "image": image},
                 {"type": "text", "text": "Describe all the colors seen in the image."},
+                # {"type": "text", "text": "Can you describe the image in detail?"},
             ],
         },
     ]
@@ -217,10 +217,6 @@ for i in range(config.text_config.num_hidden_layers):
     decode_inputs[f"past_key.{i}"] = outputs[f"past_key.{i}_RetainedState"]
     decode_inputs[f"past_value.{i}"] = outputs[f"past_value.{i}_RetainedState"]
 
-decode_inputs["image_idx"] = outputs["image_idx_output"]
-decode_inputs["vision_embeds"] = outputs["vision_embeds_RetainedState"]
-decode_inputs["deepstack_features"] = outputs["deepstack_features_RetainedState"]
-
 st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
 print(f"time for first run of decode with KV as input = {perf_counter() - st} sec\n")
@@ -235,9 +231,6 @@ loop_decode_inputs = {
 for i in range(config.text_config.num_hidden_layers):
     loop_decode_inputs[f"past_key.{i}"] = decode_out[f"past_key.{i}_RetainedState"]
     loop_decode_inputs[f"past_value.{i}"] = decode_out[f"past_value.{i}_RetainedState"]
-loop_decode_inputs["image_idx"] = decode_out["image_idx_output"]
-loop_decode_inputs["vision_embeds"] = decode_out["vision_embeds_RetainedState"]
-loop_decode_inputs["deepstack_features"] = decode_out["deepstack_features_RetainedState"]
 
 
 st = perf_counter()
