@@ -2087,6 +2087,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         generation_len: Optional[int] = None,
         image_height: Optional[int] = None,
         image_width: Optional[int] = None,
+        multi_specs: Optional[bool] = None,
+        num_frames: Optional[int] = None,
         **kwargs,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
@@ -2135,7 +2137,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path[1]), "io_dir") if write_io else None
 
         # Use VisionLanguageGeneration for image-prompt pairs
-        if (processor and images) or (tokenizer and prompts):
+        if (processor and images) or (tokenizer and prompts) or multi_specs or num_frames:
             # Create VisionLanguageGeneration instance
             batch_size_comp, ctx_len_comp, fbs = get_compilation_dims(self.lang_model.qpc_path)
             vlm_gen = VisionLanguageGeneration(
@@ -2157,6 +2159,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
             # Call generate method
             return vlm_gen.generate(
+                inputs=inputs,
+                num_frames=num_frames,
+                multi_specs=multi_specs,
                 images=images,
                 prompts=prompts,
                 generation_len=generation_len,
