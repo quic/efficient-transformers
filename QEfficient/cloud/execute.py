@@ -87,7 +87,7 @@ def main(
     cloud_ai_100_exec_kv(
         tokenizer=tokenizer,
         qpc_path=qpc_path,
-        device_id=device_group,
+        device_ids=device_group,
         prompt=prompt,
         prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,
