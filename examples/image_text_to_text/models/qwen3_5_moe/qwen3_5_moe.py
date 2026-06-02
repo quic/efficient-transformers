@@ -46,8 +46,8 @@ if skip_vision:
 
     qeff_model.compile(
         batch_size=BS,
-        prefill_seq_len=64,
-        ctx_len=4096,
+        prefill_seq_len=PREFILL_SEQ_LEN,
+        ctx_len=CTX_LEN,
         num_cores=16,
         num_devices=1,
         height=354,

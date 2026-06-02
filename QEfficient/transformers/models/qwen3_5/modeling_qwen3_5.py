@@ -93,10 +93,8 @@ class QEffQwen3_5DynamicCache(Cache):
         if past_key_values is None:
             return cache
 
-        #
         for layer_idx, layer_state in enumerate(past_key_values):
             if cache.layer_types[layer_idx] == "full_attention":
-                #
                 key_states, value_states = layer_state
                 layer = QEffDynamicLayer()
                 layer.keys = key_states
@@ -302,7 +300,6 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
 
-    # import ipdb; ipdb.set_trace()
     # Keep half or full tensor for later concatenation
     rotary_dim = cos.shape[-1]
     q_rot, q_pass = q[:, :, :, :rotary_dim], q[:, :, :, rotary_dim:]
@@ -332,7 +329,7 @@ def eager_attention_forward(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-    #
+
     if attention_mask is not None:
         attn_weights = torch.where(
             attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
@@ -376,7 +373,6 @@ class QEffQwen3_5Attention(Qwen3_5Attention):
     """
 
     def __qeff_init__(self):
-        # pass
         self.rotary_emb = QEffQwen3_5TextRotaryEmbedding(config=self.config)
 
     def forward(
@@ -862,9 +858,6 @@ class QEffQwen3_5DecoderLayer(Qwen3_5DecoderLayer):
 
 
 class QEffQwen3_5TextModel(Qwen3_5TextModel):
-    # def __qeff_init__(self):
-    #     self.rotary_emb = QEffQwen3_5TextRotaryEmbedding(config=self.config)
-
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -1104,17 +1097,6 @@ class QEffQwen3_5Model(Qwen3_5Model):
                 input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
             )
             inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
-
-        # if pixel_values_videos is not None:
-        #     video_outputs: BaseModelOutputWithPooling = self.get_video_features(
-        #         pixel_values_videos, video_grid_thw, return_dict=True
-        #     )
-        #     video_embeds = video_outputs.pooler_output
-        #     video_embeds = torch.cat(video_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
-        #     _, video_mask = self.get_placeholder_mask(
-        #         input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds
-        #     )
-        #     inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
         if position_ids is None:
             position_ids = self.compute_3d_position_ids(
@@ -1498,12 +1480,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
 
         logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-        #
         logits = self.lm_head(hidden_states)
-
-        # loss = None
-        # if labels is not None:
-        #     loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.text_config.vocab_size)
 
         return logits, outputs.past_key_values[: len(past_key_values)]
 
