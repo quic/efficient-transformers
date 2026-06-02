@@ -13,7 +13,9 @@ import pytest
 from transformers import logging
 
 from QEfficient.utils.cache import QEFF_HOME
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("INFRA")
 
 _QUICKCHECK_FILE = "tests/unit_test/models/test_model_quickcheck.py"
 _QUICKCHECK_SUMMARY = {}
