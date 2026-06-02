@@ -182,7 +182,12 @@ class CtxGatherFunc3D(torch.autograd.Function):
 
 
 class CtxGatherFunc3DGeneralized(torch.autograd.Function):
-    """3D gather variant that tolerates INT32_MAX indices by reading row 0."""
+    """3D gather variant that leaves ONNX output shape inference to the custom op.
+
+    Eager execution intentionally matches ``CtxGatherFunc3D``. During ONNX export,
+    this variant does not call ``setTypeAs(data)`` because GLM MoE packed prefill
+    gathers return an index-shaped output rather than a data-shaped output.
+    """
 
     @staticmethod
     def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
