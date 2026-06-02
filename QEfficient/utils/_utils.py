@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import onnx_ir
 import requests
 import torch
 import yaml
@@ -837,3 +838,444 @@ def custom_format_warning(msg, category, *args, **kwargs):
     YELLOW = "\033[93m"
     RESET = "\033[0m"
     return f"{YELLOW}[Warning]: {msg}{RESET}\n"
+
+
+
+import onnx
+from typing import Set
+
+
+def pytorch_to_onnx_name(pytorch_name: str) -> str:
+    parts = pytorch_name.split('.')
+    onnx_parts = [""]
+    for part in parts:
+        if part.isdigit() and onnx_parts:
+            onnx_parts[-1] = f"{onnx_parts[-1]}.{part}"
+        else:
+            onnx_parts.append(part)
+    return '/'.join(onnx_parts)
+
+def extract_until_first_layer(model_path: str, save_path: str, first_layer_name: str):
+    # Load model
+    model = onnx.load(model_path, load_external_data=False)
+    graph = model.graph
+
+    first_layer_name = pytorch_to_onnx_name(first_layer_name)
+
+    # Find first node of target type
+    target_node = None
+    for node in graph.node:
+        if first_layer_name in node.name:
+            target_node = node
+            break
+
+    if target_node is None:
+        raise ValueError(f"No node containing {first_layer_name} found.")
+
+    # Inputs: original model inputs
+    input_names = [inp.name for inp in graph.input]
+
+    # Outputs: outputs of the target node
+    output_names = list(target_node.output)
+
+    model = onnx_ir.load(model_path)
+    model.graph = onnx_ir.convenience.extract(model.graph, input_names, output_names)
+    onnx_ir.save(model, save_path)
+
+
+    # import ipdb; ipdb.set_trace()
+    # model = onnxscript.ir.load(model_path)
+    # # Extract subgraph
+    # import ipdb; ipdb.set_trace()
+    # exg = ExtractGraphPass(input_names, output_names)
+    # result = exg(model)
+    # assert result.modified
+    # ipdb.set_trace()
+    # onnxscript.ir.save(exg.model, save_path)
+    # onnx.utils.extract_model(model_path, save_path, input_names, output_names)
+
+    print(f"Subgraph saved to {save_path}")
+
+def extract_single_node_with_utils(
+    model_path_in: str,
+    node_name: str,
+    model_path_out: str,
+):
+    # Load model (we only inspect it to figure out tensor names)
+    m = onnx.load(model_path_in, load_external_data=False)
+    g = m.graph
+
+    node_name = pytorch_to_onnx_name(node_name)
+
+    # Find target node
+    nodes = [n for n in g.node if node_name in n.name]
+    if not nodes:
+        raise RuntimeError(f"Node '{node_name}' not found.")
+    node = nodes[0]
+
+    # Initializers present in the graph (weights/constants)
+    init_names = {init.name for init in g.initializer}
+
+    input_names = [name for name in node.input if name and name not in init_names]
+
+    # Build output tensor names for extraction: use node outputs
+    output_names = [name for name in node.output if name]
+
+    if not output_names:
+        raise RuntimeError(f"Node '{node_name}' has no outputs; cannot extract.")
+    model = onnx_ir.load(model_path_in)
+    model.graph = onnx_ir.convenience.extract(model.graph, input_names, output_names)
+    onnx_ir.save(model, model_path_out)
+
+    # Run the official extractor (boundary is input_names -> output_names)
+    # onnx.utils.extract_model(
+    #     input_path=model_path_in,
+    #     output_path=model_path_out,
+    #     input_names=input_names,
+    #     output_names=output_names,
+    #     check_model=True,      # optional but recommended
+    #     infer_shapes=True       # helps carry ValueInfo into the subgraph
+    # )
+    return model_path_out
+
+def extract_from_last_layer(model_path: str, save_path: str, last_layer_name: str):
+    # Load model
+    model = onnx.load(model_path, load_external_data=False)
+    graph = model.graph
+
+    last_layer_name = pytorch_to_onnx_name(last_layer_name)
+
+    # Find first node of target type
+    target_node = None
+    for node in graph.node:
+        if last_layer_name in node.name:
+            target_node = node
+            break
+
+    if target_node is None:
+        raise ValueError(f"No node containing {last_layer_name} found.")
+
+    # Inputs: original model inputs
+    init_names = {init.name for init in graph.initializer}
+
+    input_names = [name for name in target_node.input if name and name not in init_names]
+
+    # Outputs: outputs of the target node
+    output_names = [out.name for out in graph.output if "_InternalRetainedState" not in out.name]
+
+    # Extract subgraph    
+    model = onnx_ir.load(model_path)
+    model.graph = onnx_ir.convenience.extract(model.graph, input_names, output_names)
+    onnx_ir.save(model, save_path)
+    # onnx.utils.extract_model(model_path, save_path, input_names, output_names)
+    print(f"Subgraph saved to {save_path}")
+
+def collect_module_inputs(
+    model: torch.nn.Module,
+    example_inputs: Dict[str, torch.Tensor],
+    layer_class,
+) -> Dict[str, Tuple[torch.Tensor, ...]]:
+    """
+    Run model forward once, attaching hooks to every submodule to capture the inputs to each submodule received. 
+    Returns: {qualified_name -> tuple(inputs)}.
+    """
+    model = model.eval()
+    qname_by_module = {mod: qn for qn, mod in model.named_modules()}
+    captured: Dict[str, Tuple[torch.Tensor, ...]] = {}
+
+    hooks = []
+    def _hook(mod, inputs, kwargs, output):
+        qn = qname_by_module.get(mod, None)
+        if qn is None:
+            return
+        # Normalize inputs to a tuple of tensors only (skip non-tensor args)
+        # import ipdb; ipdb.set_trace()
+        import inspect
+        kwargs = {[name for name in inspect.signature(mod.forward).parameters][0]: inputs[0], **kwargs}
+        tensor_inputs = tuple(
+            (k, inp) for k, inp in kwargs.items()
+        )
+        captured[qn] = dict(tensor_inputs)
+
+    layer_prefixes = {
+        qn for qn, mod in model.named_modules()
+        if isinstance(mod, layer_class)
+    }
+
+    def is_descendant_of_layer(qn: str) -> bool:
+        # empty qn (root) isn't a descendant of anything
+        if qn == "":
+            return False
+        for pfx in layer_prefixes:
+            # Skip the layer module itself; only exclude its descendants
+            if pfx != "" and qn.startswith(pfx + "."):
+                return True
+        return False
+
+    first_layer = ""
+
+    # Attach to all leaf modules (to avoid double-capturing containers)
+    for qn, mod in model.named_modules():
+        # import ipdb; ipdb.set_trace()
+        if qn == "":
+            continue
+        if is_descendant_of_layer(qn):
+            continue
+        if isinstance(mod, layer_class) or len(list(mod.children())) == 0:
+            hooks.append(mod.register_forward_hook(_hook, with_kwargs=True))
+            if isinstance(mod, layer_class) and first_layer == "":
+                first_layer = qn
+
+    with torch.no_grad():
+        _ = model(**example_inputs)
+
+    for h in hooks:
+        h.remove()
+    return captured, first_layer
+
+
+def remove_all_forward_hooks(model: torch.nn.Module):
+    for name, module in model.named_modules():
+        if hasattr(module, "_forward_hooks"):
+            hooks = list(module._forward_hooks.keys())
+            for hook_id in hooks:
+                del module._forward_hooks[hook_id]
+
+from onnx import FunctionProto, ModelProto, GraphProto
+
+def compare_onnx_func(func1 : FunctionProto, func2 : FunctionProto):
+    if len(func1.input) != len(func2.input) or len(func1.output) != len(func2.output) or len(func1.node) != len(func2.node):
+        return False
+    for i in range(len(func1.node)):
+        node1 = func1.node[i]
+        node2 = func2.node[i]
+        # check inputs
+        if len(node1.input) != len(node2.input):
+            print(f"node {i}, input_length")
+            return False
+        for j in range(len(node1.input)):
+            if node1.input[j] in func1.input: # input to the subfunction, not from another node
+                idx = list(func1.input).index(node1.input[j])
+                if node2.input[j] not in func2.input or list(func2.input).index(node2.input[j]) != idx:
+                    print(f"node {i}, {j} input mismatch (function input)")
+                    return False
+            elif node1.input[j] != node2.input[j]:
+                # some names might change to match output nodes
+                if node1.input[j] in func1.output:
+                    idx = list(func1.output).index(node1.input[j])
+                    if node2.input[j] not in func2.output or  list(func2.output).index(node2.input[j]) != idx:
+                        print(f"node {i}, propogated output mismatch (function output)")
+                        return False
+                else:
+                    print(f"node {i}, input mismatch (node input)")
+                    return False
+        # check optype
+        if node1.op_type != node2.op_type:
+            print(f"node {i}, op type mismatch")
+            return False
+        # check attributes
+        if len(node1.attribute) != len(node2.attribute):
+            print(f"node {i}, attribute_length")
+            return False
+        for j in range(len(node1.attribute)):
+            if node1.attribute[j] != node2.attribute[j]:
+                print(f"node {i}, attribute mismatch")
+                return False
+        # check outputs
+        if len(node1.output) != len(node2.output):
+            print(f"node {i}, output length")
+            return False
+        for j in range(len(node1.output)):
+            if node1.output[j] in func1.output:
+                idx = list(func1.output).index(node1.output[j])
+                if node2.output[j] not in func2.output or  list(func2.output).index(node2.output[j]) != idx:
+                    print(f"node {i}, output mismatch (function output)")
+                    return False
+            else:
+                if node1.output[j] != node2.output[j]:
+                    print(f"node {i}, output mismatch (node output)")
+                    return False
+    return True
+
+
+def _collect_all_names(graph: onnx.GraphProto) -> Set[str]:
+    names = set()
+    names.update(vi.name for vi in graph.input)
+    names.update(vi.name for vi in graph.output)
+    names.update(vi.name for vi in graph.value_info)
+    names.update(init.name for init in graph.initializer)
+    for node in graph.node:
+        names.update(node.input)
+        names.update(node.output)
+        if node.name:
+            names.add(node.name)
+    return names
+
+def get_new_name(base: str, used: Set[str]) -> str:
+    candidate = base
+    if candidate not in used:
+        used.add(candidate)
+        return candidate
+    i = 1
+    while True:
+        alt = f"{base}_{i}"
+        if alt not in used:
+            used.add(alt)
+            return alt
+        i += 1
+
+def stitch_single_layer(model1, model2):
+    if len(model2.graph.node) != 1:
+        raise ValueError(f"Graph to stitch must only be single node")
+    if compare_onnx_func(model1.functions[0], model2.functions[0]):
+        # same onnx function
+        node_to_append = model2.graph.node[0]
+        model1_names = _collect_all_names(model1.graph)
+        # initializers
+        model2_init_rename = {}
+        for init in model2.graph.initializer:
+            new_name = init.name if init.name not in model1_names else get_new_name(init.name, model1_names)
+            model2_init_rename[init.name] = new_name
+            if init.name in node_to_append.input:
+                node_to_append.input[list(node_to_append.input).index(init.name)] = new_name
+
+        # figure out how to generalize hidden states input better
+        node_to_append.input[0] = model1.graph.output[-1].name
+        model2_out_rename = {}
+        for out in model2.graph.output:
+            new_name = out.name if out.name not in model1_names else get_new_name(out.name, model1_names)
+            model2_out_rename[out.name] = new_name
+            node_to_append.output[list(node_to_append.output).index(out.name)] = new_name
+        model1.graph.node.append(node_to_append)
+
+        # add initializers from model2 to model1
+        for init in model2.graph.initializer:
+            init.name = model2_init_rename[init.name]  # rename in place
+            model1.graph.initializer.append(init)
+
+        # update outputs of the model
+        model1.graph.output.pop()
+        for out in model2.graph.output:
+            out.name = model2_out_rename[out.name]
+            model1.graph.output.append(out)
+
+        # Preserve value_info
+        for vi in list(model2.graph.input) + list(model2.graph.value_info):
+            if vi.name in model2_init_rename:
+                vi.name = model2_init_rename[vi.name]
+            # Avoid duplicates in model1
+            if all(x.name != vi.name for x in list(model1.graph.input) + list(model1.graph.value_info)):
+                model1.graph.value_info.append(vi)
+    else:
+        raise ValueError(f"Stitching different onnx functions not yet implemented")
+    # return model1
+
+def stitch_model(model1, model2):
+    if compare_onnx_func(model1.functions[0], model2.functions[0]):
+        # same onnx function
+        first_node = model2.graph.node[0]
+        model1_names = _collect_all_names(model1.graph)
+        # initializers
+        model2_init_rename = {}
+        
+        for init in model2.graph.initializer:
+            new_name = init.name if init.name not in model1_names else get_new_name(init.name, model1_names)
+            model2_init_rename[init.name] = new_name
+
+        # figure out how to generalize hidden states input better
+        first_node.input[0] = model1.graph.output[-1].name
+
+        model2_out_rename = {}
+        for out in first_node.output: # only do this for first node for now, since we don't expect later nodes to be in common at all
+            new_name = out if out not in model1_names else get_new_name(out, model1_names)
+            model2_out_rename[out] = new_name
+            first_node.output[list(first_node.output).index(out)] = new_name
+        
+        # import ipdb; ipdb.set_trace()
+
+        for next_node in model2.graph.node:
+            for init in model2.graph.initializer:
+                if init.name in next_node.input:
+                    new_name = model2_init_rename[init.name]
+                    next_node.input[list(next_node.input).index(init.name)] = new_name
+            model1.graph.node.append(next_node)
+        
+        # add initializers from model2 to model1
+        for init in model2.graph.initializer:
+            init.name = model2_init_rename[init.name]  # rename in place
+            model1.graph.initializer.append(init)
+
+        # update outputs of the model
+        model1.graph.output.pop()
+        for out in model2.graph.output:
+            if out.name in model2_out_rename:
+                out.name = model2_out_rename[out.name]
+            if "logits" in out.name: # needed for proper ordering
+                model1.graph.output.insert(0, out)
+            else:
+                model1.graph.output.append(out)
+
+        # Preserve value_info
+        for vi in list(model2.graph.input) + list(model2.graph.value_info):
+            if vi.name in model2_init_rename:
+                vi.name = model2_init_rename[vi.name]
+            # Avoid duplicates in model1
+            if all(x.name != vi.name for x in list(model1.graph.input) + list(model1.graph.value_info)):
+                model1.graph.value_info.append(vi)
+    else:
+        raise ValueError(f"Stitching different onnx functions not yet implemented")
+
+import time, os, psutil, threading
+from contextlib import contextmanager
+
+@contextmanager
+def measure(label="layer", sample_interval: float = 0.02):
+    proc = psutil.Process(os.getpid())
+
+    # Baselines
+    rss_before = proc.memory_info().rss
+    peak_rss = rss_before
+    cpu_samples = []
+    stop = False
+
+    # Prime CPU% baseline (first call sets the reference)
+    proc.cpu_percent(None)
+
+    def sampler() -> None:
+        nonlocal peak_rss, stop
+        while not stop:
+            try:
+                # Process CPU% since last call (across all cores)
+                cpu_samples.append(proc.cpu_percent(None))
+                # Track peak RSS
+                rss = proc.memory_info().rss
+                if rss > peak_rss:
+                    peak_rss = rss
+            except Exception:
+                pass
+            time.sleep(sample_interval)
+
+    metrics: Dict[str, float] = {"label": label}
+    t0 = time.perf_counter()
+    thread = threading.Thread(target=sampler, daemon=True)
+    thread.start()
+
+    try:
+        yield metrics  # use inside the block if you want, but values are set after exit
+    finally:
+        # Stop sampling
+        stop = True
+        thread.join(timeout=0.5)
+
+        elapsed = time.perf_counter() - t0
+        rss_after = proc.memory_info().rss
+        MB = 1024 * 1024
+
+        metrics.update({
+            "elapsed_s": elapsed,
+            "cpu_avg_pct": (sum(cpu_samples) / len(cpu_samples) if cpu_samples else 0.0),
+            "cpu_peak_pct": (max(cpu_samples) if cpu_samples else 0.0),
+            "rss_peak_delta_mb": (peak_rss - rss_before) / MB,
+        })
+
+        print(metrics)

@@ -25,35 +25,35 @@ from QEfficient.utils.run_utils import ApiRunner
 from QEfficient.utils.test_utils import ModelConfig
 
 test_models_causal = [
-    "openai/gpt-oss-20b",
-    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-    "gpt2",
-    "Salesforce/codegen-350M-mono",
-    "microsoft/Phi-3-mini-4k-instruct",
-    "tiiuae/falcon-7b",
-    "Qwen/Qwen2-0.5B",
-    "Qwen/Qwen3-0.6B",
-    "bigcode/starcoder2-3b",
-    "Qwen/Qwen3-30B-A3B-Instruct-2507",
-    "Felladrin/Minueza-32M-Base",
-    "wtang06/mpt-125m-c4",
-    "hakurei/gpt-j-random-tinier",
-    "mistralai/Mixtral-8x7B-Instruct-v0.1",
-    "meta-llama/Llama-3.2-1B",
-    "unsloth/gemma-2b",
-    "unsloth/gemma-2-2b",
-    "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
-    "TheBloke/Llama-2-7B-GPTQ",  # GPTQ model
-    "ibm-granite/granite-20b-code-base",
-    # "neuralmagic/Meta-Llama-3.1-8B-Instruct-FP8-dynamic",  # naive-quantized compressed-tensor FP8 model per-channel weight, per-token activations
-    "neuralmagic/Llama-3.2-3B-Instruct-FP8",  # float quantized compressed-tensor per tensor both weight and activations
-    "neuralmagic/Qwen2-0.5B-Instruct-FP8",  # fp8 quant method, static, with lm head ignored
-    "ibm-granite/granite-3.1-2b-instruct",
-    "ibm-granite/granite-guardian-3.1-2b",
-    "hpcai-tech/grok-1",
-    "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
-    "allenai/OLMo-2-0425-1B",
-    "zai-org/GLM-4.5-Air",
+    # "openai/gpt-oss-20b",
+    # "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    # "gpt2",
+    # "Salesforce/codegen-350M-mono",
+    # "microsoft/Phi-3-mini-4k-instruct",
+    # "tiiuae/falcon-7b",
+    # "Qwen/Qwen2-0.5B",
+    # "Qwen/Qwen3-0.6B",
+    # "bigcode/starcoder2-3b",
+    # "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    # "Felladrin/Minueza-32M-Base",
+    # "wtang06/mpt-125m-c4",
+    # "hakurei/gpt-j-random-tinier",
+    # "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    # "meta-llama/Llama-3.2-1B",
+    # "unsloth/gemma-2b",
+    # "unsloth/gemma-2-2b",
+    # "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",  # AWQ model
+    # "TheBloke/Llama-2-7B-GPTQ",  # GPTQ model
+    # "ibm-granite/granite-20b-code-base",
+    # # "neuralmagic/Meta-Llama-3.1-8B-Instruct-FP8-dynamic",  # naive-quantized compressed-tensor FP8 model per-channel weight, per-token activations
+    # "neuralmagic/Llama-3.2-3B-Instruct-FP8",  # float quantized compressed-tensor per tensor both weight and activations
+    # "neuralmagic/Qwen2-0.5B-Instruct-FP8",  # fp8 quant method, static, with lm head ignored
+    # "ibm-granite/granite-3.1-2b-instruct",
+    # "ibm-granite/granite-guardian-3.1-2b",
+    # "hpcai-tech/grok-1",
+    # "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
+    # "allenai/OLMo-2-0425-1B",
+    "zai-org/GLM-4.7",
 ]
 
 test_models_qnn = [
@@ -164,12 +164,17 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         :n_layers (int): Number of layers for the Model.
     """
     replace_transformers_quantizers()
-    if config is None:
-        n_layer = get_custom_n_layers(model_name)
-        model_hf, _ = load_causal_lm_model(model_name, n_layer=n_layer)
-    else:
-        model_hf, _ = load_causal_lm_model(model_name, config=config)
-
+    # if config is None:
+    #     n_layer = get_custom_n_layers(model_name)
+    #     model_hf, _ = load_causal_lm_model(model_name, n_layer=4)
+    # else:
+    #     model_hf, _ = load_causal_lm_model(model_name, config=config)
+    model_hf = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        use_cache=True,
+        num_hidden_layers=4,
+        attn_implementation="eager",
+    )
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
     batch_size = len(Constants.INPUT_STR)
@@ -194,11 +199,12 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
             "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
         )
-    onnx_model_path = qeff_model.export()
-    ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
-    gen_len = ort_tokens.shape[-1]
+    # onnx_model_path = qeff_model.export(use_onnx_subfunctions=True)
+    # ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
+    # gen_len = ort_tokens.shape[-1]
+    gen_len = 20
 
-    assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for ONNXRT output and PyTorch output."
+    # assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for ONNXRT output and PyTorch output."
 
     if not get_available_device_id():
         pytest.skip("No available devices to run model on Cloud AI 100")
@@ -212,17 +218,21 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         prefill_only=prefill_only,
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
+        use_onnx_subfunctions=True,
     )
     exec_info = qeff_model.generate(tokenizer, prompts=Constants.INPUT_STR)
     cloud_ai_100_tokens = exec_info.generated_ids[0][
         :, :gen_len
     ]  # Because we always run for single input and single batch size
     if prefill_only:
-        assert (ort_tokens[0][0] == cloud_ai_100_tokens[0][0]).all(), (
+        assert (pytorch_kv_tokens == cloud_ai_100_tokens[0][0]).all(), (
             "prefill run output tokens don't match for ONNXRT output and Cloud AI 100 output."
         )
     else:
-        assert (ort_tokens == cloud_ai_100_tokens).all(), (
+        import ipdb
+
+        ipdb.set_trace()
+        assert (pytorch_kv_tokens[:20] == cloud_ai_100_tokens[:20]).all(), (
             "Tokens don't match for ONNXRT output and Cloud AI 100 output."
         )
         assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))

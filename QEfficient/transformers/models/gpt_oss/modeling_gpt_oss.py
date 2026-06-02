@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 import math
 import os
-from typing import Callable, Optional, Union
+from typing import Callable, List, Optional, Union
 
 import torch
 from torch import nn
@@ -1033,6 +1033,7 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         return_dict: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        layer_indices_to_run: Optional[List[int]] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> MoeModelOutputWithPast:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -1075,7 +1076,10 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
 
-        for decoder_layer in self.layers:
+
+        for layer_idx, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
+            if layer_indices_to_run is not None and layer_idx not in layer_indices_to_run:
+                continue
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -1125,6 +1129,7 @@ class QEffGptOssModel(GptOssModel):
         return_dict: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        layer_indices_to_run: Optional[List[int]] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> MoeModelOutputWithPast:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -1168,7 +1173,9 @@ class QEffGptOssModel(GptOssModel):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
 
-        for decoder_layer in self.layers:
+        for layer_idx, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
+            if layer_indices_to_run is not None and layer_idx not in layer_indices_to_run:
+                continue
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -1222,6 +1229,7 @@ class QEffGptOssForCausalLM(GptOssForCausalLM):
         output_router_logits: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
+        layer_indices_to_run: Optional[List[int]] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> MoeCausalLMOutputWithPast:
         r"""
@@ -1272,6 +1280,7 @@ class QEffGptOssForCausalLM(GptOssForCausalLM):
             output_router_logits=output_router_logits,
             return_dict=return_dict,
             cache_position=cache_position,
+            layer_indices_to_run=layer_indices_to_run,
             **kwargs,
         )
 

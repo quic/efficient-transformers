@@ -8,6 +8,7 @@
 import gc
 import inspect
 import logging
+import os
 import shutil
 import subprocess
 import warnings
@@ -33,6 +34,16 @@ from QEfficient.utils import (
     generate_mdp_partition_config,
     hash_dict_params,
     load_json,
+)
+from QEfficient.utils._utils import (
+    collect_module_inputs,
+    extract_from_last_layer,
+    extract_single_node_with_utils,
+    extract_until_first_layer,
+    measure,
+    remove_all_forward_hooks,
+    stitch_model,
+    stitch_single_layer,
 )
 from QEfficient.utils.export_utils import export_wrapper
 
@@ -209,6 +220,7 @@ class QEFFBaseModel(ABC):
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
+        use_layerwise_export: bool = True,
         **export_kwargs,
     ) -> str:
         """
@@ -278,49 +290,154 @@ class QEFFBaseModel(ABC):
                 else:
                     input_names.append(param)
 
-        try:
-            torch.onnx.export(
-                self.model,
-                (example_inputs,),
-                str(tmp_onnx_path),
-                input_names=input_names,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
-                **export_kwargs,
-            )
-            logger.info("PyTorch export successful")
-            _ = self._offload_model_weights(offload_pt_weights)
-            model = onnx.load(tmp_onnx_path, load_external_data=False)
+####################################################
+        if use_layerwise_export:     
+            layer_class = next(iter(export_kwargs["export_modules_as_functions"]))
+            layerwise_dir = export_dir / "onnx_layerwise_tmp"
+            layerwise_dir.mkdir(parents=True, exist_ok=True)
+        
+            
+            # module_inputs, first_layer_name = collect_module_inputs(self.model, example_inputs, layer_class)
 
-            # Clear temporary references
-            transform_kwargs = {
-                "onnx_base_dir": str(tmp_onnx_dir),
-                "model_name": self.model_name,
-            }
-            if onnx_transform_kwargs is not None:
-                transform_kwargs.update(onnx_transform_kwargs)
+            # extract_until_first_layer(layer_onnx_path, layer_onnx_path, first_layer_name)
+            # extract_single_node_with_utils(layer_onnx_path, first_layer_name.replace("0", "1"), layer_onnx_path.replace("0and1", "1"))
 
-            onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
-            model, transformed = onnx_transforms.apply(model, **transform_kwargs)
+            # import ipdb; ipdb.set_trace()
 
-            # Add metadata to the model
-            model.metadata_props.append(
-                onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
-            )
-            logger.info("ONNX transforms applied")
+            stitched_model = None
+            import ipdb; ipdb.set_trace()
+            # with measure("layer wise export"):
+            for i in range(60, len(self.model.model.layers)):
+                example_inputs["layer_indices_to_run"] = [i]
+                current_layer_dir = layerwise_dir / f"layer_{i}"
+                current_layer_dir.mkdir(parents=True, exist_ok=True)
+                    
+                layer_onnx_path = str(current_layer_dir / f"{self.model_name}_layer_{i}.onnx")
+                layer_onnx_path_tmp = str(current_layer_dir / f"{self.model_name}_layer_tmp_{i}.onnx")
+                if not os.path.isfile(layer_onnx_path):
+                    torch.onnx.export(
+                        self.model,
+                        (example_inputs,),
+                        layer_onnx_path_tmp,
+                        input_names=input_names,
+                        output_names=output_names,
+                        dynamic_axes=dynamic_axes,
+                        opset_version=constants.ONNX_EXPORT_OPSET,
+                        external_data=True,
+                        **export_kwargs,
+                    )
+                    remove_all_forward_hooks(self.model)
+                         
+            
+            exit()
+                    # import ipdb; ipdb.set_trace()
+                    # if i == 0 and not os.path.isfile(layer_onnx_path):
+                    #     extract_until_first_layer(layer_onnx_path_tmp, layer_onnx_path, first_layer_name)
+                    # elif i == len(self.model.model.layers) - 1 and not os.path.isfile(layer_onnx_path):
+                    #     print("Extracting from last layer")
+                    #     extract_from_last_layer(layer_onnx_path_tmp, layer_onnx_path, first_layer_name.replace("0", str(i)))
+                    # elif not os.path.isfile(layer_onnx_path):
+                    #     extract_single_node_with_utils(layer_onnx_path_tmp, first_layer_name.replace("0", str(i)), layer_onnx_path)
 
-            onnx.save(model, onnx_path)
-            del model
-            gc.collect()
-            logger.info("Transformed ONNX saved")
+                    # remove_all_forward_hooks(self.model)
 
-        except Exception as e:
-            logger.error(f"ONNX export or transforms failed: {e}")
-            raise e
+                    # # import ipdb; ipdb.set_trace()
+                    # if stitched_model is None:
+                    #     stitched_model = onnx.load(layer_onnx_path)
+                    # else:
+                    #     print(f"Stitching layer {i}")
+                    #     curr_model = onnx.load(layer_onnx_path)
+                    #     if i != len(self.model.model.layers) - 1:
+                    #         stitch_single_layer(stitched_model, curr_model)
+                    #     else:
+                    #         stitch_model(stitched_model, curr_model)
+            
+            # tmp_stitched_path = str(tmp_onnx_dir / f"{self.model_name}_stitched.onnx")
+            # stitched_path = str(export_dir / f"{self.model_name}_stitched.onnx")
 
-        finally:
-            shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
+            # onnx.external_data_helper.convert_model_to_external_data(
+            #     stitched_model,
+            #     all_tensors_to_one_file=True,
+            #     size_threshold=0,
+            #     convert_attribute=False,
+            # )
+
+            # onnx.save(stitched_model, tmp_stitched_path)
+            # stitched_model = onnx.load(tmp_stitched_path, load_external_data=False)
+
+            # import ipdb; ipdb.set_trace() 
+
+            # transform_kwargs = {
+            #     "onnx_base_dir": str(tmp_onnx_dir),
+            #     "model_name": self.model_name + "_stitched",
+            # }
+            # if onnx_transform_kwargs is not None:
+            #     transform_kwargs.update(onnx_transform_kwargs)
+
+            # for transform in self._onnx_transforms:
+            #     stitched_model, transformed = transform.apply(stitched_model, **transform_kwargs)
+
+            # stitched_model.metadata_props.append(
+            #     onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
+            # )
+            # logger.info("ONNX transforms applied to stitched model")
+
+            # onnx.external_data_helper.convert_model_to_external_data(
+            #     stitched_model,
+            #     all_tensors_to_one_file=False,
+            #     size_threshold=0,
+            #     convert_attribute=False,
+            # )
+
+            # onnx.save(stitched_model, stitched_path)
+            # logger.info("Transformed stitched ONNX saved")
+
+
+
+
+####################################################
+        # torch.onnx.export(
+        #     self.model,
+        #     (example_inputs,),
+        #     str(tmp_onnx_path),
+        #     input_names=input_names,
+        #     output_names=output_names,
+        #     dynamic_axes=dynamic_axes,
+        #     opset_version=constants.ONNX_EXPORT_OPSET,
+        #     **export_kwargs,
+        # )
+        # logger.info("PyTorch export successful")
+        # _ = self._offload_model_weights(offload_pt_weights)
+        # model = onnx.load(tmp_onnx_path, load_external_data=False)
+
+        # # Clear temporary references
+        # transform_kwargs = {
+        #     "onnx_base_dir": str(tmp_onnx_dir),
+        #     "model_name": self.model_name,
+        # }
+        # if onnx_transform_kwargs is not None:
+        #     transform_kwargs.update(onnx_transform_kwargs)
+
+        # onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
+        # model, transformed = onnx_transforms.apply(model, **transform_kwargs)
+
+        # # Add metadata to the model
+        # model.metadata_props.append(
+        #     onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
+        # )
+        # logger.info("ONNX transforms applied")
+
+        # onnx.save(model, onnx_path)
+        # del model
+        # gc.collect()
+        # logger.info("Transformed ONNX saved")
+
+        # except Exception as e:
+        #     logger.error(f"ONNX export or transforms failed: {e}")
+        #     raise e
+
+        # finally:
+        #     shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
 
         if prefill_only:
             self.prefill_onnx_path = onnx_path

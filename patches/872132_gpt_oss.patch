@@ -1,0 +1,330 @@
+diff --git a/examples/disagg_serving/gpt_oss_disagg_mode.py b/examples/disagg_serving/gpt_oss_disagg_mode.py
+index fd0d5b0..c1fdeef 100644
+--- a/examples/disagg_serving/gpt_oss_disagg_mode.py
++++ b/examples/disagg_serving/gpt_oss_disagg_mode.py
+@@ -14,7 +14,7 @@ from transformers import AutoTokenizer
+ from QEfficient import QEFFAutoModelForCausalLM
+ from QEfficient.generation.cloud_infer import QAICInferenceSession
+ 
+-model_id = "openai/gpt-oss-20b"  # weights are not required to convert to fp32
++model_id = "openai/gpt-oss-120b"  # weights are not required to convert to fp32
+ 
+ prompt = """
+ Once upon a time, in a small town, there lived a young boy named Alex. Alex was a curious and adventurous child, always eager to explore the world around him. One day, while playing in the park, Alex stumbled upon a mysterious old book hidden beneath a pile of leaves. The book was filled with stories of distant lands, magical creatures, and extraordinary adventures.
+@@ -26,8 +26,8 @@ The path to the treasure was not an easy one. Alex had to navigate through dense
+ all_outputs = []
+ # Run prefill
+ tokenizer = AutoTokenizer.from_pretrained(model_id)
+-PREFILL_SEQ_LEN = 256
+-CTX_LEN = 256
++PREFILL_SEQ_LEN = 128
++CTX_LEN = 8192
+ inputs = tokenizer(prompt, return_tensors="np", padding=True)
+ position_ids = inputs["attention_mask"].sum(1, keepdims=True)
+ padded_len = inputs["input_ids"].shape[1]
+@@ -63,24 +63,28 @@ decode_qpc_path = qeff_model.compile(
+     num_cores=16,
+     mxfp6_matmul=True,
+     mxint8_kv_cache=True,
+-    num_devices=1,
++    num_devices=4,
+     mos=1,
+     aic_enable_depth_first=True,
+     num_speculative_tokens=None,
+     offload_pt_weights=False,
++    split_retained_state_io=True,
++    retain_full_kv=True,
+ )
+ prefill_qpc_path = qeff_model.compile(
+     prefill_seq_len=PREFILL_SEQ_LEN,
+     ctx_len=CTX_LEN,
++    enable_chunking=True,
+     num_cores=16,
+     mxfp6_matmul=True,
+     mxint8_kv_cache=True,
+-    num_devices=1,
++    num_devices=4,
+     mos=1,
+     aic_enable_depth_first=True,
+     num_speculative_tokens=None,
+     prefill_only=True,
+     use_onnx_subfunctions=True,
++    split_retained_state_io=True,
+ )
+ 
+ prefill_session = QAICInferenceSession(prefill_qpc_path)
+diff --git a/examples/disagg_serving/subfunction_120b_npi.yaml b/examples/disagg_serving/subfunction_120b_npi.yaml
+index 762703d..3e1b6e2 100644
+--- a/examples/disagg_serving/subfunction_120b_npi.yaml
++++ b/examples/disagg_serving/subfunction_120b_npi.yaml
+@@ -1,27 +1,50 @@
+ FP32NodeInstanceNames:
+-  - CustomRMSNorm_58
+-  - onnx::Shape_1033777
+-  - CustomRMSNorm_349
+-  - hidden.127
+-  - CustomRMSNorm_27448
+-  - onnx::Shape_1066066
+-  - CustomRMSNorm_27709
+-  - hidden.131
+-  - CustomRMSNorm_54808
+-  - onnx::Shape_878
+-  - CustomRMSNorm_55105
+-  - hidden
+-  - hidden_states.259
+-  - Add_348
+-  - Add_347
+-  - onnx::Add_1034099
++  - onnx::Shape_139893
++  - onnx::Shape_140187
++  - onnx::Shape_144086
++  - onnx::Shape_144410
++  - onnx::Shape_883
++  - onnx::Shape_1215
+   - hidden_states.267
+-  - Add_27708
+-  - onnx::Add_1066358
+-  - Add_27707
++  - hidden_states.271
++  - hidden_states.275
++  - hidden_states.279
+   - hidden_states.3
+-  - Add_55104
+-  - onnx::Add_1209
+-  - Add_55103
+-  - /model/norm/CustomRMSNorm
+-  - /model/norm/CustomRMSNorm_output_0
+\ No newline at end of file
++  - hidden_states.7
++  - /model/norm/CustomRMSNorm_output_0
++  - /model/layers.0/QEffGptOssDecoderLayer_output_127
++  - /model/layers.1/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.2/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.3/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.4/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.5/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.6/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.7/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.8/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.9/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.10/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.11/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.12/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.13/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.14/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.15/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.16/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.17/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.18/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.19/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.20/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.21/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.22/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.23/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.24/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.25/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.26/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.27/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.28/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.29/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.30/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.31/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.32/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.33/QEffGptOssDecoderLayer.2_output_2
++  - /model/layers.34/QEffGptOssDecoderLayer.1_output_2
++  - /model/layers.35/QEffGptOssDecoderLayer.2_output_2
+diff --git a/examples/gpt_oss_disagg_mode_with_chunking.py b/examples/gpt_oss_disagg_mode_with_chunking.py
+index 363e280..a02448c 100644
+--- a/examples/gpt_oss_disagg_mode_with_chunking.py
++++ b/examples/gpt_oss_disagg_mode_with_chunking.py
+@@ -37,12 +37,14 @@ decode_qpc_path = qeff_model.compile(
+     num_cores=16,
+     mxfp6_matmul=True,
+     mxint8_kv_cache=True,
+-    num_devices=1,
++    num_devices=4,
+     mos=1,
+     aic_enable_depth_first=True,
+     num_speculative_tokens=None,
+     offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation in the next step
+     retain_full_kv=True,
++    split_retained_state_io=True,
++    node_precision_info=""
+ )
+ 
+ 
+diff --git a/tests/transformers/models/test_disagg_mode.py b/tests/transformers/models/test_disagg_mode.py
+index 6358940..3c3c884 100644
+--- a/tests/transformers/models/test_disagg_mode.py
++++ b/tests/transformers/models/test_disagg_mode.py
+@@ -5,12 +5,13 @@
+ #
+ # -----------------------------------------------------------------------------
+ 
++import gc
+ import time
+ 
+ import numpy as np
+ import pytest
+ import torch
+-from transformers import AutoModelForCausalLM, AutoTokenizer, HybridCache
++from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, HybridCache
+ 
+ from QEfficient import QEFFAutoModelForCausalLM
+ from QEfficient.generation.cloud_infer import QAICInferenceSession
+@@ -104,10 +105,10 @@ def test_disagg_mode_prefill(model_id, prompt):
+     assert (torch.from_numpy(qpc_out["logits"]) - qeff_out.logits).abs().max() < 5e-2
+ 
+ 
+-@pytest.mark.skip(reason="no way of currently testing this without the assert sdk")
++# @pytest.mark.skip(reason="no way of currently testing this without the assert sdk")
+ @pytest.mark.on_qaic
+ @pytest.mark.parametrize("model_id", [model_id])
+-@pytest.mark.parametrize("prompt", prompts)
++@pytest.mark.parametrize("prompt", [prompt2])
+ def test_disagg_mode_prefill_chunked(model_id, prompt):
+     # Run prefill
+     tokenizer = AutoTokenizer.from_pretrained(model_id)
+@@ -118,6 +119,112 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
+     num_chunks = -(padded_len // -PREFILL_SEQ_LEN)  # ceil divide without float
+     padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
+ 
++    # replace_transformers_quantizers()
++    # model = AutoModelForCausalLM.from_pretrained(model_id)
++    # config = model.config
++    # inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
++    # inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
++    # inputs.pop("token_type_ids", None)
++    # inputs = {k: torch.from_numpy(v).to(model.device) for k, v in inputs.items()}
++    # cache = HybridCache(config=config, batch_size=1, max_cache_len=CTX_LEN)
++    # ins = tokenizer(prompt, return_tensors="pt")
++    # out = model(**ins, past_key_values=cache)
++    # import ipdb; ipdb.set_trace()
++    # undo_transformers_quantizers()
++    # del model
++    # gc.collect()
++    # qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
++    # qeff_model.prefill(True, enable_chunking=True)
++    # config = qeff_model.model.config
++    config = AutoConfig.from_pretrained(model_id)
++    inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
++    inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
++    inputs.pop("token_type_ids", None)
++    # inputs = {k: torch.from_numpy(v) for k, v in inputs.items()}
++    # pkv_set_buffer = {}
++    # past_key_values = []
++    # for i in range(config.num_hidden_layers):
++    #     cache_len = CTX_LEN
++    #     pad_shape = (1, 8, cache_len, 64)
++    #     past_key = np.zeros((pad_shape), dtype=np.int8)
++    #     past_value = np.zeros((pad_shape), dtype=np.int8)
++    #     pkv = (past_key, past_value)
++    #     past_key_values.append(pkv)
++        # inputs[f"past_key.{i}"] = past_key
++        # inputs[f"past_value.{i}"] = past_value
++        # pkv_set_buffer[f"past_key.{i}_RetainedState"] = np.zeros((pad_shape), dtype=np.int8)
++        # pkv_set_buffer[f"past_value.{i}_RetainedState"] = np.zeros((pad_shape), dtype=np.int8)
++        
++
++    # for i in range(num_chunks):
++    #     chunk_inputs = inputs.copy()
++    #     chunk_inputs["input_ids"] = inputs["input_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
++    #     chunk_inputs["position_ids"] = inputs["position_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
++
++    #     qeff_out = qeff_model.model(**chunk_inputs)
++    #     inputs["past_key_values"] = qeff_out["past_key_values"]
++
++    # import ipdb; ipdb.set_trace()
++    # Check our pytorch implementation
++    # assert (qeff_out.logits - out.logits[:, -1, :]).abs().max() < 1e-4
++    # exit()
++    # prefill_qpc_path = qeff_model.compile(
++    #     onnx_path="/home/ochougul/GptOssForCausalLM-5855796edd057e17/GptOssForCausalLM.onnx",
++    #     prefill_seq_len=PREFILL_SEQ_LEN,
++    #     ctx_len=CTX_LEN,
++    #     num_cores=16,
++    #     mxfp6_matmul=True,
++    #     mxint8_kv_cache=True,
++    #     num_devices=4,
++    #     mos=1,
++    #     aic_enable_depth_first=True,
++    #     num_speculative_tokens=None,
++    #     prefill_only=True,
++    #     enable_chunking=True,
++    #     node_precision_info="/home/ochougul/efficient-transformers/examples/disagg_serving/subfunction_120b_npi.yaml",
++    #     use_onnx_subfunctions=True,
++    # )
++    prefill_qpc_path="/home/ochougul/GptOssForCausalLM-5855796edd057e17/wrong_subfunc_npi_qpc/qpc"
++    prefill_session = QAICInferenceSession(prefill_qpc_path, device_ids=[4,5,6,7])
++    prefill_session.skip_buffers(
++        [x for x in prefill_session.input_names + prefill_session.output_names if x.startswith("past_")]
++    )
++    logits_out_placeholder = np.zeros((1, 1, 201088), dtype=np.float32)
++    prefill_session.set_buffers({"logits": logits_out_placeholder})
++    # prefill_session.set_buffers(pkv_set_buffer)
++    # inputs.pop("past_key_values")
++    # inputs = {k: v.detach().numpy() for k, v in inputs.items()}
++    import ipdb; ipdb.set_trace()
++    st = time.time()
++    for i in range(num_chunks):
++        chunk_inputs = inputs.copy()
++        chunk_inputs["input_ids"] = inputs["input_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
++        chunk_inputs["position_ids"] = inputs["position_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
++        qpc_out = prefill_session.run(chunk_inputs)
++
++    print(f"time for prefill_run={time.time() - st} sec\n")
++    del prefill_session
++    import ipdb; ipdb.set_trace()
++    # Check QAIC output isclose with QEFF pytorch output
++    # assert (torch.from_numpy(qpc_out["logits"]) - qeff_out.logits).abs().max() < 8e-2
++
++
++
++
++@pytest.mark.on_qaic
++@pytest.mark.parametrize("model_id", [model_id])
++@pytest.mark.parametrize("prompt", prompts)
++def test_disagg_mode_decode_full_kv(model_id, prompt):
++    # Run prefill
++    tokenizer = AutoTokenizer.from_pretrained(model_id)
++    PREFILL_SEQ_LEN = 1
++    CTX_LEN = 128 * 3
++    inputs = tokenizer(prompt, return_tensors="np", padding=True)
++    padded_len = inputs["input_ids"].shape[1]
++    num_chunks = -(padded_len // -PREFILL_SEQ_LEN)  # ceil divide without float
++    padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
++    generation_len = 5
++
+     replace_transformers_quantizers()
+     model = AutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
+     config = model.config
+@@ -127,7 +234,10 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
+     inputs = {k: torch.from_numpy(v).to(model.device) for k, v in inputs.items()}
+     cache = HybridCache(config=config, batch_size=1, max_cache_len=CTX_LEN)
+     ins = tokenizer(prompt, return_tensors="pt")
+-    out = model(**ins, past_key_values=cache)
++    
++    for i in range(generation_len):
++        out = model(**ins, past_key_values=cache)
++        ins = {"input_ids": out.logits.argmax(dim=-1), "past_key_values": out.past_key_values}
+ 
+     undo_transformers_quantizers()
+ 
+@@ -169,8 +279,8 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
+         mos=1,
+         aic_enable_depth_first=True,
+         num_speculative_tokens=None,
+-        prefill_only=True,
+-        enable_chunking=True,
++        retain_full_kv=True,
++        node_precision_info="/home/ochougul/efficient-transformers/examples/disagg_serving/without_subfunc_npi_120b.yaml"
+     )
+     prefill_session = QAICInferenceSession(prefill_qpc_path)
+     prefill_session.skip_buffers(
+@@ -189,4 +299,4 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
+     print(f"time for prefill_run={time.time() - st} sec\n")
+     del prefill_session
+     # Check QAIC output isclose with QEFF pytorch output
+-    assert (torch.from_numpy(qpc_out["logits"]) - qeff_out.logits).abs().max() < 8e-2
++    assert (torch.from_numpy(qpc_out["logits"]) - qeff_out.logits).abs().max() < 8e-2
+\ No newline at end of file

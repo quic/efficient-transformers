@@ -92,15 +92,15 @@ class CustomOpTransform(BaseOnnxTransform):
     _custom_ops: Dict[str, Tuple[Any, Any]] = {
         "CustomRMSNormFunc": (CustomRMSNormFunc, CustomRMSNorm),
         "CtxScatterFunc": (CtxScatterFunc, CtxScatter),
-        "CtxScatterFunc3D": (CtxScatterFunc3D, CtxScatter3D),
+        # "CtxScatterFunc3D": (CtxScatterFunc3D, CtxScatter3D),
         "CtxGatherFunc": (CtxGatherFunc, CtxGather),
-        "CtxGatherFunc3D": (CtxGatherFunc3D, CtxGather3D),
-        "CtxScatterFuncCB3D": (CtxScatterFuncCB3D, CtxScatterCB3D),
-        "CtxGatherFuncCB3D": (CtxGatherFuncCB3D, CtxGatherCB3D),
-        "CtxGatherFuncBlockedKV": (CtxGatherFuncBlockedKV, CtxGatherBlockedKV),
-        "CtxGatherFuncBlockedKVCB": (CtxGatherFuncBlockedKVCB, CtxGatherBlockedKVCB),
-        "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
-        "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
+        # "CtxGatherFunc3D": (CtxGatherFunc3D, CtxGather3D),
+        # "CtxScatterFuncCB3D": (CtxScatterFuncCB3D, CtxScatterCB3D),
+        # "CtxGatherFuncCB3D": (CtxGatherFuncCB3D, CtxGatherCB3D),
+        # "CtxGatherFuncBlockedKV": (CtxGatherFuncBlockedKV, CtxGatherBlockedKV),
+        # "CtxGatherFuncBlockedKVCB": (CtxGatherFuncBlockedKVCB, CtxGatherBlockedKVCB),
+        # "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
+        # "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
     }
 
     @classmethod

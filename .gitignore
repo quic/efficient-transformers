@@ -89,3 +89,6 @@ cython_debug/
 cache_dir
 qeff_models
 .vscode/*
+
+# ONNX artifacts
+*.onnx
