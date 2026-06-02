@@ -231,8 +231,8 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         routing_weights = torch.zeros_like(router_logits)
         routing_weights.scatter_(1, top_i, top_w)
 
-        num_nsp = self.expert_blocking_num_nsp
-        packed_chunk_size = self.expert_blocking_packed_chunk_size
+        num_nsp = getattr(self, "expert_blocking_num_nsp", self.num_experts)
+        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
         if self.num_experts % num_nsp != 0:
             raise ValueError(
                 f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})"
