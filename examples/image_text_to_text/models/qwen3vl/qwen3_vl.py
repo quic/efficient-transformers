@@ -84,6 +84,7 @@ else:
         num_devices=4,
         height=354,
         width=536,
+        split_model_io=True,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,

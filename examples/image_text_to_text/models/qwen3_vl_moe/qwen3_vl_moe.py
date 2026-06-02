@@ -16,7 +16,7 @@ from QEfficient import QEFFAutoModelForImageTextToText
 model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 
-# For faster execution user can run with lesser layers, For Testing Purpose Only
+# For faster execution user can run with lesser layers, For Testing Purpose Only. Please ensure to use the configuration given below as random configurations may fail due to deepstack
 # config.vision_config.depth = 9
 # config.text_config.num_hidden_layers = 1
 # config.vision_config.deepstack_visual_indexes = [8]
@@ -85,6 +85,7 @@ else:
         num_devices=4,
         height=354,
         width=536,
+        split_model_io=True,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
