@@ -666,6 +666,7 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
     ):
         visual_pos_masks = visual_pos_masks.unsqueeze(-1).expand(-1, -1, self.config.hidden_size)
         visual_embeds = visual_embeds.to(hidden_states.device, hidden_states.dtype)
+        hidden_states = hidden_states.clone()
         visual_mask = visual_pos_masks.to(hidden_states.dtype)
         return hidden_states + (visual_embeds * visual_mask)
 
@@ -677,10 +678,10 @@ class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBloc
         x = hidden_states.view(T, H)
         act = getattr(self.experts, "act_fn", F.silu)
 
-        router_hidden_states = x.reshape(-1, self.gate.hidden_dim)
-        router_logits = F.linear(router_hidden_states, self.gate.weight)
-        top_w, top_i = torch.topk(router_logits, self.gate.top_k, dim=-1)
-        top_w = F.softmax(top_w, dim=-1, dtype=torch.float)
+        router_logits = self.gate(x)  # [T, E]
+        prob = F.softmax(router_logits, dim=-1, dtype=torch.float32)
+        top_w, top_i = torch.topk(prob, self.top_k, dim=-1)
+        top_w = top_w / torch.einsum("bi->b", top_w)[:, None]
         top_w = top_w.to(hidden_states.dtype)
         num_experts = getattr(self, "num_experts", self.gate.num_experts)
         routing_weights = torch.zeros((T, num_experts), dtype=x.dtype)

@@ -224,6 +224,7 @@ for i in range(config.text_config.num_hidden_layers):
     decode_inputs[f"past_key.{i}"] = outputs[f"past_key.{i}_RetainedState"]
     decode_inputs[f"past_value.{i}"] = outputs[f"past_value.{i}_RetainedState"]
 
+
 st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
 print(f"time for first run of decode with KV as input = {perf_counter() - st} sec\n")
