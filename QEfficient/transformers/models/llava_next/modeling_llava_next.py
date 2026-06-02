@@ -326,13 +326,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
             logger.warning("Setting img_size to be 384, as it was neither passed nor found in vision_config")
         if img_size != constants.GRANITEVISION_IMG_SIZE and kv_offload:
             logger.warning("Image Size other than 384 is not supported for LlavaNext models yet.")
-        user_vision_size = compiler_options.pop("vision_size", None)
-        if user_vision_size:
-            if user_vision_size >= ctx_len:
-                raise ValueError("vision_size must be less than ctx_len")
-            vision_size = user_vision_size
-        else:
-            vision_size = constants.GRANITEVISION_FEATURE_SIZE
+        vision_size = constants.GRANITEVISION_FEATURE_SIZE
         vision = [
             {
                 "batch_size": batch_size,

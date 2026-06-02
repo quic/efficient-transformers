@@ -1001,13 +1001,7 @@ class QEffLlama4ForConditionalGeneration(Llama4ForConditionalGeneration):
             * (img_size // self.config.vision_config.patch_size)
             // downsample_ratio
         )
-        user_vision_size = compiler_options.pop("vision_size", None)
-        if user_vision_size:
-            if user_vision_size >= ctx_len:
-                raise ValueError("vision_size must be less than ctx_len")
-            vision_size = user_vision_size
-        else:
-            vision_size = num_features_per_tile * max_num_tiles
+        vision_size = num_features_per_tile * max_num_tiles
 
         vision = [
             {
