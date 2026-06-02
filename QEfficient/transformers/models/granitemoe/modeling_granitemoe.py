@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 from typing import List, Optional, Tuple, Type, Union
+import os
 
 import torch
 from torch import nn
@@ -31,6 +32,11 @@ from QEfficient.blocking.attention_blocking import (
     BlockingMode,
     generic_blocked_attention_interface,
     past_key_value_update,
+)
+from QEfficient.customop.ctx_scatter_gather import (
+    CtxGatherFunc3DGeneralized,
+    CtxScatterFunc3DGeneralized,
+    CtxScatterFunc3DInt,
 )
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -87,6 +93,62 @@ def qeff_apply_rotary_pos_emb(
     k_embed = (k * cos) + (rotate_half(k) * sin)
     # Cast back to original dtype
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
+
+
+class QEffPrefillChunkedGraniteMoeAttention(GraniteMoeAttention):
+    """Prefill-chunked attention for GraniteMoE — no sliding window."""
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_ids: Optional[torch.LongTensor] = None,
+        position_embeddings: Tuple[torch.Tensor, torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        past_key_values: Optional[Cache] = None,
+        comp_ctx_lengths: Optional[torch.LongTensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
+        output_attentions: bool = False,
+        use_cache: bool = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        cos_cached: Optional[torch.Tensor] = None,
+        sin_cached: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        bsz, q_len, _ = hidden_states.size()
+
+        query_states = self.q_proj(hidden_states)
+        key_states = self.k_proj(hidden_states)
+        value_states = self.v_proj(hidden_states)
+
+        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
+
+        key_states, value_states, _ = past_key_value_update(
+            module=self,
+            key=key_states,
+            value=value_states,
+            attention_mask=attention_mask,
+            past_key_value=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
+            position_ids=position_ids,
+        )
+
+        attn_output, attn_weights = eager_attention_forward(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            scaling=self.scaling,
+        )
+
+        attn_output = attn_output.view(bsz, q_len, -1)
+        attn_output = self.o_proj(attn_output)
+
+        return attn_output, attn_weights
 
 
 class QEffGraniteMoeAttention(GraniteMoeAttention):
@@ -541,6 +603,182 @@ class QEffGraniteMoeMoE(GraniteMoeMoE):
         return final_hidden_states, router_logits
 
 
+
+def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
+    """Build packed->original token index table via cumsum scatter."""
+    batch_size, seq_len = T2Ei.shape
+    int32_max = torch.iinfo(torch.int32).max
+    int32_max_scalar = torch.tensor(int32_max, dtype=torch.int32, device=T2Ei.device)
+    token_idx = torch.arange(seq_len, dtype=torch.int32, device=T2Ei.device).unsqueeze(0).expand(batch_size, -1)
+    valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
+    valid_dest = valid_prefix - 1
+    scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
+    matched_idx = torch.full_like(token_idx, int32_max)
+    matched_idx = CtxScatterFunc3DInt.apply(
+        matched_idx.unsqueeze(-1),
+        scatter_pos,
+        token_idx.unsqueeze(-1),
+    ).squeeze(-1)
+    return matched_idx
+
+
+def _cumsum_scatter_gather_update_granitemoe_expert_blocked(
+    x: torch.Tensor,
+    T2Ei: torch.Tensor,
+    W_g: torch.Tensor,
+    W_u: torch.Tensor,
+    W_d: torch.Tensor,
+    routing_weight: torch.Tensor,
+    expert_out: torch.Tensor,
+    activation,
+    packed_chunk_size: int,
+    num_expert_chunks: Optional[int] = None,
+) -> torch.Tensor:
+    """Cumsum-scatter-gather-update for one local GraniteMoE expert slot.
+
+    Shapes:
+        x              : [T, H]
+        T2Ei           : [num_nsp, T]       bool
+        W_g, W_u       : [num_nsp, H, I]
+        W_d            : [num_nsp, I, H]
+        routing_weight : [num_nsp, T]
+        expert_out     : [num_nsp, T, H]    accumulator (in-out)
+    """
+    batch_size, seq_len = T2Ei.shape
+    # num_expert_chunks controls loop iteration count (unrolled at trace time).
+    # packed_chunk_size = seq_len // num_expert_chunks is computed via ONNX
+    # Shape+Div ops → DYNAMIC at runtime (scales with actual seq_len).
+    if num_expert_chunks is not None:
+        packed_chunk_size = seq_len // num_expert_chunks
+    else:
+        packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
+        num_expert_chunks = seq_len // packed_chunk_size
+
+    matched_idx = _build_matched_idx_from_cumsum(T2Ei)
+    valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
+    x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
+    rw_expanded = routing_weight.unsqueeze(-1)
+
+    for chunk_idx in range(num_expert_chunks):
+        packed_start = chunk_idx * packed_chunk_size
+        packed_stop  = packed_start + packed_chunk_size if chunk_idx < num_expert_chunks - 1 else seq_len
+        chunk_size   = packed_stop - packed_start
+        chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
+
+        x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
+
+        gate = x_chunk @ W_g
+        up = x_chunk @ W_u
+        down_chunk = (activation(gate) * up) @ W_d
+
+        rw_chunk = CtxGatherFunc3DGeneralized.apply(rw_expanded, chunk_matched_idx)
+        down_chunk = down_chunk * rw_chunk
+
+        expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
+        updated_chunk = expert_out_chunk + down_chunk
+
+        row_range = torch.arange(chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
+        rows_remaining = valid_rows - packed_start
+        chunk_valid_rows = torch.where(rows_remaining < 0, torch.zeros_like(rows_remaining), rows_remaining)
+        chunk_valid_rows = torch.where(
+            chunk_valid_rows > chunk_size,
+            torch.ones_like(chunk_valid_rows) * chunk_size,
+            chunk_valid_rows,
+        )
+        updated_chunk = torch.where(
+            (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
+        )
+        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
+
+    return expert_out
+
+
+class QEffPrefillChunkedGraniteMoeMoE(GraniteMoeMoE):
+    """NSP-blocked prefill dispatch for GraniteMoE.
+
+    Replaces the per-expert loop in QEffGraniteMoeMoE with a
+    cumsum-scatter-gather-update strategy that only runs the MLP on active
+    tokens, mirroring the Qwen3-MoE implementation.
+    """
+
+    supports_moe_prefill_blocking = True
+
+    def __qeff_init__(self):
+        W_gate_up = self.input_linear.weight   # [E, 2I, H]
+        I = W_gate_up.shape[1] // 2
+        self._W_g = nn.Parameter(W_gate_up[:, :I, :].transpose(1, 2).contiguous())   # [E, H, I]
+        self._W_u = nn.Parameter(W_gate_up[:, I:, :].transpose(1, 2).contiguous())   # [E, H, I]
+        self._W_d = nn.Parameter(self.output_linear.weight.transpose(1, 2).contiguous())  # [E, I, H]
+
+    def _forward_expert_blocked(
+        self, x: torch.Tensor, routing_weights: torch.Tensor, num_expert_chunks: Optional[int] = None
+    ) -> torch.Tensor:
+        T, H = x.shape
+        num_experts = self.router.num_experts
+        num_nsp = self.expert_blocking_num_nsp
+        if num_experts % num_nsp != 0:
+            raise ValueError(
+                f"num_experts ({num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})."
+            )
+        local_experts = num_experts // num_nsp
+        I = self._W_g.shape[2]
+
+        rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
+        W_g = self._W_g.view(local_experts, num_nsp, H, I).transpose(0, 1).contiguous()
+        W_u = self._W_u.view(local_experts, num_nsp, H, I).transpose(0, 1).contiguous()
+        W_d = self._W_d.view(local_experts, num_nsp, I, H).transpose(0, 1).contiguous()
+
+        expert_out = x.new_zeros((num_nsp, T, H))
+        for slot in range(local_experts):
+            routing_weight = rw[:, slot, :]
+            T2Ei = routing_weight > 0
+            expert_out = _cumsum_scatter_gather_update_granitemoe_expert_blocked(
+                x=x,
+                T2Ei=T2Ei,
+                W_g=W_g[:, slot],
+                W_u=W_u[:, slot],
+                W_d=W_d[:, slot],
+                routing_weight=routing_weight,
+                expert_out=expert_out,
+                activation=self.activation,
+                packed_chunk_size=self.expert_blocking_packed_chunk_size,
+                num_expert_chunks=self.expert_blocking_num_packed_chunks,
+            )
+        return torch.einsum("ijk->jk", expert_out)
+
+    def orig_forward(self, layer_input: torch.Tensor):
+        """Original per-expert loop — kept for parity testing."""
+        bsz, length, emb_size = layer_input.size()
+        layer_input = layer_input.reshape(-1, emb_size)
+        topk_gates, expert_mask, router_logits, num_experts = self.router(layer_input)
+        final_hidden_states = torch.zeros_like(layer_input)
+        for expert_idx in range(num_experts):
+            mask = expert_mask[expert_idx].transpose(0, 1).to(layer_input.dtype)
+            mask_weight = torch.einsum("be,be->b", topk_gates, mask.to(topk_gates.dtype))[:, None]
+            hidden_states = self.input_linear(layer_input, expert_idx)
+            chunked_hidden_states = hidden_states.chunk(2, dim=-1)
+            hidden_states = self.activation(chunked_hidden_states[0]) * chunked_hidden_states[1]
+            expert_outputs = self.output_linear(hidden_states, expert_idx)
+            current_hidden_states = torch.where(mask_weight > 0, expert_outputs * mask_weight, 0.0)
+            final_hidden_states += current_hidden_states
+        final_hidden_states = final_hidden_states.view(bsz, length, self.input_size)
+        return final_hidden_states, router_logits
+
+    def forward(self, layer_input: torch.Tensor):
+        bsz, length, emb_size = layer_input.size()
+        x = layer_input.reshape(-1, emb_size)
+        topk_gates, expert_mask, router_logits, num_experts = self.router(x)
+
+        # Convert [E, top_k, T] + [T, top_k] -> flat [T, E] routing weights
+        routing_weights = torch.einsum("tk,ekt->te", topk_gates, expert_mask.float())
+
+        if getattr(self, "supports_moe_prefill_blocking", False) and hasattr(self, "expert_blocking_num_nsp") and num_experts % self.expert_blocking_num_nsp == 0:
+            expert_out = self._forward_expert_blocked(x=x, routing_weights=routing_weights)
+            return expert_out.view(bsz, length, self.input_size), router_logits
+
+        return self.orig_forward(layer_input)
+
+
 class QEffGraniteMoeParallelExperts(GraniteMoeParallelExperts):
     def forward(self, inputs, expert_size):
         """
@@ -570,6 +808,12 @@ class QEffGraniteMoeForCausalLM(GraniteMoeForCausalLM):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
+        # When the chunked-prefill MoE block is active it emits CtxScatter3DInt,
+        # which the compiler does not support inside ONNX subfunctions.
+        # Return an empty set so -sub-functions is not passed to qaic-compile.
+        first_layer_moe = self.model.layers[0].block_sparse_moe
+        if isinstance(first_layer_moe, QEffPrefillChunkedGraniteMoeMoE):
+            return set()
         return {self.model.layers[0].__class__}
 
     def forward(

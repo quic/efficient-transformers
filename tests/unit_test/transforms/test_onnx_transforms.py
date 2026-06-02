@@ -531,6 +531,24 @@ class TestCustomOpTransformStructure:
 
         assert "CtxGatherFunc" in CustomOpTransform._custom_ops
 
+    def test_custom_op_transform_contains_ctx_scatter_3d_int(self):
+        """CustomOpTransform._custom_ops must contain 'CtxScatterFunc3DInt'."""
+        from QEfficient.base.onnx_transforms import CustomOpTransform
+
+        assert "CtxScatterFunc3DInt" in CustomOpTransform._custom_ops
+
+    def test_custom_op_transform_contains_ctx_scatter_3d_generalized(self):
+        """CustomOpTransform._custom_ops must contain 'CtxScatterFunc3DGeneralized'."""
+        from QEfficient.base.onnx_transforms import CustomOpTransform
+
+        assert "CtxScatterFunc3DGeneralized" in CustomOpTransform._custom_ops
+
+    def test_custom_op_transform_contains_ctx_gather_3d_generalized(self):
+        """CustomOpTransform._custom_ops must contain 'CtxGatherFunc3DGeneralized'."""
+        from QEfficient.base.onnx_transforms import CustomOpTransform
+
+        assert "CtxGatherFunc3DGeneralized" in CustomOpTransform._custom_ops
+
     def test_custom_op_transform_rms_norm_maps_to_custom_rms_norm(self):
         """CustomRMSNormFunc must map to CustomRMSNorm class."""
         from QEfficient.base.onnx_transforms import CustomOpTransform

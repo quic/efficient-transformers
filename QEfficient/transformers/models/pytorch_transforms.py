@@ -325,9 +325,11 @@ from QEfficient.transformers.models.granite.modeling_granite import (
 )
 from QEfficient.transformers.models.granitemoe.modeling_granitemoe import (
     QEffGraniteMoeAttention,
+    QEffPrefillChunkedGraniteMoeAttention,
     QEffGraniteMoeForCausalLM,
     QEffGraniteMoeModel,
     QEffGraniteMoeMoE,
+    QEffPrefillChunkedGraniteMoeMoE,
     QEffGraniteMoeParallelExperts,
     QEffGraniteMoeRotaryEmbedding,
     QEffGraniteMoeTopKGating,
@@ -757,6 +759,9 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
         # Qwen3 VL Moe
         QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
+        # GraniteMoe
+        QEffGraniteMoeMoE: QEffPrefillChunkedGraniteMoeMoE,
+        QEffGraniteMoeAttention: QEffPrefillChunkedGraniteMoeAttention,
     }
 
 
@@ -770,6 +775,11 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
         # Qwen3Moe
         QEffPrefillChunkedQwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
+        # GraniteMoe
+        QEffPrefillChunkedGraniteMoeMoE: QEffGraniteMoeMoE,
+        QEffPrefillChunkedGraniteMoeAttention: QEffGraniteMoeAttention,
+        # Qwen3 VL Moe
+        QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
     }
 
 
