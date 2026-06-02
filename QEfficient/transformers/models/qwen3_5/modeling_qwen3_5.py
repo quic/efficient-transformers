@@ -1388,10 +1388,7 @@ class QEffQwen3_5EncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
-<<<<<<< HEAD
         self.config = model.config
-=======
->>>>>>> 99fc86f1 (Adding vision part in qwen3_5)
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         if hasattr(self.model.model, "visual") and hasattr(self.model.model.visual, "blocks"):
