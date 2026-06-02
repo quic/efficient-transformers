@@ -127,7 +127,7 @@ def latency_stats_bertstyle(
     qpc_path: str,
     seq_len: int,
     prompt: str,
-    device_id: Optional[List[int]] = None,
+    device_ids: Optional[List[int]] = None,
 ):
     """
     Function to execute Bertstyle ONNX model on Cloud AI 100.
@@ -137,9 +137,9 @@ def latency_stats_bertstyle(
         :qpc_path (str): Path to save generated binary file after compilation.
         :seq_len (int): Sequence length.
         :prompt (str): Sample prompt for the model text generation.
-        :device_id (List[int]): Device Ids to be used for compilation. If devices > 1, it enables multiple card setup.
+        :device_ids (List[int]): Device Ids to be used for compilation. If devices > 1, it enables multiple card setup.
     """
-    session = QAICInferenceSession(qpc_path, device_id)
+    session = QAICInferenceSession(qpc_path, device_ids)
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, padding_side="left")
     padding_check_and_fix(tokenizer)  # Check and fix tokenizer viability
     inputs = tokenizer(prompt, return_tensors="np", max_length=seq_len, padding="max_length")
@@ -319,7 +319,7 @@ def cloud_ai_100_exec_kv(
     qpc_path: str,
     prompt: Optional[str] = None,
     prompts_txt_file_path: Optional[str] = None,
-    device_id: Optional[List[int]] = None,
+    device_ids: Optional[List[int]] = None,
     generation_len: Optional[int] = None,
     comp_ctx_lengths_prefill: Optional[List[int]] = None,
     comp_ctx_lengths_decode: Optional[List[int]] = None,
@@ -348,7 +348,7 @@ def cloud_ai_100_exec_kv(
         :prompt (str): Sample prompt for the model text generation. ``Defaults to None``.
         :prompts_txt_file_path (str): Path of the prompt text file. ``Defaults to None``.
         :generation_len (int): Maximum context length for the model during compilation. ``Defaults to None``.
-        :device_id (List[int]): Device IDs to be used for execution. If ``len(device_id) > 1``, it enables multiple card setup. If ``None``, auto-device-picker will be used. ``Defaults to None``.
+        :device_ids (List[int]): Device IDs to be used for execution. If ``len(device_ids) > 1``, it enables multiple card setup. If ``None``, auto-device-picker will be used. ``Defaults to None``.
         :enable_debug_logs (bool): If True, it enables debugging logs. ``Defaults to False``.
         :stream (bool): If True, enable streamer, which returns tokens one by one as the model generates them. ``Defaults to True``.
         :Write_io_dir (str): Path to write the input and output files. ``Defaults to None``.
@@ -377,7 +377,7 @@ def cloud_ai_100_exec_kv(
         base_path, onnx_model_path = QEfficient.export(model_name="gpt2")
         qpc_path = QEfficient.compile(onnx_path=onnx_model_path, qpc_path=os.path.join(base_path, "qpc"), num_cores=14, device_group=[0])
         tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")
-        exec_info = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt="Hi there!!", device_id=[0])
+        exec_info = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt="Hi there!!", device_ids=[0])
 
     """
     batch_size, ctx_len, full_batch_size = get_compilation_dims(qpc_path)
@@ -390,7 +390,7 @@ def cloud_ai_100_exec_kv(
     generate_text = TextGeneration(
         tokenizer=tokenizer,
         qpc_path=qpc_path,
-        device_id=device_id,
+        device_ids=device_ids,
         ctx_len=ctx_len,
         comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
         comp_ctx_lengths_decode=comp_ctx_lengths_decode,
@@ -443,7 +443,7 @@ class QEffTextGenerationBase:
         ctx_len: Optional[int] = None,
         comp_ctx_lengths_prefill: Optional[List[int]] = None,
         comp_ctx_lengths_decode: Optional[List[int]] = None,
-        device_id: Optional[List[int]] = None,
+        device_ids: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
         write_io_dir: Optional[str] = None,
         is_tlm: Optional[int] = None,
@@ -465,7 +465,7 @@ class QEffTextGenerationBase:
 
         # Load QPC
         self._session = QAICInferenceSession(
-            qpc_path, device_id, activate=activate, enable_debug_logs=enable_debug_logs
+            qpc_path, device_ids, activate=activate, enable_debug_logs=enable_debug_logs
         )
 
         # Validate sampler inputs for On-Device Sampling
@@ -1078,7 +1078,7 @@ class TextGeneration:
         ctx_len: Optional[int] = None,
         comp_ctx_lengths_prefill: Optional[List[int]] = None,
         comp_ctx_lengths_decode: Optional[List[int]] = None,
-        device_id: Optional[List[int]] = None,
+        device_ids: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
         write_io_dir: Optional[str] = None,
         is_tlm: bool = False,
@@ -1094,7 +1094,7 @@ class TextGeneration:
             ctx_len=ctx_len,
             comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
             comp_ctx_lengths_decode=comp_ctx_lengths_decode,
-            device_id=device_id,
+            device_ids=device_ids,
             enable_debug_logs=enable_debug_logs,
             write_io_dir=write_io_dir,
             is_tlm=is_tlm,
