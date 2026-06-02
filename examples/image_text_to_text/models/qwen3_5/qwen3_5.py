@@ -99,7 +99,9 @@ if skip_vision:
         return_dict=True,
         return_tensors="pt",
     )
-    inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=PREFILL_SEQ_LEN, batch_size=BS)
+    inputs = qeff_model.model.prepare_inputs_for_generation(
+        inputs=inputs, prefill_seq_len=PREFILL_SEQ_LEN, batch_size=BS
+    )
     streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=512, streamer=streamer)
     print(output.generated_ids)
