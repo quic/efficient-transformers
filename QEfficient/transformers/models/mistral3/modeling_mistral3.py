@@ -370,9 +370,15 @@ class QEffMistral3ForConditionalGeneration(Mistral3ForConditionalGeneration):
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         patch_size = self.config.vision_config.patch_size
         kernel_size = self.config.spatial_merge_size
-        vision_size = (
-            ((img_size // patch_size) * (img_size // patch_size)) * (batch_size) // (kernel_size * kernel_size)
-        )
+        user_vision_size = compiler_options.pop("vision_size", None)
+        if user_vision_size:
+            if user_vision_size >= ctx_len:
+                raise ValueError("vision_size must be less than ctx_len")
+            vision_size = user_vision_size
+        else:
+            vision_size = (
+                ((img_size // patch_size) * (img_size // patch_size)) * (batch_size) // (kernel_size * kernel_size)
+            )
 
         vision = [
             {
