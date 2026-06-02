@@ -84,8 +84,7 @@ def build_compile_kwargs(
         "mos": kwargs["MOS"],
         "use_onnx_subfunctions": kwargs["USE_ONNX_SUBFUNCTIONS"],
         "split_model_io": kwargs.get("split_model_io", True),
-        # "enable_chunking": kwargs.get("enable_chunking", True),
-        # "prefill_only": kwargs.get("prefill_only", True),
+        "batch_size": kwargs.get("BATCH_SIZE", 1),
     }
 
     if skip_vision:
