@@ -8,7 +8,7 @@
 """
 FLUX.1-schnell Image Generation Example
 
-This example demonstrates how to use the QEffFluxPipeline to generate images
+This example demonstrates how to use the generic QEffDiffusionPipeline to generate images
 using the FLUX.1-schnell model from Black Forest Labs. FLUX.1-schnell is a
 fast, distilled version of the FLUX.1 text-to-image model optimized for
 speed with minimal quality loss.
@@ -16,10 +16,11 @@ speed with minimal quality loss.
 
 import torch
 
-from QEfficient import QEffFluxPipeline
+from QEfficient import QEffDiffusionPipeline
 
-# Initialize the FLUX.1-schnell pipeline from pretrained weights
-pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+# Initialize from pretrained weights via generic auto-dispatch
+# For this model id, it resolves to QEffFluxPipeline.
+pipeline = QEffDiffusionPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 
 # Generate an image from a text prompt
 # use_onnx_subfunctions=True enables ONNX-based optimizations for faster compilation

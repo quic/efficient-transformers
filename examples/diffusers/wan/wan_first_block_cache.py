@@ -7,10 +7,11 @@
 import torch
 from diffusers.utils import export_to_video
 
-from QEfficient import QEffWanPipeline
+from QEfficient import QEffDiffusionPipeline
 
 # Non-unified WAN + first-block-cache (patch-based activation at load time).
-pipeline = QEffWanPipeline.from_pretrained(
+# Auto-dispatch resolves this model id to QEffWanPipeline.
+pipeline = QEffDiffusionPipeline.from_pretrained(
     "Wan-AI/Wan2.2-T2V-A14B-Diffusers",
     use_unified=False,
     enable_first_block_cache=True,

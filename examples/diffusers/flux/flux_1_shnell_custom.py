@@ -21,18 +21,19 @@ Use this example to learn how to fine-tune FLUX.1 for your specific needs.
 
 import torch
 
-from QEfficient import QEffFluxPipeline
+from QEfficient import QEffDiffusionPipeline
 
 # ============================================================================
 # PIPELINE INITIALIZATION WITH CUSTOM PARAMETERS
 # ============================================================================
 
 # Option 1: Basic initialization with default parameters
-pipeline = QEffFluxPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
+# Auto-dispatch resolves this model id to QEffFluxPipeline.
+pipeline = QEffDiffusionPipeline.from_pretrained("black-forest-labs/FLUX.1-schnell")
 # Option 2: Advanced initialization with custom modules
 # Uncomment and modify to use your own custom components:
 #
-# pipeline = QEffFluxPipeline.from_pretrained(
+# pipeline = QEffDiffusionPipeline.from_pretrained(
 #     "black-forest-labs/FLUX.1-schnell",
 #     text_encoder=custom_text_encoder,      # Your custom CLIP text encoder
 #     transformer=custom_transformer,         # Your custom transformer model

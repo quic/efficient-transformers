@@ -28,14 +28,15 @@ from diffusers.loaders.lora_conversion_utils import _convert_non_diffusers_wan_l
 from diffusers.utils import export_to_video, load_image
 from huggingface_hub import hf_hub_download
 
-from QEfficient import QEffWanImageToVideoPipeline
+from QEfficient import QEffDiffusionPipeline
 
 # ============================================================================
 # PIPELINE INITIALIZATION WITH CUSTOM PARAMETERS
 # ============================================================================
 
 # Option 1: Basic initialization with default parameters
-pipeline = QEffWanImageToVideoPipeline.from_pretrained("Wan-AI/Wan2.2-I2V-A14B-Diffusers")
+# Auto-dispatch resolves this model id to QEffWanImageToVideoPipeline.
+pipeline = QEffDiffusionPipeline.from_pretrained("Wan-AI/Wan2.2-I2V-A14B-Diffusers")
 
 # ============================================================================
 # LORA ADAPTER LOADING FOR LIGHTNING MODEL
