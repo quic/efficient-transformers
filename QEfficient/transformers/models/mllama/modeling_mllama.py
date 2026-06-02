@@ -52,8 +52,6 @@ _MLLAMA_DEPRECATION_MSG = (
     "vision-language capabilities with continued support."
 )
 
-warnings.warn(_MLLAMA_DEPRECATION_MSG, DeprecationWarning, stacklevel=2)
-
 MAX_NUM_IMG = 1
 NUM_CHANNEL = 3
 
@@ -697,6 +695,10 @@ class QEffMllamaForCausalLM(MllamaForCausalLM):
         - add new args cache idx for the kv retention
     """
 
+    def __init__(self, *args, **kwargs):
+        warnings.warn(_MLLAMA_DEPRECATION_MSG, DeprecationWarning, stacklevel=2)
+        super().__init__(*args, **kwargs)
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -863,6 +865,10 @@ class QEffMllamaModel(MllamaModel):
 
 
 class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
+    def __init__(self, *args, **kwargs):
+        warnings.warn(_MLLAMA_DEPRECATION_MSG, DeprecationWarning, stacklevel=2)
+        super().__init__(*args, **kwargs)
+
     def get_qeff_vision_encoder(self):
         return QEffMllamaVisionEncoder(self)
 
