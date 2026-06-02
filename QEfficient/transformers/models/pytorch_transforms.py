@@ -268,6 +268,7 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeTextSparseMoeBlock,
     Qwen3VLMoeVisionAttention,
     Qwen3VLMoeVisionModel,
+    Qwen3VLMoeTextTopKRouter
 )
 from transformers.models.roberta.modeling_roberta import RobertaModel
 from transformers.models.starcoder2.modeling_starcoder2 import (
@@ -599,6 +600,7 @@ from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     QEffQwen3VLMoeTextSparseMoeBlock,
     QEffQwen3VLMoeVisionAttention,
     QEffQwen3VLMoeVisionModel,
+    QEffQwen3VLMoeTextTopKRouter
 )
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Attention,
@@ -744,6 +746,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3VLMoeTextModel: QEffQwen3VLMoeTextModel,
         Qwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
         Qwen3VLMoeTextRotaryEmbedding: QEffQwen3VLMoeTextRotaryEmbedding,
+        Qwen3VLMoeTextTopKRouter: QEffQwen3VLMoeTextTopKRouter,
         # Qwen3vl
         Qwen3VLForConditionalGeneration: QEffQwen3VLForConditionalGeneration,
         Qwen3VLModel: QEffQwen3VLModel,

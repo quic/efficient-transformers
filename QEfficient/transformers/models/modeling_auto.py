@@ -1154,14 +1154,24 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             self.hash_params["prefill_only"] = False
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
-        return self._export(
-            inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
-            export_dir=export_dir,
-            offload_pt_weights=offload_pt_weights,
-            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
-        )
+        if os.environ.get("LAYERWISE_EXPORT", "False") == "True":
+            return self._export_layerwise(
+                inputs,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                export_dir=export_dir,
+                offload_pt_weights=offload_pt_weights,
+                use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+            )
+        else:
+            return self._export(
+                inputs,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                export_dir=export_dir,
+                offload_pt_weights=offload_pt_weights,
+                use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+            )
 
     def compile(
         self,
@@ -1403,7 +1413,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 vocab_size=self.model.language_model.config.vocab_size,
                 qaic_config=self.lang_model.model.qaic_config,
             )
-        if not skip_vision:
+        if not skip_vision and QEffQwen3_5MoeTextModel._end == QEffQwen3_5MoeTextModel._total_layers:
             self.vision_model.export(
                 inputs["vision"],
                 output_names["vision"],
@@ -3450,16 +3460,27 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
             self.model.forward = _qeff_patched_forward
             self.model._qeff_export_gemma3_cache_patch = True
-
-        return self._export(
-            example_inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
-            export_dir=export_dir,
-            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
-            offload_pt_weights=kwargs.get("offload_pt_weights", True),
-            prefill_only=prefill_only,
-        )
+        
+        if os.environ.get("LAYERWISE_EXPORT", "False") == "True":
+            return self._export_layerwise(
+                example_inputs,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                export_dir=export_dir,
+                use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+                offload_pt_weights=kwargs.get("offload_pt_weights", True),
+                prefill_only=prefill_only,
+            )
+        else:
+            return self._export(
+                example_inputs,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                export_dir=export_dir,
+                use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+                offload_pt_weights=kwargs.get("offload_pt_weights", True),
+                prefill_only=prefill_only,
+            )
 
     def build_prefill_specialization(
         self,

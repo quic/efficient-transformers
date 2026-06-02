@@ -17,11 +17,14 @@ from typing import Dict, List, Optional, Union
 
 import onnx
 import torch
+import os
 
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
+    CustomOpTransform,
     FP16ClipTransform,
     OnnxTransformPipeline,
+    RenameFunctionOutputsTransform,
     SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
@@ -58,7 +61,9 @@ class QEFFBaseModel(ABC):
     :_pytorch_transforms: Pytorch transformations to be applied after initialization.
     :_onnx_transforms: ONNX transformations to be applied after ONNX export.
     """
-
+    _start = 0
+    _end = 1
+    _total_layers = None
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
 
@@ -470,6 +475,176 @@ class QEFFBaseModel(ABC):
         self.export(**kwargs)
         return self.onnx_path
 
+    @export_wrapper
+    def _export_layerwise(
+        self,
+        example_inputs: Dict[str, torch.Tensor],
+        output_names: List[str],
+        dynamic_axes: Dict[str, Dict[int, str]],
+        onnx_transform_kwargs: Optional[Dict[str, any]] = None,
+        export_dir: Optional[str] = None,
+        offload_pt_weights: bool = True,
+        prefill_only: Optional[bool] = False,
+        **export_kwargs,
+    ) -> str:
+        idx = int(QEFFBaseModel._start)
+        end_idx = int(getattr(QEFFBaseModel, "_end", idx + 1))
+        if end_idx <= idx:
+            raise ValueError(f"Invalid export window: start={idx}, end={end_idx}")
+
+        # TODO: Hack for retain_full_kv, handle this outside
+        export_kwargs.pop("retain_full_kv", None)
+        onnx_path = export_dir / f"{self.model_name}.onnx"
+
+        # Return early if ONNX already exists
+        if onnx_path.is_file():
+            self.onnx_path = onnx_path
+            return onnx_path
+
+        # check if the model is in meta state or weights are offloaded
+        self._model_offloaded_check()
+
+        export_dir.mkdir(parents=True, exist_ok=True)
+
+        # Setup temporary paths
+        tmp_onnx_dir = export_dir / "onnx_layerwise_tmp"
+        tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
+
+        def _resolve_pkv_layers(pkv_obj):
+            if isinstance(pkv_obj, (list, tuple)):
+                return pkv_obj
+            if hasattr(pkv_obj, "to_legacy_cache"):
+                return pkv_obj.to_legacy_cache()
+            if hasattr(pkv_obj, "layers"):
+                layers = []
+                for layer in pkv_obj.layers:
+                    keys = getattr(layer, "keys", None)
+                    values = getattr(layer, "values", None)
+                    layers.append((keys, values))
+                return tuple(layers)
+            return None
+        
+        is_vision = hasattr(self.model, "language_model")
+        output_name = []
+        output_name.append("logits")
+        if idx == 0: 
+            if is_vision:
+                output_name.append('vision_embeds_RetainedState')
+                output_name.append('image_idx_output')
+            if "deepstack_features_RetainedState" in output_names:
+                output_name.append("deepstack_features_RetainedState")
+        for layer_idx in range(idx, end_idx):
+            output_name.append(f"past_key.{layer_idx}_InternalRetainedState")
+            output_name.append(f"past_value.{layer_idx}_InternalRetainedState")
+
+        # For some decoder wrappers (e.g. VLM language wrappers), forward does not accept
+        # `inputs_embeds`; keep `input_ids` in those cases.
+        if idx >= 1:
+            z = example_inputs.pop("input_ids")
+            if is_vision:
+                hidden_size = self.model.language_model.config.hidden_size
+            else:
+                hidden_size = self.model.model.config.hidden_size
+            inputs_embeds = torch.rand(z.shape[0], z.shape[1], hidden_size, device=z.device)
+            example_inputs["inputs_embeds"] = inputs_embeds
+            dynamic_axes["inputs_embeds"] = dynamic_axes.pop("input_ids")
+
+        window_size = end_idx - idx
+        if "compressed_kvs" in example_inputs:
+            example_inputs["compressed_kvs"] = [
+                val for i, val in enumerate(example_inputs["compressed_kvs"]) if i < window_size
+            ]
+        
+        # if "past_key_values" in example_inputs:
+        #     example_inputs["past_key_values"] = [
+        #         val for i, val in enumerate(example_inputs["past_key_values"]) if i < window_size
+        #     ]
+        if "past_key_values" in example_inputs:
+            pkv_layers = _resolve_pkv_layers(example_inputs["past_key_values"])
+            if pkv_layers is not None:
+                if idx >= len(pkv_layers):
+                    raise ValueError(
+                        f"Invalid past_key_values index {idx} for length {len(pkv_layers)} in layerwise export"
+                    )
+                example_inputs["past_key_values"] = [pkv_layers[idx]]
+        # Create input_names from example_inputs
+        input_names = []
+        for param in inspect.signature(self.model.forward).parameters:
+            if param in example_inputs:
+                if param == "past_key_values":
+                    pkv_layers = _resolve_pkv_layers(example_inputs["past_key_values"])
+                    if pkv_layers is None:
+                        input_names.append(param)
+                        continue
+                    example_inputs["past_key_values"] = [val for i, val in enumerate(pkv_layers) if i < window_size]
+                    for i in range(len(example_inputs["past_key_values"])):
+                        if len(example_inputs["past_key_values"][0]) == 2:
+                            for layer_offset in range(len(example_inputs["past_key_values"])):
+                                layer_idx = idx + layer_offset
+                                input_names.extend([f"past_key.{layer_idx}", f"past_value.{layer_idx}"])
+                        elif len(example_inputs["past_key_values"][0]) == 4:
+                            input_names.extend(
+                                [
+                                    f"past_key_self.{i}",
+                                    f"past_value_self.{i}",
+                                    f"past_key_cross.{i}",
+                                    f"past_value_cross.{i}",
+                                ]
+                            )
+                        else:
+                            raise ValueError(
+                                f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(example_inputs['past_key_values'][0])}"
+                            )
+                elif param == "compressed_kvs":
+                    for layer_offset in range(len(example_inputs["compressed_kvs"])):
+                        layer_idx = idx + layer_offset
+                        input_names.extend([f"compressed_kv.{layer_idx}", f"k_pe.{layer_idx}"])
+                else:
+                    input_names.append(param)
+        dynamic_axes = {k: v for k, v in dynamic_axes.items() if k in input_names}
+
+        import os
+        import time
+
+        layerwise_dir = export_dir / "onnx_layerwise_tmp"
+        start_time = time.time()
+
+        # example_inputs["layer_indices_to_run"] = [i]
+        current_layer_dir = layerwise_dir / f"layer_{idx}_{end_idx}"
+        current_layer_dir.mkdir(parents=True, exist_ok=True)
+
+        layer_onnx_path = str(current_layer_dir / f"{self.model_name}_layer_{idx}_{end_idx}.onnx")
+        layer_onnx_path_tmp = str(current_layer_dir / f"{self.model_name}_layer_tmp_{idx}_{end_idx}.onnx")
+        
+        if not os.path.isfile(layer_onnx_path):
+            torch.onnx.export(
+                self.model,
+                (),
+                layer_onnx_path_tmp,
+                kwargs=example_inputs,
+                input_names=input_names,
+                output_names=output_name,
+                dynamic_axes=dynamic_axes,
+                opset_version=constants.ONNX_EXPORT_OPSET,
+                **export_kwargs,
+            )
+            total_end = time.time()
+            print(f"\nTotal export time: {total_end - start_time:.2f} seconds")
+
+        model = onnx.load(layer_onnx_path_tmp, load_external_data=False)
+        # print(model.functions)
+        transform_kwargs = {
+            "onnx_base_dir": str(current_layer_dir),
+            "model_name": self.model_name,
+            "layer_idx": idx,
+        }
+        _onnx_transforms = [SplitTensorsTransform, CustomOpTransform, RenameFunctionOutputsTransform]
+        onnx_transforms = OnnxTransformPipeline(transforms=_onnx_transforms)
+        model, transformed = onnx_transforms.apply(model, **transform_kwargs)
+        onnx.save(model, layer_onnx_path_tmp)
+        self.onnx_path = layer_onnx_path_tmp
+        return layer_onnx_path_tmp
+    
     def transform(
         self,
         ctx_len: Optional[int] = None,
@@ -582,6 +757,9 @@ class QEFFBaseModel(ABC):
                     **compiler_options,
                 )
         onnx_path = Path(onnx_path)
+        if os.environ.get("LAYERWISE_EXPORT", "False") == "True":
+            return onnx_path
+        
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
         if not onnx_path.is_file():
