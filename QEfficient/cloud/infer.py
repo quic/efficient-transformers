@@ -315,7 +315,7 @@ def main(
         _ = qeff_model.generate(
             tokenizer,
             prompts=prompt,
-            device_id=device_group,
+            device_ids=device_group,
             prompts_txt_file_path=prompts_txt_file_path,
             generation_len=generation_len,
             iteration=iteration,
