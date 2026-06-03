@@ -27,10 +27,10 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     Qwen3_5MoeSparseMoeBlock,
     Qwen3_5MoeTextModel,
     Qwen3_5MoeTextRotaryEmbedding,
+    Qwen3_5MoeTopKRouter,
     Qwen3_5MoeVisionAttention,
     Qwen3_5MoeVisionModel,
     apply_rotary_pos_emb_vision,
-    l2norm,
     repeat_kv,
     rotate_half,
 )
@@ -540,9 +540,12 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         eye=None,
     ):
         initial_dtype = query.dtype
+        # if use_qk_l2norm_in_kernel:
+        #     query = l2norm(query, dim=-1, eps=1e-6)
+        #     key = l2norm(key, dim=-1, eps=1e-6)
         if use_qk_l2norm_in_kernel:
-            query = l2norm(query, dim=-1, eps=1e-6)
-            key = l2norm(key, dim=-1, eps=1e-6)
+            query = query * torch.rsqrt(torch.einsum("bthd,bthd->bth", query, query).unsqueeze(-1) + 1e-6)
+            key = key * torch.rsqrt(torch.einsum("bthd,bthd->bth", key, key).unsqueeze(-1) + 1e-6)
         query, key, value, beta, g = [
             x.transpose(1, 2).contiguous().to(torch.float32) for x in (query, key, value, beta, g)
         ]
@@ -562,13 +565,21 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         batch_size, num_heads, sequence_length, k_head_dim = key.shape
         v_head_dim = value.shape[-1]
         pad_size = (chunk_size - sequence_length % chunk_size) % chunk_size
-        query = F.pad(query, (0, 0, 0, pad_size))
-        key = F.pad(key, (0, 0, 0, pad_size))
-        value = F.pad(value, (0, 0, 0, pad_size))
-        beta = F.pad(beta, (0, pad_size))
+        # query = F.pad(query, (0, 0, 0, pad_size))
+        # key = F.pad(key, (0, 0, 0, pad_size))
+        # value = F.pad(value, (0, 0, 0, pad_size))
+        # beta = F.pad(beta, (0, pad_size))
+
+        # # ck = g.clone()
+        # g = F.pad(g, (0, pad_size))
+        query = F.pad(query, (0, 0, 0, pad_size), mode="constant", value=0.0)
+        key = F.pad(key, (0, 0, 0, pad_size), mode="constant", value=0.0)
+        value = F.pad(value, (0, 0, 0, pad_size), mode="constant", value=0.0)
+        beta = F.pad(beta, (0, pad_size), mode="constant", value=0.0)
 
         # ck = g.clone()
-        g = F.pad(g, (0, pad_size))
+        g = F.pad(g, (0, pad_size), mode="constant", value=0.0)
+
         total_sequence_length = sequence_length + pad_size
         scale = 1 / (query.shape[-1] ** 0.5)
         query = query * scale
@@ -604,7 +615,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         for i in range(1, chunk_size):
             row = attn[..., i, :i].clone()
             sub = attn[..., :i, :i].clone()
-            attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
+            # attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
+            attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
         attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
 
         ## Approximation code ##
@@ -630,6 +642,20 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         #     Apow = Apow @ Apow  # square for next power
 
         # attn = L
+
+        # Horners Method
+        # A = attn.masked_fill(mask, 0)
+        # acc_dtype = torch.float32
+        # A64 = A.to(acc_dtype)
+        # I64 = torch.eye(chunk_size, device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        # strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+
+        # K = chunk_size - 1
+        # S64 = I64.clone()
+        # for _ in range(K):
+        #     S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
+
+        # attn = S64.to(A.dtype)
 
         value = attn @ v_beta
         k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))
@@ -675,8 +701,11 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # L2 norm (matching chunk kernel behavior)
         q = query.float()
         k = key.float()
-        q = q * torch.rsqrt((q * q).sum(dim=-1, keepdim=True) + 1e-6)
-        k = k * torch.rsqrt((k * k).sum(dim=-1, keepdim=True) + 1e-6)
+        # q = q * torch.rsqrt((q * q).sum(dim=-1, keepdim=True) + 1e-6)
+        # k = k * torch.rsqrt((k * k).sum(dim=-1, keepdim=True) + 1e-6)
+        q = q * torch.rsqrt(torch.einsum("bthd,bthd->bth", q, q).unsqueeze(-1) + 1e-6)
+        k = k * torch.rsqrt(torch.einsum("bthd,bthd->bth", k, k).unsqueeze(-1) + 1e-6)
+
         v = value.float()
 
         scale = 1.0 / (q.shape[-1] ** 0.5)
@@ -696,11 +725,12 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # Single step — no loop because T=1
         # S update
         S_decayed = S * decay[:, :, 0]  # (B, H, d_k, d_v)
-        kv_mem = (S_decayed * k[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
+        # kv_mem = (S_decayed * k[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
+        kv_mem = torch.einsum("bhkv,bhk->bhv", S_decayed, k[:, :, 0])  # (B, H, d_v)
         delta = (v[:, :, 0] - kv_mem) * b[:, :, 0]  # (B, H, d_v)
         S_new = S_decayed + k[:, :, 0].unsqueeze(-1) * delta.unsqueeze(-2)  # (B, H, d_k, d_v)
-        out = (S_new * q[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
-
+        # out = (S_new * q[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
+        out = torch.einsum("bhkv,bhk->bhv", S_new, q[:, :, 0])  # (B, H, d_v)
         out = out.unsqueeze(2).transpose(1, 2).to(dtype)  # (B, 1, H, d_v) → (B, T, H, d_v)
         return out, S_new.to(recurrent_state.dtype)
 
@@ -772,7 +802,10 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         # ── Split Q/K/V ──────────────────────────────────────
         mixed_qkv = mixed_qkv.transpose(1, 2)
-        query, key, value = torch.split(mixed_qkv, [self.key_dim, self.key_dim, self.value_dim], dim=-1)
+        # query, key, value = torch.split(mixed_qkv, [self.key_dim, self.key_dim, self.value_dim], dim=-1)
+        query = mixed_qkv[..., : self.key_dim]
+        key = mixed_qkv[..., self.key_dim : 2 * self.key_dim]
+        value = mixed_qkv[..., 2 * self.key_dim :]
         query = query.reshape(batch_size, seq_len, -1, self.head_k_dim)
         key = key.reshape(batch_size, seq_len, -1, self.head_k_dim)
         value = value.reshape(batch_size, seq_len, -1, self.head_v_dim)
@@ -1746,7 +1779,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         inputs_shapes["vision_embeds"] = (
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             2752,
-            2048,
+            self.model.config.text_config.hidden_size,
         )
         inputs_shapes["image_idx"] = (1, 1)
 
@@ -1970,6 +2003,18 @@ def _cumsum_scatter_gather_update_expert_blocked(
     return experts_out
 
 
+class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
+        router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
+        router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1)
+        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
+        router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
+        router_top_value = router_top_value.to(router_logits.dtype)
+        router_scores = router_top_value
+        return router_logits, router_scores, router_indices
+
+
 class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
     def _forward_expert_blocked(self, x: torch.Tensor, routing_weights: torch.Tensor) -> torch.Tensor:
         act_fn = getattr(self.experts, "act_fn", F.silu)
@@ -2052,13 +2097,13 @@ class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
         routing_weights = torch.zeros((T, self.gate.num_experts), dtype=x.dtype)
         routing_weights.scatter_(1, top_i, top_w)
 
-        if self.gate.num_experts % EXPERT_BLOCKING_NUM_NSP == 0:
-            experts_out = self._forward_expert_blocked(x=x, routing_weights=routing_weights)
+        # if self.gate.num_experts % EXPERT_BLOCKING_NUM_NSP == 0:
+        #     experts_out = self._forward_expert_blocked(x=x, routing_weights=routing_weights)
 
-            shared_expert_output = self.shared_expert(x)
-            shared_expert_output = F.sigmoid(self.shared_expert_gate(x)) * shared_expert_output
-            expert_output = experts_out + shared_expert_output
-            return expert_output.view(B, S, H)
+        #     shared_expert_output = self.shared_expert(x)
+        #     shared_expert_output = F.sigmoid(self.shared_expert_gate(x)) * shared_expert_output
+        #     expert_output = experts_out + shared_expert_output
+        #     return expert_output.view(B, S, H)
 
         experts_out = torch.zeros_like(x, dtype=x.dtype)
         # breakpoint()

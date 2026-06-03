@@ -22,8 +22,8 @@ model_id = "Qwen/Qwen3.6-35B-A3B"
 config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
-# config.vision_config.depth = 5
-# config.text_config.num_hidden_layers = 2
+config.vision_config.depth = 5
+config.text_config.num_hidden_layers = 2
 config.torch_dtype = "float32"
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -73,7 +73,7 @@ prefill_qpc_path = qeff_model.compile(
     width=536,
     num_cores=16,
     num_devices=1,
-    mxfp6_matmul=True,
+    mxfp6_matmul=False,
     mxint8_kv_cache=False,
     retain_full_kv=True,
     split_model_io=True,  # This should be used for disagg serving via VLLM
@@ -83,6 +83,7 @@ prefill_qpc_path = qeff_model.compile(
     prefill_only=True,
     enable_chunking=True,
     skip_vision=True,
+    use_onnx_subfunctions=True,
     # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 
@@ -103,6 +104,7 @@ decode_qpc_path = qeff_model.compile(
     aic_enable_depth_first=True,
     prefill_only=False,
     skip_vision=True,
+    use_onnx_subfunctions=True,
     # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 
