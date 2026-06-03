@@ -146,10 +146,12 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         )
 
         # Vision-specific initialization
-        self.is_qwen_vl = hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type in {
+        model_type = getattr(getattr(qeff_model, "model", None).config, "model_type", "")
+        self.is_qwen_vl = model_type in {
             "qwen2_5_vl",
             "qwen3_vl_moe",
             "qwen3_vl",
+            "qwen3_5",
             "qwen3_5_moe",
         }
         self.qeff_model = qeff_model

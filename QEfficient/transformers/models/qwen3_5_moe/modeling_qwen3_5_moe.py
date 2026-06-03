@@ -46,7 +46,13 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxScatterFunc3DInt,
 )
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
-from QEfficient.transformers.cache_utils import QEffDynamicLayer
+from QEfficient.transformers.cache_utils import (
+    CtxGatherFuncCB,
+    CtxGatherFuncCB3D,
+    CtxScatterFuncCB,
+    CtxScatterFuncCB3D,
+    QEffDynamicLayer,
+)
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
@@ -698,7 +704,15 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         out = out.unsqueeze(2).transpose(1, 2).to(dtype)  # (B, 1, H, d_v) → (B, T, H, d_v)
         return out, S_new.to(recurrent_state.dtype)
 
-    def forward(self, hidden_states, cache_params=None, cache_position=None, attention_mask=None, position_ids=None):
+    def forward(
+        self,
+        hidden_states,
+        cache_params=None,
+        cache_position=None,
+        attention_mask=None,
+        position_ids=None,
+        batch_index: Optional[torch.LongTensor] = None,
+    ):
         batch_size, seq_len, _ = hidden_states.shape
 
         # ── Projections ──────────────────────────────────────
@@ -709,9 +723,31 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         # ── Conv (unified, handles T=1 and T=N) ──────────────
         if cache_params is not None:
-            #
-            conv_state = cache_params.conv_states[self.layer_idx]
-            recurrent_state = cache_params.recurrent_states[self.layer_idx]
+            conv_state_all = cache_params.conv_states[self.layer_idx]
+            recurrent_state_all = cache_params.recurrent_states[self.layer_idx]
+
+            # Continuous batching path: gather only active rows, then scatter updates back.
+            if batch_index is not None:
+                batch_index = batch_index.to(conv_state_all.device)
+                conv_batch_index = batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)
+                conv_ctx_indices = torch.arange(
+                    conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
+                )[None, :]
+                conv_state = CtxGatherFuncCB3D.apply(conv_state_all, conv_batch_index, conv_ctx_indices)
+
+                recurrent_batch_index = (batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)).to(
+                    recurrent_state_all.device
+                )
+                recurrent_ctx_indices = torch.arange(
+                    recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
+                )[None, None, :]
+                recurrent_state = CtxGatherFuncCB.apply(
+                    recurrent_state_all, recurrent_batch_index, recurrent_ctx_indices, recurrent_state_all.shape[2]
+                )
+            else:
+                conv_state = conv_state_all
+                recurrent_state = recurrent_state_all
+
             mixed_qkv, new_conv_state = qeff_torch_causal_conv1d_update(
                 mixed_qkv,
                 conv_state,
@@ -719,7 +755,17 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 position_ids,
                 self.conv1d.bias,
             )
-            cache_params.conv_states[self.layer_idx] = new_conv_state
+            if batch_index is not None:
+                conv_batch_index = batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)
+                conv_batch_index = conv_batch_index.to(conv_state_all.device)
+                conv_position_ids = torch.arange(
+                    conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
+                )[None, :]
+                cache_params.conv_states[self.layer_idx] = CtxScatterFuncCB3D.apply(
+                    conv_state_all, conv_batch_index, conv_position_ids, new_conv_state
+                )
+            else:
+                cache_params.conv_states[self.layer_idx] = new_conv_state
         else:
             recurrent_state = None
             mixed_qkv = F.silu(self.conv1d(mixed_qkv)[:, :, :seq_len])
@@ -767,7 +813,21 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
             last_recurrent_state = torch.where(is_decode, recurrent_S, chunk_S)
 
-            cache_params.recurrent_states[self.layer_idx] = last_recurrent_state
+            if batch_index is not None:
+                recurrent_batch_index = (batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)).to(
+                    recurrent_state_all.device
+                )
+                recurrent_position_ids = torch.arange(
+                    recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
+                )[None, :].expand(recurrent_batch_index.shape[0], -1)
+                cache_params.recurrent_states[self.layer_idx] = CtxScatterFuncCB.apply(
+                    recurrent_state_all,
+                    recurrent_batch_index,
+                    recurrent_position_ids,
+                    last_recurrent_state.to(recurrent_state_all.dtype),
+                )
+            else:
+                cache_params.recurrent_states[self.layer_idx] = last_recurrent_state
 
         else:
             # No cache — prefill only, no state needed
@@ -834,6 +894,7 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
                 cache_position=cache_position,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
+                batch_index=batch_index,
             )
         else:
             hidden_states, _ = self.self_attn(
