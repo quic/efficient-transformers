@@ -47,6 +47,7 @@ from QEfficient.utils import (
     require_value,
     to_named_specializations,
 )
+from QEfficient.utils.config_utils import calculate_num_kv_heads_repeat
 from QEfficient.utils.export_utils import export_wrapper
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,6 @@ class QEFFBaseModel(ABC):
         self.model = model
         self.config = model.config
         self.hash_params = create_model_params(self, **kwargs)
-        self.hash_params["num_kv_heads_repeat"] = kwargs.get("num_kv_heads_repeat", 1)
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
@@ -669,17 +669,20 @@ class QEFFBaseModel(ABC):
         model_config = getattr(self.model, "config", None) or getattr(
             getattr(self.model, "model", None), "config", None
         )
+        num_kv_heads_repeat = 1
+        if model_config is not None:
+            num_kv_heads_repeat = calculate_num_kv_heads_repeat(
+                num_devices=num_devices,
+                text_model_config=model_config,
+            )
 
         if model_config:
-            architectures = getattr(model_config, "architectures", None) or []
-            is_deepseek_v3 = "DeepseekV3ForCausalLM" in architectures
-            if qaic_config:
-                if qaic_config.get("blocking_mode", None) == "h":
-                    qaic_config["head_block_size"] = qaic_config.get("head_block_size", num_devices)
-                num_kv_heads_repeat = qaic_config.get("num_kv_heads_repeat", 1)
+            if qaic_config is not None:
+                num_kv_heads_repeat = qaic_config.get("num_kv_heads_repeat", num_kv_heads_repeat)
+                qaic_config["num_kv_heads_repeat"] = num_kv_heads_repeat
                 transform_root = _transform_tracking_root(self.model)
                 applied_transforms = getattr(transform_root, "_qeff_runtime_transforms_applied", set())
-                should_apply_repeat_kv = is_deepseek_v3 or (num_kv_heads_repeat is not None and num_kv_heads_repeat > 1)
+                should_apply_repeat_kv = num_kv_heads_repeat is not None and num_kv_heads_repeat > 1
                 if not should_apply_repeat_kv:
                     replicate_kv_transformed = False
                 elif ReplicateKVHeadTransform.__name__ in applied_transforms:
@@ -711,6 +714,7 @@ class QEFFBaseModel(ABC):
         if blocking_config is not None:
             self.model, _ = BlockingAttentionTransform.apply(self.model, attn_blocking_config=blocking_config)
             self.hash_params["blocking_kwargs"] = blocking_config
+        self.hash_params["num_kv_heads_repeat"] = num_kv_heads_repeat
 
     @dump_qconfig
     def _compile(

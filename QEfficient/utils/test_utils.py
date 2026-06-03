@@ -509,7 +509,7 @@ class ModelConfig:
         "meta-llama/Llama-3.2-1B",
         # "unsloth/gemma-2b",
         # "unsloth/gemma-2-2b",
-        # "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",
+        "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",
         "TheBloke/Llama-2-7B-GPTQ",
         "neuralmagic/Llama-3.2-3B-Instruct-FP8",
         "ibm-granite/granite-3.1-2b-instruct",

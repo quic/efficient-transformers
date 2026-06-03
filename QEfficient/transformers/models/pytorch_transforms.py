@@ -303,7 +303,7 @@ from QEfficient.base.pytorch_transforms import (
     ModuleMutatorTransform,
 )
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
-from QEfficient.customop.matmulnbits import QuantLinearORT
+from QEfficient.customop.matmulnbits import QuantLinearORT, dequantize_blockwise_bits
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
 from QEfficient.transformers.models.bert.modeling_bert import (
     QEffBertModel,
@@ -1001,6 +1001,7 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
         QEffMllamaForConditionalGeneration,
         QEffMistralForCausalLM,
         QEffMistral3ForConditionalGeneration,
+        QEffMixtralForCausalLM,
         QEffMptForCausalLM,
         QEffPhiForCausalLM,
         QEffPhi3ForCausalLM,
@@ -1071,49 +1072,128 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
                 return True
         return False
 
-    @staticmethod
-    def _duplicate_weights_for_mla_layer(layer: nn.Module, orig_kv_heads: int, repeat: int, dim: int, hidden_size: int):
-        new_kv_heads = repeat * orig_kv_heads
-        layer.weight.data = torch.repeat_interleave(
-            layer.weight.data.view(orig_kv_heads, dim, hidden_size), repeat, 0
-        ).view(new_kv_heads * dim, hidden_size)
-
-        if layer.bias is not None:
-            layer.bias.data = torch.repeat_interleave(layer.bias.data.view(orig_kv_heads, dim), repeat, 0).view(
-                new_kv_heads * dim
-            )
-
     def _duplicate_weights_for_linear_layer(
         layer: nn.Module, orig_kv_heads: int, repeat: int, head_dim: int, hidden_size: int
     ):
         new_kv_heads = repeat * orig_kv_heads
-        if isinstance(layer, (WQLinear_GEMM, QuantLinearGPTQ, QuantLinearORT)):
-            if head_dim % 8 != 0:
+        if isinstance(layer, WQLinear_GEMM):
+            # AWQ layout:
+            # qweight: [in_features, out_features/pack]
+            # qzeros:  [in_features/group_size, out_features/pack]
+            # scales:  [in_features/group_size, out_features]
+            if layer.qweight.shape[1] % orig_kv_heads != 0:
                 raise ValueError(
-                    f"the value head_dim={head_dim} is not divisible by 8 which is according to the assumption that model is 4-bit quantized."
+                    f"Invalid AWQ qweight shape for RepeatKV: qweight.shape={tuple(layer.qweight.shape)}, "
+                    f"orig_kv_heads={orig_kv_heads}"
                 )
-            if hidden_size % layer.group_size != 0:
+            if layer.qzeros.shape[1] % orig_kv_heads != 0 or layer.scales.shape[1] % orig_kv_heads != 0:
                 raise ValueError(
-                    f"The value of hidden_size={hidden_size} is not divisible by k_proj.group_size={layer.group_size}"
+                    f"Invalid AWQ qzeros/scales shape for RepeatKV: qzeros.shape={tuple(layer.qzeros.shape)}, "
+                    f"scales.shape={tuple(layer.scales.shape)}, orig_kv_heads={orig_kv_heads}"
                 )
 
-            # Duplication of quantized weights
             layer.qweight.data = torch.repeat_interleave(
-                layer.qweight.data.view(hidden_size, orig_kv_heads, head_dim // 8), repeat, 1
-            ).view(hidden_size, (new_kv_heads * head_dim) // 8)
-            # Duplication of quantized zero points
+                layer.qweight.data.view(layer.qweight.shape[0], orig_kv_heads, -1), repeat, 1
+            ).view(layer.qweight.shape[0], -1)
             layer.qzeros.data = torch.repeat_interleave(
-                layer.qzeros.data.view(hidden_size // layer.group_size, orig_kv_heads, head_dim // 8),
-                repeat,
-                1,
-            ).view(hidden_size // layer.group_size, (new_kv_heads * head_dim) // 8)
-            # Duplication of quantization scales
+                layer.qzeros.data.view(layer.qzeros.shape[0], orig_kv_heads, -1), repeat, 1
+            ).view(layer.qzeros.shape[0], -1)
             layer.scales.data = torch.repeat_interleave(
-                layer.scales.data.view(hidden_size // layer.group_size, orig_kv_heads, head_dim),
-                repeat,
-                1,
-            ).view(hidden_size // layer.group_size, new_kv_heads * head_dim)
+                layer.scales.data.view(layer.scales.shape[0], orig_kv_heads, -1), repeat, 1
+            ).view(layer.scales.shape[0], -1)
             layer.out_features = layer.out_features * repeat
+
+        elif isinstance(layer, QuantLinearGPTQ):
+            # GPTQ layout:
+            # qweight: [in_features/pack, out_features]
+            # qzeros:  [in_features/group_size, out_features/pack]
+            # scales:  [in_features/group_size, out_features]
+            if layer.qweight.shape[1] % orig_kv_heads != 0:
+                raise ValueError(
+                    f"Invalid GPTQ qweight shape for RepeatKV: qweight.shape={tuple(layer.qweight.shape)}, "
+                    f"orig_kv_heads={orig_kv_heads}"
+                )
+            if layer.qzeros.shape[1] % orig_kv_heads != 0 or layer.scales.shape[1] % orig_kv_heads != 0:
+                raise ValueError(
+                    f"Invalid GPTQ qzeros/scales shape for RepeatKV: qzeros.shape={tuple(layer.qzeros.shape)}, "
+                    f"scales.shape={tuple(layer.scales.shape)}, orig_kv_heads={orig_kv_heads}"
+                )
+
+            layer.qweight.data = torch.repeat_interleave(
+                layer.qweight.data.view(layer.qweight.shape[0], orig_kv_heads, -1), repeat, 1
+            ).view(layer.qweight.shape[0], -1)
+            layer.qzeros.data = torch.repeat_interleave(
+                layer.qzeros.data.view(layer.qzeros.shape[0], orig_kv_heads, -1), repeat, 1
+            ).view(layer.qzeros.shape[0], -1)
+            layer.scales.data = torch.repeat_interleave(
+                layer.scales.data.view(layer.scales.shape[0], orig_kv_heads, -1), repeat, 1
+            ).view(layer.scales.shape[0], -1)
+            layer.out_features = layer.out_features * repeat
+
+        elif isinstance(layer, QuantLinearORT):
+            # QuantLinearORT stores blockwise packed buffers. Dequantize, replicate per-KV-head,
+            # then re-pack using existing QuantLinearORT.pack path.
+            float_weight, zeros_per_group, scales_per_group = dequantize_blockwise_bits(
+                layer.qweight,
+                layer.scales,
+                layer.qzeros,
+                layer.bits,
+                layer.group_size,
+                layer.g_idx,
+                layer.in_features,
+                layer.out_features,
+            )
+            # float_weight: [out_features, in_features]
+            if float_weight.shape[0] % orig_kv_heads != 0:
+                raise ValueError(
+                    f"Invalid QuantLinearORT weight shape for RepeatKV: "
+                    f"weight.shape={tuple(float_weight.shape)}, orig_kv_heads={orig_kv_heads}"
+                )
+
+            duplicated_weight = torch.repeat_interleave(
+                float_weight.view(orig_kv_heads, -1, float_weight.shape[1]),
+                repeat,
+                dim=0,
+            ).view(new_kv_heads * (float_weight.shape[0] // orig_kv_heads), float_weight.shape[1])
+
+            duplicated_zeros = torch.repeat_interleave(
+                zeros_per_group.view(orig_kv_heads, -1, zeros_per_group.shape[1]),
+                repeat,
+                dim=0,
+            ).view(new_kv_heads * (zeros_per_group.shape[0] // orig_kv_heads), zeros_per_group.shape[1])
+            duplicated_scales = torch.repeat_interleave(
+                scales_per_group.view(orig_kv_heads, -1, scales_per_group.shape[1]),
+                repeat,
+                dim=0,
+            ).view(new_kv_heads * (scales_per_group.shape[0] // orig_kv_heads), scales_per_group.shape[1])
+
+            original_out_features = layer.out_features
+            layer.out_features = original_out_features * repeat
+            q_rows = layer.in_features // layer.group_size
+            layer.qweight = torch.zeros(
+                (layer.out_features, q_rows, layer.group_size // (8 // layer.bits)),
+                dtype=layer.qweight.dtype,
+                device=layer.qweight.device,
+            )
+            layer.qzeros = torch.zeros(
+                (q_rows + (q_rows & 1)) * (layer.out_features // 8 * layer.bits),
+                dtype=layer.qzeros.dtype,
+                device=layer.qzeros.device,
+            )
+            layer.scales = torch.zeros(
+                (q_rows * layer.out_features),
+                dtype=layer.scales.dtype,
+                device=layer.scales.device,
+            )
+
+            linear = nn.Linear(layer.in_features, layer.out_features, bias=False, dtype=duplicated_weight.dtype)
+            linear.weight.data = duplicated_weight.to(linear.weight.dtype)
+            layer.pack(
+                linear,
+                duplicated_scales.contiguous().to(layer.scales.dtype),
+                duplicated_zeros.contiguous().to(torch.int32),
+                layer.g_idx,
+            )
 
         elif isinstance(layer, FP8DeQuantLinear):
             layer.weight.data = torch.repeat_interleave(
@@ -1210,6 +1290,7 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
         Returns:
             The mutated module (same object, modified in-place).
         """
+        # breakpoint()
         replication_root = cls._get_replication_root(original_module)
         if getattr(replication_root, "_qeff_kv_replication_applied", False):
             logger.warning("KV head replication already applied for this model instance; skipping.")
@@ -1217,10 +1298,13 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
 
         text_model = cls._get_text_model(original_module)
         cfg = text_model.config
+        if cls._is_mla_model(text_model):
+            logger.warning("Skipping RepeatKVTransform: MLA models don't apply replicate KV changes.")
+            return original_module
+
         orig_kv_heads = resolve_kv_heads(cfg)
         num_attention_heads = resolve_attention_heads(cfg)
         hidden_size = resolve_hidden_size(cfg)
-        is_mla_model = cls._is_mla_model(text_model)
 
         if orig_kv_heads is None or num_attention_heads is None or hidden_size is None:
             raise ValueError(
@@ -1233,12 +1317,8 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
                 f"Invalid head values for RepeatKV transform: "
                 f"num_attention_heads={num_attention_heads}, num_key_value_heads={orig_kv_heads}"
             )
-        if is_mla_model:
-            # Legacy MLA path treats compressed-KV projection as single KV head.
-            orig_kv_heads = 1
-
         new_kv_heads = n_repeat * orig_kv_heads
-        if (not is_mla_model) and (new_kv_heads > num_attention_heads or (num_attention_heads % new_kv_heads) != 0):
+        if new_kv_heads > num_attention_heads or (num_attention_heads % new_kv_heads) != 0:
             raise ValueError(
                 f"Invalid RepeatKV configuration: num_attention_heads={num_attention_heads}, "
                 f"orig_kv_heads={orig_kv_heads}, num_kv_heads_repeat={n_repeat}, new_kv_heads={new_kv_heads}. "
@@ -1257,29 +1337,16 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
             if hasattr(attn, "n_kv_heads"):
                 attn.n_kv_heads = new_kv_heads
 
-            if cls._is_mla_attention(attn):
-                # Legacy MLA support: KV compression projection is organized as
-                # [kv_heads, kv_lora_rank + qk_rope_head_dim, hidden_size].
-                mla_orig_kv_heads = 1
-                mla_head_dim = int(attn.kv_lora_rank + attn.qk_rope_head_dim)
-                cls._duplicate_weights_for_mla_layer(
-                    attn.kv_a_proj_with_mqa,
-                    mla_orig_kv_heads,
-                    n_repeat,
-                    mla_head_dim,
-                    hidden_size,
-                )
-            else:
-                n_kv_groups = num_attention_heads // new_kv_heads
-                if hasattr(attn, "num_key_value_groups"):
-                    attn.num_key_value_groups = n_kv_groups
-                if hasattr(attn, "n_kv_groups"):
-                    attn.n_kv_groups = n_kv_groups
-                head_dim = getattr(attn, "head_dim", hidden_size // num_attention_heads)
-                k_proj = cls._get_projection_layer(attn, ("k_proj", "key_proj"))
-                v_proj = cls._get_projection_layer(attn, ("v_proj", "value_proj"))
-                cls._duplicate_weights_for_linear_layer(k_proj, orig_kv_heads, n_repeat, head_dim, hidden_size)
-                cls._duplicate_weights_for_linear_layer(v_proj, orig_kv_heads, n_repeat, head_dim, hidden_size)
+            n_kv_groups = num_attention_heads // new_kv_heads
+            if hasattr(attn, "num_key_value_groups"):
+                attn.num_key_value_groups = n_kv_groups
+            if hasattr(attn, "n_kv_groups"):
+                attn.n_kv_groups = n_kv_groups
+            head_dim = getattr(attn, "head_dim", hidden_size // num_attention_heads)
+            k_proj = cls._get_projection_layer(attn, ("k_proj", "key_proj"))
+            v_proj = cls._get_projection_layer(attn, ("v_proj", "value_proj"))
+            cls._duplicate_weights_for_linear_layer(k_proj, orig_kv_heads, n_repeat, head_dim, hidden_size)
+            cls._duplicate_weights_for_linear_layer(v_proj, orig_kv_heads, n_repeat, head_dim, hidden_size)
 
         setattr(replication_root, "_qeff_kv_replication_applied", True)
         return original_module
@@ -1302,8 +1369,11 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
         transformed = False
         if n_repeat is not None and n_repeat > 1:
             if (model.__class__ in cls._module_mapping) or (model.__class__.__name__ in cls._module_string_mapping):
+                transform_root = cls._get_replication_root(model)
+                was_applied = getattr(transform_root, "_qeff_kv_replication_applied", False)
                 cls.mutate(model, None, n_repeat)
-                transformed = True
+                is_applied = getattr(transform_root, "_qeff_kv_replication_applied", False)
+                transformed = (not was_applied) and is_applied
             else:
                 raise NotImplementedError(
                     f"Model class {model.__class__.__name__} is not supported for KV head replication."

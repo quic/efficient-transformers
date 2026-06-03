@@ -38,3 +38,31 @@ def set_kv_head_aliases(config, value: int):
     for key in KV_HEAD_CONFIG_KEYS:
         if hasattr(config, key):
             setattr(config, key, value)
+
+
+def calculate_num_kv_heads_repeat(num_devices: int, text_model_config) -> int:
+    """
+    Choose a KV-repeat value from model config and device count.
+
+    Primary criteria:
+    1. num_kv_heads * repeat is divisible by num_devices
+    2. num_attention_heads is divisible by (num_kv_heads * repeat)
+
+    Fallback:
+    repeat = num_attention_heads / num_kv_heads (integer-truncated if needed).
+    """
+    num_attention_heads = resolve_attention_heads(text_model_config)
+    num_kv_heads = resolve_kv_heads(text_model_config)
+
+    if num_attention_heads is None or num_kv_heads is None or num_attention_heads < 1 or num_kv_heads < 1:
+        return 1
+
+    num_devices = max(1, int(num_devices))
+    max_repeat = max(1, int(num_attention_heads / num_kv_heads))
+
+    for repeat in range(max_repeat, 0, -1):
+        repeated_kv_heads = num_kv_heads * repeat
+        if (repeated_kv_heads % num_devices == 0) and (num_attention_heads % repeated_kv_heads == 0):
+            return repeat
+
+    return 1
