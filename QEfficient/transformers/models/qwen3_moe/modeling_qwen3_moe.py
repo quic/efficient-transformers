@@ -206,7 +206,7 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         act_fn = getattr(self.experts, "act_fn", F.silu)
         router_logits, top_w, top_i = self.gate(x)
         if self.norm_topk_prob:
-            top_w /= torch.einsum("bi->b", top_w)[:, None]
+            top_w /= top_w.sum(-1, keepdim=True)
         top_w = top_w.to(hidden_states.dtype)
         routing_weights = torch.zeros_like(router_logits)
         routing_weights.scatter_(1, top_i, top_w)
@@ -227,7 +227,7 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         x = hidden_states.view(T, H)
         router_logits, top_w, top_i = self.gate(x)
         if self.norm_topk_prob:
-            top_w /= torch.einsum("bi->b", top_w)[:, None]
+            top_w /= top_w.sum(-1, keepdim=True)
         top_w = top_w.to(hidden_states.dtype)
         routing_weights = torch.zeros_like(router_logits)
         routing_weights.scatter_(1, top_i, top_w)
