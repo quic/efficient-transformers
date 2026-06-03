@@ -927,7 +927,7 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         QEffGlm4MoeMoE: QEffPrefillChunkedGlm4MoeMoE,
         # Qwen3_5Moe
         QEffQwen3_5MoeSparseMoeBlock: QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
-        QEffGemma4TextExperts: QEffGemma4PrefillChunkedGemma4TextExperts,
+        # Gemma4_Moe
         QEffGemma4TextExperts: QEffPrefillChunckedGemma4TextExperts,
     }
 
@@ -948,7 +948,7 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
         # Qwen3_5Moe
         QEffPrefillChunkedQwen3_5MoeSparseMoeBlock: QEffQwen3_5MoeSparseMoeBlock,
-        QEffGemma4PrefillChunkedGemma4TextExperts: QEffGemma4TextExperts,
+        # Gemma4_Moe
         QEffPrefillChunckedGemma4TextExperts: QEffGemma4TextExperts,
     }
 
