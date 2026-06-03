@@ -66,7 +66,7 @@ from QEfficient.utils.logging_utils import logger
 
 class QEffQwen3_5MoeGatedDeltaNetCustomRMSNormAIC(nn.Module):
     """
-    Norm module that works by replacing the current module with compiler known custom-op.
+    RMSNorm module that works by replacing the current module with compiler known custom-op.
     """
 
     def forward(self, hidden_states, gate):
@@ -110,7 +110,6 @@ class QEffQwen3_5MoeDynamicCache(Cache):
         if past_key_values is None:
             return cache
 
-        #
         # for layer_idx, layer_state in enumerate(past_key_values):
         layer_idx = Qwen3_5MoeTextModel._start
         if cache.layer_types[layer_idx] == "full_attention":
@@ -1041,6 +1040,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
             )
 
             # break
+        
         if QEffQwen3_5MoeTextModel._end == QEffQwen3_5MoeTextModel._total_layers:
             hidden_states = self.norm(hidden_states)
         if output_hidden_states:
@@ -1894,6 +1894,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             recurrent_shape = (linear_batch_size, layer.num_v_heads, layer.head_k_dim, layer.head_v_dim)
             lang_inputs["past_key_values"][i].append(torch.zeros(conv_shape, dtype=torch.float32))
             lang_inputs["past_key_values"][i].append(torch.zeros(recurrent_shape, dtype=torch.float32))
+
 
         #
         if continuous_batching:
