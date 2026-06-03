@@ -215,6 +215,56 @@ def test_qwen3moe_prefill_chunked_export(tmp_path):
     assert qeff.onnx_path.is_file()
 
 
+def test_qwen3moe_disagg_compile_uses_distinct_decode_and_prefill_onnx(tmp_path, monkeypatch):
+    import subprocess
+
+    compile_commands = []
+
+    def fake_compile(command, *args, **kwargs):
+        compile_commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_compile)
+
+    config = AutoConfig.for_model("qwen3_moe", **QWEN3_MOE_CFG)
+    model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
+    qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
+
+    qeff.compile(
+        compile_dir=tmp_path / "decode-compile",
+        prefill_seq_len=1,
+        ctx_len=128,
+        num_cores=2,
+        mxfp6_matmul=False,
+        mxint8_kv_cache=False,
+        offload_pt_weights=False,
+        retain_full_kv=True,
+    )
+    decode_onnx_path = qeff.onnx_path
+
+    qeff.compile(
+        compile_dir=tmp_path / "prefill-compile",
+        prefill_seq_len=64,
+        ctx_len=128,
+        num_cores=2,
+        moe_prefill_packed_chunk_size=32,
+        mxfp6_matmul=False,
+        mxint8_kv_cache=False,
+        prefill_only=True,
+        enable_chunking=True,
+        offload_pt_weights=False,
+    )
+    prefill_onnx_path = qeff.onnx_path
+
+    compiled_onnx_args = [arg for command in compile_commands for arg in command if str(arg).startswith("-m=")]
+    assert len(compiled_onnx_args) == 2
+    assert decode_onnx_path != prefill_onnx_path
+    assert decode_onnx_path.is_file()
+    assert prefill_onnx_path.is_file()
+    assert compiled_onnx_args[0] == f"-m={decode_onnx_path}"
+    assert compiled_onnx_args[1] == f"-m={prefill_onnx_path}"
+
+
 def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(tmp_path):
     import onnx
     from onnx import numpy_helper
