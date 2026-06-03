@@ -113,7 +113,6 @@ class QEffQwen3_5MoeDynamicCache(Cache):
         # for layer_idx, layer_state in enumerate(past_key_values):
         layer_idx = Qwen3_5MoeTextModel._start
         if cache.layer_types[layer_idx] == "full_attention":
-            #
             key_states, value_states = past_key_values[0]
             layer = QEffDynamicLayer()
             layer.keys = key_states
@@ -435,7 +434,7 @@ class QEffQwen3_5MoeAttention(Qwen3_5MoeAttention):
         use_blocking = (
             past_key_values is not None and blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
         )
-
+        
         if use_blocking:
             attn_output, attn_weights = generic_blocked_attention_interface(
                 module=self,
@@ -984,7 +983,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         use_cache = use_cache if use_cache is not None else self.config.use_cache
 
         return_legacy_cache = False
-
+        
         if past_key_values is not None and not isinstance(past_key_values, QEffQwen3_5MoeDynamicCache):
             return_legacy_cache = True
             past_key_values = QEffQwen3_5MoeDynamicCache.from_legacy_cache(self.config, past_key_values)
@@ -993,9 +992,11 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
-
+            
+        start = QEffQwen3_5MoeTextModel._start
+        end = QEffQwen3_5MoeTextModel._end
         if cache_position is None:
-            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+            past_seen_tokens = past_key_values.get_seq_length(layer_idx=start) if past_key_values is not None else 0
             cache_position = torch.arange(
                 past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
             )
@@ -1013,8 +1014,6 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         position_embeddings = self.rotary_emb(hidden_states, position_ids[1:])
         # position_embeddings = None
         all_hidden_states = () if output_hidden_states else None
-        start = QEffQwen3_5MoeTextModel._start
-        end = QEffQwen3_5MoeTextModel._end
         layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
         
         for layer_idx, decoder_layer in enumerate(self.layers):
