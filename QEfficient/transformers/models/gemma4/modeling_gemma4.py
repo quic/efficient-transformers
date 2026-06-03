@@ -31,11 +31,6 @@ from transformers.models.gemma4.modeling_gemma4 import (
 )
 
 from QEfficient.base.onnx_transforms import FP16ClipTransform
-from QEfficient.customop.ctx_scatter_gather import (
-    CtxGatherFunc3DGeneralized,
-    CtxScatterFunc3DGeneralized,
-    CtxScatterFunc3DInt,
-)
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -179,7 +174,6 @@ class QEffGemma4TextExperts(Gemma4TextExperts):
 
         down_proj_t = self.down_proj.transpose(1, 2)
         experts_out = torch.matmul(activated.permute(1, 0, 2), down_proj_t).permute(1, 0, 2)
-        # breakpoint()
         expert_weights = torch.zeros(
             hidden_states.shape[0],
             self.num_experts,
@@ -193,37 +187,6 @@ class QEffGemma4TextExperts(Gemma4TextExperts):
 
 
 class QEffPrefillChunckedGemma4TextExperts(Gemma4TextExperts):
-    def _forward_expert_blocked(self, x: torch.Tensor, routing_weights: torch.Tensor) -> torch.Tensor:
-        T, H = x.shape
-        num_nsp = EXPERT_BLOCKING_NUM_NSP
-        if self.num_experts % num_nsp != 0:
-            raise ValueError(
-                f"num_experts ({self.num_experts}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})"
-            )
-        local_experts = self.num_experts // num_nsp
-        rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        gate_proj_w, gate_up_w = self.gate_up_proj.chunk(2, dim=-1)
-        W_g = gate_proj_w.reshape(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_u = gate_up_w.reshape(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_d = self.down_proj.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
-        expert_out = x.new_zeros((num_nsp, T, H))
-        for slot in range(local_experts):
-            routing_weight = rw[:, slot, :]
-            T2Ei = routing_weight > 0
-            expert_out = _cumsum_scatter_gather_update_expert_blocked(
-                x=x,
-                T2Ei=T2Ei,
-                W_g=W_g[:, slot],
-                W_u=W_u[:, slot],
-                W_d=W_d[:, slot],
-                routing_weight=routing_weight,
-                expert_out=expert_out,
-                act_fn=self.act_fn,
-                T=T,
-                packed_chunk_size=EXPERT_BLOCKING_PACKED_CHUNK_SIZE,
-            )
-        return expert_out.sum(dim=0)
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -251,11 +214,6 @@ class QEffPrefillChunckedGemma4TextExperts(Gemma4TextExperts):
         )
         expert_weights.scatter_add_(1, top_k_index, top_k_weights)
         expert_weights = expert_weights.to(x.dtype)
-        # breakpoint()
-        # Accumulate expert outputs
-        if self.num_experts % EXPERT_BLOCKING_NUM_NSP == 0:
-            out = self._forward_expert_blocked(x=x, routing_weights=expert_weights)
-            return out
         out = x.new_zeros((T, H))
         for e in range(self.num_experts):
             w = expert_weights[:, e].unsqueeze(-1)  # [T, 1]
@@ -356,86 +314,6 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
 
 EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
 EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "296"))
-
-
-def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
-    """Build packed->original token index"""
-    batch_size, seq_len = T2Ei.shape
-    int32_max = torch.iinfo(torch.int32).max
-    int32_max_scalar = torch.tensor(int32_max, dtype=torch.int32, device=T2Ei.device)
-    token_idx = torch.arange(seq_len, dtype=torch.int32, device=T2Ei.device).unsqueeze(0).expand(batch_size, -1)
-    valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
-    valid_dest = valid_prefix - 1
-    scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
-    # Once the compiler fix for ConstantOfShape(INT32_MAX) is available, this
-    # can be switched back to ``torch.full_like(token_idx, int32_max)``.
-    matched_idx = int32_max_scalar.expand_as(token_idx)
-    matched_idx = CtxScatterFunc3DInt.apply(
-        matched_idx.unsqueeze(-1),
-        scatter_pos,
-        token_idx.unsqueeze(-1),
-    ).squeeze(-1)
-    return matched_idx
-
-
-def _cumsum_scatter_gather_update_expert_blocked(
-    x: torch.Tensor,
-    T2Ei: torch.Tensor,
-    W_g: torch.Tensor,
-    W_u: torch.Tensor,
-    W_d: torch.Tensor,
-    routing_weight: torch.Tensor,
-    expert_out: torch.Tensor,
-    act_fn,
-    T: int,
-    packed_chunk_size: int,
-) -> torch.Tensor:
-    """Cumsum-scatter-gather-update expert helper for NSP-blocked dispatch.
-
-    Accumulates one local expert's contribution in-place onto ``expert_out``.
-    Uses a packed/cumsum layout so the MLP runs only over active rows, then
-    scatters the weighted output back to original token positions.
-
-    Shapes:
-        x               : [T, H]
-        T2Ei            : [num_nsp, T]            (bool)
-        W_g, W_u        : [num_nsp, H, I]
-        W_d             : [num_nsp, I, H]
-        routing_weight  : [num_nsp, T]
-        expert_out      : [num_nsp, T, H]         (accumulator, in-out)
-    """
-    batch_size, seq_len = T2Ei.shape
-    packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
-
-    matched_idx = _build_matched_idx_from_cumsum(T2Ei)
-    valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
-    row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
-    x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
-    rw_expanded = routing_weight.unsqueeze(-1)
-
-    for packed_start in range(0, seq_len, packed_chunk_size):
-        packed_stop = packed_start + packed_chunk_size
-        chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
-
-        x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
-
-        gate_prime = x_chunk @ W_g
-        up_prime = x_chunk @ W_u
-        down_chunk = (up_prime * act_fn(gate_prime)) @ W_d
-        # breakpoint()
-        rw_chunk = CtxGatherFunc3DGeneralized.apply(rw_expanded, chunk_matched_idx)
-        down_chunk = down_chunk * rw_chunk
-
-        expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
-        updated_chunk = expert_out_chunk + down_chunk
-
-        chunk_valid_rows = torch.clamp(valid_rows - packed_start, min=0, max=packed_chunk_size)
-        updated_chunk = torch.where(
-            (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
-        )
-        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
-
-    return expert_out
 
 
 class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
