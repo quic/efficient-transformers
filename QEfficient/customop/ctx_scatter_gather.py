@@ -69,6 +69,8 @@ def CtxScatter3D(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates
 
     # Create indices
     batch_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, batch_size, one), [1, 2]), exp_shape)
+
+    # keep index tensor types aligned for backend that require exact dtype match
     batch_idx = ops.Cast(batch_idx, to=onnxscript.INT32.dtype)
     ctx_idx = ops.Expand(ops.Unsqueeze(position_ids, [2]), exp_shape)
     indices = ops.Concat(batch_idx, ctx_idx, axis=2)
@@ -95,7 +97,13 @@ class CtxScatterFunc3D(torch.autograd.Function):
 
 
 class CtxScatterFunc3DGeneralized(torch.autograd.Function):
-    """3D scatter variant that leaves INT32_MAX positions untouched."""
+    """Scatter variant that preserves ``data`` at invalid (INT32_MAX) positions.
+
+    Unlike :class:`CtxScatterFunc3D`, which writes updates for invalid rows to
+    ``data.shape[1]-1`` (potentially clobbering valid content), this version
+    masks out invalid rows before scattering so ``data`` is left untouched where
+    ``position_ids == INT32_MAX``.
+    """
 
     @staticmethod
     def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
@@ -137,7 +145,7 @@ def CtxScatter3DInt(
 
 
 class CtxScatterFunc3DInt(torch.autograd.Function):
-    """Int32 3D scatter used to build packed-to-original index tables."""
+    """Int32-typed scatter used to build a packed->original index table."""
 
     @staticmethod
     def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
@@ -183,16 +191,18 @@ class CtxGatherFunc3D(torch.autograd.Function):
 
 
 class CtxGatherFunc3DGeneralized(torch.autograd.Function):
-    """3D gather variant that leaves ONNX output shape inference to the custom op.
+    """Gather variant that tolerates INT32_MAX indices (invalid rows read from 0).
 
-    Eager execution intentionally matches ``CtxGatherFunc3D``. During ONNX export,
-    this variant does not call ``setTypeAs(data)`` because GLM MoE packed prefill
-    gathers return an index-shaped output rather than a data-shaped output.
+    Semantically equivalent to :class:`CtxGatherFunc3D` on the PyTorch side but
+    exposed as a separate autograd op so callers using the packed/cumsum scatter
+    pipeline can be easily recognized and so the ONNX symbolic omits
+    ``setTypeAs`` (needed when the caller already has a matching dtype on
+    ``data`` and wants the op signature to flow through without dtype pinning).
     """
 
     @staticmethod
     def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
-        batch_indices = torch.arange(data.shape[0], device=data.device).view(-1, 1)
+        batch_indices = torch.arange(data.shape[0]).view(-1, 1)
         ctx_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
         return data[batch_indices, ctx_indices]
 

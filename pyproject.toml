@@ -84,7 +84,7 @@ lint.extend-select = ["I"]
 target-version = "py310"
 
 [tool.pytest.ini_options]
-addopts = "-W ignore -v"
+addopts = "-W ignore -s -v"
 junit_logging = "all"
 doctest_optionflags = "NUMBER NORMALIZE_WHITESPACE ELLIPSIS"
 markers = [
