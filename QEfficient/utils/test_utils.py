@@ -100,6 +100,12 @@ def set_num_layers_vlm(config: AutoConfig, n_layer: int = -1):
         config.vision_config.num_hidden_layers = n_layer
         if hasattr(config.vision_config, "depth"):
             config.vision_config.depth = n_layer
+        if hasattr(config.vision_config, "deepstack_visual_indexes"):
+            # Keep deepstack taps aligned with reduced vision depth for fast-test configs.
+            deepstack_idxs = [idx for idx in config.vision_config.deepstack_visual_indexes if idx < n_layer]
+            if not deepstack_idxs and n_layer > 0:
+                deepstack_idxs = [n_layer - 1]
+            config.vision_config.deepstack_visual_indexes = deepstack_idxs
     elif hasattr(config, "llm_config"):
         config.llm_config.num_hidden_layers = n_layer
         config.vision_config.num_hidden_layers = n_layer
@@ -476,6 +482,8 @@ class ModelConfig:
         "Qwen/Qwen2.5-VL-3B-Instruct",
         "Qwen/Qwen3-VL-30B-A3B-Instruct",
         "Qwen/Qwen3-VL-2B-Instruct",
+        "Qwen/Qwen3-VL-Reranker-2B",
+        "Qwen/Qwen3-VL-Reranker-8B",
     }
 
     EXTERNAL_MODELS = {

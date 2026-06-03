@@ -195,6 +195,10 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         continuous_batching: bool = False,
         **kwargs,
     ):
+        prefill_seq_len = kwargs.get("prefill_seq_len")
+        if prefill_seq_len is None:
+            prefill_seq_len = constants.GRANITEVISION_SEQ_LEN
+        prefill_seq_len = int(prefill_seq_len)
         num_layers = self.config.text_config.num_hidden_layers
         num_key_value_heads = self.config.text_config.num_key_value_heads
         head_dim = self.config.text_config.hidden_size // self.config.text_config.num_attention_heads
@@ -221,11 +225,9 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
             ),
         }
         lang_inputs = {
-            "input_ids": torch.ones(
-                (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.GRANITEVISION_SEQ_LEN), dtype=torch.int64
-            ),
+            "input_ids": torch.ones((constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, prefill_seq_len), dtype=torch.int64),
             "attention_mask": torch.ones(
-                (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.GRANITEVISION_SEQ_LEN), dtype=torch.int64
+                (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, prefill_seq_len), dtype=torch.int64
             ),
             "vision_embeds": torch.ones(
                 (

@@ -106,6 +106,8 @@ Some models have specialized examples demonstrating advanced features:
 | **InternVL** | [models/internvl/](models/internvl/) |
 | **Molmo** | [models/molmo/](models/molmo/) |
 
+For reranker examples, see [../reranker/](../reranker/).
+
 
 ## Documentation
 - **Full Guide**: [VLM Documentation](../../docs/source/quick_start.md#vision-language-models)

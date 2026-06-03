@@ -924,9 +924,12 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         logits = self.lm_head(hidden_states).float()
         return logits, image_idx, outputs.past_key_values, pixel_values
 
-    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
+    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, **kwargs):
         BS = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        SEQ_LEN = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        seq_len = kwargs.get("prefill_seq_len")
+        if seq_len is None:
+            seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        SEQ_LEN = int(seq_len)
         CTX_LEN = constants.ONNX_EXPORT_CTX_LEN
 
         txt_cfg = self.config.get_text_config()

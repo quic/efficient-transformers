@@ -17,6 +17,8 @@ All tests run on CPU only. No actual model loading or QAIC hardware execution.
 """
 
 import pytest
+import torch
+from torch import nn
 
 # ---------------------------------------------------------------------------
 # Tests: QEFFAutoModelForImageTextToText structure
@@ -327,3 +329,76 @@ class TestMultimodalUtilityMixin:
 
         with pytest.raises(TypeError, match="only children"):
             MultimodalUtilityMixin()
+
+
+class _DummyGemma3LMOutput:
+    def __init__(self, hidden_states, past_key_values):
+        self.hidden_states = hidden_states
+        self.past_key_values = past_key_values
+
+    def __getitem__(self, idx):
+        if idx == 0:
+            return self.hidden_states
+        raise IndexError(idx)
+
+
+class _DummyGemma3LanguageModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.last_inputs_embeds = None
+
+    def forward(
+        self,
+        inputs_embeds,
+        position_ids,
+        past_key_values,
+        comp_ctx_lengths=None,
+        batch_index=None,
+        use_cache=True,
+    ):
+        self.last_inputs_embeds = inputs_embeds
+        return _DummyGemma3LMOutput(inputs_embeds, past_key_values)
+
+
+class _DummyGemma3Model(nn.Module):
+    def __init__(self, vocab_size=256, hidden_size=8, image_token_index=99):
+        super().__init__()
+        self.config = type("Cfg", (), {"image_token_index": image_token_index})()
+        self.language_model = _DummyGemma3LanguageModel()
+        self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
+        self.embed = nn.Embedding(vocab_size, hidden_size)
+
+    def get_input_embeddings(self):
+        return self.embed
+
+
+def test_qeff_gemma3_decoder_wrapper_casts_vision_embeds_to_text_embed_dtype():
+    from QEfficient.transformers.models.gemma3.modeling_gemma3 import QEffGemma3DecoderWrapper
+
+    model = _DummyGemma3Model()
+    wrapper = QEffGemma3DecoderWrapper(model)
+
+    with torch.no_grad():
+        model.embed.weight.zero_()
+
+    input_ids = torch.tensor([[1, model.config.image_token_index, 2]], dtype=torch.long)
+    position_ids = torch.tensor([[0, 1, 2]], dtype=torch.long)
+    image_idx = torch.zeros((1, 1), dtype=torch.int64)
+    vision_embeds = torch.full((1, 1, model.embed.embedding_dim), 1.5, dtype=torch.float16)
+
+    logits, _, next_image_idx, _ = wrapper(
+        input_ids=input_ids,
+        vision_embeds=vision_embeds,
+        position_ids=position_ids,
+        image_idx=image_idx,
+        past_key_values=(),
+    )
+
+    merged_embeds = model.language_model.last_inputs_embeds
+    assert merged_embeds is not None
+    assert merged_embeds.dtype == torch.float32
+    assert torch.allclose(
+        merged_embeds[0, 1], torch.full((model.embed.embedding_dim,), 1.5, dtype=torch.float32), atol=0, rtol=0
+    )
+    assert next_image_idx.item() == 1
+    assert logits.dtype == torch.float32
