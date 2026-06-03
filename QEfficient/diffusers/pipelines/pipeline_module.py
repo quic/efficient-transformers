@@ -130,7 +130,7 @@ class QEffTextEncoder(QEFFBaseModel):
             specializations (List[Dict]): Model specialization configurations
             **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
         """
-        self._compile(specializations=specializations, **compiler_options)
+        self._compile(onnx_path=self.onnx_path, specializations=specializations, **compiler_options)
 
 
 class QEffUNet(QEFFBaseModel):
@@ -207,7 +207,7 @@ class QEffUNet(QEFFBaseModel):
             specializations (List[Dict]): Model specialization configurations
             **compiler_options: Additional compiler options
         """
-        self._compile(specializations=specializations, **compiler_options)
+        self._compile(onnx_path=self.onnx_path, specializations=specializations, **compiler_options)
 
 
 class QEffVAE(QEFFBaseModel):
@@ -394,7 +394,7 @@ class QEffVAE(QEFFBaseModel):
             specializations (List[Dict]): Model specialization configurations
             **compiler_options: Additional compiler options
         """
-        self._compile(specializations=specializations, **compiler_options)
+        self._compile(onnx_path=self.onnx_path, specializations=specializations, **compiler_options)
 
 
 class QEffFluxTransformerModel(QEFFBaseModel):
@@ -543,7 +543,7 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             specializations (List[Dict]): Model specialization configurations
             **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
         """
-        self._compile(specializations=specializations, **compiler_options)
+        self._compile(onnx_path=self.onnx_path, specializations=specializations, **compiler_options)
 
 
 class QEffWanTransformer(QEFFBaseModel):
@@ -630,7 +630,7 @@ class QEffWanTransformer(QEFFBaseModel):
         )
 
     def compile(self, specializations, **compiler_options) -> None:
-        self._compile(specializations=specializations, **compiler_options)
+        self._compile(onnx_path=self.onnx_path, specializations=specializations, **compiler_options)
 
 
 class QEffWanUnifiedTransformer(QEFFBaseModel):
@@ -773,4 +773,4 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             specializations (List[Dict]): Model specialization configurations
             **compiler_options: Additional compiler options (e.g., num_cores, aic_num_of_activations)
         """
-        self._compile(specializations=specializations, **compiler_options)
+        self._compile(onnx_path=self.onnx_path, specializations=specializations, **compiler_options)
