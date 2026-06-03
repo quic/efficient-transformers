@@ -849,8 +849,10 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
                 visual_pos_masks=visual_pos_masks,
                 deepstack_visual_embeds=deepstack_visual_embeds,
             )
-            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+            if outputs.last_hidden_state.shape[1] > 1:
+                hidden_states = outputs.last_hidden_state
+            else:
+                hidden_states = outputs.last_hidden_state[:, -1:, :]
             logits = hidden_states
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
@@ -882,8 +884,10 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
                 visual_pos_masks=QEffQwen3VLDecoderWrapper._vision_mask,
                 deepstack_visual_embeds=QEffQwen3VLDecoderWrapper._deepstack,
             )
-            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+            if outputs.last_hidden_state.shape[1] > 1:
+                hidden_states = outputs.last_hidden_state
+            else:
+                hidden_states = outputs.last_hidden_state[:, -1:, :]
             logits = hidden_states
             return logits, outputs.past_key_values
 
