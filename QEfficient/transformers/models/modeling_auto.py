@@ -3784,7 +3784,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     max_blocks = max(max_blocks, num_blocks)
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
-            seq_len = 192 # for head par export, figure out a better way than hardcoding this
+            if getattr(self.hash_params.get("blocking_kwargs"), "kv_blocking_headpar_split", None):
+                seq_len = seq_len * getattr(self.hash_params.get("blocking_kwargs"), "kv_blocking_headpar_split")
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         kv_cache_shape = get_padding_shape_from_config(

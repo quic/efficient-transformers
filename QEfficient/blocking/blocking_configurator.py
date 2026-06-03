@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
 from QEfficient.utils import get_attr_or_key, require_value
-from QEfficient.utils.constants import DEFAULT_NUM_HEADS, FP16_BYTES, KV_LORA_RANK, ROPE_DIM, VTCM_SIZE_THRESHOLD
+from QEfficient.utils.constants import DEFAULT_AIC_NUM_CORES, DEFAULT_NUM_HEADS, FP16_BYTES, KV_LORA_RANK, ROPE_DIM, VTCM_SIZE_THRESHOLD
 
 
 def _infer_head_dim(model_config: Any, num_heads: int) -> int:
@@ -377,6 +377,10 @@ def build_transformer_blocking_config_for_transform(
             blocking_config.skip_kv = qaic_config.get("skip_kv")
 
         if qaic_config.get("kv_blocking_headpar_split", None) is not None and enable_blocking:
-            blocking_config.kv_blocking_headpar_split = qaic_config.get("kv_blocking_headpar_split")
+            kv_blocking_headpar_split = qaic_config.get("kv_blocking_headpar_split")
+            # if default head parallel split, we split based on num cores
+            if kv_blocking_headpar_split == 0:
+                kv_blocking_headpar_split = compile_options.get("aic_num_cores", DEFAULT_AIC_NUM_CORES)
+            blocking_config.kv_blocking_headpar_split = kv_blocking_headpar_split
 
     return blocking_config

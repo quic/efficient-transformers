@@ -100,6 +100,7 @@ def main():
     print(f"Generated: {exec_info_blocked.generated_texts[0]}")
 
 
+    # Run comparison to online softmax
     # # setup qaic config to enable blocking, ensure 4 or more device ids are passed
     # qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode, "num_kv_blocks": 2}
     # if args.num_layers:
@@ -137,8 +138,8 @@ def main():
         print("Performance non-blocked:")
         print(exec_info)
 
-    # print("Performance blocked (head parallel kv blocking):")
-    # print(exec_info_blocked)
+    print("Performance blocked (head parallel kv blocking):")
+    print(exec_info_blocked)
 
     # print("Performance blocked (normal kv blocking):")
     # print(exec_info_blocked_no_head_par)
