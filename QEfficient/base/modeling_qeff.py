@@ -562,11 +562,11 @@ class QEFFBaseModel(ABC):
 
         moe_prefill_packed_chunk_size = compiler_options.pop("moe_prefill_packed_chunk_size", None)
         if onnx_path is None:
-            # Reuse an existing ONNX only when weights are already offloaded; otherwise
-            # export again so decode/prefill compile modes can produce different graphs.
-            if self.onnx_path is not None and (
-                self._is_weights_offloaded or any(param.is_meta for param in self.model.parameters())
-            ):
+            # If weights were offloaded after export, compiling must use the existing
+            # ONNX because re-exporting is no longer possible. Otherwise export for
+            # the current compile mode, e.g. decode vs. disaggregated prefill.
+            weights_offloaded = self._is_weights_offloaded or any(param.is_meta for param in self.model.parameters())
+            if self.onnx_path is not None and weights_offloaded:
                 onnx_path = self.onnx_path
             else:
                 onnx_path = self.get_onnx_path(
