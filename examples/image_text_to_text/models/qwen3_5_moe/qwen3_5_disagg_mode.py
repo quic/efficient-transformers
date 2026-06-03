@@ -220,7 +220,6 @@ if vision_inputs:
     vision_outputs = vision_session.run(vision_inputs)
 vision_end = perf_counter()
 
-# import ipdb; ipdb.set_trace()
 lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 if "position_ids" in inputs:
     lang_inputs["position_ids"] = inputs["position_ids"]
@@ -267,7 +266,6 @@ decode_inputs["image_idx"] = outputs["image_idx_output"]
 if not skip_vision:
     decode_inputs["vision_embeds"] = outputs["vision_embeds_RetainedState"]
 
-# import ipdb; ipdb.set_trace()
 st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
 print(f"time for first run of decode with KV as input = {perf_counter() - st} sec\n")
