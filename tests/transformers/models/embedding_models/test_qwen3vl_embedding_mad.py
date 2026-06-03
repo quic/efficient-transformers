@@ -5,9 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
-import importlib.util
 import json
-from pathlib import Path
 from typing import Any, Dict, List
 
 import pytest
@@ -19,6 +17,8 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForImageTe
 from QEfficient.transformers.models.qwen3_vl._embedding_utils import (
     DEFAULT_MAD_MAX,
     EXAMPLE_DOCUMENTS,
+    EXAMPLE_QUERIES,
+    QEffQwen3VLEmbedder,
     configure_embedding_model_config,
     resolve_model_source,
 )
@@ -32,16 +32,6 @@ with open(CONFIG_PATH, "r") as f:
 
 test_embedding_models = [model_config["model_name"] for model_config in embedding_models]
 embedding_model_config_dict = {model["model_name"]: model for model in embedding_models}
-
-
-def _load_embedder_cls():
-    repo_root = Path(__file__).resolve().parents[4]
-    helper_path = repo_root / "examples/embeddings/qwen3vl/embedding_model.py"
-    spec = importlib.util.spec_from_file_location("qwen3_vl_embedding_model", str(helper_path))
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module.QEffQwen3VLEmbedder
 
 
 def _compute_cpu_embeddings(model_hf, embedder, model_inputs: List[Dict[str, Any]]) -> torch.Tensor:
@@ -110,13 +100,12 @@ def test_qwen3_vl_embedding_cpu_vs_ai100_mad_parity(model_name):
         qaic_config={"export_embedding": True},
     )
 
-    QEffQwen3VLEmbedder = _load_embedder_cls()
     embedder = QEffQwen3VLEmbedder(
         processor=processor,
         model=qeff_model,
     )
 
-    model_inputs = EXAMPLE_DOCUMENTS
+    model_inputs = EXAMPLE_QUERIES + EXAMPLE_DOCUMENTS
     compile_specs = embedder.get_compile_specs(
         inputs=model_inputs,
         ctx_len=model_cfg["ctx_len"],

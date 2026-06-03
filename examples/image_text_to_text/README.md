@@ -84,7 +84,7 @@ For the complete list of supported vision-language models, see the [Validated Mo
 
 Popular model families include:
 - Llama Vision (3.2, 4-Scout)
-- Qwen VL (2.5, 3)
+- Qwen VL (2.5)
 - Mistral Vision (Small-3.1)
 - Gemma-3
 - Granite Vision (3.2)

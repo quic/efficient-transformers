@@ -6,9 +6,7 @@
 # -----------------------------------------------------------------------------
 """Fast unit coverage for Qwen3-VL embedding helpers."""
 
-import importlib.util
 import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -16,21 +14,12 @@ import pytest
 import torch
 
 from QEfficient.transformers.models.qwen3_vl._embedding_utils import (
+    QEffQwen3VLEmbedder,
     configure_embedding_model_config,
     format_model_input,
 )
 
 CONFIG_PATH = "tests/configs/image_text_model_configs.json"
-
-
-def _load_embedder_cls():
-    repo_root = Path(__file__).resolve().parents[4]
-    helper_path = repo_root / "examples/embeddings/qwen3vl/embedding_model.py"
-    spec = importlib.util.spec_from_file_location("qwen3_vl_embedding_model", str(helper_path))
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module.QEffQwen3VLEmbedder
 
 
 def _load_embedding_model_configs():
@@ -61,8 +50,7 @@ class _DummyQEffModel:
 def test_embedding_model_list_is_present():
     model_configs = _load_embedding_model_configs()
     assert model_configs, (
-        "image_text_embedding_models is empty. "
-        "Add embedding entries in tests/configs/image_text_model_configs.json."
+        "image_text_embedding_models is empty. Add embedding entries in tests/configs/image_text_model_configs.json."
     )
 
 
@@ -97,7 +85,6 @@ def test_format_model_input_adds_default_null_payload():
 
 @pytest.mark.embedding
 def test_qwen3_vl_embedder_dummy_process_smoke(monkeypatch):
-    QEffQwen3VLEmbedder = _load_embedder_cls()
     embedder = QEffQwen3VLEmbedder(processor=None, model=_DummyQEffModel())
 
     contexts = [{"tokenized": {"kind": "image"}}, {"tokenized": {"kind": "text"}}]

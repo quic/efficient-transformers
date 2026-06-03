@@ -146,7 +146,7 @@
        },
 
      "vision_config": {
-        "head_dim": 64,
+        "head_dim": 32,
         "hidden_size": 128,
         "image_size": 1540,
         "intermediate_size": 256,
