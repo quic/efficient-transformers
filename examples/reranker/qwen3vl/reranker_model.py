@@ -173,7 +173,7 @@ class QEffQwen3VLReranker:
 
         return prepared_contexts, max_prompt_len, max_grid_h, max_grid_w
 
-    def get_compile_specs(self, inputs: Dict, ctx_len: int, prefill_seq_len: int = None) -> Dict[str, int]:
+    def get_compile_specs(self, inputs: Dict, prefill_seq_len: int = None) -> Dict[str, int]:
         """Return compile parameters required for this input batch."""
         _, max_prompt_len, max_grid_h, max_grid_w = self._collect_contexts(inputs)
         if max_prompt_len == 0:
@@ -189,9 +189,10 @@ class QEffQwen3VLReranker:
         height = max_grid_h * patch_size
         width = max_grid_w * patch_size
 
+        # ctx_len == prefill_seq_len always: reranker is single-shot prefill, no decode steps.
         return {
             "prefill_seq_len": target_prefill_seq_len,
-            "ctx_len": int(ctx_len),
+            "ctx_len": target_prefill_seq_len,
             "img_size": max(height, width),
             "height": height,
             "width": width,

@@ -30,7 +30,6 @@ def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for AI100 compile/inference knobs."""
     parser = argparse.ArgumentParser(description="Qwen3-VL reranker example.")
     parser.add_argument("--model-name", type=str, default="Qwen/Qwen3-VL-Reranker-2B")
-    parser.add_argument("--ctx-len", type=int, default=2048, help="Context length used at compile time.")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of AI100 cores.")
     parser.add_argument("--num-devices", type=int, default=1, help="Number of AI100 devices.")
     parser.add_argument(
@@ -106,7 +105,6 @@ def main() -> None:
     # 3) Derive compile requirements from current payload.
     compile_specs = reranker.get_compile_specs(
         inputs=inputs,
-        ctx_len=args.ctx_len,
         prefill_seq_len=args.compile_prefill_seq_len,
     )
 

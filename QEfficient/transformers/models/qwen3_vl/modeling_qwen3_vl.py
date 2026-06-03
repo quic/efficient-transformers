@@ -847,13 +847,8 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         continuous_batching: bool = False,
         **kwargs,
     ):
-        prefill_seq_len = kwargs.get("prefill_seq_len", constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-        if prefill_seq_len is None:
-            prefill_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        prefill_seq_len = int(prefill_seq_len)
-
         inputs_shapes = {}
-        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, prefill_seq_len)
+        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
         # vision_size = 1024
         vision_size = 187
         inputs_shapes["vision_embeds"] = (
@@ -865,7 +860,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         inputs_shapes["position_ids"] = (
             3,
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
-            prefill_seq_len,
+            constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
         inputs_shapes["pixel_values"] = (748, 1536)
         inputs_shapes["image_idx"] = (1, 1)
@@ -889,8 +884,8 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         )
         lang_inputs["position_ids"] = (
             (
-                torch.arange(prefill_seq_len, dtype=torch.int64)
-                .view(1, prefill_seq_len)
+                torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
+                .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
                 .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
             )
             .unsqueeze(0)
@@ -908,7 +903,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
             batch_size=fbs if continuous_batching else bs,
-            seq_len=prefill_seq_len,
+            seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]

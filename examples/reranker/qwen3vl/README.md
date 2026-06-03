@@ -49,7 +49,6 @@ With compile parameters:
 ```bash
 python examples/reranker/qwen3vl/qwen3_vl_reranker.py \
   --model-name Qwen/Qwen3-VL-Reranker-2B \
-  --ctx-len 2048 \
   --num-cores 16 \
   --num-devices 1 \
   --compile-prefill-seq-len 4096 \

@@ -1367,17 +1367,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         List[str]
             A list containing the paths to the generated ONNX graph files for both components.
         """
-        dummy_inputs_kwargs = {}
-        if prefill_seq_len is not None:
-            dummy_inputs_kwargs["prefill_seq_len"] = int(prefill_seq_len)
-
         # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
         try:
             inputs = self.model.get_dummy_inputs(
                 kv_offload=True,
                 continuous_batching=self.continuous_batching,
                 comp_ctx_lengths=self.comp_ctx_lengths_decode,
-                **dummy_inputs_kwargs,
             )
             dynamic_axes = self.model.get_onnx_dynamic_axes(
                 kv_offload=True,
@@ -1678,6 +1673,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             elif prefill_seq_len == 1:
                 specializations = specializations["lang"][-1:]
                 qpc_key = "lang_decode_qpc_path"
+            elif prefill_seq_len is not None and ctx_len is not None and prefill_seq_len == ctx_len:
+                # Single-shot mode (e.g. reranker): no decode steps, only prefill kernel needed.
+                specializations = specializations["lang"][:1]
+                qpc_key = "lang_qpc_path"
             else:
                 specializations = specializations["lang"]
                 qpc_key = "lang_qpc_path"
