@@ -146,7 +146,7 @@
        },
 
      "vision_config": {
-        "head_dim": 32,
+        "head_dim": 64,
         "hidden_size": 128,
         "image_size": 1540,
         "intermediate_size": 256,
@@ -791,7 +791,7 @@
       "vision_depth": 9,
       "deepstack_index": 8,
       "compile_prefill_seq_len": null,
-      "mad_max_threshold": 0.001
+      "mad_max_threshold": 0.002
     }
   ]
 }
