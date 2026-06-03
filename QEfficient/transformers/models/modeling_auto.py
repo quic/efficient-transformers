@@ -1622,7 +1622,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_seq_len=prefill_seq_len,
             )
 
-        # TODO this hould be removed once the continous batching is supported for all the models.
+        if hasattr(self.model, "generate_npi_file") and "node_precision_info" in compiler_options:
+            if self.lang_model.onnx_path is None and not skip_lang:
+                raise ValueError("Language ONNX path is required to generate a language NPI file.")
+            if self.lang_model.onnx_path:
+                compiler_options["node_precision_info"] = self.model.generate_npi_file(self.lang_model.onnx_path)
+        # TODO this should be removed once the continous batching is supported for all the models.
         compiler_options.pop("continuous_batching", None)
         compiler_options.pop("kv_cache_batch_size", None)
         compiler_options.pop("full_batch_size", None)
@@ -1874,6 +1879,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         inputs["attention_mask"] = torch.nn.functional.pad(
             inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
         )
+
+        if "mm_token_type_ids" in inputs:
+            inputs["mm_token_type_ids"] = torch.nn.functional.pad(
+                inputs["mm_token_type_ids"], (0, padded_len - input_ids_length), "constant", 0
+            )
+
         if "cross_attention_mask" in inputs:
             inputs["cross_attention_mask"] = torch.nn.functional.pad(
                 inputs["cross_attention_mask"], (0, 0, 0, 0, 0, padded_len - input_ids_length)
@@ -1886,7 +1897,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             k: v
             for k, v in inputs.items()
             if k
-            in {"pixel_values", "image_masks", "image_input_idx", "valid_idx", "aspect_ratio_ids", "aspect_ratio_mask"}
+            in {
+                "pixel_values",
+                "image_masks",
+                "image_position_ids",
+                "image_input_idx",
+                "valid_idx",
+                "aspect_ratio_ids",
+                "aspect_ratio_mask",
+            }
         }
 
         vision_inputs_fp16 = {"pixel_values", "image_masks"}
@@ -1908,6 +1927,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
             )  # Need to use -1 as position_ids for invalid tokens
 
+        if "mm_token_type_ids" not in lang_inputs and "mm_token_type_ids" in lang_session.input_names:
+            # Keep prefill/decode dynamic shapes aligned when callers omit multimodal token type ids.
+            lang_inputs["mm_token_type_ids"] = np.zeros_like(
+                lang_inputs["input_ids"], dtype=lang_inputs["input_ids"].dtype
+            )
         not_mllama = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
         if not_mllama:
             lang_inputs["image_idx"] = np.array([[0]])
@@ -1939,6 +1963,18 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             chunk_inputs["position_ids"] = lang_inputs["position_ids"][
                 ..., i * prefill_seq_len : (i + 1) * prefill_seq_len
             ]
+            if "mm_token_type_ids" in lang_inputs:
+                chunk_inputs["mm_token_type_ids"] = lang_inputs["mm_token_type_ids"][
+                    ..., i * prefill_seq_len : (i + 1) * prefill_seq_len
+                ]
+            if "token_type_ids" in lang_inputs:
+                chunk_inputs["token_type_ids"] = lang_inputs["token_type_ids"][
+                    ..., i * prefill_seq_len : (i + 1) * prefill_seq_len
+                ]
+            if "cross_attention_mask" in lang_inputs:
+                chunk_inputs["cross_attention_mask"] = lang_inputs["cross_attention_mask"][
+                    :, i * prefill_seq_len : (i + 1) * prefill_seq_len, :, :
+                ]
             outputs = lang_session.run(chunk_inputs)
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
@@ -1959,6 +1995,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # Get first token
         lang_inputs["input_ids"] = outputs["logits"].argmax(2)
         lang_inputs["position_ids"] = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
+
+        if "mm_token_type_ids" in lang_inputs:
+            lang_inputs["mm_token_type_ids"] = np.zeros_like(
+                lang_inputs["input_ids"], dtype=lang_inputs["mm_token_type_ids"].dtype
+            )
         if "cross_attention_mask" in lang_inputs:
             bs, _, num_images, img_tiles = lang_inputs["cross_attention_mask"].shape
             lang_inputs["cross_attention_mask"] = torch.ones((bs, 1, num_images, img_tiles), dtype=torch.int64).numpy()
@@ -1997,6 +2038,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             # Prepare inputs for next iteration
             lang_inputs["input_ids"] = outputs["logits"].argmax(2)
             lang_inputs["position_ids"] += 1
+            if "mm_token_type_ids" in lang_inputs:
+                lang_inputs["mm_token_type_ids"] = np.zeros_like(
+                    lang_inputs["input_ids"], dtype=lang_inputs["mm_token_type_ids"].dtype
+                )
             generated_ids[:, num_token] = lang_inputs["input_ids"].squeeze(1)
             if streamer:
                 streamer.put(lang_inputs["input_ids"][0])
@@ -2145,10 +2190,31 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             **kwargs,
         )
 
+    def __update_prefill_transform(
+        self,
+        enable: Optional[bool] = True,
+        enable_chunking: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = False,
+    ):
+        if enable:
+            if enable_chunking:
+                self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
+            else:
+                self.model, tf = PrefillOnlyTransform.apply(self.model)
+
+        else:
+            if retain_full_kv:
+                self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
+            else:
+                self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
+
     def export(
         self,
         export_dir: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
+        prefill_seq_len: Optional[int] = None,
+        prefill_only: bool = False,
+        enable_chunking: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -2166,6 +2232,18 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         str
             Path to the generated ONNX graph file.
         """
+        if prefill_only:
+            assert prefill_seq_len > 1
+            if not enable_chunking and self.continuous_batching:
+                raise NotImplementedError(
+                    "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
+                )
+            self.hash_params["prefill_only"] = True
+            self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
+        else:
+            self.hash_params["prefill_only"] = False
+            self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+
         inputs = self.model.get_dummy_inputs(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         dynamic_axes = self.model.get_onnx_dynamic_axes(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         output_names = self.model.get_output_names()
