@@ -30,7 +30,7 @@ MODEL_ARTIFACTS = [
 @pytest.mark.parametrize("model_class, artifact_filename, csv_filename", MODEL_ARTIFACTS)
 def test_validate_nightly_results(model_class, artifact_filename, csv_filename, artifacts_dir, get_pipeline_config):
     previous_artifacts_dir = os.environ.get("NIGHTLY_PIPELINE_PREVIOUS_ARTIFACTS_DIR")
-    if previous_artifacts_dir == "":
+    if previous_artifacts_dir == "null" or previous_artifacts_dir == "":
         previous_artifacts_dir = None
     current_artifact_file = artifacts_dir / artifact_filename
     previous_artifact_file = None
