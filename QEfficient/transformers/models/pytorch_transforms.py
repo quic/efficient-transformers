@@ -48,6 +48,16 @@ from transformers.models.gemma3.modeling_gemma3 import (
     Gemma3RMSNorm,
     Gemma3TextModel,
 )
+from transformers.models.gemma4.modeling_gemma4 import (
+    Gemma4ForCausalLM,
+    Gemma4ForConditionalGeneration,
+    Gemma4RMSNorm,
+    Gemma4TextAttention,
+    Gemma4TextDecoderLayer,
+    Gemma4TextExperts,
+    Gemma4TextModel,
+    Gemma4TextRouter,
+)
 from transformers.models.glm4_moe.modeling_glm4_moe import (
     Glm4MoeAttention,
     Glm4MoeDecoderLayer,
@@ -338,6 +348,17 @@ from QEfficient.transformers.models.gemma3.modeling_gemma3 import (
     QEffGemma3ForCausalLMModel,
     QEffGemma3ForConditionalGeneration,
     QEffGemma3TextModel,
+)
+from QEfficient.transformers.models.gemma4.modeling_gemma4 import (
+    QEffGemma4CustomRMSNormAIC,
+    QEffGemma4ForCausalLM,
+    QEffGemma4ForConditionalGeneration,
+    QEffGemma4TextAttention,
+    QEffGemma4TextDecoderLayer,
+    QEffGemma4TextExperts,
+    QEffGemma4TextModel,
+    QEffGemma4TextRouter,
+    QEffPrefillChunckedGemma4TextExperts,
 )
 from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
     QEffGlm4MoeAttention,
@@ -631,6 +652,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         GraniteMoeRMSNorm: CustomRMSNormAIC,
         Qwen3MoeRMSNorm: CustomRMSNormAIC,
         Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
+        Gemma4RMSNorm: QEffGemma4CustomRMSNormAIC,
         Olmo2RMSNorm: CustomRMSNormAIC,
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
@@ -739,8 +761,16 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma3Attention: QEffGemma3Attention,
         Gemma3DecoderLayer: QEffGemma3DecoderLayer,
         Gemma3TextModel: QEffGemma3TextModel,
-        Gemma3ForConditionalGeneration: QEffGemma3ForConditionalGeneration,
         Gemma3ForCausalLM: QEffGemma3ForCausalLMModel,
+        Gemma3ForConditionalGeneration: QEffGemma3ForConditionalGeneration,
+        # Gemma4
+        Gemma4TextAttention: QEffGemma4TextAttention,
+        Gemma4TextDecoderLayer: QEffGemma4TextDecoderLayer,
+        Gemma4TextModel: QEffGemma4TextModel,
+        Gemma4ForCausalLM: QEffGemma4ForCausalLM,
+        Gemma4ForConditionalGeneration: QEffGemma4ForConditionalGeneration,
+        Gemma4TextExperts: QEffGemma4TextExperts,
+        Gemma4TextRouter: QEffGemma4TextRouter,
         # GPT_OSS
         GptOssAttention: QEffGptOssAttention,
         GptOssDecoderLayer: QEffGptOssDecoderLayer,
@@ -897,6 +927,8 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         QEffGlm4MoeMoE: QEffPrefillChunkedGlm4MoeMoE,
         # Qwen3_5Moe
         QEffQwen3_5MoeSparseMoeBlock: QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
+        # Gemma4_Moe
+        QEffGemma4TextExperts: QEffPrefillChunckedGemma4TextExperts,
     }
 
 
@@ -916,6 +948,8 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
         # Qwen3_5Moe
         QEffPrefillChunkedQwen3_5MoeSparseMoeBlock: QEffQwen3_5MoeSparseMoeBlock,
+        # Gemma4_Moe
+        QEffPrefillChunckedGemma4TextExperts: QEffGemma4TextExperts,
     }
 
 
