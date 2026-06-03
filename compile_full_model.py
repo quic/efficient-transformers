@@ -47,7 +47,7 @@ def write_custom_io_yaml(path: Path, indices):
 def create_specializations_json(path: Path, batch_size: int, seq_len: int, ctx_len: int,
                                 kv_cache_batch_size:int = None, cb: bool=False, prefill_only:bool=False) -> Path:
     payload = {"specializations": [{"batch_size": str(batch_size), "seq_len": str(seq_len), "ctx_len": str(ctx_len)}]}
-    if prefill_only and cb and kv_cache_batch_size is not None:
+    if cb and kv_cache_batch_size is not None:
         payload['specializations'][0]['full_batch_size'] = str(kv_cache_batch_size)
     path.write_text(json.dumps(payload, indent=2))
     return path

@@ -218,6 +218,9 @@ def _parse_args():
     parser.add_argument(
         "--kv_cache_batch_size", type=int, default=None, help="KV cache batch size used only when --cb is enabled"
     )
+    parser.add_argument(
+        "--full_batch_size", type=int, default=None, help="Full batch size used only when --cb is enabled"
+    )
     parser.add_argument("--blocking_mode", dest="blocking_mode", type=str, default="kv", help="Blocking mode.")
     parser.add_argument(
         "--num_kv_heads_repeat",
@@ -313,15 +316,20 @@ def main():
         resolved_total_layers = getattr(text_config, "num_hidden_layers", None)
     if resolved_total_layers is None:
         raise ValueError("Could not resolve `num_hidden_layers` from text_config.")
-    if args.cb:
-        assert args.prefill_only, "CB works only on prefill model"
+    if args.prefill_only and args.cb:
+        # assert args.prefill_only, "CB works only on prefill model"
         assert args.kv_cache_batch_size is not None, (
             "You are trying to do prefix-caching please pass kv_cache_batch_size"
         )
     if not args.prefill_only:
         assert args.seq_len == 1, "pass prefill_only, looks like you are trying to get prefill model"
-        assert not args.cb, "cb is not suported for decode-only model"
-        assert args.kv_cache_batch_size is None, "doesn't support cb in decode mode1"
+        if args.cb:
+            assert args.full_batch_size is not None, "You are trying to do continuous batching without prefill_only, please pass full_batch_size"
+            if args.kv_cache_batch_size is None:
+                args.kv_cache_batch_size = args.full_batch_size
+                
+        # assert not args.cb, "cb is not suported for decode-only model"
+        # assert args.kv_cache_batch_size is None, "doesn't support cb in decode mode1"
     window_size = args.window_size
     layerwise_mode = args.layerwise_mode
     total_layers = resolved_total_layers
@@ -367,6 +375,7 @@ def main():
             qaic_config=qaic_config,
             prefill_only=args.prefill_only,
             kv_cache_batch_size=args.kv_cache_batch_size if args.cb else None,
+            full_batch_size = args.full_batch_size if (args.cb and args.seq_len==1) else None,
             use_onnx_subfunctions=True,
         )
         if first_onnx_path is None:
@@ -387,7 +396,7 @@ def main():
         compile_kwargs = {
             "onnx_path": Path(final_onnx_path),
             "num_devices": args.num_devices,
-            "batch_size": args.batch_size,
+            "batch_size": args.full_batch_size if (args.cb and args.seq_len==1) else args.batch_size,
             "seq_len": args.seq_len,
             "ctx_len": args.ctx_len,
             "num_cores": args.num_cores,
