@@ -530,9 +530,9 @@ class QEFFBaseModel(ABC):
         if idx == 0: 
             if is_vision:
                 output_name.append('vision_embeds_RetainedState')
+                if "deepstack_features_RetainedState" in output_names:
+                    output_name.append("deepstack_features_RetainedState")
                 output_name.append('image_idx_output')
-            if "deepstack_features_RetainedState" in output_names:
-                output_name.append("deepstack_features_RetainedState")
         for layer_idx in range(idx, end_idx):
             output_name.append(f"past_key.{layer_idx}_InternalRetainedState")
             output_name.append(f"past_value.{layer_idx}_InternalRetainedState")
