@@ -145,8 +145,6 @@ def main():
         effective_ctx_len=effective_ctx_len,
         skip_vision=SKIP_VISION,
         npi_mode=npi_mode,
-        # prefill_only=True,
-        # enable_chunking=True,
         skip_model_io=True,
         **compiler_kwargs,
     )

@@ -1622,18 +1622,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_seq_len=prefill_seq_len,
             )
 
-        # TODO this hould be removed once the continous batching is supported for all the models.
-
-        if not hasattr(self.model, "generate_npi_file"):
-            raise ValueError("Automatic language NPI generation is not supported for this model.")
-        if self.lang_model.onnx_path is None and not skip_lang:
-            raise ValueError("Language ONNX path is required to generate a language NPI file.")
-        if self.lang_model.onnx_path:
-            compiler_options["node_precision_info"] = self.model.generate_npi_file(self.lang_model.onnx_path)
+        if hasattr(self.model, "generate_npi_file") and "node_precision_info" in compiler_options:
+            if self.lang_model.onnx_path is None and not skip_lang:
+                raise ValueError("Language ONNX path is required to generate a language NPI file.")
+            if self.lang_model.onnx_path:
+                compiler_options["node_precision_info"] = self.model.generate_npi_file(self.lang_model.onnx_path)
+        # TODO this should be removed once the continous batching is supported for all the models.
         compiler_options.pop("continuous_batching", None)
         compiler_options.pop("kv_cache_batch_size", None)
         compiler_options.pop("full_batch_size", None)
-        # compiler_options.pop("node_precision_info", None)
         self.qpc_paths = {}
         if not skip_vision:
             vision_qpc_path = self.vision_model._compile(
