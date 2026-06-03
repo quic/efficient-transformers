@@ -3192,6 +3192,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("moe_prefill_num_nsp", None)
                 self.hash_params.pop("moe_prefill_packed_chunk_size", None)
                 self.hash_params.pop("moe_prefill_num_packed_chunks", None)
+                self.hash_params.pop("chunking_seq_len", None)
                 if kwargs.get("retain_full_kv", False):
                     sliding_window = getattr(self.model.config, "sliding_window", None)
                     kv_cache_shape[2] = seq_len + (sliding_window if sliding_window is not None else 0)
@@ -3581,6 +3582,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             the decode stage. If None, compiles for both stages. Default is None.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+        moe_prefill_packed_chunk_size : int, optional
+            Packed rows per expert-blocked MoE chunk for prefill-only chunked export. Applies only when
+            ``prefill_only=True`` and ``enable_chunking=True``. Default is 256.
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
