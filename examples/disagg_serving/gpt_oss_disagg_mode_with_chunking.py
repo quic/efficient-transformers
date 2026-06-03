@@ -19,7 +19,7 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 subfunc_npi_file_path = os.path.join(dir_path, "subfunction_120b_npi.yaml")
 non_subfunc_npi_file_path = os.path.join(dir_path, "non_subfunction_120b_npi.yaml")
 
-model_id = "openai/gpt-oss-120b"  # weights are not required to convert to fp32
+model_id = "tiny-random/gpt-oss-bf16"  # weights are not required to convert to fp32
 
 prompt = """
 Once upon a time, in a small town, there lived a young boy named Alex. Alex was a curious and adventurous child, always eager to explore the world around him. One day, while playing in the park, Alex stumbled upon a mysterious old book hidden beneath a pile of leaves. The book was filled with stories of distant lands, magical creatures, and extraordinary adventures.
@@ -32,8 +32,8 @@ The path to the treasure was not an easy one. Alex had to navigate through dense
 config = AutoConfig.from_pretrained(model_id)
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 PREFILL_SEQ_LEN = 512
-CTX_LEN = 8192
-NUM_CORES = 16
+CTX_LEN = 1024
+NUM_CORES = 4
 MOE_PREFILL_PACKED_CHUNK_SIZE = 256
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)

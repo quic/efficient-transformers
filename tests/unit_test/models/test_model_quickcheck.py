@@ -105,6 +105,51 @@ TINY_WHISPER_MODEL_ID = "hf-internal-testing/tiny-random-WhisperForConditionalGe
 TINY_SEQ_CLASSIFICATION_MODEL_ID = "ydshieh/tiny-random-BertForSequenceClassification"
 TINY_AWQ_MODEL_ID = "optimum-intel-internal-testing/tiny-mixtral-AWQ-4bit"
 
+TINY_MOE_PREFILL_SUBFUNCTION_CONFIGS = {
+    "glm4_moe": dict(
+        max_position_embeddings=128,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        hidden_size=64,
+        intermediate_size=128,
+        moe_intermediate_size=32,
+        vocab_size=127,
+        num_key_value_heads=2,
+        n_routed_experts=4,
+        num_experts_per_tok=2,
+        first_k_dense_replace=0,
+        n_group=1,
+        topk_group=1,
+        head_dim=16,
+    ),
+    "qwen3_moe": dict(
+        max_position_embeddings=128,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        hidden_size=64,
+        intermediate_size=128,
+        moe_intermediate_size=32,
+        vocab_size=127,
+        num_key_value_heads=2,
+        num_experts=4,
+        num_experts_per_tok=2,
+    ),
+    "gpt_oss": dict(
+        max_position_embeddings=128,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        hidden_size=32,
+        intermediate_size=32,
+        vocab_size=127,
+        num_key_value_heads=2,
+        num_local_experts=4,
+        num_experts_per_tok=2,
+        head_dim=16,
+        sliding_window=128,
+        rope_scaling=None,
+    ),
+}
+
 MODEL_KWARGS = {"attn_implementation": "eager"}
 PREFIX_CACHING_MODEL_ID = "hf-internal-testing/tiny-random-GPT2LMHeadModel"
 
@@ -200,6 +245,30 @@ def _count_decoder_block_subfunctions(onnx_model, qeff_model) -> int:
 
     block_names = {module.__name__ for module in submodules if hasattr(module, "__name__")}
     return sum(any(block_name in func.name for block_name in block_names) for func in onnx_model.functions)
+
+
+def _decoder_block_subfunction_names(onnx_model, qeff_model) -> Set[str]:
+    get_submodules = getattr(qeff_model.model, "get_submodules_for_export", None)
+    assert callable(get_submodules)
+
+    submodules = get_submodules()
+    assert submodules
+
+    if not isinstance(submodules, (set, list, tuple)):
+        submodules = [submodules]
+
+    block_names = {module.__name__ for module in submodules if hasattr(module, "__name__")}
+    assert block_names
+    return {func.name for func in onnx_model.functions if any(block_name in func.name for block_name in block_names)}
+
+
+def _function_op_types(onnx_model, function_names: Set[str]) -> Set[str]:
+    return {
+        node.op_type
+        for function_proto in onnx_model.functions
+        if function_proto.name in function_names
+        for node in function_proto.node
+    }
 
 
 def _assert_has_retained_state_outputs(onnx_path: Path) -> None:
@@ -507,6 +576,42 @@ def test_causal_subfunction_export_smoke(tmp_path):
     without_names = [func.name for func in without_subfunctions_model.functions]
     assert any("QEffGPT2Block" in name for name in with_names)
     assert not any("QEffGPT2Block" in name for name in without_names)
+
+
+@pytest.mark.llm_model
+@pytest.mark.parametrize(
+    ("model_type", "config_kwargs"),
+    sorted(TINY_MOE_PREFILL_SUBFUNCTION_CONFIGS.items()),
+    ids=sorted(TINY_MOE_PREFILL_SUBFUNCTION_CONFIGS),
+)
+def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, config_kwargs, tmp_path):
+    config = AutoConfig.for_model(model_type, **config_kwargs)
+    model_hf = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
+    model_hf.eval()
+    qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=False)
+
+    onnx_path = _exported_onnx_path(
+        qeff_model.export(
+            tmp_path / f"{model_type}-prefill-subfunctions",
+            prefill_only=True,
+            enable_chunking=True,
+            prefill_seq_len=64,
+            num_cores=2,
+            moe_prefill_packed_chunk_size=32,
+            use_onnx_subfunctions=True,
+            offload_pt_weights=False,
+        )
+    )
+
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    decoder_function_names = _decoder_block_subfunction_names(onnx_model, qeff_model)
+    decoder_op_types = _function_op_types(onnx_model, decoder_function_names)
+
+    assert len(decoder_function_names) == config.num_hidden_layers
+    assert "Einsum" in decoder_op_types
+    assert "CtxGather3D" in decoder_op_types
+    assert "CtxScatter3D" in decoder_op_types
+    assert "CtxScatter3DInt" in decoder_op_types
 
 
 @pytest.mark.llm_model

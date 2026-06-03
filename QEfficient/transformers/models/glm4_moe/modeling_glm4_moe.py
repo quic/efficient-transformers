@@ -761,7 +761,7 @@ class QEffPrefillChunkedGlm4MoeMoE(QEffGlm4MoeMoE):
                 packed_chunk_size=self.expert_blocking_packed_chunk_size,
             )
 
-        return expert_out.sum(dim=0)
+        return torch.einsum("nth->th", expert_out)
 
     def forward(self, hidden_states):
         residuals = hidden_states
