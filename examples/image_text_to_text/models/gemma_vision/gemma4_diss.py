@@ -27,8 +27,8 @@ model_id = "google/gemma-4-26B-A4B-it"
 config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
-config.text_config.num_hidden_layers = 2
-config.vision_config.num_hidden_layers = 2
+# config.text_config.num_hidden_layers = 2
+# config.vision_config.num_hidden_layers = 2
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config, dtype="float32", trust_remote_code=True
@@ -72,7 +72,7 @@ prefill_qpc_path = qeff_model.compile(
     mxint8_kv_cache=True,
     retain_full_kv=True,
     split_model_io=True,
-    # node_precision_info=True,
+    node_precision_info=True,
     mos=1,
     aic_enable_depth_first=True,
     prefill_only=True,
@@ -90,7 +90,7 @@ decode_qpc_path = qeff_model.compile(
     mxint8_kv_cache=True,
     split_model_io=True,
     mos=1,
-    # node_precision_info=True,
+    node_precision_info=True,
     aic_enable_depth_first=True,
     prefill_only=False,
     skip_vision=True,
@@ -143,7 +143,7 @@ if skip_vision:
         return_tensors="pt",
     )
 else:
-    messages = build_messages(SYSTEM_PROMPT, TEXT_PROMPT, use_image=True)
+    messages = build_messages(SYSTEM_PROMPT, IMAGE_PROMPT, use_image=True)
     messages[-1]["content"][0]["url"] = IMAGE_URL
     inputs = processor.apply_chat_template(
         messages,
@@ -219,9 +219,14 @@ lang_start = perf_counter()
 lang_prefill_session.set_buffers(vision_outputs)
 all_outputs = []
 chunk_inputs = lang_inputs.copy()
+
 for i in range(num_chunks):
     chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
     chunk_inputs["position_ids"] = lang_inputs["position_ids"][..., i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
+    chunk_inputs["mm_token_type_ids"] = lang_inputs["mm_token_type_ids"][
+        ..., i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN
+    ]
+
     outputs = lang_prefill_session.run(chunk_inputs)
     for i in range(config.text_config.num_hidden_layers):
         chunk_inputs[f"past_key.{i}"] = outputs[f"past_key.{i}_RetainedState"]
