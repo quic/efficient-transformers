@@ -453,6 +453,8 @@ class ModelConfig:
         "google/gemma-3-4b-it",
         "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
         "Qwen/Qwen2.5-VL-3B-Instruct",
+        "Qwen/Qwen3.5-0.8B",
+        # "Qwen/Qwen3.6-35B-A3B",
         "meta-llama/Llama-3.2-11B-Vision-Instruct",
     }
 
@@ -486,6 +488,8 @@ class ModelConfig:
         "Qwen/Qwen3-VL-2B-Instruct",
         "Qwen/Qwen3-VL-Reranker-2B",
         "Qwen/Qwen3-VL-Reranker-8B",
+        "Qwen/Qwen3.5-0.8B",
+        "Qwen/Qwen3.6-35B-A3B",
     }
 
     EXTERNAL_MODELS = {
