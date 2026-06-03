@@ -30,12 +30,12 @@ MODEL_ARTIFACTS = [
 @pytest.mark.parametrize("model_class, artifact_filename, csv_filename", MODEL_ARTIFACTS)
 def test_validate_nightly_results(model_class, artifact_filename, csv_filename, artifacts_dir, get_pipeline_config):
     previous_artifacts_dir = os.environ.get("NIGHTLY_PIPELINE_PREVIOUS_ARTIFACTS_DIR")
-    if previous_artifacts_dir == "null" or previous_artifacts_dir == "":
-        previous_artifacts_dir = None
     current_artifact_file = artifacts_dir / artifact_filename
     previous_artifact_file = None
     if previous_artifacts_dir is not None:
-        previous_artifact_file = Path(previous_artifacts_dir).expanduser().resolve() / artifact_filename
+        previous_artifacts_path = Path(previous_artifacts_dir).expanduser().resolve()
+        if previous_artifacts_path.is_dir():
+            previous_artifact_file = previous_artifacts_path / artifact_filename
     output_csv_file = artifacts_dir / csv_filename
 
     assert current_artifact_file.exists(), f"Current nightly artifact file is missing: {current_artifact_file}"
