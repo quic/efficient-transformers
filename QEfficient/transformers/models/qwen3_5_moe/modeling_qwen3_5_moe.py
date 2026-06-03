@@ -64,14 +64,14 @@ from QEfficient.utils.logging_utils import logger
 # EXPERT_BLOCKING_PACKED_CHUNK_SIZE = 32
 
 
-class QEffQwen3_5MoeGatedDeltaNetCustomRMSNormAIC(nn.Module):
+class QEffQwen3_5MoeGatedDeltaNetCustomNormAIC(nn.Module):
     """
-    RMSNorm module that works by replacing the current module with compiler known custom-op.
+    Norm module that works by replacing the current module with compiler known custom-op.
     """
 
     def forward(self, hidden_states, gate):
         return (
-            CustomRMSNormFunc.apply(
+            CustomNormFunc.apply(
                 hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
             )
         ) * F.silu(gate.to(torch.float32))
@@ -1041,8 +1041,8 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
             )
 
             # break
-
-        hidden_states = self.norm(hidden_states)
+        if QEffQwen3_5MoeTextModel._end == QEffQwen3_5MoeTextModel._total_layers:
+            hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
