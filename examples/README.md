@@ -33,6 +33,7 @@ Sentence and document embeddings.
 | Example | Model | Script |
 |---------|-------|--------|
 | Text Embeddings | all-MiniLM-L6-v2 | [embeddings/text_embeddings.py](embeddings/text_embeddings.py) |
+| Qwen3-VL Embedding | Qwen/Qwen3-VL-Embedding-8B | [embeddings/qwen3vl/qwen3_vl_embedding.py](embeddings/qwen3vl/qwen3_vl_embedding.py) |
 
 [See all embedding examples →](embeddings/)
 
