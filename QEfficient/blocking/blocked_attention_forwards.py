@@ -255,7 +255,7 @@ def blocked_kv_paged_attention_forward(
     current_position = position_ids.max(dim=-1).values
     # needed for GPT-OSS
     if sinks is not None:
-       sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
+        sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
 
     for j in range(num_kv_blocks):
         start_index = j * kv_block_size
@@ -857,7 +857,9 @@ def blocked_hqkv_paged_attention_forward(
 
                 block_index = block_table[:, j]
                 updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == j
-                k_block, v_block = past_key_value.read_only_pagedAttention(block_index, updated, layer_idx, cache_kwargs)
+                k_block, v_block = past_key_value.read_only_pagedAttention(
+                    block_index, updated, layer_idx, cache_kwargs
+                )
                 k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
 
                 k_g = k_block_states[:, h_start:h_end, :, :]
@@ -1140,7 +1142,6 @@ def blocked_bhqkv_paged_attention_forward(
     kv_block_size = past_key_value.get_seq_length() if past_key_value is not None else 0
     past_seen_tokens = kv_block_size * num_kv_blocks
 
-
     h_output_blocks = []
     h_attn_blocks = []
 
@@ -1220,7 +1221,9 @@ def blocked_bhqkv_paged_attention_forward(
 
                     block_index = block_table[:, j]
                     updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == j
-                    k_block, v_block = past_key_value.read_only_pagedAttention(block_index, updated, layer_idx, cache_kwargs)
+                    k_block, v_block = past_key_value.read_only_pagedAttention(
+                        block_index, updated, layer_idx, cache_kwargs
+                    )
                     k_block_states, v_block_states = _get_kv_states(module, k_block, v_block)
 
                     k_g = k_block_states[batch_start : batch_start + batch_len, h_start:h_end, :, :]

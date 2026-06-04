@@ -22,8 +22,8 @@ from QEfficient.blocking.blocked_attention_forwards import (
     blocked_hqkv_attention_forward,
     blocked_hqkv_paged_attention_forward,
     blocked_kv_attention_forward,
-    blocked_kv_paged_attention_forward,
     blocked_kv_mla_attention_forward,
+    blocked_kv_paged_attention_forward,
     blocked_q_attention_forward,
     blocked_qkv_attention_forward,
     blocked_qkv_paged_attention_forward,
@@ -150,7 +150,9 @@ def generic_blocked_attention_interface(
     )
 
     use_paged_kv_blocked = (
-        blocking_config is not None and "paged" in blocking_config.mode and supports_paged_attention_blocked_kv(past_key_value)
+        blocking_config is not None
+        and "paged" in blocking_config.mode
+        and supports_paged_attention_blocked_kv(past_key_value)
     )
 
     if past_key_value is not None:
