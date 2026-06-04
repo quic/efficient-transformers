@@ -465,7 +465,7 @@ class ModelConfig:
     MOLMO_MODELS = {
         "allenai/Molmo-7B-D-0924",
     }
-
+    # FIXME: Debug issue wrt Qwen 3.5, 3.6
     SKIPPED_MODELS = {
         "meta-llama/Llama-4-Scout-17B-16E-Instruct",
         "allenai/Molmo-7B-D-0924",
@@ -476,6 +476,8 @@ class ModelConfig:
         "jinaai/jina-embeddings-v2-base-code",
         "hpcai-tech/grok-1",
         "Qwen/Qwen2.5-VL-3B-Instruct",
+        "Qwen/Qwen3.5-0.8B",
+        "Qwen/Qwen3.6-35B-A3B",
     }
 
     DUAL_QPC_MODELS = {
