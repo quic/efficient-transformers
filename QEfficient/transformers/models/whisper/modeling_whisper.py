@@ -30,7 +30,7 @@ from transformers.models.whisper.modeling_whisper import (
 from QEfficient.transformers.cache_utils import QEffEncoderDecoderCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils._utils import IOInfo
-from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE, ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
 
 class QEffWhisperPositionalEmbedding(WhisperPositionalEmbedding):
@@ -794,7 +794,7 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
         self,
     ):
         bs = 1
-        seq_len = 32
+        seq_len = ONNX_EXPORT_EXAMPLE_SEQ_LEN
         encoder_seq_len = self.config.max_source_positions
         encoder_feature_count = self.config.num_mel_bins
         num_key_value_heads = self.config.decoder_attention_heads

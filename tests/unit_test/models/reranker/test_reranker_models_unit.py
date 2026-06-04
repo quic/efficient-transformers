@@ -14,7 +14,6 @@ This test is intentionally model-list driven:
 
 import copy
 import json
-import os
 from typing import Dict, List
 
 import pytest
@@ -22,7 +21,7 @@ from transformers import AutoConfig
 
 from QEfficient.utils.test_utils import set_num_layers_vlm
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/reranker_model_configs.json")
+CONFIG_PATH = "tests/configs/reranker_model_configs.json"
 
 
 def _load_reranker_model_configs() -> List[Dict]:
