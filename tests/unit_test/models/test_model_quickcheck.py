@@ -224,16 +224,25 @@ def _run_whisper_export_smoke(qeff_model: QEFFAutoModelForSpeechSeq2Seq, out_dir
 def _assert_proxy_only_onnx_transform_policy(
     qeff_model, enable_proxy: bool, always_on_transforms: Optional[Set[str]] = None
 ) -> None:
+    pytorch_transform_names = {transform.__name__ for transform in qeff_model._pytorch_transforms}
     transform_names = {transform.__name__ for transform in qeff_model._onnx_transforms}
+    proxy_pytorch_transform = "QeffProxyModuleTransform"
     proxy_only_transforms = {"FP16ClipTransform", "SplitTensorsTransform"}
     always_on_transforms = always_on_transforms or set()
     conditional_proxy_transforms = proxy_only_transforms - always_on_transforms
 
     if enable_proxy:
+        assert proxy_pytorch_transform in pytorch_transform_names
         assert proxy_only_transforms.issubset(transform_names)
     else:
+        assert proxy_pytorch_transform not in pytorch_transform_names
         assert conditional_proxy_transforms.isdisjoint(transform_names)
         assert always_on_transforms.issubset(transform_names)
+
+
+def _assert_dual_qpc_vlm_proxy_transform_policy(qeff_model, enable_proxy: bool) -> None:
+    _assert_proxy_only_onnx_transform_policy(qeff_model.vision_model, enable_proxy=enable_proxy)
+    _assert_proxy_only_onnx_transform_policy(qeff_model.lang_model, enable_proxy=enable_proxy)
 
 
 def _skip_on_model_fetch_error(exc: Exception, model_id: str) -> None:
@@ -701,6 +710,21 @@ def test_proxy_toggle_onnx_transform_policy_for_embedding():
 
 
 @pytest.mark.llm_model
+def test_proxy_toggle_onnx_transform_policy_for_sequence_classification():
+    model_id = TINY_SEQ_CLASSIFICATION_MODEL_ID
+    try:
+        qeff_default = QEFFAutoModelForSequenceClassification.from_pretrained(model_id, trust_remote_code=True)
+        qeff_proxy = QEFFAutoModelForSequenceClassification.from_pretrained(
+            model_id, trust_remote_code=True, enable_proxy=True
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    _assert_proxy_only_onnx_transform_policy(qeff_default, enable_proxy=False)
+    _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
+
+
+@pytest.mark.llm_model
 def test_proxy_toggle_onnx_transform_policy_for_whisper():
     model_id = TINY_WHISPER_MODEL_ID
     try:
@@ -714,20 +738,33 @@ def test_proxy_toggle_onnx_transform_policy_for_whisper():
 
 
 @pytest.mark.llm_model
-def test_proxy_toggle_onnx_transform_policy_for_vlm():
-    model_id = VLM_TEXT_RUNTIME_MODEL_ID
+def test_proxy_toggle_onnx_transform_policy_for_ctc():
+    model_id = TINY_AUDIO_CTC_MODEL_ID
     try:
-        qeff_default = QEFFAutoModelForImageTextToText.from_pretrained(
-            model_id, trust_remote_code=True, kv_offload=False
-        )
-        qeff_proxy = QEFFAutoModelForImageTextToText.from_pretrained(
-            model_id, trust_remote_code=True, enable_proxy=True, kv_offload=False
-        )
+        qeff_default = QEFFAutoModelForCTC.from_pretrained(model_id, trust_remote_code=True)
+        qeff_proxy = QEFFAutoModelForCTC.from_pretrained(model_id, trust_remote_code=True, enable_proxy=True)
     except Exception as exc:
         _skip_on_model_fetch_error(exc, model_id)
 
     _assert_proxy_only_onnx_transform_policy(qeff_default, enable_proxy=False)
     _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
+
+
+@pytest.mark.llm_model
+def test_proxy_toggle_onnx_transform_policy_for_vlm():
+    model_id = VLM_TEXT_RUNTIME_MODEL_ID
+    try:
+        qeff_default = QEFFAutoModelForImageTextToText.from_pretrained(
+            model_id, trust_remote_code=True, kv_offload=True
+        )
+        qeff_proxy = QEFFAutoModelForImageTextToText.from_pretrained(
+            model_id, trust_remote_code=True, enable_proxy=True, kv_offload=True
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    _assert_dual_qpc_vlm_proxy_transform_policy(qeff_default, enable_proxy=False)
+    _assert_dual_qpc_vlm_proxy_transform_policy(qeff_proxy, enable_proxy=True)
 
 
 class TestCausalLMFlagDiagnostics:
