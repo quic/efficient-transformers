@@ -39,7 +39,7 @@ from QEfficient.transformers.models.qwen3_vl._reranker_utils import (
 )
 from QEfficient.utils.test_utils import load_vlm_model, set_num_layers_vlm
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/reranker_model_configs.json")
 
 PT_AI100_MAD_MAX = 5e-3
 MAX_LENGTH = 8192
@@ -60,8 +60,7 @@ EXAMPLE_INPUTS = {
 }
 
 with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    reranker_models = config_data["image_text_reranker_models"]
+    reranker_models = json.load(f)
 
 test_reranker_models = [model_config["model_name"] for model_config in reranker_models]
 reranker_model_config_dict = {model["model_name"]: model for model in reranker_models}
@@ -298,7 +297,7 @@ def test_qwen3_vl_reranker_mad_parity(model_name):
         height=compile_height,
         width=compile_width,
         prefill_seq_len=max_prompt_len,
-        ctx_len=model_cfg["ctx_len"],
+        ctx_len=max_prompt_len,
         num_devices=1,
         num_cores=16,
         mxfp6_matmul=False,

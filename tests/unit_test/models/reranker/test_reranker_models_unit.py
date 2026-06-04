@@ -8,7 +8,7 @@
 Generic unit coverage for image-text reranker model entries.
 
 This test is intentionally model-list driven:
-  - Add/remove reranker models only in tests/configs/image_text_model_configs.json
+  - Add/remove reranker models only in tests/configs/reranker_model_configs.json
   - The same unit checks run for every configured reranker model
 """
 
@@ -22,13 +22,12 @@ from transformers import AutoConfig
 
 from QEfficient.utils.test_utils import set_num_layers_vlm
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/reranker_model_configs.json")
 
 
 def _load_reranker_model_configs() -> List[Dict]:
     with open(CONFIG_PATH, "r", encoding="utf-8") as file:
-        config_data = json.load(file)
-    return config_data.get("image_text_reranker_models", [])
+        return json.load(file)
 
 
 RERANKER_MODEL_CONFIGS = _load_reranker_model_configs()
@@ -51,7 +50,7 @@ def _vision_num_layers(config) -> int:
 
 def test_reranker_model_list_is_present():
     assert RERANKER_MODEL_CONFIGS, (
-        "image_text_reranker_models is empty. Add reranker entries in tests/configs/image_text_model_configs.json."
+        "reranker_model_configs.json is empty. Add reranker entries in tests/configs/reranker_model_configs.json."
     )
 
 

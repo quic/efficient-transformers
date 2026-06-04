@@ -273,16 +273,8 @@ class QEffInternVLModel(nn.Module):
         return output_names
 
     def get_dummy_inputs(
-        self,
-        comp_ctx_lengths: Optional[List[int]] = None,
-        kv_offload: bool = False,
-        continuous_batching: bool = False,
-        **kwargs,
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
     ):
-        prefill_seq_len = kwargs.get("prefill_seq_len")
-        if prefill_seq_len is None:
-            prefill_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        prefill_seq_len = int(prefill_seq_len)
         if vis_cfg := getattr(self.config, "vision_config", None):
             img_size = getattr(vis_cfg, "image_size", constants.INTERN_IMG_SIZE)
         else:
@@ -301,7 +293,7 @@ class QEffInternVLModel(nn.Module):
 
         # Define shapes
         inputs_shapes = {}
-        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, prefill_seq_len)
+        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
         inputs_shapes["vision_embeds"] = (
             1,
             computed_feature_size * constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
@@ -309,7 +301,7 @@ class QEffInternVLModel(nn.Module):
         )
         inputs_shapes["position_ids"] = (
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
-            prefill_seq_len,
+            constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
         inputs_shapes["pixel_values"] = (
             constants.INTERN_NUM_PATCHES * constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
@@ -329,8 +321,8 @@ class QEffInternVLModel(nn.Module):
             (inputs_shapes["vision_embeds"]), dtype=self.config.vision_config.torch_dtype
         )
         lang_inputs["position_ids"] = (
-            torch.arange(prefill_seq_len, dtype=torch.int64)
-            .view(1, prefill_seq_len)
+            torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
+            .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
             .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((1, 1), dtype=torch.int64)
@@ -342,7 +334,7 @@ class QEffInternVLModel(nn.Module):
         kv_cache_shape = get_padding_shape_from_config(
             config=self.language_model.config,
             batch_size=fbs if continuous_batching else bs,
-            seq_len=prefill_seq_len,
+            seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.language_model.config.num_hidden_layers)]
