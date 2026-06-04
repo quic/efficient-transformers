@@ -17,6 +17,7 @@ from transformers.cache_utils import DynamicCache, EncoderDecoderCache
 
 from QEfficient.generation.text_generation_inference import TextGeneration
 from QEfficient.transformers.cache_utils import QEffDynamicCache
+
 from QEfficient.utils.generate_inputs import InputHandler, InputHandlerInternVL, InputHandlerVLM
 
 
@@ -33,7 +34,7 @@ class ApiRunner:
     """
 
     def __init__(
-        self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size=None, dtype=torch.float32
+        self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size=None, dtype=torch.float32, qaic_config=None)
     ):
         """
         Initialization
@@ -55,6 +56,7 @@ class ApiRunner:
             ctx_len=ctx_len,
             full_batch_size=full_batch_size,
             dtype=dtype,
+            qaic_config=qaic_config,
         )
 
         self.gen_len = self.input_handler.ctx_len - self.input_handler.prompt_len
