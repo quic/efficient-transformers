@@ -392,6 +392,7 @@ if GLM_MOE_DSA_AVAILABLE:
         QEffGlmMoeDsaForCausalLM,
         QEffGlmMoeDsaModel,
         QEffGlmMoeDsaMoE,
+        QEffPrefillChunkedGlmMoeDsaMoE,
     )
 from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2Attention,
@@ -970,6 +971,11 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
     }
 
 
+# glm_moe_dsa prefill-chunked MoE — registered only when the arch is present (U6).
+if GLM_MOE_DSA_AVAILABLE:
+    PrefillOnlyChunkedTransform._module_mapping[QEffGlmMoeDsaMoE] = QEffPrefillChunkedGlmMoeDsaMoE
+
+
 class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
     _module_mapping = {
         # GPT_OSS
@@ -989,6 +995,11 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         # Gemma4_Moe
         QEffPrefillChunckedGemma4TextExperts: QEffGemma4TextExperts,
     }
+
+
+# glm_moe_dsa: register the reverse mapping for the decode QPC (U6-guarded).
+if GLM_MOE_DSA_AVAILABLE:
+    RevertPrefillKeepAttentionTransform._module_mapping[QEffPrefillChunkedGlmMoeDsaMoE] = QEffGlmMoeDsaMoE
 
 
 class RevertPrefillOnlyTransform(ModuleMappingTransform):
