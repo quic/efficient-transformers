@@ -33,7 +33,6 @@ model_config_dict = {model["model_name"]: model for model in causal_lm_models}
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_full_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
-
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to issues in HF.")
     if model_name in ModelConfig.FULL_MODEL_TESTS_TO_SKIP:
@@ -59,7 +58,6 @@ def test_few_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup)
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
-
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to issues in HF.")
     custom_config = model_config_dict[model_name]
@@ -97,7 +95,6 @@ def test_full_causal_lm_pytorch_vs_ort_vs_ai100_cb(model_name, manual_cleanup):
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_few_causal_lm_pytorch_vs_ort_vs_ai100_cb(model_name, manual_cleanup):
-
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to issues in HF.")
     n_layer = get_custom_n_layers(model_name)
@@ -114,7 +111,6 @@ def test_few_causal_lm_pytorch_vs_ort_vs_ai100_cb(model_name, manual_cleanup):
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_dummy_causal_lm_pytorch_vs_ort_vs_ai100_cb(model_name, manual_cleanup):
-
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to issues in HF.")
     custom_config = model_config_dict[model_name]

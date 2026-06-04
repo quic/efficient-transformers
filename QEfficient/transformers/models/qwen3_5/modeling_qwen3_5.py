@@ -300,6 +300,9 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     cos = cos[position_ids]
     sin = sin[position_ids]
 
+    cos = cos[position_ids]
+    sin = sin[position_ids]
+
     cos = qeff_apply_interleaved_mrope(cos, mrope_section)
     sin = qeff_apply_interleaved_mrope(sin, mrope_section)
 
@@ -335,7 +338,6 @@ def eager_attention_forward(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-
     if attention_mask is not None:
         attn_weights = torch.where(
             attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
@@ -603,7 +605,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         #     L = L + Ak
         #     Ak = Ak @ A
 
-        # attn = L
+        attn = L
 
         ## Factorized Approximation code ##
         # eye = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)  #
@@ -1839,7 +1841,6 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         ]
 
     def prepare_inputs_for_generation(self, inputs, prefill_seq_len=32, batch_size=1):
-
         input_ids_length = inputs["input_ids"].shape[1]
         inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
         pos_ids, rope_deltas = self.model.get_rope_index(

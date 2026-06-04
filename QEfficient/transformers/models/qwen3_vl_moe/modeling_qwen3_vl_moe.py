@@ -24,6 +24,7 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeTextModel,
     Qwen3VLMoeTextRotaryEmbedding,
     Qwen3VLMoeTextSparseMoeBlock,
+    Qwen3VLMoeTextTopKRouter,
     Qwen3VLMoeVisionAttention,
     Qwen3VLMoeVisionModel,
     apply_rotary_pos_emb_vision,
@@ -385,6 +386,7 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
+        self.layer_idx = self.layer_idx - getattr(QEffQwen3VLMoeTextModel, "_start", 0)
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
@@ -512,6 +514,10 @@ class QEffQwen3VLMoeTextDecoderLayer(Qwen3VLMoeTextDecoderLayer):
 
 
 class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
+    _start = 0
+    _end = 0
+    _total_layers = None
+
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3VLMoeTextRotaryEmbedding(config=self.config)
         self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
@@ -570,7 +576,15 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         all_self_attns = () if output_attentions else None
 
         layer_idx = 0
-        for decoder_layer in self.layers:
+        start = QEffQwen3VLMoeTextModel._start
+        end = QEffQwen3VLMoeTextModel._end
+        layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
+
+        for layer_idx, decoder_layer in enumerate(self.layers):
+            if layer_idx < start or layer_idx >= end:
+                continue
+            if layer_indices_to_run is not None and layer_idx not in layer_indices_to_run:
+                continue
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -595,15 +609,16 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
 
-            if deepstack_visual_embeds is not None and layer_idx in range(deepstack_visual_embeds.shape[0]):
+            if deepstack_visual_embeds is not None and start in range(deepstack_visual_embeds.shape[0]):
                 hidden_states = self._deepstack_process(
                     hidden_states,
                     visual_pos_masks,
-                    deepstack_visual_embeds[layer_idx],
+                    deepstack_visual_embeds[start],
                 )
             layer_idx += 1
 
-        hidden_states = self.norm(hidden_states)
+        if QEffQwen3VLMoeTextModel._end == QEffQwen3VLMoeTextModel._total_layers:
+            hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
@@ -755,7 +770,22 @@ class QEffQwen3VLEncoderWrapper(nn.Module):
         return image_embeds, deepstack_features
 
 
+class QEffQwen3VLMoeTextTopKRouter(Qwen3VLMoeTextTopKRouter):
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
+        router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
+        router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1)
+        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
+        router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
+        router_top_value = router_top_value.to(router_logits.dtype)
+        router_scores = router_top_value
+        return router_logits, router_scores, router_indices
+
+
 class QEffQwen3VLDecoderWrapper(nn.Module):
+    _deepstack = None
+    _vision_mask = None
+
     def __init__(self, model):
         super().__init__()
         self.model = model
@@ -772,53 +802,97 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
 
     def forward(
         self,
-        input_ids,
-        vision_embeds,
-        deepstack_features,
-        position_ids,
-        image_idx,
-        past_key_values,
+        input_ids=None,
+        inputs_embeds=None,
+        vision_embeds=None,
+        deepstack_features=None,
+        position_ids=None,
+        image_idx=None,
+        past_key_values=None,
         batch_index: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
-        inputs_embeds = self.model.get_input_embeddings()(input_ids)
-        B, N, C = inputs_embeds.shape
-        selected = input_ids == self.model.config.image_token_id
-        indices1 = selected.to(torch.int64).cumsum(1) - 1
-        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-        indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-        image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
+        if inputs_embeds is None:
+            inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
+        else:
+            inputs_embeds = inputs_embeds
 
-        num_features, bs, split_size, C = deepstack_features.shape
-        x = deepstack_features.reshape(num_features, bs * split_size, C)
-        deepstack_features_expanded = x[:, indices1, :]
-        image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
+        if QEffQwen3VLMoeTextModel._start == 0:
+            B, N, C = inputs_embeds.shape
+            selected = input_ids == self.model.config.image_token_id
+            indices1 = selected.to(torch.int64).cumsum(1) - 1
+            indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
+            indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+            image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
 
-        image_mask = selected.clone()
+            num_features, bs, split_size, C = deepstack_features.shape
+            x = deepstack_features.reshape(num_features, bs * split_size, C)
+            deepstack_features_expanded = x[:, indices1, :]
+            image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
+            inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
 
-        visual_pos_masks = None
-        deepstack_visual_embeds = None
+            image_mask = selected.clone()
 
-        if image_mask is not None:
-            visual_pos_masks = image_mask
-            deepstack_visual_embeds = deepstack_features_expanded
+            visual_pos_masks = None
 
-        outputs = self.language_model(
-            inputs_embeds=inputs_embeds,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            comp_ctx_lengths=comp_ctx_lengths,
-            batch_index=batch_index,
-            use_cache=True,
-            visual_pos_masks=visual_pos_masks,
-            deepstack_visual_embeds=deepstack_visual_embeds,
-        )
-        logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-        logits = self.model.lm_head(hidden_states)
-        image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
+            deepstack_visual_embeds = None
+            if image_mask is not None:
+                visual_pos_masks = image_mask
+                QEffQwen3VLDecoderWrapper._vision_mask = visual_pos_masks
+                deepstack_visual_embeds = deepstack_features_expanded
+                QEffQwen3VLDecoderWrapper._deepstack = deepstack_visual_embeds
+
+            outputs = self.language_model(
+                inputs_embeds=inputs_embeds,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                use_cache=True,
+                visual_pos_masks=visual_pos_masks,
+                deepstack_visual_embeds=deepstack_visual_embeds,
+            )
+            if outputs.last_hidden_state.shape[1] > 1:
+                hidden_states = outputs.last_hidden_state
+            else:
+                hidden_states = outputs.last_hidden_state[:, -1:, :]
+            logits = hidden_states
+            image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+            return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
+
+        elif QEffQwen3VLMoeTextModel._end == QEffQwen3VLMoeTextModel._total_layers:
+            outputs = self.language_model(
+                inputs_embeds=inputs_embeds,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                use_cache=True,
+                visual_pos_masks=QEffQwen3VLDecoderWrapper._vision_mask,
+                deepstack_visual_embeds=QEffQwen3VLDecoderWrapper._deepstack,
+            )
+            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
+            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+            logits = self.model.lm_head(hidden_states)
+            return logits, outputs.past_key_values
+
+        else:
+            outputs = self.language_model(
+                inputs_embeds=inputs_embeds,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                use_cache=True,
+                visual_pos_masks=QEffQwen3VLDecoderWrapper._vision_mask,
+                deepstack_visual_embeds=QEffQwen3VLDecoderWrapper._deepstack,
+            )
+            if outputs.last_hidden_state.shape[1] > 1:
+                hidden_states = outputs.last_hidden_state
+            else:
+                hidden_states = outputs.last_hidden_state[:, -1:, :]
+            logits = hidden_states
+            return logits, outputs.past_key_values
 
 
 class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
@@ -941,7 +1015,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
         if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int64)
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
         inputs = {}
         if kv_offload:
             inputs["vision"] = vision_inputs
