@@ -354,10 +354,20 @@ def build_transformer_blocking_config_for_transform(
     else:
         blocking_config = AttentionBlockingConfig()
         mode_from_config = ""
-        if qaic_config.get("num_kv_blocks", False) and enable_blocking and "kv" in blocking_mode and "paged" not in blocking_mode:
+        if (
+            qaic_config.get("num_kv_blocks", False)
+            and enable_blocking
+            and "kv" in blocking_mode
+            and "paged" not in blocking_mode
+        ):
             mode_from_config = "kv" + mode_from_config
             blocking_config.num_kv_blocks = _get_valid_num_blocks(qaic_config, "num_kv_blocks")
-        if qaic_config.get("num_kv_blocks", False) and enable_blocking and "kv" in blocking_mode and "paged" in blocking_mode:
+        if (
+            qaic_config.get("num_kv_blocks", False)
+            and enable_blocking
+            and "kv" in blocking_mode
+            and "paged" in blocking_mode
+        ):
             mode_from_config = "kv_paged" + mode_from_config
             blocking_config.num_kv_blocks = _get_valid_num_blocks(qaic_config, "num_kv_blocks")
         if qaic_config.get("num_q_blocks", False) and enable_blocking and "q" in blocking_mode:

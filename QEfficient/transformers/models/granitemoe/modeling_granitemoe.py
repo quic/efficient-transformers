@@ -96,6 +96,8 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
         self,
         hidden_states: torch.Tensor,
         position_ids: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.LongTensor] = None,
+        slot_id: Optional[torch.LongTensor] = None,
         position_embeddings: Tuple[torch.Tensor, torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[Cache] = None,

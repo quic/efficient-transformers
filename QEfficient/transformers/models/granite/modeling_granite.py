@@ -108,6 +108,8 @@ class QEffGraniteAttention(GraniteAttention):
         self,
         hidden_states: torch.Tensor,
         position_ids: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.LongTensor] = None,
+        slot_id: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
