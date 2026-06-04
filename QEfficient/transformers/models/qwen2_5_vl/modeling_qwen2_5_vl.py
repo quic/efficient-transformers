@@ -1142,9 +1142,9 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         }
 
         pkv_dynamic_axes = {
-                0: "full_batch_size" if continuous_batching else "batch_size",
-                2: "ctx_len",
-            }
+            0: "full_batch_size" if continuous_batching else "batch_size",
+            2: "ctx_len",
+        }
 
         qaic_config = getattr(self.model, "qaic_config", None)
         blocking_mode = qaic_config.get("blocking_mode") if qaic_config is not None else None
