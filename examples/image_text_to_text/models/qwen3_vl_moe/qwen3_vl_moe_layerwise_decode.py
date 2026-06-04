@@ -17,7 +17,7 @@ from QEfficient import QEFFAutoModelForImageTextToText
 
 
 MODEL_ID = "Qwen/Qwen3-VL-235B-A22B-Instruct"
-PREFILL_SEQ_LEN = 32
+PREFILL_SEQ_LEN =  1
 CTX_LEN = 4096
 TEXT_WINDOW_SIZE = 1
 
@@ -226,7 +226,7 @@ def main():
     config.torch_dtype = "float32"
     # config.vision_config.depth = 9
     # config.text_config.num_hidden_layers = 2
-    config.vision_config.deepstack_visual_indexes = [8, 16, 24]
+    config.vision_config.deepstack_visual_indexes = [8, 27, 36]
 
     # if TEST_TEXT_LAYERS:
     #     config.text_config.num_hidden_layers = TEST_TEXT_LAYERS
@@ -284,12 +284,11 @@ def main():
             skip_lang=skip_lang_for_window,
             split_retained_state_io=True,
             use_onnx_subfunctions=True,
-            prefill_only=True,
             mos=1,
         )
 
         if first_onnx_path is None:
-            first_onnx_path = Path(str(onnx_path["lang_prefill_qpc_path"]))
+            first_onnx_path = Path(str(onnx_path["lang_decode_qpc_path"]))
 
     if first_onnx_path is None:
         raise RuntimeError("No ONNX path produced during layer-wise language export.")
@@ -314,7 +313,6 @@ def main():
             skip_lang=skip_lang_for_window,
             split_retained_state_io=True,
             use_onnx_subfunctions=True,
-            prefill_only=True,
             mos=1,
         )
     

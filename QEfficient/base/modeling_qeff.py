@@ -615,7 +615,7 @@ class QEFFBaseModel(ABC):
 
         layer_onnx_path = str(current_layer_dir / f"{self.model_name}_layer_{idx}_{end_idx}.onnx")
         layer_onnx_path_tmp = str(current_layer_dir / f"{self.model_name}_layer_tmp_{idx}_{end_idx}.onnx")
-        
+        output_names = output_name
         if not os.path.isfile(layer_onnx_path):
             torch.onnx.export(
                 self.model,
@@ -623,7 +623,7 @@ class QEFFBaseModel(ABC):
                 layer_onnx_path_tmp,
                 kwargs=example_inputs,
                 input_names=input_names,
-                output_names=output_name,
+                output_names=output_names,
                 dynamic_axes=dynamic_axes,
                 opset_version=constants.ONNX_EXPORT_OPSET,
                 **export_kwargs,
@@ -632,7 +632,6 @@ class QEFFBaseModel(ABC):
             print(f"\nTotal export time: {total_end - start_time:.2f} seconds")
 
         model = onnx.load(layer_onnx_path_tmp, load_external_data=False)
-        # print(model.functions)
         transform_kwargs = {
             "onnx_base_dir": str(current_layer_dir),
             "model_name": self.model_name,

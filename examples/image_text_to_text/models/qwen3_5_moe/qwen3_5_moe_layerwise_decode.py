@@ -6,18 +6,18 @@
 # -----------------------------------------------------------------------------
 
 import functools
-import os
 from pathlib import Path
 
 import torch
 import transformers
 from transformers import AutoConfig
+import os
 import QEfficient
 from QEfficient import QEFFAutoModelForImageTextToText
 
 
-MODEL_ID = "Qwen/Qwen3-VL-235B-A22B-Instruct"
-PREFILL_SEQ_LEN = 32
+MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
+PREFILL_SEQ_LEN = 1
 CTX_LEN = 4096
 TEXT_WINDOW_SIZE = 1
 
@@ -27,7 +27,7 @@ TEXT_WINDOW_SIZE = 1
 # Export controls
 BATCH_SIZE = 1
 NUM_CORES = 16
-NUM_DEVICES = 4
+NUM_DEVICES = 1
 HEIGHT = 354
 WIDTH = 536
 
@@ -53,11 +53,11 @@ def _build_layer_windows(total_layers: int, window_size: int):
         raise ValueError(f"Invalid window_size={window_size}. Expected: window_size > 0.")
 
     windows = []
-    start = 0
-    while start < total_layers:
-        end = min(total_layers, start + window_size)
+    end = total_layers
+    while end > 0:
+        start = max(0, end - window_size)
         windows.append((start, end))
-        start = end
+        end = start
     return windows
 
 
@@ -182,20 +182,10 @@ def _set_layer_windows(
     transformers.modeling_utils.PreTrainedModel._text_end = text_end
     transformers.modeling_utils.PreTrainedModel._text_total_layers = text_total_layers
 
-    # Qwen3-VL-MoE model code still checks QEffQwen3_5MoeTextModel window attrs
-    # in a few places. Set both classes to keep layer-wise behavior consistent.
-    qeff_vl_mod = QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe
-    qeff_vl_mod.QEffQwen3VLMoeTextModel._start = text_start
-    qeff_vl_mod.QEffQwen3VLMoeTextModel._end = text_end
-    qeff_vl_mod.QEffQwen3VLMoeTextModel._total_layers = text_total_layers
-
-    qeff_35_mod = getattr(QEfficient.transformers.models, "qwen3_5_moe", None)
-    if qeff_35_mod is not None:
-        qeff_35_text_model = getattr(qeff_35_mod.modeling_qwen3_5_moe, "QEffQwen3_5MoeTextModel", None)
-        if qeff_35_text_model is not None:
-            qeff_35_text_model._start = text_start
-            qeff_35_text_model._end = text_end
-            qeff_35_text_model._total_layers = text_total_layers
+    qeff_mod = QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe
+    qeff_mod.QEffQwen3_5MoeTextModel._start = text_start
+    qeff_mod.QEffQwen3_5MoeTextModel._end = text_end
+    qeff_mod.QEffQwen3_5MoeTextModel._total_layers = text_total_layers
 
     QEfficient.base.modeling_qeff.QEFFBaseModel._start = text_start
     QEfficient.base.modeling_qeff.QEFFBaseModel._end = text_end
@@ -224,24 +214,21 @@ def _new_qeff_model(model_id: str, config):
 def main():
     config = AutoConfig.from_pretrained(MODEL_ID)
     config.torch_dtype = "float32"
-    # config.vision_config.depth = 9
-    # config.text_config.num_hidden_layers = 2
-    config.vision_config.deepstack_visual_indexes = [8, 16, 24]
 
     # if TEST_TEXT_LAYERS:
     #     config.text_config.num_hidden_layers = TEST_TEXT_LAYERS
 
     text_config = getattr(config, "text_config", config)
-    text_total_layers = getattr(text_config, "num_hidden_layers", None)
+    # config.vision_config.depth = 3
+    text_total_layers = 45 # getattr(text_config, "num_hidden_layers", None)
     if text_total_layers is None:
         raise ValueError("Could not resolve `num_hidden_layers` from config.text_config.")
     _ensure_pretrained_window_attrs()
     _install_shard_window_patch()
 
-    hf_qwen_mod = transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe
-    _install_window_patch(hf_qwen_mod.Qwen3VLMoeForConditionalGeneration)
-    if hasattr(hf_qwen_mod, "Qwen3VLMoeForCausalLM"):
-        _install_window_patch(hf_qwen_mod.Qwen3VLMoeForCausalLM)
+    hf_qwen_mod = transformers.models.qwen3_5_moe.modeling_qwen3_5_moe
+    _install_window_patch(hf_qwen_mod.Qwen3_5MoeForConditionalGeneration)
+    _install_window_patch(hf_qwen_mod.Qwen3_5MoeForCausalLM)
 
     text_windows = _build_layer_windows(total_layers=text_total_layers, window_size=TEXT_WINDOW_SIZE)
     # Keep layerwise only on text path in this loop.
@@ -278,18 +265,18 @@ def main():
             num_devices=NUM_DEVICES,
             height=HEIGHT,
             width=WIDTH,
-            mxfp6_matmul=True,
+            mxfp6_matmul=False,
             aic_enable_depth_first=True,
             skip_vision=True,
             skip_lang=skip_lang_for_window,
-            split_retained_state_io=True,
             use_onnx_subfunctions=True,
-            prefill_only=True,
+            enable_chunking=True,
             mos=1,
+            user_tiled=True,
         )
 
         if first_onnx_path is None:
-            first_onnx_path = Path(str(onnx_path["lang_prefill_qpc_path"]))
+            first_onnx_path = Path(str(onnx_path["lang_decode_qpc_path"]))
 
     if first_onnx_path is None:
         raise RuntimeError("No ONNX path produced during layer-wise language export.")
@@ -308,17 +295,20 @@ def main():
             num_devices=NUM_DEVICES,
             height=HEIGHT,
             width=WIDTH,
-            mxfp6_matmul=True,
+            mxfp6_matmul=False,
             aic_enable_depth_first=True,
             skip_vision=True,
             skip_lang=skip_lang_for_window,
-            split_retained_state_io=True,
             use_onnx_subfunctions=True,
-            prefill_only=True,
+            enable_chunking=True,
             mos=1,
         )
     
     print(f"Final QPC path: {qpc_path}")
-
+    
 if __name__ == "__main__":
     main()
+
+
+
+# /opt/qti-aic/exec/qaic-compile -aic-hw -aic-hw-version=ai100 -m=/home/abhishek/.cache/qeff_models/Qwen3_5MoeForConditionalGeneration/Qwen3_5MoeDecoderWrapper-61a4400d63d1b0bb/final_data/merged_0-2.onnx -retained-state -convert-to-fp16 -aic-num-cores=16 -aic-enable-depth-first -mos=1 -network-specialization-config=/home/abhishek/.cache/qeff_models/Qwen3_5MoeForConditionalGeneration/Qwen3_5MoeDecoderWrapper-61a4400d63d1b0bb/final_data/specializations.json -custom-IO-list-file=/home/abhishek/.cache/qeff_models/Qwen3_5MoeForConditionalGeneration/Qwen3_5MoeDecoderWrapper-61a4400d63d1b0bb/final_data/qpc_binaries/custom_io.yaml -aic-binary-dir=/home/abhishek/.cache/qeff_models/Qwen3_5MoeForConditionalGeneration/Qwen3_5MoeDecoderWrapper-61a4400d63d1b0bb/final_data/qpc_binaries/qpc

@@ -226,7 +226,7 @@ def run_prefix_pipeline(
                 f.result()
         _ = time.time() - t0
         
-        # delete_layer_dirs(exported_path, chunk_windows)
+        delete_layer_dirs(exported_path, chunk_windows)
         
     if verbose:
         print(f"[DONE] prefix+deletion pipeline complete ({len(windows)} windows)")

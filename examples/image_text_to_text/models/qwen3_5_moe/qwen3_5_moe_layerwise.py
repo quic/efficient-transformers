@@ -16,7 +16,7 @@ import QEfficient
 from QEfficient import QEFFAutoModelForImageTextToText
 
 
-MODEL_ID = "Qwen/Qwen3.6-35B-A3B"
+MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
 PREFILL_SEQ_LEN = 32
 CTX_LEN = 4096
 TEXT_WINDOW_SIZE = 1
@@ -219,8 +219,8 @@ def main():
     #     config.text_config.num_hidden_layers = TEST_TEXT_LAYERS
 
     text_config = getattr(config, "text_config", config)
-    config.vision_config.depth = 3
-    text_total_layers = 2 # getattr(text_config, "num_hidden_layers", None)
+    # config.vision_config.depth = 3
+    text_total_layers = 45 # getattr(text_config, "num_hidden_layers", None)
     if text_total_layers is None:
         raise ValueError("Could not resolve `num_hidden_layers` from config.text_config.")
     _ensure_pretrained_window_attrs()
@@ -265,18 +265,17 @@ def main():
             num_devices=NUM_DEVICES,
             height=HEIGHT,
             width=WIDTH,
-            mxfp6_matmul=True,
+            mxfp6_matmul=False,
             aic_enable_depth_first=True,
             skip_vision=True,
             skip_lang=skip_lang_for_window,
             prefill_only=True,
-            enable_chunking=True,
-            split_retained_state_io=True,
             use_onnx_subfunctions=True,
+            enable_chunking=True,
             mos=1,
+            user_tiled=True,
         )
 
-        # import pdb; pdb.set_trace()
         if first_onnx_path is None:
             first_onnx_path = Path(str(onnx_path["lang_prefill_qpc_path"]))
 
@@ -288,6 +287,30 @@ def main():
     print(f"Layer-wise language export completed. Final artifact/root: {final_artifact}")
 
     os.environ["LAYERWISE_EXPORT"] = "False"
+    qpc_path = qeff_model.compile(
+            lang_onnx_path=final_artifact,
+            batch_size=BATCH_SIZE,
+            prefill_seq_len=PREFILL_SEQ_LEN,
+            ctx_len=CTX_LEN,
+            num_cores=NUM_CORES,
+            num_devices=NUM_DEVICES,
+            height=HEIGHT,
+            width=WIDTH,
+            mxfp6_matmul=False,
+            aic_enable_depth_first=True,
+            skip_vision=True,
+            skip_lang=skip_lang_for_window,
+            prefill_only=True,
+            use_onnx_subfunctions=True,
+            enable_chunking=True,
+            mos=1,
+        )
+    
+    print(f"Final QPC path: {qpc_path}")
 
 if __name__ == "__main__":
     main()
+
+
+
+# /opt/qti-aic/exec/qaic-compile -aic-hw -aic-hw-version=ai100 -m=/home/abhishek/.cache/qeff_models/Qwen3_5MoeForConditionalGeneration/Qwen3_5MoeDecoderWrapper-61a4400d63d1b0bb/final_data/merged_0-2.onnx -retained-state -convert-to-fp16 -aic-num-cores=16 -aic-enable-depth-first -mos=1 -network-specialization-config=/home/abhishek/.cache/qeff_models/Qwen3_5MoeForConditionalGeneration/Qwen3_5MoeDecoderWrapper-61a4400d63d1b0bb/final_data/specializations.json -custom-IO-list-file=/home/abhishek/.cache/qeff_models/Qwen3_5MoeForConditionalGeneration/Qwen3_5MoeDecoderWrapper-61a4400d63d1b0bb/final_data/qpc_binaries/custom_io.yaml -aic-binary-dir=/home/abhishek/.cache/qeff_models/Qwen3_5MoeForConditionalGeneration/Qwen3_5MoeDecoderWrapper-61a4400d63d1b0bb/final_data/qpc_binaries/qpc

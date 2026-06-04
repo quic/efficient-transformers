@@ -209,25 +209,24 @@ export_root = _resolve_export_root(first_onnx_path)
 final_onnx_path = QEfficient.utils.layerwise_pipeline(str(export_root))
 print(f"Layer-wise language export completed. Final artifact/root: {final_onnx_path}")
 os.environ["LAYERWISE_EXPORT"] = "False"
-# qpc_path = qeff_model.compile(
-#     onnx_path=final_onnx_path,
-#     prefill_seq_len=PREFILL_SEQ_LEN,
-#     ctx_len=CTX_LEN,
-#     num_cores=16,
-#     mxfp6_matmul=True,
-#     mxint8_kv_cache=True,
-#     num_devices=1,
-#     split_retained_state_io=True,
-#     mos=1,
-#     aic_enable_depth_first=True,
-#     num_speculative_tokens=None,
-#     prefill_only=True,
-#     enable_chunking=True,
-#     use_onnx_subfunctions=True,
-# )
-# if qeff_model is None:
-#     raise RuntimeError("Failed to initialize QEfficient model.")
+qpc_path = qeff_model.compile(
+    onnx_path=final_onnx_path,
+    prefill_seq_len=PREFILL_SEQ_LEN,
+    ctx_len=CTX_LEN,
+    num_cores=16,
+    mxfp6_matmul=True,
+    mxint8_kv_cache=True,
+    num_devices=1,
+    split_retained_state_io=True,
+    mos=1,
+    aic_enable_depth_first=True,
+    num_speculative_tokens=None,
+    prefill_only=True,
+    enable_chunking=True,
+    use_onnx_subfunctions=True,
+)
 
+print(f"QPC path: {qpc_path}")
 
 # inputs = tokenizer(prompt, return_tensors="np", padding=True)
 # position_ids = inputs["attention_mask"].sum(1, keepdims=True)
