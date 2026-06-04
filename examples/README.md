@@ -4,6 +4,15 @@ Examples for running models on Qualcomm Cloud AI 100.
 
 For detailed documentation, see https://quic.github.io/efficient-transformers/
 
+
+## Layerwise Requirements
+
+For running layerwise pipelines, the following dependency is required:
+
+- Install `onnx-ir` (specific version):
+```bash
+pip install onnx_ir==0.2.1
+```
 ## Quick Navigation
 
 ### Text Generation

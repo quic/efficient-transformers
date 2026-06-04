@@ -26,7 +26,6 @@ test_models = config["audio_models"]
 
 @pytest.mark.parametrize("model_name", test_models)
 def test_generate_audio_model(model_name, get_pipeline_config, audio_model_artifacts):
-
     compile_params, generate_params = pre_generate_utils(
         model_name, "audio_model_configs", get_pipeline_config, audio_model_artifacts
     )

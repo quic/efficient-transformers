@@ -28,7 +28,6 @@ test_models = config["image_text_to_text_models"]
 def test_export_compile_image_text_to_text_model(
     model_name, kv_offload, image_text_to_text_model_artifacts, get_pipeline_config
 ):
-
     export_params, compile_params = pre_export_compile_utils(
         model_name, "image_text_to_text_model_configs", get_pipeline_config
     )

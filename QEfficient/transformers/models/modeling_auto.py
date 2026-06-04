@@ -6,6 +6,7 @@
 # ----------------------------------------------------------------------------
 
 import os
+import re
 import warnings
 from pathlib import Path
 from time import perf_counter
@@ -14,6 +15,7 @@ from typing import List, Optional, Union
 import numpy as np
 import torch
 import torch.nn as nn
+import transformers
 from transformers import (
     AutoImageProcessor,
     AutoModel,
@@ -1088,6 +1090,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.model = model.get_qeff_language_decoder()
         self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+        self.continuous_batching = False
 
     def __update_prefill_transform(
         self,
@@ -1154,14 +1157,24 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             self.hash_params["prefill_only"] = False
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
-        return self._export(
-            inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
-            export_dir=export_dir,
-            offload_pt_weights=offload_pt_weights,
-            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
-        )
+        if os.environ.get("LAYERWISE_EXPORT", "False") == "True":
+            return self._export_layerwise(
+                inputs,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                export_dir=export_dir,
+                offload_pt_weights=offload_pt_weights,
+                use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+            )
+        else:
+            return self._export(
+                inputs,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                export_dir=export_dir,
+                offload_pt_weights=offload_pt_weights,
+                use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+            )
 
     def compile(
         self,
@@ -1403,7 +1416,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 vocab_size=self.model.language_model.config.vocab_size,
                 qaic_config=self.lang_model.model.qaic_config,
             )
-        if not skip_vision:
+        if (
+            not skip_vision
+            and transformers.modeling_utils.PreTrainedModel._end
+            == transformers.modeling_utils.PreTrainedModel._total_layers
+        ):
             self.vision_model.export(
                 inputs["vision"],
                 output_names["vision"],
@@ -1418,7 +1435,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         else:
             offload_pt_weights = kwargs.get("offload_pt_weights", True)
 
-        if not skip_lang:
+        if not skip_lang and self.lang_model.onnx_path is None:
             self.lang_model.export(
                 inputs["lang"],
                 output_names["lang"],
@@ -1672,6 +1689,38 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                         if ("vision_embeds" in output_name or "deepstack_features" in output_name)
                         else kv_cache_dtype
                     )
+
+            def filter_custom_io_lang(custom_io_lang, onnx_path):
+                # Extract filename
+                filename = os.path.basename(onnx_path)
+
+                # Extract range from "merged_0-2.onnx"
+                match = re.search(r"merged_(\d+)-(\d+)\.onnx", filename)
+                if not match:
+                    return custom_io_lang  # no filtering if pattern not found
+
+                start, end = map(int, match.groups())  # e.g. 0, 2
+
+                filtered = {}
+
+                for k, v in custom_io_lang.items():
+                    # Keep everything that is NOT KV cache
+                    if ("past_key." not in k) and ("past_value." not in k):
+                        filtered[k] = v
+                        continue
+
+                    # Extract layer index
+                    layer_match = re.search(r"past_(?:key|value)\.(\d+)", k)
+                    if layer_match:
+                        idx = int(layer_match.group(1))
+                        if start <= idx < end:
+                            filtered[k] = v
+
+                return filtered
+
+            if self.lang_model.onnx_path is not None and "merged" in self.lang_model.onnx_path:
+                custom_io_lang = filter_custom_io_lang(custom_io_lang, self.lang_model.onnx_path)
+
             if prefill_only:
                 specializations = specializations["lang"][:1]
                 qpc_key = "lang_prefill_qpc_path"
@@ -3451,15 +3500,26 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model.forward = _qeff_patched_forward
             self.model._qeff_export_gemma3_cache_patch = True
 
-        return self._export(
-            example_inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
-            export_dir=export_dir,
-            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
-            offload_pt_weights=kwargs.get("offload_pt_weights", True),
-            prefill_only=prefill_only,
-        )
+        if os.environ.get("LAYERWISE_EXPORT", "False") == "True":
+            return self._export_layerwise(
+                example_inputs,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                export_dir=export_dir,
+                use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+                offload_pt_weights=kwargs.get("offload_pt_weights", True),
+                prefill_only=prefill_only,
+            )
+        else:
+            return self._export(
+                example_inputs,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                export_dir=export_dir,
+                use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+                offload_pt_weights=kwargs.get("offload_pt_weights", True),
+                prefill_only=prefill_only,
+            )
 
     def build_prefill_specialization(
         self,
@@ -3901,6 +3961,37 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 for i in range(self.num_layers):
                     custom_io[f"compressed_kv.{i}{suffix}"] = kv_cache_dtype
                     custom_io[f"k_pe.{i}{suffix}"] = kv_cache_dtype
+
+        def filter_custom_io(custom_io_lang, onnx_path):
+            # Extract filename
+            filename = os.path.basename(onnx_path)
+
+            # Extract range from "merged_0-2.onnx"
+            match = re.search(r"merged_(\d+)-(\d+)\.onnx", filename)
+            if not match:
+                return custom_io_lang  # no filtering if pattern not found
+
+            start, end = map(int, match.groups())  # e.g. 0, 2
+
+            filtered = {}
+
+            for k, v in custom_io_lang.items():
+                # Keep everything that is NOT KV cache
+                if ("past_key." not in k) and ("past_value." not in k):
+                    filtered[k] = v
+                    continue
+
+                # Extract layer index
+                layer_match = re.search(r"past_(?:key|value)\.(\d+)", k)
+                if layer_match:
+                    idx = int(layer_match.group(1))
+                    if start <= idx < end:
+                        filtered[k] = v
+
+            return filtered
+
+        if onnx_path is not None and "merged" in onnx_path:
+            custom_io = filter_custom_io(custom_io, onnx_path)
 
         qpc_path = self._compile(
             onnx_path=onnx_path,

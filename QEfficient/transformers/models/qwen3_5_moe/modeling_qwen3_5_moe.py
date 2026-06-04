@@ -109,19 +109,18 @@ class QEffQwen3_5MoeDynamicCache(Cache):
         if past_key_values is None:
             return cache
 
-        #
-        for layer_idx, layer_state in enumerate(past_key_values):
-            if cache.layer_types[layer_idx] == "full_attention":
-                #
-                key_states, value_states = layer_state
-                layer = QEffDynamicLayer()
-                layer.keys = key_states
-                layer.values = value_states
-                cache.kv_layers[layer_idx] = layer
-            else:
-                conv_state, recurrent_state = layer_state
-                cache.conv_states[layer_idx] = conv_state
-                cache.recurrent_states[layer_idx] = recurrent_state
+        # for layer_idx, layer_state in enumerate(past_key_values):
+        layer_idx = Qwen3_5MoeTextModel._start
+        if cache.layer_types[layer_idx] == "full_attention":
+            key_states, value_states = past_key_values[0]
+            layer = QEffDynamicLayer()
+            layer.keys = key_states
+            layer.values = value_states
+            cache.kv_layers[layer_idx] = layer
+        else:
+            conv_state, recurrent_state = past_key_values[0]
+            cache.conv_states[layer_idx] = conv_state
+            cache.recurrent_states[layer_idx] = recurrent_state
         return cache
 
     def __len__(self):
@@ -318,6 +317,7 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
 
+    # import ipdb; ipdb.set_trace()
     # Keep half or full tensor for later concatenation
     rotary_dim = cos.shape[-1]
     q_rot, q_pass = q[:, :, :, :rotary_dim], q[:, :, :, rotary_dim:]
@@ -579,7 +579,6 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         # ck = g.clone()
         g = F.pad(g, (0, pad_size), mode="constant", value=0.0)
-
         total_sequence_length = sequence_length + pad_size
         scale = 1 / (query.shape[-1] ** 0.5)
         query = query * scale
@@ -954,6 +953,12 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
 
 
 class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
+    _start = 0
+    _end = 0
+    _total_layers = None
+    # def __qeff_init__(self):
+    #     self.rotary_emb = QEffQwen3_5MoeTextRotaryEmbedding(config=self.config)
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -987,8 +992,10 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
+        start = QEffQwen3_5MoeTextModel._start
+        end = QEffQwen3_5MoeTextModel._end
         if cache_position is None:
-            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+            past_seen_tokens = past_key_values.get_seq_length(layer_idx=start) if past_key_values is not None else 0
             cache_position = torch.arange(
                 past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
             )
@@ -1006,7 +1013,13 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         position_embeddings = self.rotary_emb(hidden_states, position_ids[1:])
         # position_embeddings = None
         all_hidden_states = () if output_hidden_states else None
-        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+        layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
+
+        for layer_idx, decoder_layer in enumerate(self.layers):
+            if layer_idx < start or layer_idx >= end:
+                continue
+            if layer_indices_to_run is not None and layer_idx not in layer_indices_to_run:
+                continue
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -1026,13 +1039,15 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
             # break
 
-        hidden_states = self.norm(hidden_states)
+        if QEffQwen3_5MoeTextModel._end == QEffQwen3_5MoeTextModel._total_layers:
+            hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
 
+        past_key_values = past_key_values[QEffQwen3_5MoeTextModel._start]
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
@@ -1193,6 +1208,17 @@ class QEffQwen3_5MoeModel(Qwen3_5MoeModel):
                 input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
             )
             inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
+
+        # if pixel_values_videos is not None:
+        #     video_outputs: BaseModelOutputWithPooling = self.get_video_features(
+        #         pixel_values_videos, video_grid_thw, return_dict=True
+        #     )
+        #     video_embeds = video_outputs.pooler_output
+        #     video_embeds = torch.cat(video_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
+        #     _, video_mask = self.get_placeholder_mask(
+        #         input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds
+        #     )
+        #     inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
         if position_ids is None:
             position_ids = self.compute_3d_position_ids(
@@ -1415,7 +1441,6 @@ class QEffQwen3_5MoeEncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
-        self.config = model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         if hasattr(self.model.model, "visual") and hasattr(self.model.model.visual, "blocks"):
@@ -1445,44 +1470,83 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.language_model = self.model.model.language_model
-        self.config = model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5MoeDecoderLayer}
 
     def forward(
         self,
-        input_ids,
-        vision_embeds,
-        position_ids,
-        image_idx,
-        past_key_values,
+        input_ids=None,
+        inputs_embeds=None,
+        vision_embeds=None,
+        position_ids=None,
+        image_idx=None,
+        past_key_values=None,
         batch_index: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
-        inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
-        _, _, channel_size = inputs_embeds.shape
-        selected = input_ids == self.model.config.image_token_id
-        indices1 = selected.to(torch.int64).cumsum(1) - 1
-        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-        indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-        image_features_expanded = vision_embeds.reshape(-1, channel_size).unsqueeze(0)[indices0, indices1]
-        image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-        inputs_embeds = image_input_embeds
+        if inputs_embeds is None:
+            inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
+        else:
+            inputs_embeds = inputs_embeds
+        if QEffQwen3_5MoeTextModel._start == 0:
+            B, S, _ = inputs_embeds.shape
+            input_ids = torch.zeros((B, S), dtype=torch.int64, device=inputs_embeds.device)
+            _, _, channel_size = inputs_embeds.shape
+            selected = input_ids == self.model.config.image_token_id
+            indices1 = selected.to(torch.int64).cumsum(1) - 1
+            indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
+            indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+            image_features_expanded = vision_embeds.reshape(-1, channel_size).unsqueeze(0)[indices0, indices1]
+            image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
+            inputs_embeds = image_input_embeds
+            outputs = self.language_model(
+                inputs_embeds=inputs_embeds,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                use_cache=True,
+            )
+            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
+            if outputs.last_hidden_state.shape[1] > 1:
+                hidden_states = outputs.last_hidden_state
+            else:
+                hidden_states = outputs.last_hidden_state[:, -1:, :]
+            logits = hidden_states
+            image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+            return logits, vision_embeds, image_idx, outputs.past_key_values
 
-        outputs = self.language_model(
-            inputs_embeds=inputs_embeds,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            comp_ctx_lengths=comp_ctx_lengths,
-            batch_index=batch_index,
-            use_cache=True,
-        )
-        logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-        logits = self.model.lm_head(hidden_states)
-        image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        return logits, vision_embeds, image_idx, outputs.past_key_values[: len(past_key_values)]
+        elif QEffQwen3_5MoeTextModel._end == QEffQwen3_5MoeTextModel._total_layers:
+            outputs = self.language_model(
+                inputs_embeds=inputs_embeds,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                use_cache=True,
+            )
+            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
+            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+            logits = self.model.lm_head(hidden_states)
+            return logits, outputs.past_key_values
+
+        else:
+            outputs = self.language_model(
+                inputs_embeds=inputs_embeds,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                use_cache=True,
+            )
+            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
+            if outputs.last_hidden_state.shape[1] > 1:
+                hidden_states = outputs.last_hidden_state
+            else:
+                hidden_states = outputs.last_hidden_state[:, -1:, :]
+            logits = hidden_states
+            return logits, outputs.past_key_values
 
 
 class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration):
@@ -1577,8 +1641,12 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
 
         logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-
+        #
         logits = self.lm_head(hidden_states)
+
+        # loss = None
+        # if labels is not None:
+        #     loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.text_config.vocab_size)
 
         return logits, outputs.past_key_values[: len(past_key_values)]
 
@@ -1803,6 +1871,13 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
+        # Add data for KV
+        # kv_cache_shape = get_padding_shape_from_config(
+        #     config=self.model.config.text_config,
+        #     batch_size=fbs if continuous_batching else bs,
+        #     seq_len=dummy_seq_len,
+        # )
+
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
             batch_size=fbs if continuous_batching else bs,
@@ -1812,16 +1887,17 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         linear_batch_size = fbs if continuous_batching else bs
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
-        for i in range(self.model.config.text_config.num_hidden_layers):
-            if self.model.config.text_config.layer_types[i] == "full_attention":
-                for kv in ["key", "value"]:
-                    lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
-            else:
-                layer = self.model.language_model.layers[i].linear_attn
-                conv_shape = (linear_batch_size, layer.conv_dim, layer.conv_kernel_size)
-                recurrent_shape = (linear_batch_size, layer.num_v_heads, layer.head_k_dim, layer.head_v_dim)
-                lang_inputs["past_key_values"][i].append(torch.zeros(conv_shape, dtype=torch.float32))
-                lang_inputs["past_key_values"][i].append(torch.zeros(recurrent_shape, dtype=torch.float32))
+        # for i in range(self.model.config.text_config.num_hidden_layers):
+        i = QEffQwen3_5MoeModel._start
+        if self.model.config.text_config.layer_types[i] == "full_attention":
+            for kv in ["key", "value"]:
+                lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+        else:
+            layer = self.model.language_model.layers[i].linear_attn
+            conv_shape = (linear_batch_size, layer.conv_dim, layer.conv_kernel_size)
+            recurrent_shape = (linear_batch_size, layer.num_v_heads, layer.head_k_dim, layer.head_v_dim)
+            lang_inputs["past_key_values"][i].append(torch.zeros(conv_shape, dtype=torch.float32))
+            lang_inputs["past_key_values"][i].append(torch.zeros(recurrent_shape, dtype=torch.float32))
 
         #
         if continuous_batching:
@@ -1866,7 +1942,6 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         ]
 
     def prepare_inputs_for_generation(self, inputs, prefill_seq_len=32, batch_size=1):
-
         input_ids_length = inputs["input_ids"].shape[1]
         inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
         pos_ids, rope_deltas = self.model.get_rope_index(
@@ -1888,6 +1963,18 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
 
         inputs.pop("mm_token_type_ids")
         return inputs
+
+
+class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
+        router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
+        router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1)
+        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
+        router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
+        router_top_value = router_top_value.to(router_logits.dtype)
+        router_scores = router_top_value
+        return router_logits, router_scores, router_indices
 
 
 class QEffQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
@@ -2001,18 +2088,6 @@ def _cumsum_scatter_gather_update_expert_blocked(
         experts_out = CtxScatterFunc3DGeneralized.apply(experts_out, chunk_matched_idx, updated_chunk)
 
     return experts_out
-
-
-class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
-    def forward(self, hidden_states):
-        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
-        router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
-        router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1)
-        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
-        router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
-        router_top_value = router_top_value.to(router_logits.dtype)
-        router_scores = router_top_value
-        return router_logits, router_scores, router_indices
 
 
 class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
