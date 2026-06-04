@@ -122,6 +122,16 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     pytorch_kv_tokens = None
     ort_tokens = None
 
+    api_runner = ApiRunner(
+        batch_size,
+        tokenizer,
+        config,
+        prompts,
+        Constants.PROMPT_LEN,
+        Constants.CTX_LEN,
+        full_batch_size if continuous_batching else None,
+        qaic_config=qaic_config,
+    )
     qeff_model = QEFFAutoModelForCausalLM(
         copy.deepcopy(model_hf),
         is_tlm=is_tlm,
