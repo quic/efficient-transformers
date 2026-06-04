@@ -220,6 +220,7 @@ if vision_inputs:
     vision_outputs = vision_session.run(vision_inputs)
 vision_end = perf_counter()
 
+# import ipdb; ipdb.set_trace()
 lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
 if "position_ids" in inputs:
     lang_inputs["position_ids"] = inputs["position_ids"]

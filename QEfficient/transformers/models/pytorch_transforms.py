@@ -266,6 +266,7 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeTextRMSNorm,
     Qwen3VLMoeTextRotaryEmbedding,
     Qwen3VLMoeTextSparseMoeBlock,
+    Qwen3VLMoeTextTopKRouter,
     Qwen3VLMoeVisionAttention,
     Qwen3VLMoeVisionModel,
 )
@@ -597,6 +598,7 @@ from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     QEffQwen3VLMoeTextModel,
     QEffQwen3VLMoeTextRotaryEmbedding,
     QEffQwen3VLMoeTextSparseMoeBlock,
+    QEffQwen3VLMoeTextTopKRouter,
     QEffQwen3VLMoeVisionAttention,
     QEffQwen3VLMoeVisionModel,
 )
@@ -744,6 +746,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3VLMoeTextModel: QEffQwen3VLMoeTextModel,
         Qwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
         Qwen3VLMoeTextRotaryEmbedding: QEffQwen3VLMoeTextRotaryEmbedding,
+        Qwen3VLMoeTextTopKRouter: QEffQwen3VLMoeTextTopKRouter,
         # Qwen3vl
         Qwen3VLForConditionalGeneration: QEffQwen3VLForConditionalGeneration,
         Qwen3VLModel: QEffQwen3VLModel,
