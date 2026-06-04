@@ -20,6 +20,7 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     Qwen3_5MoeAttention,
     Qwen3_5MoeCausalLMOutputWithPast,
     Qwen3_5MoeDecoderLayer,
+    Qwen3_5MoeExperts,
     Qwen3_5MoeForCausalLM,
     Qwen3_5MoeForConditionalGeneration,
     Qwen3_5MoeGatedDeltaNet,
@@ -31,7 +32,6 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     Qwen3_5MoeTopKRouter,
     Qwen3_5MoeVisionAttention,
     Qwen3_5MoeVisionModel,
-    Qwen3_5MoeExperts,
     apply_rotary_pos_emb_vision,
     repeat_kv,
     rotate_half,
@@ -664,12 +664,12 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         decay_mask = decay_mask * (~mask_strict).float()  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
-        for i in range(1, chunk_size):
-            row = attn[..., i, :i].clone()
-            sub = attn[..., :i, :i].clone()
-            # attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
-            attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
-        attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
+        # for i in range(1, chunk_size):
+        #     row = attn[..., i, :i].clone()
+        #     sub = attn[..., :i, :i].clone()
+        #     # attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
+        #     attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
+        # attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
 
         ## Approximation code ##
         # A = attn
@@ -708,6 +708,17 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         #     S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
 
         # attn = S64.to(A.dtype)
+
+        #  Newton-Schulz
+        I = torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
+        L = attn.masked_fill(mask, 0)
+
+        X = I
+        for _ in range(int(math.log2(chunk_size)) + 2):
+            R = I - (I - L) @ X
+            X = X + X @ R
+
+        attn = X
 
         value = attn @ v_beta
         k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))
@@ -2091,8 +2102,9 @@ class QEffQwen3_5MoeExperts(Qwen3_5MoeExperts):
         # transformers>=5 uses fused gate_up projections. Keep backward-compatible
         # aliases expected by existing QEff paths.
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
-        self.gate_proj = nn.Parameter(self.gate_up_proj[:, :self.expert_dim, :].detach().clone())
+        self.gate_proj = nn.Parameter(self.gate_up_proj[:, : self.expert_dim, :].detach().clone())
         self.up_proj = nn.Parameter(self.gate_up_proj[:, self.expert_dim :, :].detach().clone())
+
 
 class QEffQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -2200,14 +2212,13 @@ def _cumsum_scatter_gather_update_expert_blocked(
 
 
 class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
-
     def __qeff_init__(self):
         self.top_k = getattr(self.gate, "top_k", None)
         self.norm_topk_prob = getattr(self.gate, "norm_topk_prob", False)
         self.num_experts = getattr(self.gate, "num_experts", self.experts.gate_up_proj.shape[0])
         self.gate_up_proj_w = self.experts.gate_up_proj
         self.down_proj_w = self.experts.down_proj
-    
+
     def _split_expert_weights(self, hidden_size: int):
         gate_up_proj_w = self.gate_up_proj_w
         if gate_up_proj_w.shape[2] != hidden_size:
@@ -2220,7 +2231,6 @@ class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
         if down_proj_w.shape[1] != intermediate_size:
             down_proj_w = down_proj_w.transpose(1, 2)
         return gate_proj_w, up_proj_w, down_proj_w
-
 
     def _forward_expert_blocked(self, x: torch.Tensor, routing_weights: torch.Tensor) -> torch.Tensor:
         act_fn = getattr(self.experts, "act_fn", F.silu)
@@ -2236,9 +2246,8 @@ class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
         local_experts = self.gate.num_experts // num_nsp
         rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
         experts_out = x.new_zeros((num_nsp, T, H))
-        inter = self.experts.gate_up_proj.shape[1] // 2
 
-        # gate_up_proj is [E, 2I, H]. After split we get [E, I, H], so transpose to [E, H, I]
+        # gate_up_proj is [E, 2I, H]. after split we get [E, I, H], so transpose to [E, H, I]
         # before grouping into [num_nsp, local_experts, H, I].
         # wt_g, wt_u = torch.split(self.experts.gate_up_proj, inter, dim=1)
         wt_g, wt_u, W_d = self._split_expert_weights(H)
