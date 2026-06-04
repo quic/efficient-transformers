@@ -58,6 +58,23 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4TextModel,
     Gemma4TextRouter,
 )
+
+try:
+    from transformers.models.gemma4_unified.modeling_gemma4_unified import (
+        Gemma4UnifiedForCausalLM,
+        Gemma4UnifiedForConditionalGeneration,
+        Gemma4UnifiedRMSNorm,
+        Gemma4UnifiedTextAttention,
+        Gemma4UnifiedTextDecoderLayer,
+        Gemma4UnifiedTextModel,
+    )
+except Exception:
+    Gemma4UnifiedForCausalLM = None
+    Gemma4UnifiedForConditionalGeneration = None
+    Gemma4UnifiedRMSNorm = None
+    Gemma4UnifiedTextAttention = None
+    Gemma4UnifiedTextDecoderLayer = None
+    Gemma4UnifiedTextModel = None
 from transformers.models.glm4_moe.modeling_glm4_moe import (
     Glm4MoeAttention,
     Glm4MoeDecoderLayer,
@@ -360,6 +377,23 @@ from QEfficient.transformers.models.gemma4.modeling_gemma4 import (
     QEffGemma4TextRouter,
     QEffPrefillChunckedGemma4TextExperts,
 )
+
+try:
+    from QEfficient.transformers.models.gemma4_unified.modeling_gemma4_unified import (
+        QEffGemma4UnifiedCustomRMSNormAIC,
+        QEffGemma4UnifiedForCausalLM,
+        QEffGemma4UnifiedForConditionalGeneration,
+        QEffGemma4UnifiedTextAttention,
+        QEffGemma4UnifiedTextDecoderLayer,
+        QEffGemma4UnifiedTextModel,
+    )
+except Exception:
+    QEffGemma4UnifiedCustomRMSNormAIC = None
+    QEffGemma4UnifiedForCausalLM = None
+    QEffGemma4UnifiedForConditionalGeneration = None
+    QEffGemma4UnifiedTextAttention = None
+    QEffGemma4UnifiedTextDecoderLayer = None
+    QEffGemma4UnifiedTextModel = None
 from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
     QEffGlm4MoeAttention,
     QEffGlm4MoeDecoderLayer,
@@ -903,6 +937,19 @@ class KVCacheTransform(ModuleMappingTransform):
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
         return model, transformed
+
+
+if Gemma4UnifiedForCausalLM is not None:
+    CustomOpsTransform._module_mapping.update({Gemma4UnifiedRMSNorm: QEffGemma4UnifiedCustomRMSNormAIC})
+    KVCacheTransform._module_mapping.update(
+        {
+            Gemma4UnifiedTextAttention: QEffGemma4UnifiedTextAttention,
+            Gemma4UnifiedTextDecoderLayer: QEffGemma4UnifiedTextDecoderLayer,
+            Gemma4UnifiedTextModel: QEffGemma4UnifiedTextModel,
+            Gemma4UnifiedForCausalLM: QEffGemma4UnifiedForCausalLM,
+            Gemma4UnifiedForConditionalGeneration: QEffGemma4UnifiedForConditionalGeneration,
+        }
+    )
 
 
 class PrefillOnlyTransform(ModuleMappingTransform):

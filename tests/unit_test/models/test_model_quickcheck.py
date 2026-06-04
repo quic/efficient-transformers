@@ -1282,3 +1282,174 @@ class TestDiffusersNamedSpecializations:
         result = to_named_specializations(flat)
         assert result[0]["name"] == "Prefill"
         assert result[1]["name"] == "Decode"
+
+
+def test_gemma4_unified_dummy_vision_and_decoder_paths(tmp_path):
+    import copy
+
+    from transformers.models.gemma4_unified.configuration_gemma4_unified import (
+        Gemma4UnifiedAudioConfig,
+        Gemma4UnifiedConfig,
+        Gemma4UnifiedTextConfig,
+        Gemma4UnifiedVisionConfig,
+    )
+    from transformers.models.gemma4_unified.modeling_gemma4_unified import Gemma4UnifiedForConditionalGeneration
+
+    from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform
+
+    torch.manual_seed(0)
+    text_config = Gemma4UnifiedTextConfig(
+        vocab_size=128,
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=6,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        num_global_key_value_heads=1,
+        head_dim=16,
+        global_head_dim=16,
+        max_position_embeddings=128,
+        sliding_window=8,
+        layer_types=["sliding_attention"] * 5 + ["full_attention"],
+        rope_parameters={
+            "full_attention": {
+                "partial_rotary_factor": 0.25,
+                "rope_theta": 1000000.0,
+                "rope_type": "proportional",
+            },
+            "sliding_attention": {"rope_theta": 10000.0, "rope_type": "default"},
+        },
+        final_logit_softcapping=30.0,
+        attention_k_eq_v=True,
+        use_bidirectional_attention="vision",
+        num_kv_shared_layers=0,
+    )
+    vision_config = Gemma4UnifiedVisionConfig(
+        patch_size=2,
+        pooling_kernel_size=2,
+        mm_embed_dim=32,
+        mm_posemb_size=8,
+        output_proj_dims=32,
+    )
+    config = Gemma4UnifiedConfig(
+        text_config=text_config,
+        vision_config=vision_config,
+        audio_config=Gemma4UnifiedAudioConfig(audio_embed_dim=32),
+        image_token_id=120,
+        video_token_id=121,
+        audio_token_id=122,
+    )
+    config.architectures = ["Gemma4UnifiedForConditionalGeneration"]
+    config.torch_dtype = torch.float32
+    config.text_config.torch_dtype = torch.float32
+
+    hf_model = Gemma4UnifiedForConditionalGeneration(config).eval()
+    model = copy.deepcopy(hf_model).eval()
+    model, custom_transformed = CustomOpsTransform.apply(model)
+    model, kv_transformed = KVCacheTransform.apply(model)
+    assert custom_transformed and kv_transformed
+    assert type(model).__name__ == "QEffGemma4UnifiedForConditionalGeneration"
+    assert type(model.model.language_model).__name__ == "QEffGemma4UnifiedTextModel"
+    assert type(model.model.language_model.layers[0].self_attn).__name__ == "QEffGemma4UnifiedTextAttention"
+    assert type(model.model.language_model.layers[-1].self_attn).__name__ == "QEffGemma4UnifiedTextAttention"
+
+    seq_len = 10
+    input_ids = torch.tensor(
+        [
+            [
+                5,
+                6,
+                config.image_token_id,
+                config.image_token_id,
+                config.image_token_id,
+                config.image_token_id,
+                7,
+                8,
+                9,
+                10,
+            ]
+        ],
+        dtype=torch.long,
+    )
+    mm_token_type_ids = torch.zeros((1, seq_len), dtype=torch.long)
+    mm_token_type_ids[:, 2:6] = 1
+    position_ids = torch.arange(seq_len, dtype=torch.long).view(1, seq_len)
+
+    max_patches = model._get_vision_max_patches()
+    image_position_ids = torch.full((1, max_patches, 2), -1, dtype=torch.long)
+    image_position_ids[:, :4, :] = torch.tensor([[[0, 0], [0, 1], [1, 0], [1, 1]]], dtype=torch.long)
+    pixel_values = torch.randn(1, max_patches, model._get_patch_dim())
+
+    with torch.no_grad():
+        hf_outputs = hf_model(
+            input_ids=input_ids,
+            pixel_values=pixel_values,
+            image_position_ids=image_position_ids,
+            position_ids=position_ids,
+            mm_token_type_ids=mm_token_type_ids,
+            use_cache=True,
+        )
+        qeff_outputs = model(
+            input_ids=input_ids,
+            pixel_values=pixel_values,
+            image_position_ids=image_position_ids,
+            position_ids=position_ids,
+            mm_token_type_ids=mm_token_type_ids,
+            use_cache=True,
+        )
+    torch.testing.assert_close(hf_outputs.logits, qeff_outputs.logits, rtol=1e-4, atol=1e-4)
+    assert len(qeff_outputs.past_key_values) == config.text_config.num_hidden_layers
+
+    encoder = model.get_qeff_vision_encoder()
+    with torch.no_grad():
+        vision_embeds = encoder(pixel_values, image_position_ids)
+    assert vision_embeds.shape == (1, max_patches, config.text_config.hidden_size)
+    assert torch.count_nonzero(vision_embeds[:, 4:, :]) == 0
+
+    decoder = model.get_qeff_language_decoder()
+    past = model.get_dummy_pkv_cache(config.text_config, batch_size=1, seq_len=seq_len)
+    with torch.no_grad():
+        logits, retained_vision, image_idx, past_key_values = decoder(
+            input_ids=input_ids,
+            vision_embeds=vision_embeds[:, :4, :],
+            position_ids=position_ids,
+            image_idx=torch.zeros((1, 1), dtype=torch.long),
+            past_key_values=past,
+            mm_token_type_ids=mm_token_type_ids,
+        )
+    assert logits.shape == (1, 1, config.text_config.vocab_size)
+    assert retained_vision.shape == (1, 4, config.text_config.hidden_size)
+    assert image_idx.item() == 4
+    assert len(past_key_values) == config.text_config.num_hidden_layers
+
+    vlm_wrapper = QEFFAutoModelForImageTextToText(copy.deepcopy(hf_model), kv_offload=True)
+    onnx_paths = vlm_wrapper.export(
+        tmp_path / "gemma4-unified", skip_vision=True, offload_pt_weights=False, prefill_seq_len=seq_len
+    )
+    onnx_path = _exported_onnx_path(onnx_paths[1])
+    with torch.no_grad():
+        wrapper_vision_embeds = vlm_wrapper.model.get_qeff_vision_encoder()(pixel_values, image_position_ids)[:, :4, :]
+        wrapper_past = vlm_wrapper.model.get_dummy_pkv_cache(config.text_config, batch_size=1, seq_len=seq_len)
+        wrapper_logits, _, _, _ = vlm_wrapper.model.get_qeff_language_decoder()(
+            input_ids=input_ids,
+            vision_embeds=wrapper_vision_embeds,
+            position_ids=position_ids,
+            image_idx=torch.zeros((1, 1), dtype=torch.long),
+            past_key_values=wrapper_past,
+            mm_token_type_ids=mm_token_type_ids,
+        )
+
+    ort_session = _ort_session(onnx_path)
+    input_names = {item.name for item in ort_session.get_inputs()}
+    ort_inputs = {
+        "input_ids": input_ids.numpy(),
+        "vision_embeds": wrapper_vision_embeds.detach().numpy(),
+        "position_ids": position_ids.numpy(),
+        "image_idx": np.zeros((1, 1), dtype=np.int64),
+        "mm_token_type_ids": mm_token_type_ids.numpy(),
+    }
+    for layer_idx, (key, value) in enumerate(wrapper_past):
+        ort_inputs[f"past_key.{layer_idx}"] = key.numpy()
+        ort_inputs[f"past_value.{layer_idx}"] = value.numpy()
+    ort_logits = ort_session.run(None, {name: value for name, value in ort_inputs.items() if name in input_names})[0]
+    np.testing.assert_allclose(wrapper_logits.detach().numpy(), ort_logits, rtol=1e-3, atol=1e-3)
