@@ -108,7 +108,6 @@ def test_qwen3_vl_embedding_cpu_vs_ai100_mad_parity(model_name):
     model_inputs = EXAMPLE_QUERIES + EXAMPLE_DOCUMENTS
     compile_specs = embedder.get_compile_specs(
         inputs=model_inputs,
-        ctx_len=model_cfg["ctx_len"],
         prefill_seq_len=model_cfg.get("compile_prefill_seq_len", None),
     )
     qpc_paths = qeff_model.compile(

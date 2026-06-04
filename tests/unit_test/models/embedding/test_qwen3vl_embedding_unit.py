@@ -118,8 +118,8 @@ def test_qwen3_vl_embedder_dummy_process_smoke(monkeypatch):
     monkeypatch.setattr(QEffQwen3VLEmbedder, "_run_ai100_vision", staticmethod(_fake_run_ai100_vision))
     monkeypatch.setattr(QEffQwen3VLEmbedder, "_run_ai100_prefill", staticmethod(_fake_run_ai100_prefill))
 
-    compile_specs = embedder.get_compile_specs(inputs=[{}, {}], ctx_len=64, prefill_seq_len=12)
-    assert compile_specs == {"prefill_seq_len": 12, "ctx_len": 64, "img_size": 160, "height": 96, "width": 160}
+    compile_specs = embedder.get_compile_specs(inputs=[{}, {}], prefill_seq_len=12)
+    assert compile_specs == {"prefill_seq_len": 12, "ctx_len": 12, "img_size": 160, "height": 96, "width": 160}
 
     embeddings = embedder.process(
         inputs=[{}, {}],
