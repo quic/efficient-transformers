@@ -441,15 +441,23 @@ class TestGetCompilationDims:
 
     def test_basic(self, tmp_path):
         path = self._write_spec(tmp_path, {"specializations": [{"batch_size": "4", "ctx_len": "128"}]})
-        bs, cl, fbs = get_compilation_dims(path)
+        bs, cl, fbs, num_kv_blocks = get_compilation_dims(path)
         assert bs == 4 and cl == 128 and fbs is None
 
     def test_with_full_batch_size(self, tmp_path):
         path = self._write_spec(
             tmp_path, {"specializations": [{"batch_size": "4", "ctx_len": "128", "full_batch_size": "16"}]}
         )
-        bs, cl, fbs = get_compilation_dims(path)
+        bs, cl, fbs, num_kv_blocks = get_compilation_dims(path)
         assert fbs == 16
+
+    def test_with_pagedAttention(self, tmp_path):
+        path = self._write_spec(
+            tmp_path,
+            {"specializations": [{"batch_size": "4", "ctx_len": "128", "full_batch_size": "16", "num_kv_blocks": "8"}]},
+        )
+        bs, cl, fbs, num_kv_blocks = get_compilation_dims(path)
+        assert num_kv_blocks == 8
 
     def test_missing_file_raises(self, tmp_path):
         qpc_dir = tmp_path / "qpc"
@@ -459,7 +467,7 @@ class TestGetCompilationDims:
 
     def test_returns_ints(self, tmp_path):
         path = self._write_spec(tmp_path, {"specializations": [{"batch_size": "2", "ctx_len": "64"}]})
-        bs, cl, fbs = get_compilation_dims(path)
+        bs, cl, fbs, num_kv_blocks = get_compilation_dims(path)
         assert isinstance(bs, int) and isinstance(cl, int)
 
 
