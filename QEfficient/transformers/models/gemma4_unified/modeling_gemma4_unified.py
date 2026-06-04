@@ -19,8 +19,7 @@ no heavy vision tower.  The image path is raw merged patches directly through
 `model.model.embed_vision`.
 """
 
-import os
-from collections import UserDict, defaultdict
+from collections import UserDict
 from pathlib import Path
 from typing import List, Optional, Type, Union
 
