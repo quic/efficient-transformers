@@ -68,6 +68,20 @@ from transformers.models.glm4_moe.modeling_glm4_moe import (
     Glm4MoeRotaryEmbedding,
     Glm4MoeTopkRouter,
 )
+# glm_moe_dsa (GLM-5.1) landed in transformers 5.4.0 — guard so older transformers still import (U6).
+try:
+    from transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+        GlmMoeDsaAttention,
+        GlmMoeDsaDecoderLayer,
+        GlmMoeDsaForCausalLM,
+        GlmMoeDsaModel,
+        GlmMoeDsaMoE,
+        GlmMoeDsaRMSNorm,
+    )
+
+    GLM_MOE_DSA_AVAILABLE = True
+except ImportError:
+    GLM_MOE_DSA_AVAILABLE = False
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeAttention,
@@ -370,6 +384,15 @@ from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
     QEffGlm4MoeTopkRouter,
     QEffPrefillChunkedGlm4MoeMoE,
 )
+
+if GLM_MOE_DSA_AVAILABLE:
+    from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+        QEffGlmMoeDsaAttention,
+        QEffGlmMoeDsaDecoderLayer,
+        QEffGlmMoeDsaForCausalLM,
+        QEffGlmMoeDsaModel,
+        QEffGlmMoeDsaMoE,
+    )
 from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2Attention,
     QEffGPT2Block,
@@ -903,6 +926,21 @@ class KVCacheTransform(ModuleMappingTransform):
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
         return model, transformed
+
+
+# glm_moe_dsa (GLM-5.1) — registered only when the architecture is present in transformers (U6).
+# Native HF model (no auto_map) → class-type replacement via KVCacheTransform (U4 Path A).
+if GLM_MOE_DSA_AVAILABLE:
+    KVCacheTransform._module_mapping.update(
+        {
+            GlmMoeDsaModel: QEffGlmMoeDsaModel,
+            GlmMoeDsaForCausalLM: QEffGlmMoeDsaForCausalLM,
+            GlmMoeDsaAttention: QEffGlmMoeDsaAttention,
+            GlmMoeDsaDecoderLayer: QEffGlmMoeDsaDecoderLayer,
+            GlmMoeDsaMoE: QEffGlmMoeDsaMoE,
+        }
+    )
+    CustomOpsTransform._module_mapping.update({GlmMoeDsaRMSNorm: CustomRMSNormAIC})
 
 
 class PrefillOnlyTransform(ModuleMappingTransform):
