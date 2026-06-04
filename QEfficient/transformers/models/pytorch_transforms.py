@@ -236,6 +236,7 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     Qwen3_5MoeTopKRouter,
     Qwen3_5MoeVisionAttention,
     Qwen3_5MoeVisionModel,
+    Qwen3_5MoeExperts,
 )
 from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     Qwen3MoeAttention,
@@ -569,6 +570,7 @@ from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     QEffQwen3_5MoeTopKRouter,
     QEffQwen3_5MoeVisionAttention,
     QEffQwen3_5MoeVisionModel,
+    QEffQwen3_5MoeExperts,
 )
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffPrefillChunkedQwen3MoeSparseMoeBlock,
@@ -868,6 +870,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3_5MoeVisionAttention: QEffQwen3_5MoeVisionAttention,
         Qwen3_5MoeVisionModel: QEffQwen3_5MoeVisionModel,
         Qwen3_5MoeTopKRouter: QEffQwen3_5MoeTopKRouter,
+        Qwen3_5MoeExperts: QEffQwen3_5MoeExperts,
         # Qwen2.5 VL
         Qwen2_5_VLForConditionalGeneration: QEffQwen_2_5_vl_ForConditionalGeneration,
         Qwen2_5_VLModel: QEffQwen2_5_VLModel,
