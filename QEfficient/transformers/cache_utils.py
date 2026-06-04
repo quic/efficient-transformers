@@ -260,7 +260,7 @@ class QEffDynamicLayer(CacheLayerMixin):
                 Block index of the K/V block to read from the block table
 
             updated:
-                Was the current block updated during the current write? If yes, then read slot_id + seq_len worth of entires from current block
+                Was the current block updated during the current write? If yes, then read position_ids.max % block_size worth of entires from current block
 
         Return:
             A tuple containing the updated key and value states.
@@ -271,13 +271,14 @@ class QEffDynamicLayer(CacheLayerMixin):
             self._mark_initialized(k_out)
         position_ids = cache_kwargs.get("position_ids")
         batch, seq_len = position_ids.shape
-        slot_id = cache_kwargs.get("slot_id", None)
         num_kv_blocks, num_kv_heads, block_size, dh = k_out.shape
         ctx_indices = torch.arange(block_size)[None, ...]
-        gather_limit = torch.where(updated, slot_id.unsqueeze(-1) + seq_len, block_size)
+        block_fill_len = position_ids.max(1, keepdim=True).values % block_size
+        gather_limit = torch.where(updated, block_fill_len, block_size)
+
         block_indices = block_index.unsqueeze(-1)
-        invalid_mask = torch.ones_like(position_ids, dtype=torch.bool)
-        invalid_mask = torch.where(block_indices < 0, invalid_mask, ctx_indices >= gather_limit)
+        gather_limit = torch.where(block_indices < 0, 0, gather_limit)
+        invalid_mask = ctx_indices > gather_limit
 
         if torch.onnx.is_in_onnx_export():
             invalid_idx_value = torch.iinfo(torch.int32).max
@@ -312,7 +313,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         else:
             self._mark_initialized(self.keys)
             position_ids = cache_kwargs.get("position_ids")
-            block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks/BS] -> each entry is block_id value
+            block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks] -> each entry is block_id value
             slot_id = cache_kwargs.get("slot_id")
             batch, num_kv_heads, seq_len, dh = key_states.shape
             num_kv_blocks, num_kv_heads, block_size, dh = self.keys.shape

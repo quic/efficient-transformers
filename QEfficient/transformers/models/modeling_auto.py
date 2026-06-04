@@ -2347,7 +2347,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
         if num_kv_blocks:
-            kv_block_size = -(-ctx_len // num_kv_blocks) 
+            kv_block_size = -(-ctx_len // num_kv_blocks)
             lang_inputs["block_table"] = np.arange(batch_size * num_kv_blocks, dtype=np.int64).reshape(
                 batch_size, num_kv_blocks
             )
@@ -3772,8 +3772,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     max_blocks = max(max_blocks, num_blocks)
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
-            num_kv_blocks = self.hash_params["blocking_kwargs"].num_kv_blocks 
-            self.supports_paged_attention = "paged" in self.hash_params["blocking_kwargs"].mode 
+            num_kv_blocks = self.hash_params["blocking_kwargs"].num_kv_blocks
+            self.supports_paged_attention = "paged" in self.hash_params["blocking_kwargs"].mode
             seq_len = kv_block_size = -(-seq_len // num_kv_blocks) if self.supports_paged_attention else seq_len
 
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
@@ -3863,7 +3863,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             batch, num_kv_heads, CL, dh = kv_cache_shape
             total_num_kv_blocks = batch * num_kv_blocks
             kv_cache_shape = [total_num_kv_blocks, num_kv_heads, kv_block_size, dh]
-            example_inputs["block_table"] = torch.arange((bs * num_kv_blocks), dtype=torch.int64).view(bs, num_kv_blocks)
+            example_inputs["block_table"] = torch.arange((bs * num_kv_blocks), dtype=torch.int64).view(
+                bs, num_kv_blocks
+            )
             example_inputs["slot_id"] = torch.zeros(bs, dtype=torch.int64)
             dynamic_axes["block_table"] = {0: "batch_size", 1: "num_kv_blocks"}
             dynamic_axes["slot_id"] = {0: "batch_size"}
@@ -4107,7 +4109,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # TODO: remove this; not required
         if full_batch_size:
             spec["full_batch_exec_size"] = exec_batch_size
-        if self.model.qaic_config is not None and "paged" in self.model.qaic_config.get("blocking_mode", None):
+        if self.model.qaic_config is not None and "paged" in self.model.qaic_config.get("blocking_mode", ""):
             num_kv_blocks = self.model.qaic_config["num_kv_blocks"]
             spec["num_kv_blocks"] = num_kv_blocks
             spec["total_num_kv_blocks"] = kv_cache_batch_size * num_kv_blocks
@@ -4175,7 +4177,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             spec["full_batch_size"] = kv_cache_batch_size
         else:
             spec["batch_size"] = kv_cache_batch_size
-        if self.model.qaic_config is not None and "paged" in self.model.qaic_config.get("blocking_mode", None):
+        if self.model.qaic_config is not None and "paged" in self.model.qaic_config.get("blocking_mode", ""):
             num_kv_blocks = self.model.qaic_config["num_kv_blocks"]
             spec["num_kv_blocks"] = num_kv_blocks
             spec["total_num_kv_blocks"] = kv_cache_batch_size * num_kv_blocks

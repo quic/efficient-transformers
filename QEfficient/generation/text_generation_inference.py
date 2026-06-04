@@ -486,7 +486,7 @@ class QEffTextGenerationBase:
         self.full_batch_size = (
             full_batch_size if full_batch_size else self._fetch_full_batch_size()
         )  # Check and fetch full batch size if CB is enabled
-        self.num_kv_blocks = num_kv_blocks if num_kv_blocks else 1
+        self.num_kv_blocks = num_kv_blocks if num_kv_blocks else None
         self.kv_block_size = -(-self._ctx_len // self.num_kv_blocks) if num_kv_blocks else 1
 
         # Initialize the storage variables.
@@ -753,7 +753,9 @@ class QEffTextGenerationBase:
 
             # run prefill for num_chunks
             outputs, position_ids, generation_len = self.run_prefill(
-                next_prompt, generation_len, decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1),
+                next_prompt,
+                generation_len,
+                decode_batch_id=np.array(decode_batch_id, dtype=np.int64).reshape(1, 1),
                 block_table=block_table,
             )
 
@@ -1158,9 +1160,13 @@ class TextGeneration:
             self._full_batch_size if self._full_batch_size is not None else self._qaic_model.batch_size
         )
         max_gen_length = self._ctx_len if not generation_len else max(self._ctx_len, generation_len)
-        self._qaic_model.block_table = np.arange(
-            execution_batch_size * self._num_kv_blocks, dtype=np.int64
-        ).reshape(execution_batch_size, self._num_kv_blocks) if self._num_kv_blocks else None
+        self._qaic_model.block_table = (
+            np.arange(execution_batch_size * self._num_kv_blocks, dtype=np.int64).reshape(
+                execution_batch_size, self._num_kv_blocks
+            )
+            if self._num_kv_blocks
+            else None
+        )
 
         # Create a prompt queue.
         self._prompt_queue = deque(prompt)
