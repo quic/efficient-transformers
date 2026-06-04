@@ -33,7 +33,6 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     apply_rotary_pos_emb_vision,
     repeat_kv,
     rotate_half,
-    Qwen3_5MoeTopKRouter,
 )
 
 from QEfficient.blocking.attention_blocking import (
@@ -434,7 +433,7 @@ class QEffQwen3_5MoeAttention(Qwen3_5MoeAttention):
         use_blocking = (
             past_key_values is not None and blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
         )
-        
+
         if use_blocking:
             attn_output, attn_weights = generic_blocked_attention_interface(
                 module=self,
@@ -983,7 +982,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         use_cache = use_cache if use_cache is not None else self.config.use_cache
 
         return_legacy_cache = False
-        
+
         if past_key_values is not None and not isinstance(past_key_values, QEffQwen3_5MoeDynamicCache):
             return_legacy_cache = True
             past_key_values = QEffQwen3_5MoeDynamicCache.from_legacy_cache(self.config, past_key_values)
@@ -992,7 +991,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
-            
+
         start = QEffQwen3_5MoeTextModel._start
         end = QEffQwen3_5MoeTextModel._end
         if cache_position is None:
@@ -1015,7 +1014,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         # position_embeddings = None
         all_hidden_states = () if output_hidden_states else None
         layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
-        
+
         for layer_idx, decoder_layer in enumerate(self.layers):
             if layer_idx < start or layer_idx >= end:
                 continue
@@ -1039,7 +1038,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
             )
 
             # break
-        
+
         if QEffQwen3_5MoeTextModel._end == QEffQwen3_5MoeTextModel._total_layers:
             hidden_states = self.norm(hidden_states)
         if output_hidden_states:
@@ -1047,8 +1046,8 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
-        
-        past_key_values = (past_key_values[QEffQwen3_5MoeTextModel._start])
+
+        past_key_values = past_key_values[QEffQwen3_5MoeTextModel._start]
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
@@ -1648,7 +1647,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         # loss = None
         # if labels is not None:
         #     loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.text_config.vocab_size)
-        
+
         return logits, outputs.past_key_values[: len(past_key_values)]
 
     def get_specializations(
@@ -1889,7 +1888,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         # for i in range(self.model.config.text_config.num_hidden_layers):
-        i=QEffQwen3_5MoeModel._start
+        i = QEffQwen3_5MoeModel._start
         if self.model.config.text_config.layer_types[i] == "full_attention":
             for kv in ["key", "value"]:
                 lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
@@ -1899,7 +1898,6 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             recurrent_shape = (linear_batch_size, layer.num_v_heads, layer.head_k_dim, layer.head_v_dim)
             lang_inputs["past_key_values"][i].append(torch.zeros(conv_shape, dtype=torch.float32))
             lang_inputs["past_key_values"][i].append(torch.zeros(recurrent_shape, dtype=torch.float32))
-
 
         #
         if continuous_batching:
@@ -1944,7 +1942,6 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         ]
 
     def prepare_inputs_for_generation(self, inputs, prefill_seq_len=32, batch_size=1):
-
         input_ids_length = inputs["input_ids"].shape[1]
         inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
         pos_ids, rope_deltas = self.model.get_rope_index(
@@ -1967,6 +1964,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         inputs.pop("mm_token_type_ids")
         return inputs
 
+
 class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
     def forward(self, hidden_states):
         hidden_states = hidden_states.reshape(-1, self.hidden_dim)
@@ -1977,7 +1975,8 @@ class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
         router_top_value = router_top_value.to(router_logits.dtype)
         router_scores = router_top_value
         return router_logits, router_scores, router_indices
-    
+
+
 class QEffQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, S, H = hidden_states.shape
@@ -2089,18 +2088,6 @@ def _cumsum_scatter_gather_update_expert_blocked(
         experts_out = CtxScatterFunc3DGeneralized.apply(experts_out, chunk_matched_idx, updated_chunk)
 
     return experts_out
-
-
-class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
-    def forward(self, hidden_states):
-        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
-        router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
-        router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1)
-        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
-        router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
-        router_top_value = router_top_value.to(router_logits.dtype)
-        router_scores = router_top_value
-        return router_logits, router_scores, router_indices
 
 
 class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):

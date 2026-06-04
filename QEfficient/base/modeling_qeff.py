@@ -8,6 +8,7 @@
 import gc
 import inspect
 import logging
+import os
 import shutil
 import subprocess
 import warnings
@@ -17,7 +18,6 @@ from typing import Dict, List, Optional, Union
 
 import onnx
 import torch
-import os
 
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
@@ -61,6 +61,7 @@ class QEFFBaseModel(ABC):
     :_pytorch_transforms: Pytorch transformations to be applied after initialization.
     :_onnx_transforms: ONNX transformations to be applied after ONNX export.
     """
+
     _start = 0
     _end = 1
     _total_layers = None
@@ -523,16 +524,16 @@ class QEFFBaseModel(ABC):
                     layers.append((keys, values))
                 return tuple(layers)
             return None
-        
+
         is_vision = hasattr(self.model, "language_model")
         output_name = []
         output_name.append("logits")
-        if idx == 0: 
+        if idx == 0:
             if is_vision:
-                output_name.append('vision_embeds_RetainedState')
+                output_name.append("vision_embeds_RetainedState")
                 if "deepstack_features_RetainedState" in output_names:
                     output_name.append("deepstack_features_RetainedState")
-                output_name.append('image_idx_output')
+                output_name.append("image_idx_output")
         for layer_idx in range(idx, end_idx):
             output_name.append(f"past_key.{layer_idx}_InternalRetainedState")
             output_name.append(f"past_value.{layer_idx}_InternalRetainedState")
@@ -554,7 +555,7 @@ class QEFFBaseModel(ABC):
             example_inputs["compressed_kvs"] = [
                 val for i, val in enumerate(example_inputs["compressed_kvs"]) if i < window_size
             ]
-        
+
         # if "past_key_values" in example_inputs:
         #     example_inputs["past_key_values"] = [
         #         val for i, val in enumerate(example_inputs["past_key_values"]) if i < window_size
@@ -643,7 +644,7 @@ class QEFFBaseModel(ABC):
         onnx.save(model, layer_onnx_path_tmp)
         self.onnx_path = layer_onnx_path_tmp
         return layer_onnx_path_tmp
-    
+
     def transform(
         self,
         ctx_len: Optional[int] = None,
@@ -758,7 +759,7 @@ class QEFFBaseModel(ABC):
         onnx_path = Path(onnx_path)
         if os.environ.get("LAYERWISE_EXPORT", "False") == "True":
             return onnx_path
-        
+
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
         if not onnx_path.is_file():

@@ -75,7 +75,6 @@ def test_full_blockedKV_onnx_function_count_with_subfunction(model_name, manual_
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_few_blockedKV_onnx_function_count_with_subfunction(model_name, manual_cleanup):
-
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to issues in HF.")
 
@@ -89,7 +88,6 @@ def test_few_blockedKV_onnx_function_count_with_subfunction(model_name, manual_c
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_dummy_blockedKV_onnx_function_count_with_subfunction(model_name, manual_cleanup):
-
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to issues in HF.")
 

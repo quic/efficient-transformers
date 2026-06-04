@@ -6,16 +6,15 @@
 # -----------------------------------------------------------------------------
 
 import functools
+import os
 import time
+from pathlib import Path
 
-import numpy as np
-import torch
+import transformers
 from transformers import AutoConfig, AutoTokenizer
 
+import QEfficient
 from QEfficient import QEFFAutoModelForCausalLM
-from QEfficient.generation.cloud_infer import QAICInferenceSession
-from pathlib import Path
-import time
 
 model_id = "Qwen/Qwen3-235B-A22B-Instruct-2507"  # weights are not required to convert to fp32
 # model_id = "yujiepan/qwen3-moe-tiny-random"
@@ -31,15 +30,12 @@ PREFILL_SEQ_LEN = 4
 CTX_LEN = 128
 
 
-
-import transformers
-import QEfficient
-
 def _ensure_pretrained_window_attrs():
     if not hasattr(transformers.modeling_utils.PreTrainedModel, "_start"):
         transformers.modeling_utils.PreTrainedModel._start = 0
     if not hasattr(transformers.modeling_utils.PreTrainedModel, "_end"):
         transformers.modeling_utils.PreTrainedModel._end = 0
+
 
 def _build_layer_windows(total_layers: int, window_size: int):
     if total_layers <= 0:
@@ -82,12 +78,14 @@ def _install_window_patch(model_cls):
     model_cls.__init__ = patched_init
     model_cls._window_patch_installed = True
 
+
 def _resolve_export_root(onnx_path: Path) -> Path:
     parts = list(onnx_path.parts)
     if "onnx_layerwise_tmp" in parts:
         marker_idx = parts.index("onnx_layerwise_tmp")
         return Path(*parts[:marker_idx])
     return onnx_path.parent
+
 
 def _install_shard_window_patch():
     if getattr(transformers.modeling_utils, "_window_shard_patch_installed", False):
@@ -142,12 +140,12 @@ if resolved_total_layers is None:
 
 # Layerwise window size. `1` keeps only one decoder layer active per window.
 window_size = 1
-total_layers = 2 #resolved_total_layers # config.num_hidden_layers = 1
+total_layers = 2  # resolved_total_layers # config.num_hidden_layers = 1
 windows = _build_layer_windows(total_layers=total_layers, window_size=window_size)
 qeff_model = None
-first_onnx_path=None
+first_onnx_path = None
 export_start = time.perf_counter()
-import os
+
 os.environ["LAYERWISE_EXPORT"] = "True"
 for start, end in windows:
     transformers.modeling_utils.PreTrainedModel._start = start
@@ -185,7 +183,7 @@ for start, end in windows:
         use_onnx_subfunctions=True,
     )
 
-    ################################# decode 
+    ################################# decode
     # onnx_path = qeff_model.compile(
     #     prefill_seq_len=PREFILL_SEQ_LEN,
     #     ctx_len=CTX_LEN,

@@ -24,12 +24,12 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeTextModel,
     Qwen3VLMoeTextRotaryEmbedding,
     Qwen3VLMoeTextSparseMoeBlock,
+    Qwen3VLMoeTextTopKRouter,
     Qwen3VLMoeVisionAttention,
     Qwen3VLMoeVisionModel,
     apply_rotary_pos_emb_vision,
     repeat_kv,
     rotate_half,
-    Qwen3VLMoeTextTopKRouter
 )
 
 from QEfficient.blocking.attention_blocking import (
@@ -517,7 +517,7 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
     _start = 0
     _end = 0
     _total_layers = None
-    
+
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3VLMoeTextRotaryEmbedding(config=self.config)
         self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
@@ -579,7 +579,7 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         start = QEffQwen3VLMoeTextModel._start
         end = QEffQwen3VLMoeTextModel._end
         layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
-        
+
         for layer_idx, decoder_layer in enumerate(self.layers):
             if layer_idx < start or layer_idx >= end:
                 continue
@@ -616,7 +616,7 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
                     deepstack_visual_embeds[start],
                 )
             layer_idx += 1
-        
+
         if QEffQwen3VLMoeTextModel._end == QEffQwen3VLMoeTextModel._total_layers:
             hidden_states = self.norm(hidden_states)
         if output_hidden_states:
@@ -769,6 +769,7 @@ class QEffQwen3VLEncoderWrapper(nn.Module):
         )
         return image_embeds, deepstack_features
 
+
 class QEffQwen3VLMoeTextTopKRouter(Qwen3VLMoeTextTopKRouter):
     def forward(self, hidden_states):
         hidden_states = hidden_states.reshape(-1, self.hidden_dim)
@@ -779,10 +780,12 @@ class QEffQwen3VLMoeTextTopKRouter(Qwen3VLMoeTextTopKRouter):
         router_top_value = router_top_value.to(router_logits.dtype)
         router_scores = router_top_value
         return router_logits, router_scores, router_indices
-    
+
+
 class QEffQwen3VLDecoderWrapper(nn.Module):
     _deepstack = None
     _vision_mask = None
+
     def __init__(self, model):
         super().__init__()
         self.model = model
@@ -813,7 +816,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
         else:
             inputs_embeds = inputs_embeds
-        
+
         if QEffQwen3VLMoeTextModel._start == 0:
             B, N, C = inputs_embeds.shape
             selected = input_ids == self.model.config.image_token_id
@@ -856,7 +859,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             logits = hidden_states
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
-        
+
         elif QEffQwen3VLMoeTextModel._end == QEffQwen3VLMoeTextModel._total_layers:
             outputs = self.language_model(
                 inputs_embeds=inputs_embeds,

@@ -12,9 +12,9 @@ from pathlib import Path
 import torch
 import transformers
 from transformers import AutoConfig
+
 import QEfficient
 from QEfficient import QEFFAutoModelForImageTextToText
-
 
 MODEL_ID = "Qwen/Qwen3-VL-235B-A22B-Instruct"
 PREFILL_SEQ_LEN = 32
@@ -30,6 +30,7 @@ NUM_CORES = 16
 NUM_DEVICES = 4
 HEIGHT = 354
 WIDTH = 536
+
 
 def _ensure_pretrained_window_attrs():
     if not hasattr(transformers.modeling_utils.PreTrainedModel, "_start"):
@@ -63,7 +64,11 @@ def _build_layer_windows(total_layers: int, window_size: int):
 
 def _get_text_layers_container(model):
     # VLM path first
-    if hasattr(model, "model") and hasattr(model.model, "language_model") and hasattr(model.model.language_model, "layers"):
+    if (
+        hasattr(model, "model")
+        and hasattr(model.model, "language_model")
+        and hasattr(model.model.language_model, "layers")
+    ):
         return model.model.language_model.layers
     # LLM-compatible fallbacks
     if hasattr(model, "model") and hasattr(model.model, "layers"):
@@ -96,6 +101,7 @@ def _null_outside_window_layers(model, apply_text: bool = True):
             for idx, _ in enumerate(text_layers):
                 if idx < text_start or idx >= text_end:
                     text_layers[idx] = None
+
 
 def _install_window_patch(model_cls):
     if getattr(model_cls, "_window_patch_installed", False):
@@ -269,7 +275,7 @@ def main():
                 qeff_model.model,
                 apply_text=not skip_lang_for_window,
             )
-        
+
         onnx_path = qeff_model.compile(
             batch_size=BATCH_SIZE,
             prefill_seq_len=PREFILL_SEQ_LEN,
@@ -300,25 +306,26 @@ def main():
 
     os.environ["LAYERWISE_EXPORT"] = "False"
     qpc_path = qeff_model.compile(
-            lang_onnx_path=final_artifact,
-            batch_size=BATCH_SIZE,
-            prefill_seq_len=PREFILL_SEQ_LEN,
-            ctx_len=CTX_LEN,
-            num_cores=NUM_CORES,
-            num_devices=NUM_DEVICES,
-            height=HEIGHT,
-            width=WIDTH,
-            mxfp6_matmul=True,
-            aic_enable_depth_first=True,
-            skip_vision=True,
-            skip_lang=skip_lang_for_window,
-            split_retained_state_io=True,
-            use_onnx_subfunctions=True,
-            prefill_only=True,
-            mos=1,
-        )
-    
+        lang_onnx_path=final_artifact,
+        batch_size=BATCH_SIZE,
+        prefill_seq_len=PREFILL_SEQ_LEN,
+        ctx_len=CTX_LEN,
+        num_cores=NUM_CORES,
+        num_devices=NUM_DEVICES,
+        height=HEIGHT,
+        width=WIDTH,
+        mxfp6_matmul=True,
+        aic_enable_depth_first=True,
+        skip_vision=True,
+        skip_lang=skip_lang_for_window,
+        split_retained_state_io=True,
+        use_onnx_subfunctions=True,
+        prefill_only=True,
+        mos=1,
+    )
+
     print(f"Final QPC path: {qpc_path}")
+
 
 if __name__ == "__main__":
     main()

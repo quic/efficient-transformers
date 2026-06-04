@@ -2,6 +2,7 @@
 import argparse
 import os
 import re
+import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Tuple
@@ -9,8 +10,6 @@ from typing import List, Tuple
 import onnx
 import onnx_ir
 from onnx import external_data_helper
-import shutil
-from typing import List, Tuple
 
 from QEfficient.base.onnx_transforms import CustomOpTransform, RemovePrefix
 
@@ -100,20 +99,26 @@ def split_layer_graph(
     graph_outputs = [v.name for v in model.graph.output]
 
     if layer_start == 0:
-        if 'deepstack_features' in graph_inputs:
+        if "deepstack_features" in graph_inputs:
             preferred_inputs = ["input_ids", "position_ids", "deepstack_features"]
         else:
             preferred_inputs = ["input_ids", "position_ids"]
     else:
         preferred_inputs = ["inputs_embeds", "position_ids"]
 
-    cache_inputs = sorted([n for n in graph_inputs if n.startswith("past_key.") or n.startswith("past_value.") or n=="vision_embeds" or n=="image_idx"])
+    cache_inputs = sorted(
+        [
+            n
+            for n in graph_inputs
+            if n.startswith("past_key.") or n.startswith("past_value.") or n == "vision_embeds" or n == "image_idx"
+        ]
+    )
     input_names = [n for n in preferred_inputs if n in graph_inputs] + cache_inputs
 
     output_names = list(graph_outputs)
     if shard_idx != total_shards - 1 and "position_ids" in graph_inputs and "position_ids" not in output_names:
         output_names.append("position_ids")
-    
+
     # import pdb; pdb.set_trace()
     model_ir.graph = onnx_ir.convenience.extract(
         model_ir.graph,
@@ -127,7 +132,13 @@ def split_layer_graph(
     return True
 
 
-def run_split_pipeline(exported_path: str, num_layers: int = 61, start_layer: int = 0, windows: list[tuple[int, int]] = [], verbose: bool = False) -> None:
+def run_split_pipeline(
+    exported_path: str,
+    num_layers: int = 61,
+    start_layer: int = 0,
+    windows: list[tuple[int, int]] = [],
+    verbose: bool = False,
+) -> None:
     windows = _discover_layer_windows(exported_path, start_layer=start_layer)
     for shard_idx, (layer_start, layer_end) in enumerate(windows):
         split_layer_graph(shard_idx, len(windows), exported_path, layer_start, layer_end)
@@ -139,13 +150,15 @@ def run_split_pipeline(exported_path: str, num_layers: int = 61, start_layer: in
 # STAGE 2: PREFIX + DELETION
 # ============================================================
 
+
 def delete_layer_dirs(exported_path: str, layer_windows: List[Tuple[int, int]]) -> None:
     for layer_start, layer_end in layer_windows:
         layer_dir = f"{exported_path}/onnx_layerwise_tmp/layer_{layer_start}_{layer_end}"
-        
+
         if os.path.isdir(layer_dir):
             shutil.rmtree(layer_dir)  # deletes entire directory
-            
+
+
 def rewrite_tensors_with_prefix(
     model: onnx.ModelProto,
     prefix: str,
@@ -225,9 +238,9 @@ def run_prefix_pipeline(
             for f in as_completed(futures):
                 f.result()
         _ = time.time() - t0
-        
+
         delete_layer_dirs(exported_path, chunk_windows)
-        
+
     if verbose:
         print(f"[DONE] prefix+deletion pipeline complete ({len(windows)} windows)")
 
@@ -300,15 +313,16 @@ def merge_models(m1, m2, io_map):
         for node in graph.node:
             if node.op_type == old_name:
                 node.op_type = new_name
+
     try:
         graph = onnx.compose.merge_graphs(m1.graph, m2.graph, io_map)
-    except:
+    except Exception:
         first, second = io_map[0]
         parts = first.rsplit("//", 1)
         layer = parts[0] if len(parts) == 2 else parts[1]
         io_map[0] = (f"{layer}/logits", second)
         graph = onnx.compose.merge_graphs(m1.graph, m2.graph, io_map)
-        
+
     model = onnx.helper.make_model_gen_version(
         graph,
         producer_name="QEfficient",
@@ -378,7 +392,7 @@ def merge_models(m1, m2, io_map):
             final_funcs[(f.domain, f.name)] = f
         else:
             raise ValueError("Function not found")
-        
+
     graph2 = onnx.compose.merge_graphs(m1.graph, m2.graph, io_map)
     model.graph.CopyFrom(graph2)
 
@@ -391,7 +405,11 @@ def merge_models(m1, m2, io_map):
 
 
 def run_merge_pipeline(
-    exported_path: str, num_layers: int = 61, final_data_dir: str = "final_data", windows: list[tuple[int, int]] = [], verbose: bool = False
+    exported_path: str,
+    num_layers: int = 61,
+    final_data_dir: str = "final_data",
+    windows: list[tuple[int, int]] = [],
+    verbose: bool = False,
 ) -> str:
     if len(windows) < 1:
         raise ValueError("Need at least one discovered shard to merge")
@@ -428,13 +446,10 @@ def run_merge_pipeline(
         if not decoder_nodes:
             raise RuntimeError(f"DecoderLayer node not found in {m1_path}")
         decoder_output = list(decoder_nodes[-1].output)
-        selected_output = next(
-            (x for x in decoder_output if "RetainedState" not in x),
-            None
-        )
+        selected_output = next((x for x in decoder_output if "RetainedState" not in x), None)
         if selected_output is None:
             raise RuntimeError(f"No decoder output found without 'RetainedState'. Outputs: {decoder_output}")
-        
+
         merged_model = merge_models(
             m1_pref,
             m2_pref,

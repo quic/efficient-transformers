@@ -433,10 +433,10 @@ class QEffQwen3MoeDecoderLayer(Qwen3MoeDecoderLayer):
 
 
 class QEffQwen3MoeModel(Qwen3MoeModel):
-    _start=0
-    _end=0
+    _start = 0
+    _end = 0
     _total_layers = None
-    
+
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3MoeRotaryEmbedding(config=self.config)
         self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
@@ -466,15 +466,15 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
-        
+
         start = QEffQwen3MoeModel._start
         end = QEffQwen3MoeModel._end
-        
+
         if QEffQwen3MoeModel._end == 0:
             total_layers = end = self.config.num_hidden_layers
             QEffQwen3MoeModel._end = total_layers
             QEffQwen3MoeModel._total_layers = total_layers
-            
+
         past_key_values_length = 0
         if past_key_values is not None:
             past_key_values_length = past_key_values[0][0].shape[2]

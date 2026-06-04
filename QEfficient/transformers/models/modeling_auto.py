@@ -15,6 +15,7 @@ from typing import List, Optional, Union
 import numpy as np
 import torch
 import torch.nn as nn
+import transformers
 from transformers import (
     AutoImageProcessor,
     AutoModel,
@@ -1415,7 +1416,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 vocab_size=self.model.language_model.config.vocab_size,
                 qaic_config=self.lang_model.model.qaic_config,
             )
-        if not skip_vision and QEffQwen3_5MoeTextModel._end == QEffQwen3_5MoeTextModel._total_layers:
+        if (
+            not skip_vision
+            and transformers.modeling_utils.PreTrainedModel._end
+            == transformers.modeling_utils.PreTrainedModel._total_layers
+        ):
             self.vision_model.export(
                 inputs["vision"],
                 output_names["vision"],
@@ -1429,7 +1434,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             offload_pt_weights = False  # to keep weight for decode onnx
         else:
             offload_pt_weights = kwargs.get("offload_pt_weights", True)
-        
+
         if not skip_lang and self.lang_model.onnx_path is None:
             self.lang_model.export(
                 inputs["lang"],
@@ -1623,7 +1628,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             self.vision_model.onnx_path = vision_onnx_path
         if lang_onnx_path:
             self.lang_model.onnx_path = lang_onnx_path
-        
+
         if vision_onnx_path is None or lang_onnx_path is None:
             self.export(
                 use_onnx_subfunctions=use_onnx_subfunctions,
@@ -1664,7 +1669,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # Custom NPI file options
         if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
             compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
-        
+
         if not skip_lang:
             custom_io_lang = {}
             # Inputs
@@ -1714,11 +1719,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 return filtered
 
             if self.lang_model.onnx_path is not None and "merged" in self.lang_model.onnx_path:
-                custom_io_lang = filter_custom_io_lang(
-                    custom_io_lang,
-                    self.lang_model.onnx_path
-                )
-            
+                custom_io_lang = filter_custom_io_lang(custom_io_lang, self.lang_model.onnx_path)
+
             if prefill_only:
                 specializations = specializations["lang"][:1]
                 qpc_key = "lang_prefill_qpc_path"
@@ -2437,7 +2439,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                 custom_io[output_name] = (
                     CUSTOM_IO_DTYPE_MAP[target_dtype] if "pixel_values" in output_name else kv_cache_dtype
                 )
-        
+
         # TODO this hould be removed once the continous batching is supported for all the models.
         compiler_options.pop("continuous_batching", None)
         compiler_options.pop("kv_cache_batch_size", None)
@@ -3497,7 +3499,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
             self.model.forward = _qeff_patched_forward
             self.model._qeff_export_gemma3_cache_patch = True
-        
+
         if os.environ.get("LAYERWISE_EXPORT", "False") == "True":
             return self._export_layerwise(
                 example_inputs,
@@ -3959,39 +3961,37 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 for i in range(self.num_layers):
                     custom_io[f"compressed_kv.{i}{suffix}"] = kv_cache_dtype
                     custom_io[f"k_pe.{i}{suffix}"] = kv_cache_dtype
-                    
+
         def filter_custom_io(custom_io_lang, onnx_path):
-                # Extract filename
-                filename = os.path.basename(onnx_path)
+            # Extract filename
+            filename = os.path.basename(onnx_path)
 
-                # Extract range from "merged_0-2.onnx"
-                match = re.search(r"merged_(\d+)-(\d+)\.onnx", filename)
-                if not match:
-                    return custom_io_lang  # no filtering if pattern not found
+            # Extract range from "merged_0-2.onnx"
+            match = re.search(r"merged_(\d+)-(\d+)\.onnx", filename)
+            if not match:
+                return custom_io_lang  # no filtering if pattern not found
 
-                start, end = map(int, match.groups())  # e.g. 0, 2
+            start, end = map(int, match.groups())  # e.g. 0, 2
 
-                filtered = {}
+            filtered = {}
 
-                for k, v in custom_io_lang.items():
-                    # Keep everything that is NOT KV cache
-                    if ("past_key." not in k) and ("past_value." not in k):
+            for k, v in custom_io_lang.items():
+                # Keep everything that is NOT KV cache
+                if ("past_key." not in k) and ("past_value." not in k):
+                    filtered[k] = v
+                    continue
+
+                # Extract layer index
+                layer_match = re.search(r"past_(?:key|value)\.(\d+)", k)
+                if layer_match:
+                    idx = int(layer_match.group(1))
+                    if start <= idx < end:
                         filtered[k] = v
-                        continue
 
-                    # Extract layer index
-                    layer_match = re.search(r"past_(?:key|value)\.(\d+)", k)
-                    if layer_match:
-                        idx = int(layer_match.group(1))
-                        if start <= idx < end:
-                            filtered[k] = v
+            return filtered
 
-                return filtered
-        if onnx_path is not None and "merged" in onnx_path:   
-            custom_io = filter_custom_io(
-                custom_io,
-                onnx_path
-            )
+        if onnx_path is not None and "merged" in onnx_path:
+            custom_io = filter_custom_io(custom_io, onnx_path)
 
         qpc_path = self._compile(
             onnx_path=onnx_path,
