@@ -426,3 +426,84 @@ class QEffGlmMoeDsaForCausalLM(GlmMoeDsaForCausalLM):
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
         )
+
+
+# Reuse the canonical chunked-blocked expert kernel from the sibling MoE arch — same
+# expert weight layout (`all_{gate,up,down}_proj` in `[E,H,I]` / `[E,I,H]`).
+from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
+    _cumsum_scatter_gather_update_expert_blocked,
+)
+
+
+class QEffPrefillChunkedGlmMoeDsaMoE(QEffGlmMoeDsaMoE):
+    """Prefill-only chunked variant of the GLM-MoE-DSA MoE block.
+
+    Activated by ``PrefillOnlyChunkedTransform`` for the prefill QPC of a disaggregated
+    compile. Splits the routed experts across ``expert_blocking_num_nsp`` virtual slots and
+    streams tokens through them in packed chunks of ``expert_blocking_packed_chunk_size``.
+    Both attributes are injected by ``modeling_auto`` after the transform applies.
+
+    The expert-side math is identical to ``QEffGlm4MoeMoE``'s prefill-chunked path because
+    the routed-expert weight layout is the same (3D fused gate_up_proj / down_proj). The
+    only GLM-MoE-DSA specifics are kept in the parent class: the sigmoid-gated router with
+    ``e_score_correction_bias`` for selection (un-biased scores for weighting), and the
+    shared-experts add at the end of ``forward``.
+    """
+
+    supports_moe_prefill_blocking = True
+
+    def _forward_expert_blocked(
+        self,
+        hidden_states: torch.Tensor,
+        topk_indices: torch.Tensor,
+        topk_weights: torch.Tensor,
+    ) -> torch.Tensor:
+        T, H = hidden_states.shape
+        num_experts = self.num_experts
+        num_nsp = self.expert_blocking_num_nsp
+        if num_experts % num_nsp != 0:
+            raise ValueError(
+                f"num_experts ({num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})"
+            )
+
+        routing_weights = hidden_states.new_zeros((T, num_experts))
+        routing_weights.scatter_(1, topk_indices, topk_weights)
+
+        local_experts = num_experts // num_nsp
+        rw = (
+            routing_weights.transpose(0, 1)
+            .contiguous()
+            .view(local_experts, num_nsp, T)
+            .transpose(0, 1)
+            .contiguous()
+        )
+        W_g = self.all_gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_u = self.all_up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_d = self.all_down_proj.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
+        expert_out = hidden_states.new_zeros((num_nsp, T, H))
+        routing_weights_unsqueezed = rw.unsqueeze(-1)
+
+        for slot in range(local_experts):
+            expert_out = _cumsum_scatter_gather_update_expert_blocked(
+                x=hidden_states,
+                T2Ei=rw[:, slot, :] > 0,
+                W_g=W_g[:, slot],
+                W_u=W_u[:, slot],
+                W_d=W_d[:, slot],
+                routing_weight=routing_weights_unsqueezed[:, slot],
+                expert_out=expert_out,
+                act_fn=self.act_fn,
+                packed_chunk_size=self.expert_blocking_packed_chunk_size,
+            )
+
+        return expert_out.sum(dim=0)
+
+    def forward(self, hidden_states):
+        residuals = hidden_states
+        orig_shape = hidden_states.shape
+        router_logits = self.gate(hidden_states)
+        topk_indices, topk_weights = self.route_tokens_to_experts(router_logits)
+        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
+        hidden_states = self._forward_expert_blocked(hidden_states, topk_indices, topk_weights).view(*orig_shape)
+        hidden_states = hidden_states + self.shared_experts(residuals)
+        return hidden_states
