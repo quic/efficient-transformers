@@ -220,7 +220,7 @@ def main():
 
     text_config = getattr(config, "text_config", config)
     # config.vision_config.depth = 3
-    text_total_layers = 45 # getattr(text_config, "num_hidden_layers", None)
+    text_total_layers = getattr(text_config, "num_hidden_layers", None)
     if text_total_layers is None:
         raise ValueError("Could not resolve `num_hidden_layers` from config.text_config.")
     _ensure_pretrained_window_attrs()
