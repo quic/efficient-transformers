@@ -77,8 +77,6 @@
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="finetune.html">Finetune Infra</a></li>
-<li class="toctree-l1"><a class="reference internal" href="finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -142,6 +140,8 @@ We support wide range of <a class="reference internal" href="validate.html#valid
 <p><em><strong>Latest news</strong></em> : <br></p>
 <ul class="simple">
 <li><p>[coming soon] Support for more popular <a class="reference internal" href="validate.html#models-coming-soon"><span class="std std-ref">models</span></a><br></p></li>
+<li><p>[04/2026] Added WAN non-unified execution support in <code class="docutils literal notranslate"><span class="pre">QEffWanPipeline</span></code> with separate <code class="docutils literal notranslate"><span class="pre">transformer_high</span></code> and <code class="docutils literal notranslate"><span class="pre">transformer_low</span></code> modules</p></li>
+<li><p>[04/2026] Added first-block-cache support for WAN non-unified mode and FLUX (<code class="docutils literal notranslate"><span class="pre">QEffWanPipeline</span></code>, <code class="docutils literal notranslate"><span class="pre">QEffFluxPipeline</span></code>)</p></li>
 <li><p>[12/2025] Enabled <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/disagg_serving">disaggregated serving</a> for GPT-OSS model</p></li>
 <li><p>[12/2025] Added support for wav2vec2 Audio Model <a class="reference external" href="https://huggingface.co/facebook/wav2vec2-base-960h">facebook/wav2vec2-base-960h</a></p></li>
 <li><p>[12/2025] Added support for diffuser video generation model <a class="reference external" href="https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B-Diffusers">WAN 2.2 Model Card</a></p></li>
@@ -227,7 +227,7 @@ We support wide range of <a class="reference internal" href="validate.html#valid
       </div>
     </section>
   </div>
-  <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+    <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
     <span class="rst-current-version" data-toggle="rst-current-version">
       Version: Main
       <span class="fa fa-caret-down"></span>
@@ -240,6 +240,7 @@ We support wide range of <a class="reference internal" href="validate.html#valid
         <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
         <dd><a href="release/v1.20/index.html">release/v1.20</a></dd>
         <dd><a href="release/v1.21/index.html">release/v1.21</a></dd>
+        <dd><a href="release/v1.21.6/index.html">release/v1.21.6</a></dd>
       </dl>
     </div>
 </div><script>

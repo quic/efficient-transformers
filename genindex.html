@@ -74,8 +74,6 @@
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="source/finetune.html">Finetune Infra</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="source/finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -128,6 +126,7 @@
  | <a href="#F"><strong>F</strong></a>
  | <a href="#G"><strong>G</strong></a>
  | <a href="#M"><strong>M</strong></a>
+ | <a href="#P"><strong>P</strong></a>
  | <a href="#Q"><strong>Q</strong></a>
  | <a href="#S"><strong>S</strong></a>
  | <a href="#T"><strong>T</strong></a>
@@ -185,6 +184,8 @@
 </li>
         <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.compile">(QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline method)</a>
 </li>
+        <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline.compile">(QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline method)</a>
+</li>
         <li><a href="source/qeff_autoclasses.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.compile">(QEfficient.peft.auto.QEffAutoPeftModelForCausalLM method)</a>
 </li>
         <li><a href="source/qeff_autoclasses.html#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.compile">(QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM method)</a>
@@ -194,6 +195,8 @@
         <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.compile">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM method)</a>
 </li>
         <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.compile">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC method)</a>
+</li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.compile">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification method)</a>
 </li>
         <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.compile">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq method)</a>
 </li>
@@ -205,7 +208,11 @@
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.do_classifier_free_guidance">do_classifier_free_guidance (QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline property)</a>
+
+      <ul>
+        <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline.do_classifier_free_guidance">(QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline property)</a>
 </li>
+      </ul></li>
   </ul></td>
 </tr></table>
 
@@ -229,6 +236,8 @@
 </li>
         <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.export">(QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline method)</a>
 </li>
+        <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline.export">(QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline method)</a>
+</li>
         <li><a href="source/qeff_autoclasses.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.export">(QEfficient.peft.auto.QEffAutoPeftModelForCausalLM method)</a>
 </li>
         <li><a href="source/qeff_autoclasses.html#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.export">(QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM method)</a>
@@ -238,6 +247,8 @@
         <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM.export">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCausalLM method)</a>
 </li>
         <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.export">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC method)</a>
+</li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.export">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification method)</a>
 </li>
         <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.export">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq method)</a>
 </li>
@@ -253,6 +264,8 @@
       <ul>
         <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.from_pretrained">(QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline class method)</a>
 </li>
+        <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline.from_pretrained">(QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline class method)</a>
+</li>
         <li><a href="source/qeff_autoclasses.html#QEfficient.peft.auto.QEffAutoPeftModelForCausalLM.from_pretrained">(QEfficient.peft.auto.QEffAutoPeftModelForCausalLM class method)</a>
 </li>
         <li><a href="source/qeff_autoclasses.html#QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM.from_pretrained">(QEfficient.peft.lora.auto.QEffAutoLoraModelForCausalLM class method)</a>
@@ -264,6 +277,8 @@
         <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.from_pretrained">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC class method)</a>
 </li>
         <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText.from_pretrained">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForImageTextToText class method)</a>
+</li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.from_pretrained">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification class method)</a>
 </li>
         <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.from_pretrained">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq class method)</a>
 </li>
@@ -285,15 +300,23 @@
 </li>
         <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC.generate">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForCTC method)</a>
 </li>
+        <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification.generate">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSequenceClassification method)</a>
+</li>
         <li><a href="source/qeff_autoclasses.html#QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq.generate">(QEfficient.transformers.models.modeling_auto.QEFFAutoModelForSpeechSeq2Seq method)</a>
 </li>
       </ul></li>
       <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.flux.pipeline_flux.QEffFluxPipeline.get_default_config_path">get_default_config_path() (QEfficient.diffusers.pipelines.flux.pipeline_flux.QEffFluxPipeline static method)</a>
 
       <ul>
-        <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.get_default_config_path">(QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline static method)</a>
+        <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.get_default_config_path">(QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline method)</a>
+</li>
+        <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline.get_default_config_path">(QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline static method)</a>
 </li>
       </ul></li>
+      <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.pipeline_module.QEffVAE.get_img_encoder_onnx_params">get_img_encoder_onnx_params() (QEfficient.diffusers.pipelines.pipeline_module.QEffVAE method)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.pipeline_module.QEffFluxTransformerModel.get_model_config">get_model_config (QEfficient.diffusers.pipelines.pipeline_module.QEffFluxTransformerModel property)</a>
 
       <ul>
@@ -306,8 +329,6 @@
         <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.pipeline_module.QEffWanUnifiedTransformer.get_model_config">(QEfficient.diffusers.pipelines.pipeline_module.QEffWanUnifiedTransformer property)</a>
 </li>
       </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.pipeline_module.QEffFluxTransformerModel.get_onnx_params">get_onnx_params() (QEfficient.diffusers.pipelines.pipeline_module.QEffFluxTransformerModel method)</a>
 
       <ul>
@@ -318,6 +339,8 @@
         <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.pipeline_module.QEffWanUnifiedTransformer.get_onnx_params">(QEfficient.diffusers.pipelines.pipeline_module.QEffWanUnifiedTransformer method)</a>
 </li>
       </ul></li>
+      <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline.get_vae_encoder_npi_path">get_vae_encoder_npi_path() (QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline static method)</a>
+</li>
       <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.pipeline_module.QEffVAE.get_video_onnx_params">get_video_onnx_params() (QEfficient.diffusers.pipelines.pipeline_module.QEffVAE method)</a>
 </li>
   </ul></td>
@@ -341,6 +364,8 @@
 </li>
         <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.model">(QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline attribute)</a>
 </li>
+        <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline.model">(QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline attribute)</a>
+</li>
       </ul></li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
@@ -349,7 +374,17 @@
       <ul>
         <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.modules">(QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline attribute)</a>
 </li>
+        <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline.modules">(QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline attribute)</a>
+</li>
       </ul></li>
+  </ul></td>
+</tr></table>
+
+<h2 id="P">P</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline.prepare_latents">prepare_latents() (QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline method)</a>
+</li>
   </ul></td>
 </tr></table>
 
@@ -362,11 +397,13 @@
 </li>
       <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.pipeline_module.QEffTextEncoder">QEffTextEncoder (class in QEfficient.diffusers.pipelines.pipeline_module)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.pipeline_module.QEffUNet">QEffUNet (class in QEfficient.diffusers.pipelines.pipeline_module)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.pipeline_module.QEffVAE">QEffVAE (class in QEfficient.diffusers.pipelines.pipeline_module)</a>
+</li>
+      <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline">QEffWanImageToVideoPipeline (class in QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v)</a>
 </li>
       <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline">QEffWanPipeline (class in QEfficient.diffusers.pipelines.wan.pipeline_wan)</a>
 </li>
@@ -383,6 +420,8 @@
       <ul>
         <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.scheduler">(QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline attribute)</a>
 </li>
+        <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline.scheduler">(QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline attribute)</a>
+</li>
       </ul></li>
   </ul></td>
 </tr></table>
@@ -395,6 +434,8 @@
       <ul>
         <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.text_encoder">(QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline attribute)</a>
 </li>
+        <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline.text_encoder">(QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline attribute)</a>
+</li>
       </ul></li>
       <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.flux.pipeline_flux.QEffFluxPipeline.text_encoder_2">text_encoder_2 (QEfficient.diffusers.pipelines.flux.pipeline_flux.QEffFluxPipeline attribute)</a>
 </li>
@@ -402,6 +443,8 @@
 
       <ul>
         <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.tokenizer">(QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline attribute)</a>
+</li>
+        <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline.tokenizer">(QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline attribute)</a>
 </li>
       </ul></li>
   </ul></td>
@@ -411,7 +454,13 @@
       <ul>
         <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.transformer">(QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline attribute)</a>
 </li>
+        <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline.transformer">(QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline attribute)</a>
+</li>
       </ul></li>
+      <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.transformer_high">transformer_high (QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline attribute)</a>
+</li>
+      <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.transformer_low">transformer_low (QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline attribute)</a>
+</li>
       <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.pipeline_module.QEffVAE.type">type (QEfficient.diffusers.pipelines.pipeline_module.QEffVAE attribute)</a>
 </li>
   </ul></td>
@@ -421,7 +470,11 @@
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.unified_wrapper">unified_wrapper (QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline attribute)</a>
+
+      <ul>
+        <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline.unified_wrapper">(QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline attribute)</a>
 </li>
+      </ul></li>
   </ul></td>
 </tr></table>
 
@@ -434,6 +487,12 @@
         <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline.vae_decode">(QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline attribute)</a>
 </li>
       </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline.vae_decoder">vae_decoder (QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline attribute)</a>
+</li>
+      <li><a href="source/diffuser_classes.html#QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline.vae_encoder">vae_encoder (QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline attribute)</a>
+</li>
   </ul></td>
 </tr></table>
 
@@ -459,7 +518,7 @@
       </div>
     </section>
   </div>
-  <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+    <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
     <span class="rst-current-version" data-toggle="rst-current-version">
       Version: Main
       <span class="fa fa-caret-down"></span>
@@ -472,6 +531,7 @@
         <dd><a href="source/release/v1.19/index.html">release/v1.19</a></dd>
         <dd><a href="source/release/v1.20/index.html">release/v1.20</a></dd>
         <dd><a href="source/release/v1.21/index.html">release/v1.21</a></dd>
+        <dd><a href="source/release/v1.21.6/index.html">release/v1.21.6</a></dd>
       </dl>
     </div>
 </div><script>
