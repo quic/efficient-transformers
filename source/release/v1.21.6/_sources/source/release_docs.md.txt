@@ -1,6 +1,6 @@
 # Efficient Transformer Library - 1.21.6 Release Notes
 
-Welcome to the official release of **Efficient Transformer Library v1.21.6**! This targeted release builds on the v1.21 line with multi-resolution Vision Language Model workflows, Qwen3-VL stability fixes, on-device sampling enablement, online serving support for Gemma4 through vLLM, and compatibility updates for newer model and framework APIs.
+Welcome to the official release of **Efficient Transformer Library v1.21.6**! This targeted release builds on the v1.21 line with multi-resolution Vision Language Model workflows, Qwen3-VL stability fixes, on-device sampling enablement, online serving support for Gemma3 through vLLM, and compatibility updates for newer model and framework APIs.
 
 > ✅ The exact release content is available on the [`release/v1.21.6`](https://github.com/quic/efficient-transformers/tree/release/v1.21.6) branch. The package version for this branch is `1.21.6.0`.
 
