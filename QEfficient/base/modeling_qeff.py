@@ -65,6 +65,7 @@ class QEFFBaseModel(ABC):
     _start = 0
     _end = 0
     _total_layers = None
+    _layerwise_active = False
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
 
@@ -757,7 +758,7 @@ class QEFFBaseModel(ABC):
                     **compiler_options,
                 )
         onnx_path = Path(onnx_path)
-        if os.environ.get("LAYERWISE_EXPORT", "False") == "True":
+        if QEFFBaseModel._layerwise_active:
             return onnx_path
 
         compile_dir = Path(compile_dir or onnx_path.parent)

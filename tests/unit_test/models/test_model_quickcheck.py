@@ -1282,3 +1282,118 @@ class TestDiffusersNamedSpecializations:
         result = to_named_specializations(flat)
         assert result[0]["name"] == "Prefill"
         assert result[1]["name"] == "Decode"
+
+
+# ---------------------------------------------------------------------------
+# Layer-wise export (provisional, scheduled for deprecation)
+# ---------------------------------------------------------------------------
+
+LAYERWISE_TINY_MODEL_ID = "tiny-random/qwen3-vl-moe"
+LAYERWISE_TINY_MODEL_IDS = {
+    "qwen3_vl_moe": "tiny-random/qwen3-vl-moe",
+    "qwen3_5_moe": "tiny-random/qwen3.5-moe",
+    "qwen3_moe": "tiny-random/qwen3-moe",
+}
+
+
+@pytest.mark.llm_model
+def test_layerwise_window_helpers():
+    """Pure-Python coverage of the windowing helpers - no model load required."""
+    from QEfficient.transformers.models import _layerwise
+
+    assert _layerwise._build_layer_windows(4, 1) == [(0, 1), (1, 2), (2, 3), (3, 4)]
+    assert _layerwise._build_layer_windows(5, 2) == [(0, 2), (2, 4), (4, 5)]
+    with pytest.raises(ValueError):
+        _layerwise._build_layer_windows(0, 1)
+    with pytest.raises(ValueError):
+        _layerwise._build_layer_windows(4, 0)
+
+
+@pytest.mark.llm_model
+def test_layerwise_supported_guard_rejects_unrelated_model():
+    """layerwise=True must hard-fail on architectures without windowing hooks."""
+    from QEfficient.transformers.models import _layerwise
+
+    config = AutoConfig.from_pretrained("hf-internal-testing/tiny-random-LlamaForCausalLM")
+    with pytest.raises(NotImplementedError, match="layerwise=True is only supported"):
+        _layerwise.assert_layerwise_supported(config)
+
+
+@pytest.mark.llm_model
+def test_layerwise_supported_guard_accepts_qwen3_vl_moe():
+    from QEfficient.transformers.models import _layerwise
+
+    try:
+        config = AutoConfig.from_pretrained(LAYERWISE_TINY_MODEL_ID)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, LAYERWISE_TINY_MODEL_ID)
+    resolved = _layerwise.assert_layerwise_supported(config)
+    assert resolved in {"qwen3_vl_moe", "qwen3_vl_moe_text"}
+
+
+@pytest.mark.llm_model
+@pytest.mark.parametrize(
+    ("arch", "model_id"),
+    sorted(LAYERWISE_TINY_MODEL_IDS.items()),
+    ids=sorted(LAYERWISE_TINY_MODEL_IDS),
+)
+def test_layerwise_supported_guard_accepts_all_supported(arch, model_id):
+    """Guard must accept each architecture in the layerwise allowlist."""
+    from QEfficient.transformers.models import _layerwise
+
+    try:
+        config = AutoConfig.from_pretrained(model_id)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+    resolved = _layerwise.assert_layerwise_supported(config)
+    assert arch in resolved or resolved.startswith(arch)
+
+
+@pytest.mark.llm_model
+def test_layerwise_off_does_not_set_env_var(tmp_path):
+    """Backward compat: layerwise must be controlled purely via the API,
+    never via environment variables, and must be off by default."""
+    from QEfficient.base.modeling_qeff import QEFFBaseModel
+    from QEfficient.transformers.models import _layerwise  # noqa: F401
+
+    assert os.environ.get("LAYERWISE_EXPORT") is None
+    assert QEFFBaseModel._layerwise_active is False
+
+
+@pytest.mark.llm_model
+def test_layerwise_context_manager_toggles_class_flag():
+    """The driver's context manager must flip the class flag and restore it,
+    even on exception, with no env-var side-effects."""
+    from QEfficient.base.modeling_qeff import QEFFBaseModel
+    from QEfficient.transformers.models import _layerwise
+
+    assert QEFFBaseModel._layerwise_active is False
+    with _layerwise._layerwise_export_env():
+        assert QEFFBaseModel._layerwise_active is True
+        assert "LAYERWISE_EXPORT" not in os.environ
+    assert QEFFBaseModel._layerwise_active is False
+
+    try:
+        with _layerwise._layerwise_export_env():
+            raise RuntimeError("boom")
+    except RuntimeError:
+        pass
+    assert QEFFBaseModel._layerwise_active is False
+
+
+@pytest.mark.llm_model
+def test_layerwise_compile_rejects_unsupported_model():
+    """End-to-end smoke: invoking layerwise=True on llama bubbles the guard error."""
+    try:
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+            "hf-internal-testing/tiny-random-LlamaForCausalLM",
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, "tiny-random/llama")
+    # CausalLM does not expose a layerwise= kwarg today; only DualQPC VLM does.
+    # So this test guards via the helper directly to make the contract explicit
+    # for future surface expansion.
+    from QEfficient.transformers.models import _layerwise
+
+    with pytest.raises(NotImplementedError):
+        _layerwise.assert_layerwise_supported(qeff_model.model.config)
