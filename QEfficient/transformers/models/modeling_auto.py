@@ -15,7 +15,6 @@ from typing import List, Optional, Union
 import numpy as np
 import torch
 import torch.nn as nn
-import transformers
 from transformers import (
     AutoImageProcessor,
     AutoModel,
@@ -1416,11 +1415,18 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 vocab_size=self.model.language_model.config.vocab_size,
                 qaic_config=self.lang_model.model.qaic_config,
             )
-        if (
-            not skip_vision
-            and transformers.modeling_utils.PreTrainedModel._end
-            == transformers.modeling_utils.PreTrainedModel._total_layers
-        ):
+
+        layerwise_export = os.environ.get("LAYERWISE_EXPORT", "False") == "True"
+
+        should_export = not skip_vision and (
+            not layerwise_export
+            or (
+                layerwise_export
+                and QEfficient.base.modeling_qeff.QEFFBaseModel._end
+                == QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers
+            )
+        )
+        if should_export:
             self.vision_model.export(
                 inputs["vision"],
                 output_names["vision"],
@@ -1718,7 +1724,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
                 return filtered
 
-            if self.lang_model.onnx_path is not None and "merged" in self.lang_model.onnx_path:
+            if self.lang_model.onnx_path is not None and "merged" in str(self.lang_model.onnx_path):
                 custom_io_lang = filter_custom_io_lang(custom_io_lang, self.lang_model.onnx_path)
 
             if prefill_only:
@@ -3990,7 +3996,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
             return filtered
 
-        if onnx_path is not None and "merged" in onnx_path:
+        if onnx_path is not None and "merged" in str(onnx_path):
             custom_io = filter_custom_io(custom_io, onnx_path)
 
         qpc_path = self._compile(

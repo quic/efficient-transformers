@@ -110,7 +110,7 @@ class QEffQwen3_5MoeDynamicCache(Cache):
             return cache
 
         # for layer_idx, layer_state in enumerate(past_key_values):
-        layer_idx = Qwen3_5MoeTextModel._start
+        layer_idx = QEffQwen3_5MoeTextModel._start
         if cache.layer_types[layer_idx] == "full_attention":
             key_states, value_states = past_key_values[0]
             layer = QEffDynamicLayer()
@@ -317,7 +317,6 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
 
-    # import ipdb; ipdb.set_trace()
     # Keep half or full tensor for later concatenation
     rotary_dim = cos.shape[-1]
     q_rot, q_pass = q[:, :, :, :rotary_dim], q[:, :, :, rotary_dim:]
@@ -1209,17 +1208,6 @@ class QEffQwen3_5MoeModel(Qwen3_5MoeModel):
             )
             inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
 
-        # if pixel_values_videos is not None:
-        #     video_outputs: BaseModelOutputWithPooling = self.get_video_features(
-        #         pixel_values_videos, video_grid_thw, return_dict=True
-        #     )
-        #     video_embeds = video_outputs.pooler_output
-        #     video_embeds = torch.cat(video_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
-        #     _, video_mask = self.get_placeholder_mask(
-        #         input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds
-        #     )
-        #     inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
-
         if position_ids is None:
             position_ids = self.compute_3d_position_ids(
                 input_ids=input_ids,
@@ -1441,6 +1429,7 @@ class QEffQwen3_5MoeEncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
+        self.config = model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         if hasattr(self.model.model, "visual") and hasattr(self.model.model.visual, "blocks"):
@@ -1470,6 +1459,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.language_model = self.model.model.language_model
+        self.config = model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5MoeDecoderLayer}
@@ -1641,12 +1631,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
 
         logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-        #
         logits = self.lm_head(hidden_states)
-
-        # loss = None
-        # if labels is not None:
-        #     loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.text_config.vocab_size)
 
         return logits, outputs.past_key_values[: len(past_key_values)]
 
@@ -1870,13 +1855,6 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
 
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
-
-        # Add data for KV
-        # kv_cache_shape = get_padding_shape_from_config(
-        #     config=self.model.config.text_config,
-        #     batch_size=fbs if continuous_batching else bs,
-        #     seq_len=dummy_seq_len,
-        # )
 
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
