@@ -58,7 +58,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
     qaic_config: Optional[dict] = None,
-    num_kv_heads_repeat: Optional[int] = 1,
+    num_replicate_kv_heads: Optional[int] = 1,
     test_kv_replicate: Optional[bool] = None,
     torch_dtype: Optional[torch.dtype] = torch.float32,
     compare_results: Optional[bool] = False,
@@ -82,9 +82,9 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         config = set_num_layers_vlm(config, n_layer=n_layer)
         if test_kv_replicate:
             text_config = get_text_config(config)
-            num_kv_heads_repeat = text_config.num_attention_heads // text_config.num_key_value_heads
+            num_replicate_kv_heads = text_config.num_attention_heads // text_config.num_key_value_heads
             qaic_config = qaic_config or {}
-            qaic_config["num_kv_heads_repeat"] = num_kv_heads_repeat
+            qaic_config["num_replicate_kv_heads"] = num_replicate_kv_heads
         if hasattr(config, "model_type") and config.model_type in ["gemma3"]:
             config.text_config._sliding_window_pattern = 2
             config.text_config.layer_types = ["sliding_attention", "full_attention"]
@@ -104,7 +104,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
                 config=config,
                 qaic_config=qaic_config,
                 torch_dtype=torch_dtype,
-                num_kv_heads_repeat=num_kv_heads_repeat,
+                num_replicate_kv_heads=num_replicate_kv_heads,
             )
         else:
             model_hf = load_vlm_model(config)
@@ -114,14 +114,14 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
                 config=config,
                 qaic_config=qaic_config,
                 torch_dtype=torch_dtype,
-                num_kv_heads_repeat=num_kv_heads_repeat,
+                num_replicate_kv_heads=num_replicate_kv_heads,
             )
     else:
         if test_kv_replicate:
             text_config = get_text_config(config)
-            num_kv_heads_repeat = text_config.num_attention_heads // text_config.num_key_value_heads
+            num_replicate_kv_heads = text_config.num_attention_heads // text_config.num_key_value_heads
             qaic_config = qaic_config or {}
-            qaic_config["num_kv_heads_repeat"] = num_kv_heads_repeat
+            qaic_config["num_replicate_kv_heads"] = num_replicate_kv_heads
         model_hf = load_vlm_model_from_config(config)
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
@@ -129,7 +129,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             config=model_hf.config,
             qaic_config=qaic_config,
             torch_dtype=torch_dtype,
-            num_kv_heads_repeat=num_kv_heads_repeat,
+            num_replicate_kv_heads=num_replicate_kv_heads,
         )
     compile_kwargs = {
         "num_devices": num_devices,

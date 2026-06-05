@@ -40,7 +40,7 @@ def set_kv_head_aliases(config, value: int):
             setattr(config, key, value)
 
 
-def calculate_num_kv_heads_repeat(num_devices: int, text_model_config) -> int:
+def calculate_num_replicate_kv_heads(num_devices: int, text_model_config) -> int:
     """
     Choose a KV-repeat value from model config and device count.
 

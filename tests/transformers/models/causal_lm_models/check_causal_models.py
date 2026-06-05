@@ -73,7 +73,7 @@ def check_kv_repeat_causal_lm_pytorch_vs_ai100(
             f"Invalid heads in config for RepeatKV: num_attention_heads ({num_attention_heads}) "
             f"is not divisible by num_key_value_heads ({num_key_value_heads})."
         )
-    num_kv_heads_repeat = num_attention_heads // num_key_value_heads
+    num_replicate_kv_heads = num_attention_heads // num_key_value_heads
 
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
@@ -82,7 +82,7 @@ def check_kv_repeat_causal_lm_pytorch_vs_ai100(
         ctx_len=ctx_len,
         n_layer=n_layer,
         config=config,
-        qaic_config={"num_kv_heads_repeat": num_kv_heads_repeat},
+        qaic_config={"num_replicate_kv_heads": num_replicate_kv_heads},
     )
 
 

@@ -47,7 +47,7 @@ from QEfficient.utils import (
     require_value,
     to_named_specializations,
 )
-from QEfficient.utils.config_utils import calculate_num_kv_heads_repeat
+from QEfficient.utils.config_utils import calculate_num_replicate_kv_heads
 from QEfficient.utils.export_utils import export_wrapper
 
 logger = logging.getLogger(__name__)
@@ -669,20 +669,20 @@ class QEFFBaseModel(ABC):
         model_config = getattr(self.model, "config", None) or getattr(
             getattr(self.model, "model", None), "config", None
         )
-        num_kv_heads_repeat = 1
+        num_replicate_kv_heads = 1
         if model_config is not None:
-            num_kv_heads_repeat = calculate_num_kv_heads_repeat(
+            num_replicate_kv_heads = calculate_num_replicate_kv_heads(
                 num_devices=num_devices,
                 text_model_config=model_config,
             )
 
         if model_config:
             if qaic_config is not None:
-                num_kv_heads_repeat = qaic_config.get("num_kv_heads_repeat", num_kv_heads_repeat)
-                qaic_config["num_kv_heads_repeat"] = num_kv_heads_repeat
+                num_replicate_kv_heads = qaic_config.get("num_replicate_kv_heads", num_replicate_kv_heads)
+                qaic_config["num_replicate_kv_heads"] = num_replicate_kv_heads
                 transform_root = _transform_tracking_root(self.model)
                 applied_transforms = getattr(transform_root, "_qeff_runtime_transforms_applied", set())
-                should_apply_repeat_kv = num_kv_heads_repeat is not None and num_kv_heads_repeat > 1
+                should_apply_repeat_kv = num_replicate_kv_heads is not None and num_replicate_kv_heads > 1
                 if not should_apply_repeat_kv:
                     replicate_kv_transformed = False
                 elif ReplicateKVHeadTransform.__name__ in applied_transforms:
@@ -691,7 +691,7 @@ class QEFFBaseModel(ABC):
                 else:
                     self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(
                         self.model,
-                        num_kv_heads_repeat,
+                        num_replicate_kv_heads,
                     )
                     if replicate_kv_transformed:
                         applied_transforms.add(ReplicateKVHeadTransform.__name__)
@@ -714,7 +714,7 @@ class QEFFBaseModel(ABC):
         if blocking_config is not None:
             self.model, _ = BlockingAttentionTransform.apply(self.model, attn_blocking_config=blocking_config)
             self.hash_params["blocking_kwargs"] = blocking_config
-        self.hash_params["num_kv_heads_repeat"] = num_kv_heads_repeat
+        self.hash_params["num_replicate_kv_heads"] = num_replicate_kv_heads
 
     @dump_qconfig
     def _compile(

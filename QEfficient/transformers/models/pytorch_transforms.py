@@ -1321,7 +1321,7 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
         if new_kv_heads > num_attention_heads or (num_attention_heads % new_kv_heads) != 0:
             raise ValueError(
                 f"Invalid RepeatKV configuration: num_attention_heads={num_attention_heads}, "
-                f"orig_kv_heads={orig_kv_heads}, num_kv_heads_repeat={n_repeat}, new_kv_heads={new_kv_heads}. "
+                f"orig_kv_heads={orig_kv_heads}, num_replicate_kv_heads={n_repeat}, new_kv_heads={new_kv_heads}. "
                 "Expected new_kv_heads <= num_attention_heads and divisibility."
             )
 
@@ -1352,20 +1352,20 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
         return original_module
 
     @classmethod
-    def apply(cls, model: nn.Module, num_kv_heads_repeat: Optional[int] = None, **kwargs) -> Tuple[nn.Module, bool]:
+    def apply(cls, model: nn.Module, num_replicate_kv_heads: Optional[int] = None, **kwargs) -> Tuple[nn.Module, bool]:
         """
         Replicates KV heads in attention modules based on provided multiplier.
 
         Args:
             model: The model to apply the transform to.
             kwargs: Additional arguments for the transformation. Includes:
-                - num_kv_heads_repeat: The number of times to repeat the KV heads.
+                - num_replicate_kv_heads: The number of times to repeat the KV heads.
         """
-        if num_kv_heads_repeat is None:
-            n_repeat = kwargs.pop("num_kv_heads_repeat", 1)
+        if num_replicate_kv_heads is None:
+            n_repeat = kwargs.pop("num_replicate_kv_heads", 1)
         else:
-            kwargs.pop("num_kv_heads_repeat", None)
-            n_repeat = num_kv_heads_repeat
+            kwargs.pop("num_replicate_kv_heads", None)
+            n_repeat = num_replicate_kv_heads
         transformed = False
         if n_repeat is not None and n_repeat > 1:
             if (model.__class__ in cls._module_mapping) or (model.__class__.__name__ in cls._module_string_mapping):
