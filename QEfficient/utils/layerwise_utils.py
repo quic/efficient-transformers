@@ -113,7 +113,9 @@ def build_meta_model(hf_auto_class, pretrained_model_name_or_path: str, **kwargs
 
     config = kwargs.pop("config", None)
     if config is None:
-        config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=kwargs.get("trust_remote_code", False))
+        config = AutoConfig.from_pretrained(
+            pretrained_model_name_or_path, trust_remote_code=kwargs.get("trust_remote_code", False)
+        )
 
     torch_dtype = kwargs.get("torch_dtype", torch.float32)
     if torch_dtype is not None:

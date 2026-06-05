@@ -1556,9 +1556,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         total_layers = self._layerwise_total_layers or self._layerwise_text_total_layers
         if total_layers <= 1:
-            raise ValueError(
-                f"Layer-wise export needs more than one decoder layer, got total_layers={total_layers}."
-            )
+            raise ValueError(f"Layer-wise export needs more than one decoder layer, got total_layers={total_layers}.")
         windows = build_layer_windows(total_layers, self._layerwise_window_size)
         qaic_config = self._layerwise_qaic_config
         init_kwargs = {k: v for k, v in self._layerwise_init_kwargs.items() if k != "_layerwise_from_pretrained_kwargs"}
@@ -3832,9 +3830,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         total_layers = self.num_layers
         if total_layers <= 1:
-            raise ValueError(
-                f"Layer-wise export needs more than one decoder layer, got total_layers={total_layers}."
-            )
+            raise ValueError(f"Layer-wise export needs more than one decoder layer, got total_layers={total_layers}.")
         windows = build_layer_windows(total_layers, layerwise_window_size)
         qaic_config = getattr(self.model, "qaic_config", None)
 

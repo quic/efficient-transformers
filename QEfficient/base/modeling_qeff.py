@@ -8,7 +8,6 @@
 import gc
 import inspect
 import logging
-import os
 import shutil
 import subprocess
 import warnings

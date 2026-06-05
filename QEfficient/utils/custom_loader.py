@@ -59,9 +59,7 @@ class CustomLoader:
     ) -> None:
         self.hf_auto_class = hf_auto_class
         self.pretrained_model_name_or_path = pretrained_model_name_or_path
-        self.layer_prefixes: Tuple[str, ...] = (
-            (layer_prefix,) if isinstance(layer_prefix, str) else tuple(layer_prefix)
-        )
+        self.layer_prefixes: Tuple[str, ...] = (layer_prefix,) if isinstance(layer_prefix, str) else tuple(layer_prefix)
         self.total_layers = int(total_layers)
         self.from_pretrained_kwargs = dict(from_pretrained_kwargs or {})
 
