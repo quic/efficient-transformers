@@ -64,7 +64,7 @@ class QEffQwen3_5GatedDeltaNetCustomRMSNormAIC(nn.Module):
             CustomRMSNormFunc.apply(
                 hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
             )
-        ) * F.silu(gate.to(torch.float32))
+        ) * F.silu(gate.to(gate.dtype))
 
 
 class QEffQwen3_5DynamicCache(Cache):
@@ -338,7 +338,7 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.dtype), attn_weights
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
@@ -530,7 +530,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             query = l2norm(query, dim=-1, eps=1e-6)
             key = l2norm(key, dim=-1, eps=1e-6)
         query, key, value, beta, g = [
-            x.transpose(1, 2).contiguous().to(torch.float32) for x in (query, key, value, beta, g)
+            x.transpose(1, 2).contiguous().to(query.dtype) for x in (query, key, value, beta, g)
         ]
 
         mask = (position_ids[0] != -1).unsqueeze(1)
@@ -1047,8 +1047,8 @@ class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
             if layer_type == "full_attention":
                 layer_names = [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
                 layer_tensors = [
-                    torch.zeros(tuple(kv_cache_shape), dtype=torch.float32),
-                    torch.zeros(tuple(kv_cache_shape), dtype=torch.float32),
+                    torch.zeros(tuple(kv_cache_shape), dtype=self.model.config.dtype),
+                    torch.zeros(tuple(kv_cache_shape), dtype=self.model.config.dtype),
                 ]
                 layer_axes = [
                     {0: batch_axis_name, 2: "ctx_len"},
@@ -1060,8 +1060,8 @@ class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
                 recurrent_shape = (batch_size, layer.num_v_heads, layer.head_k_dim, layer.head_v_dim)
                 layer_names = [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
                 layer_tensors = [
-                    torch.zeros(conv_shape, dtype=torch.float32),
-                    torch.zeros(recurrent_shape, dtype=torch.float32),
+                    torch.zeros(conv_shape, dtype=self.model.config.dtype),
+                    torch.zeros(recurrent_shape, dtype=self.model.config.dtype),
                 ]
                 layer_axes = [{0: batch_axis_name}, {0: batch_axis_name}]
 
@@ -1362,7 +1362,7 @@ class QEffQwen3_5VisionAttention(Qwen3_5VisionAttention):
         col_mask = (cols >= start) & (cols < end)
         block_mask = row_mask & col_mask
 
-        final_mask = torch.ones((seq_len, seq_len), dtype=torch.float32)
+        final_mask = torch.ones((seq_len, seq_len), dtype=self.config.dtype)
         final_mask[block_mask.any(dim=0)] = 0
         final_mask = torch.where(final_mask == 1.0, torch.finfo(q.dtype).min, final_mask)
         attention_mask[0] = final_mask
@@ -1758,10 +1758,10 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
 
         vision_inputs = {}
         lang_inputs = {}
-        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
+        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=self.model.config.dtype)
         vision_inputs["image_grid_thw"] = torch.zeros((inputs_shapes["image_grid_thw"]), dtype=torch.int64)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
-        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
+        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=self.model.config.dtype)
         lang_inputs["position_ids"] = (
             (
                 torch.arange(dummy_seq_len, dtype=torch.int64)
@@ -1788,13 +1788,13 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         for i in range(self.model.config.text_config.num_hidden_layers):
             if self.model.config.text_config.layer_types[i] == "full_attention":
                 for kv in ["key", "value"]:
-                    lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                    lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=self.model.config.dtype))
             else:
                 layer = self.model.language_model.layers[i].linear_attn
                 conv_shape = (linear_batch_size, layer.conv_dim, layer.conv_kernel_size)
                 recurrent_shape = (linear_batch_size, layer.num_v_heads, layer.head_k_dim, layer.head_v_dim)
-                lang_inputs["past_key_values"][i].append(torch.zeros(conv_shape, dtype=torch.float32))
-                lang_inputs["past_key_values"][i].append(torch.zeros(recurrent_shape, dtype=torch.float32))
+                lang_inputs["past_key_values"][i].append(torch.zeros(conv_shape, dtype=self.model.config.dtype))
+                lang_inputs["past_key_values"][i].append(torch.zeros(recurrent_shape, dtype=self.model.config.dtype))
 
         #
         if continuous_batching:

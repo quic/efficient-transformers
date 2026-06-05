@@ -400,11 +400,10 @@ def eager_attention_forward(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-    #
-    # MIN_MASKED_ATTENTION_VALUE = -10000
+
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.dtype), attn_weights
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
@@ -600,7 +599,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             query = query * torch.rsqrt(torch.einsum("bthd,bthd->bth", query, query).unsqueeze(-1) + 1e-6)
             key = key * torch.rsqrt(torch.einsum("bthd,bthd->bth", key, key).unsqueeze(-1) + 1e-6)
         query, key, value, beta, g = [
-            x.transpose(1, 2).contiguous().to(torch.float32) for x in (query, key, value, beta, g)
+            x.transpose(1, 2).contiguous().to(query.dtype) for x in (query, key, value, beta, g)
         ]
 
         mask = (position_ids[0] != -1).unsqueeze(1)
@@ -659,9 +658,9 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # decay_mask = ((g.unsqueeze(-1) - g.unsqueeze(-2)).tril().exp().float()).tril() # original decay_mask
 
         diff = g.unsqueeze(-1) - g.unsqueeze(-2)  # (B, H, num_chunks, C, C)
-        diff = diff * (~mask_strict).float()  # zero upper triangle (strict)
-        decay_mask = diff.exp().float()
-        decay_mask = decay_mask * (~mask_strict).float()  # ensure upper is zero
+        diff = diff * (~mask_strict).to(diff.dtype)  # zero upper triangle (strict)
+        decay_mask = diff.exp().to(diff.dtype)
+        decay_mask = decay_mask * (~mask_strict).to(decay_mask.dtype)  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
         # for i in range(1, chunk_size):
@@ -709,13 +708,14 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         # attn = S64.to(A.dtype)
 
-        #  Newton-Schulz
-        I = torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
+        # Newton-Schulz
+
+        Eye = torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
         L = attn.masked_fill(mask, 0)
 
-        X = I
+        X = Eye
         for _ in range(int(math.log2(chunk_size)) + 2):
-            R = I - (I - L) @ X
+            R = Eye - (Eye - L) @ X
             X = X + X @ R
 
         attn = X
@@ -1491,8 +1491,7 @@ class QEffQwen3_5MoeVisionAttention(Qwen3_5MoeVisionAttention):
         row_mask = (rows >= start) & (rows < end)
         col_mask = (cols >= start) & (cols < end)
         block_mask = row_mask & col_mask
-
-        final_mask = torch.ones((seq_len, seq_len), dtype=torch.float32)
+        final_mask = torch.ones((seq_len, seq_len), dtype=self.config.dtype)
         final_mask[block_mask.any(dim=0)] = 0
         final_mask = torch.where(final_mask == 1.0, torch.finfo(q.dtype).min, final_mask)
         attention_mask[0] = final_mask
@@ -2180,7 +2179,8 @@ def _cumsum_scatter_gather_update_expert_blocked(
     packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
 
     matched_idx = _build_matched_idx_from_cumsum(T2Ei)
-    valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
+    # valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
+    valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
     row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
     for packed_start in range(0, seq_len, packed_chunk_size):
@@ -2209,6 +2209,18 @@ def _cumsum_scatter_gather_update_expert_blocked(
         expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
 
     return expert_out
+
+
+class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
+        router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
+        router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1).to(router_logits.dtype)
+        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
+        router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
+        router_top_value = router_top_value.to(router_logits.dtype)
+        router_scores = router_top_value
+        return router_logits, router_scores, router_indices
 
 
 class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
@@ -2275,7 +2287,7 @@ class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
                 act_fn=act_fn,
                 packed_chunk_size=packed_chunk_size,
             )
-        return experts_out.sum(dim=0)
+        return torch.einsum("ijk->jk", experts_out)
 
     # def orig_forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     #     B, S, H = hidden_states.shape

@@ -24,6 +24,7 @@ config = AutoConfig.from_pretrained(model_id)
 LAYERWISE = True
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
+<<<<<<< HEAD
 config.vision_config.depth = 4
 config.text_config.num_hidden_layers = 4
 config.torch_dtype = "float16"
@@ -34,6 +35,13 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     kv_offload=True,
     config=config,
     layerwise=LAYERWISE,
+=======
+config.vision_config.depth = 5
+config.text_config.num_hidden_layers = 2
+
+qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+    model_id, attn_implementation="eager", kv_offload=True, config=config, dtype=torch.float32
+>>>>>>> 2932096 (Adding fp16 support and comments addresses)
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)

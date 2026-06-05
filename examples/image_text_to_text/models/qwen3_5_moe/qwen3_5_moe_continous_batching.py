@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import torch
 import transformers
 from transformers import AutoConfig, AutoProcessor
 
@@ -16,13 +17,13 @@ config = AutoConfig.from_pretrained(model_id)
 # For faster execution user can run with lesser layers, For Testing Purpose Only
 config.vision_config.depth = 4
 config.text_config.num_hidden_layers = 2
-config.torch_dtype = "float32"
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id,
     attn_implementation="eager",
     kv_offload=True,
     config=config,
+    dtype=torch.float32,
     continuous_batching=True,
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
