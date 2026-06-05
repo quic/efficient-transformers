@@ -578,6 +578,11 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         layer_idx = 0
         start = QEffQwen3VLMoeTextModel._start
         end = QEffQwen3VLMoeTextModel._end
+        if QEffQwen3VLMoeTextModel._end == 0:
+            total_layers = len(self.layers)
+            end = total_layers
+            QEffQwen3VLMoeTextModel._end = total_layers
+            QEffQwen3VLMoeTextModel._total_layers = total_layers
         layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
 
         for layer_idx, decoder_layer in enumerate(self.layers):
@@ -849,11 +854,18 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
                 visual_pos_masks=visual_pos_masks,
                 deepstack_visual_embeds=deepstack_visual_embeds,
             )
-            if outputs.last_hidden_state.shape[1] > 1:
-                hidden_states = outputs.last_hidden_state
+            if QEffQwen3VLMoeTextModel._end == QEffQwen3VLMoeTextModel._total_layers:
+                logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
+                hidden_states = outputs.last_hidden_state[
+                    torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index
+                ]
+                logits = self.model.lm_head(hidden_states)
             else:
-                hidden_states = outputs.last_hidden_state[:, -1:, :]
-            logits = hidden_states
+                if outputs.last_hidden_state.shape[1] > 1:
+                    hidden_states = outputs.last_hidden_state
+                else:
+                    hidden_states = outputs.last_hidden_state[:, -1:, :]
+                logits = hidden_states
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
 
