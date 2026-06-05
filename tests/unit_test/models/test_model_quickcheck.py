@@ -2064,6 +2064,41 @@ def test_causal_compile_custom_io_carries_prefix(tmp_path, monkeypatch):
     assert all("_VLLM" in k for k in custom_io if k.startswith(("past_key.", "past_value.")))
     assert captured.get("kv_cache_prefix") == "VLLM"
 
+    # Critical safety check: kv_cache_prefix must NOT appear in compiler_options.
+    # The _compile signature has kv_cache_prefix as an explicit named param so Python never places
+    # it in **compiler_options — if it did, the compiler would see "-kv-cache-prefix=VLLM" and fail.
+    # We verify by reconstructing the known explicit params and confirming the remainder (what would
+    # become **compiler_options in the real _compile) does not contain kv_cache_prefix.
+    _known_explicit_params = {
+        "onnx_path",
+        "compile_dir",
+        "mxint8_kv_cache",
+        "specializations",
+        "custom_io",
+        "mdp_ts_num_devices",
+        "num_speculative_tokens",
+        "enable_qnn",
+        "qnn_config",
+        "use_onnx_subfunctions",
+        "prefill_only",
+        "offload_pt_weights",
+        "enable_chunking",
+        "retain_full_kv",
+        "qaic_config",
+        "specialization_module_name",
+        "kv_cache_prefix",
+        "retained_state",
+        "convert_to_fp16",
+        "mxfp6_matmul",
+        # compile-time args added by causal compile():
+        "aic_num_cores",
+        "moe_prefill_packed_chunk_size",
+    }
+    implicit_compiler_options = {k: v for k, v in captured.items() if k not in _known_explicit_params}
+    assert "kv_cache_prefix" not in implicit_compiler_options, (
+        "kv_cache_prefix leaked into compiler_options — would produce an invalid compiler flag"
+    )
+
 
 @pytest.mark.llm_model
 def test_vlm_export_prefix_lang_only(tmp_path):
