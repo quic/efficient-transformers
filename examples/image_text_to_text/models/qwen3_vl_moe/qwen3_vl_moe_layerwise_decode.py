@@ -22,20 +22,20 @@ from transformers import AutoConfig
 from QEfficient import QEFFAutoModelForImageTextToText
 
 # MODEL_ID = "Qwen/Qwen3-VL-235B-A22B-Instruct"
-MODEL_ID = "tiny-random/qwen3-vl-moe"
+# MODEL_ID = "tiny-random/qwen3-vl-moe"
+MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 
 
 def main():
     config = AutoConfig.from_pretrained(MODEL_ID)
-    config.torch_dtype = "float32"
-    config.vision_config.deepstack_visual_indexes = [8, 27, 36]
+    config.torch_dtype = "float16"
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         MODEL_ID,
         attn_implementation="eager",
         kv_offload=True,
         config=config,
-        torch_dtype=torch.float32,
+        torch_dtype=torch.float16,
     )
 
     qpc_path = qeff_model.compile(
@@ -47,6 +47,7 @@ def main():
         height=354,
         width=536,
         mxfp6_matmul=True,
+        mxint8_kv_cache=True,
         aic_enable_depth_first=True,
         skip_vision=True,
         split_retained_state_io=True,

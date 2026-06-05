@@ -8,7 +8,6 @@
 import gc
 import inspect
 import logging
-import os
 import shutil
 import subprocess
 import warnings
@@ -545,9 +544,15 @@ class QEFFBaseModel(ABC):
             z = example_inputs.pop("input_ids")
             if is_vision:
                 hidden_size = self.model.language_model.config.hidden_size
+                embed_dtype = getattr(self.model.language_model.config, "torch_dtype", None)
             else:
                 hidden_size = self.model.model.config.hidden_size
-            inputs_embeds = torch.rand(z.shape[0], z.shape[1], hidden_size, device=z.device)
+                embed_dtype = getattr(self.model.model.config, "torch_dtype", None)
+            # Match the model's dtype so per-window export does not introduce a
+            # float32/float16 mismatch when running through fp16 decoder layers.
+            if embed_dtype is None:
+                embed_dtype = next(self.model.parameters()).dtype
+            inputs_embeds = torch.rand(z.shape[0], z.shape[1], hidden_size, device=z.device, dtype=embed_dtype)
             example_inputs["inputs_embeds"] = inputs_embeds
             dynamic_axes["inputs_embeds"] = dynamic_axes.pop("input_ids")
 

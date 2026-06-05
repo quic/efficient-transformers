@@ -131,6 +131,103 @@ def _null_outside_window_layers(model, *, apply_text: bool = True) -> None:
                 text_layers[idx] = None
 
 
+def _find_language_model(model):
+    """Locate the inner language_model that owns sin_cached / cos_cached / embed_tokens."""
+    candidates = []
+    if hasattr(model, "model") and hasattr(model.model, "language_model"):
+        candidates.append(model.model.language_model)
+    if hasattr(model, "language_model"):
+        candidates.append(model.language_model)
+    if hasattr(model, "model"):
+        candidates.append(model.model)
+    candidates.append(model)
+    for cand in candidates:
+        if any(hasattr(cand, attr) for attr in ("sin_cached", "cos_cached", "embed_tokens")):
+            return cand
+    return None
+
+
+def _slim_for_window_export(qeff_model, *, ctx_len: Optional[int]) -> None:
+    """Shrink top-level params that are unused (or oversized) for this window.
+
+    Without this, every per-window ONNX shard re-bakes the full RoPE base table
+    (``sin_cached``/``cos_cached`` of shape ``[max_position_embeddings, head_dim]``,
+    typically tens of MB in fp32) plus the full vocab embedding, blowing each
+    layer-window shard up by 1-2 orders of magnitude over the actual layer
+    weight footprint. Each top-level param is touched in-place; the next
+    window rebuilds the model from scratch via the factory so there is no
+    leakage across windows.
+    """
+    import torch
+
+    inner = qeff_model.model if hasattr(qeff_model, "model") else qeff_model
+    lm = _find_language_model(inner)
+    if lm is None:
+        return
+
+    pt = transformers.modeling_utils.PreTrainedModel
+    text_start = int(getattr(pt, "_text_start", getattr(pt, "_start", 0)))
+    text_end = int(getattr(pt, "_text_end", getattr(pt, "_end", 0)))
+    text_total = int(getattr(pt, "_text_total_layers", getattr(pt, "_total_layers", 0) or 0))
+
+    # 1) Truncate sin_cached / cos_cached to the rows actually addressable at
+    #    inference time (ctx_len). The original tables are sized to
+    #    max_position_embeddings (often 256k+) which is dead weight for export.
+    if ctx_len:
+        for attr in ("sin_cached", "cos_cached"):
+            param = getattr(lm, attr, None)
+            if param is None or not hasattr(param, "shape") or param.dim() < 2:
+                continue
+            cur_rows = int(param.shape[0])
+            target_rows = max(1, int(ctx_len))
+            if cur_rows <= target_rows:
+                continue
+            with torch.no_grad():
+                truncated = param.detach()[:target_rows].clone().contiguous()
+            new_param = torch.nn.Parameter(truncated, requires_grad=False)
+            setattr(lm, attr, new_param)
+
+    # 2) Drop the vocab embedding for windows that don't run input-id lookup.
+    #    The first window (text_start == 0) is the only one that calls
+    #    ``get_input_embeddings()(input_ids)``; later windows take
+    #    ``inputs_embeds`` directly so the embedding matrix is unreached but
+    #    still serialized. Replace its weight with a tiny placeholder of the
+    #    same dtype/device so module attributes stay valid.
+    if text_start > 0 and hasattr(lm, "embed_tokens"):
+        embed = getattr(lm, "embed_tokens", None)
+        weight = getattr(embed, "weight", None)
+        if weight is not None and weight.dim() == 2 and weight.shape[0] > 1:
+            with torch.no_grad():
+                tiny = torch.zeros((1, weight.shape[1]), dtype=weight.dtype, device=weight.device)
+            embed.weight = torch.nn.Parameter(tiny, requires_grad=False)
+
+    # 3) Drop the lm_head for windows that aren't the last one. Only the final
+    #    window applies ``self.model.lm_head(hidden_states)``.
+    outer = qeff_model.model if hasattr(qeff_model, "model") else qeff_model
+    lm_head = getattr(outer, "lm_head", None)
+    if (
+        lm_head is not None
+        and text_total > 0
+        and text_end < text_total
+        and hasattr(lm_head, "weight")
+        and lm_head.weight is not None
+        and lm_head.weight.dim() == 2
+        and lm_head.weight.shape[0] > 1
+    ):
+        with torch.no_grad():
+            tiny = torch.zeros(
+                (1, lm_head.weight.shape[1]),
+                dtype=lm_head.weight.dtype,
+                device=lm_head.weight.device,
+            )
+        lm_head.weight = torch.nn.Parameter(tiny, requires_grad=False)
+        if getattr(lm_head, "bias", None) is not None:
+            lm_head.bias = torch.nn.Parameter(
+                torch.zeros((1,), dtype=lm_head.bias.dtype, device=lm_head.bias.device),
+                requires_grad=False,
+            )
+
+
 def _install_window_patch(model_cls) -> None:
     if getattr(model_cls, "_window_patch_installed", False):
         return
@@ -352,6 +449,7 @@ def run_layerwise(
             last_qeff_model = qeff_model
             if hasattr(qeff_model, "model"):
                 _null_outside_window_layers(qeff_model.model, apply_text=True)
+            _slim_for_window_export(qeff_model, ctx_len=compile_kwargs.get("ctx_len"))
 
             window_kwargs = dict(compile_kwargs)
             # skip_lang is a VLM-only kwarg; only inject when present in caller's kwargs.
