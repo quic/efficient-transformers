@@ -587,11 +587,11 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         decay_mask = decay_mask * (~mask_strict).float()  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
-        for i in range(1, chunk_size):
-            row = attn[..., i, :i].clone()
-            sub = attn[..., :i, :i].clone()
-            attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
-        attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
+        # for i in range(1, chunk_size):
+        #     row = attn[..., i, :i].clone()
+        #     sub = attn[..., :i, :i].clone()
+        #     attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
+        # attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
 
         ## Approximation code ##
         # A = attn
@@ -631,6 +631,17 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         #     S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
 
         # attn = S64
+
+        # Newton-Schulz
+        Eye = torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
+        L = attn.masked_fill(mask, 0)
+
+        X = Eye
+        for _ in range(int(math.log2(chunk_size)) + 2):
+            R = Eye - (Eye - L) @ X
+            X = X + X @ R
+
+        attn = X
 
         value = attn @ v_beta
         k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))
