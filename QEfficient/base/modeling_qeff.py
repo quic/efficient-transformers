@@ -90,7 +90,23 @@ class QEFFBaseModel(ABC):
         self.is_transformed: bool = False
 
         self._normalize_torch_dtype()
-        # Apply the transformations
+        # Apply the transformations. For layer-wise export the model arrives on
+        # the `meta` device and the data-mutating transforms must run on the
+        # real per-window weights instead, so application is deferred and the
+        # loop calls `apply_pytorch_transforms()` after streaming each window.
+        if not getattr(self, "_defer_pytorch_transforms", False):
+            self.apply_pytorch_transforms()
+
+        if self.config.torch_dtype == torch.bfloat16:
+            logger.warning("BFloat16 dtype is not yet supported; converting to float16 precision!")
+
+    def apply_pytorch_transforms(self) -> bool:
+        """Apply the class ``_pytorch_transforms`` to ``self.model`` in place.
+
+        Returns ``True`` if any transform reported a change. Used both by the
+        normal init flow and by the layer-wise export loop (after streaming each
+        window's real weights into ``self.model``).
+        """
         any_transformed = False
         for transform in self._pytorch_transforms:
             self.model, transformed = transform.apply(self.model)
@@ -100,9 +116,7 @@ class QEFFBaseModel(ABC):
             warnings.warn(f"No transforms applied to model: {self.model_name}. It may be an unsupported model!")
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
-
-        if self.config.torch_dtype == torch.bfloat16:
-            logger.warning("BFloat16 dtype is not yet supported; converting to float16 precision!")
+        return any_transformed
 
     def _normalize_torch_dtype(self):
         """
@@ -502,9 +516,6 @@ class QEFFBaseModel(ABC):
             self.onnx_path = onnx_path
             return onnx_path
 
-        # check if the model is in meta state or weights are offloaded
-        self._model_offloaded_check()
-
         export_dir.mkdir(parents=True, exist_ok=True)
 
         # Setup temporary paths
@@ -757,9 +768,6 @@ class QEFFBaseModel(ABC):
                     **compiler_options,
                 )
         onnx_path = Path(onnx_path)
-        if os.environ.get("LAYERWISE_EXPORT", "False") == "True":
-            return onnx_path
-
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
         if not onnx_path.is_file():
