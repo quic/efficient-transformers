@@ -300,9 +300,6 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
     cos = cos[position_ids]
     sin = sin[position_ids]
 
-    cos = cos[position_ids]
-    sin = sin[position_ids]
-
     cos = qeff_apply_interleaved_mrope(cos, mrope_section)
     sin = qeff_apply_interleaved_mrope(sin, mrope_section)
 
@@ -605,7 +602,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         #     L = L + Ak
         #     Ak = Ak @ A
 
-        attn = L
+        # attn = L
 
         ## Factorized Approximation code ##
         # eye = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)  #
