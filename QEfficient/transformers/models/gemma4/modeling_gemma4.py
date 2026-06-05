@@ -20,7 +20,6 @@ from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutpu
 from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4ForCausalLM,
     Gemma4ForConditionalGeneration,
-    Gemma4RMSNorm,
     Gemma4TextAttention,
     Gemma4TextDecoderLayer,
     Gemma4TextExperts,
@@ -135,14 +134,15 @@ class QEffGemma4TextRouter(Gemma4TextRouter):
         return router_probabilities, top_k_weights, top_k_index
 
 
-class QEffGemma4CustomRMSNormAIC(Gemma4RMSNorm):
+class QEffGemma4CustomRMSNormAIC(nn.Module):
     """
     Gemma4 RMSNorm replacement that preserves `with_scale=False` behavior while
     still exporting through the compiler-known custom RMSNorm op.
     """
 
-    def __qeff_init__(self):
-        pass
+    def _norm(self, hidden_states: torch.Tensor):
+        mean_squared = hidden_states.pow(2).mean(-1, keepdim=True) + self.eps
+        return hidden_states * torch.pow(mean_squared, -0.5)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         if not _is_onnx_export():

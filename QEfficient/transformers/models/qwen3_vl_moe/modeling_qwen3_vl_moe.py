@@ -642,12 +642,8 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
     ):
         visual_pos_masks = visual_pos_masks.unsqueeze(-1).expand(-1, -1, self.config.hidden_size)
         visual_embeds = visual_embeds.to(hidden_states.device, hidden_states.dtype)
-        hidden_states = hidden_states.clone()
-        mixed_embeds = hidden_states + visual_embeds
-
-        local_this = torch.where(visual_pos_masks, mixed_embeds, hidden_states)
-
-        return local_this
+        visual_mask = visual_pos_masks.to(hidden_states.dtype)
+        return hidden_states + (visual_embeds * visual_mask)
 
 
 class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
@@ -657,9 +653,10 @@ class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBloc
         x = hidden_states.view(T, H)
         act = getattr(self.experts, "act_fn", F.silu)
 
-        gate_out = self.gate(x)
-        router_logits, top_w, top_i = gate_out
-        top_w = top_w / torch.einsum("bi->b", top_w)[:, None]
+        router_hidden_states = x.reshape(-1, self.gate.hidden_dim)
+        router_logits = F.linear(router_hidden_states, self.gate.weight)
+        top_w, top_i = torch.topk(router_logits, self.gate.top_k, dim=-1)
+        top_w = F.softmax(top_w, dim=-1, dtype=torch.float)
         top_w = top_w.to(hidden_states.dtype)
         num_experts = getattr(self, "num_experts", self.gate.num_experts)
         routing_weights = torch.zeros((T, num_experts), dtype=x.dtype)
@@ -900,16 +897,14 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         B, S, H = hidden_states.shape
         T = B * S
         x = hidden_states.view(T, H)
-
-        gate_out = self.gate(x)
-        router_logits, top_w, top_i = gate_out
-        top_w = top_w / torch.einsum("bi->b", top_w)[:, None]
+        router_hidden_states = x.reshape(-1, self.gate.hidden_dim)
+        router_logits = F.linear(router_hidden_states, self.gate.weight)
+        top_w, top_i = torch.topk(router_logits, self.gate.top_k, dim=-1)
+        top_w = F.softmax(top_w, dim=-1, dtype=torch.float)
         top_w = top_w.to(x.dtype)
         idx = top_i.reshape(-1)
-        w_up = self.experts.gate_up_proj.index_select(0, idx)
-        w_dn = self.experts.down_proj.index_select(0, idx)
-        if w_up.shape[1] != H:
-            w_up = w_up.transpose(1, 2)
+        w_up = self.experts.gate_up_proj.transpose(1, 2).index_select(0, idx)
+        w_dn = self.experts.down_proj.transpose(1, 2).index_select(0, idx)
 
         top_k = top_i.shape[-1]
         xk = x.unsqueeze(1).expand(-1, top_k, -1).contiguous()
@@ -919,8 +914,6 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         half = I2 // 2
         gate, up = gate_up[..., :half], gate_up[..., half:]
         intermediate = up * self.experts.act_fn(gate)
-        if w_dn.shape[1] != half:
-            w_dn = w_dn.transpose(1, 2)
         experts_out = torch.bmm(intermediate, w_dn)
         experts_out = experts_out.view(T, top_k, H) * top_w.unsqueeze(-1)
         experts_out = torch.einsum("bnd->bd", experts_out)
