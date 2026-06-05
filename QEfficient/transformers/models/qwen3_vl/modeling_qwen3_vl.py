@@ -57,6 +57,18 @@ def _should_export_embedding_output(module) -> bool:
     return False
 
 
+def _is_single_shot_mode(module) -> bool:
+    """True when model is single-shot prefill only (reranker/embedding) — no KV cache needed."""
+    for holder in (module, getattr(module, "model", None)):
+        if holder is None:
+            continue
+        qaic_config = getattr(holder, "qaic_config", None)
+        if isinstance(qaic_config, dict):
+            if qaic_config.get("no_kv_cache", False) or qaic_config.get("export_embedding", False):
+                return True
+    return False
+
+
 def qeff_apply_interleaved_mrope(freqs, mrope_section):
     """Apply interleaved MRoPE to 3D rotary embeddings.
     Reorganizes frequency layout from chunked [TTT...HHH...WWW] to
@@ -549,7 +561,9 @@ class QEffQwen3VLTextModel(Qwen3VLTextModel):
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
-        if self.config.use_cache and not isinstance(past_key_values, Cache):
+        return_legacy_cache = False
+        effective_use_cache = use_cache if use_cache is not None else self.config.use_cache
+        if effective_use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
 
@@ -567,7 +581,11 @@ class QEffQwen3VLTextModel(Qwen3VLTextModel):
         elif position_ids.dim() == 2:
             position_ids = position_ids[None, ...].expand(3, position_ids.shape[0], -1)
 
-        target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
+        target_length = (
+            attention_mask.shape[-1]
+            if isinstance(attention_mask, torch.Tensor)
+            else (past_seen_tokens if past_seen_tokens > 0 else inputs_embeds.shape[1])
+        )
         causal_mask = _create_causal_mask(
             position_ids=position_ids[0], target_length=target_length, sliding_window=None
         )
@@ -696,7 +714,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         deepstack_features,
         position_ids,
         image_idx,
-        past_key_values,
+        past_key_values=None,
         batch_index: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
@@ -705,7 +723,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         selected = input_ids == self.model.config.image_token_id
         indices1 = selected.to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-        indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+        indices0 = torch.arange(selected.shape[0], device=selected.device).view(-1, 1)
         image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
 
         num_features, bs, split_size, C = deepstack_features.shape
@@ -723,13 +741,14 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             visual_pos_masks = image_mask
             deepstack_visual_embeds = deepstack_features_expanded
 
+        single_shot = _is_single_shot_mode(self)
         outputs = self.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
-            past_key_values=past_key_values,
+            past_key_values=None if single_shot else past_key_values,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
-            use_cache=True,
+            use_cache=not single_shot,
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
         )
@@ -737,6 +756,10 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
         logits = self.model.lm_head(hidden_states)
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        if single_shot:
+            if _should_export_embedding_output(self):
+                return logits, vision_embeds, deepstack_features, image_idx, hidden_states
+            return logits, vision_embeds, deepstack_features, image_idx
         if _should_export_embedding_output(self):
             return logits, vision_embeds, deepstack_features, image_idx, hidden_states, outputs.past_key_values
         return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
@@ -920,6 +943,8 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int64)
         inputs = {}
         if kv_offload:
+            if _is_single_shot_mode(self):
+                lang_inputs.pop("past_key_values")
             inputs["vision"] = vision_inputs
             inputs["lang"] = lang_inputs
         else:
@@ -1101,6 +1126,11 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
 
             lang = [lang_prefill, lang_decode]
 
+        # Single-shot (reranker/embedding): no KV cache → ctx_len not referenced in ONNX
+        if _is_single_shot_mode(self):
+            for spec in lang:
+                spec.pop("ctx_len", None)
+
         specializations = {}
 
         if kv_offload:
@@ -1149,6 +1179,10 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         dynamic_axes = {}
 
         if kv_offload:
+            if _is_single_shot_mode(self):
+                for i in range(num_layers):
+                    lang_dynamic_axes.pop(f"past_key.{i}", None)
+                    lang_dynamic_axes.pop(f"past_value.{i}", None)
             dynamic_axes["vision"] = vision_dynamic_axes
             dynamic_axes["lang"] = lang_dynamic_axes
         else:
@@ -1166,11 +1200,25 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
 
         output_names = {}
         if kv_offload:
-            lang_output_names.insert(1, "vision_embeds_RetainedState")
-            lang_output_names.insert(2, "image_idx_output")
-            lang_output_names.insert(2, "deepstack_features_RetainedState")
-            if _should_export_embedding_output(self):
-                lang_output_names.insert(4, "embedding_output")
+            if _is_single_shot_mode(self):
+                # Single-shot: keep vision/deepstack retained states, drop KV retained states.
+                # Order matches QEffQwen3VLDecoderWrapper.forward single-shot return:
+                # reranker: (logits, vision_embeds, deepstack_features, image_idx)
+                # embedding: (logits, vision_embeds, deepstack_features, image_idx, hidden_states)
+                lang_output_names = [
+                    "logits",
+                    "vision_embeds_RetainedState",
+                    "deepstack_features_RetainedState",
+                    "image_idx_output",
+                ]
+                if _should_export_embedding_output(self):
+                    lang_output_names.append("embedding_output")  # hidden_states is output[4]
+            else:
+                lang_output_names.insert(1, "vision_embeds_RetainedState")
+                lang_output_names.insert(2, "image_idx_output")
+                lang_output_names.insert(2, "deepstack_features_RetainedState")
+                if _should_export_embedding_output(self):
+                    lang_output_names.insert(4, "embedding_output")
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
         else:

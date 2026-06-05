@@ -96,6 +96,7 @@ def main() -> None:
         kv_offload=True,
         trust_remote_code=True,
         config=config,
+        qaic_config={"no_kv_cache": True},
     )
 
     # 2) Build reranker helper and reference payload.

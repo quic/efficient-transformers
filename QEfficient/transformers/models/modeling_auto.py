@@ -1268,6 +1268,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
         self.model = model
         self.config = model.config
+        # Propagate qaic_config to the full model so helpers like _is_single_shot_mode
+        # can detect the mode when get_output_names/get_dummy_inputs are called on it.
+        model.qaic_config = qaic_config
 
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, qaic_config=qaic_config, **kwargs)
