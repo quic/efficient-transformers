@@ -241,6 +241,7 @@ def main():
     text_total_layers = getattr(text_config, "num_hidden_layers", None)
     if text_total_layers is None:
         raise ValueError("Could not resolve `num_hidden_layers` from config.text_config.")
+    config.text_config.num_hidden_layers = text_total_layers
     _ensure_pretrained_window_attrs()
     _install_shard_window_patch()
 

@@ -14,7 +14,9 @@ jobs:
           python-version: "3.11"
 
       - name: Install package and test dependencies
-        run: pip install -e ".[test]"
+        run: |
+          pip install -e ".[test]"
+          pip install onnx_ir
 
       - name: Run unit tests
         env:

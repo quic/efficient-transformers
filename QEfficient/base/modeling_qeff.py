@@ -63,7 +63,7 @@ class QEFFBaseModel(ABC):
     """
 
     _start = 0
-    _end = 1
+    _end = 0
     _total_layers = None
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]

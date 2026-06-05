@@ -29,7 +29,6 @@ __all__ = [
     "CtxGatherFuncBlockedKV",
     "CtxScatterFunc",
     "CtxGatherFunc3D",
-    "CtxGatherFunc3DGeneralized",
     "CtxScatterFunc3D",
     "CtxGatherFunc3DGeneralized",
     "CtxScatterFunc3DGeneralized",

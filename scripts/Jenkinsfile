@@ -65,7 +65,8 @@ pipeline {
                     pip install junitparser pytest-xdist &&
                     pip install librosa==0.10.2 soundfile==0.13.1 &&
                     pip install qwen-vl-utils==0.0.14 &&
-                    pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1
+                    pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1 &&
+                    pip install onnx_ir
                     rm -rf QEfficient"
                 '''
             }
