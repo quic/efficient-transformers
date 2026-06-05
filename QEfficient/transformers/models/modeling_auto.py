@@ -15,7 +15,6 @@ from typing import List, Optional, Union
 import numpy as np
 import torch
 import torch.nn as nn
-import transformers
 from transformers import (
     AutoImageProcessor,
     AutoModel,
@@ -1416,18 +1415,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 vocab_size=self.model.language_model.config.vocab_size,
                 qaic_config=self.lang_model.model.qaic_config,
             )
-        
+
         layerwise_export = os.environ.get("LAYERWISE_EXPORT", "False") == "True"
 
-        should_export = (
-            not skip_vision
-            and (
-                not layerwise_export
-                or (
-                    layerwise_export
-                    and QEfficient.base.modeling_qeff.QEFFBaseModel._end
-                    == QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers
-                )
+        should_export = not skip_vision and (
+            not layerwise_export
+            or (
+                layerwise_export
+                and QEfficient.base.modeling_qeff.QEFFBaseModel._end
+                == QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers
             )
         )
         if should_export:
