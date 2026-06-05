@@ -48,6 +48,7 @@
         "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
         "hpcai-tech/grok-1"
     ],
+
     "image_text_to_text_models": [
         "Qwen/Qwen3.5-0.8B",
         "Qwen/Qwen3.6-35B-A3B",
@@ -66,6 +67,7 @@
         "OpenGVLab/InternVL2_5-1B",
         "OpenGVLab/InternVL3_5-1B"
     ],
+
     "embedding_models": [
         "BAAI/bge-base-en-v1.5",
         "BAAI/bge-large-en-v1.5",
@@ -79,6 +81,7 @@
         "ibm-granite/granite-embedding-278m-multilingual",
         "intfloat/multilingual-e5-large"
     ],
+
     "audio_models": [
         "openai/whisper-tiny",
         "openai/whisper-base",
@@ -87,10 +90,12 @@
         "openai/whisper-large",
         "openai/whisper-large-v3-turbo"
     ],
+
     "audio_embedding_models": [
         "facebook/wav2vec2-base",
         "facebook/wav2vec2-large"
     ],
+
     "sequence_models": [
         "meta-llama/Llama-Prompt-Guard-2-22M"
     ]
