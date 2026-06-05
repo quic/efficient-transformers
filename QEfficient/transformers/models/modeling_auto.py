@@ -1724,7 +1724,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
                 return filtered
 
-            if self.lang_model.onnx_path is not None and "merged" in self.lang_model.onnx_path:
+            if self.lang_model.onnx_path is not None and "merged" in str(self.lang_model.onnx_path):
                 custom_io_lang = filter_custom_io_lang(custom_io_lang, self.lang_model.onnx_path)
 
             if prefill_only:
@@ -3996,7 +3996,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
             return filtered
 
-        if onnx_path is not None and "merged" in onnx_path:
+        if onnx_path is not None and "merged" in str(onnx_path):
             custom_io = filter_custom_io(custom_io, onnx_path)
 
         qpc_path = self._compile(

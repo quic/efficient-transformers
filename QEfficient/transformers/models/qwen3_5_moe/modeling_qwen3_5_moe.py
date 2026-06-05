@@ -110,7 +110,7 @@ class QEffQwen3_5MoeDynamicCache(Cache):
             return cache
 
         # for layer_idx, layer_state in enumerate(past_key_values):
-        layer_idx = Qwen3_5MoeTextModel._start
+        layer_idx = QEffQwen3_5MoeTextModel._start
         if cache.layer_types[layer_idx] == "full_attention":
             key_states, value_states = past_key_values[0]
             layer = QEffDynamicLayer()
