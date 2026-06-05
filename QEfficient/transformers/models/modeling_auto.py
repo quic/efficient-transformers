@@ -1416,11 +1416,21 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 vocab_size=self.model.language_model.config.vocab_size,
                 qaic_config=self.lang_model.model.qaic_config,
             )
-        if (
+        
+        layerwise_export = os.environ.get("LAYERWISE_EXPORT", "False") == "True"
+
+        should_export = (
             not skip_vision
-            and transformers.modeling_utils.PreTrainedModel._end
-            == transformers.modeling_utils.PreTrainedModel._total_layers
-        ):
+            and (
+                not layerwise_export
+                or (
+                    layerwise_export
+                    and QEfficient.base.modeling_qeff.QEFFBaseModel._end
+                    == QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers
+                )
+            )
+        )
+        if should_export:
             self.vision_model.export(
                 inputs["vision"],
                 output_names["vision"],
