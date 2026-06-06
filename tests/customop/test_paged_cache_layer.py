@@ -153,7 +153,57 @@ def test_paged_layer_ccl_partial_read():
     assert torch.allclose(pv, cv), "CCL V mismatch"
 
 
+def test_paged_padding_routes_to_null_block_no_corruption():
+    """Different-length sequences with padding (position_ids < 0).
+
+    Padded writes must go to the reserved null block (never read) and must NOT
+    corrupt any real block. Valid-region reads must match an independent oracle.
+    """
+    torch.manual_seed(99)
+    bsz, heads, dim = 2, 2, 4
+    page_size, max_blocks = 4, 6
+    ctx_len = page_size * max_blocks
+    num_blocks = bsz * max_blocks + 1  # reserve last as null block
+    null_block = num_blocks - 1
+
+    block_table = _make_block_table(bsz, max_blocks, seed=21)  # references blocks [0, bsz*max_blocks)
+    batch_index = torch.arange(bsz).view(bsz, 1).to(torch.int32)
+
+    paged = QEffPagedDynamicLayer.from_tensors(
+        torch.zeros(num_blocks, heads, page_size, dim), torch.zeros(num_blocks, heads, page_size, dim)
+    )
+
+    # Sequence lengths differ: seq0=10, seq1=5. Prefill width = 10, seq1 padded with pos=-1.
+    lens = [10, 5]
+    width = max(lens)
+    pos = torch.full((bsz, width), -1, dtype=torch.int32)
+    for b, L in enumerate(lens):
+        pos[b, :L] = torch.arange(L)
+    key = torch.randn(bsz, heads, width, dim)
+    val = torch.randn(bsz, heads, width, dim)
+
+    # Independent oracle: contiguous cache, write ONLY valid tokens.
+    oracle_k = torch.zeros(bsz, heads, ctx_len, dim)
+    oracle_v = torch.zeros(bsz, heads, ctx_len, dim)
+    for b, L in enumerate(lens):
+        oracle_k[b, :, :L, :] = key[b, :, :L, :]
+        oracle_v[b, :, :L, :] = val[b, :, :L, :]
+
+    pk, pv = paged.update(
+        key, val, {"batch_index": batch_index, "position_ids": pos, "block_table": block_table}
+    )
+
+    for b, L in enumerate(lens):
+        assert torch.allclose(pk[b, :, :L, :], oracle_k[b, :, :L, :]), f"seq{b} K corrupted by padding"
+        assert torch.allclose(pv[b, :, :L, :], oracle_v[b, :, :L, :]), f"seq{b} V corrupted by padding"
+
+    # The null block must have received the padded writes (proves routing happened):
+    # seq1 had width-L1 = 5 padded tokens.
+    assert paged.keys[null_block].abs().sum() > 0, "padded writes did not reach the null block"
+
+
 if __name__ == "__main__":
     test_paged_layer_matches_contiguous_layer()
     test_paged_layer_ccl_partial_read()
+    test_paged_padding_routes_to_null_block_no_corruption()
     print("PAGED CACHE LAYER PARITY: ALL PASS")

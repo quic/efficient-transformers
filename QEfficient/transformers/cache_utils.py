@@ -406,24 +406,39 @@ class QEffPagedDynamicLayer(CacheLayerMixin):
             self.is_initialized = True
 
     @staticmethod
-    def _write_indices(position_ids, block_table, page_size):
-        """(physical_block, intra_offset) int32 tensors of shape [bsz, seq] for write."""
+    def _write_indices(position_ids, block_table, page_size, num_blocks):
+        """(physical_block, intra_offset) int32 tensors of shape [bsz, seq] for write.
+
+        Padding positions (``position_ids < 0``) are routed to the reserved **null
+        block** (physical index ``num_blocks - 1``, which no ``block_table`` entry
+        references and ``_read_indices`` never returns), so padded writes neither
+        crash eager indexing nor corrupt real KV — and the behaviour is identical
+        on the ONNX/AIC ScatterND path (all indices are in range).
+        """
+        invalid = position_ids < 0
         logical_block = (position_ids // page_size).clamp(min=0).to(torch.int64)  # [bsz, seq]
         phys_block = torch.gather(block_table, 1, logical_block).to(torch.int32)
         offset = (position_ids % page_size).to(torch.int32)
-        # Drop padding writes (position < 0) by sending them to an out-of-range
-        # page offset, mirroring the continuous-batching scatter sentinel.
-        invalid = torch.iinfo(torch.int32).max
-        offset = torch.where(position_ids < 0, torch.tensor(invalid, dtype=torch.int32), offset)
+        null_block = num_blocks - 1
+        phys_block = torch.where(invalid, torch.tensor(null_block, dtype=torch.int32), phys_block)
+        offset = torch.where(invalid, torch.zeros_like(offset), offset)
         return phys_block, offset
 
     @staticmethod
-    def _read_indices(position_ids, block_table, page_size, ctx_len):
-        """(physical_block, intra_offset, invalid_mask) for reading logical [0, ctx_len)."""
+    def _read_indices(position_ids, block_table, page_size, ctx_len, num_blocks):
+        """(physical_block, intra_offset, invalid_mask) for reading logical [0, ctx_len).
+
+        ``phys_block`` is clamped into ``[0, num_blocks)`` so that unused/garbage
+        ``block_table`` entries (beyond the request's allocated blocks) can never
+        cause an out-of-range gather; positions past the real length are zeroed via
+        ``invalid_mask`` (and masked by the attention mask), matching the
+        contiguous path.
+        """
         bsz = position_ids.shape[0]
         ctx_indices = torch.arange(ctx_len)[None, :].expand(bsz, ctx_len)  # [bsz, ctx]
         logical_block = (ctx_indices // page_size).to(torch.int64)
         phys_block = torch.gather(block_table, 1, logical_block).to(torch.int32)
+        phys_block = phys_block.clamp(0, num_blocks - 1)
         offset = (ctx_indices % page_size).to(torch.int32)
         gather_limit = position_ids.max(1, keepdim=True).values  # [bsz, 1]
         invalid_mask = ctx_indices > gather_limit  # [bsz, ctx]
@@ -439,7 +454,8 @@ class QEffPagedDynamicLayer(CacheLayerMixin):
         position_ids = cache_kwargs.get("position_ids")
         block_table = cache_kwargs.get("block_table")
         page_size = self.keys.shape[2]
-        phys_block, offset = self._write_indices(position_ids, block_table, page_size)
+        num_blocks = self.keys.shape[0]
+        phys_block, offset = self._write_indices(position_ids, block_table, page_size, num_blocks)
         self.keys = CtxScatterPagedFunc.apply(self.keys, phys_block, offset, key_states)
         self.values = CtxScatterPagedFunc.apply(self.values, phys_block, offset, value_states)
 
@@ -451,9 +467,12 @@ class QEffPagedDynamicLayer(CacheLayerMixin):
         position_ids = cache_kwargs.get("position_ids")
         block_table = cache_kwargs.get("block_table")
         page_size = k_pool.shape[2]
+        num_blocks = k_pool.shape[0]
         max_blocks = block_table.shape[1]
         ctx_len = cache_kwargs.get("CCL", max_blocks * page_size)
-        g_phys, g_offset, invalid_mask = self._read_indices(position_ids, block_table, page_size, ctx_len)
+        g_phys, g_offset, invalid_mask = self._read_indices(
+            position_ids, block_table, page_size, ctx_len, num_blocks
+        )
         k_out = CtxGatherPagedFunc.apply(k_pool, g_phys, g_offset)
         v_out = CtxGatherPagedFunc.apply(v_pool, g_phys, g_offset)
         v_out = torch.where(
@@ -479,10 +498,11 @@ class QEffPagedDynamicLayer(CacheLayerMixin):
         if block_table is None:
             raise ValueError("QEffPagedDynamicLayer.update requires 'block_table' in cache_kwargs")
         page_size = self.keys.shape[2]
+        num_blocks = self.keys.shape[0]
         max_blocks = block_table.shape[1]
 
         # ---- Scatter (write) into the block pool ----
-        phys_block, offset = self._write_indices(position_ids, block_table, page_size)
+        phys_block, offset = self._write_indices(position_ids, block_table, page_size, num_blocks)
         self.keys = CtxScatterPagedFunc.apply(self.keys, phys_block, offset, key_states)
         self.values = CtxScatterPagedFunc.apply(self.values, phys_block, offset, value_states)
         k_pool, v_pool = self.keys, self.values
@@ -490,7 +510,9 @@ class QEffPagedDynamicLayer(CacheLayerMixin):
         # ---- Gather (read) logically-contiguous [0, ctx_len) for attention ----
         full_ctx = max_blocks * page_size
         ctx_len = cache_kwargs.get("CCL", full_ctx)
-        g_phys, g_offset, invalid_mask = self._read_indices(position_ids, block_table, page_size, ctx_len)
+        g_phys, g_offset, invalid_mask = self._read_indices(
+            position_ids, block_table, page_size, ctx_len, num_blocks
+        )
         k_out = CtxGatherPagedFunc.apply(k_pool, g_phys, g_offset)
         v_out = CtxGatherPagedFunc.apply(v_pool, g_phys, g_offset)
         v_out = torch.where(
