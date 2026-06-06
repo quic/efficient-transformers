@@ -17,7 +17,7 @@ once first-class multi-window export lands. Supported model types:
 
 import torch
 import transformers
-from transformers import AutoConfig, AutoProcessor, TextStreamer
+from transformers import AutoConfig, AutoProcessor
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
@@ -80,7 +80,6 @@ def main():
         return_tensors="pt",
     )
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
-    # streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
