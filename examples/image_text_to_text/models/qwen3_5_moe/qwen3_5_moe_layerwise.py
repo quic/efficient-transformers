@@ -23,7 +23,8 @@ from transformers import AutoConfig
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
+MODEL_ID = "Qwen/Qwen3.5-0.8B"
+# MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
 PREFILL_SEQ_LEN = 32
 CTX_LEN = 4096
 BATCH_SIZE = 1
@@ -34,8 +35,8 @@ WIDTH = 536
 TEXT_WINDOW_SIZE = 1
 
 # Optional: export only the first N (>1) text layers for quick validation.
-# TOTAL_TEXT_LAYERS = 2
-TOTAL_TEXT_LAYERS = None
+TOTAL_TEXT_LAYERS = 2
+# TOTAL_TEXT_LAYERS = None
 
 
 def main():

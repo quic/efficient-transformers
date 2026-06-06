@@ -94,12 +94,14 @@ class QEffQwen3_5DynamicCache(Cache):
         cls,
         config,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor, ...], ...]] = None,
+        start_layer: int = 0,
     ) -> "QEffQwen3_5DynamicCache":
         cache = cls(config)
         if past_key_values is None:
             return cache
 
-        for layer_idx, layer_state in enumerate(past_key_values):
+        for offset, layer_state in enumerate(past_key_values):
+            layer_idx = start_layer + offset
             if cache.layer_types[layer_idx] == "full_attention":
                 key_states, value_states = layer_state
                 layer = QEffDynamicLayer()
@@ -944,15 +946,20 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
 
         if past_key_values is not None and not isinstance(past_key_values, QEffQwen3_5DynamicCache):
             return_legacy_cache = True
-            past_key_values = QEffQwen3_5DynamicCache.from_legacy_cache(self.config, past_key_values)
+            past_key_values = QEffQwen3_5DynamicCache.from_legacy_cache(self.config, past_key_values, start_layer=getattr(self, "_start", 0))
         elif use_cache and past_key_values is None:
             past_key_values = QEffQwen3_5DynamicCache(self.config)
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
+        start = getattr(self, "_start", 0)
+        end = getattr(self, "_end", 0)
+        if end == 0:
+            end = self.config.num_hidden_layers
+
         if cache_position is None:
-            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+            past_seen_tokens = past_key_values.get_seq_length(layer_idx=start) if past_key_values is not None else 0
             cache_position = torch.arange(
                 past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
             )
@@ -970,7 +977,9 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
         position_embeddings = self.rotary_emb(hidden_states, position_ids[1:])
         # position_embeddings = None
         all_hidden_states = () if output_hidden_states else None
-        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+        for layer_idx, decoder_layer in enumerate(self.layers):
+            if layer_idx < start or layer_idx >= end:
+                continue
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -988,14 +997,16 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
                 **kwargs,
             )
 
-            # break
-
-        hidden_states = self.norm(hidden_states)
+        if end == getattr(self, "_total_layers", self.config.num_hidden_layers):
+            hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
+
+        if return_legacy_cache:
+            past_key_values = past_key_values[start]
 
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
@@ -1458,13 +1469,14 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
             hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
             logits = self.model.lm_head(hidden_states)
+            return logits, outputs.past_key_values
         else:
             logits = outputs.last_hidden_state
+            if getattr(self.language_model, "_start", 0) == 0:
+                image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+                return logits, vision_embeds, image_idx, outputs.past_key_values
+            return logits, outputs.past_key_values
 
-        if getattr(self.language_model, "_start", 0) == 0:
-            image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-
-        return logits, vision_embeds, image_idx, outputs.past_key_values[: len(past_key_values)]
 
 
 class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
