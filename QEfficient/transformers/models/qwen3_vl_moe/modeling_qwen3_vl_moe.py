@@ -854,7 +854,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
                 visual_pos_masks=visual_pos_masks,
                 deepstack_visual_embeds=deepstack_visual_embeds,
             )
-            if QEffQwen3VLMoeTextModel._end == QEffQwen3VLMoeTextModel._total_layers:
+            if QEffQwen3VLMoeTextModel._end == 0:
                 logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
                 hidden_states = outputs.last_hidden_state[
                     torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index
