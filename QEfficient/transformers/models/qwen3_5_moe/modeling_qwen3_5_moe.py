@@ -1506,7 +1506,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
                 batch_index=batch_index,
                 use_cache=True,
             )
-            if QEffQwen3VLMoeTextModel._end == 0:
+            if QEffQwen3_5MoeTextModel._end == 0:
                 logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
                 hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
                 logits = self.model.lm_head(hidden_states)
