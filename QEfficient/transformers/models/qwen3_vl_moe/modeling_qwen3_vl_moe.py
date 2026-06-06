@@ -386,7 +386,7 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
-        self.layer_idx = self.layer_idx - getattr(QEffQwen3VLMoeTextModel, "_start", 0)
+        self.layer_idx = self.layer_idx - getattr(self, "_start", 0)
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
@@ -576,8 +576,8 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         all_self_attns = () if output_attentions else None
 
         layer_idx = 0
-        start = QEffQwen3VLMoeTextModel._start
-        end = QEffQwen3VLMoeTextModel._end
+        start = getattr(self, "_start", 0)
+        end = getattr(self, "_end", 0)
         layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
 
         for layer_idx, decoder_layer in enumerate(self.layers):
@@ -617,7 +617,7 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
                 )
             layer_idx += 1
 
-        if QEffQwen3VLMoeTextModel._end == QEffQwen3VLMoeTextModel._total_layers:
+        if end == getattr(self, "_total_layers", len(self.layers)):
             hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
@@ -814,7 +814,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         else:
             inputs_embeds = inputs_embeds
 
-        if QEffQwen3VLMoeTextModel._start == 0:
+        if getattr(self.language_model, "_start", 0) == 0:
             B, N, C = inputs_embeds.shape
             selected = input_ids == self.model.config.image_token_id
             indices1 = selected.to(torch.int64).cumsum(1) - 1
@@ -857,7 +857,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
 
-        elif QEffQwen3VLMoeTextModel._end == QEffQwen3VLMoeTextModel._total_layers:
+        elif getattr(self.language_model, "_end", 0) == getattr(self.language_model, "_total_layers", None):
             outputs = self.language_model(
                 inputs_embeds=inputs_embeds,
                 position_ids=position_ids,

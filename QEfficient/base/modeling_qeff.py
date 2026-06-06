@@ -501,8 +501,8 @@ class QEFFBaseModel(ABC):
         prefill_only: Optional[bool] = False,
         **export_kwargs,
     ) -> str:
-        idx = int(QEFFBaseModel._start)
-        end_idx = int(getattr(QEFFBaseModel, "_end", idx + 1))
+        idx = int(getattr(self, "_start", 0))
+        end_idx = int(getattr(self, "_end", idx + 1))
         if end_idx <= idx:
             raise ValueError(f"Invalid export window: start={idx}, end={end_idx}")
 

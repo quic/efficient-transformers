@@ -326,7 +326,7 @@ class QEffQwen3MoeAttention(Qwen3MoeAttention):
 
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
-        self.layer_idx = self.layer_idx - getattr(QEffQwen3MoeModel, "_start", 0)
+        self.layer_idx = self.layer_idx - getattr(self, "_start", 0)
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
         if use_blocking:
             attn_output, attn_weights = generic_blocked_attention_interface(
@@ -467,13 +467,13 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        start = QEffQwen3MoeModel._start
-        end = QEffQwen3MoeModel._end
+        start = getattr(self, "_start", 0)
+        end = getattr(self, "_end", 0)
 
-        if QEffQwen3MoeModel._end == 0:
+        if end == 0:
             total_layers = end = self.config.num_hidden_layers
-            QEffQwen3MoeModel._end = total_layers
-            QEffQwen3MoeModel._total_layers = total_layers
+            self._end = total_layers
+            self._total_layers = total_layers
 
         past_key_values_length = 0
         if past_key_values is not None:
@@ -514,8 +514,8 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
                 cos_cached=cos,
             )
 
-        total_layers = getattr(QEffQwen3MoeModel, "_total_layers", len(self.layers))
-        if QEffQwen3MoeModel._end == total_layers:
+        total_layers = getattr(self, "_total_layers", len(self.layers))
+        if end == total_layers:
             hidden_states = self.norm(hidden_states)
 
         # add hidden states from the last decoder layer
@@ -576,8 +576,8 @@ class QEffQwen3MoeForCausalLM(Qwen3MoeForCausalLM):
         )
 
         hidden_states = outputs.last_hidden_state
-        total_layers = getattr(QEffQwen3MoeModel, "_total_layers", len(self.model.layers))
-        if QEffQwen3MoeModel._end < total_layers:
+        total_layers = getattr(self.model, "_total_layers", len(self.model.layers))
+        if getattr(self.model, "_end", 0) < total_layers:
             logits = hidden_states
         else:
             logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)

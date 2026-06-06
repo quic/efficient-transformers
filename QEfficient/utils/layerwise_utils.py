@@ -73,31 +73,37 @@ def resolve_text_model(model: nn.Module):
     return owner, layer_prefix
 
 
-def set_window_state(text_model: nn.Module, start: int, end: int, total_layers: int) -> None:
-    """Set the layer-window state on the text-model class.
+def set_window_state(text_model: nn.Module, start: int, end: int, total_layers: int, qeff_wrapper=None) -> None:
+    """Set the layer-window state as instance attributes on the text-model and wrapper.
 
     The model ``forward`` reads ``_start/_end/_total_layers`` as class
-    attributes, so these are set on ``type(text_model)`` (centralized here
-    instead of monkeypatching from example scripts).
+    attributes (inert defaults). This helper sets them as instance attributes
+    on ``text_model`` (and its child attention modules) so that no global class
+    state is mutated.
 
-    The same window is mirrored onto :class:`QEFFBaseModel` because the shared
-    ``_export_layerwise`` routine reads the window from there.
+    When ``qeff_wrapper`` is provided (the :class:`QEFFBaseModel` subclass
+    instance driving the export), the window is also mirrored onto it so that
+    ``_export_layerwise`` can read ``self._start / self._end``.
     """
-    cls = type(text_model)
-    cls._start = int(start)
-    cls._end = int(end)
-    cls._total_layers = int(total_layers)
+    text_model._start = int(start)
+    text_model._end = int(end)
+    text_model._total_layers = int(total_layers)
 
-    from QEfficient.base.modeling_qeff import QEFFBaseModel
+    # Propagate _start to child attention modules that need the layer offset.
+    if hasattr(text_model, "layers"):
+        for layer in text_model.layers:
+            if hasattr(layer, "self_attn"):
+                layer.self_attn._start = int(start)
 
-    QEFFBaseModel._start = int(start)
-    QEFFBaseModel._end = int(end)
-    QEFFBaseModel._total_layers = int(total_layers)
+    if qeff_wrapper is not None:
+        qeff_wrapper._start = int(start)
+        qeff_wrapper._end = int(end)
+        qeff_wrapper._total_layers = int(total_layers)
 
 
-def reset_window_state(text_model: nn.Module, total_layers: int) -> None:
+def reset_window_state(text_model: nn.Module, total_layers: int, qeff_wrapper=None) -> None:
     """Reset window state to cover the full model (``[0, total_layers)``)."""
-    set_window_state(text_model, 0, total_layers, total_layers)
+    set_window_state(text_model, 0, total_layers, total_layers, qeff_wrapper=qeff_wrapper)
 
 
 def build_meta_model(hf_auto_class, pretrained_model_name_or_path: str, **kwargs):

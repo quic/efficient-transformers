@@ -104,13 +104,14 @@ class QEffQwen3_5MoeDynamicCache(Cache):
         cls,
         config,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor, ...], ...]] = None,
+        start_layer: int = 0,
     ) -> "QEffQwen3_5MoeDynamicCache":
         cache = cls(config)
         if past_key_values is None:
             return cache
 
         # for layer_idx, layer_state in enumerate(past_key_values):
-        layer_idx = QEffQwen3_5MoeTextModel._start
+        layer_idx = start_layer
         if cache.layer_types[layer_idx] == "full_attention":
             key_states, value_states = past_key_values[0]
             layer = QEffDynamicLayer()
@@ -984,15 +985,15 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
         if past_key_values is not None and not isinstance(past_key_values, QEffQwen3_5MoeDynamicCache):
             return_legacy_cache = True
-            past_key_values = QEffQwen3_5MoeDynamicCache.from_legacy_cache(self.config, past_key_values)
+            past_key_values = QEffQwen3_5MoeDynamicCache.from_legacy_cache(self.config, past_key_values, start_layer=getattr(self, "_start", 0))
         elif use_cache and past_key_values is None:
             past_key_values = QEffQwen3_5MoeDynamicCache(self.config)
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        start = QEffQwen3_5MoeTextModel._start
-        end = QEffQwen3_5MoeTextModel._end
+        start = getattr(self, "_start", 0)
+        end = getattr(self, "_end", 0)
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length(layer_idx=start) if past_key_values is not None else 0
             cache_position = torch.arange(
@@ -1038,7 +1039,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
             # break
 
-        if QEffQwen3_5MoeTextModel._end == QEffQwen3_5MoeTextModel._total_layers:
+        if end == getattr(self, "_total_layers", len(self.layers)):
             hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
@@ -1046,7 +1047,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
 
-        past_key_values = past_key_values[QEffQwen3_5MoeTextModel._start]
+        past_key_values = past_key_values[start]
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
@@ -1479,7 +1480,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
             inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
         else:
             inputs_embeds = inputs_embeds
-        if QEffQwen3_5MoeTextModel._start == 0:
+        if getattr(self.language_model, "_start", 0) == 0:
             B, S, _ = inputs_embeds.shape
             input_ids = torch.zeros((B, S), dtype=torch.int64, device=inputs_embeds.device)
             _, _, channel_size = inputs_embeds.shape
@@ -1507,7 +1508,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, image_idx, outputs.past_key_values
 
-        elif QEffQwen3_5MoeTextModel._end == QEffQwen3_5MoeTextModel._total_layers:
+        elif getattr(self.language_model, "_end", 0) == getattr(self.language_model, "_total_layers", len(self.language_model.layers)):
             outputs = self.language_model(
                 inputs_embeds=inputs_embeds,
                 position_ids=position_ids,
@@ -1866,7 +1867,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         # for i in range(self.model.config.text_config.num_hidden_layers):
-        i = QEffQwen3_5MoeModel._start
+        i = getattr(self.model.language_model, "_start", 0)
         if self.model.config.text_config.layer_types[i] == "full_attention":
             for kv in ["key", "value"]:
                 lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))

@@ -1590,9 +1590,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
             self.lang_model.model, _ = SamplerTransform.apply(self.lang_model.model, qaic_config, **init_kwargs)
 
-            # 3) Set the layer-window state on the language text model.
+           # 3) Set the layer-window state on the language text model.
             lang_text_model, _ = resolve_text_model(self.lang_model.model)
-            set_window_state(lang_text_model, start, end, total_layers)
+            set_window_state(lang_text_model, start, end, total_layers, qeff_wrapper=self.lang_model)
 
             # 4) Export just this language window.
             window_onnx = self.lang_model._export_layerwise(
@@ -1618,7 +1618,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         final_onnx_path = QEfficient.utils.layerwise_pipeline(str(export_root), num_layers=total_layers)
 
-        reset_window_state(lang_text_model, total_layers)
+        reset_window_state(lang_text_model, total_layers, qeff_wrapper=self.lang_model)
         self.lang_model.onnx_path = final_onnx_path
         return final_onnx_path
 
@@ -3849,9 +3849,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model, _ = SpDTransform.apply(self.model, qaic_config)
             self.model, _ = SamplerTransform.apply(self.model, qaic_config)
 
-            # 3) Set the layer-window state on the (post-transform) text model.
+           # 3) Set the layer-window state on the (post-transform) text model.
             text_model, _ = resolve_text_model(self.model)
-            set_window_state(text_model, start, end, total_layers)
+            set_window_state(text_model, start, end, total_layers, qeff_wrapper=self)
 
             # 4) Export just this window.
             window_onnx = self._export_layerwise(
@@ -3879,7 +3879,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         final_onnx_path = QEfficient.utils.layerwise_pipeline(str(export_root), num_layers=total_layers)
 
         # Restore full-model window state so any later full-graph operations behave normally.
-        reset_window_state(text_model, total_layers)
+        reset_window_state(text_model, total_layers, qeff_wrapper=self)
         self.onnx_path = final_onnx_path
         return final_onnx_path
 
