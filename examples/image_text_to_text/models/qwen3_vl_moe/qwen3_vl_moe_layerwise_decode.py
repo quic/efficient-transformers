@@ -15,11 +15,8 @@ once first-class multi-window export lands. Supported model types:
 ``qwen3_vl_moe``, ``qwen3_5_moe``, ``qwen3_moe``.
 """
 
-import requests
 import torch
 import transformers
-from PIL import Image
-from qwen_vl_utils import process_vision_info
 from transformers import AutoConfig, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
@@ -41,7 +38,7 @@ def main():
         kv_offload=True,
         config=config,
         torch_dtype=torch.float16,
-        # layerwise=True,
+        layerwise=True,
     )
     batch_size = 1
     qpc_path = qeff_model.compile(
@@ -59,8 +56,8 @@ def main():
         split_retained_state_io=True,
         use_onnx_subfunctions=True,
         mos=1,
-        # layerwise=True,
-        # layerwise_window_size=1,
+        layerwise=True,
+        layerwise_window_size=1,
     )
     print(f"Final QPC path: {qpc_path}")
 
@@ -83,7 +80,7 @@ def main():
         return_tensors="pt",
     )
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
-    streamer = TextStreamer(tokenizer)
+    # streamer = TextStreamer(tokenizer)
     output = qeff_model.generate(inputs=inputs, generation_len=100)
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))

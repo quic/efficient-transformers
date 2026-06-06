@@ -112,6 +112,10 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     bound_args = new_sig.bind(*args, **kwargs)
     bound_args.apply_defaults()
     all_args = bound_args.arguments
+    if func.__name__ == "_export_layerwise":
+        export_kwargs = dict(all_args.get("export_kwargs") or {})
+        export_kwargs["_qeff_layerwise_export"] = True
+        all_args["export_kwargs"] = export_kwargs
 
     # Use the model's current configuration for hashing to ensure any post-load modifications are captured
     # TODO: Replace with get_model_config property of modeling classes and remove the if-else

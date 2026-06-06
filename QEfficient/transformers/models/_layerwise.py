@@ -547,58 +547,59 @@ def run_layerwise(
     first_onnx_path: Optional[Path] = None
     last_qeff_model = None
 
-    with _layerwise_export_env():
-        _set_layer_windows(0, min(window_size, text_total_layers), text_total_layers)
-        cached_probe = probe_qeff_model or qeff_factory(model_id, config)
-        cached_onnx_path = _cached_layerwise_onnx_path(cached_probe, compile_kwargs)
-        if cached_onnx_path is not None:
-            first_onnx_path = cached_onnx_path
-            last_qeff_model = cached_probe
-
-        for text_start, text_end in windows:
+    try:
+        with _layerwise_export_env():
+            _set_layer_windows(0, min(window_size, text_total_layers), text_total_layers)
+            cached_probe = probe_qeff_model or qeff_factory(model_id, config)
+            cached_onnx_path = _cached_layerwise_onnx_path(cached_probe, compile_kwargs)
             if cached_onnx_path is not None:
-                break
-            _set_layer_windows(text_start, text_end, text_total_layers)
+                first_onnx_path = cached_onnx_path
+                last_qeff_model = cached_probe
 
-            qeff_model = qeff_factory(model_id, config)
-            last_qeff_model = qeff_model
-            if hasattr(qeff_model, "model"):
-                _null_outside_window_layers(qeff_model.model, apply_text=True)
-            _slim_for_window_export(qeff_model, ctx_len=compile_kwargs.get("ctx_len"))
+            for text_start, text_end in windows:
+                if cached_onnx_path is not None:
+                    break
+                _set_layer_windows(text_start, text_end, text_total_layers)
 
-            window_kwargs = dict(compile_kwargs)
-            # skip_lang is a VLM-only kwarg; only inject when present in caller's kwargs.
-            if "skip_lang" in window_kwargs:
-                window_kwargs["skip_lang"] = False
-            onnx_path = qeff_model.compile(**window_kwargs)
-            if first_onnx_path is None:
-                if isinstance(onnx_path, dict):
-                    lang_key = next(
-                        (
-                            k
-                            for k in (
-                                "lang_decode_qpc_path",
-                                "lang_prefill_qpc_path",
-                                "lang_qpc_path",
-                            )
-                            if k in onnx_path
-                        ),
-                        None,
-                    )
-                    if lang_key is None:
-                        raise RuntimeError(f"Layer-wise window produced no lang_*_qpc_path: keys={list(onnx_path)}")
-                    lang_path = onnx_path[lang_key]
-                else:
-                    lang_path = onnx_path
-                first_onnx_path = Path(str(lang_path))
+                qeff_model = qeff_factory(model_id, config)
+                last_qeff_model = qeff_model
+                if hasattr(qeff_model, "model"):
+                    _null_outside_window_layers(qeff_model.model, apply_text=True)
+                _slim_for_window_export(qeff_model, ctx_len=compile_kwargs.get("ctx_len"))
+
+                window_kwargs = dict(compile_kwargs)
+                # skip_lang is a VLM-only kwarg; only inject when present in caller's kwargs.
+                if "skip_lang" in window_kwargs:
+                    window_kwargs["skip_lang"] = False
+                onnx_path = qeff_model.compile(**window_kwargs)
+                if first_onnx_path is None:
+                    if isinstance(onnx_path, dict):
+                        lang_key = next(
+                            (
+                                k
+                                for k in (
+                                    "lang_decode_qpc_path",
+                                    "lang_prefill_qpc_path",
+                                    "lang_qpc_path",
+                                )
+                                if k in onnx_path
+                            ),
+                            None,
+                        )
+                        if lang_key is None:
+                            raise RuntimeError(f"Layer-wise window produced no lang_*_qpc_path: keys={list(onnx_path)}")
+                        lang_path = onnx_path[lang_key]
+                    else:
+                        lang_path = onnx_path
+                    first_onnx_path = Path(str(lang_path))
+    finally:
+        _reset_layer_windows()
 
     if first_onnx_path is None:
         raise RuntimeError("Layer-wise export produced no ONNX shards.")
 
     export_root = _resolve_export_root(first_onnx_path)
     final_artifact = _stitch_layerwise_if_available(export_root, text_total_layers)
-
-    _reset_layer_windows()
 
     if not final_compile:
         return final_artifact

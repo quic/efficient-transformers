@@ -1488,6 +1488,42 @@ def test_layerwise_cached_merged_prefers_complete_graph(tmp_path):
 
 
 @pytest.mark.llm_model
+def test_layerwise_export_hash_is_separate_from_default(monkeypatch):
+    from QEfficient.utils import export_utils
+
+    class DummyConfig:
+        def to_diff_dict(self):
+            return {"model_type": "dummy"}
+
+    class DummyModel:
+        config = DummyConfig()
+
+    class DummyQEffModel:
+        model = DummyModel()
+        hash_params = {}
+
+    def normal_export(self, example_inputs, output_names, dynamic_axes, **export_kwargs):
+        pass
+
+    def _export_layerwise(self, example_inputs, output_names, dynamic_axes, **export_kwargs):
+        pass
+
+    captured_export_kwargs = []
+
+    def fake_create_export_hash(**kwargs):
+        captured_export_kwargs.append(kwargs.get("export_kwargs"))
+        return "hash", {}
+
+    monkeypatch.setattr(export_utils, "create_export_hash", fake_create_export_hash)
+
+    export_utils._generate_export_hash(DummyQEffModel(), ({}, ["logits"], {}), {}, normal_export)
+    export_utils._generate_export_hash(DummyQEffModel(), ({}, ["logits"], {}), {}, _export_layerwise)
+
+    assert captured_export_kwargs[0] in (None, {})
+    assert captured_export_kwargs[1]["_qeff_layerwise_export"] is True
+
+
+@pytest.mark.llm_model
 def test_subfunction_compile_io_names_use_internal_retained_state():
     from QEfficient.transformers.models.modeling_auto import _compile_io_name, _state_input_name
 
