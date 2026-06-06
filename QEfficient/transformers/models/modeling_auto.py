@@ -123,6 +123,39 @@ def _resolve_torch_dtype(kwargs: dict) -> None:
         kwargs["torch_dtype"] = torch.float32
 
 
+def _build_layerwise_vision_export_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
+    """Load a VLM with vision weights and only the first language window.
+
+    This opt-in path keeps vision export usable while avoiding materializing
+    every decoder layer up front. Language ONNX/QPC export still goes through
+    the regular layerwise driver, which reloads each window independently.
+    """
+    from QEfficient.transformers.models import _layerwise
+
+    config = kwargs.get("config", None)
+    if config is None:
+        from transformers import AutoConfig
+
+        config_kwargs = {
+            key: kwargs[key]
+            for key in ("trust_remote_code", "revision", "token", "subfolder", "cache_dir")
+            if key in kwargs
+        }
+        config = AutoConfig.from_pretrained(pretrained_model_name_or_path, **config_kwargs)
+        kwargs["config"] = config
+    model_type = _layerwise.assert_layerwise_supported(config)
+    total_layers = _layerwise._resolve_text_total_layers(config)
+    _layerwise._ensure_pretrained_window_attrs()
+    _layerwise._install_window_patches_for(model_type)
+
+    with _layerwise._layerwise_export_env():
+        _layerwise._set_layer_windows(0, min(1, total_layers), total_layers)
+        try:
+            return hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        finally:
+            _layerwise._reset_layer_windows()
+
+
 def _build_meta_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
     """Construct an HF model on the meta device for layer-wise mode.
 
@@ -1615,6 +1648,27 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         return _factory
 
+    def _build_layerwise_vision_wrapper(self):
+        """Materialize vision weights while keeping language bounded to one window."""
+        model_id = self._pretrained_model_name_or_path
+        if model_id is None:
+            raise RuntimeError("layerwise=True requires a model loaded via from_pretrained(...).")
+        torch_dtype = getattr(self.config, "torch_dtype", None)
+        kwargs = {
+            "config": self.config,
+            "attn_implementation": "eager",
+            "torch_dtype": torch_dtype,
+            "low_cpu_mem_usage": True,
+        }
+        _resolve_torch_dtype(kwargs)
+        self.config.torch_dtype = kwargs["torch_dtype"]
+        model = _build_layerwise_vision_export_model(self._hf_auto_class, model_id, kwargs)
+        return self.__class__(
+            model,
+            continuous_batching=self.continuous_batching,
+            pretrained_model_name_or_path=model_id,
+        )
+
     def _run_layerwise_export(
         self,
         *,
@@ -1777,6 +1831,36 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
 
         if layerwise:
+            if skip_lang and not skip_vision:
+                vision_wrapper = self._build_layerwise_vision_wrapper()
+                qpc_paths = vision_wrapper.compile(
+                    img_size=img_size,
+                    vision_onnx_path=vision_onnx_path,
+                    lang_onnx_path=lang_onnx_path,
+                    compile_dir=compile_dir,
+                    prefill_seq_len=prefill_seq_len,
+                    comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+                    comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+                    ctx_len=ctx_len,
+                    batch_size=batch_size,
+                    full_batch_size=full_batch_size,
+                    kv_cache_batch_size=kv_cache_batch_size,
+                    num_devices=num_devices,
+                    num_cores=num_cores,
+                    mxfp6_matmul=mxfp6_matmul,
+                    mxint8_kv_cache=mxint8_kv_cache,
+                    skip_vision=skip_vision,
+                    skip_lang=skip_lang,
+                    use_onnx_subfunctions=use_onnx_subfunctions,
+                    prefill_only=prefill_only,
+                    enable_chunking=enable_chunking,
+                    qaic_config=qaic_config,
+                    **compiler_options,
+                )
+                self.vision_model.onnx_path = vision_wrapper.vision_model.onnx_path
+                self.vision_model.qpc_path = vision_wrapper.vision_model.qpc_path
+                self.qpc_paths = qpc_paths
+                return qpc_paths
             return self._run_layerwise_compile(
                 img_size=img_size,
                 vision_onnx_path=vision_onnx_path,
@@ -1874,7 +1958,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if lang_onnx_path:
             self.lang_model.onnx_path = lang_onnx_path
 
-        if vision_onnx_path is None or lang_onnx_path is None:
+        needs_vision_export = not skip_vision and vision_onnx_path is None
+        needs_lang_export = not skip_lang and lang_onnx_path is None
+
+        if needs_vision_export or needs_lang_export:
             self.export(
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 skip_vision=skip_vision,
@@ -2226,6 +2313,23 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         lang_start = perf_counter()
         # Run prefill
         chunk_inputs = lang_inputs.copy()
+        logits_vocab_size = None
+        logits_dtype = np.float32
+        logits_binding_idx = lang_session.binding_index_map.get("logits")
+        if logits_binding_idx is not None and getattr(lang_session, "allowed_shapes", None):
+            allowed_vocab_sizes = [
+                int(shape_spec[logits_binding_idx][1][-1])
+                for shape_spec in lang_session.allowed_shapes
+                if len(shape_spec) > logits_binding_idx and len(shape_spec[logits_binding_idx][1]) >= 3
+            ]
+            if allowed_vocab_sizes:
+                logits_vocab_size = max(allowed_vocab_sizes)
+        if logits_vocab_size is None and logits_binding_idx is not None:
+            logits_dims = tuple(lang_session.bindings[logits_binding_idx].dims)
+            if logits_dims:
+                logits_vocab_size = int(logits_dims[-1])
+        if logits_binding_idx is not None:
+            logits_dtype = lang_session.aic_to_np_dtype_mapping[lang_session.bindings[logits_binding_idx].type]
         for i in range(num_chunks):
             if (
                 self.comp_ctx_lengths_prefill is not None
@@ -2250,6 +2354,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 chunk_inputs["cross_attention_mask"] = lang_inputs["cross_attention_mask"][
                     :, i * prefill_seq_len : (i + 1) * prefill_seq_len, :, :
                 ]
+            if logits_vocab_size is not None:
+                logits_shape = (
+                    chunk_inputs["input_ids"].shape[0],
+                    chunk_inputs["input_ids"].shape[1],
+                    logits_vocab_size,
+                )
+                lang_session.set_buffers({"logits": np.zeros(logits_shape, dtype=logits_dtype)})
             outputs = lang_session.run(chunk_inputs)
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
@@ -2269,6 +2380,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             lang_session.skip_buffers(vision_outputs.keys())
         # Get first token
         lang_inputs["input_ids"] = outputs["logits"].argmax(2)
+        if lang_inputs["input_ids"].ndim == 2 and lang_inputs["input_ids"].shape[1] > 1:
+            lang_inputs["input_ids"] = lang_inputs["input_ids"][:, -1:]
         lang_inputs["position_ids"] = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
 
         if "mm_token_type_ids" in lang_inputs:
@@ -2297,6 +2410,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     ccl_id = i
                     break
             lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_decode[ccl_id]
+
+        if logits_vocab_size is not None:
+            decode_logits_shape = (lang_inputs["input_ids"].shape[0], 1, logits_vocab_size)
+            lang_session.set_buffers({"logits": np.zeros(decode_logits_shape, dtype=logits_dtype)})
 
         decode_start = perf_counter()
         for num_token in range(1, generation_len):

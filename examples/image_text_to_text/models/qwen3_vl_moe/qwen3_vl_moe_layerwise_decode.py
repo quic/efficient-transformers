@@ -22,13 +22,13 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 
 # MODEL_ID = "Qwen/Qwen3-VL-235B-A22B-Instruct"
-MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-# MODEL_ID = "tiny-random/qwen3-vl-moe"
+# MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+MODEL_ID = "tiny-random/qwen3-vl-moe"
 
 
 def main():
     config = AutoConfig.from_pretrained(MODEL_ID)
-    config.torch_dtype = "float16"
+    config.dtype = "float16"
     tokenizer = transformers.AutoTokenizer.from_pretrained(MODEL_ID)
     processor = AutoProcessor.from_pretrained(MODEL_ID)
 
@@ -37,7 +37,7 @@ def main():
         attn_implementation="eager",
         kv_offload=True,
         config=config,
-        torch_dtype=torch.float16,
+        dtype=torch.float16,
         layerwise=True,
     )
     batch_size = 1

@@ -1055,6 +1055,9 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
 class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
     def get_submodules_for_export(self) -> Type[nn.Module]:
+        layer_types = getattr(self.config, "layer_types", None)
+        if layer_types and len(set(layer_types)) > 1:
+            return set()
         return {QEffQwen3_5MoeDecoderLayer}
 
     @staticmethod
@@ -1170,6 +1173,10 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
 
 
 class QEffQwen3_5MoeModel(Qwen3_5MoeModel):
+    _start = 0
+    _end = 0
+    _total_layers = None
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -1462,6 +1469,9 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
         self.config = model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
+        layer_types = getattr(self.config.text_config, "layer_types", None)
+        if layer_types and len(set(layer_types)) > 1:
+            return set()
         return {QEffQwen3_5MoeDecoderLayer}
 
     def forward(
@@ -1866,7 +1876,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         # for i in range(self.model.config.text_config.num_hidden_layers):
-        i = QEffQwen3_5MoeModel._start
+        i = QEffQwen3_5MoeTextModel._start
         if self.model.config.text_config.layer_types[i] == "full_attention":
             for kv in ["key", "value"]:
                 lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))

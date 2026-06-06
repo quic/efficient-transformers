@@ -16,23 +16,28 @@ once first-class multi-window export lands. Supported model types:
 """
 
 import torch
-from transformers import AutoConfig
+import transformers
+from transformers import AutoConfig, AutoProcessor
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
+# MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
+MODEL_ID = "tiny-random/qwen3.6-moe"
+# MODEL_ID = "Qwen/Qwen3.6-35B-A3B"
 
 
 def main():
     config = AutoConfig.from_pretrained(MODEL_ID)
     config.torch_dtype = "float32"
+    tokenizer = transformers.AutoTokenizer.from_pretrained(MODEL_ID)
+    processor = AutoProcessor.from_pretrained(MODEL_ID)
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         MODEL_ID,
         attn_implementation="eager",
         kv_offload=True,
         config=config,
-        torch_dtype=torch.float32,
+        dtype=torch.float32,
         layerwise=True,
     )
 
@@ -41,19 +46,44 @@ def main():
         prefill_seq_len=1,
         ctx_len=4096,
         num_cores=16,
-        num_devices=1,
+        num_devices=4,
         height=354,
         width=536,
         mxfp6_matmul=True,
+        mxint8_kv_cache=True,
         aic_enable_depth_first=True,
         skip_vision=True,
         split_retained_state_io=True,
-        use_onnx_subfunctions=True,
+        use_onnx_subfunctions=False,
         mos=1,
         layerwise=True,
         layerwise_window_size=1,
     )
     print(f"Final QPC path: {qpc_path}")
+
+    batch_size = 1
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Tell me about yourself."},
+            ],
+        },
+    ]
+    messages = [messages] * batch_size
+
+    inputs = processor.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt",
+    )
+    inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
+    output = qeff_model.generate(inputs=inputs, generation_len=100)
+    print(output.generated_ids)
+    print(tokenizer.batch_decode(output.generated_ids))
+    print(output)
 
 
 if __name__ == "__main__":

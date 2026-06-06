@@ -1361,6 +1361,36 @@ def test_layerwise_off_does_not_set_env_var(tmp_path):
 
 
 @pytest.mark.llm_model
+def test_layerwise_vision_wrapper_keeps_only_first_text_window():
+    try:
+        config = AutoConfig.from_pretrained(LAYERWISE_TINY_MODEL_ID)
+        qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+            LAYERWISE_TINY_MODEL_ID,
+            kv_offload=True,
+            config=config,
+            layerwise=True,
+        )
+        vision_wrapper = qeff_model._build_layerwise_vision_wrapper()
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, LAYERWISE_TINY_MODEL_ID)
+
+    layers = vision_wrapper.model.model.language_model.layers
+
+    assert getattr(qeff_model, "_layerwise_outer_meta", False) is True
+    assert layers[0] is not None
+    assert sum(layer is not None for layer in layers) == 1
+    assert next(vision_wrapper.model.model.visual.parameters()).device.type != "meta"
+
+    default_model = QEFFAutoModelForImageTextToText.from_pretrained(
+        LAYERWISE_TINY_MODEL_ID,
+        kv_offload=True,
+        config=config,
+    )
+    default_layers = default_model.model.model.language_model.layers
+    assert sum(layer is not None for layer in default_layers) == len(default_layers)
+
+
+@pytest.mark.llm_model
 def test_layerwise_context_manager_toggles_class_flag():
     """The driver's context manager must flip the class flag and restore it,
     even on exception, with no env-var side-effects."""

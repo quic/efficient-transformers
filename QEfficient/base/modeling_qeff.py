@@ -850,6 +850,31 @@ class QEFFBaseModel(ABC):
                 continue
             command.append(f"{option}={value}")
 
+        # Final custom-IO normalization against ONNX I/O names.
+        # This only rewrites retained-state aliases:
+        # *_InternalRetainedState <-> *_RetainedState.
+        # Any other custom-IO key is preserved as-is for backward compatibility.
+        if custom_io is not None and onnx_path is not None:
+            try:
+                model = onnx.load(onnx_path, load_external_data=False)
+                io_names = {value.name for value in list(model.graph.input) + list(model.graph.output)}
+                normalized_custom_io = {}
+                for io_name, dtype in custom_io.items():
+                    resolved_name = io_name
+                    if io_name not in io_names:
+                        if io_name.endswith("_InternalRetainedState"):
+                            candidate = io_name[: -len("_InternalRetainedState")] + "_RetainedState"
+                            if candidate in io_names:
+                                resolved_name = candidate
+                        elif io_name.endswith("_RetainedState"):
+                            candidate = io_name[: -len("_RetainedState")] + "_InternalRetainedState"
+                            if candidate in io_names:
+                                resolved_name = candidate
+                    normalized_custom_io[resolved_name] = dtype
+                custom_io = normalized_custom_io
+            except Exception:
+                pass
+
         if use_onnx_subfunctions:
             logger.info("Using ONNX subfunctions for compilation.")
             command.append("-sub-functions")

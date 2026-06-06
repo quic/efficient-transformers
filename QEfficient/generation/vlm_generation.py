@@ -279,6 +279,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             next_token_id (array): The next token ID.
         """
         next_token_id = self._fetch_next_token_id(outputs)
+        if next_token_id.ndim == 2 and next_token_id.shape[1] > 1:
+            next_token_id = next_token_id[:, -1:]
 
         # Store the generated values.
         self.decode_input_ids[decode_batch_id or slice(None)] = next_token_id
@@ -306,9 +308,6 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         Returns:
             Final prefill outputs
         """
-        # Set output buffers
-        self._set_output_buffers(batch_size=prefill_logit_bs, sequence_length=1)
-
         # Skip buffers for dual-QPC coordination
         self._session.skip_buffers(self._lang_skip_buffers)
 
@@ -335,6 +334,10 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             position_ids_slice = lang_inputs["position_ids"][
                 ..., i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
             ]
+
+            # Prefill specializations can return one logit per prompt token.
+            # Size the output buffer to the active chunk instead of the decode shape.
+            self._set_output_buffers(batch_size=prefill_logit_bs, sequence_length=input_ids_slice.shape[1])
 
             chunk_inputs = {
                 "input_ids": input_ids_slice,

@@ -350,11 +350,12 @@ def _set_layer_windows(text_start: int, text_end: int, text_total_layers: int) -
 
     qeff_35_mod = getattr(QEfficient.transformers.models, "qwen3_5_moe", None)
     if qeff_35_mod is not None:
-        cls = getattr(qeff_35_mod.modeling_qwen3_5_moe, "QEffQwen3_5MoeTextModel", None)
-        if cls is not None:
-            cls._start = text_start
-            cls._end = text_end
-            cls._total_layers = text_total_layers
+        for class_name in ("QEffQwen3_5MoeTextModel", "QEffQwen3_5MoeModel"):
+            cls = getattr(qeff_35_mod.modeling_qwen3_5_moe, class_name, None)
+            if cls is not None:
+                cls._start = text_start
+                cls._end = text_end
+                cls._total_layers = text_total_layers
 
     qeff_3_mod = getattr(QEfficient.transformers.models, "qwen3_moe", None)
     if qeff_3_mod is not None:
@@ -445,14 +446,18 @@ def _install_window_patches_for(model_type: str) -> None:
             for name in ("Qwen3VLMoeForConditionalGeneration", "Qwen3VLMoeForCausalLM")
             if (cls := getattr(qwen3_vl_moe_mod, name, None)) is not None
         )
+    qwen3_5_moe_mod = getattr(getattr(transformers.models, "qwen3_5_moe", None), "modeling_qwen3_5_moe", None)
+    if qwen3_5_moe_mod is not None and model_type in {"qwen3_5_moe", "qwen3_5_moe_text"}:
+        candidates.extend(
+            cls
+            for name in ("Qwen3_5MoeForConditionalGeneration", "Qwen3_5MoeForCausalLM")
+            if (cls := getattr(qwen3_5_moe_mod, name, None)) is not None
+        )
     qwen3_moe_mod = getattr(getattr(transformers.models, "qwen3_moe", None), "modeling_qwen3_moe", None)
     if qwen3_moe_mod is not None and model_type in {"qwen3_moe"}:
         candidates.extend(
             cls for name in ("Qwen3MoeForCausalLM",) if (cls := getattr(qwen3_moe_mod, name, None)) is not None
         )
-    # qwen3_5_moe shares the qwen3_vl_moe HF classes today; the QEff modeling
-    # file overrides behavior. Install the shard patch (above) and rely on
-    # _null_outside_window_layers running post-init in the driver loop.
     for cls in candidates:
         _install_window_patch(cls)
 
