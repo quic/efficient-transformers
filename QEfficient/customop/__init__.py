@@ -12,6 +12,10 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxScatterFunc,
     CtxScatterFunc3D,
 )
+from QEfficient.customop.ctx_paged_scatter_gather import (
+    CtxGatherPagedFunc,
+    CtxScatterPagedFunc,
+)
 from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxGatherFuncBlockedKVCB,
     CtxGatherFuncCB,
@@ -34,4 +38,6 @@ __all__ = [
     "CtxScatterFuncCB",
     "CtxGatherFuncCB3D",
     "CtxScatterFuncCB3D",
+    "CtxScatterPagedFunc",
+    "CtxGatherPagedFunc",
 ]
