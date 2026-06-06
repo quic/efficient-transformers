@@ -40,6 +40,7 @@ def export_wrapper(func):
     """
 
     def wrapper(self, *args, **kwargs):
+        cache_probe = kwargs.pop("_layerwise_cache_probe", False)
         # 1. Setup ONNX subfunctions if requested
         if use_onnx_subfunctions := kwargs.pop("use_onnx_subfunctions", False):
             args, kwargs = _setup_onnx_subfunctions(self, args, kwargs)
@@ -52,12 +53,15 @@ def export_wrapper(func):
         export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
         kwargs["export_dir"] = export_dir
         self.export_hash = export_hash
+        if cache_probe:
+            kwargs["_layerwise_cache_probe"] = True
 
         # 4. Execute the actual export
         onnx_path = func(self, *args, **kwargs)
 
         # 5. Save export metadata
-        _save_export_metadata(export_dir, filtered_hash_params)
+        if not cache_probe:
+            _save_export_metadata(export_dir, filtered_hash_params)
 
         # 6. Always cleanup subfunctions if they were setup
         if use_onnx_subfunctions:

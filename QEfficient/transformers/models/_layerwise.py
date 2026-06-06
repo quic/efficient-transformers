@@ -386,17 +386,45 @@ def _is_cached_merged(onnx_path: Path) -> bool:
     return "final_data" in onnx_path.parts and onnx_path.name.startswith("merged_")
 
 
-def _stitch_layerwise_if_available(export_root: Path) -> str:
-    # If a prior run already produced the merged ONNX, just return it.
+def _cached_merged_onnx(export_root: Path, total_layers: Optional[int] = None) -> Optional[Path]:
+    """Return the complete cached merged ONNX, if it exists."""
     cached_dir = export_root / "final_data"
-    if cached_dir.is_dir():
-        cached_merged = sorted(cached_dir.glob("merged_*.onnx"))
-        if cached_merged:
-            return str(cached_merged[-1])
+    if not cached_dir.is_dir():
+        return None
+    if total_layers is not None:
+        expected = cached_dir / f"merged_0-{total_layers}.onnx"
+        if expected.is_file():
+            return expected
+    cached_merged = sorted(cached_dir.glob("merged_0-*.onnx"))
+    return cached_merged[-1] if cached_merged else None
+
+
+def _stitch_layerwise_if_available(export_root: Path, total_layers: Optional[int] = None) -> str:
+    # If a prior run already produced the complete merged ONNX, just return it.
+    cached_merged = _cached_merged_onnx(export_root, total_layers)
+    if cached_merged is not None:
+        return str(cached_merged)
     pipeline_fn = getattr(QEfficient.utils, "layerwise_pipeline", None)
     if callable(pipeline_fn):
         return pipeline_fn(str(export_root))
     return str(export_root / "onnx_layerwise_tmp")
+
+
+def _cached_layerwise_onnx_path(qeff_model, compile_kwargs: Dict[str, Any]) -> Optional[Path]:
+    """Return a cached merged ONNX path without exporting or loading weights."""
+    probe_kwargs = dict(compile_kwargs)
+    probe_kwargs["_layerwise_cache_probe"] = True
+    cached = qeff_model.compile(**probe_kwargs)
+    if isinstance(cached, dict):
+        cached = next(
+            (
+                cached.get(key)
+                for key in ("lang_decode_qpc_path", "lang_prefill_qpc_path", "lang_qpc_path")
+                if cached.get(key) is not None
+            ),
+            None,
+        )
+    return Path(cached) if cached is not None else None
 
 
 def _install_window_patches_for(model_type: str) -> None:
@@ -468,6 +496,7 @@ def run_layerwise(
     config,
     qeff_factory,
     compile_kwargs: Dict[str, Any],
+    probe_qeff_model=None,
     window_size: int = 1,
     final_compile: bool = True,
 ) -> Any:
@@ -488,6 +517,9 @@ def run_layerwise(
         Forwarded verbatim to ``qeff_model.compile(...)`` per window. The driver
         injects ``skip_lang`` per-window and ``lang_onnx_path`` for the final
         stitched compile.
+    probe_qeff_model : QEffModel, optional
+        Existing wrapper used for cache probing before any per-window weights are
+        loaded. In normal layerwise use this is the outer meta wrapper.
     window_size : int
         Number of text-decoder layers per window. ``1`` matches the legacy
         example.
@@ -516,7 +548,16 @@ def run_layerwise(
     last_qeff_model = None
 
     with _layerwise_export_env():
-        for window_idx, (text_start, text_end) in enumerate(windows):
+        _set_layer_windows(0, min(window_size, text_total_layers), text_total_layers)
+        cached_probe = probe_qeff_model or qeff_factory(model_id, config)
+        cached_onnx_path = _cached_layerwise_onnx_path(cached_probe, compile_kwargs)
+        if cached_onnx_path is not None:
+            first_onnx_path = cached_onnx_path
+            last_qeff_model = cached_probe
+
+        for text_start, text_end in windows:
+            if cached_onnx_path is not None:
+                break
             _set_layer_windows(text_start, text_end, text_total_layers)
 
             qeff_model = qeff_factory(model_id, config)
@@ -555,7 +596,7 @@ def run_layerwise(
         raise RuntimeError("Layer-wise export produced no ONNX shards.")
 
     export_root = _resolve_export_root(first_onnx_path)
-    final_artifact = _stitch_layerwise_if_available(export_root)
+    final_artifact = _stitch_layerwise_if_available(export_root, text_total_layers)
 
     _reset_layer_windows()
 

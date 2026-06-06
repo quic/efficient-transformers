@@ -488,6 +488,7 @@ class QEFFBaseModel(ABC):
         prefill_only: Optional[bool] = False,
         **export_kwargs,
     ) -> str:
+        cache_probe = export_kwargs.pop("_layerwise_cache_probe", False)
         idx = int(QEFFBaseModel._start)
         end_idx = int(getattr(QEFFBaseModel, "_end", idx + 1))
         if end_idx <= idx:
@@ -508,10 +509,13 @@ class QEFFBaseModel(ABC):
         # example without changes goes straight to the QPC compile.
         final_data_dir = export_dir / "final_data"
         if final_data_dir.is_dir():
-            cached_merged = sorted(final_data_dir.glob("merged_*.onnx"))
-            if cached_merged:
-                self.onnx_path = cached_merged[-1]
+            total_layers = int(getattr(QEFFBaseModel, "_total_layers", 0) or 0)
+            cached_merged = final_data_dir / f"merged_0-{total_layers}.onnx"
+            if total_layers > 0 and cached_merged.is_file():
+                self.onnx_path = cached_merged
                 return self.onnx_path
+        if cache_probe:
+            return None
 
         # check if the model is in meta state or weights are offloaded
         self._model_offloaded_check()
@@ -752,6 +756,7 @@ class QEFFBaseModel(ABC):
                 For QNN Compilation path, when enable_qnn is set to True, any parameter passed in compiler_options will be ignored.
         """
 
+        layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
         moe_prefill_packed_chunk_size = compiler_options.pop("moe_prefill_packed_chunk_size", None)
         if onnx_path is None:
             # If weights were offloaded after export, compiling must use the existing
@@ -771,11 +776,15 @@ class QEFFBaseModel(ABC):
                     num_devices=mdp_ts_num_devices,
                     qaic_config=qaic_config,
                     moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+                    _layerwise_cache_probe=layerwise_cache_probe,
                     **compiler_options,
                 )
-        onnx_path = Path(onnx_path)
         if QEFFBaseModel._layerwise_active:
+            if onnx_path is None:
+                return None
+            onnx_path = Path(onnx_path)
             return onnx_path
+        onnx_path = Path(onnx_path)
 
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
@@ -858,14 +867,13 @@ class QEFFBaseModel(ABC):
 
         compile_dir = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
         qpc_path = compile_dir / "qpc"
-        qpc_path.mkdir(parents=True, exist_ok=True)
-
+        if (qpc_path / "programqpc.bin").is_file():
+            self.qpc_path = qpc_path
+            return qpc_path
         if qpc_path.is_dir():
-            if (qpc_path / "programqpc.bin").is_file():
-                self.qpc_path = qpc_path
-                return qpc_path
-            # Probably compilation failure last time, delete directory to start over
+            # Probably compilation failure last time, delete directory to start over.
             shutil.rmtree(qpc_path)
+        compile_dir.mkdir(parents=True, exist_ok=True)
 
         # Write the generated MDP partition config file (not if user provided it)
 

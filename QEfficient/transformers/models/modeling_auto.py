@@ -13,6 +13,7 @@ from time import perf_counter
 from typing import List, Optional, Union
 
 import numpy as np
+import onnx
 import torch
 import torch.nn as nn
 from transformers import (
@@ -144,6 +145,62 @@ def _build_meta_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
     with torch.device("meta"):
         model = hf_auto_class.from_config(config, torch_dtype=torch_dtype)
     return model
+
+
+def _compile_io_name(name: str, *, use_onnx_subfunctions: bool) -> str:
+    """Return the compiler-visible name for retained-state ONNX outputs."""
+    if not use_onnx_subfunctions or not name.endswith("_RetainedState"):
+        return name
+    if any(token in name for token in ("key", "value", "compressed_kv", "k_pe")):
+        return name[: -len("_RetainedState")] + "_InternalRetainedState"
+    return name
+
+
+def _state_input_name(output_name: str) -> str:
+    """Map a retained-state output name to its matching state input name."""
+    for suffix in ("_InternalRetainedState", "_RetainedState"):
+        if output_name.endswith(suffix):
+            return output_name[: -len(suffix)]
+    return output_name
+
+
+def _filter_custom_io_for_onnx(custom_io: dict, onnx_path: Optional[Union[str, Path]]) -> dict:
+    """Keep custom-IO entries that exist in the ONNX graph.
+
+    Layerwise stitched graphs may prefix I/O names (for example ``layer_0/``)
+    and may expose public retained-state names even when subfunction export used
+    internal names during per-window export. Matching by basename keeps compiler
+    custom-IO compatible with both graph shapes.
+    """
+    if onnx_path is None:
+        return custom_io
+    try:
+        model = onnx.load(onnx_path, load_external_data=False)
+    except Exception:
+        return custom_io
+
+    io_names = {value.name for value in list(model.graph.input) + list(model.graph.output)}
+    basename_to_name = {name.rsplit("/", 1)[-1]: name for name in io_names}
+
+    def resolve_name(name: str) -> Optional[str]:
+        candidates = [name]
+        if name.endswith("_InternalRetainedState"):
+            candidates.append(name[: -len("_InternalRetainedState")] + "_RetainedState")
+        elif name.endswith("_RetainedState"):
+            candidates.append(name[: -len("_RetainedState")] + "_InternalRetainedState")
+        for candidate in candidates:
+            if candidate in io_names:
+                return candidate
+            if candidate in basename_to_name:
+                return basename_to_name[candidate]
+        return None
+
+    filtered = {}
+    for name, dtype in custom_io.items():
+        resolved_name = resolve_name(name)
+        if resolved_name is not None:
+            filtered[resolved_name] = dtype
+    return filtered
 
 
 class QEFFTransformersBase(QEFFBaseModel):
@@ -1187,6 +1244,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
                 export_dir=export_dir,
                 offload_pt_weights=offload_pt_weights,
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+                _layerwise_cache_probe=kwargs.get("_layerwise_cache_probe", False),
             )
         else:
             return self._export(
@@ -1412,6 +1470,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         List[str]
             A list containing the paths to the generated ONNX graph files for both components.
         """
+        layerwise_cache_probe = kwargs.pop("_layerwise_cache_probe", False)
         if layerwise:
             return self._run_layerwise_export(
                 export_dir=export_dir,
@@ -1471,7 +1530,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 == QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers
             )
         )
-        if should_export:
+        if should_export and not layerwise_cache_probe:
             self.vision_model.export(
                 inputs["vision"],
                 output_names["vision"],
@@ -1497,6 +1556,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 prefill_seq_len=prefill_seq_len,
+                _layerwise_cache_probe=layerwise_cache_probe,
             )
         return self.onnx_path
 
@@ -1592,6 +1652,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             config=self.config,
             qeff_factory=self._build_layerwise_factory(),
             compile_kwargs=compile_kwargs,
+            probe_qeff_model=self,
             window_size=layerwise_window_size,
             final_compile=False,
         )
@@ -1611,14 +1672,25 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 "QEFFAutoModelForImageTextToText.from_pretrained(...). "
                 "Direct __init__ does not preserve the model id needed for per-window reload."
             )
-        return _layerwise.run_layerwise(
+        qpc_paths = _layerwise.run_layerwise(
             model_id=model_id,
             config=self.config,
             qeff_factory=self._build_layerwise_factory(),
             compile_kwargs=compile_kwargs,
+            probe_qeff_model=self,
             window_size=layerwise_window_size,
             final_compile=True,
         )
+        self.qpc_paths = qpc_paths
+        if isinstance(qpc_paths, dict):
+            self.vision_model.qpc_path = qpc_paths.get("vision_qpc_path") or self.vision_model.qpc_path
+            self.lang_model.qpc_path = (
+                qpc_paths.get("lang_decode_qpc_path")
+                or qpc_paths.get("lang_prefill_qpc_path")
+                or qpc_paths.get("lang_qpc_path")
+                or self.lang_model.qpc_path
+            )
+        return qpc_paths
 
     def compile(
         self,
@@ -1740,6 +1812,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 "KV caching requires continuous batching. Please set `full_batch_size` and "
                 "enable `continuous_batching=True` in `from_pretrained`."
             )
+        layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
 
         # Infer kv_cache_batch_size if not provided
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
@@ -1810,7 +1883,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 prefill_seq_len=prefill_seq_len,
+                _layerwise_cache_probe=layerwise_cache_probe,
             )
+            if layerwise_cache_probe:
+                return self.lang_model.onnx_path
 
         # generating NPI during compile
         if hasattr(self.model, "generate_npi_file") and "node_precision_info" in compiler_options:
@@ -1853,54 +1929,24 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         if not skip_lang:
             custom_io_lang = {}
-            # Inputs
             for output_name in output_names["lang"]:
                 if output_name.endswith("_RetainedState"):
-                    custom_io_lang[output_name[: -len("_RetainedState")]] = (
+                    compiler_output_name = _compile_io_name(
+                        output_name,
+                        use_onnx_subfunctions=use_onnx_subfunctions,
+                    )
+                    custom_io_lang[_state_input_name(compiler_output_name)] = (
+                        CUSTOM_IO_DTYPE_MAP[target_dtype]
+                        if ("vision_embeds" in output_name or "deepstack_features" in output_name)
+                        else kv_cache_dtype
+                    )
+                    custom_io_lang[compiler_output_name] = (
                         CUSTOM_IO_DTYPE_MAP[target_dtype]
                         if ("vision_embeds" in output_name or "deepstack_features" in output_name)
                         else kv_cache_dtype
                     )
 
-            # outputs
-            for output_name in output_names["lang"]:
-                if output_name.endswith("_RetainedState"):
-                    custom_io_lang[output_name] = (
-                        CUSTOM_IO_DTYPE_MAP[target_dtype]
-                        if ("vision_embeds" in output_name or "deepstack_features" in output_name)
-                        else kv_cache_dtype
-                    )
-
-            def filter_custom_io_lang(custom_io_lang, onnx_path):
-                # Extract filename
-                filename = os.path.basename(onnx_path)
-
-                # Extract range from "merged_0-2.onnx"
-                match = re.search(r"merged_(\d+)-(\d+)\.onnx", filename)
-                if not match:
-                    return custom_io_lang  # no filtering if pattern not found
-
-                start, end = map(int, match.groups())  # e.g. 0, 2
-
-                filtered = {}
-
-                for k, v in custom_io_lang.items():
-                    # Keep everything that is NOT KV cache
-                    if ("past_key." not in k) and ("past_value." not in k):
-                        filtered[k] = v
-                        continue
-
-                    # Extract layer index
-                    layer_match = re.search(r"past_(?:key|value)\.(\d+)", k)
-                    if layer_match:
-                        idx = int(layer_match.group(1))
-                        if start <= idx < end:
-                            filtered[k] = v
-
-                return filtered
-
-            if self.lang_model.onnx_path is not None and "merged" in str(self.lang_model.onnx_path):
-                custom_io_lang = filter_custom_io_lang(custom_io_lang, self.lang_model.onnx_path)
+            custom_io_lang = _filter_custom_io_for_onnx(custom_io_lang, self.lang_model.onnx_path)
 
             if prefill_only:
                 specializations = specializations["lang"][:1]
@@ -2607,18 +2653,14 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         custom_io = {}
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[target_dtype]
-        # inputs
         for input_name in output_names:
             if input_name.endswith("_RetainedState"):
-                custom_io[input_name[: -len("_RetainedState")]] = (
+                compiler_output_name = _compile_io_name(input_name, use_onnx_subfunctions=use_onnx_subfunctions)
+                custom_io[_state_input_name(compiler_output_name)] = (
                     CUSTOM_IO_DTYPE_MAP[target_dtype] if "pixel_values" in input_name else kv_cache_dtype
                 )
-
-        # outputs
-        for output_name in output_names:
-            if output_name.endswith("_RetainedState"):
-                custom_io[output_name] = (
-                    CUSTOM_IO_DTYPE_MAP[target_dtype] if "pixel_values" in output_name else kv_cache_dtype
+                custom_io[compiler_output_name] = (
+                    CUSTOM_IO_DTYPE_MAP[target_dtype] if "pixel_values" in input_name else kv_cache_dtype
                 )
 
         # TODO this hould be removed once the continous batching is supported for all the models.
@@ -3475,6 +3517,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             config=config,
             qeff_factory=_factory,
             compile_kwargs=forward_kwargs,
+            probe_qeff_model=self,
             window_size=layerwise_window_size,
             final_compile=final_compile,
         )
@@ -4248,43 +4291,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             for suffix in ["", "_RetainedState"]:
                 for i in range(self.num_layers):
                     for kv in ["key", "value"]:
-                        custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
+                        name = _compile_io_name(
+                            f"past_{kv}.{i}{suffix}",
+                            use_onnx_subfunctions=use_onnx_subfunctions,
+                        )
+                        custom_io[name] = kv_cache_dtype
         else:
             for suffix in ["", "_RetainedState"]:
                 for i in range(self.num_layers):
-                    custom_io[f"compressed_kv.{i}{suffix}"] = kv_cache_dtype
-                    custom_io[f"k_pe.{i}{suffix}"] = kv_cache_dtype
+                    for prefix in ("compressed_kv", "k_pe"):
+                        name = _compile_io_name(
+                            f"{prefix}.{i}{suffix}",
+                            use_onnx_subfunctions=use_onnx_subfunctions,
+                        )
+                        custom_io[name] = kv_cache_dtype
 
-        def filter_custom_io(custom_io_lang, onnx_path):
-            # Extract filename
-            filename = os.path.basename(onnx_path)
-
-            # Extract range from "merged_0-2.onnx"
-            match = re.search(r"merged_(\d+)-(\d+)\.onnx", filename)
-            if not match:
-                return custom_io_lang  # no filtering if pattern not found
-
-            start, end = map(int, match.groups())  # e.g. 0, 2
-
-            filtered = {}
-
-            for k, v in custom_io_lang.items():
-                # Keep everything that is NOT KV cache
-                if ("past_key." not in k) and ("past_value." not in k):
-                    filtered[k] = v
-                    continue
-
-                # Extract layer index
-                layer_match = re.search(r"past_(?:key|value)\.(\d+)", k)
-                if layer_match:
-                    idx = int(layer_match.group(1))
-                    if start <= idx < end:
-                        filtered[k] = v
-
-            return filtered
-
-        if onnx_path is not None and "merged" in str(onnx_path):
-            custom_io = filter_custom_io(custom_io, onnx_path)
+        custom_io = _filter_custom_io_for_onnx(custom_io, onnx_path)
 
         qpc_path = self._compile(
             onnx_path=onnx_path,
@@ -4641,15 +4663,11 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
         custom_io["input_features"] = kv_cache_dtype
 
-        # Slice output_names to get input names
         for output_name in output_names:
             if output_name.endswith("_RetainedState"):
-                custom_io[output_name[: -len("_RetainedState")]] = kv_cache_dtype
-
-        # Get output names
-        for output_name in output_names:
-            if output_name.endswith("_RetainedState"):
-                custom_io[output_name] = kv_cache_dtype
+                compiler_output_name = _compile_io_name(output_name, use_onnx_subfunctions=use_onnx_subfunctions)
+                custom_io[_state_input_name(compiler_output_name)] = kv_cache_dtype
+                custom_io[compiler_output_name] = kv_cache_dtype
 
         return self._compile(
             onnx_path=onnx_path,

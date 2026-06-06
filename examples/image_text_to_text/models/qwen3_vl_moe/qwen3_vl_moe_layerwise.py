@@ -26,15 +26,15 @@ MODEL_ID = "tiny-random/qwen3-vl-moe"
 
 def main():
     config = AutoConfig.from_pretrained(MODEL_ID)
-    config.torch_dtype = "float32"
-    config.vision_config.deepstack_visual_indexes = [8, 27, 36]
+    config.torch_dtype = "float16"
+    # config.vision_config.deepstack_visual_indexes = [8, 27, 36]
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         MODEL_ID,
         attn_implementation="eager",
         kv_offload=True,
         config=config,
-        torch_dtype=torch.float32,
+        torch_dtype=torch.float16,
         layerwise=True,
     )
 

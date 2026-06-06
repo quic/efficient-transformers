@@ -1382,6 +1382,159 @@ def test_layerwise_context_manager_toggles_class_flag():
 
 
 @pytest.mark.llm_model
+def test_layerwise_uses_probe_model_for_cached_export(monkeypatch, tmp_path):
+    """A cached merged ONNX must avoid rebuilding per-window models."""
+    from QEfficient.transformers.models import _layerwise
+
+    class DummyConfig:
+        model_type = "qwen3_moe"
+        num_hidden_layers = 2
+
+    class ProbeModel:
+        def __init__(self, cached_path):
+            self.cached_path = cached_path
+
+        def compile(self, **kwargs):
+            assert kwargs.pop("_layerwise_cache_probe") is True
+            return self.cached_path
+
+    cached_path = tmp_path / "Model-hash" / "final_data" / "merged_0-2.onnx"
+    cached_path.parent.mkdir(parents=True)
+    cached_path.touch()
+    factory_called = False
+
+    def fail_factory(*args, **kwargs):
+        nonlocal factory_called
+        factory_called = True
+        raise AssertionError("factory must not run when merged ONNX is cached")
+
+    monkeypatch.setattr(_layerwise, "_install_window_patches_for", lambda model_type: None)
+    result = _layerwise.run_layerwise(
+        model_id="dummy",
+        config=DummyConfig(),
+        qeff_factory=fail_factory,
+        compile_kwargs={},
+        probe_qeff_model=ProbeModel(cached_path),
+        final_compile=False,
+    )
+
+    assert result == str(cached_path)
+    assert factory_called is False
+
+
+@pytest.mark.llm_model
+def test_layerwise_cache_miss_exports_all_windows(monkeypatch, tmp_path):
+    from QEfficient.transformers.models import _layerwise
+
+    class DummyConfig:
+        model_type = "qwen3_moe"
+        num_hidden_layers = 3
+
+    class ProbeModel:
+        def compile(self, **kwargs):
+            assert kwargs.pop("_layerwise_cache_probe") is True
+            return None
+
+    exported_windows = []
+
+    class WindowModel:
+        def __init__(self):
+            self.model = object()
+
+        def compile(self, **kwargs):
+            start = _layerwise._LAYERWISE_STATE["text_start"]
+            end = _layerwise._LAYERWISE_STATE["text_end"]
+            exported_windows.append((start, end))
+            shard = tmp_path / "onnx_layerwise_tmp" / f"layer_{start}_{end}" / f"model_layer_tmp_{start}_{end}.onnx"
+            shard.parent.mkdir(parents=True, exist_ok=True)
+            shard.touch()
+            return str(shard)
+
+    monkeypatch.setattr(_layerwise, "_install_window_patches_for", lambda model_type: None)
+    monkeypatch.setattr(_layerwise, "_null_outside_window_layers", lambda *args, **kwargs: None)
+    monkeypatch.setattr(_layerwise, "_slim_for_window_export", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        _layerwise,
+        "_stitch_layerwise_if_available",
+        lambda export_root, total_layers=None: str(export_root / "merged.onnx"),
+    )
+
+    result = _layerwise.run_layerwise(
+        model_id="dummy",
+        config=DummyConfig(),
+        qeff_factory=lambda *args, **kwargs: WindowModel(),
+        compile_kwargs={},
+        probe_qeff_model=ProbeModel(),
+        window_size=1,
+        final_compile=False,
+    )
+
+    assert exported_windows == [(0, 1), (1, 2), (2, 3)]
+    assert result.endswith("merged.onnx")
+
+
+@pytest.mark.llm_model
+def test_layerwise_cached_merged_prefers_complete_graph(tmp_path):
+    from QEfficient.transformers.models import _layerwise
+
+    final_data = tmp_path / "final_data"
+    final_data.mkdir()
+    partial = final_data / "merged_9-48.onnx"
+    complete = final_data / "merged_0-48.onnx"
+    partial.touch()
+    complete.touch()
+
+    assert _layerwise._cached_merged_onnx(tmp_path, total_layers=48) == complete
+
+
+@pytest.mark.llm_model
+def test_subfunction_compile_io_names_use_internal_retained_state():
+    from QEfficient.transformers.models.modeling_auto import _compile_io_name, _state_input_name
+
+    output_name = _compile_io_name("past_value.1_RetainedState", use_onnx_subfunctions=True)
+
+    assert output_name == "past_value.1_InternalRetainedState"
+    assert _state_input_name(output_name) == "past_value.1"
+    assert _compile_io_name("vision_embeds_RetainedState", use_onnx_subfunctions=True) == "vision_embeds_RetainedState"
+
+
+@pytest.mark.llm_model
+def test_runtime_aliases_internal_retained_state_outputs():
+    from QEfficient.generation.cloud_infer import _add_basename_binding_aliases, _public_retained_state_name
+
+    assert _public_retained_state_name("past_key.0_InternalRetainedState") == "past_key.0_RetainedState"
+    assert _public_retained_state_name("past_value.1_InternalRetainedState") == "past_value.1_RetainedState"
+    assert _public_retained_state_name("logits") is None
+
+    binding_map = {"layer_0/input_ids": 3}
+    bindings = [type("Binding", (), {"name": "layer_0/input_ids", "index": 3})()]
+    _add_basename_binding_aliases(binding_map, bindings)
+    assert binding_map["input_ids"] == 3
+
+
+@pytest.mark.llm_model
+def test_layerwise_compile_hydrates_outer_qpc_paths(monkeypatch, tmp_path):
+    from QEfficient.transformers.models import _layerwise
+    from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
+
+    qpc_path = tmp_path / "qpc"
+    model = object.__new__(_QEffAutoModelForImageTextToTextDualQPC)
+    model._pretrained_model_name_or_path = "dummy"
+    model.config = object()
+    model.vision_model = type("Vision", (), {"qpc_path": None})()
+    model.lang_model = type("Lang", (), {"qpc_path": None})()
+    model._build_layerwise_factory = lambda: None
+
+    monkeypatch.setattr(_layerwise, "run_layerwise", lambda **kwargs: {"lang_decode_qpc_path": qpc_path})
+
+    result = model._run_layerwise_compile(layerwise_window_size=1)
+
+    assert result == {"lang_decode_qpc_path": qpc_path}
+    assert model.qpc_paths == result
+    assert model.lang_model.qpc_path == qpc_path
+
+
+@pytest.mark.llm_model
 def test_layerwise_compile_rejects_unsupported_model():
     """End-to-end smoke: invoking layerwise=True on llama bubbles the guard error."""
     try:
