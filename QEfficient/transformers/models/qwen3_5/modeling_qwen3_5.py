@@ -1420,23 +1420,30 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
 
     def forward(
         self,
-        input_ids,
-        vision_embeds,
-        position_ids,
-        image_idx,
-        past_key_values,
+        input_ids=None,
+        inputs_embeds=None,
+        vision_embeds=None,
+        position_ids=None,
+        image_idx=None,
+        past_key_values=None,
         batch_index: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
-        inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
-        _, _, channel_size = inputs_embeds.shape
-        selected = input_ids == self.model.config.image_token_id
-        indices1 = selected.to(torch.int64).cumsum(1) - 1
-        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-        indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-        image_features_expanded = vision_embeds.reshape(-1, channel_size).unsqueeze(0)[indices0, indices1]
-        image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-        inputs_embeds = image_input_embeds
+        if inputs_embeds is None:
+            inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
+        else:
+            inputs_embeds = inputs_embeds
+
+        if getattr(self.language_model, "_start", 0) == 0:
+            _, _, channel_size = inputs_embeds.shape
+            selected = input_ids == self.model.config.image_token_id
+            indices1 = selected.to(torch.int64).cumsum(1) - 1
+            indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
+            indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+            image_features_expanded = vision_embeds.reshape(-1, channel_size).unsqueeze(0)[indices0, indices1]
+            image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
+            inputs_embeds = image_input_embeds
+
         outputs = self.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
@@ -1445,10 +1452,18 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
             batch_index=batch_index,
             use_cache=True,
         )
-        logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-        logits = self.model.lm_head(hidden_states)
-        image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+
+        total_layers = getattr(self.language_model, "_total_layers", len(self.language_model.layers))
+        if getattr(self.language_model, "_end", total_layers) == total_layers:
+            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
+            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+            logits = self.model.lm_head(hidden_states)
+        else:
+            logits = outputs.last_hidden_state
+
+        if getattr(self.language_model, "_start", 0) == 0:
+            image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+
         return logits, vision_embeds, image_idx, outputs.past_key_values[: len(past_key_values)]
 
 
