@@ -17,7 +17,8 @@ from transformers import AutoConfig
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+MODEL_ID = "tiny-random/qwen3-vl-moe"
+# MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 PREFILL_SEQ_LEN = 32
 CTX_LEN = 4096
 BATCH_SIZE = 1

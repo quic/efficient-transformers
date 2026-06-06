@@ -25,8 +25,8 @@ from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 
-model_id = "Qwen/Qwen3-235B-A22B-Instruct-2507"  # weights are not required to convert to fp32
-# model_id = "yujiepan/qwen3-moe-tiny-random"
+model_id = "yujiepan/qwen3-moe-tiny-random"
+# model_id = "Qwen/Qwen3-235B-A22B-Instruct-2507"  # weights are not required to convert to fp32
 
 config = AutoConfig.from_pretrained(model_id)
 tokenizer = AutoTokenizer.from_pretrained(model_id)
