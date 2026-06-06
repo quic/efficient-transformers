@@ -99,6 +99,45 @@ def assert_layerwise_supported(config) -> str:
     )
 
 
+def is_layerwise_active() -> bool:
+    """True only while the layer-wise export driver is running.
+
+    The driver flips this on inside :func:`_layerwise_export_env`. Outside that
+    scope (the default, non-layerwise path) it is always False, which lets the
+    modeling forwards short-circuit every window branch and behave exactly as
+    they did before layer-wise support was added.
+    """
+    return bool(_LAYERWISE_STATE["active"])
+
+
+def resolve_layer_window(model_cls, total_layers: int) -> Tuple[int, int]:
+    """Return the ``[start, end)`` decoder-layer window to run this forward.
+
+    When layer-wise export is inactive this always returns ``(0, total_layers)``
+    regardless of any ``_start``/``_end`` class attributes, so the default path
+    is independent of (possibly stale) window state left on the modeling class.
+    When the driver is active it honors the window it poked onto ``model_cls``.
+    """
+    if not is_layerwise_active():
+        return 0, total_layers
+    start = int(getattr(model_cls, "_start", 0) or 0)
+    end = getattr(model_cls, "_end", 0) or 0
+    end = int(end) if end else total_layers
+    return start, end
+
+
+def is_last_layer_window(model_cls, total_layers: int) -> bool:
+    """True if this forward owns the final decoder window (applies final norm / lm_head).
+
+    Always True on the default path; on the layer-wise path it is True only for
+    the window whose ``_end`` reaches the total layer count.
+    """
+    if not is_layerwise_active():
+        return True
+    _, end = resolve_layer_window(model_cls, total_layers)
+    return end >= total_layers
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers (lifted from the legacy example script)
 # ---------------------------------------------------------------------------

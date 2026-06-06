@@ -1319,6 +1319,127 @@ def test_layerwise_supported_guard_rejects_unrelated_model():
         _layerwise.assert_layerwise_supported(config)
 
 
+def test_resolve_torch_dtype_normalizes_dtype_alias():
+    """transformers-v5 ``dtype`` alias must be honored and kept in sync with ``torch_dtype``.
+
+    Regression guard: passing ``dtype=float16`` used to be ignored, leaving the
+    model forced to float32 - breaking the Qwen3.5 float16 export path.
+    """
+    from QEfficient.transformers.models.modeling_auto import _resolve_torch_dtype
+
+    # float16 supplied via the v5 alias must survive and populate torch_dtype.
+    kwargs = {"dtype": torch.float16}
+    _resolve_torch_dtype(kwargs)
+    assert kwargs["torch_dtype"] == torch.float16
+    assert kwargs["dtype"] == torch.float16
+
+    # float16 via the legacy name still works.
+    kwargs = {"torch_dtype": torch.float16}
+    _resolve_torch_dtype(kwargs)
+    assert kwargs["torch_dtype"] == torch.float16
+
+    # bfloat16 is downgraded to float32 on ai100 regardless of which name is used.
+    kwargs = {"dtype": torch.bfloat16}
+    _resolve_torch_dtype(kwargs)
+    assert kwargs["torch_dtype"] == torch.float32
+    assert kwargs["dtype"] == torch.float32
+
+
+def test_qwen3_5_moe_gated_norm_preserves_float16():
+    """GatedDeltaNet RMSNorm must keep the input dtype so the gated output feeds
+    the float16 out_proj without a dtype mismatch (Qwen3.5 float16 export)."""
+    import torch.nn as nn
+
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+        QEffQwen3_5MoeGatedDeltaNetCustomRMSNormAIC,
+    )
+
+    norm = QEffQwen3_5MoeGatedDeltaNetCustomRMSNormAIC()
+    norm.weight = nn.Parameter(torch.ones(16, dtype=torch.float16))
+    norm.eps = 1e-6
+
+    out = norm(torch.randn(4, 16, dtype=torch.float16), torch.randn(4, 16, dtype=torch.float16))
+    assert out.dtype == torch.float16
+
+
+def test_layerwise_matches_default_path_for_qwen3_moe():
+    """Without-layerwise and with-layerwise forwards must produce identical output.
+    This is the core backward-compatibility contract: running every decoder layer
+    in a single forward (default path) must match running the same layers one
+    window at a time and chaining the hidden states (layerwise path), bit for bit.
+    """
+    from transformers.models.qwen3_moe.modeling_qwen3_moe import Qwen3MoeConfig, Qwen3MoeForCausalLM
+
+    import QEfficient
+    from QEfficient.transformers.models import _layerwise
+
+    cfg = Qwen3MoeConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        moe_intermediate_size=64,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=16,
+        num_experts=4,
+        num_experts_per_tok=2,
+        vocab_size=128,
+        max_position_embeddings=128,
+        decoder_sparse_step=1,
+        norm_topk_prob=True,
+    )
+    torch.manual_seed(0)
+    hf = Qwen3MoeForCausalLM(cfg).eval()
+    qeff_model = QEfficient.QEFFAutoModelForCausalLM(hf, continuous_batching=False)
+    inner = qeff_model.model.model
+
+    B, S, ctx, num_layers = 1, 8, 16, cfg.num_hidden_layers
+    n_kv, head_dim = cfg.num_key_value_heads, cfg.head_dim
+    ids = torch.randint(0, cfg.vocab_size, (B, S))
+    position_ids = torch.arange(S).view(1, -1)
+
+    def fresh_pkv():
+        return tuple(
+            (torch.zeros(B, n_kv, ctx, head_dim), torch.zeros(B, n_kv, ctx, head_dim)) for _ in range(num_layers)
+        )
+
+    # Default (non-layerwise) path: all layers in one shot.
+    with torch.no_grad():
+        default_out = inner(
+            input_ids=ids,
+            position_ids=position_ids,
+            past_key_values=fresh_pkv(),
+            cache_position=torch.arange(S),
+        )
+
+    # Layerwise path: window size 1, chaining hidden states across windows.
+    hidden_states = inner.embed_tokens(ids)
+    try:
+        with _layerwise._layerwise_export_env():
+            for window in range(num_layers):
+                _layerwise._set_layer_windows(window, window + 1, num_layers)
+                with torch.no_grad():
+                    out = inner(
+                        inputs_embeds=hidden_states,
+                        position_ids=position_ids,
+                        past_key_values=fresh_pkv(),
+                        cache_position=torch.arange(S),
+                    )
+                hidden_states = out.last_hidden_state
+    finally:
+        _layerwise._reset_layer_windows()
+
+    assert torch.equal(default_out.last_hidden_state, hidden_states), (
+        "layerwise windowed forward diverged from the default single-shot forward"
+    )
+
+    # The default path must leave the mutable window state untouched.
+    from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import QEffQwen3MoeModel
+
+    assert QEffQwen3MoeModel._start == 0
+    assert QEffQwen3MoeModel._end == 0
+
+
 @pytest.mark.llm_model
 def test_layerwise_supported_guard_accepts_qwen3_vl_moe():
     from QEfficient.transformers.models import _layerwise

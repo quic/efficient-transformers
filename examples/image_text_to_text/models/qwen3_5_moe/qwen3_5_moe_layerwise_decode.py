@@ -28,7 +28,7 @@ MODEL_ID = "tiny-random/qwen3.6-moe"
 
 def main():
     config = AutoConfig.from_pretrained(MODEL_ID)
-    config.torch_dtype = "float32"
+    config.torch_dtype = "float16"
     tokenizer = transformers.AutoTokenizer.from_pretrained(MODEL_ID)
     processor = AutoProcessor.from_pretrained(MODEL_ID)
 
@@ -37,8 +37,8 @@ def main():
         attn_implementation="eager",
         kv_offload=True,
         config=config,
-        dtype=torch.float32,
-        layerwise=True,
+        dtype=torch.float16,
+        # layerwise=True,
     )
 
     qpc_path = qeff_model.compile(
@@ -56,8 +56,8 @@ def main():
         split_retained_state_io=True,
         use_onnx_subfunctions=False,
         mos=1,
-        layerwise=True,
-        layerwise_window_size=1,
+        # layerwise=True,
+        # layerwise_window_size=1,
     )
     print(f"Final QPC path: {qpc_path}")
 

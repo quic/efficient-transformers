@@ -110,8 +110,17 @@ def _resolve_torch_dtype(kwargs: dict) -> None:
     * If torch_dtype is not set at all, default to float32 so that
       models whose config.json declares bfloat16 are still loaded in
       a dtype that the ai100 compiler accepts.
+
+    Transformers v5 renamed the ``torch_dtype`` argument to ``dtype``. To keep
+    backward compatibility for callers (and examples) that pass either name,
+    a caller-supplied ``dtype`` is folded into ``torch_dtype`` here and the two
+    are kept in sync on the way out so the loaded model and its config agree.
     """
     aic_hw_version = constants.DEFAULT_AIC_HW_VERSION
+    # Normalize the transformers-v5 ``dtype`` alias onto ``torch_dtype`` so a
+    # single code path governs the HW dtype policy below.
+    if kwargs.get("torch_dtype", None) is None and kwargs.get("dtype", None) is not None:
+        kwargs["torch_dtype"] = kwargs["dtype"]
     current_dtype = kwargs.get("torch_dtype", None)
 
     if (current_dtype is None or current_dtype == torch.bfloat16) and aic_hw_version != "ai200":
@@ -121,6 +130,10 @@ def _resolve_torch_dtype(kwargs: dict) -> None:
                 aic_hw_version,
             )
         kwargs["torch_dtype"] = torch.float32
+
+    # Keep the v5 alias in sync so HF from_pretrained and config see one dtype.
+    if "dtype" in kwargs:
+        kwargs["dtype"] = kwargs["torch_dtype"]
 
 
 def _build_layerwise_vision_export_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
