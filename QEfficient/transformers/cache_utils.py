@@ -19,10 +19,12 @@ from QEfficient.customop import (
     CtxGatherFuncBlockedKVCB,
     CtxGatherFuncCB,
     CtxGatherFuncCB3D,
+    CtxGatherPagedFunc,
     CtxScatterFunc,
     CtxScatterFunc3D,
     CtxScatterFuncCB,
     CtxScatterFuncCB3D,
+    CtxScatterPagedFunc,
 )
 
 
@@ -343,6 +345,160 @@ class QEffDynamicLayer(CacheLayerMixin):
         return k_out, v_out
 
 
+class QEffPagedDynamicLayer(CacheLayerMixin):
+    """Block-pool (paged) KV cache layer for Cloud AI 100.
+
+    Unlike :class:`QEffDynamicLayer` whose cache tensor is per-sequence-contiguous
+    ``[full_batch_size, num_heads, ctx_len, head_dim]``, this layer stores KV in a
+    shared **block pool** ``[num_blocks, num_heads, page_size, head_dim]``. The
+    physical location of a logical token is resolved through a per-request
+    ``block_table`` (passed via ``cache_kwargs``)::
+
+        physical_block = block_table[seq, logical_pos // page_size]
+        intra_offset   = logical_pos % page_size
+
+    Reads/writes reuse :class:`CtxScatterPagedFunc` / :class:`CtxGatherPagedFunc`
+    (ScatterND/GatherND). Attention sees the gathered, logically-contiguous
+    ``[batch, num_heads, ctx, head_dim]`` exactly as in the contiguous path, so no
+    attention-side change is required.
+    """
+
+    is_sliding = False
+
+    def __init__(self):
+        super().__init__()
+
+    def lazy_initialization(self, key_states: torch.Tensor):
+        self.dtype = key_states.dtype
+        self.device = key_states.device
+        self.keys = torch.tensor([], dtype=self.dtype, device=self.device)
+        self.values = torch.tensor([], dtype=self.dtype, device=self.device)
+        self.is_initialized = True
+
+    def get_mask_sizes(self, cache_position: torch.Tensor) -> tuple[int, int]:
+        # Position tracking for the paged path is driven by externally supplied
+        # position_ids / block_table (AIC graph inputs), not by cache shape.
+        kv_offset = 0
+        query_length = cache_position.shape[0]
+        kv_length = query_length
+        return kv_length, kv_offset
+
+    def get_seq_length(self) -> int:
+        # The block-pool first dim is num_blocks, not a sequence length; the runner
+        # tracks positions via position_ids, so report 0 here.
+        return 0
+
+    def get_max_cache_shape(self) -> int:
+        return -1
+
+    @classmethod
+    def from_tensors(cls, key_states: torch.Tensor, value_states: torch.Tensor) -> "QEffPagedDynamicLayer":
+        layer = cls()
+        layer.keys = key_states
+        layer.values = value_states
+        layer._mark_initialized(key_states)
+        return layer
+
+    def _mark_initialized(self, reference_states: torch.Tensor) -> None:
+        if not self.is_initialized:
+            self.dtype = reference_states.dtype
+            self.device = reference_states.device
+            self.is_initialized = True
+
+    @staticmethod
+    def _write_indices(position_ids, block_table, page_size):
+        """(physical_block, intra_offset) int32 tensors of shape [bsz, seq] for write."""
+        logical_block = (position_ids // page_size).clamp(min=0).to(torch.int64)  # [bsz, seq]
+        phys_block = torch.gather(block_table, 1, logical_block).to(torch.int32)
+        offset = (position_ids % page_size).to(torch.int32)
+        # Drop padding writes (position < 0) by sending them to an out-of-range
+        # page offset, mirroring the continuous-batching scatter sentinel.
+        invalid = torch.iinfo(torch.int32).max
+        offset = torch.where(position_ids < 0, torch.tensor(invalid, dtype=torch.int32), offset)
+        return phys_block, offset
+
+    @staticmethod
+    def _read_indices(position_ids, block_table, page_size, ctx_len):
+        """(physical_block, intra_offset, invalid_mask) for reading logical [0, ctx_len)."""
+        bsz = position_ids.shape[0]
+        ctx_indices = torch.arange(ctx_len)[None, :].expand(bsz, ctx_len)  # [bsz, ctx]
+        logical_block = (ctx_indices // page_size).to(torch.int64)
+        phys_block = torch.gather(block_table, 1, logical_block).to(torch.int32)
+        offset = (ctx_indices % page_size).to(torch.int32)
+        gather_limit = position_ids.max(1, keepdim=True).values  # [bsz, 1]
+        invalid_mask = ctx_indices > gather_limit  # [bsz, ctx]
+        return phys_block, offset, invalid_mask
+
+    def write_only(self, key_states, value_states, cache_kwargs):
+        if self.keys is None or (isinstance(self.keys, torch.Tensor) and self.keys.numel() == 0):
+            self.keys = key_states
+            self.values = value_states
+            self._mark_initialized(self.keys)
+            return
+        self._mark_initialized(self.keys)
+        position_ids = cache_kwargs.get("position_ids")
+        block_table = cache_kwargs.get("block_table")
+        page_size = self.keys.shape[2]
+        phys_block, offset = self._write_indices(position_ids, block_table, page_size)
+        self.keys = CtxScatterPagedFunc.apply(self.keys, phys_block, offset, key_states)
+        self.values = CtxScatterPagedFunc.apply(self.values, phys_block, offset, value_states)
+
+    def read_only(self, cache_kwargs):
+        """Gather-only read of logically-contiguous [0, ctx_len) from the block pool."""
+        k_pool, v_pool = self.keys, self.values
+        if k_pool is not None:
+            self._mark_initialized(k_pool)
+        position_ids = cache_kwargs.get("position_ids")
+        block_table = cache_kwargs.get("block_table")
+        page_size = k_pool.shape[2]
+        max_blocks = block_table.shape[1]
+        ctx_len = cache_kwargs.get("CCL", max_blocks * page_size)
+        g_phys, g_offset, invalid_mask = self._read_indices(position_ids, block_table, page_size, ctx_len)
+        k_out = CtxGatherPagedFunc.apply(k_pool, g_phys, g_offset)
+        v_out = CtxGatherPagedFunc.apply(v_pool, g_phys, g_offset)
+        v_out = torch.where(
+            invalid_mask.unsqueeze(1).unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out
+        )
+        return k_out, v_out
+
+    def update(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        cache_kwargs: Optional[dict[str, Any]] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.keys is None or (isinstance(self.keys, torch.Tensor) and self.keys.numel() == 0):
+            self.keys = key_states
+            self.values = value_states
+            self._mark_initialized(self.keys)
+            return self.keys, self.values
+
+        self._mark_initialized(self.keys)
+        position_ids = cache_kwargs.get("position_ids")
+        block_table = cache_kwargs.get("block_table")
+        if block_table is None:
+            raise ValueError("QEffPagedDynamicLayer.update requires 'block_table' in cache_kwargs")
+        page_size = self.keys.shape[2]
+        max_blocks = block_table.shape[1]
+
+        # ---- Scatter (write) into the block pool ----
+        phys_block, offset = self._write_indices(position_ids, block_table, page_size)
+        self.keys = CtxScatterPagedFunc.apply(self.keys, phys_block, offset, key_states)
+        self.values = CtxScatterPagedFunc.apply(self.values, phys_block, offset, value_states)
+        k_pool, v_pool = self.keys, self.values
+
+        # ---- Gather (read) logically-contiguous [0, ctx_len) for attention ----
+        full_ctx = max_blocks * page_size
+        ctx_len = cache_kwargs.get("CCL", full_ctx)
+        g_phys, g_offset, invalid_mask = self._read_indices(position_ids, block_table, page_size, ctx_len)
+        k_out = CtxGatherPagedFunc.apply(k_pool, g_phys, g_offset)
+        v_out = CtxGatherPagedFunc.apply(v_pool, g_phys, g_offset)
+        v_out = torch.where(
+            invalid_mask.unsqueeze(1).unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out
+        )
+        return k_out, v_out
+
+
 class QEffDynamicCompressedKVRopeLayer:
     def __init__(self, ckv, k_pe):
         self.ckv = ckv
@@ -624,6 +780,65 @@ class QEffDynamicCache(Cache):
         """
         self.append_new_layers(layer_idx)
         return self.layers[layer_idx].update3D(key_states, value_states, cache_kwargs)
+
+
+class QEffPagedDynamicCache(Cache):
+    """Paged (block-table) variant of :class:`QEffDynamicCache` for Cloud AI 100.
+
+    KV is stored in a shared block pool ``[num_blocks, num_heads, page_size,
+    head_dim]`` per layer. Selected (instead of :class:`QEffDynamicCache`) when the
+    model runs in paged mode; the per-request ``block_table`` is threaded through
+    ``cache_kwargs`` by the attention forward. See :class:`QEffPagedDynamicLayer`.
+    """
+
+    def __init__(self, ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None, *args, **kwargs):
+        kwargs.pop("layer_classes", None)
+        kwargs.pop("layers", None)
+        kwargs.pop("layer_class_to_replicate", None)
+
+        try:
+            # transformers>=4.57
+            Cache.__init__(self, *args, layer_class_to_replicate=QEffPagedDynamicLayer, **kwargs)
+        except TypeError:
+            # transformers<=4.56
+            Cache.__init__(self, *args, layer_classes=QEffPagedDynamicLayer, **kwargs)
+        if ddp_cache_data is not None:
+            for key_states, value_states in ddp_cache_data:
+                self.layers.append(QEffPagedDynamicLayer.from_tensors(key_states, value_states))
+
+    def append_new_layers(self, layer_idx: int) -> None:
+        while len(self.layers) <= layer_idx:
+            self.layers.append(QEffPagedDynamicLayer())
+
+    @classmethod
+    def from_legacy_cache(
+        cls, past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
+    ) -> "QEffPagedDynamicCache":
+        cache = cls()
+        if past_key_values is not None:
+            for layer_idx in range(len(past_key_values)):
+                key_states, value_states = past_key_values[layer_idx]
+                cache.append_new_layers(layer_idx)
+                cache.layers[layer_idx].keys = key_states
+                cache.layers[layer_idx].values = value_states
+                cache.layers[layer_idx]._mark_initialized(key_states)
+        return cache
+
+    def to_legacy_cache(self) -> Tuple[Tuple[torch.Tensor, torch.Tensor]]:
+        legacy_cache = ()
+        for layer in self.layers:
+            legacy_cache += ((layer.keys, layer.values),)
+        return legacy_cache
+
+    def get_seq_length(self, layer_idx: Optional[int] = 0, cache_position: Optional[torch.LongTensor] = None) -> int:
+        return 0
+
+    def read_only(self, layer_idx, cache_kwargs):
+        return self.layers[layer_idx].read_only(cache_kwargs)
+
+    def write_only(self, key_states, value_states, layer_idx, cache_kwargs):
+        self.append_new_layers(layer_idx)
+        return self.layers[layer_idx].write_only(key_states, value_states, cache_kwargs)
 
 
 class QEffEncoderDecoderCache(EncoderDecoderCache):
