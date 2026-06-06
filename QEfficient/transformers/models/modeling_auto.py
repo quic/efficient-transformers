@@ -123,6 +123,29 @@ def _resolve_torch_dtype(kwargs: dict) -> None:
         kwargs["torch_dtype"] = torch.float32
 
 
+def _build_meta_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
+    """Construct an HF model on the meta device for layer-wise mode.
+
+    Avoids materializing checkpoint weights at the outer ``from_pretrained``
+    call site. The wrapper still has a fully-typed ``nn.Module`` (so config,
+    architectures, and module structure are all real), but every parameter
+    and buffer is a meta tensor — zero RAM. The layer-wise driver later
+    rebuilds a real per-window model when ``compile()``/``export()`` runs.
+    """
+    from transformers import AutoConfig
+
+    config = kwargs.get("config", None)
+    if config is None:
+        config_kwargs = {
+            k: kwargs[k] for k in ("trust_remote_code", "revision", "token", "subfolder", "cache_dir") if k in kwargs
+        }
+        config = AutoConfig.from_pretrained(pretrained_model_name_or_path, **config_kwargs)
+    torch_dtype = kwargs.get("torch_dtype", torch.float32)
+    with torch.device("meta"):
+        model = hf_auto_class.from_config(config, torch_dtype=torch_dtype)
+    return model
+
+
 class QEFFTransformersBase(QEFFBaseModel):
     """
     Base class for QEfficient wrappers around HuggingFace transformer models.
@@ -1320,10 +1343,17 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        # Respect an explicit low_cpu_mem_usage=True from the caller (used by the
+        # layer-wise driver to keep RAM bounded by one window's weights via meta
+        # init + sharded materialization). For everyone else, force False to
+        # match prior behavior.
+        explicit_low_cpu = kwargs.get("low_cpu_mem_usage", None) is True
+        kwargs.update(
+            {
+                "attn_implementation": "eager",
+                "low_cpu_mem_usage": True if explicit_low_cpu else False,
+            }
+        )
 
         _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
@@ -1501,11 +1531,14 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         """Reproduce the from_pretrained kwargs needed to rebuild this wrapper per window."""
         # Mirror the dual-QPC from_pretrained surface; the layerwise driver passes
         # config explicitly per call, so we only carry torch_dtype + attn here.
+        # low_cpu_mem_usage=True works with the shard-window patch to allocate
+        # only the active window's weights instead of the full model.
         torch_dtype = getattr(self.config, "torch_dtype", None)
         return {
             "attn_implementation": "eager",
             "kv_offload": True,
             "torch_dtype": torch_dtype,
+            "low_cpu_mem_usage": True,
         }
 
     def _build_layerwise_factory(self):
@@ -2977,6 +3010,7 @@ class QEFFAutoModelForImageTextToText:
         kv_offload: Optional[bool] = None,
         continuous_batching: bool = False,
         qaic_config: Optional[dict] = None,
+        layerwise: bool = False,
         **kwargs,
     ):
         """
@@ -3017,17 +3051,31 @@ class QEFFAutoModelForImageTextToText:
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        # Respect explicit low_cpu_mem_usage=True (used by the layer-wise driver
+        # to materialize only the active window's weights via meta init +
+        # sharded materialization). Default behavior remains False.
+        explicit_low_cpu = kwargs.get("low_cpu_mem_usage", None) is True
+        kwargs.update(
+            {
+                "attn_implementation": "eager",
+                "low_cpu_mem_usage": True if explicit_low_cpu else False,
+            }
+        )
 
         _resolve_torch_dtype(kwargs)
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        if layerwise:
+            # Layer-wise mode: build the outer model on the meta device so the
+            # caller's ``from_pretrained`` does not pull the full checkpoint
+            # into RAM. compile()/export() rebuilds a real per-window model
+            # internally via the layer-wise driver, so the outer instance is
+            # only used as a config holder.
+            model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
+        else:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
-        return cls(
+        instance = cls(
             model,
             kv_offload=kv_offload,
             continuous_batching=continuous_batching,
@@ -3035,6 +3083,12 @@ class QEFFAutoModelForImageTextToText:
             qaic_config=qaic_config,
             **kwargs,
         )
+        # Mark the wrapper so its compile() can default ``layerwise=True`` if
+        # the user forgot to pass it (the meta model cannot be exported any
+        # other way) and so the driver knows weights still need to be loaded.
+        if layerwise:
+            instance._layerwise_outer_meta = True
+        return instance
 
 
 MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {
@@ -3214,6 +3268,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         continuous_batching: bool = False,
         qaic_config: Optional[dict] = None,
         max_seq_len_cached: Optional[int] = None,
+        layerwise: bool = False,
         *args,
         **kwargs,
     ):
@@ -3269,15 +3324,28 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
         kv_offload = kwargs.pop("kv_offload", None)
 
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        # Respect explicit low_cpu_mem_usage=True (used by the layer-wise driver
+        # to materialize only the active window's weights via meta init +
+        # sharded materialization). Default behavior remains False.
+        explicit_low_cpu = kwargs.get("low_cpu_mem_usage", None) is True
+        kwargs.update(
+            {
+                "attn_implementation": "eager",
+                "low_cpu_mem_usage": True if explicit_low_cpu else False,
+            }
+        )
 
         _resolve_torch_dtype(kwargs)
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        if layerwise:
+            # Layer-wise mode: build the outer model on the meta device. The
+            # caller still gets a typed wrapper, but no checkpoint weights are
+            # pulled into RAM. compile()/export() rebuilds a real per-window
+            # model internally via the layer-wise driver.
+            model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
+        else:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
 
@@ -3292,7 +3360,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 continuous_batching=continuous_batching,
                 **kwargs,
             )
-        return cls(
+        instance = cls(
             model,
             continuous_batching=continuous_batching,
             qaic_config=qaic_config,
@@ -3300,6 +3368,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             max_seq_len_cached=max_seq_len_cached,
             **kwargs,
         )
+        if layerwise:
+            instance._layerwise_outer_meta = True
+        return instance
 
     @property
     def get_model_config(self) -> dict:
@@ -3396,6 +3467,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 config=config,
                 torch_dtype=torch_dtype,
                 continuous_batching=self.continuous_batching,
+                low_cpu_mem_usage=True,
             )
 
         return _layerwise.run_layerwise(

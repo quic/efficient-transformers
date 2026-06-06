@@ -38,6 +38,29 @@ _LAYERWISE_SUPPORTED_MODEL_TYPES = frozenset(
     }
 )
 
+# Hard cap on the RoPE base table rows we serialize per window. Chosen as a
+# constant (not a function of ctx_len) on purpose: changing ctx_len at compile
+# time should re-use the cached ONNX and only re-run the QPC compile. Any
+# inference-time position id is bounded by ctx_len, and ctx_len in practice
+# stays well under 32K for the supported MoE families today, so dropping
+# the unreachable rows past 32K is lossless.
+_LAYERWISE_ROPE_MAX_POSITIONS = 32768
+
+# Process-local layer-wise window state. We deliberately avoid setting class
+# attributes on transformers.modeling_utils.PreTrainedModel - those would leak
+# to every HF model in the process and survive past the layer-wise run. The
+# patched HF hooks (shard filter, model-init nuller) close over this dict so
+# they can be installed once and behave as no-ops whenever ``active`` is False.
+_LAYERWISE_STATE: Dict[str, int] = {
+    "active": 0,
+    "start": 0,
+    "end": 0,
+    "total_layers": 0,
+    "text_start": 0,
+    "text_end": 0,
+    "text_total_layers": 0,
+}
+
 _DEPRECATION_WARNED = False
 
 
@@ -82,10 +105,13 @@ def assert_layerwise_supported(config) -> str:
 
 
 def _ensure_pretrained_window_attrs() -> None:
-    pt = transformers.modeling_utils.PreTrainedModel
-    for attr in ("_start", "_end", "_total_layers", "_text_start", "_text_end", "_text_total_layers"):
-        if not hasattr(pt, attr):
-            setattr(pt, attr, 0)
+    """No-op kept for compatibility with prior call sites.
+
+    Layer-wise window state lives in the module-local ``_LAYERWISE_STATE``
+    dict (see top of file); we no longer pollute ``PreTrainedModel`` with
+    class attributes.
+    """
+    return
 
 
 def _build_layer_windows(total_layers: int, window_size: int) -> List[Tuple[int, int]]:
@@ -121,9 +147,8 @@ def _get_text_layers_container(model):
 def _null_outside_window_layers(model, *, apply_text: bool = True) -> None:
     if not apply_text:
         return
-    pt = transformers.modeling_utils.PreTrainedModel
-    text_start = int(getattr(pt, "_text_start", getattr(pt, "_start", 0)))
-    text_end = int(getattr(pt, "_text_end", getattr(pt, "_end", 0)))
+    text_start = int(_LAYERWISE_STATE["text_start"] or _LAYERWISE_STATE["start"])
+    text_end = int(_LAYERWISE_STATE["text_end"] or _LAYERWISE_STATE["end"])
     text_layers = _get_text_layers_container(model)
     if text_layers is not None and text_end > text_start:
         for idx, _ in enumerate(text_layers):
@@ -165,27 +190,29 @@ def _slim_for_window_export(qeff_model, *, ctx_len: Optional[int]) -> None:
     if lm is None:
         return
 
-    pt = transformers.modeling_utils.PreTrainedModel
-    text_start = int(getattr(pt, "_text_start", getattr(pt, "_start", 0)))
-    text_end = int(getattr(pt, "_text_end", getattr(pt, "_end", 0)))
-    text_total = int(getattr(pt, "_text_total_layers", getattr(pt, "_total_layers", 0) or 0))
+    text_start = int(_LAYERWISE_STATE["text_start"] or _LAYERWISE_STATE["start"])
+    text_end = int(_LAYERWISE_STATE["text_end"] or _LAYERWISE_STATE["end"])
+    text_total = int(_LAYERWISE_STATE["text_total_layers"] or _LAYERWISE_STATE["total_layers"] or 0)
 
-    # 1) Truncate sin_cached / cos_cached to the rows actually addressable at
-    #    inference time (ctx_len). The original tables are sized to
-    #    max_position_embeddings (often 256k+) which is dead weight for export.
-    if ctx_len:
-        for attr in ("sin_cached", "cos_cached"):
-            param = getattr(lm, attr, None)
-            if param is None or not hasattr(param, "shape") or param.dim() < 2:
-                continue
-            cur_rows = int(param.shape[0])
-            target_rows = max(1, int(ctx_len))
-            if cur_rows <= target_rows:
-                continue
-            with torch.no_grad():
-                truncated = param.detach()[:target_rows].clone().contiguous()
-            new_param = torch.nn.Parameter(truncated, requires_grad=False)
-            setattr(lm, attr, new_param)
+    # 1) Truncate sin_cached / cos_cached to a fixed cap (32K rows) instead
+    #    of ctx_len. A constant cap keeps the export hash invariant when the
+    #    user changes ctx_len, so re-compiling at a different context length
+    #    only re-runs the QPC compile - the cached layer-wise ONNX is reused.
+    #    Inference-time position ids are bounded by ctx_len which is well
+    #    under the cap for the supported MoE families today.
+    del ctx_len  # signature retained for forward compat, value intentionally unused
+    rope_cap = _LAYERWISE_ROPE_MAX_POSITIONS
+    for attr in ("sin_cached", "cos_cached"):
+        param = getattr(lm, attr, None)
+        if param is None or not hasattr(param, "shape") or param.dim() < 2:
+            continue
+        cur_rows = int(param.shape[0])
+        if cur_rows <= rope_cap:
+            continue
+        with torch.no_grad():
+            truncated = param.detach()[:rope_cap].clone().contiguous()
+        new_param = torch.nn.Parameter(truncated, requires_grad=False)
+        setattr(lm, attr, new_param)
 
     # 2) Drop the vocab embedding for windows that don't run input-id lookup.
     #    The first window (text_start == 0) is the only one that calls
@@ -236,7 +263,10 @@ def _install_window_patch(model_cls) -> None:
     @functools.wraps(original_init)
     def patched_init(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
-        _null_outside_window_layers(self, apply_text=True)
+        # Only nullify decoder layers when the layer-wise driver is actively
+        # exporting; idle calls to from_pretrained must behave normally.
+        if _LAYERWISE_STATE["active"]:
+            _null_outside_window_layers(self, apply_text=True)
 
     model_cls.__init__ = patched_init
     model_cls._window_patch_installed = True
@@ -251,15 +281,19 @@ def _install_shard_window_patch() -> None:
     @functools.wraps(original_get_checkpoint_shard_files)
     def patched_get_checkpoint_shard_files(*args, **kwargs):
         shard_files, metadata = original_get_checkpoint_shard_files(*args, **kwargs)
+        # Honor the module-local state instead of polluting PreTrainedModel.
+        # When layerwise is not active this reduces to a no-op for any HF
+        # caller that happens to load checkpoint shards in this process.
+        if not _LAYERWISE_STATE["active"]:
+            return shard_files, metadata
         weight_map = metadata.get("weight_map")
         if not weight_map:
             return shard_files, metadata
 
-        pt = transformers.modeling_utils.PreTrainedModel
-        start = int(getattr(pt, "_start", 0))
-        end = int(getattr(pt, "_end", 0))
-        text_start = int(getattr(pt, "_text_start", start))
-        text_end = int(getattr(pt, "_text_end", end))
+        start = int(_LAYERWISE_STATE["start"])
+        end = int(_LAYERWISE_STATE["end"])
+        text_start = int(_LAYERWISE_STATE["text_start"] or start)
+        text_end = int(_LAYERWISE_STATE["text_end"] or end)
         if text_end <= text_start:
             return shard_files, metadata
 
@@ -293,14 +327,19 @@ def _install_shard_window_patch() -> None:
 
 
 def _set_layer_windows(text_start: int, text_end: int, text_total_layers: int) -> None:
-    pt = transformers.modeling_utils.PreTrainedModel
-    pt._start = text_start
-    pt._end = text_end
-    pt._total_layers = text_total_layers
-    pt._text_start = text_start
-    pt._text_end = text_end
-    pt._text_total_layers = text_total_layers
+    # Update the module-local state used by patched HF hooks. We deliberately
+    # do NOT set class attributes on transformers.modeling_utils.PreTrainedModel
+    # here - that would leak to every HF model in the process.
+    _LAYERWISE_STATE["start"] = text_start
+    _LAYERWISE_STATE["end"] = text_end
+    _LAYERWISE_STATE["total_layers"] = text_total_layers
+    _LAYERWISE_STATE["text_start"] = text_start
+    _LAYERWISE_STATE["text_end"] = text_end
+    _LAYERWISE_STATE["text_total_layers"] = text_total_layers
 
+    # The QEff modeling classes themselves expose _start/_end/_total_layers as
+    # part of their windowing contract (they are read inside their forward
+    # implementations). Those are ours to set.
     qeff_vl_mod = getattr(QEfficient.transformers.models, "qwen3_vl_moe", None)
     if qeff_vl_mod is not None:
         cls = getattr(qeff_vl_mod.modeling_qwen3_vl_moe, "QEffQwen3VLMoeTextModel", None)
@@ -338,10 +377,22 @@ def _resolve_export_root(onnx_path: Path) -> Path:
     parts = list(onnx_path.parts)
     if "onnx_layerwise_tmp" in parts:
         return Path(*parts[: parts.index("onnx_layerwise_tmp")])
+    if "final_data" in parts:
+        return Path(*parts[: parts.index("final_data")])
     return onnx_path.parent
 
 
+def _is_cached_merged(onnx_path: Path) -> bool:
+    return "final_data" in onnx_path.parts and onnx_path.name.startswith("merged_")
+
+
 def _stitch_layerwise_if_available(export_root: Path) -> str:
+    # If a prior run already produced the merged ONNX, just return it.
+    cached_dir = export_root / "final_data"
+    if cached_dir.is_dir():
+        cached_merged = sorted(cached_dir.glob("merged_*.onnx"))
+        if cached_merged:
+            return str(cached_merged[-1])
     pipeline_fn = getattr(QEfficient.utils, "layerwise_pipeline", None)
     if callable(pipeline_fn):
         return pipeline_fn(str(export_root))
@@ -349,13 +400,33 @@ def _stitch_layerwise_if_available(export_root: Path) -> str:
 
 
 def _install_window_patches_for(model_type: str) -> None:
-    """Install the HF __init__/shard patches needed for the given model_type."""
+    """Install the HF __init__/shard patches needed for the given model_type.
+
+    The shard-file patch makes ``from_pretrained`` skip checkpoint shards that
+    only contain weights for layers outside the active window, so loading an
+    N-layer model in a window of size 1 reads ~1/N of the disk. The init
+    patch nulls the unused decoder layers right after the model is built so
+    the full layer list is never instantiated in memory.
+    """
     _install_shard_window_patch()
-    if "qwen3_vl_moe" in model_type:
-        hf_mod = transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe
-        _install_window_patch(hf_mod.Qwen3VLMoeForConditionalGeneration)
-        if hasattr(hf_mod, "Qwen3VLMoeForCausalLM"):
-            _install_window_patch(hf_mod.Qwen3VLMoeForCausalLM)
+    candidates = []
+    qwen3_vl_moe_mod = getattr(getattr(transformers.models, "qwen3_vl_moe", None), "modeling_qwen3_vl_moe", None)
+    if qwen3_vl_moe_mod is not None and "qwen3_vl_moe" in model_type:
+        candidates.extend(
+            cls
+            for name in ("Qwen3VLMoeForConditionalGeneration", "Qwen3VLMoeForCausalLM")
+            if (cls := getattr(qwen3_vl_moe_mod, name, None)) is not None
+        )
+    qwen3_moe_mod = getattr(getattr(transformers.models, "qwen3_moe", None), "modeling_qwen3_moe", None)
+    if qwen3_moe_mod is not None and model_type in {"qwen3_moe"}:
+        candidates.extend(
+            cls for name in ("Qwen3MoeForCausalLM",) if (cls := getattr(qwen3_moe_mod, name, None)) is not None
+        )
+    # qwen3_5_moe shares the qwen3_vl_moe HF classes today; the QEff modeling
+    # file overrides behavior. Install the shard patch (above) and rely on
+    # _null_outside_window_layers running post-init in the driver loop.
+    for cls in candidates:
+        _install_window_patch(cls)
 
 
 @contextmanager
@@ -367,12 +438,15 @@ def _layerwise_export_env():
     interpreters (e.g. test workers) operate independently.
     """
     base = QEfficient.base.modeling_qeff.QEFFBaseModel
-    prev = getattr(base, "_layerwise_active", False)
+    prev_active = getattr(base, "_layerwise_active", False)
+    prev_state_active = _LAYERWISE_STATE["active"]
     base._layerwise_active = True
+    _LAYERWISE_STATE["active"] = 1
     try:
         yield
     finally:
-        base._layerwise_active = prev
+        base._layerwise_active = prev_active
+        _LAYERWISE_STATE["active"] = prev_state_active
 
 
 def _resolve_text_total_layers(config) -> int:

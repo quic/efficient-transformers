@@ -36,6 +36,7 @@ def main():
         kv_offload=True,
         config=config,
         torch_dtype=torch.float16,
+        layerwise=True,
     )
 
     qpc_path = qeff_model.compile(

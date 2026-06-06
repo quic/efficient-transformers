@@ -502,6 +502,17 @@ class QEFFBaseModel(ABC):
             self.onnx_path = onnx_path
             return onnx_path
 
+        # Layer-wise reuse: if the merged final ONNX from a prior run exists
+        # under final_data/, skip per-window export entirely. The driver's
+        # stitch step picks up the same merged file, so re-running the same
+        # example without changes goes straight to the QPC compile.
+        final_data_dir = export_dir / "final_data"
+        if final_data_dir.is_dir():
+            cached_merged = sorted(final_data_dir.glob("merged_*.onnx"))
+            if cached_merged:
+                self.onnx_path = cached_merged[-1]
+                return self.onnx_path
+
         # check if the model is in meta state or weights are offloaded
         self._model_offloaded_check()
 

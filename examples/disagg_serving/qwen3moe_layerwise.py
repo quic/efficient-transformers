@@ -27,7 +27,7 @@ config = AutoConfig.from_pretrained(model_id)
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 
 
-qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, config=config)
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, config=config, layerwise=True)
 
 qpc_path = qeff_model.compile(
     prefill_seq_len=PREFILL_SEQ_LEN,
