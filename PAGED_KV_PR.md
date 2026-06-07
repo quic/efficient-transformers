@@ -64,12 +64,17 @@ CPU venv (mac/Linux): `python tests/customop/<name>.py`. All pass.
   `2.23 MB` vs contiguous `16.78 MB` for short-seqs-in-long-context (**7.5× / 86.7%
   smaller**); CPU-eager latency ≈ `1.0×` (host-side; not the AIC metric).
 
+## Also included: `compile(paged_kv=True, page_size=, num_blocks=)`
+
+`compile()` injects `num_blocks`/`page_size`/`max_num_blocks` into every
+specialization and pops the paged kwargs so they are not forwarded to the AIC
+compiler. CPU test (`test_paged_compile_spec.py`) asserts the spec dims via a
+mocked `_compile`. So the full QAIC path is wired: `export(paged_kv=True)` →
+`compile(paged_kv=True)` → (box) AIC compile.
+
 ## NOT in this PR (box-gated — needs a QAIC host)
 
-1. **compile() specialization dims for paged** (`num_blocks` / `page_size` /
-   `max_num_blocks`) in `build_prefill_specialization` / `build_decode_specialization`
-   / `compile`. Mechanical, but only meaningfully validated against the AIC compiler.
-2. **AIC compile** of the paged QPC + on-card **accuracy** and **throughput/FBS**
+1. **AIC compile** of the paged QPC + on-card **accuracy** and **throughput/FBS**
    go/no-go (plan Step 3). CPU-eager, onnxruntime-ops numerics, and full-model export
    are verified, but the authoritative full-graph numeric/perf gate is the AIC
    compiler + card.
