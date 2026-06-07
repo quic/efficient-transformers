@@ -47,12 +47,16 @@ def CtxScatterPaged(
     num_heads = ops.Gather(ops.Shape(data), [1])
     seq_len = ops.Gather(ops.Shape(block_idx), [1])
 
-    zero = ops.Constant(value_ints=[0])
     one = ops.Constant(value_ints=[1])
     exp_shape = ops.Concat(batch_size, num_heads, seq_len, one, axis=0)
 
+    # Range requires scalar (0-d) args per the ONNX spec.
+    zero_s = ops.Constant(value_int=0)
+    one_s = ops.Constant(value_int=1)
+    num_heads_s = ops.Gather(ops.Shape(data), 1)
+
     blk_idx = ops.Expand(ops.Unsqueeze(block_idx, [1, 3]), exp_shape)
-    head_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, num_heads, one), [0, 2, 3]), exp_shape)
+    head_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero_s, num_heads_s, one_s), [0, 2, 3]), exp_shape)
     off_idx = ops.Expand(ops.Unsqueeze(offset_idx, [1, 3]), exp_shape)
     indices = ops.Concat(blk_idx, head_idx, off_idx, axis=3)
 
@@ -104,18 +108,16 @@ def CtxGatherPaged(
     num_heads = ops.Gather(ops.Shape(data), [1])
     ctx_len = ops.Gather(ops.Shape(block_idx), [1])
 
-    zero = ops.Constant(value_ints=[0])
     one = ops.Constant(value_ints=[1])
-    exp_shape = ops.Concat(
-        ops.Reshape(batch_size, [1]),
-        ops.Reshape(num_heads, [1]),
-        ops.Reshape(ctx_len, [1]),
-        one,
-        axis=0,
-    )
+    exp_shape = ops.Concat(batch_size, num_heads, ctx_len, one, axis=0)
+
+    # Range requires scalar (0-d) args per the ONNX spec.
+    zero_s = ops.Constant(value_int=0)
+    one_s = ops.Constant(value_int=1)
+    num_heads_s = ops.Gather(ops.Shape(data), 1)
 
     blk_idx = ops.Expand(ops.Unsqueeze(block_idx, [1, 3]), exp_shape)
-    head_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, num_heads, one), [0, 2, 3]), exp_shape)
+    head_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero_s, num_heads_s, one_s), [0, 2, 3]), exp_shape)
     off_idx = ops.Expand(ops.Unsqueeze(offset_idx, [1, 3]), exp_shape)
     indices = ops.Concat(blk_idx, head_idx, off_idx, axis=3)
 

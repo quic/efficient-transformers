@@ -77,8 +77,8 @@ def _make_block_table(bsz, max_blocks, seed=0):
 def _paged_write(pool, block_table, position_ids, key, page_size):
     logical_block = (position_ids // page_size).clamp(min=0)
     offset = position_ids % page_size
-    phys_block = torch.gather(block_table, 1, logical_block.to(torch.int64)).to(torch.int32)
-    return CtxScatterPagedFunc.forward(pool, phys_block, offset.to(torch.int32), key)
+    phys_block = torch.gather(block_table, 1, logical_block.to(torch.int64)).to(torch.int64)
+    return CtxScatterPagedFunc.forward(pool, phys_block, offset.to(torch.int64), key)
 
 
 def _paged_read(pool, block_table, ctx_len, page_size):
@@ -89,8 +89,8 @@ def _paged_read(pool, block_table, ctx_len, page_size):
     # Valid range is enforced by the caller (ctx_len <= max_blocks*page_size); assert
     # rather than silently clamp so a malformed block_table fails visibly (stricter oracle).
     assert int(logical_block.max()) < max_blocks, "ctx_len exceeds block_table capacity"
-    offset = (ctx_idx % page_size).to(torch.int32)
-    phys_block = torch.gather(block_table, 1, logical_block.to(torch.int64)).to(torch.int32)
+    offset = (ctx_idx % page_size).to(torch.int64)
+    phys_block = torch.gather(block_table, 1, logical_block.to(torch.int64)).to(torch.int64)
     num_blocks = pool.shape[0]
     assert int(phys_block.min()) >= 0 and int(phys_block.max()) < num_blocks, "block id out of pool range"
     return CtxGatherPagedFunc.forward(pool, phys_block, offset)

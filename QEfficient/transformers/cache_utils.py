@@ -417,10 +417,13 @@ class QEffPagedDynamicLayer(CacheLayerMixin):
         """
         invalid = position_ids < 0
         logical_block = (position_ids // page_size).clamp(min=0).to(torch.int64)  # [bsz, seq]
-        phys_block = torch.gather(block_table, 1, logical_block).to(torch.int32)
-        offset = (position_ids % page_size).to(torch.int32)
+        # Keep index tensors int64 (matching position_ids) so the onnxscript scatter
+        # builds a single-typed ScatterND index (mixing int32 with the int64 head
+        # Range would break ONNX/onnxruntime type checking).
+        phys_block = torch.gather(block_table, 1, logical_block).to(torch.int64)
+        offset = (position_ids % page_size).to(torch.int64)
         null_block = num_blocks - 1
-        phys_block = torch.where(invalid, torch.tensor(null_block, dtype=torch.int32), phys_block)
+        phys_block = torch.where(invalid, torch.tensor(null_block, dtype=torch.int64), phys_block)
         offset = torch.where(invalid, torch.zeros_like(offset), offset)
         return phys_block, offset
 
@@ -437,9 +440,9 @@ class QEffPagedDynamicLayer(CacheLayerMixin):
         bsz = position_ids.shape[0]
         ctx_indices = torch.arange(ctx_len)[None, :].expand(bsz, ctx_len)  # [bsz, ctx]
         logical_block = (ctx_indices // page_size).to(torch.int64)
-        phys_block = torch.gather(block_table, 1, logical_block).to(torch.int32)
+        phys_block = torch.gather(block_table, 1, logical_block).to(torch.int64)
         phys_block = phys_block.clamp(0, num_blocks - 1)
-        offset = (ctx_indices % page_size).to(torch.int32)
+        offset = (ctx_indices % page_size).to(torch.int64)
         gather_limit = position_ids.max(1, keepdim=True).values  # [bsz, 1]
         invalid_mask = ctx_indices > gather_limit  # [bsz, ctx]
         return phys_block, offset, invalid_mask

@@ -53,11 +53,11 @@ def test_paged_ops_onnx_export():
     nb, heads, page, dim = 9, 2, 4, 8
     bsz, seq, ctx = 2, 5, 16
     pool = torch.zeros(nb, heads, page, dim)
-    block_idx = torch.zeros(bsz, seq, dtype=torch.int32)
-    offset_idx = torch.zeros(bsz, seq, dtype=torch.int32)
+    block_idx = torch.zeros(bsz, seq, dtype=torch.int64)
+    offset_idx = torch.zeros(bsz, seq, dtype=torch.int64)
     updates = torch.randn(bsz, heads, seq, dim)
-    g_block = torch.zeros(bsz, ctx, dtype=torch.int32)
-    g_offset = torch.zeros(bsz, ctx, dtype=torch.int32)
+    g_block = torch.zeros(bsz, ctx, dtype=torch.int64)
+    g_offset = torch.zeros(bsz, ctx, dtype=torch.int64)
 
     input_names = ["pool", "block_idx", "offset_idx", "updates", "g_block", "g_offset"]
     with tempfile.NamedTemporaryFile(suffix=".onnx", delete=False) as f:
@@ -86,9 +86,71 @@ def test_paged_ops_onnx_export():
     assert ("GatherND" in op_names) or any("Gather" in o for o in op_names), f"no gather op in {ops}"
 
 
+def _export(module, inputs, input_names):
+    with tempfile.NamedTemporaryFile(suffix=".onnx", delete=False) as f:
+        path = f.name
+    torch.onnx.export(
+        module, inputs, path, input_names=input_names, output_names=["out"], opset_version=17, dynamo=False
+    )
+    return path
+
+
+def test_paged_ops_onnx_numeric_matches_eager():
+    """Run the EXPORTED ONNX under onnxruntime and compare to eager — validates the
+    onnxscript symbolic lowering (what the AIC compiler consumes), not just that it
+    exports. Uses random non-trivial block/offset indices so a wrong index
+    construction in the onnxscript would surface as a numeric mismatch.
+    """
+    import numpy as np
+    import onnxruntime as ort
+    from onnx import inliner
+
+    torch.manual_seed(5)
+    nb, heads, page, dim = 11, 2, 4, 8
+    bsz, seq, ctx = 2, 5, 16
+    # Disjoint per-sequence blocks so scatter/gather indices are non-trivial & valid.
+    g = torch.Generator().manual_seed(1)
+    max_blocks = 5
+    bt = torch.stack([torch.randperm(max_blocks, generator=g) + b * max_blocks for b in range(bsz)], 0)
+    wpos = torch.arange(seq).view(1, -1).expand(bsz, seq)
+    block_idx = torch.gather(bt, 1, wpos // page).to(torch.int64)
+    offset_idx = (wpos % page).to(torch.int64)
+    gpos = torch.arange(ctx).view(1, -1).expand(bsz, ctx)
+    g_block = torch.gather(bt, 1, (gpos // page).clamp(max=max_blocks - 1)).to(torch.int64)
+    g_offset = (gpos % page).to(torch.int64)
+    pool = torch.randn(nb, heads, page, dim)
+    updates = torch.randn(bsz, heads, seq, dim)
+
+    inputs = (pool.clone(), block_idx, offset_idx, updates, g_block, g_offset)
+    input_names = ["pool", "block_idx", "offset_idx", "updates", "g_block", "g_offset"]
+
+    with torch.no_grad():
+        eager = _PagedRoundTrip()(*[x.clone() if torch.is_tensor(x) else x for x in inputs]).numpy()
+
+    path = _export(_PagedRoundTrip(), inputs, input_names)
+    model = onnx.load(path)
+    # com.qualcomm.cloud custom functions must inline to standard ops so ORT can run them.
+    model = inliner.inline_local_functions(model)
+    sess = ort.InferenceSession(model.SerializeToString(), providers=["CPUExecutionProvider"])
+    feeds = {
+        "pool": pool.numpy(),
+        "block_idx": block_idx.numpy(),
+        "offset_idx": offset_idx.numpy(),
+        "updates": updates.numpy(),
+        "g_block": g_block.numpy(),
+        "g_offset": g_offset.numpy(),
+    }
+    ort_out = sess.run(None, feeds)[0]
+
+    max_diff = float(np.abs(eager - ort_out).max())
+    print(f"[metrics] onnx_numeric: precision max_abs_diff={max_diff:.3e} (eager vs onnxruntime)")
+    assert np.allclose(eager, ort_out, atol=1e-5, rtol=1e-5), f"ONNX symbolic path differs from eager: {max_diff}"
+
+
 if __name__ == "__main__":
     from _metrics import measure
 
     with measure("test_paged_onnx_export"):
         test_paged_ops_onnx_export()
+        test_paged_ops_onnx_numeric_matches_eager()
     print("PAGED ONNX EXPORT: PASS")
