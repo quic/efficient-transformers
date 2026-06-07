@@ -95,8 +95,41 @@ def test_qwen2_paged_logits_match_contiguous():
 
     assert cont.logits.shape == paged.logits.shape
     assert torch.allclose(cont.logits, paged.logits, atol=1e-4, rtol=1e-4), (
-        f"max abs diff = {(cont.logits - paged.logits).abs().max().item()}"
+        f"prefill max abs diff = {(cont.logits - paged.logits).abs().max().item()}"
     )
+
+    # ---- Multi-step decode: feed the returned cache back + a new token. ----
+    # Validates cache PERSISTENCE across calls (the real decode path), not just prefill.
+    cont_cache = cont.past_key_values  # legacy tuples with prefill KV written in
+    paged_cache = paged.past_key_values
+    cur = prompt_len
+    for step in range(3):
+        next_ids = torch.randint(0, cfg.vocab_size, (bsz, 1))
+        next_pos = torch.full((bsz, 1), cur, dtype=torch.int64)
+        with torch.no_grad():
+            cont = model(
+                input_ids=next_ids,
+                position_ids=next_pos,
+                batch_index=batch_index,
+                attention_mask=attn_mask,
+                past_key_values=cont_cache,
+                use_cache=True,
+            )
+            paged = model(
+                input_ids=next_ids,
+                position_ids=next_pos,
+                batch_index=batch_index,
+                block_table=block_table,
+                attention_mask=attn_mask,
+                past_key_values=paged_cache,
+                use_cache=True,
+            )
+        assert torch.allclose(cont.logits, paged.logits, atol=1e-4, rtol=1e-4), (
+            f"decode step {step} max abs diff = {(cont.logits - paged.logits).abs().max().item()}"
+        )
+        cont_cache = cont.past_key_values
+        paged_cache = paged.past_key_values
+        cur += 1
 
 
 if __name__ == "__main__":

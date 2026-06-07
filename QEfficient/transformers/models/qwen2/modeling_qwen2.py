@@ -300,6 +300,15 @@ class QEffQwen2Model(Qwen2Model):
                 "You cannot specify both input_ids and inputs_embeds at the same time, and must specify either one"
             )
 
+        if block_table is not None:
+            # Paged mode tracks positions via externally supplied position_ids
+            # (the paged cache has no meaningful get_seq_length), and resolves
+            # physical KV per batch row through block_table.
+            if position_ids is None:
+                raise ValueError("position_ids must be supplied when using paged cache (block_table)")
+            if block_table.shape[0] != (inputs_embeds.shape[0] if inputs_embeds is not None else input_ids.shape[0]):
+                raise ValueError("block_table batch size does not match input batch size")
+
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
