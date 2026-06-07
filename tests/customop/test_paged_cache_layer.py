@@ -107,6 +107,9 @@ def test_paged_layer_matches_contiguous_layer():
             {"batch_index": batch_index, "position_ids": position_ids, "block_table": block_table},
         )
         assert ck.shape == pk.shape, f"shape mismatch {ck.shape} vs {pk.shape}"
+        from _metrics import report_precision
+
+        report_precision("cache_layer.K", pk[:, :, :valid_len, :], ck[:, :, :valid_len, :])
         assert torch.allclose(pk[:, :, :valid_len, :], ck[:, :, :valid_len, :]), "K mismatch"
         assert torch.allclose(pv[:, :, :valid_len, :], cv[:, :, :valid_len, :]), "V mismatch"
 
@@ -203,7 +206,10 @@ def test_paged_padding_routes_to_null_block_no_corruption():
 
 
 if __name__ == "__main__":
-    test_paged_layer_matches_contiguous_layer()
-    test_paged_layer_ccl_partial_read()
-    test_paged_padding_routes_to_null_block_no_corruption()
+    from _metrics import measure
+
+    with measure("test_paged_cache_layer"):
+        test_paged_layer_matches_contiguous_layer()
+        test_paged_layer_ccl_partial_read()
+        test_paged_padding_routes_to_null_block_no_corruption()
     print("PAGED CACHE LAYER PARITY: ALL PASS")

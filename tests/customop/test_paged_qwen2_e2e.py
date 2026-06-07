@@ -94,6 +94,9 @@ def test_qwen2_paged_logits_match_contiguous():
         )
 
     assert cont.logits.shape == paged.logits.shape
+    from _metrics import report_precision
+
+    report_precision("qwen2_e2e.prefill_logits", paged.logits, cont.logits)
     assert torch.allclose(cont.logits, paged.logits, atol=1e-4, rtol=1e-4), (
         f"prefill max abs diff = {(cont.logits - paged.logits).abs().max().item()}"
     )
@@ -124,6 +127,9 @@ def test_qwen2_paged_logits_match_contiguous():
                 past_key_values=paged_cache,
                 use_cache=True,
             )
+        from _metrics import report_precision
+
+        report_precision(f"qwen2_e2e.decode{step}_logits", paged.logits, cont.logits)
         assert torch.allclose(cont.logits, paged.logits, atol=1e-4, rtol=1e-4), (
             f"decode step {step} max abs diff = {(cont.logits - paged.logits).abs().max().item()}"
         )
@@ -133,5 +139,8 @@ def test_qwen2_paged_logits_match_contiguous():
 
 
 if __name__ == "__main__":
-    test_qwen2_paged_logits_match_contiguous()
+    from _metrics import measure
+
+    with measure("test_paged_qwen2_e2e"):
+        test_qwen2_paged_logits_match_contiguous()
     print("QWEN2 PAGED E2E PARITY: PASS")

@@ -118,6 +118,9 @@ def test_paged_matches_contiguous_prefill_and_decode():
     pool = _paged_write(pool, block_table, pos, kp, page_size)
 
     paged_read = _paged_read(pool, block_table, ctx_len, page_size)
+    from _metrics import report_precision
+
+    report_precision("ops_parity.prefill", paged_read[:, :, :prompt_len, :], cont[:, :, :prompt_len, :])
     assert torch.allclose(paged_read[:, :, :prompt_len, :], cont[:, :, :prompt_len, :]), "prefill mismatch"
 
     # Indirection must be REAL: reading the same pool with a DIFFERENT block_table
@@ -170,6 +173,9 @@ def test_sequences_do_not_collide():
 
 
 if __name__ == "__main__":
-    test_paged_matches_contiguous_prefill_and_decode()
-    test_sequences_do_not_collide()
+    from _metrics import measure
+
+    with measure("test_paged_kv_parity"):
+        test_paged_matches_contiguous_prefill_and_decode()
+        test_sequences_do_not_collide()
     print("PAGED KV PARITY: ALL PASS")

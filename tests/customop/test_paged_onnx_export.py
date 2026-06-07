@@ -87,5 +87,8 @@ def test_paged_ops_onnx_export():
 
 
 if __name__ == "__main__":
-    test_paged_ops_onnx_export()
+    from _metrics import measure
+
+    with measure("test_paged_onnx_export"):
+        test_paged_ops_onnx_export()
     print("PAGED ONNX EXPORT: PASS")
