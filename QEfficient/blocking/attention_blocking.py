@@ -98,6 +98,10 @@ def past_key_value_update(
         if comp_ctx_lengths is not None:
             attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
             cache_kwargs["CCL"] = attention_mask.shape[-1]
+        elif block_table is not None and attention_mask is not None:
+            # Paged cache has no get_seq_length(); make the gather length follow the
+            # causal-mask KV width so the gathered KV always matches the attention mask.
+            cache_kwargs["CCL"] = attention_mask.shape[-1]
         key, value = past_key_value.update(key, value, module.layer_idx, cache_kwargs)
     return key, value, attention_mask, cache_kwargs
 

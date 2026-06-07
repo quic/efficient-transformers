@@ -3092,6 +3092,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if paged_kv:
             if len(kv_cache_shape) != 4:
                 raise NotImplementedError("paged_kv export is only supported for 4D KV caches")
+            # The DYNAMIC_SEQ_LEN export branch builds pkv shapes from get_dummy_pkv_cache
+            # and would ignore the block-pool kv_cache_shape override below, silently
+            # producing a non-paged graph. Reject until paged support is wired there.
+            if (
+                hasattr(self.model.config, "model_type")
+                and self.model.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
+            ):
+                raise NotImplementedError(
+                    f"paged_kv export is not yet supported for dynamic-seq-len model_type "
+                    f"'{self.model.config.model_type}'"
+                )
             paged_page_size = int(kwargs.get("paged_block_size", 16))
             base_bs = fbs if self.continuous_batching else bs
             paged_max_blocks = max(1, -(-seq_len // paged_page_size))  # logical blocks per sequence
