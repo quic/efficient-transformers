@@ -1094,7 +1094,9 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             lang_inputs["input_ids"] = torch.zeros((bs, prefill_seq_len), dtype=torch.int64)
 
         lang_inputs["position_ids"] = (
-            (torch.arange(prefill_seq_len, dtype=torch.int64).view(1, prefill_seq_len).repeat(bs, 1)).unsqueeze(0).repeat(4, 1, 1)
+            (torch.arange(prefill_seq_len, dtype=torch.int64).view(1, prefill_seq_len).repeat(bs, 1))
+            .unsqueeze(0)
+            .repeat(4, 1, 1)
         )
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
