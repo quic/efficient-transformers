@@ -909,11 +909,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
 
         lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=self.config.torch_dtype)
         lang_inputs["position_ids"] = (
-            (
-                torch.arange(prefill_seq_len, dtype=torch.int64)
-                .view(1, prefill_seq_len)
-                .repeat(bs, 1)
-            )
+            (torch.arange(prefill_seq_len, dtype=torch.int64).view(1, prefill_seq_len).repeat(bs, 1))
             .unsqueeze(0)
             .repeat(4, 1, 1)
         )
