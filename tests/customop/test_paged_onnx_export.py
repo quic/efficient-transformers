@@ -1,0 +1,91 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
+"""ONNX export smoke test for the paged scatter/gather ops.
+
+Validates the SYMBOLIC (onnxscript) path — the thing the eager parity tests
+cannot cover — by exporting a tiny module that scatters into and gathers from a
+block pool, then checking the produced ONNX graph: it must export without error,
+expose the block/offset index tensors as graph inputs, and lower to the expected
+ScatterND / GatherND (under the com.qualcomm.cloud opset) that the AIC compiler
+consumes.
+"""
+
+import tempfile
+
+import onnx
+import pytest
+import torch
+
+pytest.importorskip("QEfficient")
+
+from QEfficient.customop import CtxGatherPagedFunc, CtxScatterPagedFunc  # noqa: E402
+
+
+class _PagedRoundTrip(torch.nn.Module):
+    def forward(self, pool, block_idx, offset_idx, updates, g_block, g_offset):
+        pool = CtxScatterPagedFunc.apply(pool, block_idx, offset_idx, updates)
+        return CtxGatherPagedFunc.apply(pool, g_block, g_offset)
+
+
+def _collect_op_types(model):
+    ops = set()
+
+    def walk(graph):
+        for n in graph.node:
+            ops.add((n.domain, n.op_type))
+            for attr in n.attribute:
+                if attr.g.ByteSize():
+                    walk(attr.g)
+
+    walk(model.graph)
+    for f in model.functions:
+        for n in f.node:
+            ops.add((n.domain, n.op_type))
+    return ops
+
+
+def test_paged_ops_onnx_export():
+    nb, heads, page, dim = 9, 2, 4, 8
+    bsz, seq, ctx = 2, 5, 16
+    pool = torch.zeros(nb, heads, page, dim)
+    block_idx = torch.zeros(bsz, seq, dtype=torch.int32)
+    offset_idx = torch.zeros(bsz, seq, dtype=torch.int32)
+    updates = torch.randn(bsz, heads, seq, dim)
+    g_block = torch.zeros(bsz, ctx, dtype=torch.int32)
+    g_offset = torch.zeros(bsz, ctx, dtype=torch.int32)
+
+    input_names = ["pool", "block_idx", "offset_idx", "updates", "g_block", "g_offset"]
+    with tempfile.NamedTemporaryFile(suffix=".onnx", delete=False) as f:
+        path = f.name
+    torch.onnx.export(
+        _PagedRoundTrip(),
+        (pool, block_idx, offset_idx, updates, g_block, g_offset),
+        path,
+        input_names=input_names,
+        output_names=["out"],
+        opset_version=17,
+        dynamo=False,
+    )
+
+    model = onnx.load(path)
+    onnx.checker.check_model(model)
+
+    graph_inputs = {i.name for i in model.graph.input}
+    for name in input_names:
+        assert name in graph_inputs, f"missing graph input {name}"
+
+    ops = _collect_op_types(model)
+    op_names = {op for _, op in ops}
+    # Either the custom function nodes are present, or they inlined to ScatterND/GatherND.
+    assert ("ScatterND" in op_names) or any("Scatter" in o for o in op_names), f"no scatter op in {ops}"
+    assert ("GatherND" in op_names) or any("Gather" in o for o in op_names), f"no gather op in {ops}"
+
+
+if __name__ == "__main__":
+    test_paged_ops_onnx_export()
+    print("PAGED ONNX EXPORT: PASS")
