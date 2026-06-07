@@ -86,6 +86,7 @@ class QEffGlmMoeDsaIndexer(GlmMoeDsaIndexer):
             topk=topk,
             blocked_indexer=blocked_indexer,
             num_kv_blocks=num_kv_blocks,
+            ctx_len_hint=getattr(self, "ctx_len_hint", None),
         )
         return topk_indices, valid_topk, indexer_key_cache
 
@@ -96,6 +97,7 @@ def _build_dsa_topk_indices(
     topk: int,
     blocked_indexer: bool = False,
     num_kv_blocks: int = 1,
+    ctx_len_hint: Optional[int] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     current_position = position_ids.max(dim=-1).values
     if not blocked_indexer or num_kv_blocks <= 1:
@@ -105,7 +107,7 @@ def _build_dsa_topk_indices(
 
     masked_score = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=index_scores.dtype, device=index_scores.device)
     ctx_len = index_scores.shape[-1]
-    block_size = -(-ctx_len // num_kv_blocks)
+    block_size = -(-(ctx_len_hint or ctx_len) // num_kv_blocks)
     candidate_scores = []
     candidate_indices = []
 
@@ -125,7 +127,7 @@ def _build_dsa_topk_indices(
         if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
             scores_block = torch.where(skip_future, masked_score, scores_block)
 
-        local_k = min(topk, scores_block.shape[-1])
+        local_k = min(topk, block_size)
         local_topk = torch.topk(scores_block, k=local_k, dim=-1)
         candidate_scores.append(local_topk.values)
         candidate_indices.append(local_topk.indices.to(torch.int32) + start_index)
@@ -183,8 +185,8 @@ def _dsa_mla_attention_forward(
     pad = 0
     if topk % split != 0:
         pad = split - (topk % split)
-        key = F.pad(key, (0, 0, 0, pad))
-        ckv_for_v = F.pad(ckv_for_v, (0, 0, 0, pad))
+        key = F.pad(key, (0, 0, 0, pad), value=0.0)
+        ckv_for_v = F.pad(ckv_for_v, (0, 0, 0, pad), value=0.0)
         valid_topk_mask = F.pad(valid_topk_mask, (0, pad), value=0.0)
     topk += pad
 
@@ -200,13 +202,13 @@ def _dsa_mla_attention_forward(
     max_split = attn.max(dim=-1).values
     exp_attn = torch.exp(attn - max_split.unsqueeze(-1))
     exp_attn = torch.where(valid_mask, exp_attn, torch.zeros(1, dtype=exp_attn.dtype, device=exp_attn.device))
-    sum_split = exp_attn.sum(dim=-1)
+    sum_split = torch.einsum("bhsqt->bhsq", exp_attn)
     out_split = torch.matmul(exp_attn, value_5d.float())
 
     global_max = max_split.max(dim=2).values
     merge_weight = torch.exp(max_split - global_max.unsqueeze(2))
-    denom = (merge_weight * sum_split).sum(dim=2) + 1e-20
-    output = (merge_weight.unsqueeze(-1) * out_split).sum(dim=2) / denom.unsqueeze(-1)
+    denom = torch.einsum("bhsq,bhsq->bhq", merge_weight, sum_split) + 1e-20
+    output = torch.einsum("bhsq,bhsqd->bhqd", merge_weight, out_split) / denom.unsqueeze(-1)
     output = output.to(query.dtype)
     output = output.view(batch, num_kv_heads, num_repeats, query_len, kv_lora_rank).reshape(
         batch, num_query_heads, query_len, kv_lora_rank

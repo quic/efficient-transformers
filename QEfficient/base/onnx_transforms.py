@@ -223,7 +223,9 @@ class RenameFunctionOutputsTransform(BaseOnnxTransform):
                     if "_InternalRetainedState" in out_name:
                         renamed = True
                         orig = node.output[i]
-                        if "key" in out_name:
+                        if "indexer_key_cache" in out_name:
+                            new = f"indexer_key_cache.{layer_idx}_RetainedState"
+                        elif "key" in out_name:
                             new = f"past_key.{layer_idx}_RetainedState"
                         elif "value" in out_name:
                             new = f"past_value.{layer_idx}_RetainedState"
