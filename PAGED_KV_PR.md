@@ -35,6 +35,7 @@ threading is model-specific.
   `past_key_value_update` / `generic_blocked_attention_interface` (centralizes paged
   support for any model that adopts the threading).
 - `QEfficient/customop/__init__.py` — export the new ops.
+- `QEfficient/transformers/models/modeling_auto.py` — `QEFFAutoModelForCausalLM.export(paged_kv=True, paged_block_size=..., paged_num_blocks=...)`: exports KV as a block pool, adds `block_table` + `attention_mask` graph inputs, pkv dynamic axes `num_blocks`/`page_size`. Guards dynamic-seq-len archs (unsupported).
 
 **Tests (`tests/customop/`):** `test_paged_kv_parity.py`, `test_paged_cache_layer.py`,
 `test_paged_qwen2_e2e.py`, `test_paged_onnx_export.py`, `test_paged_qwen2_onnx.py`,
@@ -65,13 +66,13 @@ CPU venv (mac/Linux): `python tests/customop/<name>.py`. All pass.
 
 ## NOT in this PR (box-gated — needs a QAIC host)
 
-1. **Production export-plumbing** in `QEFFAutoModelForCausalLM.export()`: a `paged_kv`
-   flag that shapes `past_key_values` as the block pool and adds `block_table` to
-   `example_inputs` / `dynamic_axes` / specializations (the runtime threading is
-   already export-ready; this is the pipeline wiring).
+1. **compile() specialization dims for paged** (`num_blocks` / `page_size` /
+   `max_num_blocks`) in `build_prefill_specialization` / `build_decode_specialization`
+   / `compile`. Mechanical, but only meaningfully validated against the AIC compiler.
 2. **AIC compile** of the paged QPC + on-card **accuracy** and **throughput/FBS**
-   go/no-go (plan Step 3). CPU-eager and onnxruntime-ops numerics are bit-exact, but
-   the authoritative full-graph numeric/perf gate is the AIC compiler + card.
+   go/no-go (plan Step 3). CPU-eager, onnxruntime-ops numerics, and full-model export
+   are verified, but the authoritative full-graph numeric/perf gate is the AIC
+   compiler + card.
 3. **vLLM-QAIC plugin** changes (separate repo): un-disable paging in `platform.py`
    (`block_size = page_size`, re-enable prefix caching), feed vLLM's block_table into
    the QPC in `model_runner.py`. (This also re-populates `Request.block_hashes`,
