@@ -34,7 +34,7 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
     past_key_value_update,
 )
-from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffPagedDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
@@ -130,6 +130,7 @@ class QEffQwen2Attention(Qwen2Attention):
         past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.Tensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         cos_cached: Optional[torch.Tensor] = None,
         sin_cached: Optional[torch.Tensor] = None,
@@ -163,6 +164,7 @@ class QEffQwen2Attention(Qwen2Attention):
                 batch_index=batch_index,
                 position_ids=position_ids,
                 past_seen_tokens=past_seen_tokens,
+                block_table=block_table,
             )
         else:
             key_states, value_states, attention_mask, _ = past_key_value_update(
@@ -174,6 +176,7 @@ class QEffQwen2Attention(Qwen2Attention):
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 position_ids=position_ids,
+                block_table=block_table,
             )
             attn_output, attn_weights = eager_attention_forward(
                 self,
@@ -206,6 +209,7 @@ class QEffQwen2DecoderLayer(Qwen2DecoderLayer):
         past_key_value: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         sin_cached=None,
@@ -240,6 +244,7 @@ class QEffQwen2DecoderLayer(Qwen2DecoderLayer):
             past_key_values=past_key_value,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
+            block_table=block_table,
             use_cache=use_cache,
             cache_position=cache_position,
             sin_cached=sin_cached,
@@ -278,6 +283,7 @@ class QEffQwen2Model(Qwen2Model):
         past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.Tensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -297,7 +303,12 @@ class QEffQwen2Model(Qwen2Model):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
+            # Paged (block-pool) cache when a block_table is supplied; otherwise the
+            # contiguous continuous-batching cache.
+            if block_table is not None:
+                past_key_values = QEffPagedDynamicCache.from_legacy_cache(past_key_values)
+            else:
+                past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -333,6 +344,7 @@ class QEffQwen2Model(Qwen2Model):
                 past_key_value=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
+                block_table=block_table,
                 use_cache=use_cache,
                 cache_position=cache_position,
                 sin_cached=sin,
@@ -380,6 +392,7 @@ class QEffQwen2ForCausalLM(Qwen2ForCausalLM):
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
+        block_table: Optional[torch.Tensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -397,6 +410,7 @@ class QEffQwen2ForCausalLM(Qwen2ForCausalLM):
             past_key_values=past_key_values,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
+            block_table=block_table,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             output_hidden_states=output_hidden_states,

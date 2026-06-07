@@ -80,9 +80,14 @@ def past_key_value_update(
     batch_index: Optional[torch.LongTensor] = None,
     position_ids: Optional[torch.LongTensor] = None,
     sliding_window: Optional[int] = None,
+    block_table: Optional[torch.Tensor] = None,
 ):
     if past_key_value is not None:
         cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+        # Paged (block-table) caches resolve physical KV locations from block_table;
+        # threading it here centralizes paged support for any model using this helper.
+        if block_table is not None:
+            cache_kwargs["block_table"] = block_table
         if sliding_window is not None:
             cache_kwargs.update(
                 {
@@ -116,6 +121,7 @@ def generic_blocked_attention_interface(
     position_bias: Optional[torch.Tensor] = None,
     sinks: Optional[torch.Tensor] = None,
     sliding_window: Optional[int] = None,
+    block_table: Optional[torch.Tensor] = None,
     **kwargs,
 ):
     use_kv_blocked = (
@@ -129,6 +135,8 @@ def generic_blocked_attention_interface(
                 "position_ids": position_ids,
                 "past_seen_tokens": past_seen_tokens,
             }
+            if block_table is not None:
+                cache_kwargs["block_table"] = block_table
             if sliding_window is not None:
                 cache_kwargs.update(
                     {
@@ -148,6 +156,7 @@ def generic_blocked_attention_interface(
                 batch_index=batch_index,
                 position_ids=position_ids,
                 sliding_window=sliding_window,
+                block_table=block_table,
             )
 
     strategy = _STRATEGIES.get(blocking_config.mode)
