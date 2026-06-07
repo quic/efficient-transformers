@@ -37,8 +37,8 @@ ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxScatterPaged(
     data: onnxscript.FLOAT,
-    block_idx: onnxscript.INT32,
-    offset_idx: onnxscript.INT32,
+    block_idx: onnxscript.INT64,
+    offset_idx: onnxscript.INT64,
     updates: onnxscript.FLOAT,
 ) -> onnxscript.FLOAT:
     # data: [num_blocks, num_heads, page_size, head_dim]
@@ -99,8 +99,8 @@ class CtxScatterPagedFunc(torch.autograd.Function):
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxGatherPaged(
     data: onnxscript.FLOAT,
-    block_idx: onnxscript.INT32,
-    offset_idx: onnxscript.INT32,
+    block_idx: onnxscript.INT64,
+    offset_idx: onnxscript.INT64,
 ) -> onnxscript.FLOAT:
     # data: [num_blocks, num_heads, page_size, head_dim]
     # block_idx, offset_idx: [batch, ctx]   -> out: [batch, num_heads, ctx, head_dim]

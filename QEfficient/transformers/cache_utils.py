@@ -361,6 +361,16 @@ class QEffPagedDynamicLayer(CacheLayerMixin):
     (ScatterND/GatherND). Attention sees the gathered, logically-contiguous
     ``[batch, num_heads, ctx, head_dim]`` exactly as in the contiguous path, so no
     attention-side change is required.
+
+    Runtime contract for the caller (e.g. the QAIC model runner):
+      * ``past_key_values`` are the **block-pool tensors** themselves, shaped
+        ``[num_blocks, num_heads, page_size, head_dim]`` (not per-sequence).
+      * The **last block (index ``num_blocks - 1``) is reserved as a null block**
+        for padding writes (``position_ids < 0``): it is never returned by a gather
+        and ``block_table`` entries must never reference it. Size the pool with one
+        extra block beyond the usable blocks.
+      * ``block_table`` entries for logical blocks a request has not allocated must
+        still be in ``[0, num_blocks)`` (they are clamped defensively and masked).
     """
 
     is_sliding = False
@@ -479,7 +489,7 @@ class QEffPagedDynamicLayer(CacheLayerMixin):
         k_out = CtxGatherPagedFunc.apply(k_pool, g_phys, g_offset)
         v_out = CtxGatherPagedFunc.apply(v_pool, g_phys, g_offset)
         v_out = torch.where(
-            invalid_mask.unsqueeze(1).unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out
+            invalid_mask.unsqueeze(1).unsqueeze(-1), torch.tensor(0.0, dtype=v_out.dtype), v_out
         )
         return k_out, v_out
 
@@ -519,7 +529,7 @@ class QEffPagedDynamicLayer(CacheLayerMixin):
         k_out = CtxGatherPagedFunc.apply(k_pool, g_phys, g_offset)
         v_out = CtxGatherPagedFunc.apply(v_pool, g_phys, g_offset)
         v_out = torch.where(
-            invalid_mask.unsqueeze(1).unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out
+            invalid_mask.unsqueeze(1).unsqueeze(-1), torch.tensor(0.0, dtype=v_out.dtype), v_out
         )
         return k_out, v_out
 
