@@ -435,7 +435,11 @@ class QEffDynamicCompressedKVRopeLayer:
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
         ckv_out = CtxGatherFunc.apply(ckv_out, ctx_indices, ctx_len)
-        ckv_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), ckv_out)
+        ckv_out = torch.where(
+            invalid_mask.unsqueeze(-1),
+            torch.zeros(1, dtype=ckv_out.dtype, device=ckv_out.device),
+            ckv_out,
+        )
         return ckv_out
 
     def update_k_pe(self, k_pe_cache, cache_kwargs):
@@ -455,7 +459,11 @@ class QEffDynamicCompressedKVRopeLayer:
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
         k_pe_out = CtxGatherFunc.apply(k_pe_out, ctx_indices, ctx_len)
-        k_pe_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), k_pe_out)
+        k_pe_out = torch.where(
+            invalid_mask.unsqueeze(-1),
+            torch.zeros(1, dtype=k_pe_out.dtype, device=k_pe_out.device),
+            k_pe_out,
+        )
         return k_pe_out
 
     def read_only_blocked_ckv(self, start_index, end_index, cache_kwargs):
@@ -477,7 +485,11 @@ class QEffDynamicCompressedKVRopeLayer:
         ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
         ckv_out = CtxGatherFuncBlockedKV.apply(ckv_out, ctx_indices)
 
-        ckv_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), ckv_out)
+        ckv_out = torch.where(
+            invalid_mask.unsqueeze(-1),
+            torch.zeros(1, dtype=ckv_out.dtype, device=ckv_out.device),
+            ckv_out,
+        )
         return ckv_out
 
     def read_only_blocked_k_pe(self, start_index, end_index, cache_kwargs):
@@ -499,7 +511,11 @@ class QEffDynamicCompressedKVRopeLayer:
         ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
         k_pe_out = CtxGatherFuncBlockedKV.apply(k_pe_out, ctx_indices)
 
-        k_pe_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), k_pe_out)
+        k_pe_out = torch.where(
+            invalid_mask.unsqueeze(-1),
+            torch.zeros(1, dtype=k_pe_out.dtype, device=k_pe_out.device),
+            k_pe_out,
+        )
         return k_pe_out
 
     def write_only_k_pe(self, k_pe_cache, cache_kwargs):

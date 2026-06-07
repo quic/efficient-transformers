@@ -104,6 +104,7 @@ TINY_AUDIO_CTC_MODEL_ID = "hf-internal-testing/tiny-random-wav2vec2"
 TINY_WHISPER_MODEL_ID = "hf-internal-testing/tiny-random-WhisperForConditionalGeneration"
 TINY_SEQ_CLASSIFICATION_MODEL_ID = "ydshieh/tiny-random-BertForSequenceClassification"
 TINY_AWQ_MODEL_ID = "optimum-intel-internal-testing/tiny-mixtral-AWQ-4bit"
+GLM_MOE_DSA_MODEL_ID = "tiny-random/glm-5.1"
 
 MODEL_KWARGS = {"attn_implementation": "eager"}
 PREFIX_CACHING_MODEL_ID = "hf-internal-testing/tiny-random-GPT2LMHeadModel"
@@ -340,6 +341,24 @@ def test_causal_lm_cpu_runtime_parity_with_api_runner(model_type, model_id, tmp_
 
     assert np.array_equal(hf_tokens, kv_tokens.squeeze(0))
     assert np.array_equal(kv_tokens, ort_tokens)
+
+
+@pytest.mark.llm_model
+def test_glm_moe_dsa_export_smoke(tmp_path):
+    try:
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+            GLM_MOE_DSA_MODEL_ID,
+            trust_remote_code=True,
+            torch_dtype=torch.float32,
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, GLM_MOE_DSA_MODEL_ID)
+
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "glm-moe-dsa"))
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    output_names = {output.name for output in onnx_model.graph.output}
+    assert any(name.startswith("indexer_key_cache.") and name.endswith("_RetainedState") for name in output_names)
+    assert _count_decoder_block_subfunctions(onnx_model, qeff_model) == 0
 
 
 @pytest.mark.llm_model

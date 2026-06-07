@@ -45,6 +45,16 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4TextModel,
     Gemma4TextRouter,
 )
+from transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+    GlmMoeDsaAttention,
+    GlmMoeDsaDecoderLayer,
+    GlmMoeDsaForCausalLM,
+    GlmMoeDsaModel,
+    GlmMoeDsaMoE,
+    GlmMoeDsaRMSNorm,
+    GlmMoeDsaRotaryEmbedding,
+    GlmMoeDsaTopkRouter,
+)
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeAttention,
@@ -134,6 +144,15 @@ from .models.gemma4.modeling_gemma4 import (
     QEffGemma4TextModel,
     QEffGemma4TextRouter,
 )
+from .models.glm_moe_dsa.modeling_glm_moe_dsa import (
+    QEffGlmMoeDsaAttention,
+    QEffGlmMoeDsaDecoderLayer,
+    QEffGlmMoeDsaForCausalLM,
+    QEffGlmMoeDsaModel,
+    QEffGlmMoeDsaMoE,
+    QEffGlmMoeDsaRotaryEmbedding,
+    QEffGlmMoeDsaTopkRouter,
+)
 from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT2LMHeadModel, QEffGPT2Model
 from .models.gpt_bigcode.modeling_gpt_bigcode import (
     QEffGPTBigCodeAttention,
@@ -207,6 +226,7 @@ qeff_supported_architectures = ModelArchitectures(
         GPTBigCodeForCausalLM.__name__,
         MllamaForCausalLM.__name__,
         WhisperForConditionalGeneration.__name__,
+        GlmMoeDsaForCausalLM.__name__,
     ]
 )
 
@@ -215,7 +235,7 @@ qeff_supported_architectures = ModelArchitectures(
 DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma3", "gemma3_text", "gemma4_text", "llama4", "llama4_text"}
 
 # This is for supporting different modelling classes specially written for prefill-only model
-SPECIALIZED_DISAGG_SERVING_MODEL_ARCH = {"gpt_oss", "qwen3_moe", "glm4_moe", "kimi_k2", "kimi_k25"}
+SPECIALIZED_DISAGG_SERVING_MODEL_ARCH = {"gpt_oss", "qwen3_moe", "glm4_moe", "glm_moe_dsa", "kimi_k2", "kimi_k25"}
 
 _PROXY_ONLY_ONNX_TRANSFORMS = (FP16ClipTransform, SplitTensorsTransform)
 
@@ -279,6 +299,15 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     Gemma4TextExperts: QEffGemma4TextExperts,
     Gemma4TextRouter: QEffGemma4TextRouter,
     Gemma4RMSNorm: QEffGemma4CustomRMSNormAIC,
+    # GLM-MoE-DSA layers
+    GlmMoeDsaModel: QEffGlmMoeDsaModel,
+    GlmMoeDsaForCausalLM: QEffGlmMoeDsaForCausalLM,
+    GlmMoeDsaAttention: QEffGlmMoeDsaAttention,
+    GlmMoeDsaDecoderLayer: QEffGlmMoeDsaDecoderLayer,
+    GlmMoeDsaRotaryEmbedding: QEffGlmMoeDsaRotaryEmbedding,
+    GlmMoeDsaMoE: QEffGlmMoeDsaMoE,
+    GlmMoeDsaTopkRouter: QEffGlmMoeDsaTopkRouter,
+    GlmMoeDsaRMSNorm: CustomRMSNormAIC,
     # MPT model layers
     MptAttention: QEffMptAttention,
     MptBlock: QEffMptBlock,

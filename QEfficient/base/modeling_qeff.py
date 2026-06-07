@@ -101,8 +101,11 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
-        if self.config.torch_dtype == torch.bfloat16:
+        target_dtype = self.config.torch_dtype
+        if target_dtype == torch.bfloat16:
             logger.warning("BFloat16 dtype is not yet supported; converting to float16 precision!")
+            target_dtype = torch.float16
+        self.model = self.model.to(dtype=target_dtype)
 
     def _normalize_torch_dtype(self):
         """
@@ -369,6 +372,9 @@ class QEFFBaseModel(ABC):
                                 f"k_pe.{i}",
                             ]
                         )
+                elif param == "indexer_key_cache":
+                    for i in range(len(example_inputs["indexer_key_cache"])):
+                        input_names.append(f"indexer_key_cache.{i}")
                 else:
                     input_names.append(param)
 
@@ -451,6 +457,8 @@ class QEFFBaseModel(ABC):
                     else moe_prefill_packed_chunk_size,
                 }
             )
+        elif specializations:
+            kwargs["prefill_seq_len"] = get_attr_or_key(specializations[0], ("cl", "seq_len", "sequence_length"))
 
         # Transform before export
         qaic_config = (
@@ -600,6 +608,10 @@ class QEFFBaseModel(ABC):
                     for layer_offset in range(len(example_inputs["compressed_kvs"])):
                         layer_idx = idx + layer_offset
                         input_names.extend([f"compressed_kv.{layer_idx}", f"k_pe.{layer_idx}"])
+                elif param == "indexer_key_cache":
+                    for layer_offset in range(len(example_inputs["indexer_key_cache"])):
+                        layer_idx = idx + layer_offset
+                        input_names.append(f"indexer_key_cache.{layer_idx}")
                 else:
                     input_names.append(param)
         dynamic_axes = {k: v for k, v in dynamic_axes.items() if k in input_names}

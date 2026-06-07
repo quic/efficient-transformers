@@ -54,6 +54,9 @@ class InputHandler:
         )
 
     def _get_layer_cache_shape(self, layer_idx):
+        if getattr(self.config, "model_type", None) == "glm_moe_dsa":
+            batch = self.full_batch_size if self.full_batch_size else self.padding_shape[0]
+            return [batch, self.config.num_attention_heads, self.ctx_len, self.config.qk_head_dim]
         if not hasattr(self.config, "layer_types") or self.config.layer_types is None:
             if hasattr(self.config, "sliding_window") and hasattr(self.config, "sliding_window_pattern"):
                 is_sliding = bool((layer_idx + 1) % self.config.sliding_window_pattern)
@@ -138,6 +141,12 @@ class InputHandler:
             pkv = (past_key, past_value)
             past_key_values.append(pkv)
         inputs["past_key_values"] = tuple(past_key_values)
+        if getattr(self.config, "model_type", None) == "glm_moe_dsa":
+            batch = self.full_batch_size if self.full_batch_size else batch_size
+            inputs["indexer_key_cache"] = tuple(
+                torch.zeros((batch, self.ctx_len, self.config.index_head_dim), dtype=self.dtype)
+                for _ in range(self.n_layer)
+            )
 
         return inputs
 
@@ -177,6 +186,8 @@ class InputHandler:
             updated_inputs["past_key_values"] = tuple(normalized_pkv)
         else:
             updated_inputs["past_key_values"] = pkv
+        if "indexer_key_cache" in inputs:
+            updated_inputs["indexer_key_cache"] = pt_outputs.attentions
 
         return updated_inputs
 
@@ -211,6 +222,10 @@ class InputHandler:
             pad_shape = self._get_layer_cache_shape(i)
             inputs["past_key." + str(i)] = np.zeros((pad_shape), dtype=np.float32)
             inputs["past_value." + str(i)] = np.zeros((pad_shape), dtype=np.float32)
+            if getattr(self.config, "model_type", None) == "glm_moe_dsa":
+                inputs["indexer_key_cache." + str(i)] = np.zeros(
+                    (batch_size, self.ctx_len, self.config.index_head_dim), dtype=np.float32
+                )
         if self.full_batch_size:
             inputs["batch_index"] = np.arange(self.full_batch_size).reshape(-1, 1)
         return inputs
@@ -233,6 +248,8 @@ class InputHandler:
         for i in range(self.n_layer):
             updated_inputs["past_key." + str(i)] = ort_outputs["past_key_values"][i * 2]
             updated_inputs["past_value." + str(i)] = ort_outputs["past_key_values"][i * 2 + 1]
+            if "indexer_key_cache" in ort_outputs:
+                updated_inputs["indexer_key_cache." + str(i)] = ort_outputs["indexer_key_cache"][i]
         if self.full_batch_size:
             updated_inputs["batch_index"] = inputs["batch_index"]
         return updated_inputs
@@ -254,9 +271,15 @@ class InputHandler:
                 present_key_values.append(ort_outputs["past_key." + str(i) + "_RetainedState"])
             if "past_value." + str(i) + "_RetainedState" in ort_outputs:
                 present_key_values.append(ort_outputs["past_value." + str(i) + "_RetainedState"])
+        indexer_key_cache = []
+        for i in range(self.n_layer):
+            if "indexer_key_cache." + str(i) + "_RetainedState" in ort_outputs:
+                indexer_key_cache.append(ort_outputs["indexer_key_cache." + str(i) + "_RetainedState"])
 
         outputs = {}
         outputs["past_key_values"] = present_key_values
+        if indexer_key_cache:
+            outputs["indexer_key_cache"] = indexer_key_cache
         outputs["logits"] = ort_outputs["logits"]
 
         return outputs
