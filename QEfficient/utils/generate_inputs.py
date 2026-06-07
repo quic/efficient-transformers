@@ -20,7 +20,16 @@ from QEfficient.utils import (
 
 class InputHandler:
     def __init__(
-        self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size, dtype=torch.float32, qaic_config=None
+        self,
+        batch_size,
+        tokenizer,
+        config,
+        prompt,
+        prompt_len,
+        ctx_len,
+        full_batch_size,
+        dtype=torch.float32,
+        qaic_config=None,
     ):
         """
         Initialization
