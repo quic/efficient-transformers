@@ -3081,6 +3081,25 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
+
+        # --- Paged (block-table) KV export ---
+        # When paged_kv is requested, KV is a shared block pool
+        # [num_blocks, num_kv_heads, page_size, head_dim] addressed via a block_table
+        # input, instead of a per-sequence [bs/fbs, kv_heads, ctx_len, head_dim] slot.
+        paged_kv = kwargs.get("paged_kv", False)
+        paged_page_size = None
+        paged_max_blocks = None
+        if paged_kv:
+            if len(kv_cache_shape) != 4:
+                raise NotImplementedError("paged_kv export is only supported for 4D KV caches")
+            paged_page_size = int(kwargs.get("paged_block_size", 16))
+            base_bs = fbs if self.continuous_batching else bs
+            paged_max_blocks = max(1, -(-seq_len // paged_page_size))  # logical blocks per sequence
+            # +1 reserves the null block (padding sink) the paged cache layer requires.
+            num_blocks = int(kwargs.get("paged_num_blocks", base_bs * paged_max_blocks + 1))
+            num_kv_heads, head_dim = kv_cache_shape[1], kv_cache_shape[3]
+            kv_cache_shape = [num_blocks, num_kv_heads, paged_page_size, head_dim]
+
         enable_chunking = kwargs.get("enable_chunking", False)
         if (
             kwargs.get("retain_full_kv", False)
@@ -3147,6 +3166,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
                 2: "ctx_len",
             }
+        if paged_kv:
+            # Block pool: dim0 is the (shared) block count, dim2 is the page size.
+            pkv_dynamic_axes = {0: "num_blocks", 2: "page_size"}
         output_names = []
         if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
             if self.model.qaic_config.get("return_pdfs", False):
@@ -3234,6 +3256,16 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
             dynamic_axes["batch_index"] = {0: "batch_size"}
+
+        if paged_kv:
+            # Per-request logical->physical block map.
+            example_inputs["block_table"] = torch.zeros((bs, paged_max_blocks), dtype=torch.int64)
+            dynamic_axes["block_table"] = {0: "batch_size", 1: "max_num_blocks"}
+            # The paged cache has no get_seq_length(); supply an attention_mask so the
+            # model derives the KV (gather) length from it instead of from the cache.
+            logical_ctx = paged_max_blocks * paged_page_size
+            example_inputs["attention_mask"] = torch.ones((bs, logical_ctx), dtype=torch.int64)
+            dynamic_axes["attention_mask"] = {0: "batch_size", 1: "ctx_len"}
 
         if self.is_tlm:
             nlk = constants.ONNX_EXPORT_EXAMPLE_NLK  # Number of Logits to Keep
