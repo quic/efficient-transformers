@@ -1954,6 +1954,38 @@ class TestApplyKvCachePrefixHelper:
         output_names = ["logits", "past_key.0_RetainedState", "past_value.0_RetainedState"]
         assert align_kv_input_names_to_retained_outputs(input_names, output_names) == input_names
 
+    def test_on_device_sampler_buffers_not_prefixed(self):
+        """Sampler retained-state buffers (past_repetition_penalty_buffer / past_presence_penalty_buffer)
+        must NOT receive the KV-cache prefix on either the output or paired input side."""
+        from QEfficient.utils import align_kv_input_names_to_retained_outputs, apply_kv_cache_prefix
+
+        outputs = [
+            "logits",
+            "probs",
+            "next_tokens",
+            "past_key.0_RetainedState",
+            "past_value.0_RetainedState",
+            "past_repetition_penalty_buffer_RetainedState",
+            "past_presence_penalty_buffer_RetainedState",
+        ]
+        prefixed = apply_kv_cache_prefix(outputs, "VLLM")
+        assert "past_repetition_penalty_buffer_RetainedState" in prefixed
+        assert "past_presence_penalty_buffer_RetainedState" in prefixed
+        # And no sampler-buffer name accidentally carries the infix.
+        assert not any("penalty_buffer_VLLM_RetainedState" in name for name in prefixed)
+
+        inputs = [
+            "input_ids",
+            "past_key.0",
+            "past_value.0",
+            "past_repetition_penalty_buffer",
+            "past_presence_penalty_buffer",
+        ]
+        aligned = align_kv_input_names_to_retained_outputs(inputs, prefixed)
+        assert "past_repetition_penalty_buffer" in aligned
+        assert "past_presence_penalty_buffer" in aligned
+        assert not any(name.endswith("penalty_buffer_VLLM") for name in aligned)
+
     @pytest.mark.parametrize("bad", ["", "a_b", "a.b", "a b", 123, "past-key"])
     def test_validation_rejects_bad_prefix(self, bad):
         from QEfficient.utils import validate_kv_cache_prefix
