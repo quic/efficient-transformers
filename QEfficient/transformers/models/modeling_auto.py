@@ -3560,6 +3560,21 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # Infer kv_cache_batch_size if not provided
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
 
+        # --- Paged (block-table) KV compile ---
+        # Provide concrete values for the block-pool dynamic axes declared by
+        # export(paged_kv=True): num_blocks, page_size, max_num_blocks. These are
+        # popped so they are NOT forwarded to the AIC compiler as flags. Must match
+        # the exported graph (and the runtime additional_config num_blocks/page_size).
+        paged_kv = compiler_options.pop("paged_kv", False)
+        paged_page_size = compiler_options.pop("page_size", None)
+        paged_num_blocks = compiler_options.pop("num_blocks", None)
+        paged_max_blocks = compiler_options.pop("max_num_blocks", None)
+        if paged_kv:
+            if paged_page_size is None or paged_num_blocks is None:
+                raise ValueError("paged_kv compile requires `page_size` and `num_blocks`.")
+            if paged_max_blocks is None:
+                paged_max_blocks = -(-ctx_len // paged_page_size)  # ceil(ctx_len / page_size)
+
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
             if comp_ctx_lengths_prefill is None and comp_ctx_lengths_decode is None:
@@ -3674,6 +3689,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         if kw_spec := compiler_options.pop("specializations", None):
             specializations = kw_spec
+        elif paged_kv:
+            # Inject the block-pool dims into every specialization so the compiler
+            # binds num_blocks/page_size (pkv) and max_num_blocks (block_table).
+            for spec in specializations:
+                spec["num_blocks"] = paged_num_blocks
+                spec["page_size"] = paged_page_size
+                spec["max_num_blocks"] = paged_max_blocks
 
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[target_dtype]
