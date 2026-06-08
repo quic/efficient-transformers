@@ -68,6 +68,23 @@ from transformers.models.glm4_moe.modeling_glm4_moe import (
     Glm4MoeRotaryEmbedding,
     Glm4MoeTopkRouter,
 )
+try:
+    from transformers.models.deepseek_v4.modeling_deepseek_v4 import (
+        DeepseekV4Attention,
+        DeepseekV4DecoderLayer,
+        DeepseekV4ForCausalLM,
+        DeepseekV4HyperConnection,
+        DeepseekV4HyperHead,
+        DeepseekV4Model,
+        DeepseekV4RMSNorm,
+        DeepseekV4RotaryEmbedding,
+        DeepseekV4SparseMoeBlock,
+        DeepseekV4UnweightedRMSNorm,
+    )
+
+    _HAS_DEEPSEEK_V4 = True
+except ImportError:
+    _HAS_DEEPSEEK_V4 = False
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeAttention,
@@ -325,6 +342,17 @@ from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
     QEffDeepseekV3MoE,
     QEffPrefillOnlyDeepseekV3MoE,
 )
+if _HAS_DEEPSEEK_V4:
+    from QEfficient.transformers.models.deepseek_v4.modeling_deepseek_v4 import (
+        QEffDeepseekV4Attention,
+        QEffDeepseekV4CustomRMSNormAIC,
+        QEffDeepseekV4DecoderLayer,
+        QEffDeepseekV4ForCausalLM,
+        QEffDeepseekV4HyperConnection,
+        QEffDeepseekV4HyperHead,
+        QEffDeepseekV4Model,
+        QEffDeepseekV4SparseMoeBlock,
+    )
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
     QEffFalconDecoderLayer,
@@ -663,6 +691,11 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Glm4MoeRMSNorm: CustomRMSNormAIC,
+        **(
+            {DeepseekV4RMSNorm: QEffDeepseekV4CustomRMSNormAIC}
+            if _HAS_DEEPSEEK_V4
+            else {}
+        ),
         Wav2Vec2Encoder: QEffWav2Vec2Encoder,
         Wav2Vec2EncoderStableLayerNorm: QEffWav2Vec2EncoderStableLayerNorm,
         # BERT-family: replace _create_attention_masks (uses create_bidirectional_mask,
@@ -687,6 +720,20 @@ class KVCacheTransform(ModuleMappingTransform):
         Glm4MoeRotaryEmbedding: QEffGlm4MoeRotaryEmbedding,
         Glm4MoeMoE: QEffGlm4MoeMoE,
         Glm4MoeTopkRouter: QEffGlm4MoeTopkRouter,
+        # DeepSeek-V4
+        **(
+            {
+                DeepseekV4Model: QEffDeepseekV4Model,
+                DeepseekV4ForCausalLM: QEffDeepseekV4ForCausalLM,
+                DeepseekV4Attention: QEffDeepseekV4Attention,
+                DeepseekV4DecoderLayer: QEffDeepseekV4DecoderLayer,
+                DeepseekV4SparseMoeBlock: QEffDeepseekV4SparseMoeBlock,
+                DeepseekV4HyperConnection: QEffDeepseekV4HyperConnection,
+                DeepseekV4HyperHead: QEffDeepseekV4HyperHead,
+            }
+            if _HAS_DEEPSEEK_V4
+            else {}
+        ),
         # CodeGen
         CodeGenAttention: QEffCodeGenAttention,
         CodeGenBlock: QEffCodeGenBlock,
