@@ -1645,7 +1645,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_seq_len=prefill_seq_len,
             )
 
-        if hasattr(self.model, "generate_npi_file") and "node_precision_info" in compiler_options:
+        if hasattr(self.model, "generate_npi_file") and "node_precision_info" not in compiler_options:
             if self.lang_model.onnx_path is None and not skip_lang:
                 raise ValueError("Language ONNX path is required to generate a language NPI file.")
             if self.lang_model.onnx_path:

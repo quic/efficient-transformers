@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-from typing import Optional
 
 import numpy as np
 
@@ -66,13 +65,7 @@ def build_messages(system_prompt: str, user_prompt: str, use_image: bool):
     return messages
 
 
-def resolve_npi_mode(enable_npi: bool, disable_npi: Optional[bool] = False) -> str:
-    return "enabled" if enable_npi else "disabled" if disable_npi else "auto"
-
-
-def build_compile_kwargs(
-    *, effective_prefill_seq_len: int, effective_ctx_len: int, skip_vision: bool, npi_mode: str, **kwargs
-):
+def build_compile_kwargs(*, effective_prefill_seq_len: int, effective_ctx_len: int, skip_vision: bool, **kwargs):
     kwargs = {
         "prefill_seq_len": effective_prefill_seq_len,
         "ctx_len": effective_ctx_len,
@@ -85,18 +78,12 @@ def build_compile_kwargs(
         "use_onnx_subfunctions": kwargs["USE_ONNX_SUBFUNCTIONS"],
         "split_model_io": kwargs.get("split_model_io", True),
         "batch_size": kwargs.get("BATCH_SIZE", 1),
+        "node_precision_info": kwargs.get("node_precision_info", None),
     }
-
     if skip_vision:
         kwargs["skip_vision"] = True
-
-    if npi_mode == "enabled":
-        if skip_vision:
-            pass
-        else:
-            kwargs["node_precision_info"] = True
-    elif npi_mode == "disabled":
-        kwargs["node_precision_info"] = False
+    if kwargs["node_precision_info"] is None:
+        kwargs.pop("node_precision_info")
     return kwargs
 
 

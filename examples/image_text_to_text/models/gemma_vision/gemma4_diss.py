@@ -16,7 +16,6 @@ from gemma4_utils import (
     CHAT_TEMPLATE,
     build_messages,
     remove_fp16clip_transform_if_disabled,
-    resolve_npi_mode,
 )
 from transformers import AutoConfig, AutoProcessor
 
@@ -27,8 +26,8 @@ model_id = "google/gemma-4-26B-A4B-it"
 config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
-# config.text_config.num_hidden_layers = 2
-# config.vision_config.num_hidden_layers = 2
+config.text_config.num_hidden_layers = 2
+config.vision_config.num_hidden_layers = 2
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config, dtype="float32", trust_remote_code=True
@@ -38,11 +37,8 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
-ENABLE_NPI = True
-DISABLE_NPI = False
 ENABLE_FP16_CLIP = True
 remove_fp16clip_transform_if_disabled(qeff_model, ENABLE_FP16_CLIP)
-npi_mode = resolve_npi_mode(ENABLE_NPI, DISABLE_NPI)
 PREFILL_SEQ_LEN = 296
 CTX_LEN = 4096
 BS = 1
@@ -72,7 +68,6 @@ prefill_qpc_path = qeff_model.compile(
     mxint8_kv_cache=True,
     retain_full_kv=True,
     split_model_io=True,
-    node_precision_info=True,
     mos=1,
     aic_enable_depth_first=True,
     prefill_only=True,
@@ -90,7 +85,6 @@ decode_qpc_path = qeff_model.compile(
     mxint8_kv_cache=True,
     split_model_io=True,
     mos=1,
-    node_precision_info=True,
     aic_enable_depth_first=True,
     prefill_only=False,
     skip_vision=True,
