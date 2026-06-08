@@ -16,7 +16,6 @@ from gemma4_utils import (
     CHAT_TEMPLATE,
     build_messages,
     remove_fp16clip_transform_if_disabled,
-    resolve_npi_mode,
 )
 from transformers import AutoConfig, AutoProcessor
 
@@ -38,14 +37,12 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
-ENABLE_NPI = True
-DISABLE_NPI = False
 ENABLE_FP16_CLIP = True
 remove_fp16clip_transform_if_disabled(qeff_model, ENABLE_FP16_CLIP)
-npi_mode = resolve_npi_mode(ENABLE_NPI, DISABLE_NPI)
 PREFILL_SEQ_LEN = 296
 CTX_LEN = 4096
 BS = 1
+
 
 skip_vision = False
 if not skip_vision:
@@ -59,6 +56,7 @@ if not skip_vision:
         mxfp6_matmul=True,
         aic_enable_depth_first=True,
         skip_vision=skip_vision,
+        node_precision_info=True,
         split_model_io=True,
         skip_lang=True,
     )
@@ -72,9 +70,9 @@ prefill_qpc_path = qeff_model.compile(
     mxint8_kv_cache=True,
     retain_full_kv=True,
     split_model_io=True,
-    node_precision_info=True,
     mos=1,
     aic_enable_depth_first=True,
+    node_precision_info=True,
     prefill_only=True,
     enable_chunking=True,
     skip_vision=True,
@@ -90,8 +88,8 @@ decode_qpc_path = qeff_model.compile(
     mxint8_kv_cache=True,
     split_model_io=True,
     mos=1,
-    node_precision_info=True,
     aic_enable_depth_first=True,
+    node_precision_info=True,
     prefill_only=False,
     skip_vision=True,
 )
