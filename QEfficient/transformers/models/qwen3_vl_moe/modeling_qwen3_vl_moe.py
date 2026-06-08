@@ -745,6 +745,7 @@ class QEffQwen3VLEncoderWrapper(nn.Module):
         super().__init__()
         self.model = model.model
         self.model.vision_model = self.model.visual
+        self.config = self.model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
