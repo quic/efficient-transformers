@@ -39,7 +39,6 @@ test_models = config["image_text_to_text_models"]
 def test_generate_image_text_to_text_model(
     model_name, kv_offload, image_text_to_text_model_artifacts, get_pipeline_config
 ):
-
     compile_params, generate_params = pre_generate_utils(
         model_name, "image_text_to_text_model_configs", get_pipeline_config, image_text_to_text_model_artifacts
     )
