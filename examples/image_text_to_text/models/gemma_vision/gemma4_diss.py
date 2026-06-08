@@ -197,8 +197,6 @@ vision_start = perf_counter()
 vision_outputs = {}
 if vision_inputs:
     vision_outputs = vision_session.run(vision_inputs)
-print(vision_outputs)
-exit()
 vision_end = perf_counter()
 
 lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}

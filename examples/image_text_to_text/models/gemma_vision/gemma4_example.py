@@ -77,11 +77,11 @@ def main():
     config = AutoConfig.from_pretrained(MODEL_ID)
 
     # For Testing Purpose Only
-    config = _apply_reduced_layer_config(
-        config,
-        num_lang_layers=NUM_LANG_HIDDEN_LAYER,
-        num_vision_layers=NUM_VISION_HIDDEN_LAYER,
-    )
+    # config = _apply_reduced_layer_config(
+    #     config,
+    #     num_lang_layers=NUM_LANG_HIDDEN_LAYER,
+    #     num_vision_layers=NUM_VISION_HIDDEN_LAYER,
+    # )
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         MODEL_ID,
