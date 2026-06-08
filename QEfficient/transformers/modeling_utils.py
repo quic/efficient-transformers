@@ -38,6 +38,7 @@ from transformers.models.gemma2.modeling_gemma2 import (
 )
 from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4ForCausalLM,
+    Gemma4ForConditionalGeneration,
     Gemma4RMSNorm,
     Gemma4TextAttention,
     Gemma4TextDecoderLayer,
@@ -45,6 +46,23 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4TextModel,
     Gemma4TextRouter,
 )
+
+try:
+    from transformers.models.gemma4_unified.modeling_gemma4_unified import (
+        Gemma4UnifiedForCausalLM,
+        Gemma4UnifiedForConditionalGeneration,
+        Gemma4UnifiedRMSNorm,
+        Gemma4UnifiedTextAttention,
+        Gemma4UnifiedTextDecoderLayer,
+        Gemma4UnifiedTextModel,
+    )
+except Exception:
+    Gemma4UnifiedForCausalLM = None
+    Gemma4UnifiedForConditionalGeneration = None
+    Gemma4UnifiedRMSNorm = None
+    Gemma4UnifiedTextAttention = None
+    Gemma4UnifiedTextDecoderLayer = None
+    Gemma4UnifiedTextModel = None
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeAttention,
@@ -128,12 +146,30 @@ from .models.gemma2.modeling_gemma2 import (
 from .models.gemma4.modeling_gemma4 import (
     QEffGemma4CustomRMSNormAIC,
     QEffGemma4ForCausalLM,
+    QEffGemma4ForConditionalGeneration,
     QEffGemma4TextAttention,
     QEffGemma4TextDecoderLayer,
     QEffGemma4TextExperts,
     QEffGemma4TextModel,
     QEffGemma4TextRouter,
 )
+
+try:
+    from .models.gemma4_unified.modeling_gemma4_unified import (
+        QEffGemma4UnifiedCustomRMSNormAIC,
+        QEffGemma4UnifiedForCausalLM,
+        QEffGemma4UnifiedForConditionalGeneration,
+        QEffGemma4UnifiedTextAttention,
+        QEffGemma4UnifiedTextDecoderLayer,
+        QEffGemma4UnifiedTextModel,
+    )
+except Exception:
+    QEffGemma4UnifiedCustomRMSNormAIC = None
+    QEffGemma4UnifiedForCausalLM = None
+    QEffGemma4UnifiedForConditionalGeneration = None
+    QEffGemma4UnifiedTextAttention = None
+    QEffGemma4UnifiedTextDecoderLayer = None
+    QEffGemma4UnifiedTextModel = None
 from .models.gpt2.modeling_gpt2 import QEffGPT2Attention, QEffGPT2Block, QEffGPT2LMHeadModel, QEffGPT2Model
 from .models.gpt_bigcode.modeling_gpt_bigcode import (
     QEffGPTBigCodeAttention,
@@ -197,6 +233,7 @@ qeff_supported_architectures = ModelArchitectures(
         GemmaForCausalLM.__name__,
         Gemma2ForCausalLM.__name__,
         Gemma4ForCausalLM.__name__,
+        Gemma4ForConditionalGeneration.__name__,
         MistralForCausalLM.__name__,
         MixtralForCausalLM.__name__,
         Phi3ForCausalLM.__name__,
@@ -210,9 +247,25 @@ qeff_supported_architectures = ModelArchitectures(
     ]
 )
 
+if Gemma4UnifiedForCausalLM is not None:
+    qeff_supported_architectures.architectures.extend(
+        [
+            Gemma4UnifiedForCausalLM.__name__,
+            Gemma4UnifiedForConditionalGeneration.__name__,
+        ]
+    )
+
 
 # This is for supporting different seq_len for different layers for Sliding window attn, chunked attn etc.
-DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma3", "gemma3_text", "gemma4_text", "llama4", "llama4_text"}
+DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH = {
+    "gemma3",
+    "gemma3_text",
+    "gemma4_text",
+    "gemma4_unified",
+    "gemma4_unified_text",
+    "llama4",
+    "llama4_text",
+}
 
 # This is for supporting different modelling classes specially written for prefill-only model
 SPECIALIZED_DISAGG_SERVING_MODEL_ARCH = {"gpt_oss", "qwen3_moe", "glm4_moe", "kimi_k2", "kimi_k25"}
@@ -275,6 +328,7 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     Gemma4TextAttention: QEffGemma4TextAttention,
     Gemma4TextModel: QEffGemma4TextModel,
     Gemma4ForCausalLM: QEffGemma4ForCausalLM,
+    Gemma4ForConditionalGeneration: QEffGemma4ForConditionalGeneration,
     Gemma4TextDecoderLayer: QEffGemma4TextDecoderLayer,
     Gemma4TextExperts: QEffGemma4TextExperts,
     Gemma4TextRouter: QEffGemma4TextRouter,
@@ -339,6 +393,18 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     WhisperModel: QEffWhisperModel,
     WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
 }
+
+if Gemma4UnifiedForCausalLM is not None:
+    TransformersToQEffModulesDict.update(
+        {
+            Gemma4UnifiedTextAttention: QEffGemma4UnifiedTextAttention,
+            Gemma4UnifiedTextModel: QEffGemma4UnifiedTextModel,
+            Gemma4UnifiedForCausalLM: QEffGemma4UnifiedForCausalLM,
+            Gemma4UnifiedForConditionalGeneration: QEffGemma4UnifiedForConditionalGeneration,
+            Gemma4UnifiedTextDecoderLayer: QEffGemma4UnifiedTextDecoderLayer,
+            Gemma4UnifiedRMSNorm: QEffGemma4UnifiedCustomRMSNormAIC,
+        }
+    )
 
 
 def build_model_class_mapping(auto_model_class, qeff_class_name):

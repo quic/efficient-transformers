@@ -1446,6 +1446,17 @@ class QEffGemma4DynamicCache(QEffDynamicCache):
         while len(self.layers) <= layer_idx:
             self.layers.append(QEffGemma4DynamicLayer(is_sliding=self._is_sliding_layer(len(self.layers))))
 
+    def update(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        layer_idx: int,
+        *args,
+        **kwargs,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        self.append_new_layers(layer_idx)
+        return super().update(key_states, value_states, layer_idx, *args, **kwargs)
+
     @classmethod
     def from_legacy_cache(
         cls,

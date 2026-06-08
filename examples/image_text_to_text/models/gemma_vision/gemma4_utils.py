@@ -132,8 +132,5 @@ def normalize_generated_ids(generated_ids):
 
 def effective_lens(model, prefill_seq_len: int, ctx_len: int, prompt_len: int, generation_len: int, skip_vision: bool):
     effective_ctx_len = max(ctx_len, prompt_len + generation_len)
-    if skip_vision:
-        effective_prefill_seq_len = prefill_seq_len
-    else:
-        effective_prefill_seq_len = max(prefill_seq_len, prompt_len)
+    effective_prefill_seq_len = prefill_seq_len
     return effective_prefill_seq_len, effective_ctx_len

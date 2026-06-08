@@ -1045,8 +1045,12 @@ class QEffVisionEncoderForTextImageToTextModel(QEFFBaseModel):
         dict
             The configuration dictionary.
         """
-        if hasattr(self.model.model, "vision_model"):
+        if hasattr(self.model, "vision_model"):
+            return self.model.vision_model.config.__dict__
+        if hasattr(self.model, "model") and hasattr(self.model.model, "vision_model"):
             return self.model.model.vision_model.config.__dict__
+        if hasattr(self.model, "config"):
+            return self.model.config.__dict__
         return self.model.model.config.__dict__
 
 
