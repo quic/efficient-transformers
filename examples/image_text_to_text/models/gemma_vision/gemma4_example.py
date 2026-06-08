@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-import os
 
 from gemma4_utils import (
     CHAT_TEMPLATE,
@@ -31,9 +30,15 @@ GENERATION_LEN = 1920
 NUM_LANG_HIDDEN_LAYER = 2
 NUM_VISION_HIDDEN_LAYER = 2
 
+# NODE_PRECISION_INFO:Optional argument
+# If set to True, the NPI file will be generated automatically.
+# If a file path is provided, that file will be used for compilation.
+# If not specified or False, it will skip NPI file.
+NODE_PRECISION_INFO = True
+
 # Path to Node Precision Info YAML file.
-npi_file_path = "examples/image_text_to_text/models/gemma_vision/configs/gemma4_E4B_npi.yaml"
-npi_file_full_path = os.path.join(os.getcwd(), npi_file_path)
+# npi_file_path = "examples/image_text_to_text/models/gemma_vision/configs/gemma4_E4B_npi.yaml"
+# npi_file_full_path = os.path.join(os.getcwd(), npi_file_path)
 
 compiler_kwargs = {
     "NUM_CORES": 16,
@@ -45,7 +50,7 @@ compiler_kwargs = {
     "USE_ONNX_SUBFUNCTIONS": False,
     "split_model_io": True,
     "BATCH_SIZE": BS,
-    "node_precision_info": npi_file_full_path,  # Optional argument to specify NPI file path. If not provided,  NPI will be generated during compile.
+    "node_precision_info": NODE_PRECISION_INFO,
 }
 
 
@@ -72,11 +77,11 @@ def main():
     config = AutoConfig.from_pretrained(MODEL_ID)
 
     # For Testing Purpose Only
-    # config = _apply_reduced_layer_config(
-    #     config,
-    #     num_lang_layers=NUM_LANG_HIDDEN_LAYER,
-    #     num_vision_layers=NUM_VISION_HIDDEN_LAYER,
-    # )
+    config = _apply_reduced_layer_config(
+        config,
+        num_lang_layers=NUM_LANG_HIDDEN_LAYER,
+        num_vision_layers=NUM_VISION_HIDDEN_LAYER,
+    )
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         MODEL_ID,

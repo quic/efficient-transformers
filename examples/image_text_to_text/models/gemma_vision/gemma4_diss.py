@@ -43,6 +43,7 @@ PREFILL_SEQ_LEN = 296
 CTX_LEN = 4096
 BS = 1
 
+
 skip_vision = False
 if not skip_vision:
     vision_qpc_path = qeff_model.compile(
@@ -55,6 +56,7 @@ if not skip_vision:
         mxfp6_matmul=True,
         aic_enable_depth_first=True,
         skip_vision=skip_vision,
+        node_precision_info=True,
         split_model_io=True,
         skip_lang=True,
     )
@@ -70,6 +72,7 @@ prefill_qpc_path = qeff_model.compile(
     split_model_io=True,
     mos=1,
     aic_enable_depth_first=True,
+    node_precision_info=True,
     prefill_only=True,
     enable_chunking=True,
     skip_vision=True,
@@ -86,6 +89,7 @@ decode_qpc_path = qeff_model.compile(
     split_model_io=True,
     mos=1,
     aic_enable_depth_first=True,
+    node_precision_info=True,
     prefill_only=False,
     skip_vision=True,
 )
@@ -193,6 +197,8 @@ vision_start = perf_counter()
 vision_outputs = {}
 if vision_inputs:
     vision_outputs = vision_session.run(vision_inputs)
+print(vision_outputs)
+exit()
 vision_end = perf_counter()
 
 lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}

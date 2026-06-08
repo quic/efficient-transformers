@@ -83,7 +83,9 @@ def build_compile_kwargs(*, effective_prefill_seq_len: int, effective_ctx_len: i
     if skip_vision:
         kwargs["skip_vision"] = True
     if kwargs["node_precision_info"] is None:
-        kwargs.pop("node_precision_info")
+        kwargs["node_precision_info"] = False
+    return kwargs
+
     return kwargs
 
 
