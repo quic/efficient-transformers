@@ -7,6 +7,7 @@
 
 import copy
 import inspect
+import os
 import re
 import warnings
 from pathlib import Path
@@ -41,6 +42,8 @@ def export_wrapper(func):
 
     def wrapper(self, *args, **kwargs):
         cache_probe = kwargs.pop("_layerwise_cache_probe", False)
+        _apply_low_memory_export_defaults(self, kwargs)
+
         # 1. Setup ONNX subfunctions if requested
         if use_onnx_subfunctions := kwargs.pop("use_onnx_subfunctions", False):
             args, kwargs = _setup_onnx_subfunctions(self, args, kwargs)
@@ -70,6 +73,33 @@ def export_wrapper(func):
         return onnx_path
 
     return wrapper
+
+
+def _env_enabled(name: str) -> bool:
+    return os.environ.get(name, "").lower() in {"1", "true", "yes", "on"}
+
+
+def _env_disabled(name: str) -> bool:
+    return os.environ.get(name, "").lower() in {"0", "false", "no", "off"}
+
+
+def _onnx_transforms_need_tensor_data(qeff_model) -> bool:
+    tensor_data_transforms = {"FP16ClipTransform", "SplitTensorsTransform"}
+    return any(
+        getattr(transform, "__name__", str(transform)) in tensor_data_transforms
+        for transform in qeff_model._onnx_transforms
+    )
+
+
+def _apply_low_memory_export_defaults(qeff_model, kwargs) -> None:
+    export_params_disabled = _env_disabled("QEFF_ONNX_EXPORT_PARAMS") or kwargs.get("export_params") is False
+    if not (_env_enabled("QEFF_LOW_MEMORY_ONNX_EXPORT") or export_params_disabled):
+        return
+    if kwargs.get("use_onnx_subfunctions", False) or _onnx_transforms_need_tensor_data(qeff_model):
+        return
+    kwargs["_qeff_low_memory_external_initializers"] = True
+    kwargs.setdefault("export_params", False)
+    kwargs.setdefault("do_constant_folding", False)
 
 
 def _prepare_export_directory(qeff_model, kwargs) -> Path:

@@ -119,6 +119,14 @@ pip install dist/qefficient-0.0.1.dev0-py3-none-any.whl
 
 For more details about using ``QEfficient`` via Cloud AI 100 Apps SDK, visit [Linux Installation Guide](https://quic.github.io/efficient-transformers/source/installation.html)
 
+## Low-memory export options
+
+When `torch_dtype` is passed to `QEFFAutoModelForCausalLM.from_pretrained`, QEfficient treats it as the load/export precision. For safetensor checkpoints, floating tensors are materialized once in that dtype and then streamed into a meta-initialized model. For example, `torch_dtype=torch.float16` creates/reuses fp16 materialized shards and avoids holding both the original checkpoint dtype and the fp16 export copy in host RAM.
+
+If `torch_dtype` is omitted, the loader follows the existing default path. `QEFF_MATERIALIZED_CHECKPOINT_DIR` can be set to choose where the materialized checkpoint cache is stored.
+
+ONNX initializer offload is opt-in and is not enabled by default. Set `QEFF_LOW_MEMORY_ONNX_EXPORT=1`, pass `export_params=False` to `export()`, or set `QEFF_ONNX_EXPORT_PARAMS=0` to export the ONNX graph first and then attach PyTorch weights as external ONNX initializers. This keeps initializer bytes out of the in-memory `ModelProto` during transform/save. `QEFF_LOW_MEMORY_ONNX_EXPORT=1` is ignored for ONNX subfunctions and transforms that need tensor data loaded in memory; explicit `export_params=False` or `QEFF_ONNX_EXPORT_PARAMS=0` remains a hard request and will fail if those transforms require initializer tensors in the graph.
+
 
 ## Documentation
 

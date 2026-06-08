@@ -7,6 +7,7 @@
 import copy
 from collections import Counter
 
+import pytest
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM
 
@@ -197,6 +198,33 @@ def test_qwen3moe_blocked_forward_parity():
 
     assert orig.shape == blocked.shape
     assert (orig - blocked).abs().max().item() < 0.1, "Qwen3MOE parity failed"
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_qwen3moe_blocked_forward_accepts_half_precision_router_logits(dtype):
+    from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
+        QEffPrefillChunkedQwen3MoeSparseMoeBlock,
+    )
+
+    config = AutoConfig.for_model("qwen3_moe", **QWEN3_MOE_CFG)
+    model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS).to(dtype)
+    block = next(
+        module
+        for _, module in model.named_modules()
+        if hasattr(module, "experts") and hasattr(module, "gate") and hasattr(module.gate, "num_experts")
+    )
+    block.__class__ = QEffPrefillChunkedQwen3MoeSparseMoeBlock
+    block.__qeff_init__()
+    block.expert_blocking_num_nsp = 2
+    block.expert_blocking_packed_chunk_size = 256
+
+    x = torch.randn(1, 8, config.hidden_size, dtype=dtype)
+    with torch.no_grad():
+        blocked, router_logits = block.forward(x)
+
+    assert blocked.dtype == dtype
+    assert router_logits.dtype == torch.float32
+    assert torch.isfinite(blocked.float()).all()
 
 
 def test_qwen3moe_decode_export(tmp_path):

@@ -5,7 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
+import onnx
 import pytest
+from onnx import TensorProto
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
@@ -79,6 +81,44 @@ def test_re_export_behavior_with_offloaded_weights(tmp_cache):
     # Re-export should fail with RuntimeError due to offloaded weights
     with pytest.raises(RuntimeError, match="weights have been offloaded"):
         qeff_model.export()
+
+
+def test_default_export_keeps_initializers_inline(tmp_cache):
+    """Low-memory ONNX initializer offload is opt-in, not the default export path."""
+    model = AutoModelForCausalLM.from_config(test_config, **model_kwargs)
+    qeff_model = QEFFAutoModelForCausalLM(model, continuous_batching=False)
+
+    onnx_path = qeff_model.export(tmp_cache / "default", offload_pt_weights=False)
+    graph_only_model = onnx.load(onnx_path, load_external_data=False)
+
+    assert graph_only_model.graph.initializer
+    assert all(initializer.data_location != TensorProto.EXTERNAL for initializer in graph_only_model.graph.initializer)
+
+
+def test_low_memory_export_externalizes_initializers(tmp_cache, monkeypatch):
+    """Low-memory export keeps ONNX initializer bytes out of the in-memory ModelProto."""
+    monkeypatch.setenv("QEFF_LOW_MEMORY_ONNX_EXPORT", "1")
+    model = AutoModelForCausalLM.from_config(test_config, **model_kwargs)
+    qeff_model = QEFFAutoModelForCausalLM(model, continuous_batching=False)
+
+    onnx_path = qeff_model.export(tmp_cache / "lowmem", offload_pt_weights=False)
+    onnx.checker.check_model(str(onnx_path), full_check=False)
+    graph_only_model = onnx.load(onnx_path, load_external_data=False)
+
+    external_initializers = [
+        initializer
+        for initializer in graph_only_model.graph.initializer
+        if initializer.data_location == TensorProto.EXTERNAL
+    ]
+    assert external_initializers
+    assert all(len(initializer.raw_data) == 0 for initializer in external_initializers)
+
+    graph_input_names = {graph_input.name for graph_input in graph_only_model.graph.input}
+    initializer_names = {initializer.name for initializer in graph_only_model.graph.initializer}
+    assert graph_input_names.isdisjoint(initializer_names)
+
+    loaded_model = onnx.load(onnx_path, load_external_data=True)
+    assert sum(len(initializer.raw_data) for initializer in loaded_model.graph.initializer) > 0
 
 
 def test_vlm_dual_qpc_memory_offload_behavior():

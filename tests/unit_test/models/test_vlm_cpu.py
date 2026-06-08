@@ -18,6 +18,7 @@ All tests run on CPU only. No actual model loading or QAIC hardware execution.
 
 import pytest
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 # ---------------------------------------------------------------------------
@@ -158,6 +159,123 @@ class TestQEffAutoModelForImageTextToTextDualQPCStructure:
         sig = inspect.signature(_QEffAutoModelForImageTextToTextDualQPC.compile)
         assert "skip_lang" in sig.parameters
         assert "skip_vision" in sig.parameters
+
+
+# ---------------------------------------------------------------------------
+# Tests: Qwen3-VL wrapper ownership
+# ---------------------------------------------------------------------------
+
+
+class _TinyQwen3VLInner(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.language_model = nn.Module()
+        self.language_model.embed_tokens = nn.Embedding(8, 4)
+        self.lm_head = nn.Linear(4, 8, bias=False)
+        self.visual = nn.Module()
+        self.visual.blocks = nn.ModuleList([nn.Linear(4, 4)])
+
+
+class _TinyQwen3VLParent(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.model = _TinyQwen3VLInner()
+        self.lm_head = self.model.lm_head
+        self.config = type("Config", (), {"image_token_id": 7})()
+
+
+class TestQwen3VLWrapperOwnership:
+    """Qwen3-VL dual-QPC wrappers must not register the full parent VLM."""
+
+    @pytest.mark.parametrize(
+        "module_path",
+        [
+            "QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl",
+            "QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe",
+        ],
+    )
+    def test_decoder_wrapper_does_not_register_full_parent(self, module_path):
+        module = __import__(module_path, fromlist=["QEffQwen3VLDecoderWrapper"])
+        parent = _TinyQwen3VLParent()
+
+        wrapper = module.QEffQwen3VLDecoderWrapper(parent)
+
+        assert "model" not in dict(wrapper.named_children())
+        assert parent not in list(wrapper.modules())
+
+    @pytest.mark.parametrize(
+        "module_path",
+        [
+            "QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl",
+            "QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe",
+        ],
+    )
+    def test_encoder_wrapper_does_not_register_full_inner_model(self, module_path):
+        module = __import__(module_path, fromlist=["QEffQwen3VLEncoderWrapper"])
+        parent = _TinyQwen3VLParent()
+
+        wrapper = module.QEffQwen3VLEncoderWrapper(parent)
+
+        assert "model" not in dict(wrapper.named_children())
+        assert parent.model not in list(wrapper.modules())
+
+
+# ---------------------------------------------------------------------------
+# Tests: Qwen3-VL-MoE expert projection layout
+# ---------------------------------------------------------------------------
+
+
+class TestQwen3VLMoeExpertProjectionLayout:
+    """Qwen3-VL-MoE export path must use transformed expert weights in-place."""
+
+    def test_sparse_moe_block_uses_export_weight_layout(self):
+        from types import SimpleNamespace
+
+        from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+            QEffQwen3VLMoeTextSparseMoeBlock,
+        )
+
+        batch_size, seq_len, hidden_size = 2, 3, 4
+        intermediate_size, num_experts, top_k = 5, 3, 2
+        hidden_states = torch.arange(batch_size * seq_len * hidden_size, dtype=torch.float32).reshape(
+            batch_size, seq_len, hidden_size
+        )
+        gate = SimpleNamespace(
+            hidden_dim=hidden_size,
+            top_k=top_k,
+            weight=torch.arange(num_experts * hidden_size, dtype=torch.float32).reshape(num_experts, hidden_size),
+        )
+        experts = SimpleNamespace(
+            gate_up_proj=torch.arange(num_experts * hidden_size * intermediate_size * 2, dtype=torch.float32).reshape(
+                num_experts, hidden_size, intermediate_size * 2
+            ),
+            down_proj=torch.arange(num_experts * intermediate_size * hidden_size, dtype=torch.float32).reshape(
+                num_experts, intermediate_size, hidden_size
+            ),
+            act_fn=F.silu,
+        )
+        block = SimpleNamespace(gate=gate, experts=experts)
+
+        output, router_logits = QEffQwen3VLMoeTextSparseMoeBlock.forward(block, hidden_states)
+
+        x = hidden_states.view(batch_size * seq_len, hidden_size)
+        expected_logits = F.linear(x, gate.weight)
+        top_w, top_i = torch.topk(expected_logits, top_k, dim=-1)
+        top_w = F.softmax(top_w, dim=-1, dtype=torch.float32)
+        expected_rows = []
+        for token_idx, token in enumerate(x):
+            token_rows = []
+            for expert_idx in top_i[token_idx]:
+                gate_up = token @ experts.gate_up_proj[expert_idx]
+                gate_part, up_part = gate_up.chunk(2, dim=-1)
+                token_rows.append((up_part * experts.act_fn(gate_part)) @ experts.down_proj[expert_idx])
+            expected_rows.append((torch.stack(token_rows) * top_w[token_idx].unsqueeze(-1)).sum(dim=0))
+        expected_output = torch.stack(expected_rows).view(batch_size, seq_len, hidden_size)
+
+        assert router_logits.shape == (batch_size * seq_len, num_experts)
+        assert output.shape == hidden_states.shape
+        assert torch.allclose(router_logits, expected_logits)
+        assert torch.allclose(output, expected_output)
 
 
 # ---------------------------------------------------------------------------
