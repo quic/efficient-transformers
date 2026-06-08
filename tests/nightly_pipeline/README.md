@@ -91,7 +91,8 @@ tests/nightly_pipeline/
 └── sequence_models/
 ```
 
-Current implementation is centered on `causal_lm`, and the same phase contract is intended to be extended to the other model families.
+Current implementation is centered on `causal_lm`, and the same phase contract is intended to be extended to
+the other model families.
 
 ## Execution Flow
 
@@ -120,15 +121,66 @@ Example:
 pytest tests/nightly_pipeline/causal_lm_models/test_generate.py
 ```
 
+### Phase 3: Validate Results
+
+- input: current artifact JSON files and previous nightly artifact JSON files
+- action: compare timing, size, family-specific outputs, and performance metrics using configured tolerances
+- output: one family-specific validation CSV per model family in the current artifact directory
+
+The validator uses MAD when `generated_ids` or `embedding` is available, and falls back to exact text/value
+assertions for families such as audio embedding and sequence classification.
+
+Example:
+
+```bash
+export NIGHTLY_PIPELINE_PREVIOUS_ARTIFACTS_DIR="$PWD/Nightly_Pipeline/$PREVIOUS_BUILD_ID"
+pytest tests/nightly_pipeline/test_result_validation.py
+```
+
 ## CI-Friendly Command Pattern
 
-For a single nightly run: Currently running as a Freestyle Project in Jenkins, but should be converted to a Pipeline job. The command pattern is:
+For a single nightly run: Currently running as a Freestyle Project in Jenkins, but should be converted to a
+Pipeline job. The command pattern is:
 
 ```bash
 export NIGHTLY_PIPELINE_ARTIFACTS_DIR="$PWD/Nightly_Pipeline/$BUILD_ID"
+export NIGHTLY_PIPELINE_PREVIOUS_ARTIFACTS_DIR="$PWD/Nightly_Pipeline/$PREVIOUS_BUILD_ID"
 
 pytest -n auto tests/nightly_pipeline/causal_lm_models/test_export_compile.py
 pytest tests/nightly_pipeline/causal_lm_models/test_generate.py
+pytest tests/nightly_pipeline/test_result_validation.py
+```
+
+### Runtime Model Skips
+
+Freestyle jobs can skip selected models without editing `validated_models.json` by passing comma-separated model names
+through family-specific environment variables:
+
+- `SKIP_CAUSAL_LM_MODELS`
+- `SKIP_IMAGE_TEXT_MODELS`
+- `SKIP_EMBEDDING_MODELS`
+- `SKIP_AUDIO_MODELS`
+- `SKIP_AUDIO_EMBEDDING_MODELS`
+- `SKIP_SEQUENCE_MODELS`
+
+Example:
+
+```bash
+export SKIP_CAUSAL_LM_MODELS="meta-llama/Llama-3.2-3B,hpcai-tech/grok-1,meta-llama/Llama-3.2-1B"
+export SKIP_AUDIO_MODELS="openai/whisper-base"
+```
+
+When running inside Docker, pass these variables through `docker exec`:
+
+```bash
+sudo docker exec \
+  -e SKIP_CAUSAL_LM_MODELS="${SKIP_CAUSAL_LM_MODELS:-}" \
+  -e SKIP_IMAGE_TEXT_MODELS="${SKIP_IMAGE_TEXT_MODELS:-}" \
+  -e SKIP_EMBEDDING_MODELS="${SKIP_EMBEDDING_MODELS:-}" \
+  -e SKIP_AUDIO_MODELS="${SKIP_AUDIO_MODELS:-}" \
+  -e SKIP_AUDIO_EMBEDDING_MODELS="${SKIP_AUDIO_EMBEDDING_MODELS:-}" \
+  -e SKIP_SEQUENCE_MODELS="${SKIP_SEQUENCE_MODELS:-}" \
+  "${BUILD_NAME}" bash -lc "pytest tests/nightly_pipeline/causal_lm_models/test_export_compile.py -n 4"
 ```
 
 ## Config Files
@@ -151,6 +203,7 @@ Defines per-phase execution settings, such as:
 - export parameters
 - compile parameters
 - generation parameters
+- validation tolerances
 
 Use this file when:
 
