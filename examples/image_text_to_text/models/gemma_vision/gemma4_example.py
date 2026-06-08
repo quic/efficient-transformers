@@ -32,7 +32,7 @@ NUM_LANG_HIDDEN_LAYER = 2
 NUM_VISION_HIDDEN_LAYER = 2
 
 # Path to Node Precision Info YAML file.
-npi_file_path = "examples/image_text_to_text/models/gemma_vision/configs/gemma4_E2B_npi.yaml"
+npi_file_path = "examples/image_text_to_text/models/gemma_vision/configs/gemma4_E4B_npi.yaml"
 npi_file_full_path = os.path.join(os.getcwd(), npi_file_path)
 
 compiler_kwargs = {
