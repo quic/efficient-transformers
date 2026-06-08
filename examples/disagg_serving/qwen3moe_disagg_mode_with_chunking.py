@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 import time
 
 import numpy as np
@@ -15,7 +16,7 @@ from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 # model_id = "Qwen/Qwen3-30B-A3B-Instruct-2507"  # weights are not required to convert to fp32
-model_id = "yujiepan/qwen3-moe-tiny-random"
+model_id = "Qwen/Qwen3.5-397B-A17B"
 prompt = """
 Explain quantum computing in simple terms.
 """
@@ -26,7 +27,7 @@ CTX_LEN = PREFILL_SEQ_LEN * 3
 NUM_CORES = 4
 MOE_PREFILL_PACKED_CHUNK_SIZE = 256
 
-qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16)
 decode_qpc_path = qeff_model.compile(
     prefill_seq_len=1,
     ctx_len=CTX_LEN,
@@ -40,6 +41,10 @@ decode_qpc_path = qeff_model.compile(
     offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation in the next step
     retain_full_kv=True,
 )
+
+if os.environ.get("QEFF_DECODE_EXPORT_ONLY", "").lower() in {"1", "true", "yes", "on"}:
+    print(f"decode ONNX path={decode_qpc_path}")
+    raise SystemExit(0)
 
 # Following command errors out by default, the user is supposed to run the printed command and provide the generated qpc path as prefill_qpc_path commenting out lines 55-68
 

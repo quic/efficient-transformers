@@ -48,6 +48,16 @@ from QEfficient.utils import (
     to_named_specializations,
 )
 from QEfficient.utils.export_utils import export_wrapper
+from QEfficient.utils.mem_profile import (
+    ExportMemoryProfiler,
+    flatten_torch_tensors,
+    onnx_initializer_summary,
+    profile_torch_onnx_internals,
+)
+from QEfficient.utils.onnx_external_weights import (
+    attach_external_initializers_from_torch,
+    low_memory_external_initializers_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -306,6 +316,21 @@ class QEFFBaseModel(ABC):
         """
         # TODO: Hack for retain_full_kv, handle this outside
         export_kwargs.pop("retain_full_kv", None)
+        export_dynamo = os.environ.get("QEFF_ONNX_EXPORT_DYNAMO", "").lower() in {"1", "true", "yes", "on"}
+        export_params_disabled = export_kwargs.get("export_params") is False or os.environ.get(
+            "QEFF_ONNX_EXPORT_PARAMS", ""
+        ).lower() in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+        low_memory_external_initializers = low_memory_external_initializers_enabled() or export_params_disabled
+        export_kwargs.setdefault("dynamo", export_dynamo)
+        export_kwargs.setdefault("external_data", export_dynamo)
+        if low_memory_external_initializers:
+            export_kwargs.setdefault("export_params", False)
+            export_kwargs.setdefault("do_constant_folding", False)
         onnx_path = export_dir / f"{self.model_name}.onnx"
 
         # Return early if ONNX already exists
@@ -341,22 +366,25 @@ class QEFFBaseModel(ABC):
                     if pkv_layers is None:
                         input_names.append(param)
                         continue
-                    for i in range(len(pkv_layers)):
-                        if len(pkv_layers[0]) == 2:
-                            input_names.extend([f"past_key.{i}", f"past_value.{i}"])
-                        elif len(pkv_layers[0]) == 4:
-                            input_names.extend(
-                                [
-                                    f"past_key_self.{i}",
-                                    f"past_value_self.{i}",
-                                    f"past_key_cross.{i}",
-                                    f"past_value_cross.{i}",
-                                ]
-                            )
-                        else:
-                            raise ValueError(
-                                f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(pkv_layers[0])}"
-                            )
+                    if hasattr(self.model, "get_retained_state_names"):
+                        input_names.extend(self.model.get_retained_state_names())
+                    else:
+                        for i in range(len(pkv_layers)):
+                            if len(pkv_layers[0]) == 2:
+                                input_names.extend([f"past_key.{i}", f"past_value.{i}"])
+                            elif len(pkv_layers[0]) == 4:
+                                input_names.extend(
+                                    [
+                                        f"past_key_self.{i}",
+                                        f"past_value_self.{i}",
+                                        f"past_key_cross.{i}",
+                                        f"past_value_cross.{i}",
+                                    ]
+                                )
+                            else:
+                                raise ValueError(
+                                    f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(pkv_layers[0])}"
+                                )
                 elif param == "compressed_kvs":
                     for i in range(len(example_inputs["compressed_kvs"])):
                         input_names.extend(
@@ -372,51 +400,92 @@ class QEFFBaseModel(ABC):
                 else:
                     input_names.append(param)
 
-        try:
-            torch.onnx.export(
-                self.model,
-                (),
-                str(onnx_path),
-                kwargs=example_inputs,
-                input_names=input_names,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
-                **export_kwargs,
-            )
-            logger.info("PyTorch export successful")
-            _ = self._offload_model_weights(offload_pt_weights)
-            model = onnx.load(onnx_path, load_external_data=False)
+        with ExportMemoryProfiler(f"{self.model_name}._export") as mem_profiler:
+            mem_profiler.tensor_summary("model.parameters", self.model.parameters())
+            mem_profiler.tensor_summary("model.buffers", self.model.buffers())
+            mem_profiler.tensor_summary("example_inputs", flatten_torch_tensors(example_inputs))
 
-            needs_external_tensor_data = any(
-                transform in self._onnx_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)
-            )
-            transform_kwargs = {
-                "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
-                "model_name": self.model_name,
-            }
-            if onnx_transform_kwargs is not None:
-                transform_kwargs.update(onnx_transform_kwargs)
+            try:
+                with mem_profiler.stage("torch.onnx.export"), profile_torch_onnx_internals(mem_profiler):
+                    torch.onnx.export(
+                        self.model,
+                        (),
+                        str(onnx_path),
+                        kwargs=example_inputs,
+                        input_names=input_names,
+                        output_names=output_names,
+                        dynamic_axes=dynamic_axes,
+                        opset_version=constants.ONNX_EXPORT_OPSET,
+                        **export_kwargs,
+                    )
+                logger.info("PyTorch export successful")
+                mem_profiler.snapshot(
+                    "torch.onnx.export.file",
+                    {
+                        "onnx_path": str(onnx_path),
+                        "file_size_bytes": onnx_path.stat().st_size if onnx_path.exists() else None,
+                    },
+                )
 
-            onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
-            model, transformed = onnx_transforms.apply(model, **transform_kwargs)
+                needs_external_tensor_data = any(
+                    transform in self._onnx_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)
+                )
+                if low_memory_external_initializers and needs_external_tensor_data:
+                    raise RuntimeError(
+                        "QEFF_LOW_MEMORY_ONNX_EXPORT is incompatible with ONNX transforms that need tensor data "
+                        "loaded into the ModelProto. Disable FP16ClipTransform/SplitTensorsTransform or unset "
+                        "QEFF_LOW_MEMORY_ONNX_EXPORT."
+                    )
 
-            # Add metadata to the model
-            model.metadata_props.append(
-                onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
-            )
-            logger.info("ONNX transforms applied")
+                if low_memory_external_initializers:
+                    with mem_profiler.stage("onnx.load.graph_only", {"load_external_data": False}):
+                        model = onnx.load(onnx_path, load_external_data=False)
+                    with mem_profiler.stage("onnx.attach_external_initializers"):
+                        external_summary = attach_external_initializers_from_torch(model, self.model, onnx_path)
+                    mem_profiler.snapshot("onnx.attach_external_initializers.summary", external_summary)
+                    with mem_profiler.stage("offload_pt_weights", {"enabled": offload_pt_weights}):
+                        _ = self._offload_model_weights(offload_pt_weights)
+                else:
+                    with mem_profiler.stage("offload_pt_weights", {"enabled": offload_pt_weights}):
+                        _ = self._offload_model_weights(offload_pt_weights)
+                    with mem_profiler.stage("onnx.load", {"load_external_data": False}):
+                        model = onnx.load(onnx_path, load_external_data=False)
+                mem_profiler.snapshot("onnx.load.summary", onnx_initializer_summary(model))
 
-            onnx_path_tmp = onnx_path.with_suffix(onnx_path.suffix + ".tmp")
-            onnx.save(model, onnx_path_tmp)
-            onnx_path_tmp.replace(onnx_path)
-            del model
-            gc.collect()
-            logger.info("Transformed ONNX saved")
+                transform_kwargs = {
+                    "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
+                    "model_name": self.model_name,
+                }
+                if onnx_transform_kwargs is not None:
+                    transform_kwargs.update(onnx_transform_kwargs)
 
-        except Exception as e:
-            logger.error(f"ONNX export or transforms failed: {e}")
-            raise e
+                onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
+                with mem_profiler.stage("onnx.transforms", {"transforms": ",".join(self._transform_names())}):
+                    model, transformed = onnx_transforms.apply(model, **transform_kwargs)
+
+                # Add metadata to the model
+                model.metadata_props.append(
+                    onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
+                )
+                logger.info("ONNX transforms applied")
+
+                onnx_path_tmp = onnx_path.with_suffix(onnx_path.suffix + ".tmp")
+                with mem_profiler.stage("onnx.save"):
+                    if low_memory_external_initializers:
+                        with open(onnx_path_tmp, "wb") as onnx_file:
+                            onnx_file.write(model.SerializeToString())
+                    else:
+                        onnx.save(model, onnx_path_tmp)
+                with mem_profiler.stage("onnx.replace"):
+                    onnx_path_tmp.replace(onnx_path)
+                with mem_profiler.stage("onnx.model.free"):
+                    del model
+                    gc.collect()
+                logger.info("Transformed ONNX saved")
+
+            except Exception as e:
+                logger.error(f"ONNX export or transforms failed: {e}")
+                raise e
 
         self.onnx_path = onnx_path
         return onnx_path
@@ -438,6 +507,11 @@ class QEFFBaseModel(ABC):
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "retain_full_kv": retain_full_kv,
         }
+
+        if specializations is not None and specializations:
+            specialization_seq_len = get_attr_or_key(specializations[0], ("cl", "seq_len", "sequence_length"))
+            if specialization_seq_len is not None:
+                kwargs["prefill_seq_len"] = specialization_seq_len
 
         if prefill_only:
             kwargs.update(
@@ -758,6 +832,9 @@ class QEFFBaseModel(ABC):
                 )
         onnx_path = Path(onnx_path)
         if os.environ.get("LAYERWISE_EXPORT", "False") == "True":
+            return onnx_path
+        if os.environ.get("QEFF_EXPORT_ONLY", "").lower() in {"1", "true", "yes", "on"}:
+            logger.info("QEFF_EXPORT_ONLY is enabled; skipping compiler invocation after ONNX export")
             return onnx_path
 
         compile_dir = Path(compile_dir or onnx_path.parent)
