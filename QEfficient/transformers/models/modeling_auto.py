@@ -78,6 +78,7 @@ from QEfficient.utils import (
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.safetensor_materializer import maybe_materialize_safetensor_checkpoint
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
 CUSTOM_IO_DTYPE_MAP = {
@@ -121,6 +122,40 @@ def _resolve_torch_dtype(kwargs: dict) -> None:
                 aic_hw_version,
             )
         kwargs["torch_dtype"] = torch.float32
+
+
+def _prepare_weight_materialized_from_pretrained_source(pretrained_model_name_or_path: str, kwargs: dict) -> str:
+    qeff_materialize_weights = kwargs.pop("qeff_materialize_weights", None)
+    qeff_materialized_checkpoint_dir = kwargs.pop("qeff_materialized_checkpoint_dir", None)
+    qeff_materialize_force = kwargs.pop("qeff_materialize_force", None)
+
+    _resolve_torch_dtype(kwargs)
+    materialized_checkpoint = maybe_materialize_safetensor_checkpoint(
+        pretrained_model_name_or_path,
+        kwargs.get("torch_dtype"),
+        enabled=qeff_materialize_weights,
+        cache_dir=qeff_materialized_checkpoint_dir,
+        revision=kwargs.get("revision"),
+        token=kwargs.get("token", kwargs.get("use_auth_token")),
+        local_files_only=kwargs.get("local_files_only", False),
+        force=qeff_materialize_force,
+        hub_cache_dir=kwargs.get("cache_dir"),
+    )
+    if materialized_checkpoint is None:
+        if kwargs.get("low_cpu_mem_usage", None):
+            logger.warning("Updating low_cpu_mem_usage=False")
+        kwargs["low_cpu_mem_usage"] = False
+        return pretrained_model_name_or_path
+
+    kwargs["low_cpu_mem_usage"] = True
+    kwargs["use_safetensors"] = True
+    if materialized_checkpoint.materialized:
+        logger.info(
+            "Loading model from QEfficient materialized %s checkpoint: %s",
+            materialized_checkpoint.target_dtype,
+            materialized_checkpoint.path,
+        )
+    return str(materialized_checkpoint.path)
 
 
 class QEFFTransformersBase(QEFFBaseModel):
@@ -179,12 +214,10 @@ class QEFFTransformersBase(QEFFBaseModel):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
-        _resolve_torch_dtype(kwargs)
+        kwargs.update({"attn_implementation": "eager"})
+        pretrained_model_name_or_path = _prepare_weight_materialized_from_pretrained_source(
+            pretrained_model_name_or_path, kwargs
+        )
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -347,12 +380,10 @@ class QEFFAutoModel(QEFFTransformersBase):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
-        _resolve_torch_dtype(kwargs)
+        kwargs.update({"attn_implementation": "eager"})
+        pretrained_model_name_or_path = _prepare_weight_materialized_from_pretrained_source(
+            pretrained_model_name_or_path, kwargs
+        )
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
@@ -728,12 +759,10 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
-        _resolve_torch_dtype(kwargs)
+        kwargs.update({"attn_implementation": "eager"})
+        pretrained_model_name_or_path = _prepare_weight_materialized_from_pretrained_source(
+            pretrained_model_name_or_path, kwargs
+        )
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
@@ -1319,12 +1348,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
-        _resolve_torch_dtype(kwargs)
+        kwargs.update({"attn_implementation": "eager"})
+        pretrained_model_name_or_path = _prepare_weight_materialized_from_pretrained_source(
+            pretrained_model_name_or_path, kwargs
+        )
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -2223,17 +2250,16 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        kwargs.update({"attn_implementation": "eager"})
+        pretrained_model_name_or_path = _prepare_weight_materialized_from_pretrained_source(
+            pretrained_model_name_or_path, kwargs
+        )
 
         from transformers import AutoConfig
 
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
-        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -2875,12 +2901,10 @@ class QEFFAutoModelForImageTextToText:
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
-        _resolve_torch_dtype(kwargs)
+        kwargs.update({"attn_implementation": "eager"})
+        pretrained_model_name_or_path = _prepare_weight_materialized_from_pretrained_source(
+            pretrained_model_name_or_path, kwargs
+        )
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -3127,14 +3151,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
         kv_offload = kwargs.pop("kv_offload", None)
 
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
-        _resolve_torch_dtype(kwargs)
+        kwargs.update({"attn_implementation": "eager"})
+        pretrained_model_name_or_path = _prepare_weight_materialized_from_pretrained_source(
+            pretrained_model_name_or_path, kwargs
+        )
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
@@ -4595,12 +4617,10 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
-        _resolve_torch_dtype(kwargs)
+        kwargs.update({"attn_implementation": "eager"})
+        pretrained_model_name_or_path = _prepare_weight_materialized_from_pretrained_source(
+            pretrained_model_name_or_path, kwargs
+        )
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
