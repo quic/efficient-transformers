@@ -87,7 +87,7 @@ prefill_qpc_path = qeff_model.compile(
     width=536,
     num_cores=16,
     num_devices=1,
-    mxfp6_matmul=False,
+    mxfp6_matmul=True,
     mxint8_kv_cache=False,
     retain_full_kv=True,
     split_model_io=True,  # This should be used for disagg serving via VLLM
@@ -98,9 +98,12 @@ prefill_qpc_path = qeff_model.compile(
     enable_chunking=True,
     skip_vision=True,
     use_onnx_subfunctions=False,
+<<<<<<< HEAD
     layerwise_window_size=1,
     layerwise=LAYERWISE,
     offload_pt_weights=False,
+=======
+>>>>>>> 3d3435c (updating moe code and minor fixes)
     # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 
@@ -122,8 +125,11 @@ decode_qpc_path = qeff_model.compile(
     prefill_only=False,
     skip_vision=True,
     use_onnx_subfunctions=False,
+<<<<<<< HEAD
     layerwise=LAYERWISE,
     layerwise_window_size=1,
+=======
+>>>>>>> 3d3435c (updating moe code and minor fixes)
     # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 
@@ -159,11 +165,13 @@ lang_prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_q
 lang_decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"))
 
 if skip_vision:
+    text_prompt_2 = "Describe yourself as a large language model, including your purpose, capabilities, and limitations. Explain how you process and generate responses, interact with users, and handle uncertainty, while emphasizing accuracy, safety, and helpfulness in diverse conversations across various topics and domains."
+
     messages = [
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": "Tell me about yourself."},
+                {"type": "text", "text": text_prompt_2},
             ],
         },
     ]
@@ -177,7 +185,7 @@ else:
             "role": "user",
             "content": [
                 {"type": "image", "image": image},
-                {"type": "text", "text": "Describe all the colors seen in the image."},
+                {"type": "text", "text": "Describe the image."},
             ],
         },
     ]

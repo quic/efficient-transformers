@@ -623,7 +623,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         # acc_dtype = torch.float32
         # A64 = A.to(acc_dtype)
         # I64 = torch.eye(chunk_size, device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
-        # strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+        strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
 
         # K = chunk_size - 1
         # S64 = I64.clone()
@@ -633,15 +633,29 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         # attn = S64
 
         # Newton-Schulz
-        Eye = torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
-        L = attn.masked_fill(mask, 0)
+        # Eye = torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
+        # L = attn.masked_fill(mask, 0)
 
-        X = Eye
-        for _ in range(int(math.log2(chunk_size)) + 2):
-            R = Eye - (Eye - L) @ X
-            X = X + X @ R
+        # X = Eye
+        # for _ in range(int(math.log2(chunk_size)) + 2):
+        #     R = Eye - (Eye - L) @ X
+        #     X = X + X @ R
 
-        attn = X
+        # attn = X
+
+        # Newton-Schulz updated
+        acc_dtype = torch.float32
+        I64 = torch.eye(chunk_size, device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        L64 = attn.masked_fill(mask, 0).to(acc_dtype)
+
+        # X0 = I
+        Xj = I64.clone()
+        for _ in range(chunk_size - 1):
+            Rj = I64 - ((I64 - L64) @ Xj)
+            Xj = Xj + (Xj @ Rj).masked_fill(~strict_lower, 0)
+            Xj = Xj.masked_fill(~strict_lower, 0) + I64
+
+        attn = Xj.to(attn.dtype)
 
         value = attn @ v_beta
         k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))

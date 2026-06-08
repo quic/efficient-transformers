@@ -31,7 +31,7 @@ processor = AutoProcessor.from_pretrained(model_id)
 # Enable KV blocking for full-attention layers with 2 KV blocks
 # To disable KV blocking, comment out the qaic_config line below
 # Set skip_kv=True to skip future KV blocks during inference (optimization)
-qaic_config = {"blocking_mode": "kv", "num_kv_blocks": 2, "skip_kv": True}
+qaic_config = {"enable_blocking": True, "blocking_mode": "kv", "num_kv_blocks": 4, "skip_kv": True}
 
 enable_blocking = False  ## By default blocking is false
 ### use skip_vision=Ture, if want to run only text, or false ###
@@ -49,14 +49,14 @@ if skip_vision:
         prefill_seq_len=PREFILL_SEQ_LEN,
         ctx_len=CTX_LEN,
         num_cores=16,
-        num_devices=1,
+        num_devices=4,
         height=354,
         width=536,
         mxfp6_matmul=True,
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
-        # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
+        qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
     )
 
     if enable_blocking:
@@ -121,7 +121,7 @@ else:
         prefill_seq_len=PREFILL_SEQ_LEN,
         ctx_len=CTX_LEN,
         num_cores=16,
-        num_devices=1,
+        num_devices=4,
         height=354,
         width=536,
         mxfp6_matmul=True,
