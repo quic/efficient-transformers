@@ -32,7 +32,7 @@ import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
-from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfoNew,
     PerfMetrics,
@@ -196,7 +196,7 @@ def _compile_io_name(name: str, *, use_onnx_subfunctions: bool) -> str:
     """Return the compiler-visible name for retained-state ONNX outputs."""
     if not use_onnx_subfunctions or not name.endswith("_RetainedState"):
         return name
-    if any(token in name for token in ("key", "value", "compressed_kv", "k_pe")):
+    if any(token in name for token in ("key", "value", "conv_state", "recurrent_state", "compressed_kv", "k_pe")):
         return name[: -len("_RetainedState")] + "_InternalRetainedState"
     return name
 
@@ -2221,7 +2221,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             [
                 x
                 for x in lang_session.input_names + lang_session.output_names
-                if x.startswith("past_") or x.endswith("_RetainedState")
+                if is_retained_state_name(x) or x.endswith("_RetainedState")
             ]
         )
 
@@ -2329,6 +2329,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         logits_vocab_size = None
         logits_dtype = np.float32
         logits_binding_idx = lang_session.binding_index_map.get("logits")
+        input_ids_binding_idx = lang_session.binding_index_map.get("input_ids")
+        logits_seq_len_by_input_seq = {}
+        default_logits_seq_len = 1
         if logits_binding_idx is not None and getattr(lang_session, "allowed_shapes", None):
             allowed_vocab_sizes = [
                 int(shape_spec[logits_binding_idx][1][-1])
@@ -2337,10 +2340,21 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             ]
             if allowed_vocab_sizes:
                 logits_vocab_size = max(allowed_vocab_sizes)
+            if input_ids_binding_idx is not None:
+                for shape_spec in lang_session.allowed_shapes:
+                    if len(shape_spec) <= max(input_ids_binding_idx, logits_binding_idx):
+                        continue
+                    input_dims = shape_spec[input_ids_binding_idx][1]
+                    logits_dims = shape_spec[logits_binding_idx][1]
+                    if len(input_dims) < 2 or len(logits_dims) < 2:
+                        continue
+                    logits_seq_len_by_input_seq[int(input_dims[1])] = int(logits_dims[1])
         if logits_vocab_size is None and logits_binding_idx is not None:
             logits_dims = tuple(lang_session.bindings[logits_binding_idx].dims)
             if logits_dims:
                 logits_vocab_size = int(logits_dims[-1])
+            if len(logits_dims) > 1:
+                default_logits_seq_len = int(logits_dims[1])
         if logits_binding_idx is not None:
             logits_dtype = lang_session.aic_to_np_dtype_mapping[lang_session.bindings[logits_binding_idx].type]
         for i in range(num_chunks):
@@ -2368,9 +2382,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     :, i * prefill_seq_len : (i + 1) * prefill_seq_len, :, :
                 ]
             if logits_vocab_size is not None:
+                input_seq_len = int(chunk_inputs["input_ids"].shape[1])
+                logits_seq_len = logits_seq_len_by_input_seq.get(input_seq_len, default_logits_seq_len)
                 logits_shape = (
                     chunk_inputs["input_ids"].shape[0],
-                    chunk_inputs["input_ids"].shape[1],
+                    logits_seq_len,
                     logits_vocab_size,
                 )
                 lang_session.set_buffers({"logits": np.zeros(logits_shape, dtype=logits_dtype)})
@@ -2386,7 +2402,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             [
                 x
                 for x in lang_session.input_names + lang_session.output_names
-                if x.startswith("past_") or x.endswith("_RetainedState")
+                if is_retained_state_name(x) or x.endswith("_RetainedState")
             ]
         )
         if not_mllama:
@@ -2915,7 +2931,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             [
                 x
                 for x in qpc_session.input_names + qpc_session.output_names
-                if x.startswith("past_") or x.endswith("_RetainedState")
+                if is_retained_state_name(x) or x.endswith("_RetainedState")
             ]
         )
 
@@ -4875,7 +4891,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         )
 
         self.qpc_session.skip_buffers(
-            [x for x in self.qpc_session.input_names + self.qpc_session.output_names if x.startswith("past_")]
+            [x for x in self.qpc_session.input_names + self.qpc_session.output_names if is_retained_state_name(x)]
         )
 
         outputs = {

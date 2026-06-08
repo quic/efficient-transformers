@@ -20,7 +20,8 @@ from transformers import AutoConfig
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
+# MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
+MODEL_ID = "tiny-random/qwen3.6-moe"
 
 
 def main():

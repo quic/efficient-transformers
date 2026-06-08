@@ -332,6 +332,25 @@ class QEFFBaseModel(ABC):
                 return tuple(layers)
             return None
 
+        def _resolve_pkv_names(layer_idx, layer_state):
+            if hasattr(self.model, "get_onnx_past_key_value_names"):
+                names = self.model.get_onnx_past_key_value_names(layer_idx, layer_state)
+                if names is not None:
+                    return list(names)
+            state_len = len(layer_state)
+            if state_len == 2:
+                return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
+            if state_len == 4:
+                return [
+                    f"past_key_self.{layer_idx}",
+                    f"past_value_self.{layer_idx}",
+                    f"past_key_cross.{layer_idx}",
+                    f"past_value_cross.{layer_idx}",
+                ]
+            raise ValueError(
+                f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {state_len}"
+            )
+
         # Create input_names from example_inputs
         input_names = []
         for param in inspect.signature(self.model.forward).parameters:
@@ -342,21 +361,7 @@ class QEFFBaseModel(ABC):
                         input_names.append(param)
                         continue
                     for i in range(len(pkv_layers)):
-                        if len(pkv_layers[0]) == 2:
-                            input_names.extend([f"past_key.{i}", f"past_value.{i}"])
-                        elif len(pkv_layers[0]) == 4:
-                            input_names.extend(
-                                [
-                                    f"past_key_self.{i}",
-                                    f"past_value_self.{i}",
-                                    f"past_key_cross.{i}",
-                                    f"past_value_cross.{i}",
-                                ]
-                            )
-                        else:
-                            raise ValueError(
-                                f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(pkv_layers[0])}"
-                            )
+                        input_names.extend(_resolve_pkv_names(i, pkv_layers[i]))
                 elif param == "compressed_kvs":
                     for i in range(len(example_inputs["compressed_kvs"])):
                         input_names.extend(
@@ -540,6 +545,25 @@ class QEFFBaseModel(ABC):
                 return tuple(layers)
             return None
 
+        def _resolve_pkv_names(layer_idx, layer_state):
+            if hasattr(self.model, "get_onnx_past_key_value_names"):
+                names = self.model.get_onnx_past_key_value_names(layer_idx, layer_state)
+                if names is not None:
+                    return list(names)
+            state_len = len(layer_state)
+            if state_len == 2:
+                return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
+            if state_len == 4:
+                return [
+                    f"past_key_self.{layer_idx}",
+                    f"past_value_self.{layer_idx}",
+                    f"past_key_cross.{layer_idx}",
+                    f"past_value_cross.{layer_idx}",
+                ]
+            raise ValueError(
+                f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {state_len}"
+            )
+
         is_vision = hasattr(self.model, "language_model")
         output_name = []
         output_name.append("logits")
@@ -549,9 +573,21 @@ class QEFFBaseModel(ABC):
                 if "deepstack_features_RetainedState" in output_names:
                     output_name.append("deepstack_features_RetainedState")
                 output_name.append("image_idx_output")
+        retained_state_suffix = (
+            "_InternalRetainedState" if export_kwargs.get("use_onnx_subfunctions", False) else "_RetainedState"
+        )
         for layer_idx in range(idx, end_idx):
-            output_name.append(f"past_key.{layer_idx}_InternalRetainedState")
-            output_name.append(f"past_value.{layer_idx}_InternalRetainedState")
+            layer_states = _resolve_pkv_layers(example_inputs.get("past_key_values"))
+            if layer_states is None:
+                output_name.append(f"past_key.{layer_idx}{retained_state_suffix}")
+                output_name.append(f"past_value.{layer_idx}{retained_state_suffix}")
+            else:
+                output_name.extend(
+                    [
+                        f"{name}{retained_state_suffix}"
+                        for name in _resolve_pkv_names(layer_idx, layer_states[layer_idx])
+                    ]
+                )
 
         # For some decoder wrappers (e.g. VLM language wrappers), forward does not accept
         # `inputs_embeds`; keep `input_ids` in those cases.
@@ -600,23 +636,12 @@ class QEFFBaseModel(ABC):
                         continue
                     example_inputs["past_key_values"] = [val for i, val in enumerate(pkv_layers) if i < window_size]
                     for i in range(len(example_inputs["past_key_values"])):
-                        if len(example_inputs["past_key_values"][0]) == 2:
-                            for layer_offset in range(len(example_inputs["past_key_values"])):
-                                layer_idx = idx + layer_offset
-                                input_names.extend([f"past_key.{layer_idx}", f"past_value.{layer_idx}"])
-                        elif len(example_inputs["past_key_values"][0]) == 4:
+                        for layer_offset in range(len(example_inputs["past_key_values"])):
+                            layer_idx = idx + layer_offset
                             input_names.extend(
-                                [
-                                    f"past_key_self.{i}",
-                                    f"past_value_self.{i}",
-                                    f"past_key_cross.{i}",
-                                    f"past_value_cross.{i}",
-                                ]
+                                _resolve_pkv_names(layer_idx, example_inputs["past_key_values"][layer_offset])
                             )
-                        else:
-                            raise ValueError(
-                                f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {len(example_inputs['past_key_values'][0])}"
-                            )
+                        break
                 elif param == "compressed_kvs":
                     for layer_offset in range(len(example_inputs["compressed_kvs"])):
                         layer_idx = idx + layer_offset
@@ -662,6 +687,26 @@ class QEFFBaseModel(ABC):
         _onnx_transforms = [SplitTensorsTransform, CustomOpTransform, RenameFunctionOutputsTransform]
         onnx_transforms = OnnxTransformPipeline(transforms=_onnx_transforms)
         model, transformed = onnx_transforms.apply(model, **transform_kwargs)
+
+        def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
+            if old_name == new_name:
+                return
+            for node in graph.node:
+                node.input[:] = [new_name if value == old_name else value for value in node.input]
+                node.output[:] = [new_name if value == old_name else value for value in node.output]
+            for initializer in graph.initializer:
+                if initializer.name == old_name:
+                    initializer.name = new_name
+            for value_info in list(graph.input) + list(graph.output) + list(graph.value_info):
+                if value_info.name == old_name:
+                    value_info.name = new_name
+
+        for output_idx, expected_name in enumerate(output_names):
+            if output_idx >= len(model.graph.output):
+                break
+            current_name = model.graph.output[output_idx].name
+            _rename_graph_value(model.graph, current_name, expected_name)
+
         onnx.save(model, layer_onnx_path_tmp)
         self.onnx_path = layer_onnx_path_tmp
         return layer_onnx_path_tmp

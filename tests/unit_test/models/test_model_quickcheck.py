@@ -1441,6 +1441,145 @@ def test_layerwise_matches_default_path_for_qwen3_moe():
 
 
 @pytest.mark.llm_model
+def test_layerwise_matches_default_path_for_qwen3_5_moe():
+    """Qwen3.5-MoE decoder wrapper must preserve logits with layerwise windows."""
+    import QEfficient
+    from QEfficient.transformers.models import _layerwise
+
+    config = AutoConfig.from_pretrained(LAYERWISE_TINY_MODEL_IDS["qwen3_5_moe"])
+    config.torch_dtype = "float32"
+
+    qeff_model = QEfficient.QEFFAutoModelForImageTextToText.from_pretrained(
+        LAYERWISE_TINY_MODEL_IDS["qwen3_5_moe"],
+        attn_implementation="eager",
+        kv_offload=True,
+        config=config,
+        dtype=torch.float32,
+        layerwise=False,
+    )
+    wrapper = qeff_model.model.get_qeff_language_decoder().eval()
+    lang_inputs = qeff_model.model.get_dummy_inputs(kv_offload=True)["lang"]
+
+    with torch.no_grad():
+        default_out = wrapper(**lang_inputs)
+
+    hidden_states = None
+    total_layers = qeff_model.model.config.text_config.num_hidden_layers
+    try:
+        with _layerwise._layerwise_export_env():
+            for window in range(total_layers):
+                _layerwise._set_layer_windows(window, window + 1, total_layers)
+                call_kwargs = {
+                    "position_ids": lang_inputs["position_ids"],
+                    "past_key_values": lang_inputs["past_key_values"],
+                }
+                if window == 0:
+                    call_kwargs.update(
+                        input_ids=lang_inputs["input_ids"],
+                        vision_embeds=lang_inputs["vision_embeds"],
+                        image_idx=lang_inputs["image_idx"],
+                    )
+                else:
+                    call_kwargs["inputs_embeds"] = hidden_states
+
+                with torch.no_grad():
+                    window_out = wrapper(**call_kwargs)
+                hidden_states = window_out[0]
+    finally:
+        _layerwise._reset_layer_windows()
+
+    assert torch.equal(default_out[0], hidden_states), "Qwen3.5-MoE layerwise logits diverged from default logits"
+
+
+@pytest.mark.llm_model
+def test_layerwise_matches_default_path_for_qwen3_vl_moe():
+    """Qwen3-VL-MoE decoder wrapper must preserve logits with layerwise windows."""
+    import QEfficient
+    from QEfficient.transformers.models import _layerwise
+
+    model_id = LAYERWISE_TINY_MODEL_IDS["qwen3_vl_moe"]
+    try:
+        config = AutoConfig.from_pretrained(model_id)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+    config.torch_dtype = "float32"
+
+    qeff_model = QEfficient.QEFFAutoModelForImageTextToText.from_pretrained(
+        model_id,
+        attn_implementation="eager",
+        kv_offload=True,
+        config=config,
+        dtype=torch.float32,
+        layerwise=False,
+    )
+    wrapper = qeff_model.model.get_qeff_language_decoder().eval()
+    lang_inputs = qeff_model.model.get_dummy_inputs(kv_offload=True)["lang"]
+
+    with torch.no_grad():
+        default_out = wrapper(**lang_inputs)
+
+    hidden_states = None
+    total_layers = qeff_model.model.config.text_config.num_hidden_layers
+    try:
+        with _layerwise._layerwise_export_env():
+            for window in range(total_layers):
+                _layerwise._set_layer_windows(window, window + 1, total_layers)
+                call_kwargs = {k: v for k, v in lang_inputs.items() if k not in ("input_ids", "inputs_embeds")}
+                if window == 0:
+                    call_kwargs["input_ids"] = lang_inputs["input_ids"]
+                else:
+                    call_kwargs["inputs_embeds"] = hidden_states
+
+                with torch.no_grad():
+                    window_out = wrapper(**call_kwargs)
+                hidden_states = window_out[0]
+    finally:
+        _layerwise._reset_layer_windows()
+
+    assert torch.equal(default_out[0], hidden_states), "Qwen3-VL-MoE layerwise logits diverged from default logits"
+
+
+def test_split_layer_graph_keeps_qwen3_5_linear_states(tmp_path):
+    """Qwen3.5 layerwise split must retain linear-attention state inputs."""
+    from onnx import TensorProto, helper
+
+    from QEfficient.utils.layerwise_pipeline import split_layer_graph
+
+    layer_dir = tmp_path / "onnx_layerwise_tmp" / "layer_0_1"
+    layer_dir.mkdir(parents=True)
+    model_path = layer_dir / "model_layer_tmp_0_1.onnx"
+
+    graph = helper.make_graph(
+        nodes=[
+            helper.make_node("Identity", ["input_ids"], ["logits"]),
+            helper.make_node("Identity", ["conv_state.0"], ["conv_state.0_RetainedState"]),
+            helper.make_node("Identity", ["recurrent_state.0"], ["recurrent_state.0_RetainedState"]),
+        ],
+        name="qwen35_layer",
+        inputs=[
+            helper.make_tensor_value_info("input_ids", TensorProto.INT64, [1, 8]),
+            helper.make_tensor_value_info("position_ids", TensorProto.INT64, [4, 1, 8]),
+            helper.make_tensor_value_info("conv_state.0", TensorProto.FLOAT, [1, 64, 4]),
+            helper.make_tensor_value_info("recurrent_state.0", TensorProto.FLOAT, [1, 4, 16, 16]),
+        ],
+        outputs=[
+            helper.make_tensor_value_info("logits", TensorProto.INT64, [1, 8]),
+            helper.make_tensor_value_info("conv_state.0_RetainedState", TensorProto.FLOAT, [1, 64, 4]),
+            helper.make_tensor_value_info("recurrent_state.0_RetainedState", TensorProto.FLOAT, [1, 4, 16, 16]),
+        ],
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    onnx.save(model, model_path)
+
+    assert split_layer_graph(0, 1, str(tmp_path), 0, 1) is True
+
+    split_model = onnx.load(layer_dir / "split_graph.onnx", load_external_data=False)
+    input_names = {value.name for value in split_model.graph.input}
+    assert "conv_state.0" in input_names
+    assert "recurrent_state.0" in input_names
+
+
+@pytest.mark.llm_model
 def test_layerwise_supported_guard_accepts_qwen3_vl_moe():
     from QEfficient.transformers.models import _layerwise
 

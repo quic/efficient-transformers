@@ -22,13 +22,20 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 
 # MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
-MODEL_ID = "tiny-random/qwen3.6-moe"
-# MODEL_ID = "Qwen/Qwen3.6-35B-A3B"
+# MODEL_ID = "tiny-random/qwen3.6-moe"
+MODEL_ID = "Qwen/Qwen3.6-35B-A3B"
+LAYERWISE = True
+TORCH_DTYPE = torch.float16
+RANDOM_SEED = 42
 
 
 def main():
+    # Tiny random checkpoints have missing params initialized from RNG.
+    # Keep the seed fixed so layerwise/non-layerwise parity checks are stable.
+    torch.manual_seed(RANDOM_SEED)
+
     config = AutoConfig.from_pretrained(MODEL_ID)
-    config.torch_dtype = "float16"
+    config.torch_dtype = TORCH_DTYPE
     tokenizer = transformers.AutoTokenizer.from_pretrained(MODEL_ID)
     processor = AutoProcessor.from_pretrained(MODEL_ID)
 
@@ -37,8 +44,8 @@ def main():
         attn_implementation="eager",
         kv_offload=True,
         config=config,
-        dtype=torch.float16,
-        # layerwise=True,
+        dtype=TORCH_DTYPE,
+        layerwise=LAYERWISE,
     )
 
     qpc_path = qeff_model.compile(
@@ -56,8 +63,8 @@ def main():
         split_retained_state_io=True,
         use_onnx_subfunctions=False,
         mos=1,
-        # layerwise=True,
-        # layerwise_window_size=1,
+        layerwise=LAYERWISE,
+        layerwise_window_size=1,
     )
     print(f"Final QPC path: {qpc_path}")
 

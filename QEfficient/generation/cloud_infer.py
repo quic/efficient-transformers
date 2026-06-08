@@ -22,6 +22,11 @@ def _public_retained_state_name(output_name: str) -> Optional[str]:
     return None
 
 
+def is_retained_state_name(name: str) -> bool:
+    """Return True when an I/O binding participates in retained-state cache flow."""
+    return name.startswith(("past_", "conv_state.", "recurrent_state.", "compressed_", "k_pe"))
+
+
 def _add_basename_binding_aliases(binding_index_map: Dict[str, int], bindings) -> None:
     """Allow callers to use unprefixed I/O names for prefixed ONNX graphs."""
     for binding in bindings:

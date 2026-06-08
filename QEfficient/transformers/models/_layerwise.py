@@ -17,11 +17,14 @@ on; calling :func:`run_layerwise` for any other architecture will raise.
 from __future__ import annotations
 
 import functools
+import random
 import warnings
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
+import torch
 import transformers
 
 import QEfficient
@@ -59,6 +62,7 @@ _LAYERWISE_STATE: Dict[str, int] = {
     "text_start": 0,
     "text_end": 0,
     "text_total_layers": 0,
+    "force_full_init": 0,
 }
 
 _DEPRECATION_WARNED = False
@@ -165,6 +169,20 @@ def _build_layer_windows(total_layers: int, window_size: int) -> List[Tuple[int,
         windows.append((start, end))
         start = end
     return windows
+
+
+@functools.lru_cache(maxsize=32)
+def _checkpoint_has_shard_index(model_id: str) -> bool:
+    """Return True when checkpoint provides an index file for shard filtering."""
+    hub_kwargs = {"_raise_exceptions_for_missing_entries": False}
+    for index_filename in ("model.safetensors.index.json", "pytorch_model.bin.index.json"):
+        try:
+            index_path = transformers.utils.hub.cached_file(model_id, index_filename, **hub_kwargs)
+        except Exception:
+            index_path = None
+        if index_path is not None:
+            return True
+    return False
 
 
 def _get_text_layers_container(model):
@@ -304,7 +322,7 @@ def _install_window_patch(model_cls) -> None:
         original_init(self, *args, **kwargs)
         # Only nullify decoder layers when the layer-wise driver is actively
         # exporting; idle calls to from_pretrained must behave normally.
-        if _LAYERWISE_STATE["active"]:
+        if _LAYERWISE_STATE["active"] and not _LAYERWISE_STATE["force_full_init"]:
             _null_outside_window_layers(self, apply_text=True)
 
     model_cls.__init__ = patched_init
@@ -375,6 +393,7 @@ def _set_layer_windows(text_start: int, text_end: int, text_total_layers: int) -
     _LAYERWISE_STATE["text_start"] = text_start
     _LAYERWISE_STATE["text_end"] = text_end
     _LAYERWISE_STATE["text_total_layers"] = text_total_layers
+    _LAYERWISE_STATE["force_full_init"] = 0
 
     # The QEff modeling classes themselves expose _start/_end/_total_layers as
     # part of their windowing contract (they are read inside their forward
@@ -590,11 +609,39 @@ def run_layerwise(
     windows = _build_layer_windows(text_total_layers, window_size)
     first_onnx_path: Optional[Path] = None
     last_qeff_model = None
+    force_full_init_for_run = model_type in {"qwen3_5_moe", "qwen3_5_moe_text"} and not _checkpoint_has_shard_index(
+        model_id
+    )
+    init_rng_snapshot = {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.random.get_rng_state(),
+    }
+
+    def _build_window_model():
+        # Some tiny/testing checkpoints intentionally miss parameters and rely on
+        # random initialization for the missing tensors. Replaying the same RNG
+        # state for each per-window load keeps layerwise export numerically
+        # aligned with non-layerwise behavior in those cases.
+        prev_python_state = random.getstate()
+        prev_numpy_state = np.random.get_state()
+        prev_torch_state = torch.random.get_rng_state()
+        try:
+            random.setstate(init_rng_snapshot["python"])
+            np.random.set_state(init_rng_snapshot["numpy"])
+            torch.random.set_rng_state(init_rng_snapshot["torch"])
+            return qeff_factory(model_id, config)
+        finally:
+            random.setstate(prev_python_state)
+            np.random.set_state(prev_numpy_state)
+            torch.random.set_rng_state(prev_torch_state)
 
     try:
         with _layerwise_export_env():
             _set_layer_windows(0, min(window_size, text_total_layers), text_total_layers)
-            cached_probe = probe_qeff_model or qeff_factory(model_id, config)
+            if force_full_init_for_run:
+                _LAYERWISE_STATE["force_full_init"] = 1
+            cached_probe = probe_qeff_model or _build_window_model()
             cached_onnx_path = _cached_layerwise_onnx_path(cached_probe, compile_kwargs)
             if cached_onnx_path is not None:
                 first_onnx_path = cached_onnx_path
@@ -604,8 +651,10 @@ def run_layerwise(
                 if cached_onnx_path is not None:
                     break
                 _set_layer_windows(text_start, text_end, text_total_layers)
+                if force_full_init_for_run:
+                    _LAYERWISE_STATE["force_full_init"] = 1
 
-                qeff_model = qeff_factory(model_id, config)
+                qeff_model = _build_window_model()
                 last_qeff_model = qeff_model
                 if hasattr(qeff_model, "model"):
                     _null_outside_window_layers(qeff_model.model, apply_text=True)

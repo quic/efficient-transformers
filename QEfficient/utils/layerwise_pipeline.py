@@ -99,7 +99,12 @@ def split_layer_graph(
         [
             n
             for n in graph_inputs
-            if n.startswith("past_key.") or n.startswith("past_value.") or n == "vision_embeds" or n == "image_idx"
+            if n.startswith("past_key.")
+            or n.startswith("past_value.")
+            or n.startswith("conv_state.")
+            or n.startswith("recurrent_state.")
+            or n == "vision_embeds"
+            or n == "image_idx"
         ]
     )
     input_names = [n for n in preferred_inputs if n in graph_inputs] + cache_inputs

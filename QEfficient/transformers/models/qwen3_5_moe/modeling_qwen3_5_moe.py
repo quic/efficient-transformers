@@ -130,22 +130,38 @@ class QEffQwen3_5MoeDynamicCache(Cache):
                     cache.recurrent_states[layer_idx] = recurrent_state
             return cache
 
-        # for layer_idx, layer_state in enumerate(past_key_values):
         layer_idx = QEffQwen3_5MoeTextModel._start
+        layer_state = past_key_values
+        if len(past_key_values) == len(cache.layer_types) and isinstance(past_key_values[layer_idx], (tuple, list)):
+            layer_state = past_key_values[layer_idx]
+        elif len(past_key_values) == 1 and isinstance(past_key_values[0], (tuple, list)):
+            layer_state = past_key_values[0]
         if cache.layer_types[layer_idx] == "full_attention":
-            key_states, value_states = past_key_values[0]
+            key_states, value_states = layer_state
             layer = QEffDynamicLayer()
             layer.keys = key_states
             layer.values = value_states
             cache.kv_layers[layer_idx] = layer
         else:
-            conv_state, recurrent_state = past_key_values[0]
+            conv_state, recurrent_state = layer_state
             cache.conv_states[layer_idx] = conv_state
             cache.recurrent_states[layer_idx] = recurrent_state
         return cache
 
     def __len__(self):
         return len(self.layer_types)
+
+    def __getitem__(self, layer_idx) -> Tuple[torch.Tensor, torch.Tensor]:
+        if isinstance(layer_idx, slice):
+            return tuple(self[idx] for idx in range(*layer_idx.indices(len(self.layer_types))))
+        if not isinstance(layer_idx, int):
+            raise TypeError(f"Unsupported cache index type: {type(layer_idx)!r}")
+        if layer_idx < 0:
+            layer_idx += len(self.layer_types)
+        if self.layer_types[layer_idx] == "full_attention":
+            layer = self.kv_layers[layer_idx]
+            return (layer.keys, layer.values)
+        return (self.conv_states[layer_idx], self.recurrent_states[layer_idx])
 
     @property
     def key_cache(self):
@@ -195,9 +211,26 @@ class QEffQwen3_5MoeDynamicCache(Cache):
         return layer.write_only(key_states, value_states, cache_kwargs)
 
     def has_previous_state(self, layer_idx=None) -> bool:
-        if self.last_linear_layer is None:
+        if layer_idx is not None:
+            if layer_idx < 0 or layer_idx >= len(self.layer_types):
+                return False
+            if self.layer_types[layer_idx] != "linear_attention":
+                return False
+            return self.conv_states[layer_idx] is not None
+
+        linear_layers = [idx for idx, layer_type in enumerate(self.layer_types) if layer_type == "linear_attention"]
+        if not linear_layers:
             return False
-        return self.conv_states[self.last_linear_layer] is not None
+
+        # In layerwise mode only the active window state is materialized.
+        # Checking only the global last linear layer can incorrectly report
+        # "no previous state" for earlier linear windows.
+        if is_layerwise_active():
+            active_idx = QEffQwen3_5MoeTextModel._start
+            if active_idx in linear_layers:
+                return self.conv_states[active_idx] is not None
+
+        return any(self.conv_states[idx] is not None for idx in linear_layers)
 
     def reorder_cache(self, beam_idx: torch.LongTensor):
         for layer_idx, layer_type in enumerate(self.layer_types):
@@ -1015,13 +1048,25 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         start, end = resolve_layer_window(QEffQwen3_5MoeTextModel, len(self.layers))
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length(layer_idx=start) if past_key_values is not None else 0
-            cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
-            )
+            active_layer_type = self.config.layer_types[start] if start < len(self.config.layer_types) else None
+            if is_layerwise_active() and position_ids is not None and active_layer_type == "linear_attention":
+                text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
+                cache_position = text_position_ids[0].clamp_min(0)
+            else:
+                cache_position = torch.arange(
+                    past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+                )
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
+        if isinstance(attention_mask, torch.Tensor):
+            target_length = attention_mask.shape[-1]
+        else:
+            pos_max = 0
+            if position_ids is not None:
+                text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
+                pos_max = int(text_position_ids.max().item()) + 1
+            target_length = max(past_seen_tokens, pos_max)
         causal_mask = _create_causal_mask(
             position_ids=position_ids[0], target_length=target_length, sliding_window=None
         )
@@ -1496,6 +1541,11 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
             return set()
         return {QEffQwen3_5MoeDecoderLayer}
 
+    def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
+        if self.config.text_config.layer_types[layer_idx] == "full_attention":
+            return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
+        return [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
+
     def forward(
         self,
         input_ids=None,
@@ -1844,8 +1894,8 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
                 lang_dynamic_axes[f"past_key.{i}"] = {0: batch_axis_name, 2: "ctx_len"}
                 lang_dynamic_axes[f"past_value.{i}"] = {0: batch_axis_name, 2: "ctx_len"}
             else:
-                lang_dynamic_axes[f"past_key.{i}"] = {0: batch_axis_name}
-                lang_dynamic_axes[f"past_value.{i}"] = {0: batch_axis_name}
+                lang_dynamic_axes[f"conv_state.{i}"] = {0: batch_axis_name}
+                lang_dynamic_axes[f"recurrent_state.{i}"] = {0: batch_axis_name}
 
         if continuous_batching:
             lang_dynamic_axes["batch_index"] = {0: "batch_size"}
@@ -1966,9 +2016,21 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]
         lang_output_names = ["logits"]
-        for i in range(self.model.config.text_config.num_hidden_layers):
-            for kv in ["key", "value"]:
-                lang_output_names.append(f"past_{kv}.{i}_RetainedState")
+        for layer_idx, layer_type in enumerate(self.model.config.text_config.layer_types):
+            if layer_type == "full_attention":
+                lang_output_names.extend(
+                    [
+                        f"past_key.{layer_idx}_RetainedState",
+                        f"past_value.{layer_idx}_RetainedState",
+                    ]
+                )
+            else:
+                lang_output_names.extend(
+                    [
+                        f"conv_state.{layer_idx}_RetainedState",
+                        f"recurrent_state.{layer_idx}_RetainedState",
+                    ]
+                )
 
         output_names = {}
         if kv_offload:
