@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+
 from gemma4_utils import (
     CHAT_TEMPLATE,
     build_compile_kwargs,
@@ -11,7 +12,6 @@ from gemma4_utils import (
     effective_lens,
     normalize_generated_ids,
     remove_fp16clip_transform_if_disabled,
-    resolve_npi_mode,
 )
 from transformers import AutoConfig, AutoProcessor
 
@@ -30,6 +30,16 @@ GENERATION_LEN = 1920
 NUM_LANG_HIDDEN_LAYER = 2
 NUM_VISION_HIDDEN_LAYER = 2
 
+# NODE_PRECISION_INFO:Optional argument
+# If set to True, the NPI file will be generated automatically.
+# If a file path is provided, that file will be used for compilation.
+# If not specified or False, it will skip NPI file.
+NODE_PRECISION_INFO = True
+
+# Path to Node Precision Info YAML file.
+# npi_file_path = "examples/image_text_to_text/models/gemma_vision/configs/gemma4_E4B_npi.yaml"
+# npi_file_full_path = os.path.join(os.getcwd(), npi_file_path)
+
 compiler_kwargs = {
     "NUM_CORES": 16,
     "NUM_DEVICES": 4,
@@ -40,6 +50,7 @@ compiler_kwargs = {
     "USE_ONNX_SUBFUNCTIONS": False,
     "split_model_io": True,
     "BATCH_SIZE": BS,
+    "node_precision_info": NODE_PRECISION_INFO,
 }
 
 
@@ -81,7 +92,6 @@ def main():
         ignore_mismatched_sizes=True,
     )
     remove_fp16clip_transform_if_disabled(qeff_model, True)
-    npi_mode = resolve_npi_mode(True)
 
     if SKIP_VISION:
         messages = build_messages(SYSTEM_PROMPT, TEXT_PROMPT, use_image=False)
@@ -107,7 +117,6 @@ def main():
             effective_prefill_seq_len=effective_prefill_seq_len,
             effective_ctx_len=effective_ctx_len,
             skip_vision=SKIP_VISION,
-            npi_mode=npi_mode,
             **compiler_kwargs,
         )
         qeff_model.compile(**compile_kwargs)
@@ -144,7 +153,6 @@ def main():
         effective_prefill_seq_len=effective_prefill_seq_len,
         effective_ctx_len=effective_ctx_len,
         skip_vision=SKIP_VISION,
-        npi_mode=npi_mode,
         skip_model_io=True,
         **compiler_kwargs,
     )
