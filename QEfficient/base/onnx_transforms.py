@@ -237,6 +237,31 @@ class RenameFunctionOutputsTransform(BaseOnnxTransform):
                         if orig in model_out_map:
                             graph.output[model_out_map[orig]].name = new
                 layer_idx += 1
+
+        # Fallback: the decoder layer may not have been emitted as an ONNX function
+        # (e.g. torch.onnx declines to functionize it). In that case the retained-state
+        # outputs remain as plain top-level nodes still carrying the `_InternalRetainedState`
+        # suffix that `_setup_onnx_subfunctions` applied. The compiler's custom-IO config
+        # expects the `_RetainedState` suffix, so rename any leftovers directly on the graph.
+        rename_map = {
+            out.name: out.name.replace("_InternalRetainedState", "_RetainedState")
+            for out in graph.output
+            if "_InternalRetainedState" in out.name
+        }
+        if rename_map:
+            renamed = True
+            for out in graph.output:
+                if out.name in rename_map:
+                    out.name = rename_map[out.name]
+            # Keep producers (and any consumers) consistent with the renamed tensors.
+            for node in graph.node:
+                for i, name in enumerate(node.output):
+                    if name in rename_map:
+                        node.output[i] = rename_map[name]
+                for i, name in enumerate(node.input):
+                    if name in rename_map:
+                        node.input[i] = rename_map[name]
+
         return renamed
 
 
