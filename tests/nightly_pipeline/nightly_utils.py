@@ -106,6 +106,7 @@ NIGHTLY_SKIPPED_MODELS = {
     "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
     "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+    "mistralai/Mixtral-8x7B-v0.1",
     "hpcai-tech/grok-1",
     # Audio Embedding Models
     "facebook/wav2vec2-large",
