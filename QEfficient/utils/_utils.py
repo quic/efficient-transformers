@@ -706,6 +706,8 @@ class IOInfo:
 def dump_qconfig(func):
     def wrapper(self, *args, **kwargs):
         result = func(self, *args, **kwargs)
+        if os.environ.get("QEFF_EXPORT_ONLY", "").lower() in {"1", "true", "yes", "on"}:
+            return result
         try:
             create_and_dump_qconfigs(
                 self.qpc_path,

@@ -109,18 +109,22 @@ class QEffQwen3_5MoeDynamicCache(Cache):
         if past_key_values is None:
             return cache
 
-        # for layer_idx, layer_state in enumerate(past_key_values):
-        layer_idx = QEffQwen3_5MoeTextModel._start
-        if cache.layer_types[layer_idx] == "full_attention":
-            key_states, value_states = past_key_values[0]
-            layer = QEffDynamicLayer()
-            layer.keys = key_states
-            layer.values = value_states
-            cache.kv_layers[layer_idx] = layer
-        else:
-            conv_state, recurrent_state = past_key_values[0]
-            cache.conv_states[layer_idx] = conv_state
-            cache.recurrent_states[layer_idx] = recurrent_state
+        start = QEffQwen3_5MoeTextModel._start
+        end = QEffQwen3_5MoeTextModel._end or len(cache.layer_types)
+        for offset, layer_state in enumerate(past_key_values):
+            layer_idx = start + offset
+            if layer_idx >= end or layer_idx >= len(cache.layer_types):
+                break
+            if cache.layer_types[layer_idx] == "full_attention":
+                key_states, value_states = layer_state
+                layer = QEffDynamicLayer()
+                layer.keys = key_states
+                layer.values = value_states
+                cache.kv_layers[layer_idx] = layer
+            else:
+                conv_state, recurrent_state = layer_state
+                cache.conv_states[layer_idx] = conv_state
+                cache.recurrent_states[layer_idx] = recurrent_state
         return cache
 
     def __len__(self):
@@ -423,8 +427,13 @@ class QEffQwen3_5MoeAttention(Qwen3_5MoeAttention):
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
 
+        rotary_position_ids = position_ids
+        if rotary_position_ids.ndim == 2:
+            rotary_position_ids = rotary_position_ids.unsqueeze(0).expand(3, -1, -1)
+        elif rotary_position_ids.shape[0] != 3 and rotary_position_ids.shape[0] > 3:
+            rotary_position_ids = rotary_position_ids[1:]
         query_states, key_states = qeff_apply_rotary_pos_emb(
-            query_states, key_states, cos, sin, position_ids[1:], self.rotary_emb.mrope_section
+            query_states, key_states, cos, sin, rotary_position_ids, self.rotary_emb.mrope_section
         )
 
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
@@ -452,11 +461,12 @@ class QEffQwen3_5MoeAttention(Qwen3_5MoeAttention):
         else:
             if past_key_values is not None:
                 # sin and cos are specific to RoPE models; cache_position needed for the static cache
+                scatter_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
                 cache_kwargs = {
                     "sin": sin,
                     "cos": cos,
                     "batch_index": batch_index,
-                    "position_ids": position_ids[0],
+                    "position_ids": scatter_position_ids,
                 }
                 if comp_ctx_lengths is not None:
                     attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
@@ -549,7 +559,19 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             x.transpose(1, 2).contiguous().to(torch.float32) for x in (query, key, value, beta, g)
         ]
 
-        mask = (position_ids[0] != -1).unsqueeze(1)
+        if os.environ.get("QEFF_DEBUG_QWEN35_LINEAR_MASK", "").lower() in {"1", "true", "yes", "on"}:
+            print(
+                "[QEFF-QWEN35-MASK]"
+                f" query={tuple(query.shape)} key={tuple(key.shape)} value={tuple(value.shape)}"
+                f" g={tuple(g.shape)} beta={tuple(beta.shape)} position_ids={tuple(position_ids.shape)}",
+                flush=True,
+            )
+        mask_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
+        if mask_position_ids.ndim == 1:
+            mask_position_ids = mask_position_ids.unsqueeze(0)
+        mask = (mask_position_ids != -1).unsqueeze(1)
+        if os.environ.get("QEFF_DEBUG_QWEN35_LINEAR_MASK", "").lower() in {"1", "true", "yes", "on"}:
+            print(f"[QEFF-QWEN35-MASK] mask={tuple(mask.shape)}", flush=True)
 
         zeros = torch.zeros(g.shape, dtype=g.dtype, device=g.device)
 
@@ -881,7 +903,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # ── Output ────────────────────────────────────────────
         core_attn_out = self.norm(core_attn_out.reshape(-1, self.head_v_dim), z.reshape(-1, self.head_v_dim))
         # core_attn_out = core_attn_out.reshape(-1, self.head_v_dim)
-        return self.out_proj(core_attn_out.reshape(batch_size, seq_len, -1))
+        core_attn_out = core_attn_out.reshape(batch_size, seq_len, -1).to(self.out_proj.weight.dtype)
+        return self.out_proj(core_attn_out)
 
     @staticmethod
     def apply_mask_to_padding_states(hidden_states, attention_mask):
@@ -940,14 +963,14 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
                 **kwargs,
             )
 
-        hidden_states = residual + hidden_states
+        hidden_states = (residual + hidden_states).to(residual.dtype)
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
         # For the MoE layers, we need to unpack
         if isinstance(hidden_states, tuple):
             hidden_states, _ = hidden_states
-        hidden_states = residual + hidden_states
+        hidden_states = (residual + hidden_states).to(residual.dtype)
         return hidden_states
 
 
@@ -991,8 +1014,10 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
+        if QEffQwen3_5MoeTextModel._total_layers is None:
+            QEffQwen3_5MoeTextModel._total_layers = len(self.layers)
         start = QEffQwen3_5MoeTextModel._start
-        end = QEffQwen3_5MoeTextModel._end
+        end = QEffQwen3_5MoeTextModel._end or QEffQwen3_5MoeTextModel._total_layers
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length(layer_idx=start) if past_key_values is not None else 0
             cache_position = torch.arange(
@@ -1038,7 +1063,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
             # break
 
-        if QEffQwen3_5MoeTextModel._end == QEffQwen3_5MoeTextModel._total_layers:
+        if end == QEffQwen3_5MoeTextModel._total_layers:
             hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
@@ -1046,7 +1071,8 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
 
-        past_key_values = past_key_values[QEffQwen3_5MoeTextModel._start]
+        if QEffQwen3_5MoeTextModel._end:
+            past_key_values = past_key_values[QEffQwen3_5MoeTextModel._start]
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
