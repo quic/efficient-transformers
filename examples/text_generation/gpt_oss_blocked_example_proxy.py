@@ -52,10 +52,13 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
     non_subfunc_npi_file_path = os.path.join("examples/disagg_serving/", "non_subfunction_120b_npi.yaml")
+    subfunc_npi_file_path = os.path.join("examples/disagg_serving/", "subfunction_120b_npi.yaml")
 
     if args.compare_non_blocking:
         if args.num_layers:
-            model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, num_hidden_layers=args.num_layers, enable_proxy=True)
+            model = QEFFAutoModelForCausalLM.from_pretrained(
+                args.model_name, num_hidden_layers=args.num_layers, enable_proxy=True
+            )
         else:
             model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, enable_proxy=True)
 
@@ -79,9 +82,16 @@ def main():
         print(f"Generated: {exec_info.generated_texts[0]}")
 
     # setup qaic config to enable blocking, ensure 4 or more device ids are passed
-    qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode, "kv_blocking_headpar_split": 16, "num_kv_blocks": 2}
+    qaic_config = {
+        "enable_blocking": True,
+        "blocking_mode": args.blocking_mode,
+        "kv_blocking_headpar_split": 16,
+        "num_kv_blocks": 2,
+    }
     if args.num_layers:
-        model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, num_hidden_layers=args.num_layers, enable_proxy=True)
+        model_blocked = QEFFAutoModelForCausalLM.from_pretrained(
+            args.model_name, num_hidden_layers=args.num_layers, enable_proxy=True
+        )
     else:
         model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, enable_proxy=True)
 
@@ -98,7 +108,7 @@ def main():
         use_onnx_subfunctions=True,
         qaic_config=qaic_config,
         user_tiled=True,
-        node_precision_info=non_subfunc_npi_file_path,
+        node_precision_info=subfunc_npi_file_path,
     )
     print(f"Model compiled to: {qpc_path_blocked}")
 
@@ -111,7 +121,6 @@ def main():
 
     print(f"\nPrompt: {args.prompt}")
     print(f"Generated: {exec_info_blocked.generated_texts[0]}")
-
 
     # # setup qaic config to enable blocking, ensure 4 or more device ids are passed
     # qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode, "num_kv_blocks": 2}
@@ -150,8 +159,8 @@ def main():
         print("Performance non-blocked:")
         print(exec_info)
 
-    # print("Performance blocked (head parallel kv blocking):")
-    # print(exec_info_blocked)
+    print("Performance blocked (head parallel kv blocking):")
+    print(exec_info_blocked)
 
     # print("Performance blocked (normal kv blocking):")
     # print(exec_info_blocked_no_head_par)

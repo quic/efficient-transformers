@@ -99,7 +99,6 @@ def main():
     print(f"\nPrompt: {args.prompt}")
     print(f"Generated: {exec_info_blocked.generated_texts[0]}")
 
-
     # Run comparison to online softmax
     # # setup qaic config to enable blocking, ensure 4 or more device ids are passed
     # qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode, "num_kv_blocks": 2}

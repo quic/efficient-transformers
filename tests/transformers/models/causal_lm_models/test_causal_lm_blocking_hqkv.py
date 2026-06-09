@@ -29,7 +29,7 @@ model_config_dict = {model["model_name"]: model for model in blockedKV_models}
 @pytest.mark.full_layers
 @pytest.mark.llm_model
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model_name", test_models_blockedKV[0:1])
+@pytest.mark.parametrize("model_name", test_models_blockedKV[:1])
 def test_full_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
     HEAD_BLOCK_SIZE = 8
     NUM_KV_BLOCKS = 2
@@ -98,7 +98,7 @@ def test_full_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manu
 @pytest.mark.few_layers
 @pytest.mark.llm_model
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model_name", test_models_blockedKV[3:4])
+@pytest.mark.parametrize("model_name", test_models_blockedKV[:1])
 def test_few_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
     HEAD_BLOCK_SIZE = 8
     NUM_KV_BLOCKS = 2
@@ -167,7 +167,7 @@ def test_few_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manua
 @pytest.mark.dummy_layers
 @pytest.mark.llm_model
 @pytest.mark.on_qaic
-@pytest.mark.parametrize("model_name", test_models_blockedKV[0:1])
+@pytest.mark.parametrize("model_name", test_models_blockedKV[:1])
 def test_dummy_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
     HEAD_BLOCK_SIZE = 8
     NUM_KV_BLOCKS = 2
