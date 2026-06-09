@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import math
 from typing import Any, Callable, Dict, Optional, Tuple
-import copy
 
 import torch
 from torch import nn
@@ -293,7 +292,13 @@ def blocked_kv_attention_forward_headpar_offline(
             + torch.arange(split, device=query.device)[:, None] * split_block_len
             + torch.arange(split_block_len, device=query.device)[None, :]
         )
-        query_pos = position_ids.repeat(1, num_kv_groups)
+        # use expand instead of repeat to make sure it is subfunction compatible
+        query_pos = (
+            position_ids.unsqueeze(1)
+            .expand(-1, num_kv_groups, -1)
+            .reshape(position_ids.shape[0], position_ids.shape[1] * num_kv_groups)
+        )
+
         causal_mask = key_abs[None, :, None, :] > query_pos[:, None, :, None]
         attn_weights_block = attn_weights_block.masked_fill(causal_mask.unsqueeze(1), -3.0e4)
 
@@ -307,7 +312,8 @@ def blocked_kv_attention_forward_headpar_offline(
         if pad_len > 0:
             v_block = nn.functional.pad(v_block, (0, 0, 0, pad_len))
         value_5d = v_block.view(batch_size, num_kv_heads, split, split_block_len, head_dim)
-        sum_block = exp_block.sum(dim=-1)
+        # sum_block = exp_block.sum(dim=-1)
+        sum_block = torch.einsum("bsgkn->bsgk", exp_block)
         out_block = torch.matmul(exp_block, value_5d)
         if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
             sum_block = torch.where(skip_future, torch.zeros_like(sum_block), sum_block)
@@ -322,13 +328,13 @@ def blocked_kv_attention_forward_headpar_offline(
     out_stacked = torch.stack(out_blocks)
     block_max = max_stacked.max(dim=0).values
     block_weight = torch.exp(max_stacked - block_max.unsqueeze(0))
-    block_sum = (block_weight * sum_stacked).sum(dim=0)
-    block_out = (block_weight.unsqueeze(-1) * out_stacked).sum(dim=0)
+    block_sum = torch.einsum("nbsgk->bsgk", (block_weight * sum_stacked))
+    block_out = torch.einsum("nbsgkv->bsgkv", (block_weight.unsqueeze(-1) * out_stacked))
 
     split_max = block_max.max(dim=2).values
     split_weight = torch.exp(block_max - split_max.unsqueeze(2))
-    split_sum = (split_weight * block_sum).sum(dim=2)
-    split_out = (split_weight.unsqueeze(-1) * block_out).sum(dim=2)
+    split_sum = torch.einsum("bsgk->bsk", (split_weight * block_sum))
+    split_out = torch.einsum("bsgkv->bskv", (split_weight.unsqueeze(-1) * block_out))
 
     if sinks is not None:
         sinks_logits = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)

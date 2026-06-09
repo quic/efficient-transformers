@@ -1079,9 +1079,6 @@ class QEFFBaseModel(ABC):
             else:
                 command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
-        if self.hash_params.get("blocking_kwargs", None):
-            command.append(f"-user-tiled")
-
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
 

@@ -29,6 +29,7 @@ from QEfficient.blocking.blocked_attention_forwards import (
 
 class BlockingMode(str, Enum):
     NONE = ""
+    AUTO = "auto"
     KV = "kv"
     Q = "q"
     H = "h"
@@ -37,6 +38,15 @@ class BlockingMode(str, Enum):
     HKV = "hkv"
     HQKV = "hqkv"
     BHQKV = "bhqkv"
+
+    @classmethod
+    def resolve(cls, mode: Optional[str | "BlockingMode"]) -> "BlockingMode":
+        if mode is None:
+            return cls.NONE
+        resolved_mode = cls(mode)
+        if resolved_mode == cls.AUTO:
+            return cls.HQKV
+        return resolved_mode
 
 
 @dataclass
