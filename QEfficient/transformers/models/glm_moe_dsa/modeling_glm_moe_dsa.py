@@ -377,6 +377,12 @@ class QEffGlmMoeDsaModel(GlmMoeDsaModel):
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
+        # ONNX-tracer compatibility: torch.onnx.export's _flatten() rejects custom
+        # cache objects in the output; convert back to the legacy list-of-list form.
+        # Same shape DeepseekV3 uses (modeling_deepseek.py:1097).
+        if past_key_values is not None and hasattr(past_key_values, "to_legacy_cache"):
+            past_key_values = past_key_values.to_legacy_cache()
+
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values,
@@ -387,6 +393,29 @@ class QEffGlmMoeDsaModel(GlmMoeDsaModel):
 class QEffGlmMoeDsaForCausalLM(GlmMoeDsaForCausalLM):
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffGlmMoeDsaDecoderLayer}
+
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+        # MLA K/V have asymmetric per-head dims:
+        #   K = qk_nope_head_dim + qk_rope_head_dim
+        #   V = v_head_dim
+        # The default symmetric kv_cache_shape in modeling_auto._export_inputs
+        # collapses both to head_dim, which is wrong here.
+        k_shape = (
+            batch_size,
+            config.num_attention_heads,
+            seq_len,
+            config.qk_nope_head_dim + config.qk_rope_head_dim,
+        )
+        v_shape = (batch_size, config.num_attention_heads, seq_len, config.v_head_dim)
+        dummy_cache = []
+        for _ in range(config.num_hidden_layers):
+            dummy_cache.append(
+                [
+                    torch.zeros(k_shape, dtype=config.torch_dtype),
+                    torch.zeros(v_shape, dtype=config.torch_dtype),
+                ]
+            )
+        return dummy_cache
 
     def forward(
         self,
