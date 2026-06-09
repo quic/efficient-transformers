@@ -1560,6 +1560,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         ctx_len: int,
         height: int | List[int] = None,
         width: int | List[int] = None,
+        img_size = None,
         time: int = 1,
         num_frames: int | List[int] = 1,
         kv_offload: bool = False,
