@@ -349,6 +349,7 @@
     {
       "model_name": "zai-org/GLM-5.1",
       "model_type": "glm_moe_dsa",
+      "tokenizer_id": "gpt2",
       "additional_params": {
         "max_position_embeddings": 256,
         "num_hidden_layers": 4,
