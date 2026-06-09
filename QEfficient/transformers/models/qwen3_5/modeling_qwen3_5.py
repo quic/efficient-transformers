@@ -1558,7 +1558,6 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         batch_size: int,
         prefill_seq_len: int,
         ctx_len: int,
-        img_size: None,
         height: int | List[int] = None,
         width: int | List[int] = None,
         time: int = 1,
@@ -1593,12 +1592,10 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         image_factor = constants.IMAGE_FACTOR_QWEN_3
         image_min_token_num = constants.IMAGE_MIN_TOKEN_NUM
         image_max_token_num = constants.IMAGE_MAX_TOKEN_NUM
-        min_pixels = image_min_token_num * image_factor**2
-        max_pixels = image_max_token_num * image_factor**2
         mm_processor_kwargs = compiler_options.pop("mm_processor_kwargs", None)
         if mm_processor_kwargs:
-            min_pixels = mm_processor_kwargs.get("min_pixels", min_pixels)
-            max_pixels = mm_processor_kwargs.get("max_pixels", max_pixels)
+            min_pixels = mm_processor_kwargs.get("min_pixels", image_min_token_num * image_factor**2)
+            max_pixels = mm_processor_kwargs.get("max_pixels", image_max_token_num * image_factor**2)
 
         vision = []
         max_vision_size = 0

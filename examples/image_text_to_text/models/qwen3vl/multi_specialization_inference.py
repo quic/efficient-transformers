@@ -45,6 +45,7 @@ if skip_vision:  # Only Text
         skip_vision=True,
         mos=1,
         use_onnx_subfunctions=True,
+        split_model_io=True,
     )
 
     messages = [
@@ -114,6 +115,7 @@ else:  # Vision + Text
         aic_enable_depth_first=True,
         mos=1,
         use_onnx_subfunctions=False,
+        split_model_io=True,
     )
 
     image_url = "https://picsum.photos/id/237/536/354"
