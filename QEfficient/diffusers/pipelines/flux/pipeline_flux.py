@@ -192,10 +192,11 @@ class QEffFluxPipeline:
         # Load the base Flux model in float32 on CPU
         model = cls._hf_auto_class.from_pretrained(
             pretrained_model_name_or_path,
-            torch_dtype=torch.float32,
+            torch_dtype=torch.float16,
             device_map="cpu",
             **kwargs,
         )
+        breakpoint()
 
         return cls(
             model=model,
@@ -491,7 +492,7 @@ class QEffFluxPipeline:
         text_encoder_output = {
             "last_hidden_state": np.random.rand(
                 batch_size, self.tokenizer_max_length, self.text_encoder.model.config.hidden_size
-            ).astype(np.float32),
+            ).astype(np.float16),
             "pooler_output": np.random.rand(batch_size, self.text_encoder.model.config.hidden_size).astype(np.int32),
         }
         self.text_encoder.qpc_session.set_buffers(text_encoder_output)
@@ -769,7 +770,7 @@ class QEffFluxPipeline:
 
         # Allocate output buffer for transformer
         output_buffer = {
-            "output": np.random.rand(batch_size, cl, self.transformer.model.config.in_channels).astype(np.float32),
+            "output": np.random.rand(batch_size, cl, self.transformer.model.config.in_channels).astype(np.float16),
         }
         self.transformer.qpc_session.set_buffers(output_buffer)
         if self.enable_first_block_cache:
@@ -832,7 +833,7 @@ class QEffFluxPipeline:
                 }
                 if self.enable_first_block_cache:
                     stage_cache_threshold = 0.0 if cache_threshold is None else cache_threshold
-                    inputs_aic["cache_threshold"] = np.array(stage_cache_threshold, dtype=np.float32)
+                    inputs_aic["cache_threshold"] = np.array(stage_cache_threshold, dtype=np.float16)
 
                 # Run transformer inference and measure time
                 start_transformer_step_time = time.perf_counter()

@@ -269,7 +269,7 @@ class QEffVAE(QEFFBaseModel):
 
         # VAE decoder takes latent representation as input
         example_inputs = {
-            "latent_sample": torch.randn(bs, 16, latent_height, latent_width),
+            "latent_sample": torch.randn(bs, 16, latent_height, latent_width, dtype=torch.float16),
             "return_dict": False,
         }
 
@@ -303,6 +303,7 @@ class QEffVAE(QEFFBaseModel):
                 num_frames,
                 height,
                 width,
+                dtype=torch.float16,
             ),
         }
         output_names = ["latents"]
@@ -340,7 +341,7 @@ class QEffVAE(QEFFBaseModel):
 
         # VAE decoder takes latent representation as input
         example_inputs = {
-            "latent_sample": torch.randn(bs, 16, latent_frames, latent_height, latent_width),
+            "latent_sample": torch.randn(bs, 16, latent_frames, latent_height, latent_width, dtype=torch.float16),
             "return_dict": False,
         }
 
@@ -459,21 +460,21 @@ class QEffFluxTransformerModel(QEFFBaseModel):
         """
         example_inputs = {
             # Latent representation of the image
-            "hidden_states": torch.randn(batch_size, cl, self.model.config.in_channels, dtype=torch.float32),
+            "hidden_states": torch.randn(batch_size, cl, self.model.config.in_channels, dtype=torch.float16),
             "encoder_hidden_states": torch.randn(
-                batch_size, seq_length, self.model.config.joint_attention_dim, dtype=torch.float32
+                batch_size, seq_length, self.model.config.joint_attention_dim, dtype=torch.float16
             ),
-            "pooled_projections": torch.randn(batch_size, self.model.config.pooled_projection_dim, dtype=torch.float32),
-            "timestep": torch.tensor([1.0], dtype=torch.float32),
-            "img_ids": torch.randn(cl, 3, dtype=torch.float32),
-            "txt_ids": torch.randn(seq_length, 3, dtype=torch.float32),
+            "pooled_projections": torch.randn(batch_size, self.model.config.pooled_projection_dim, dtype=torch.float16),
+            "timestep": torch.tensor([1.0], dtype=torch.float16),
+            "img_ids": torch.randn(cl, 3, dtype=torch.float16),
+            "txt_ids": torch.randn(seq_length, 3, dtype=torch.float16),
             # AdaLN embeddings for dual transformer blocks
             # Shape: [num_layers, FLUX_ADALN_DUAL_BLOCK_CHUNKS, FLUX_ADALN_HIDDEN_DIM]
             "adaln_emb": torch.randn(
                 self.model.config["num_layers"],
                 constants.FLUX_ADALN_DUAL_BLOCK_CHUNKS,
                 constants.FLUX_ADALN_HIDDEN_DIM,
-                dtype=torch.float32,
+                dtype=torch.float16,
             ),
             # AdaLN embeddings for single transformer blocks
             # Shape: [num_single_layers, FLUX_ADALN_SINGLE_BLOCK_CHUNKS, FLUX_ADALN_HIDDEN_DIM]
@@ -481,11 +482,11 @@ class QEffFluxTransformerModel(QEFFBaseModel):
                 self.model.config["num_single_layers"],
                 constants.FLUX_ADALN_SINGLE_BLOCK_CHUNKS,
                 constants.FLUX_ADALN_HIDDEN_DIM,
-                dtype=torch.float32,
+                dtype=torch.float16,
             ),
             # Output AdaLN embedding
             # Shape: [batch_size, FLUX_ADALN_OUTPUT_DIM] for final projection
-            "adaln_out": torch.randn(batch_size, constants.FLUX_ADALN_OUTPUT_DIM, dtype=torch.float32),
+            "adaln_out": torch.randn(batch_size, constants.FLUX_ADALN_OUTPUT_DIM, dtype=torch.float16),
         }
 
         output_names = ["output"]
@@ -577,20 +578,20 @@ class QEffWanTransformer(QEFFBaseModel):
                 constants.WAN_ONNX_EXPORT_LATENT_FRAMES,
                 constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_45P,
                 constants.WAN_ONNX_EXPORT_LATENT_WIDTH_45P,
-                dtype=torch.float32,
+                dtype=torch.float16,
             ),
             "encoder_hidden_states": torch.randn(
-                batch_size, constants.WAN_ONNX_EXPORT_SEQ_LEN, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float32
+                batch_size, constants.WAN_ONNX_EXPORT_SEQ_LEN, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float16
             ),
             "rotary_emb": torch.randn(
-                2, constants.WAN_ONNX_EXPORT_CL_45P, 1, constants.WAN_ONNX_EXPORT_ROTARY_DIM, dtype=torch.float32
+                2, constants.WAN_ONNX_EXPORT_CL_45P, 1, constants.WAN_ONNX_EXPORT_ROTARY_DIM, dtype=torch.float16
             ),
-            "temb": torch.randn(batch_size, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float32),
+            "temb": torch.randn(batch_size, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float16),
             "timestep_proj": torch.randn(
                 batch_size,
                 constants.WAN_PROJECTION_DIM,
                 constants.WAN_TEXT_EMBED_DIM,
-                dtype=torch.float32,
+                dtype=torch.float16,
             ),
             "return_dict": False,
         }
@@ -694,24 +695,24 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
                 constants.WAN_ONNX_EXPORT_LATENT_FRAMES,
                 constants.WAN_ONNX_EXPORT_LATENT_HEIGHT_45P,
                 constants.WAN_ONNX_EXPORT_LATENT_WIDTH_45P,
-                dtype=torch.float32,
+                dtype=torch.float16,
             ),
             # encoder_hidden_states = [BS, seq len , text dim]
             "encoder_hidden_states": torch.randn(
-                batch_size, constants.WAN_ONNX_EXPORT_SEQ_LEN, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float32
+                batch_size, constants.WAN_ONNX_EXPORT_SEQ_LEN, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float16
             ),
             # Rotary position embeddings: [2, context_length, 1, rotary_dim]; 2 is from tuple of cos, sin freqs
             "rotary_emb": torch.randn(
-                2, constants.WAN_ONNX_EXPORT_CL_45P, 1, constants.WAN_ONNX_EXPORT_ROTARY_DIM, dtype=torch.float32
+                2, constants.WAN_ONNX_EXPORT_CL_45P, 1, constants.WAN_ONNX_EXPORT_ROTARY_DIM, dtype=torch.float16
             ),
             # Timestep embeddings: [batch_size=1, embedding_dim]
-            "temb": torch.randn(batch_size, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float32),
+            "temb": torch.randn(batch_size, constants.WAN_TEXT_EMBED_DIM, dtype=torch.float16),
             # Projected timestep embeddings: [batch_size=1, projection_dim, embedding_dim]
             "timestep_proj": torch.randn(
                 batch_size,
                 constants.WAN_PROJECTION_DIM,
                 constants.WAN_TEXT_EMBED_DIM,
-                dtype=torch.float32,
+                dtype=torch.float16,
             ),
             # Timestep parameter: Controls high/low noise transformer selection based on shape
             "tsp": torch.ones(1, dtype=torch.int64),

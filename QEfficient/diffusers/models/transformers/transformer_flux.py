@@ -153,7 +153,7 @@ class QEffFluxSingleTransformerBlock(FluxSingleTransformerBlock):
         hidden_states = gate * self.proj_out(hidden_states)
         hidden_states = residual + hidden_states
         # if hidden_states.dtype == torch.float16:
-        hidden_states = hidden_states.clip(torch.finfo(torch.float32).min, torch.finfo(torch.float32).max)
+        hidden_states = hidden_states.clip(torch.finfo(torch.float16).min, torch.finfo(torch.float16).max)
 
         encoder_hidden_states, hidden_states = hidden_states[:, :text_seq_len], hidden_states[:, text_seq_len:]
         return encoder_hidden_states, hidden_states

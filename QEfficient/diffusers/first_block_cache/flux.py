@@ -190,11 +190,11 @@ def _get_onnx_params_with_first_block_cache(self):
         hidden_size = num_heads * head_dim
 
     ds_factor = self.model._qeff_first_block_cache_downsample_factor
-    example_inputs["prev_hidden_states_residuals"] = torch.randn(batch_size, cl, hidden_size, dtype=torch.float32)
+    example_inputs["prev_hidden_states_residuals"] = torch.randn(batch_size, cl, hidden_size, dtype=torch.float16)
     example_inputs["prev_first_hidden_states_residuals"] = torch.randn(
-        batch_size, cl, hidden_size // ds_factor, dtype=torch.float32
+        batch_size, cl, hidden_size // ds_factor, dtype=torch.float16
     )
-    example_inputs["cache_threshold"] = torch.tensor(0.0, dtype=torch.float32)
+    example_inputs["cache_threshold"] = torch.tensor(0.0, dtype=torch.float16)
 
     output_names.extend(
         [
