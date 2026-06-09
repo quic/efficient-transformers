@@ -910,7 +910,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         ctx_len: int,
         height: int | List[int] = None,
         width: int | List[int] = None,
-        img_size = None,
+        img_size=None,
         num_frames: int | List[int] = 1,
         kv_offload: bool = False,
         continuous_batching: bool = False,
