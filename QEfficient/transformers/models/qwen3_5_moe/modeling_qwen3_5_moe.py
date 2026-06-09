@@ -11,6 +11,7 @@ from typing import List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn.functional as F
+from qwen_vl_utils import smart_resize
 from torch import nn
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
@@ -1750,10 +1751,10 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         prefill_seq_len: int,
         ctx_len: int,
         img_size: None,
-        height: int = None,
-        width: int = None,
+        height: int | List[int] = None,
+        width: int | List[int] = None,
         time: int = 1,
-        num_frames: int = 1,
+        num_frames: int | List[int] = 1,
         kv_offload: bool = False,
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
@@ -1770,6 +1771,10 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
                 f"Setting height and width to be {height} and {width} respectively, as it was neither passed nor found in vision_config"
             )
 
+        height = [height] if isinstance(height, int) else height
+        width = [width] if isinstance(width, int) else width
+        num_frames = [num_frames] * len(height) if isinstance(num_frames, int) else num_frames
+
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
@@ -1777,61 +1782,61 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         patch_size = self.config.vision_config.patch_size
         temporal_patch_size = getattr(self.config.vision_config, "temporal_patch_size", 1)
 
-        IMAGE_FACTOR = 32
-        MIN_PIXELS = 64 * 32 * 32
-        MAX_PIXELS = 16384 * 32 * 32
-        MAX_RATIO = 200
+        image_factor = constants.IMAGE_FACTOR_QWEN_3
+        image_min_token_num = constants.IMAGE_MIN_TOKEN_NUM
+        image_max_token_num = constants.IMAGE_MAX_TOKEN_NUM
+        min_pixels = image_min_token_num * image_factor**2
+        max_pixels = image_max_token_num * image_factor**2
+        mm_processor_kwargs = compiler_options.pop("mm_processor_kwargs", None)
+        if mm_processor_kwargs:
+            min_pixels = mm_processor_kwargs.get("min_pixels", min_pixels)
+            max_pixels = mm_processor_kwargs.get("max_pixels", max_pixels)
 
-        def round_by_factor(number: int, factor: int) -> int:
-            return round(number / factor) * factor
+        vision = []
+        max_vision_size = 0
+        user_vision_size = compiler_options.pop("vision_size", None)
+        if user_vision_size:
+            assert user_vision_size < ctx_len, "vision_size must be less than ctx_len"
+            max_vision_size = user_vision_size
 
-        def ceil_by_factor(number: int, factor: int) -> int:
-            return math.ceil(number / factor) * factor
+        for h, w, f in zip(height, width, num_frames):
+            resized_height, resized_width = smart_resize(
+                height=h, width=w, factor=image_factor, min_pixels=min_pixels, max_pixels=max_pixels
+            )
+            grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+            grid_height = grid_h * grid_w
+            grid_width = patch_size * patch_size * temporal_patch_size * channel
+            vision_size = (grid_height // 4) * time
+            grid_height = grid_height * time * batch_size
 
-        def floor_by_factor(number: int, factor: int) -> int:
-            return math.floor(number / factor) * factor
-
-        def smart_resize(
-            height: int,
-            width: int,
-            factor: int = IMAGE_FACTOR,
-            min_pixels: int = MIN_PIXELS,
-            max_pixels: int = MAX_PIXELS,
-        ) -> tuple[int, int]:
-            if max(height, width) / min(height, width) > MAX_RATIO:
-                raise ValueError(
-                    f"absolute aspect ratio must be smaller than {MAX_RATIO}, got {max(height, width) / min(height, width)}"
+            if not user_vision_size:
+                max_vision_size = max(max_vision_size, vision_size * f)
+                assert max_vision_size < ctx_len, (
+                    f"Computed vision_size of {vision_size * f} tokens "
+                    f"(vision_size={vision_size}, num_frames={f}) for image resolution "
+                    f"(width={w}, height={h}) must be less than ctx_len. Please adjust the image "
+                    "resolution."
                 )
-            h_bar = max(factor, round_by_factor(height, factor))
-            w_bar = max(factor, round_by_factor(width, factor))
-            if h_bar * w_bar > max_pixels:
-                beta = math.sqrt((height * width) / max_pixels)
-                h_bar = floor_by_factor(height / beta, factor)
-                w_bar = floor_by_factor(width / beta, factor)
-            elif h_bar * w_bar < min_pixels:
-                beta = math.sqrt(min_pixels / (height * width))
-                h_bar = ceil_by_factor(height * beta, factor)
-                w_bar = ceil_by_factor(width * beta, factor)
-            return h_bar, w_bar
+            else:
+                assert vision_size * f <= user_vision_size, (
+                    f"Computed vision_size of {vision_size * f} tokens "
+                    f"(vision_size={vision_size}, num_frames={f}) for image resolution "
+                    f"(width={w}, height={h}) cannot exceed the provided "
+                    f"vision_size={user_vision_size}. Please adjust the image resolution or "
+                    "increase the vision_size."
+                )
 
-        resized_height, resized_width = smart_resize(height=height, width=width)
-        grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
-        grid_height = grid_h * grid_w
-        grid_width = patch_size * patch_size * temporal_patch_size * channel
-        vision_size = (grid_height // 4) * num_frames * time
-        grid_height = grid_height * time * batch_size
-
-        vision = [
-            {
-                "batch_size": batch_size,
-                "vision_size": vision_size,
-                "grid_height": grid_height,
-                "grid_width": grid_width,
-                "time": time,
-                "grid_h": grid_h,
-                "grid_w": grid_w,
-            }
-        ]
+            vision.append(
+                {
+                    "batch_size": batch_size,
+                    "vision_size": vision_size,
+                    "grid_height": grid_height,
+                    "grid_width": grid_width,
+                    "time": time,
+                    "grid_h": grid_h,
+                    "grid_w": grid_w,
+                }
+            )
 
         def _build_lang_spec(seq_len_val, comp_ctx_len=None):
             spec = {
@@ -1842,7 +1847,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
                 "ctx_len": ctx_len,
             }
             if kv_offload:
-                spec["vision_size"] = vision_size
+                spec["vision_size"] = max_vision_size
                 spec["vision_batch_size"] = batch_size
             if comp_ctx_len is not None:
                 spec["comp_ctx_lengths"] = comp_ctx_len
