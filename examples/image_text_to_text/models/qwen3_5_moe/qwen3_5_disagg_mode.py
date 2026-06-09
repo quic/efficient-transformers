@@ -21,13 +21,19 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 model_id = "Qwen/Qwen3.6-35B-A3B"
 config = AutoConfig.from_pretrained(model_id)
 
+LAYERWISE = True
+
 # For faster execution user can run with lesser layers, For Testing Purpose Only
-config.vision_config.depth = 5
-config.text_config.num_hidden_layers = 2
-config.torch_dtype = "float32"
+config.vision_config.depth = 4
+config.text_config.num_hidden_layers = 4
+config.torch_dtype = "float16"
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=True, config=config
+    model_id,
+    attn_implementation="eager",
+    kv_offload=True,
+    config=config,
+    layerwise=LAYERWISE,
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -62,7 +68,7 @@ if not skip_vision:
         skip_vision=skip_vision,
         split_model_io=True,
         skip_lang=True,
-        use_onnx_subfunctions=True,
+        use_onnx_subfunctions=False,
     )
 
 prefill_qpc_path = qeff_model.compile(
@@ -83,7 +89,10 @@ prefill_qpc_path = qeff_model.compile(
     prefill_only=True,
     enable_chunking=True,
     skip_vision=True,
-    use_onnx_subfunctions=True,
+    use_onnx_subfunctions=False,
+    layerwise_window_size=1,
+    layerwise=LAYERWISE,
+    offload_pt_weights=False,
     # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 
@@ -104,7 +113,9 @@ decode_qpc_path = qeff_model.compile(
     aic_enable_depth_first=True,
     prefill_only=False,
     skip_vision=True,
-    use_onnx_subfunctions=True,
+    use_onnx_subfunctions=False,
+    layerwise=LAYERWISE,
+    layerwise_window_size=1,
     # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 

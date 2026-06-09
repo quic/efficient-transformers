@@ -2279,6 +2279,7 @@ class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
         act = getattr(self.experts, "act_fn", F.silu)
 
         prob, top_w, top_i = self.gate(hidden_states)
+        top_w = top_w.to(x.dtype)
         routing_weights = torch.zeros((T, self.gate.num_experts), dtype=x.dtype)
         routing_weights.scatter_(1, top_i, top_w)
 
