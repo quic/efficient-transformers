@@ -53,7 +53,7 @@ def update_running_softmax(
     output: torch.Tensor,
     v_block: torch.Tensor,
     skip_kv: bool = False,
-    skip_future: Optional(torch.Tensor) = None,
+    skip_future: Optional[torch.Tensor] = None,
 ):
     # Update Running row maximum
     prev_max = current_max
