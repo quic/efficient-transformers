@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import os
 import warnings
 from pathlib import Path
 from time import perf_counter
@@ -44,6 +43,7 @@ from QEfficient.transformers.modeling_utils import (
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
     _configure_proxy_for_model,
+    _try_load_meta,
 )
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
@@ -154,7 +154,11 @@ class QEFFTransformersBase(QEFFBaseModel):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        # model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+
+        model = _try_load_meta(cls._hf_auto_class, pretrained_model_name_or_path, *args, **kwargs)
+        if model is None:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
@@ -317,7 +321,11 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        # model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+
+        model = _try_load_meta(cls._hf_auto_class, pretrained_model_name_or_path, *args, **kwargs)
+        if model is None:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)
@@ -697,7 +705,9 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        model = _try_load_meta(cls._hf_auto_class, pretrained_model_name_or_path, *args, **kwargs)
+        if model is None:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
 
@@ -1273,7 +1283,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        model = _try_load_meta(cls._hf_auto_class, pretrained_model_name_or_path, **kwargs)
+        if model is None:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
@@ -2086,7 +2098,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
+        model = _try_load_meta(cls._hf_auto_class, pretrained_model_name_or_path, config, *args, **kwargs)
+        if model is None:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
@@ -2698,7 +2712,9 @@ class QEFFAutoModelForImageTextToText:
             logger.warning("Updating low_cpu_mem_usage=False")
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        model = _try_load_meta(cls._hf_auto_class, pretrained_model_name_or_path, **kwargs)
+        if model is None:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
@@ -2950,7 +2966,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_offload = kwargs.pop("kv_offload", None)
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        # model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        model = _try_load_meta(cls._hf_auto_class, pretrained_model_name_or_path, *args, **kwargs)
+        if model is None:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
 
@@ -4235,7 +4254,9 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        model = _try_load_meta(cls._hf_auto_class, pretrained_model_name_or_path, *args, **kwargs)
+        if model is None:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)

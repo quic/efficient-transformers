@@ -93,11 +93,6 @@ from QEfficient.customop import CustomRMSNormAIC
 from QEfficient.proxy.pytorch_transform import QeffProxyModuleTransform
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
-
-if TYPE_CHECKING:
-    from QEfficient.base.modeling_qeff import QEFFBaseModel
-
-# Placeholder for all non-transformer models
 from .models.codegen.modeling_codegen import (
     QEffCodeGenAttention,
     QEffCodeGenBlock,
@@ -163,6 +158,102 @@ from .models.whisper.modeling_whisper import (
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
 )
+
+if TYPE_CHECKING:
+    from QEfficient.base.modeling_qeff import QEFFBaseModel
+
+
+# Weights Cache Detection
+
+
+def _try_load_meta(hf_auto_class, pretrained_model_name_or_path: str, *args, **kwargs):
+    """
+    Try to load model from local cache if weights exist.
+
+    This function:
+    - Detects whether full model weights exist in local HF cache
+    - If weights are found, loads and returns the model
+    - If only config exists, returns None to trigger standard from_pretrained()
+    - If nothing is cached, returns None to trigger standard from_pretrained()
+
+    Parameters
+    ----------
+    hf_auto_class : type
+        The HuggingFace AutoModel class to use for loading
+    pretrained_model_name_or_path : str
+        Model name or path
+    *args : tuple
+        Positional arguments to pass to from_pretrained
+    **kwargs : dict
+        Keyword arguments to pass to from_pretrained
+
+    Returns
+    -------
+    model or None
+        Loaded model if weights are cached locally, None otherwise
+    """
+
+    model_name = pretrained_model_name_or_path
+    weight_files = ["model.safetensors", "pytorch_model.bin"]
+    weights_found = False
+    found_weight_path = None
+
+    # ---- METHOD 1: transformers.cached_file ----
+    try:
+        from transformers.utils.hub import cached_file
+
+        for filename in weight_files:
+            try:
+                path = cached_file(
+                    model_name,
+                    filename,
+                    local_files_only=True,
+                )
+                if path:
+                    logger.debug(f"[CACHE] Full weights cached: {filename} at {path}")
+                    weights_found = True
+                    found_weight_path = path
+                    break
+            except Exception as e:
+                logger.debug(f"[CACHE] transformers miss {filename}: {type(e).__name__}")
+    except Exception as e:
+        logger.debug(f"[CACHE] transformers check failed: {e}")
+
+    # ---- METHOD 2: hf_hub_download fallback ----
+    if not weights_found:
+        try:
+            from huggingface_hub import hf_hub_download
+
+            for filename in weight_files:
+                try:
+                    path = hf_hub_download(
+                        repo_id=model_name,
+                        filename=filename,
+                        local_files_only=True,
+                    )
+                    if path:
+                        logger.debug(f"[CACHE] Full weights cached: {filename} at {path}")
+                        weights_found = True
+                        found_weight_path = path
+                        break
+                except Exception as e:
+                    logger.debug(f"[CACHE] hf_hub miss {filename}: {type(e).__name__}")
+        except Exception as e:
+            logger.debug(f"[CACHE] hf_hub check failed: {e}")
+
+    # ---- If weights found, load and return model ----
+    if weights_found:
+        try:
+            logger.debug(f"[CACHE] Loading model from cached weights at {found_weight_path}")
+            model = hf_auto_class.from_pretrained(model_name, local_files_only=True, *args, **kwargs)
+            logger.info("[CACHE] Model successfully loaded from local cache")
+            return model
+        except Exception as e:
+            logger.warning(f"[CACHE] Failed to load model from cached weights: {e}. Falling back to standard loading.")
+            return None
+
+    return None
+
 
 # Define a named tuple for ModelArchitectures
 # Required for the Automation tool
