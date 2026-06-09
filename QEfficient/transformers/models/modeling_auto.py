@@ -82,9 +82,8 @@ from QEfficient.utils import (
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.safetensor_materializer import (
-    load_safetensor_checkpoint_into_model,
-    maybe_materialize_safetensor_checkpoint,
-    normalize_torch_dtype,
+    load_hf_model_with_optional_safetensor_streaming,
+    prepare_safetensor_streaming_from_pretrained_source,
 )
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
@@ -100,10 +99,6 @@ TORCH_TO_NUMPY_DTYPE_MAP = {
     torch.bfloat16: np.float16,  # Since numpy doesn't support bfloat16
     torch.float32: np.float32,
 }
-
-
-_QEFF_STREAMING_CHECKPOINT_PATH_KWARG = "_qeff_streaming_checkpoint_path"
-_QEFF_STREAMING_CHECKPOINT_DTYPE_KWARG = "_qeff_streaming_checkpoint_dtype"
 
 
 def _resolve_torch_dtype(kwargs: dict) -> None:
@@ -260,108 +255,6 @@ def _filter_custom_io_for_onnx(custom_io: dict, onnx_path: Optional[Union[str, P
     return filtered
 
 
-def _prepare_weight_materialized_from_pretrained_source(pretrained_model_name_or_path: str, kwargs: dict) -> str:
-    """Use explicit torch_dtype as the checkpoint/export precision for streaming load.
-
-    For example, torch_dtype=torch.float16 materializes floating safetensor
-    weights as fp16 first, then streams them into a meta-initialized model so
-    load/export does not hold both the source checkpoint dtype and fp16 copy.
-    If torch_dtype is omitted, this returns the original source and preserves
-    the existing Hugging Face load path.
-    """
-    requested_torch_dtype = kwargs.get("torch_dtype") if "torch_dtype" in kwargs else kwargs.get("dtype")
-    _resolve_torch_dtype(kwargs)
-    if requested_torch_dtype is None:
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-        kwargs["low_cpu_mem_usage"] = False
-        return pretrained_model_name_or_path
-
-    try:
-        materialized_checkpoint = maybe_materialize_safetensor_checkpoint(
-            pretrained_model_name_or_path,
-            kwargs.get("torch_dtype"),
-            cache_dir=os.environ.get("QEFF_MATERIALIZED_CHECKPOINT_DIR"),
-            revision=kwargs.get("revision"),
-            token=kwargs.get("token", kwargs.get("use_auth_token")),
-            local_files_only=kwargs.get("local_files_only", False),
-            hub_cache_dir=kwargs.get("cache_dir"),
-        )
-    except (OSError, ValueError) as exc:
-        logger.warning("Skipping QEfficient streaming checkpoint load: %s", exc)
-        materialized_checkpoint = None
-
-    if materialized_checkpoint is None:
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-        kwargs["low_cpu_mem_usage"] = False
-        return pretrained_model_name_or_path
-
-    kwargs[_QEFF_STREAMING_CHECKPOINT_PATH_KWARG] = str(materialized_checkpoint.path)
-    kwargs[_QEFF_STREAMING_CHECKPOINT_DTYPE_KWARG] = kwargs.get("torch_dtype")
-    kwargs["low_cpu_mem_usage"] = True
-    kwargs["use_safetensors"] = True
-    if materialized_checkpoint.materialized:
-        logger.info(
-            "Loading model from QEfficient materialized %s checkpoint: %s",
-            materialized_checkpoint.target_dtype,
-            materialized_checkpoint.path,
-        )
-    return str(materialized_checkpoint.path)
-
-
-def _set_config_torch_dtype(config, torch_dtype: torch.dtype) -> None:
-    if config is None:
-        return
-    if hasattr(config, "torch_dtype"):
-        config.torch_dtype = torch_dtype
-    for child_name in ("text_config", "vision_config", "llm_config"):
-        if hasattr(config, child_name):
-            _set_config_torch_dtype(getattr(config, child_name), torch_dtype)
-
-
-def _load_hf_model_with_optional_streaming(auto_class, pretrained_model_name_or_path, args: tuple, kwargs: dict):
-    streaming_checkpoint_path = kwargs.pop(_QEFF_STREAMING_CHECKPOINT_PATH_KWARG, None)
-    streaming_dtype = kwargs.pop(_QEFF_STREAMING_CHECKPOINT_DTYPE_KWARG, None)
-    if streaming_checkpoint_path is None:
-        return auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-
-    if args:
-        logger.warning("QEfficient streaming checkpoint load does not support positional model args; using HF loader.")
-        return auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-
-    config = kwargs.get("config")
-    if config is None:
-        config_kwargs = {}
-        for key in ("cache_dir", "revision", "token", "use_auth_token", "local_files_only", "trust_remote_code"):
-            if key in kwargs:
-                config_kwargs[key] = kwargs[key]
-        config = AutoConfig.from_pretrained(pretrained_model_name_or_path, **config_kwargs)
-
-    constructor_kwargs = {}
-    for key in ("attn_implementation", "trust_remote_code", "torch_dtype", "dtype"):
-        if key in kwargs:
-            constructor_kwargs[key] = kwargs[key]
-
-    normalized_streaming_dtype = normalize_torch_dtype(streaming_dtype)
-    if normalized_streaming_dtype is not None:
-        _set_config_torch_dtype(config, normalized_streaming_dtype)
-
-    logger.info("Streaming safetensors checkpoint into model from %s", streaming_checkpoint_path)
-    with torch.device("meta"):
-        model = auto_class.from_config(config, **constructor_kwargs)
-    if normalized_streaming_dtype is not None:
-        _set_config_torch_dtype(getattr(model, "config", None), normalized_streaming_dtype)
-    load_summary = load_safetensor_checkpoint_into_model(model, streaming_checkpoint_path, target_dtype=streaming_dtype)
-    logger.info(
-        "Loaded %s tensors (%s bytes) through QEfficient streaming safetensor loader",
-        load_summary.loaded_tensor_count,
-        load_summary.loaded_tensor_bytes,
-    )
-    model.eval()
-    return model
-
-
 class QEFFTransformersBase(QEFFBaseModel):
     """
     Base class for QEfficient wrappers around HuggingFace transformer models.
@@ -423,10 +316,12 @@ class QEFFTransformersBase(QEFFBaseModel):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        pretrained_model_name_or_path = _prepare_weight_materialized_from_pretrained_source(
+        pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
             pretrained_model_name_or_path, kwargs
         )
-        model = _load_hf_model_with_optional_streaming(cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs)
+        model = load_hf_model_with_optional_safetensor_streaming(
+            cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs
+        )
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
@@ -593,10 +488,12 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        pretrained_model_name_or_path = _prepare_weight_materialized_from_pretrained_source(
+        pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
             pretrained_model_name_or_path, kwargs
         )
-        model = _load_hf_model_with_optional_streaming(cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs)
+        model = load_hf_model_with_optional_safetensor_streaming(
+            cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs
+        )
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)
@@ -976,10 +873,12 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        pretrained_model_name_or_path = _prepare_weight_materialized_from_pretrained_source(
+        pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
             pretrained_model_name_or_path, kwargs
         )
-        model = _load_hf_model_with_optional_streaming(cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs)
+        model = load_hf_model_with_optional_safetensor_streaming(
+            cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs
+        )
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
 
@@ -1578,10 +1477,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             }
         )
 
-        pretrained_model_name_or_path = _prepare_weight_materialized_from_pretrained_source(
+        pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
             pretrained_model_name_or_path, kwargs
         )
-        model = _load_hf_model_with_optional_streaming(cls._hf_auto_class, pretrained_model_name_or_path, (), kwargs)
+        model = load_hf_model_with_optional_safetensor_streaming(
+            cls._hf_auto_class, pretrained_model_name_or_path, (), kwargs
+        )
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
@@ -2730,16 +2631,16 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        from transformers import AutoConfig
-
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
         kwargs["config"] = config
-        pretrained_model_name_or_path = _prepare_weight_materialized_from_pretrained_source(
+        pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
             pretrained_model_name_or_path, kwargs
         )
-        model = _load_hf_model_with_optional_streaming(cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs)
+        model = load_hf_model_with_optional_safetensor_streaming(
+            cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs
+        )
         kwargs.pop("config", None)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -3407,10 +3308,12 @@ class QEFFAutoModelForImageTextToText:
             # only used as a config holder.
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
         else:
-            pretrained_model_name_or_path = _prepare_weight_materialized_from_pretrained_source(
+            pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
                 pretrained_model_name_or_path, kwargs
             )
-            model = _load_hf_model_with_optional_streaming(cls._hf_auto_class, pretrained_model_name_or_path, (), kwargs)
+            model = load_hf_model_with_optional_safetensor_streaming(
+                cls._hf_auto_class, pretrained_model_name_or_path, (), kwargs
+            )
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
@@ -3684,10 +3587,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             # model internally via the layer-wise driver.
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
         else:
-            pretrained_model_name_or_path = _prepare_weight_materialized_from_pretrained_source(
+            pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
                 pretrained_model_name_or_path, kwargs
             )
-            model = _load_hf_model_with_optional_streaming(cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs)
+            model = load_hf_model_with_optional_safetensor_streaming(
+                cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs
+            )
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
 
@@ -5209,10 +5114,12 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        pretrained_model_name_or_path = _prepare_weight_materialized_from_pretrained_source(
+        pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
             pretrained_model_name_or_path, kwargs
         )
-        model = _load_hf_model_with_optional_streaming(cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs)
+        model = load_hf_model_with_optional_safetensor_streaming(
+            cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs
+        )
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)

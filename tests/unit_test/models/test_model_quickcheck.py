@@ -18,6 +18,7 @@ This file intentionally uses two coverage tiers:
      but do not yet have a stable CPU runtime parity path in the consolidated test
 """
 
+import json
 import logging
 import os
 import shutil
@@ -32,6 +33,8 @@ import onnx
 import onnxruntime as ort
 import pytest
 import torch
+from safetensors import safe_open
+from safetensors.torch import save_file
 from transformers import (
     AutoConfig,
     AutoModel,
@@ -43,6 +46,7 @@ from transformers import (
     Qwen2Config,
 )
 
+from QEfficient.base import modeling_qeff
 from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModel,
     QEFFAutoModelForCausalLM,
@@ -53,7 +57,13 @@ from QEfficient.transformers.models.modeling_auto import (
 )
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils._utils import _infer_specialization_name, to_named_specializations
+from QEfficient.utils.export_utils import _apply_low_memory_export_defaults
 from QEfficient.utils.run_utils import ApiRunner
+from QEfficient.utils.safetensor_materializer import (
+    load_safetensor_checkpoint_into_model,
+    materialize_safetensor_checkpoint,
+    prepare_safetensor_streaming_from_pretrained_source,
+)
 
 ort.set_default_logger_severity(3)
 logging.getLogger("QEfficient").setLevel(logging.ERROR)
@@ -537,6 +547,277 @@ def test_seq_classification_cpu_parity_and_export(tmp_path):
 
     assert np.allclose(hf_logits, qeff_logits, atol=1e-5)
     assert np.allclose(hf_logits, ort_logits, atol=1e-5)
+
+
+class _QuickcheckTinyMetaModule(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.empty(2, 3))
+        self.register_buffer("scale", torch.empty(3))
+
+
+def _write_quickcheck_safetensor_checkpoint(path: Path) -> None:
+    path.mkdir()
+    with (path / "config.json").open("w") as handle:
+        json.dump(
+            {
+                "architectures": ["TinyForCausalLM"],
+                "model_type": "tiny",
+                "torch_dtype": "bfloat16",
+                "text_config": {"torch_dtype": "bfloat16"},
+            },
+            handle,
+        )
+    save_file(
+        {
+            "bf16_weight": torch.ones(2, 3, dtype=torch.bfloat16),
+            "fp32_weight": torch.ones(3, 2, dtype=torch.float32),
+            "int_weight": torch.ones(1, dtype=torch.int64),
+        },
+        path / "model.safetensors",
+        metadata={"format": "pt"},
+    )
+
+
+def _write_quickcheck_sharded_safetensor_checkpoint(path: Path) -> None:
+    path.mkdir()
+    with (path / "config.json").open("w") as handle:
+        json.dump({"model_type": "tiny", "torch_dtype": "bfloat16"}, handle)
+    save_file(
+        {
+            "weight": torch.ones(2, 3, dtype=torch.bfloat16),
+            "int_weight": torch.ones(1, dtype=torch.int64),
+        },
+        path / "model-00001-of-00002.safetensors",
+        metadata={"format": "pt"},
+    )
+    save_file(
+        {"scale": torch.arange(3, dtype=torch.float32)},
+        path / "model-00002-of-00002.safetensors",
+        metadata={"format": "pt"},
+    )
+    with (path / "model.safetensors.index.json").open("w") as handle:
+        json.dump(
+            {
+                "metadata": {"total_size": 0},
+                "weight_map": {
+                    "weight": "model-00001-of-00002.safetensors",
+                    "int_weight": "model-00001-of-00002.safetensors",
+                    "scale": "model-00002-of-00002.safetensors",
+                },
+            },
+            handle,
+        )
+
+
+def _quickcheck_tiny_sequence_classifier():
+    config = AutoConfig.for_model(
+        "bert",
+        hidden_size=8,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        intermediate_size=16,
+        vocab_size=17,
+        max_position_embeddings=64,
+        num_labels=2,
+    )
+    model = AutoModelForSequenceClassification.from_config(config)
+    model.eval()
+    return QEFFAutoModelForSequenceClassification(model)
+
+
+def test_quickcheck_materialize_safetensor_checkpoint_converts_floating_tensors(tmp_path):
+    source_path = tmp_path / "source"
+    _write_quickcheck_safetensor_checkpoint(source_path)
+
+    materialized = materialize_safetensor_checkpoint(
+        source_path,
+        torch.float16,
+        cache_dir=tmp_path / "qeff_materialized",
+    )
+
+    with safe_open(materialized.path / "model.safetensors", framework="pt", device="cpu") as reader:
+        assert reader.get_tensor("bf16_weight").dtype == torch.float16
+        assert reader.get_tensor("fp32_weight").dtype == torch.float16
+        assert reader.get_tensor("int_weight").dtype == torch.int64
+    with (materialized.path / "config.json").open() as handle:
+        config = json.load(handle)
+    assert config["torch_dtype"] == "float16"
+    assert config["text_config"]["torch_dtype"] == "float16"
+    with safe_open(source_path / "model.safetensors", framework="pt", device="cpu") as reader:
+        assert reader.get_tensor("bf16_weight").dtype == torch.bfloat16
+
+
+def test_quickcheck_materialize_safetensor_checkpoint_converts_shards(tmp_path, monkeypatch):
+    source_path = tmp_path / "source"
+    _write_quickcheck_sharded_safetensor_checkpoint(source_path)
+    monkeypatch.setattr("QEfficient.utils.safetensor_materializer._SAFETENSOR_PARALLEL_WORKERS", 2)
+
+    materialized = materialize_safetensor_checkpoint(
+        source_path,
+        torch.float16,
+        cache_dir=tmp_path / "qeff_materialized",
+    )
+
+    with safe_open(materialized.path / "model-00001-of-00002.safetensors", framework="pt", device="cpu") as reader:
+        assert reader.get_tensor("weight").dtype == torch.float16
+        assert reader.get_tensor("int_weight").dtype == torch.int64
+    with safe_open(materialized.path / "model-00002-of-00002.safetensors", framework="pt", device="cpu") as reader:
+        assert reader.get_tensor("scale").dtype == torch.float16
+    with (materialized.path / "model.safetensors.index.json").open() as handle:
+        index = json.load(handle)
+    assert index["metadata"]["total_size"] > 0
+
+
+def test_quickcheck_loader_hook_skips_streaming_without_explicit_dtype(tmp_path, monkeypatch):
+    source_path = tmp_path / "source"
+    _write_quickcheck_safetensor_checkpoint(source_path)
+    monkeypatch.setenv("QEFF_MATERIALIZED_CHECKPOINT_DIR", str(tmp_path / "qeff_materialized"))
+    kwargs = {"low_cpu_mem_usage": False}
+
+    prepared_path = prepare_safetensor_streaming_from_pretrained_source(str(source_path), kwargs)
+
+    assert prepared_path == str(source_path)
+    assert kwargs["torch_dtype"] == torch.float32
+    assert kwargs["low_cpu_mem_usage"] is False
+    assert "use_safetensors" not in kwargs
+    assert not (tmp_path / "qeff_materialized").exists()
+
+
+def test_quickcheck_streaming_loader_casts_sharded_checkpoint(tmp_path, monkeypatch):
+    source_path = tmp_path / "source"
+    _write_quickcheck_sharded_safetensor_checkpoint(source_path)
+    monkeypatch.setattr("QEfficient.utils.safetensor_materializer._SAFETENSOR_PARALLEL_WORKERS", 2)
+
+    with torch.device("meta"):
+        model = _QuickcheckTinyMetaModule()
+
+    result = load_safetensor_checkpoint_into_model(model, source_path, target_dtype=torch.float16)
+
+    assert result.loaded_tensor_count == 2
+    assert not result.missing_parameter_names
+    assert model.weight.dtype == torch.float16
+    assert model.scale.dtype == torch.float16
+    assert torch.equal(model.scale, torch.arange(3, dtype=torch.float16))
+
+
+def test_quickcheck_default_export_keeps_initializers_inline(tmp_path):
+    qeff_model = _quickcheck_tiny_sequence_classifier()
+
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "default"))
+    graph_only_model = onnx.load(onnx_path, load_external_data=False)
+
+    assert graph_only_model.graph.initializer
+    assert all(
+        initializer.data_location != onnx.TensorProto.EXTERNAL for initializer in graph_only_model.graph.initializer
+    )
+
+
+def test_quickcheck_low_memory_export_keeps_constant_folding_default(monkeypatch):
+    monkeypatch.setenv("QEFF_LOW_MEMORY_ONNX_EXPORT", "1")
+    kwargs = {}
+
+    class DummyQEFFModel:
+        _onnx_transforms = []
+
+    _apply_low_memory_export_defaults(DummyQEFFModel(), kwargs)
+
+    assert kwargs["export_params"] is False
+    assert "do_constant_folding" not in kwargs
+
+
+def test_quickcheck_low_memory_export_retries_without_constant_folding_on_externalizer_validation_failure(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("QEFF_LOW_MEMORY_ONNX_EXPORT", "1")
+    export_constant_folding_values = []
+    original_export = modeling_qeff.torch.onnx.export
+
+    def export_spy(*args, **kwargs):
+        export_constant_folding_values.append(kwargs.get("do_constant_folding", "unset"))
+        return original_export(*args, **kwargs)
+
+    original_attach = modeling_qeff.attach_external_initializers_from_torch
+    attach_call_count = 0
+
+    def attach_spy(*args, **kwargs):
+        nonlocal attach_call_count
+        attach_call_count += 1
+        summary = dict(original_attach(*args, **kwargs))
+        if attach_call_count == 1:
+            summary["missing_initializer_input_count"] = 1
+            summary["missing_initializer_inputs"] = ["bert.embeddings.word_embeddings.weight"]
+        return summary
+
+    monkeypatch.setattr(modeling_qeff.torch.onnx, "export", export_spy)
+    monkeypatch.setattr(modeling_qeff, "attach_external_initializers_from_torch", attach_spy)
+    qeff_model = _quickcheck_tiny_sequence_classifier()
+
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "retry"))
+
+    assert onnx_path.is_file()
+    assert attach_call_count == 2
+    assert export_constant_folding_values == ["unset", False]
+
+
+@pytest.mark.llm_model
+def test_causal_from_pretrained_streams_fp16_safetensors(tmp_path, monkeypatch):
+    source_path = tmp_path / "source"
+    materialized_dir = tmp_path / "materialized"
+    monkeypatch.setenv("QEFF_MATERIALIZED_CHECKPOINT_DIR", str(materialized_dir))
+    config = AutoConfig.for_model(
+        "gpt2",
+        n_layer=1,
+        n_head=2,
+        n_embd=8,
+        vocab_size=17,
+        n_positions=64,
+        n_ctx=64,
+    )
+    source_model = AutoModelForCausalLM.from_config(config, attn_implementation="eager").to(torch.bfloat16)
+    source_model.save_pretrained(source_path, safe_serialization=True)
+
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(str(source_path), torch_dtype=torch.float16)
+
+    assert next(qeff_model.model.parameters()).dtype == torch.float16
+    assert all(parameter.device.type == "cpu" for parameter in qeff_model.model.parameters())
+    assert not materialized_dir.exists()
+
+
+@pytest.mark.llm_model
+def test_seq_classification_fp16_low_memory_export_externalizes_initializers(tmp_path, monkeypatch):
+    monkeypatch.setenv("QEFF_LOW_MEMORY_ONNX_EXPORT", "1")
+    config = AutoConfig.for_model(
+        "bert",
+        hidden_size=8,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        intermediate_size=16,
+        vocab_size=17,
+        max_position_embeddings=64,
+        num_labels=2,
+    )
+    model_hf = AutoModelForSequenceClassification.from_config(config).to(torch.float16)
+    model_hf.eval()
+    qeff_model = QEFFAutoModelForSequenceClassification(model_hf)
+
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "lowmem-fp16", offload_pt_weights=False))
+    graph_only_model = onnx.load(onnx_path, load_external_data=False)
+    external_initializers = [
+        initializer
+        for initializer in graph_only_model.graph.initializer
+        if initializer.data_location == onnx.TensorProto.EXTERNAL
+    ]
+
+    assert external_initializers
+    assert any(initializer.data_type == onnx.TensorProto.FLOAT16 for initializer in external_initializers)
+    assert all(len(initializer.raw_data) == 0 for initializer in external_initializers)
+    graph_input_names = {graph_input.name for graph_input in graph_only_model.graph.input}
+    initializer_names = {initializer.name for initializer in graph_only_model.graph.initializer}
+    assert graph_input_names.isdisjoint(initializer_names)
+
+    loaded_model = onnx.load(onnx_path, load_external_data=True)
+    assert sum(len(initializer.raw_data) for initializer in loaded_model.graph.initializer) > 0
 
 
 @pytest.mark.llm_model

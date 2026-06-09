@@ -8,6 +8,7 @@
 import gc
 import inspect
 import logging
+import os
 import shutil
 import subprocess
 import warnings
@@ -59,6 +60,45 @@ from QEfficient.utils.onnx_external_weights import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class LowMemoryExternalInitializerError(RuntimeError):
+    """Raised when low-memory ONNX initializer reconstruction is incomplete."""
+
+
+def _validate_low_memory_external_initializers(
+    model, external_summary: Dict[str, object], input_names: List[str]
+) -> None:
+    """Validate that externalized torch weights are no longer graph inputs."""
+
+    unsupported_count = int(external_summary.get("unsupported_initializer_input_count", 0))
+    if unsupported_count:
+        raise LowMemoryExternalInitializerError(
+            "Low-memory ONNX export could not externalize graph inputs with unsupported dtypes: "
+            f"{external_summary.get('unsupported_initializer_inputs', [])}"
+        )
+
+    missing_count = int(external_summary.get("missing_initializer_input_count", 0))
+    if missing_count:
+        raise LowMemoryExternalInitializerError(
+            "Low-memory ONNX export left torch parameter/buffer inputs unattached: "
+            f"{external_summary.get('missing_initializer_inputs', [])}"
+        )
+
+    graph_input_names = {graph_input.name for graph_input in model.graph.input}
+    initializer_names = {initializer.name for initializer in model.graph.initializer}
+    overlapping_names = sorted(graph_input_names & initializer_names)
+    if overlapping_names:
+        raise LowMemoryExternalInitializerError(
+            f"Low-memory ONNX export left initializer names in graph inputs: {overlapping_names[:10]}"
+        )
+
+    unexpected_graph_inputs = sorted(graph_input_names - set(input_names))
+    if unexpected_graph_inputs:
+        raise LowMemoryExternalInitializerError(
+            "Low-memory ONNX export could not resolve unexpected graph inputs after external initializer "
+            f"attachment: {unexpected_graph_inputs[:10]}"
+        )
 
 
 class QEFFBaseModel(ABC):
@@ -328,7 +368,6 @@ class QEFFBaseModel(ABC):
         low_memory_external_initializers = low_memory_external_initializers or export_params_disabled
         if low_memory_external_initializers:
             export_kwargs.setdefault("export_params", False)
-            export_kwargs.setdefault("do_constant_folding", False)
         onnx_path = export_dir / f"{self.model_name}.onnx"
 
         # Return early if ONNX already exists
@@ -415,8 +454,16 @@ class QEFFBaseModel(ABC):
             mem_profiler.tensor_summary("model.buffers", self.model.buffers())
             mem_profiler.tensor_summary("example_inputs", flatten_torch_tensors(example_inputs))
 
-            try:
-                with mem_profiler.stage("torch.onnx.export"), profile_torch_onnx_internals(mem_profiler):
+            def _cleanup_partial_low_memory_export():
+                for path in (
+                    onnx_path,
+                    onnx_path.with_name(f"{onnx_path.name}.data"),
+                    onnx_path.with_suffix(onnx_path.suffix + ".tmp"),
+                ):
+                    path.unlink(missing_ok=True)
+
+            def _run_torch_onnx_export(current_export_kwargs, stage_name):
+                with mem_profiler.stage(stage_name), profile_torch_onnx_internals(mem_profiler):
                     torch.onnx.export(
                         self.model,
                         (),
@@ -426,16 +473,28 @@ class QEFFBaseModel(ABC):
                         output_names=output_names,
                         dynamic_axes=dynamic_axes,
                         opset_version=constants.ONNX_EXPORT_OPSET,
-                        **export_kwargs,
+                        **current_export_kwargs,
                     )
                 logger.info("PyTorch export successful")
                 mem_profiler.snapshot(
-                    "torch.onnx.export.file",
+                    f"{stage_name}.file",
                     {
                         "onnx_path": str(onnx_path),
                         "file_size_bytes": onnx_path.stat().st_size if onnx_path.exists() else None,
                     },
                 )
+
+            def _load_model_with_external_initializers():
+                with mem_profiler.stage("onnx.load.graph_only", {"load_external_data": False}):
+                    graph_model = onnx.load(onnx_path, load_external_data=False)
+                with mem_profiler.stage("onnx.attach_external_initializers"):
+                    external_summary = attach_external_initializers_from_torch(graph_model, self.model, onnx_path)
+                _validate_low_memory_external_initializers(graph_model, external_summary, input_names)
+                mem_profiler.snapshot("onnx.attach_external_initializers.summary", external_summary)
+                return graph_model
+
+            try:
+                _run_torch_onnx_export(export_kwargs, "torch.onnx.export")
 
                 needs_external_tensor_data = any(
                     transform in self._onnx_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)
@@ -448,11 +507,19 @@ class QEFFBaseModel(ABC):
                     )
 
                 if low_memory_external_initializers:
-                    with mem_profiler.stage("onnx.load.graph_only", {"load_external_data": False}):
-                        model = onnx.load(onnx_path, load_external_data=False)
-                    with mem_profiler.stage("onnx.attach_external_initializers"):
-                        external_summary = attach_external_initializers_from_torch(model, self.model, onnx_path)
-                    mem_profiler.snapshot("onnx.attach_external_initializers.summary", external_summary)
+                    try:
+                        model = _load_model_with_external_initializers()
+                    except LowMemoryExternalInitializerError as exc:
+                        logger.warning(
+                            "Low-memory ONNX external initializer reconstruction failed with default constant "
+                            "folding; retrying once with do_constant_folding=False. Error: %s",
+                            exc,
+                        )
+                        _cleanup_partial_low_memory_export()
+                        retry_export_kwargs = dict(export_kwargs)
+                        retry_export_kwargs["do_constant_folding"] = False
+                        _run_torch_onnx_export(retry_export_kwargs, "torch.onnx.export.retry_without_constant_folding")
+                        model = _load_model_with_external_initializers()
                     with mem_profiler.stage("offload_pt_weights", {"enabled": offload_pt_weights}):
                         _ = self._offload_model_weights(offload_pt_weights)
                 else:

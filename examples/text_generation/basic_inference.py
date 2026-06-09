@@ -27,10 +27,10 @@ def main():
         choices=["float16", "bfloat16", "float32"],
         default=None,
         help=(
-            "Optional load/export precision. For example, float16 materializes floating "
-            "safetensor weights as fp16 before streaming them into the model, avoiding "
-            "an extra bf16/fp16 checkpoint copy during export. If omitted, QEfficient "
-            "uses its existing default loading behavior."
+            "Optional load/export precision. For example, float16 streams floating "
+            "safetensor weights into the model as fp16 one tensor at a time, avoiding "
+            "an extra checkpoint copy during export. If omitted, QEfficient uses its "
+            "existing default loading behavior."
         ),
     )
     parser.add_argument(
@@ -42,9 +42,9 @@ def main():
     args = parser.parse_args()
 
     # Load tokenizer and model. If --torch-dtype is set, QEfficient uses that
-    # precision for load/export and streams a matching materialized safetensors
-    # checkpoint into the model to reduce host RAM during export. Leaving it unset
-    # preserves the existing default loader path.
+    # precision for load/export and streams safetensors directly into the model to
+    # reduce host RAM during export. Leaving it unset preserves the existing
+    # default loader path.
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     model_kwargs = {}
     if args.torch_dtype is not None:

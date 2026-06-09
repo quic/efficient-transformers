@@ -99,7 +99,6 @@ def _apply_low_memory_export_defaults(qeff_model, kwargs) -> None:
         return
     kwargs["_qeff_low_memory_external_initializers"] = True
     kwargs.setdefault("export_params", False)
-    kwargs.setdefault("do_constant_folding", False)
 
 
 def _prepare_export_directory(qeff_model, kwargs) -> Path:
