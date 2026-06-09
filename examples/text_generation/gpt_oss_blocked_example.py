@@ -23,6 +23,7 @@ def main():
     )
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
+    parser.add_argument("--num-layers", type=int, default=2, help="Number of layers")
     parser.add_argument(
         "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
@@ -46,6 +47,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
     non_subfunc_npi_file_path = os.path.join("examples/disagg_serving/", "non_subfunction_120b_npi.yaml")
+    subfunc_npi_file_path = os.path.join("examples/disagg_serving/", "subfunction_120b_npi.yaml")
 
     if args.compare_non_blocking:
         model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
@@ -72,8 +74,11 @@ def main():
         print(f"Generated: {exec_info.generated_texts[0]}")
 
     # setup qaic config to enable blocking, ensure 4 or more device ids are passed
-    qaic_config = {"blocking_mode": args.blocking_mode, "kv_blocking_headpar_split": 0}
-    model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
+    qaic_config = {"blocking_mode": args.blocking_mode, "num_kv_blocks": 2, "kv_blocking_headpar_split": 0}
+    if args.num_layers:
+        model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, num_hidden_layers=args.num_layers)
+    else:
+        model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
 
     # model_blocked._offload_model_weights(True)
 
@@ -82,10 +87,13 @@ def main():
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
-        num_devices=16,
+        num_devices=8,
         qaic_config=qaic_config,
+        mxfp6_matmul=True,
+        mxint8_kv_cache=True,
+        use_onnx_subfunctions=True,
         user_tiled=True,
-        node_precision_info=non_subfunc_npi_file_path,
+        node_precision_info=subfunc_npi_file_path,
     )
     print(f"Model compiled to: {qpc_path_blocked}")
 
@@ -100,38 +108,41 @@ def main():
     print(f"Generated: {exec_info_blocked.generated_texts[0]}")
 
     # Run comparison to online softmax
-    # # setup qaic config to enable blocking, ensure 4 or more device ids are passed
-    # qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode, "num_kv_blocks": 2}
-    # if args.num_layers:
-    #     model_blocked_no_head_par = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, num_hidden_layers=args.num_layers, enable_proxy=True)
-    # else:
-    #     model_blocked_no_head_par = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
+    # setup qaic config to enable blocking, ensure 4 or more device ids are passed
+    qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode, "num_kv_blocks": 2}
+    if args.num_layers:
+        model_blocked_no_head_par = QEFFAutoModelForCausalLM.from_pretrained(
+            args.model_name, num_hidden_layers=args.num_layers
+        )
+    else:
+        model_blocked_no_head_par = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
 
-    # # model_blocked_no_head_par._offload_model_weights(True)
+    # model_blocked_no_head_par._offload_model_weights(True)
 
-    # # Compile the model
-    # qpc_path_blocked_no_head_par = model_blocked_no_head_par.compile(
-    #     prefill_seq_len=args.prefill_seq_len,
-    #     ctx_len=args.ctx_len,
-    #     num_cores=args.num_cores,
-    #     num_devices=8,
-    #     mxfp6_matmul=True,
-    #     mxint8_kv_cache=True,
-    #     use_onnx_subfunctions=True,
-    #     qaic_config=qaic_config,
-    #     user_tiled=True,
-    # )
-    # print(f"Model compiled to: {qpc_path_blocked_no_head_par}")
+    # Compile the model
+    qpc_path_blocked_no_head_par = model_blocked_no_head_par.compile(
+        prefill_seq_len=args.prefill_seq_len,
+        ctx_len=args.ctx_len,
+        num_cores=args.num_cores,
+        num_devices=8,
+        mxfp6_matmul=True,
+        mxint8_kv_cache=True,
+        use_onnx_subfunctions=True,
+        qaic_config=qaic_config,
+        user_tiled=True,
+        node_precision_info=subfunc_npi_file_path,
+    )
+    print(f"Model compiled to: {qpc_path_blocked_no_head_par}")
 
-    # # Generate text
-    # exec_info_blocked_no_head_par = model_blocked_no_head_par.generate(
-    #     tokenizer=tokenizer,
-    #     prompts=[args.prompt],
-    #     generation_len=args.generation_len,
-    # )
+    # Generate text
+    exec_info_blocked_no_head_par = model_blocked_no_head_par.generate(
+        tokenizer=tokenizer,
+        prompts=[args.prompt],
+        generation_len=args.generation_len,
+    )
 
-    # print(f"\nPrompt: {args.prompt}")
-    # print(f"Generated: {exec_info_blocked_no_head_par.generated_texts[0]}")
+    print(f"\nPrompt: {args.prompt}")
+    print(f"Generated: {exec_info_blocked_no_head_par.generated_texts[0]}")
 
     if args.compare_non_blocking:
         print("Performance non-blocked:")
@@ -140,8 +151,8 @@ def main():
     print("Performance blocked (head parallel kv blocking):")
     print(exec_info_blocked)
 
-    # print("Performance blocked (normal kv blocking):")
-    # print(exec_info_blocked_no_head_par)
+    print("Performance blocked (normal kv blocking):")
+    print(exec_info_blocked_no_head_par)
 
 
 if __name__ == "__main__":
