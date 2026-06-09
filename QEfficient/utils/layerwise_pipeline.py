@@ -82,17 +82,6 @@ def split_layer_graph(
 
     model = onnx.load(onnx_path, load_external_data=False)
 
-    decoder_input = None
-    decoder_output = None
-    for node in model.graph.node:
-        if "DecoderLayer" in node.name:
-            decoder_input = list(node.input)
-            decoder_output = list(node.output)
-            break
-
-    if decoder_input is None or decoder_output is None:
-        raise RuntimeError(f"DecoderLayer not found in layer window {layer_start}_{layer_end}")
-
     model_ir = onnx_ir.load(onnx_path)
 
     graph_inputs = [v.name for v in model.graph.input]
@@ -110,7 +99,12 @@ def split_layer_graph(
         [
             n
             for n in graph_inputs
-            if n.startswith("past_key.") or n.startswith("past_value.") or n == "vision_embeds" or n == "image_idx"
+            if n.startswith("past_key.")
+            or n.startswith("past_value.")
+            or n.startswith("conv_state.")
+            or n.startswith("recurrent_state.")
+            or n == "vision_embeds"
+            or n == "image_idx"
         ]
     )
     input_names = [n for n in preferred_inputs if n in graph_inputs] + cache_inputs
@@ -442,13 +436,17 @@ def run_merge_pipeline(
         m1_pref = onnx.load(m1_path, load_external_data=False)
         m2_pref = onnx.load(m2_path, load_external_data=False)
 
-        decoder_nodes = [n for n in m1_pref.graph.node if "DecoderLayer" in n.name]
-        if not decoder_nodes:
-            raise RuntimeError(f"DecoderLayer node not found in {m1_path}")
-        decoder_output = list(decoder_nodes[-1].output)
-        selected_output = next((x for x in decoder_output if "RetainedState" not in x), None)
+        graph_outputs = [output.name for output in m1_pref.graph.output]
+        selected_output = next(
+            (
+                name
+                for name in graph_outputs
+                if "RetainedState" not in name and not name.endswith("position_ids") and "image_idx" not in name
+            ),
+            None,
+        )
         if selected_output is None:
-            raise RuntimeError(f"No decoder output found without 'RetainedState'. Outputs: {decoder_output}")
+            raise RuntimeError(f"No mergeable decoder output found in {m1_path}. Outputs: {graph_outputs}")
 
         merged_model = merge_models(
             m1_pref,
