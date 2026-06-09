@@ -41,6 +41,7 @@ if skip_vision:  # Only Text
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
+        split_model_io=True,
     )
 
     messages = [
@@ -110,6 +111,7 @@ else:  # Vision + Text
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
         mos=1,
+        split_model_io=True,
     )
 
     image_url = "https://picsum.photos/id/237/536/354"
@@ -143,5 +145,5 @@ else:  # Vision + Text
         inputs=inputs, tokenizer=tokenizer, generation_len=100, multi_specs=True, num_frames=frames
     )
     print(output.generated_ids)
-    print(output.generated_texts)
+    print(tokenizer.batch_decode(output.generated_ids))
     print(output)

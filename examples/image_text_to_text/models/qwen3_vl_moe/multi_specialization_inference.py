@@ -16,7 +16,7 @@ from QEfficient import QEFFAutoModelForImageTextToText
 model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 
-# For faster execution user can run with lesser layers, For Testing Purpose Only
+# # For faster execution user can run with lesser layers, For Testing Purpose Only
 # config.vision_config.depth = 9
 # config.text_config.num_hidden_layers = 1
 # config.vision_config.deepstack_visual_indexes = [8]
@@ -45,6 +45,7 @@ if skip_vision:  # Only Text
         skip_vision=True,
         mos=1,
         use_onnx_subfunctions=True,
+        split_model_io=True,
     )
 
     messages = [
@@ -114,6 +115,7 @@ else:  # Vision + Text
         aic_enable_depth_first=True,
         mos=1,
         use_onnx_subfunctions=False,
+        split_model_io=True,
     )
 
     image_url = "https://picsum.photos/id/237/536/354"
@@ -146,5 +148,5 @@ else:  # Vision + Text
         inputs=inputs, tokenizer=tokenizer, generation_len=100, multi_specs=True, num_frames=frames
     )
     print(output.generated_ids)
-    print(output.generated_texts)
+    print(tokenizer.batch_decode(output.generated_ids))
     print(output)

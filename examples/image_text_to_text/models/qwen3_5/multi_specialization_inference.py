@@ -15,10 +15,10 @@ from QEfficient import QEFFAutoModelForImageTextToText
 
 model_id = "Qwen/Qwen3.5-0.8B"
 config = AutoConfig.from_pretrained(model_id)
-# For faster execution user can run with lesser layers, For Testing Purpose Only
-config.vision_config.depth = 4
-config.text_config.num_hidden_layers = 2
-config.torch_dtype = "float32"
+# # For faster execution user can run with lesser layers, For Testing Purpose Only
+# config.vision_config.depth = 4
+# config.text_config.num_hidden_layers = 2
+# config.torch_dtype = "float32"
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config
@@ -44,6 +44,7 @@ if skip_vision:  # Only Text
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
+        split_model_io=True,
     )
 
     messages = [
@@ -142,4 +143,5 @@ else:  # Vision + Text
         num_frames=frames,
     )
     print(output.generated_ids)
+    print(tokenizer.batch_decode(output.generated_ids))
     print(output)
