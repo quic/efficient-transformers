@@ -68,20 +68,14 @@ from transformers.models.glm4_moe.modeling_glm4_moe import (
     Glm4MoeRotaryEmbedding,
     Glm4MoeTopkRouter,
 )
-# glm_moe_dsa (GLM-5.1) landed in transformers 5.4.0 — guard so older transformers still import (U6).
-try:
-    from transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
-        GlmMoeDsaAttention,
-        GlmMoeDsaDecoderLayer,
-        GlmMoeDsaForCausalLM,
-        GlmMoeDsaModel,
-        GlmMoeDsaMoE,
-        GlmMoeDsaRMSNorm,
-    )
-
-    GLM_MOE_DSA_AVAILABLE = True
-except ImportError:
-    GLM_MOE_DSA_AVAILABLE = False
+from transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+    GlmMoeDsaAttention,
+    GlmMoeDsaDecoderLayer,
+    GlmMoeDsaForCausalLM,
+    GlmMoeDsaModel,
+    GlmMoeDsaMoE,
+    GlmMoeDsaRMSNorm,
+)
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeAttention,
@@ -385,15 +379,14 @@ from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
     QEffPrefillChunkedGlm4MoeMoE,
 )
 
-if GLM_MOE_DSA_AVAILABLE:
-    from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
-        QEffGlmMoeDsaAttention,
-        QEffGlmMoeDsaDecoderLayer,
-        QEffGlmMoeDsaForCausalLM,
-        QEffGlmMoeDsaModel,
-        QEffGlmMoeDsaMoE,
-        QEffPrefillChunkedGlmMoeDsaMoE,
-    )
+from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+    QEffGlmMoeDsaAttention,
+    QEffGlmMoeDsaDecoderLayer,
+    QEffGlmMoeDsaForCausalLM,
+    QEffGlmMoeDsaModel,
+    QEffGlmMoeDsaMoE,
+    QEffPrefillChunkedGlmMoeDsaMoE,
+)
 from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2Attention,
     QEffGPT2Block,
@@ -929,19 +922,18 @@ class KVCacheTransform(ModuleMappingTransform):
         return model, transformed
 
 
-# glm_moe_dsa (GLM-5.1) — registered only when the architecture is present in transformers (U6).
-# Native HF model (no auto_map) → class-type replacement via KVCacheTransform (U4 Path A).
-if GLM_MOE_DSA_AVAILABLE:
-    KVCacheTransform._module_mapping.update(
-        {
-            GlmMoeDsaModel: QEffGlmMoeDsaModel,
-            GlmMoeDsaForCausalLM: QEffGlmMoeDsaForCausalLM,
-            GlmMoeDsaAttention: QEffGlmMoeDsaAttention,
-            GlmMoeDsaDecoderLayer: QEffGlmMoeDsaDecoderLayer,
-            GlmMoeDsaMoE: QEffGlmMoeDsaMoE,
-        }
-    )
-    CustomOpsTransform._module_mapping.update({GlmMoeDsaRMSNorm: CustomRMSNormAIC})
+# glm_moe_dsa (GLM-5.1) — native HF model (no auto_map) → class-type replacement
+# via KVCacheTransform (U4 Path A).
+KVCacheTransform._module_mapping.update(
+    {
+        GlmMoeDsaModel: QEffGlmMoeDsaModel,
+        GlmMoeDsaForCausalLM: QEffGlmMoeDsaForCausalLM,
+        GlmMoeDsaAttention: QEffGlmMoeDsaAttention,
+        GlmMoeDsaDecoderLayer: QEffGlmMoeDsaDecoderLayer,
+        GlmMoeDsaMoE: QEffGlmMoeDsaMoE,
+    }
+)
+CustomOpsTransform._module_mapping.update({GlmMoeDsaRMSNorm: CustomRMSNormAIC})
 
 
 class PrefillOnlyTransform(ModuleMappingTransform):
@@ -971,9 +963,8 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
     }
 
 
-# glm_moe_dsa prefill-chunked MoE — registered only when the arch is present (U6).
-if GLM_MOE_DSA_AVAILABLE:
-    PrefillOnlyChunkedTransform._module_mapping[QEffGlmMoeDsaMoE] = QEffPrefillChunkedGlmMoeDsaMoE
+# glm_moe_dsa prefill-chunked MoE.
+PrefillOnlyChunkedTransform._module_mapping[QEffGlmMoeDsaMoE] = QEffPrefillChunkedGlmMoeDsaMoE
 
 
 class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
@@ -997,9 +988,8 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
     }
 
 
-# glm_moe_dsa: register the reverse mapping for the decode QPC (U6-guarded).
-if GLM_MOE_DSA_AVAILABLE:
-    RevertPrefillKeepAttentionTransform._module_mapping[QEffPrefillChunkedGlmMoeDsaMoE] = QEffGlmMoeDsaMoE
+# glm_moe_dsa: reverse mapping for the decode QPC.
+RevertPrefillKeepAttentionTransform._module_mapping[QEffPrefillChunkedGlmMoeDsaMoE] = QEffGlmMoeDsaMoE
 
 
 class RevertPrefillOnlyTransform(ModuleMappingTransform):
