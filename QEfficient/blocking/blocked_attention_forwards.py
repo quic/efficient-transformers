@@ -287,20 +287,40 @@ def blocked_kv_attention_forward_headpar_offline(
             pad_mask = key_idx.unsqueeze(0) >= valid_in_chunk.unsqueeze(1)
             attn_weights_block = attn_weights_block.masked_fill(pad_mask.view(1, 1, split, 1, split_block_len), -3.0e4)
 
-        key_abs = (
-            start_index
-            + torch.arange(split, device=query.device)[:, None] * split_block_len
-            + torch.arange(split_block_len, device=query.device)[None, :]
-        )
-        # use expand instead of repeat to make sure it is subfunction compatible
-        query_pos = (
-            position_ids.unsqueeze(1)
-            .expand(-1, num_kv_groups, -1)
-            .reshape(position_ids.shape[0], position_ids.shape[1] * num_kv_groups)
-        )
+        # key_abs = (
+        #     start_index
+        #     + torch.arange(split, device=query.device)[:, None] * split_block_len
+        #     + torch.arange(split_block_len, device=query.device)[None, :]
+        # )
+        # # use expand instead of repeat to make sure it is subfunction compatible
+        # query_pos = (
+        #     position_ids.unsqueeze(1)
+        #     .expand(-1, num_kv_groups, -1)
+        #     .reshape(position_ids.shape[0], position_ids.shape[1] * num_kv_groups)
+        # )
 
-        causal_mask = key_abs[None, :, None, :] > query_pos[:, None, :, None]
-        attn_weights_block = attn_weights_block.masked_fill(causal_mask.unsqueeze(1), -3.0e4)
+        split_causal_masks = []
+        for s in range(split):
+            s_start = start_index + s * split_block_len
+            mask_s = _create_causal_mask(
+                position_ids=position_ids,
+                target_length=s_start + split_block_len,
+                sliding_window=sliding_window,
+                start_index=s_start,
+            )
+            # mask_s: [B, 1, Q, split_block_len]
+            # Expand to folded GQA space: [B, 1, G*Q, split_block_len]
+            mask_s = (
+                mask_s.unsqueeze(2)
+                .expand(-1, -1, num_kv_groups, -1, -1)
+                .reshape(batch_size, 1, num_kv_groups * seq_len, split_block_len)
+            )
+            split_causal_masks.append(mask_s)
+        causal_mask = torch.stack(split_causal_masks, dim=2)  # [B, 1, split, G*Q, split_block_len]
+
+        # import ipdb; ipdb.set_trace()
+        # causal_mask = key_abs[None, :, None, :] > query_pos[:, None, :, None]
+        attn_weights_block = attn_weights_block.masked_fill(causal_mask, -3.0e4)
 
         max_block = attn_weights_block.max(dim=-1).values
         exp_block = torch.exp(attn_weights_block - max_block.unsqueeze(-1))
