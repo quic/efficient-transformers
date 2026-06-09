@@ -38,7 +38,7 @@ def main():
         kv_offload=True,
         config=config,
         dtype=torch.float16,
-        layerwise=True,
+        layerwise=False,
     )
     batch_size = 1
     qpc_path = qeff_model.compile(
@@ -46,7 +46,7 @@ def main():
         prefill_seq_len=1,
         ctx_len=4096,
         num_cores=16,
-        num_devices=4,
+        num_devices=1,
         height=354,
         width=536,
         mxfp6_matmul=True,
@@ -56,8 +56,8 @@ def main():
         split_retained_state_io=True,
         use_onnx_subfunctions=True,
         mos=1,
-        layerwise=True,
-        layerwise_window_size=1,
+        layerwise=False,
+        layerwise_window_size=None,
     )
     print(f"Final QPC path: {qpc_path}")
 

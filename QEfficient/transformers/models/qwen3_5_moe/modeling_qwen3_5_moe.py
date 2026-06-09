@@ -67,6 +67,7 @@ from QEfficient.utils.logging_utils import logger
 
 # EXPERT_BLOCKING_NUM_NSP = 16
 # EXPERT_BLOCKING_PACKED_CHUNK_SIZE = 32
+QWEN3_5_MOE_ROPE_CACHE_EXPORT_CAP = 76800
 
 
 class QEffQwen3_5MoeGatedDeltaNetCustomRMSNormAIC(nn.Module):
@@ -219,19 +220,15 @@ class QEffQwen3_5MoeDynamicCache(Cache):
                 return False
             return self.conv_states[layer_idx] is not None
 
-        linear_layers = [idx for idx, layer_type in enumerate(self.layer_types) if layer_type == "linear_attention"]
-        if not linear_layers:
-            return False
-
-        # In layerwise mode only the active window state is materialized.
-        # Checking only the global last linear layer can incorrectly report
-        # "no previous state" for earlier linear windows.
+        # Layerwise path only materializes the active layer state.
         if is_layerwise_active():
             active_idx = QEffQwen3_5MoeTextModel._start
-            if active_idx in linear_layers:
+            if 0 <= active_idx < len(self.layer_types) and self.layer_types[active_idx] == "linear_attention":
                 return self.conv_states[active_idx] is not None
 
-        return any(self.conv_states[idx] is not None for idx in linear_layers)
+        if self.last_linear_layer is None:
+            return False
+        return self.conv_states[self.last_linear_layer] is not None
 
     def reorder_cache(self, beam_idx: torch.LongTensor):
         for layer_idx, layer_type in enumerate(self.layer_types):
@@ -280,8 +277,9 @@ class QEffQwen3_5MoeTextRotaryEmbedding(Qwen3_5MoeTextRotaryEmbedding):
 
     def __init__(self, config, device=None):
         super().__init__(config=config, device=device)
+        cached_seq_len = min(int(self.original_max_seq_len), QWEN3_5_MOE_ROPE_CACHE_EXPORT_CAP)
         self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len,
+            seq_len=cached_seq_len,
             device=self.inv_freq.device,
             dtype=torch.get_default_dtype(),
         )
