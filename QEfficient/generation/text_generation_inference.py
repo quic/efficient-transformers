@@ -16,7 +16,7 @@ import numpy as np
 import transformers
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.utils import padding_check_and_fix
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
@@ -500,13 +500,7 @@ class QEffTextGenerationBase:
         self._set_tokenizer_params()  # set tokenizer params
         # Skip inputs/outputs
         self._session.skip_buffers(
-            [x for x in self._session.input_names + self._session.output_names if x.startswith("past_")]
-        )
-        self._session.skip_buffers(
-            [x for x in self._session.input_names + self._session.output_names if x.startswith("compressed_")]
-        )
-        self._session.skip_buffers(
-            [x for x in self._session.input_names + self._session.output_names if x.startswith("k_pe")]
+            [x for x in self._session.input_names + self._session.output_names if is_retained_state_name(x)]
         )
 
     def _set_tokenizer_params(self):

@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 from transformers import AutoImageProcessor, PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.embedding_handler import VisionHandler
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfo,
@@ -232,7 +232,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         self._vision_skip_buffers = [
             x
             for x in self._vision_session.input_names + self._vision_session.output_names
-            if x.startswith("past_") or x.endswith("_RetainedState")
+            if is_retained_state_name(x) or x.endswith("_RetainedState")
         ]
         self._vision_session.skip_buffers(self._vision_skip_buffers)
 
@@ -240,7 +240,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         self._lang_skip_buffers = [
             x
             for x in self._session.input_names + self._session.output_names
-            if x.startswith("past_") or x.endswith("_RetainedState")
+            if is_retained_state_name(x) or x.endswith("_RetainedState")
         ]
 
     def run_prefill_for_all_inputs(self, prompt_queue, generation_len):
@@ -279,6 +279,8 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             next_token_id (array): The next token ID.
         """
         next_token_id = self._fetch_next_token_id(outputs)
+        if next_token_id.ndim == 2 and next_token_id.shape[1] > 1:
+            next_token_id = next_token_id[:, -1:]
 
         # Store the generated values.
         self.decode_input_ids[decode_batch_id or slice(None)] = next_token_id
@@ -306,9 +308,6 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         Returns:
             Final prefill outputs
         """
-        # Set output buffers
-        self._set_output_buffers(batch_size=prefill_logit_bs, sequence_length=1)
-
         # Skip buffers for dual-QPC coordination
         self._session.skip_buffers(self._lang_skip_buffers)
 
@@ -330,11 +329,35 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 else:
                     lang_inputs[op] = self.sampling_params[op]
 
+        prefill_output_seq_len_by_input_seq = {}
+        default_prefill_output_seq_len = 1
+        if not self.include_sampler:
+            logits_binding_idx = self._session.binding_index_map.get("logits")
+            input_ids_binding_idx = self._session.binding_index_map.get("input_ids")
+            if logits_binding_idx is not None and input_ids_binding_idx is not None:
+                if getattr(self._session, "allowed_shapes", None):
+                    for shape_spec in self._session.allowed_shapes:
+                        if len(shape_spec) <= max(input_ids_binding_idx, logits_binding_idx):
+                            continue
+                        input_dims = shape_spec[input_ids_binding_idx][1]
+                        logits_dims = shape_spec[logits_binding_idx][1]
+                        if len(input_dims) < 2 or len(logits_dims) < 2:
+                            continue
+                        prefill_output_seq_len_by_input_seq[int(input_dims[1])] = int(logits_dims[1])
+                logits_binding = self._session.bindings[logits_binding_idx]
+                if len(logits_binding.dims) > 1:
+                    default_prefill_output_seq_len = int(logits_binding.dims[1])
+
         for i in range(num_chunks):
             input_ids_slice = lang_inputs["input_ids"][:, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len]
             position_ids_slice = lang_inputs["position_ids"][
                 ..., i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
             ]
+
+            prefill_output_seq_len = prefill_output_seq_len_by_input_seq.get(
+                int(input_ids_slice.shape[1]), default_prefill_output_seq_len
+            )
+            self._set_output_buffers(batch_size=prefill_logit_bs, sequence_length=prefill_output_seq_len)
 
             chunk_inputs = {
                 "input_ids": input_ids_slice,

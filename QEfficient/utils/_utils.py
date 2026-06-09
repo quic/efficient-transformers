@@ -706,9 +706,16 @@ class IOInfo:
 def dump_qconfig(func):
     def wrapper(self, *args, **kwargs):
         result = func(self, *args, **kwargs)
+        # Skip qconfig dumping when no QPC was actually produced (e.g. the
+        # layer-wise export short-circuits compile to return an ONNX path).
+        # Without this guard we'd hit a TypeError inside create_and_dump_qconfigs
+        # and surface a confusing user-facing message.
+        qpc_path = getattr(self, "qpc_path", None)
+        if qpc_path is None:
+            return result
         try:
             create_and_dump_qconfigs(
-                self.qpc_path,
+                qpc_path,
                 self.onnx_path,
                 self.get_model_config,
                 [cls.__name__ for cls in self._pytorch_transforms],
@@ -724,7 +731,7 @@ def dump_qconfig(func):
                 },
             )
         except Exception as e:
-            print(f"An unexpected error occurred while dumping the qconfig: {e}")
+            logger.debug("Skipping qconfig dump: %s", e)
         return result
 
     return wrapper
