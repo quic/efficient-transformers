@@ -47,7 +47,7 @@ _LAYERWISE_SUPPORTED_MODEL_TYPES = frozenset(
 # inference-time position id is bounded by ctx_len, and ctx_len in practice
 # stays well under 32K for the supported MoE families today, so dropping
 # the unreachable rows past 32K is lossless.
-_LAYERWISE_ROPE_MAX_POSITIONS = 32768
+_LAYERWISE_ROPE_MAX_POSITIONS = 76800
 
 # Process-local layer-wise window state. We deliberately avoid setting class
 # attributes on transformers.modeling_utils.PreTrainedModel - those would leak
@@ -609,37 +609,42 @@ def run_layerwise(
     windows = _build_layer_windows(text_total_layers, window_size)
     first_onnx_path: Optional[Path] = None
     last_qeff_model = None
-    force_full_init_for_run = model_type in {"qwen3_5_moe", "qwen3_5_moe_text"} and not _checkpoint_has_shard_index(
+    needs_deterministic_init = model_type in {"qwen3_5_moe", "qwen3_5_moe_text"} and not _checkpoint_has_shard_index(
         model_id
     )
-    init_rng_snapshot = {
-        "python": random.getstate(),
-        "numpy": np.random.get_state(),
-        "torch": torch.random.get_rng_state(),
-    }
+    if needs_deterministic_init:
+        init_rng_snapshot = {
+            "python": random.getstate(),
+            "numpy": np.random.get_state(),
+            "torch": torch.random.get_rng_state(),
+        }
 
-    def _build_window_model():
-        # Some tiny/testing checkpoints intentionally miss parameters and rely on
-        # random initialization for the missing tensors. Replaying the same RNG
-        # state for each per-window load keeps layerwise export numerically
-        # aligned with non-layerwise behavior in those cases.
-        prev_python_state = random.getstate()
-        prev_numpy_state = np.random.get_state()
-        prev_torch_state = torch.random.get_rng_state()
-        try:
-            random.setstate(init_rng_snapshot["python"])
-            np.random.set_state(init_rng_snapshot["numpy"])
-            torch.random.set_rng_state(init_rng_snapshot["torch"])
+        def _build_window_model():
+            # Tiny/test checkpoints can miss some tensors and rely on random
+            # initialization. Reusing one RNG snapshot per window preserves
+            # layerwise-vs-default parity for those models.
+            prev_python_state = random.getstate()
+            prev_numpy_state = np.random.get_state()
+            prev_torch_state = torch.random.get_rng_state()
+            try:
+                random.setstate(init_rng_snapshot["python"])
+                np.random.set_state(init_rng_snapshot["numpy"])
+                torch.random.set_rng_state(init_rng_snapshot["torch"])
+                return qeff_factory(model_id, config)
+            finally:
+                random.setstate(prev_python_state)
+                np.random.set_state(prev_numpy_state)
+                torch.random.set_rng_state(prev_torch_state)
+
+    else:
+
+        def _build_window_model():
             return qeff_factory(model_id, config)
-        finally:
-            random.setstate(prev_python_state)
-            np.random.set_state(prev_numpy_state)
-            torch.random.set_rng_state(prev_torch_state)
 
     try:
         with _layerwise_export_env():
             _set_layer_windows(0, min(window_size, text_total_layers), text_total_layers)
-            if force_full_init_for_run:
+            if needs_deterministic_init:
                 _LAYERWISE_STATE["force_full_init"] = 1
             cached_probe = probe_qeff_model or _build_window_model()
             cached_onnx_path = _cached_layerwise_onnx_path(cached_probe, compile_kwargs)
@@ -651,7 +656,7 @@ def run_layerwise(
                 if cached_onnx_path is not None:
                     break
                 _set_layer_windows(text_start, text_end, text_total_layers)
-                if force_full_init_for_run:
+                if needs_deterministic_init:
                     _LAYERWISE_STATE["force_full_init"] = 1
 
                 qeff_model = _build_window_model()

@@ -51,6 +51,8 @@ from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
 
+QWEN3_VL_ROPE_CACHE_EXPORT_CAP = 76800
+
 
 def qeff_apply_interleaved_mrope(freqs, mrope_section):
     """Apply interleaved MRoPE to 3D rotary embeddings.
@@ -527,8 +529,16 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
 
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3VLMoeTextRotaryEmbedding(config=self.config)
-        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
-        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
+        # Export-only cap to avoid serializing oversized RoPE tables that are
+        # unreachable for deployed context lengths (e.g. 4K/8K/16K). This keeps
+        # non-layerwise QPC size aligned with layerwise exports.
+        rope_rows = min(int(self.rotary_emb.sin_cached.shape[0]), QWEN3_VL_ROPE_CACHE_EXPORT_CAP)
+        self.sin_cached = torch.nn.Parameter(
+            (self.rotary_emb.sin_cached[:rope_rows] * self.rotary_emb.attention_scaling).contiguous()
+        )
+        self.cos_cached = torch.nn.Parameter(
+            (self.rotary_emb.cos_cached[:rope_rows] * self.rotary_emb.attention_scaling).contiguous()
+        )
 
     def forward(
         self,

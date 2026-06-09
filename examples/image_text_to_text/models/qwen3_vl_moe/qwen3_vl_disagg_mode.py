@@ -18,15 +18,17 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-# model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-model_id = "tiny-random/qwen3-vl-moe"
+model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+# model_id = "tiny-random/qwen3-vl-moe"
 config = AutoConfig.from_pretrained(model_id)
 config.dtype = "float16"
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
 # config.vision_config.depth = 9
 # config.text_config.num_hidden_layers = 6
-# config.vision_config.deepstack_visual_indexes = [8]
+
+# deepstack indexes must fall within the reduced vision depth (defaults are [8, 16, 24])
+# config.vision_config.deepstack_visual_indexes = [1, 2, 3]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config, dtype=torch.float16, layerwise=True
@@ -54,7 +56,7 @@ if not skip_vision:
         skip_vision=skip_vision,
         split_model_io=True,
         skip_lang=True,
-        use_onnx_subfunctions=True,
+        use_onnx_subfunctions=False,
         layerwise=True,
     )
 
@@ -75,9 +77,10 @@ prefill_qpc_path = qeff_model.compile(
     prefill_only=True,
     enable_chunking=True,
     skip_vision=True,
-    use_onnx_subfunctions=True,
+    use_onnx_subfunctions=False,
     layerwise=True,
     layerwise_window_size=1,
+    offload_pt_weights=False,
 )
 
 
@@ -96,7 +99,7 @@ decode_qpc_path = qeff_model.compile(
     aic_enable_depth_first=True,
     prefill_only=False,
     skip_vision=True,
-    use_onnx_subfunctions=True,
+    use_onnx_subfunctions=False,
     layerwise=True,
     layerwise_window_size=1,
 )
