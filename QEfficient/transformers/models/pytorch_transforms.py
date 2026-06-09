@@ -284,23 +284,17 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Model,
 )
 
-# GLM-OCR requires transformers 5.0.1dev0+; gracefully absent in earlier releases (U6)
-try:
-    from transformers.models.glm_ocr.modeling_glm_ocr import (
-        GlmOcrForConditionalGeneration,
-        GlmOcrModel,
-        GlmOcrRMSNorm,
-        GlmOcrTextAttention,
-        GlmOcrTextDecoderLayer,
-        GlmOcrTextModel,
-        GlmOcrTextRotaryEmbedding,
-        GlmOcrVisionAttention,
-        GlmOcrVisionModel,
-    )
-
-    _HAS_GLM_OCR = True
-except ImportError:
-    _HAS_GLM_OCR = False
+from transformers.models.glm_ocr.modeling_glm_ocr import (
+    GlmOcrForConditionalGeneration,
+    GlmOcrModel,
+    GlmOcrRMSNorm,
+    GlmOcrTextAttention,
+    GlmOcrTextDecoderLayer,
+    GlmOcrTextModel,
+    GlmOcrTextRotaryEmbedding,
+    GlmOcrVisionAttention,
+    GlmOcrVisionModel,
+)
 from transformers.models.t5.modeling_t5 import (
     T5Attention,
     T5LayerNorm,
@@ -639,18 +633,16 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEffStarcoder2Model,
 )
 
-# QEff GLM-OCR classes — imported only when the HF glm_ocr module is available (U6)
-if _HAS_GLM_OCR:
-    from QEfficient.transformers.models.glm_ocr.modeling_glm_ocr import (
-        QEffGlmOcrForConditionalGeneration,
-        QEffGlmOcrModel,
-        QEffGlmOcrTextAttention,
-        QEffGlmOcrTextDecoderLayer,
-        QEffGlmOcrTextModel,
-        QEffGlmOcrTextRotaryEmbedding,
-        QEffGlmOcrVisionAttention,
-        QEffGlmOcrVisionModel,
-    )
+from QEfficient.transformers.models.glm_ocr.modeling_glm_ocr import (
+    QEffGlmOcrForConditionalGeneration,
+    QEffGlmOcrModel,
+    QEffGlmOcrTextAttention,
+    QEffGlmOcrTextDecoderLayer,
+    QEffGlmOcrTextModel,
+    QEffGlmOcrTextRotaryEmbedding,
+    QEffGlmOcrVisionAttention,
+    QEffGlmOcrVisionModel,
+)
 from QEfficient.transformers.models.t5.modeling_t5 import (
     QEffT5Attention,
     QEffT5LayerNorm,
@@ -1352,27 +1344,26 @@ class PoolingTransform:
 
 
 # ---------------------------------------------------------------------------
-# GLM-OCR: conditional registration (U6 — requires transformers 5.0.1dev0+)
+# GLM-OCR registration
 # ---------------------------------------------------------------------------
-if _HAS_GLM_OCR:
-    KVCacheTransform._module_mapping.update(
-        {
-            # GlmOcr
-            GlmOcrForConditionalGeneration: QEffGlmOcrForConditionalGeneration,
-            GlmOcrModel: QEffGlmOcrModel,
-            GlmOcrTextAttention: QEffGlmOcrTextAttention,
-            GlmOcrTextDecoderLayer: QEffGlmOcrTextDecoderLayer,
-            GlmOcrVisionAttention: QEffGlmOcrVisionAttention,
-            GlmOcrVisionModel: QEffGlmOcrVisionModel,
-            GlmOcrTextModel: QEffGlmOcrTextModel,
-            GlmOcrTextRotaryEmbedding: QEffGlmOcrTextRotaryEmbedding,
-        }
-    )
-    CustomOpsTransform._module_mapping.update(
-        {
-            GlmOcrRMSNorm: CustomRMSNormAIC,
-        }
-    )
+KVCacheTransform._module_mapping.update(
+    {
+        # GlmOcr
+        GlmOcrForConditionalGeneration: QEffGlmOcrForConditionalGeneration,
+        GlmOcrModel: QEffGlmOcrModel,
+        GlmOcrTextAttention: QEffGlmOcrTextAttention,
+        GlmOcrTextDecoderLayer: QEffGlmOcrTextDecoderLayer,
+        GlmOcrVisionAttention: QEffGlmOcrVisionAttention,
+        GlmOcrVisionModel: QEffGlmOcrVisionModel,
+        GlmOcrTextModel: QEffGlmOcrTextModel,
+        GlmOcrTextRotaryEmbedding: QEffGlmOcrTextRotaryEmbedding,
+    }
+)
+CustomOpsTransform._module_mapping.update(
+    {
+        GlmOcrRMSNorm: CustomRMSNormAIC,
+    }
+)
 
 
 def get_decoder_layer_classes_for_export(model: nn.Module) -> set:
