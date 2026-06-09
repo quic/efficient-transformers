@@ -38,32 +38,36 @@ from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 def rotate_half_interleaved(x):
-    """Rotate for interleaved RoPE (V4 style): pairs consecutive channels."""
-    d = x.shape[-1]
-    x1 = x[..., : d // 2]
-    x2 = x[..., d // 2 :]
-    return torch.cat((-x2, x1), dim=-1)
+    """V4 interleaved rotate-half: pairs even/odd channels and swaps them.
+
+    Matches HF's transformers.models.deepseek_v4.modeling_deepseek_v4.rotate_half
+    (x[..., 0::2], x[..., 1::2] → stack((-x2, x1), -1).flatten(-2)).
+    """
+    x1 = x[..., 0::2]
+    x2 = x[..., 1::2]
+    return torch.stack((-x2, x1), dim=-1).flatten(-2)
 
 
 def qeff_apply_rotary_pos_emb_v4(x, cos, sin, position_ids, rope_dim):
-    """Apply interleaved RoPE to the rope-slice of x, leave the rest untouched.
+    """Apply interleaved RoPE to the *trailing* rope slice of x (V4 layout: [nope | rope]).
 
-    V4 uses partial rotary: only the first `rope_dim` channels get RoPE.
     cos/sin shape: [seq_len, rope_dim//2] (no duplication in V4's RotaryEmbedding).
-    We repeat_interleave to get [seq_len, rope_dim] for the rotation.
+    Match HF: each pair (c_k, c_k) appears at positions (2k, 2k+1). Express that as
+    `stack(c, c, -1).flatten(-2)` instead of `repeat_interleave` for stable ONNX trace.
     """
     cos_pos = cos[position_ids]  # [B, S, rope_dim//2]
     sin_pos = sin[position_ids]  # [B, S, rope_dim//2]
-    cos_pos = cos_pos.repeat_interleave(2, dim=-1).unsqueeze(1)  # [B, 1, S, rope_dim]
-    sin_pos = sin_pos.repeat_interleave(2, dim=-1).unsqueeze(1)  # [B, 1, S, rope_dim]
+    cos_pos = torch.stack([cos_pos, cos_pos], dim=-1).flatten(-2).unsqueeze(1)  # [B, 1, S, rope_dim]
+    sin_pos = torch.stack([sin_pos, sin_pos], dim=-1).flatten(-2).unsqueeze(1)  # [B, 1, S, rope_dim]
 
-    x_rope = x[..., :rope_dim]
-    x_pass = x[..., rope_dim:]
-
-    x_rotated = (x_rope * cos_pos) + (rotate_half_interleaved(x_rope) * sin_pos)
-    if x_pass.shape[-1] == 0:
-        return x_rotated.to(x.dtype)
-    return torch.cat([x_rotated, x_pass], dim=-1).to(x.dtype)
+    # V4 lays each head out as [nope | rope]; rotate only the trailing rope_dim channels.
+    if rope_dim == x.shape[-1]:
+        rotated = (x * cos_pos) + (rotate_half_interleaved(x) * sin_pos)
+        return rotated.to(x.dtype)
+    nope = x[..., :-rope_dim]
+    rope = x[..., -rope_dim:]
+    rotated = (rope * cos_pos) + (rotate_half_interleaved(rope) * sin_pos)
+    return torch.cat([nope, rotated], dim=-1).to(x.dtype)
 
 
 class QEffDeepseekV4RotaryEmbedding(nn.Module):
@@ -178,11 +182,10 @@ class QEffDeepseekV4Attention(DeepseekV4Attention):
         # Attention computation
         attn_weights = torch.matmul(q, key_states.transpose(2, 3)) * self.scaling
 
-        # Add per-head learned sinks as bias to position 0
-        sink_bias = self.sinks.view(1, self.num_heads, 1, 1)
-        attn_weights = attn_weights + sink_bias * (attention_mask == 0).float()[:, :1, :, :1]
-
         if attention_mask is not None:
+            # Add per-head learned sinks as bias to position 0 (where mask is 0 = not masked)
+            sink_bias = self.sinks.view(1, self.num_heads, 1, 1)
+            attn_weights = attn_weights + sink_bias * (attention_mask == 0).float()[:, :1, :, :1]
             attn_weights = torch.where(
                 attention_mask,
                 torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
@@ -192,11 +195,9 @@ class QEffDeepseekV4Attention(DeepseekV4Attention):
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
         attn_output = torch.matmul(attn_weights, value_states)
 
-        # Apply conjugate rotation to undo RoPE on the output rope-slice
-        # (V4's K==V means V also has RoPE; undo via -sin at query position)
-        attn_output = qeff_apply_rotary_pos_emb_v4(
-            attn_output, cos, -sin, position_ids, self.rope_dim
-        )
+        # Undo RoPE on output (V4: V has RoPE baked in; HF reverses before grouped o_proj).
+        # attn_output=[B,H,S,D]; our apply fn expects [B,H,S,D] with cos broadcast on dim 1.
+        attn_output = qeff_apply_rotary_pos_emb_v4(attn_output, cos, -sin, position_ids, self.rope_dim)
 
         # Grouped output projection
         attn_output = attn_output.transpose(1, 2).contiguous()
@@ -214,7 +215,9 @@ class QEffDeepseekV4HyperConnection(DeepseekV4HyperConnection):
 
     def forward(self, hidden_streams: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         hc = self.hc_mult
-        flat = self.input_norm(hidden_streams.flatten(start_dim=2).float())
+        bsz, q_len, _, hidden_size = hidden_streams.shape
+        # Explicit reshape with concrete last-dim so ONNX shape inference resolves it (not flatten() / -1).
+        flat = self.input_norm(hidden_streams.reshape(bsz, q_len, hc * hidden_size).float())
         pre_w, post_w, comb_w = F.linear(flat, self.fn.float()).split([hc, hc, hc * hc], dim=-1)
         pre_b, post_b, comb_b = self.base.split([hc, hc, hc * hc])
         pre_scale, post_scale, comb_scale = self.scale.unbind(0)
@@ -223,12 +226,12 @@ class QEffDeepseekV4HyperConnection(DeepseekV4HyperConnection):
         post = 2 * torch.sigmoid(post_w * post_scale + post_b)
         comb_logits = comb_w.view(*comb_w.shape[:-1], hc, hc) * comb_scale + comb_b.view(hc, hc)
         comb = torch.softmax(comb_logits, dim=-1) + self.hc_eps
-        comb = comb / (torch.einsum("...ij->...j", comb).unsqueeze(-2) + self.hc_eps)
+        comb = comb / (comb.sum(dim=-2).unsqueeze(-2) + self.hc_eps)
         for _ in range(self.hc_sinkhorn_iters - 1):
-            comb = comb / (torch.einsum("...ij->...i", comb).unsqueeze(-1) + self.hc_eps)
-            comb = comb / (torch.einsum("...ij->...j", comb).unsqueeze(-2) + self.hc_eps)
+            comb = comb / (comb.sum(dim=-1).unsqueeze(-1) + self.hc_eps)
+            comb = comb / (comb.sum(dim=-2).unsqueeze(-2) + self.hc_eps)
 
-        collapsed = torch.einsum("bshd,bsh->bsd", hidden_streams, pre).to(hidden_streams.dtype)
+        collapsed = (hidden_streams * pre.unsqueeze(-1)).sum(dim=2).to(hidden_streams.dtype)
         return post, comb, collapsed
 
 
@@ -236,10 +239,11 @@ class QEffDeepseekV4HyperHead(DeepseekV4HyperHead):
     """QEff-adapted HyperHead: final HC-stream collapse."""
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        flat = self.input_norm(x.flatten(2).float())
+        bsz, q_len, hc, hidden_size = x.shape
+        flat = self.input_norm(x.reshape(bsz, q_len, hc * hidden_size).float())
         mixes = F.linear(flat, self.hc_fn.float())
         pre = torch.sigmoid(mixes * self.hc_scale.float() + self.hc_base.float()) + self.eps
-        return torch.einsum("bshd,bsh->bsd", x, pre).to(x.dtype)
+        return (x * pre.unsqueeze(-1)).sum(dim=2).to(x.dtype)
 
 
 class QEffDeepseekV4SparseMoeBlock(DeepseekV4SparseMoeBlock):
@@ -286,7 +290,7 @@ class QEffDeepseekV4SparseMoeBlock(DeepseekV4SparseMoeBlock):
         experts_out = expert_output.view(bs * seq_len, top_k, hidden_size)
         experts_out = experts_out * topk_weights.unsqueeze(-1)
         # M1: einsum aggregation, NOT .sum(dim=1)
-        final = torch.einsum("abc->ac", experts_out)
+        final = experts_out.sum(dim=1)
         return final.to(hidden_states.dtype)
 
     def forward(
