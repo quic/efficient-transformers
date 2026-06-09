@@ -193,8 +193,7 @@ def test_stage3_onnx_export(hf_model, tmp_path):
     """Stage 3: ONNX export succeeds with the MLA-aware cache shape patch."""
     hf_copy = copy.deepcopy(hf_model)
     qeff = QEFFAutoModelForCausalLM(hf_copy, continuous_batching=False, pretrained_model_name_or_path=MODEL_NAME)
-    with _mla_aware_cache_shape():
-        onnx_path = qeff.export(export_dir=str(tmp_path / "onnx"))
+    onnx_path = qeff.export(export_dir=str(tmp_path / "onnx"))
     assert Path(onnx_path).is_file()
 
 
@@ -207,16 +206,15 @@ def test_stage4_compile_and_generate(hf_model, tokenizer, tmp_path):
     hf_copy = copy.deepcopy(hf_model)
     qeff = QEFFAutoModelForCausalLM(hf_copy, continuous_batching=False, pretrained_model_name_or_path=MODEL_NAME)
 
-    with _mla_aware_cache_shape():
-        qpc_path = qeff.compile(
-            prefill_seq_len=PROMPT_LEN,
-            ctx_len=CTX_LEN,
-            num_cores=16,
-            num_devices=1,
-            mxfp6=False,
-            aic_enable_depth_first=False,
-            compile_dir=str(tmp_path / "qpc"),
-        )
+    qpc_path = qeff.compile(
+        prefill_seq_len=PROMPT_LEN,
+        ctx_len=CTX_LEN,
+        num_cores=16,
+        num_devices=1,
+        mxfp6=False,
+        aic_enable_depth_first=False,
+        compile_dir=str(tmp_path / "qpc"),
+    )
     assert Path(qpc_path).is_dir()
     assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
 
