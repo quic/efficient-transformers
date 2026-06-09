@@ -3757,14 +3757,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if self.hash_params.get("blocking_kwargs", None):
             max_blocks = -1
             for blocking_param, num_blocks in self.hash_params.get("blocking_kwargs").__dict__.items():
-                if "head_block_size" in blocking_param:
-                    continue
-                if isinstance(num_blocks, int):
+                if ("num_kv_blocks" in blocking_param or "num_q_blocks" in blocking_param) and isinstance(
+                    num_blocks, int
+                ):
                     max_blocks = max(max_blocks, num_blocks)
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
             if getattr(self.hash_params.get("blocking_kwargs"), "kv_blocking_headpar_split", None):
-                seq_len = seq_len * getattr(self.hash_params.get("blocking_kwargs"), "kv_blocking_headpar_split")
+                seq_len = max_blocks * getattr(self.hash_params.get("blocking_kwargs"), "kv_blocking_headpar_split")
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         kv_cache_shape = get_padding_shape_from_config(

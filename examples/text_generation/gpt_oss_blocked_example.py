@@ -72,7 +72,7 @@ def main():
         print(f"Generated: {exec_info.generated_texts[0]}")
 
     # setup qaic config to enable blocking, ensure 4 or more device ids are passed
-    qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode, "kv_blocking_headpar_split": 0}
+    qaic_config = {"blocking_mode": args.blocking_mode, "kv_blocking_headpar_split": 0}
     model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
 
     # model_blocked._offload_model_weights(True)
