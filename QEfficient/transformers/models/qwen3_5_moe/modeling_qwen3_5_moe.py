@@ -2086,6 +2086,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         inputs.pop("mm_token_type_ids")
         return inputs
 
+
 class QEffQwen3_5MoeExperts(Qwen3_5MoeExperts):
     def __qeff_init__(self):
         # transformers>=5 uses fused gate_up projections. Keep backward-compatible
@@ -2212,6 +2213,7 @@ class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
         router_top_value = router_top_value.to(router_logits.dtype)
         router_scores = router_top_value
         return router_logits, router_scores, router_indices
+
 
 class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
     supports_moe_prefill_blocking = True
