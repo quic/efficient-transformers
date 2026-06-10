@@ -3404,9 +3404,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
-        if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []) or (
-            getattr(self.model.config, "model_type", None) == "glm_moe_dsa"
-        ):
+        if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []):
             if self.model.qaic_config is not None and self.model.qaic_config.get("mla_absorption", None) is not None:
                 mla_absorption = self.model.qaic_config["mla_absorption"]
                 cache_compressed = mla_absorption.get("cache_compressed", False)
