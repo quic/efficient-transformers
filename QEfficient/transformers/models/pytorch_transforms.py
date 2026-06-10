@@ -70,8 +70,10 @@ from transformers.models.glm4_moe.modeling_glm4_moe import (
 )
 from transformers.models.deepseek_v4.modeling_deepseek_v4 import (
     DeepseekV4Attention,
+    DeepseekV4CSACompressor,
     DeepseekV4DecoderLayer,
     DeepseekV4ForCausalLM,
+    DeepseekV4HCACompressor,
     DeepseekV4HyperConnection,
     DeepseekV4HyperHead,
     DeepseekV4Model,
@@ -339,8 +341,10 @@ from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
 )
 from QEfficient.transformers.models.deepseek_v4.modeling_deepseek_v4 import (
     QEffDeepseekV4Attention,
+    QEffDeepseekV4CSACompressor,
     QEffDeepseekV4DecoderLayer,
     QEffDeepseekV4ForCausalLM,
+    QEffDeepseekV4HCACompressor,
     QEffDeepseekV4HyperConnection,
     QEffDeepseekV4HyperHead,
     QEffDeepseekV4Model,
@@ -717,6 +721,8 @@ class KVCacheTransform(ModuleMappingTransform):
         DeepseekV4SparseMoeBlock: QEffDeepseekV4SparseMoeBlock,
         DeepseekV4HyperConnection: QEffDeepseekV4HyperConnection,
         DeepseekV4HyperHead: QEffDeepseekV4HyperHead,
+        DeepseekV4CSACompressor: QEffDeepseekV4CSACompressor,
+        DeepseekV4HCACompressor: QEffDeepseekV4HCACompressor,
         # CodeGen
         CodeGenAttention: QEffCodeGenAttention,
         CodeGenBlock: QEffCodeGenBlock,

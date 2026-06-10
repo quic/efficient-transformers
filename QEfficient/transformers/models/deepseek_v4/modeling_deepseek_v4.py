@@ -10,9 +10,12 @@
 V4 introduces shared-KV MQA (single KV head, K==V), partial interleaved RoPE
 on the trailing ``qk_rope_head_dim`` channels, manifold-constrained
 HyperConnections (mHC) replacing residuals, and a 384-expert hash+top-k MoE
-with sqrtsoftplus noaux_tc routing. The CSA/HCA compressor branches on certain
-layers are not yet wired (stateful, requires the compressed_kvs cache machinery
-from deepseek_v3).
+with sqrtsoftplus noaux_tc routing. CSA/HCA layers additionally compress every
+``compress_rate`` tokens into long-range KV entries; the compressor runs
+static-shape over the layer's cached input prefix (the V slot of the layer's
+single K==V cache pair is repurposed to hold that input). The CSA Lightning
+Indexer's top-k gather is omitted as inert for ctx within
+``index_topk * compress_rate`` (asserted), mirroring glm_moe_dsa's inert DSA.
 """
 
 from typing import List, Optional, Tuple, Type, Union
@@ -22,11 +25,14 @@ import torch.nn.functional as F
 from torch import nn
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
+from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 from transformers.models.deepseek_v4.modeling_deepseek_v4 import (
     DeepseekV4Attention,
     DeepseekV4Config,
+    DeepseekV4CSACompressor,
     DeepseekV4DecoderLayer,
     DeepseekV4ForCausalLM,
+    DeepseekV4HCACompressor,
     DeepseekV4HyperConnection,
     DeepseekV4HyperHead,
     DeepseekV4Model,
@@ -67,7 +73,14 @@ def qeff_apply_rotary_pos_emb_v4(x, cos, sin, position_ids, rope_dim):
 
 
 class QEffDeepseekV4RotaryEmbedding(nn.Module):
-    """Precomputed sin/cos buffers, one pair per RoPE layer-type in config."""
+    """Precomputed sin/cos buffers, one pair per RoPE layer-type in config.
+
+    Mirrors HF ``DeepseekV4RotaryEmbedding`` init: each layer-type's inv_freq and
+    attention-scaling come from ``ROPE_INIT_FUNCTIONS[rope_type]`` (so YARN's
+    interpolated inv_freq + mscale are applied, not a plain linear RoPE). The
+    cos/sin tables are baked once for static gather at ``[position_ids]``; V4's
+    interleaved RoPE keeps them half-width (``qk_rope_head_dim // 2``).
+    """
 
     def __init__(self, config: DeepseekV4Config):
         super().__init__()
@@ -75,27 +88,149 @@ class QEffDeepseekV4RotaryEmbedding(nn.Module):
         rope_params = config.rope_parameters or {}
         self.layer_types = [k for k, v in rope_params.items() if isinstance(v, dict)]
 
+        t = torch.arange(config.max_position_embeddings, dtype=torch.float32)
         for layer_type in self.layer_types:
-            rp = rope_params[layer_type]
-            base = rp.get("rope_theta", config.rope_theta)
-            dim = config.qk_rope_head_dim
-            inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
-            t = torch.arange(config.max_position_embeddings, dtype=torch.float32)
-            freqs = torch.outer(t, inv_freq)
-            scaling = rp.get("attention_factor", 1.0) if rp.get("rope_type") == "yarn" else 1.0
-            self.register_buffer(f"{layer_type}_cos_cached", freqs.cos() * scaling, persistent=False)
-            self.register_buffer(f"{layer_type}_sin_cached", freqs.sin() * scaling, persistent=False)
+            rope_type = rope_params[layer_type].get("rope_type", "default")
+            rope_init_fn = ROPE_INIT_FUNCTIONS[rope_type]
+            inv_freq, attention_scaling = rope_init_fn(config, layer_type=layer_type)
+            freqs = torch.outer(t, inv_freq.to(torch.float32))
+            self.register_buffer(f"{layer_type}_cos_cached", freqs.cos() * attention_scaling, persistent=False)
+            self.register_buffer(f"{layer_type}_sin_cached", freqs.sin() * attention_scaling, persistent=False)
 
     def forward(self, layer_type: str):
         return getattr(self, f"{layer_type}_cos_cached"), getattr(self, f"{layer_type}_sin_cached")
 
 
+def _v4_window_compress(kv, gate, position_bias, kv_norm, compress_rate, head_dim, overlap):
+    """Pool ``compress_rate`` source tokens into one compressed entry (V4 §2.3).
+
+    Shared by HCA (``overlap=False``) and CSA (``overlap=True``). ``kv`` / ``gate``
+    are the per-token compressor projections over the *full gathered prefix*
+    (``[B, S, F]`` with ``F == head_dim`` for HCA, ``2*head_dim`` for CSA). Only
+    the longest window-aligned prefix is pooled; ``n_windows`` is a Python int
+    derived from the static ``S`` dim (constant under ONNX trace). Returns the
+    compressed entries ``[B, n_windows, head_dim]`` (RoPE NOT yet applied) — the
+    caller adds RoPE at the window positions.
+
+    For CSA the two-series Ca/Cb overlap layout (paper §2.3.1) is built within the
+    single forward: window ``w`` reads window ``w-1``'s Ca slice via a static
+    shifted-slice (no cross-call state — valid because the recompute always sees
+    the full prefix, proven ≡ HF incremental).
+    """
+    batch, seq_len = kv.shape[0], kv.shape[1]
+    n_windows = seq_len // compress_rate
+    if n_windows == 0:
+        return kv.new_zeros((batch, 0, head_dim))
+    ratio = compress_rate
+    usable = n_windows * ratio
+    chunk_kv = kv[:, :usable].view(batch, n_windows, ratio, -1)
+    chunk_gate = gate[:, :usable].view(batch, n_windows, ratio, -1) + position_bias
+
+    if not overlap:
+        compressed = kv_norm((chunk_kv * chunk_gate.softmax(dim=2, dtype=torch.float32).to(chunk_kv.dtype)).sum(dim=2))
+        return compressed
+
+    # CSA: Ca = [..., :head_dim] (next window's contribution), Cb = [..., head_dim:]
+    # (current window). Entry w = softmax-gated combine of window w-1's Ca with
+    # window w's Cb over 2*ratio slots. Window 0's first half stays zero-kv /
+    # -inf-gate (softmax weight ~0) — the recompute owns the full prefix so there
+    # is no prior-call overlap to inject.
+    new_kv = chunk_kv.new_zeros((batch, n_windows, 2 * ratio, head_dim))
+    new_gate = chunk_gate.new_full((batch, n_windows, 2 * ratio, head_dim), MIN_MASKED_ATTENTION_VALUE)
+    new_kv[:, :, ratio:] = chunk_kv[..., head_dim:]
+    new_gate[:, :, ratio:] = chunk_gate[..., head_dim:]
+    if n_windows > 1:
+        new_kv[:, 1:, :ratio] = chunk_kv[:, :-1, :, :head_dim]
+        new_gate[:, 1:, :ratio] = chunk_gate[:, :-1, :, :head_dim]
+    compressed = kv_norm((new_kv * new_gate.softmax(dim=2, dtype=torch.float32).to(new_kv.dtype)).sum(dim=2))
+    return compressed
+
+
+class QEffDeepseekV4Compressor:
+    """Shared static-shape forward for CSA/HCA compressors (paper §2.3).
+
+    Stateless windowed compression over the *full gathered prefix* — the layer
+    caches its input so decode always re-derives the complete window history
+    (recompute-from-prefix ≡ HF stateful incremental, verified to 0.0). Emits the
+    compressed KV entries (one per closed window of ``compress_rate`` tokens) and
+    a per-query causal ``block_bias`` over them.
+
+    The Lightning Indexer's top-``index_topk`` selection (CSA only) is omitted: it
+    is mathematically inert while ``compressed_len <= index_topk`` (= ``ctx <=
+    index_topk * compress_rate``), so every compressed entry is selected and the
+    causal mask alone is exact. ``__qeff_init__`` asserts the compile ctx stays in
+    that range. Same posture as ``glm_moe_dsa``'s inert DSA indexer.
+    """
+
+    overlap: bool  # set by the CSA/HCA subclass
+
+    def __qeff_init__(self):
+        # HF compressor stores head_dim / compress_rate / kv_norm / position_bias /
+        # rotary_emb but not `config`; the rope dim lives on the rotary emb's config.
+        self.rope_dim = self.rotary_emb.config.qk_rope_head_dim
+
+    def compress(self, hidden_states, query_positions, cos, sin):
+        """``hidden_states``: full gathered prefix ``[B, S_prefix, hidden]`` (S_prefix
+        is the whole sequence so far, even at decode). ``query_positions``: the
+        current forward's query positions ``[B, q_len]`` used for the causal
+        block-bias. Returns ``(compressed_kv [B, 1, n_windows, head_dim],
+        block_bias [B, 1, q_len, n_windows])`` or ``(zeros[B,1,0,head_dim], None)``
+        when no window has closed yet."""
+        batch, seq_len, _ = hidden_states.shape
+        kv = self.kv_proj(hidden_states)
+        gate = self.gate_proj(hidden_states)
+        compressed = _v4_window_compress(
+            kv, gate, self.position_bias, self.kv_norm, self.compress_rate, self.head_dim, self.overlap
+        )
+        n_windows = compressed.shape[1]
+        if n_windows == 0:
+            return compressed.unsqueeze(1), None
+
+        # The CSA Lightning Indexer's top-index_topk gather is omitted because it is
+        # inert while every compressed entry is selected (n_windows <= index_topk).
+        # Guard the omission so a too-long ctx fails loudly instead of silently wrong.
+        indexer = getattr(self, "indexer", None)
+        if indexer is not None:
+            assert n_windows <= indexer.index_topk, (
+                f"CSA indexer top-k omitted but n_windows={n_windows} > index_topk={indexer.index_topk}; "
+                "ctx exceeds the indexer-inert range — port the top-k gather before compiling at this ctx."
+            )
+
+        # RoPE each window at its deterministic absolute position i*compress_rate.
+        positions = (torch.arange(n_windows) * self.compress_rate).unsqueeze(0).expand(batch, -1)
+        compressed = qeff_apply_rotary_pos_emb_v4(compressed.unsqueeze(1), cos, sin, positions, self.rope_dim)
+        compressed_kv = compressed  # [B, 1, n_windows, head_dim]
+
+        # Per-query causal block-bias: query t may attend compressed entry w only
+        # if w*compress_rate < t+1, i.e. w < (t+1)//compress_rate.
+        entry_indices = torch.arange(n_windows).view(1, 1, 1, -1)
+        causal_threshold = ((query_positions + 1) // self.compress_rate).unsqueeze(1).unsqueeze(-1)  # [B,1,q,1]
+        block_bias = torch.where(
+            entry_indices >= causal_threshold,
+            torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=compressed_kv.dtype),
+            torch.zeros((), dtype=compressed_kv.dtype),
+        )  # [B, 1, q_len, n_windows]
+        return compressed_kv, block_bias
+
+
+class QEffDeepseekV4CSACompressor(QEffDeepseekV4Compressor, DeepseekV4CSACompressor):
+    overlap = True
+
+
+class QEffDeepseekV4HCACompressor(QEffDeepseekV4Compressor, DeepseekV4HCACompressor):
+    overlap = False
+
+
 class QEffDeepseekV4Attention(DeepseekV4Attention):
     """Shared-KV MQA: one KV head, K==V, broadcast to query heads.
 
-    The CSA/HCA compressor branches are not yet wired (stateful, would need
-    the ``compressed_kvs`` cache from deepseek_v3). Decode runs the
-    sliding-window path only.
+    Sliding-attention layers attend the sliding-window K=V cache only. CSA/HCA
+    layers additionally compress every ``compress_rate`` tokens of the layer input
+    into long-range KV entries (``QEffDeepseekV4Compressor``) and concatenate them
+    onto the KV axis with a per-query causal block-bias. The compressor input is
+    cached so decode re-derives the full window history (the ``compressed_kvs``
+    pattern from deepseek_v3, realized over the standard cache with CtxScatter/
+    CtxGather gathers).
     """
 
     def __qeff_init__(self):
@@ -131,25 +266,75 @@ class QEffDeepseekV4Attention(DeepseekV4Attention):
 
         if past_key_value is not None:
             cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
-            kv_cached, _ = past_key_value.update(kv, kv, self.layer_idx, cache_kwargs)
+            if self.compressor is not None:
+                # One cache slot per layer (the export machinery assumes exactly one
+                # (k,v) pair per decoder layer). V4 is K==V MQA, so the V slot is a
+                # redundant copy of K — repurpose it to hold this layer's compressor
+                # INPUT prefix. update() scatters/gathers K and V independently, so
+                # K (head_dim) and V (hidden_size) may differ in width. K_out is the
+                # sliding KV for attention; V_out is the full input prefix the
+                # compressor pools windows over (decode feeds 1 token/step, so the
+                # cache re-derives the whole window history — verified ≡ HF to 0.0).
+                comp_in_4d = hidden_states.view(bsz, q_len, 1, -1).transpose(1, 2)  # [B,1,S,hidden]
+                kv_cached, comp_gathered = past_key_value.update(kv, comp_in_4d, self.layer_idx, cache_kwargs)
+                comp_in = comp_gathered.transpose(1, 2).reshape(bsz, -1, hidden_states.shape[-1])
+            else:
+                kv_cached, _ = past_key_value.update(kv, kv, self.layer_idx, cache_kwargs)
             key_states = value_states = kv_cached
         else:
             key_states = value_states = kv
+            comp_in = hidden_states
 
         key_states = key_states.expand(-1, self.num_heads, -1, -1)
         value_states = value_states.expand(-1, self.num_heads, -1, -1)
 
         attn_weights = torch.matmul(q, key_states.transpose(2, 3)) * self.scaling
 
-        if attention_mask is not None:
-            # Per-head learned sinks added at position 0 (where mask == 0).
-            sink_bias = self.sinks.view(1, self.num_heads, 1, 1)
-            attn_weights = attn_weights + sink_bias * (attention_mask == 0).float()[:, :1, :, :1]
-            attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype), attn_weights
+        block_bias = None
+        if self.compressor is not None:
+            # Pool windows over the full input prefix (cached above), RoPE each
+            # window at its absolute position, score queries against the compressed
+            # entries, and gate with a per-query causal block-bias.
+            compressed_kv, block_bias = self.compressor.compress(
+                comp_in, position_ids, cos_compress, sin_compress
             )
+            n_comp = compressed_kv.shape[2]
+            if n_comp > 0:
+                comp_k = compressed_kv.expand(-1, self.num_heads, -1, -1)
+                comp_scores = torch.matmul(q, comp_k.transpose(2, 3)) * self.scaling
+                attn_weights = torch.cat([attn_weights, comp_scores], dim=-1)
+            else:
+                block_bias = None
 
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
+        if attention_mask is not None:
+            sliding_w = attention_mask.shape[-1]
+            masked = torch.where(
+                attention_mask,
+                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
+                attn_weights[..., :sliding_w],
+            )
+            attn_weights = torch.cat([masked, attn_weights[..., sliding_w:]], dim=-1)
+        if block_bias is not None:
+            # block_bias is [B, 1, S, n_windows]; broadcast-add over the compressed
+            # columns (the trailing n_windows of attn_weights). Head dim 1 → num_heads.
+            n_windows = block_bias.shape[-1]
+            pad = attn_weights.new_zeros(
+                (attn_weights.shape[0], 1, attn_weights.shape[2], attn_weights.shape[-1] - n_windows)
+            )
+            attn_weights = attn_weights + torch.cat([pad, block_bias], dim=-1)
+
+        # Per-head learnable attention sink (gpt-oss style): append the sink as an
+        # extra logit column, softmax over [scores | sink], then drop it. The sink
+        # absorbs probability mass so the real-token weights sum to < 1 — adding it
+        # as a per-row bias instead would cancel under softmax shift-invariance.
+        sinks = self.sinks.reshape(1, self.num_heads, 1, 1).expand(bsz, -1, q_len, -1)
+        combined_logits = torch.cat([attn_weights, sinks], dim=-1)
+        combined_logits = combined_logits - combined_logits.max(dim=-1, keepdim=True).values
+        probs = F.softmax(combined_logits, dim=-1, dtype=torch.float32).to(q.dtype)
+        attn_weights = probs[..., :-1]
+
+        if self.compressor is not None and block_bias is not None and compressed_kv.shape[2] > 0:
+            value_states = torch.cat([value_states, compressed_kv.expand(-1, self.num_heads, -1, -1)], dim=2)
         attn_output = torch.matmul(attn_weights, value_states)
 
         # Undo RoPE on output: V4's K == V means V also carries RoPE; HF
@@ -353,12 +538,21 @@ class QEffDeepseekV4ForCausalLM(DeepseekV4ForCausalLM):
         return {QEffDeepseekV4DecoderLayer}
 
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
-        # Shared-KV MQA: K == V, single head, full head_dim.
-        cache_shape = (batch_size, 1, seq_len, config.head_dim)
-        return [
-            [torch.zeros(cache_shape, dtype=config.torch_dtype), torch.zeros(cache_shape, dtype=config.torch_dtype)]
-            for _ in range(config.num_hidden_layers)
-        ]
+        # One (K, V) pair per layer (the export path assumes exactly one per layer).
+        # K is always the shared-KV MQA sliding cache [B,1,ctx,head_dim]. For CSA/HCA
+        # layers the V slot is repurposed to hold the compressor input prefix
+        # [B,1,ctx,hidden_size] (V4 is K==V, so the real V is a redundant copy of K);
+        # sliding-only layers keep V=K width.
+        layer_types = getattr(config, "layer_types", None) or ["sliding_attention"] * config.num_hidden_layers
+        cache = []
+        for layer_type in layer_types:
+            k_shape = (batch_size, 1, seq_len, config.head_dim)
+            v_width = config.hidden_size if layer_type != "sliding_attention" else config.head_dim
+            v_shape = (batch_size, 1, seq_len, v_width)
+            cache.append(
+                [torch.zeros(k_shape, dtype=config.torch_dtype), torch.zeros(v_shape, dtype=config.torch_dtype)]
+            )
+        return cache
 
     def forward(
         self,
