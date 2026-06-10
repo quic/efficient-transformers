@@ -35,6 +35,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     ReplicateKVHeadTransform,
 )
 from QEfficient.utils import (
+    align_kv_input_names_to_retained_outputs,
     constants,
     create_json,
     create_model_params,
@@ -377,6 +378,16 @@ class QEFFBaseModel(ABC):
                 else:
                     input_names.append(param)
 
+        # When retained-state outputs carry an injected KV-cache prefix
+        # (past_key.0_<prefix>_RetainedState), rename the matching KV inputs (past_key.0 ->
+        # past_key.0_<prefix>) so the compiler pairs and retains them, and carry the dynamic axes over
+        # to the renamed inputs. No-op without a prefix.
+        aligned_input_names = align_kv_input_names_to_retained_outputs(input_names, output_names)
+        if aligned_input_names != input_names:
+            rename_map = {old: new for old, new in zip(input_names, aligned_input_names) if old != new}
+            dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
+            input_names = aligned_input_names
+
         try:
             torch.onnx.export(
                 self.model,
@@ -436,6 +447,7 @@ class QEFFBaseModel(ABC):
         retain_full_kv: Optional[bool] = False,
         qaic_config: Optional[dict] = None,
         moe_prefill_packed_chunk_size: Optional[int] = None,
+        kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ):
         kwargs = {
@@ -443,6 +455,8 @@ class QEFFBaseModel(ABC):
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "retain_full_kv": retain_full_kv,
         }
+        if kv_cache_prefix:
+            kwargs["kv_cache_prefix"] = kv_cache_prefix
 
         if prefill_only:
             kwargs.update(
@@ -775,6 +789,7 @@ class QEFFBaseModel(ABC):
         retain_full_kv: Optional[bool] = None,
         qaic_config: Optional[dict] = None,
         specialization_module_name: Optional[str] = None,
+        kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ) -> str:
         """
@@ -822,6 +837,7 @@ class QEFFBaseModel(ABC):
                     qaic_config=qaic_config,
                     moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                     _layerwise_cache_probe=layerwise_cache_probe,
+                    kv_cache_prefix=kv_cache_prefix,
                     **compiler_options,
                 )
         if QEFFBaseModel._layerwise_active:
