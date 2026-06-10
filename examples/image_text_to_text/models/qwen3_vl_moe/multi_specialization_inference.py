@@ -28,7 +28,7 @@ tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
 # use skip_vision=True, if want to run only text
-skip_vision = False
+skip_vision = True
 
 if skip_vision:  # Only Text
     batch_size = 1

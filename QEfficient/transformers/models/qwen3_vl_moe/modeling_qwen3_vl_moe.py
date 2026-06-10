@@ -22,6 +22,7 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeTextAttention,
     Qwen3VLMoeTextConfig,
     Qwen3VLMoeTextDecoderLayer,
+    Qwen3VLMoeTextExperts,
     Qwen3VLMoeTextModel,
     Qwen3VLMoeTextRotaryEmbedding,
     Qwen3VLMoeTextSparseMoeBlock,
@@ -662,6 +663,27 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         return hidden_states + (visual_embeds * visual_mask)
 
 
+class QEffQwen3VLMoeTextExperts(Qwen3VLMoeTextExperts):
+    def __qeff_init__(self):
+        hidden_dim = self.hidden_dim
+        if self.gate_up_proj.shape[1] == hidden_dim:
+            inter = self.gate_up_proj.shape[-1] // 2
+            all_gate, all_up = torch.split(self.gate_up_proj, inter, dim=-1)
+        else:
+            inter = self.gate_up_proj.shape[1] // 2
+            all_gate, all_up = torch.split(self.gate_up_proj, inter, dim=1)
+            all_gate = all_gate.transpose(1, 2)
+            all_up = all_up.transpose(1, 2)
+
+        all_down = self.down_proj
+        if all_down.shape[1] == hidden_dim:
+            all_down = all_down.transpose(1, 2)
+
+        self.all_gate = nn.Parameter(all_gate.contiguous().detach(), requires_grad=False)
+        self.all_up = nn.Parameter(all_up.contiguous().detach(), requires_grad=False)
+        self.all_down = nn.Parameter(all_down.contiguous().detach(), requires_grad=False)
+
+
 class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, S, H = hidden_states.shape
@@ -674,7 +696,7 @@ class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBloc
         top_w, top_i = torch.topk(router_logits, self.gate.top_k, dim=-1)
         top_w = F.softmax(top_w, dim=-1, dtype=torch.float)
         top_w = top_w.to(hidden_states.dtype)
-        num_experts = getattr(self, "num_experts", self.gate.num_experts)
+        num_experts = getattr(self.experts, "num_experts", self.gate.num_experts)
         routing_weights = torch.zeros((T, num_experts), dtype=x.dtype)
         routing_weights.scatter_(1, top_i, top_w)
 
@@ -683,19 +705,10 @@ class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBloc
         for e in range(num_experts):
             routing_weight = routing_weights[:, e].unsqueeze(-1)
 
-            W_gate_up_e = self.experts.gate_up_proj[e]  # [H, 2I]
-            W_dn_e = self.experts.down_proj[e]  # [I, H]
-            if W_gate_up_e.shape[0] != H:
-                W_gate_up_e = W_gate_up_e.transpose(0, 1)
-            gate_up = x @ W_gate_up_e  # [T, 2I]
-
-            I2 = gate_up.shape[-1] // 2
-            gate = gate_up[:, :I2]  # [T, I]
-            up = gate_up[:, I2:]  # [T, I]
+            gate = x @ self.experts.all_gate[e]
+            up = x @ self.experts.all_up[e]
             intermediate = up * act(gate)
-            if W_dn_e.shape[0] != I2:
-                W_dn_e = W_dn_e.transpose(0, 1)
-            down = intermediate @ W_dn_e
+            down = intermediate @ self.experts.all_down[e]
             masked_down = torch.where(
                 routing_weight > 0, down * routing_weight, torch.zeros_like(expert_out, dtype=down.dtype)
             )  # TODO: verify and remove
@@ -958,16 +971,15 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         top_w = F.softmax(top_w, dim=-1, dtype=torch.float)
         top_w = top_w.to(x.dtype)
         idx = top_i.reshape(-1)
-        w_up = self.experts.gate_up_proj.transpose(1, 2).index_select(0, idx)
-        w_dn = self.experts.down_proj.transpose(1, 2).index_select(0, idx)
+        w_gate = self.experts.all_gate[idx]
+        w_up = self.experts.all_up[idx]
+        w_dn = self.experts.all_down[idx]
 
         top_k = top_i.shape[-1]
         xk = x.unsqueeze(1).expand(-1, top_k, -1).contiguous()
         xk = xk.view(-1, 1, H)
-        gate_up = torch.bmm(xk, w_up)
-        I2 = gate_up.size(-1)
-        half = I2 // 2
-        gate, up = gate_up[..., :half], gate_up[..., half:]
+        gate = torch.bmm(xk, w_gate)
+        up = torch.bmm(xk, w_up)
         intermediate = up * self.experts.act_fn(gate)
         experts_out = torch.bmm(intermediate, w_dn)
         experts_out = experts_out.view(T, top_k, H) * top_w.unsqueeze(-1)
