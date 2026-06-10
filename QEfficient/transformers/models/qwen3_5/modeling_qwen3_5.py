@@ -53,6 +53,8 @@ from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
 
+QWEN3_5_ROPE_CACHE_EXPORT_CAP = 76800
+
 
 class QEffQwen3_5GatedDeltaNetCustomRMSNormAIC(nn.Module):
     """
@@ -215,8 +217,9 @@ class QEffQwen3_5TextRotaryEmbedding(Qwen3_5TextRotaryEmbedding):
 
     def __init__(self, config, device=None):
         super().__init__(config=config, device=device)
+        cached_seq_len = min(int(self.original_max_seq_len), QWEN3_5_ROPE_CACHE_EXPORT_CAP)
         self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len,
+            seq_len=cached_seq_len,
             device=self.inv_freq.device,
             dtype=torch.get_default_dtype(),
         )
@@ -265,7 +268,21 @@ def qeff_apply_interleaved_mrope(freqs, mrope_section):
     return freqs_t
 
 
-def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqueeze_dim=1):
+def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section, dtype=None):
+    invalid_pos_mask = position_ids < 0
+    safe_position_ids = torch.where(invalid_pos_mask, torch.zeros_like(position_ids), position_ids)
+    flat_pos = safe_position_ids.reshape(-1)
+    cos = cos.index_select(0, flat_pos).reshape(*safe_position_ids.shape, cos.shape[-1])
+    sin = sin.index_select(0, flat_pos).reshape(*safe_position_ids.shape, sin.shape[-1])
+    cos = qeff_apply_interleaved_mrope(cos, mrope_section).unsqueeze(1)
+    sin = qeff_apply_interleaved_mrope(sin, mrope_section).unsqueeze(1)
+    if dtype is not None:
+        cos = cos.to(dtype=dtype)
+        sin = sin.to(dtype=dtype)
+    return cos, sin
+
+
+def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, mrope_section=None, unsqueeze_dim=1):
     """Applies Rotary Position Embedding with Multimodal Sections to the query and key tensors (https://qwenlm.github.io/blog/qwen2-vl/).
 
     Explanation:
@@ -298,14 +315,13 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, mrope_section, unsqu
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
 
-    cos = cos[position_ids]
-    sin = sin[position_ids]
-
-    cos = qeff_apply_interleaved_mrope(cos, mrope_section)
-    sin = qeff_apply_interleaved_mrope(sin, mrope_section)
-
-    cos = cos.unsqueeze(unsqueeze_dim)
-    sin = sin.unsqueeze(unsqueeze_dim)
+    if position_ids is not None:
+        cos = cos[position_ids]
+        sin = sin[position_ids]
+        cos = qeff_apply_interleaved_mrope(cos, mrope_section)
+        sin = qeff_apply_interleaved_mrope(sin, mrope_section)
+        cos = cos.unsqueeze(unsqueeze_dim)
+        sin = sin.unsqueeze(unsqueeze_dim)
 
     # Keep half or full tensor for later concatenation
     rotary_dim = cos.shape[-1]
@@ -379,12 +395,13 @@ class QEffQwen3_5Attention(Qwen3_5Attention):
     """
 
     def __qeff_init__(self):
-        self.rotary_emb = QEffQwen3_5TextRotaryEmbedding(config=self.config)
+        # RoPE tables are prepared once in the text model and passed down.
+        return
 
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]],
         attention_mask: Optional[torch.Tensor],
         past_key_values: Optional[QEffQwen3_5DynamicCache] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -405,14 +422,10 @@ class QEffQwen3_5Attention(Qwen3_5Attention):
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        kv_seq_len = key_states.shape[-2]
-        kv_seq_len = past_key_values.get_seq_length(self.layer_idx, cache_position)
-
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-
-        query_states, key_states = qeff_apply_rotary_pos_emb(
-            query_states, key_states, cos, sin, position_ids[1:], self.rotary_emb.mrope_section
-        )
+        if position_embeddings is None:
+            raise ValueError("`position_embeddings` must be provided for QEffQwen3_5Attention.")
+        cos, sin = position_embeddings
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
@@ -919,6 +932,16 @@ class QEffQwen3_5DecoderLayer(Qwen3_5DecoderLayer):
 
 
 class QEffQwen3_5TextModel(Qwen3_5TextModel):
+    def __qeff_init__(self):
+        self.rotary_emb = QEffQwen3_5TextRotaryEmbedding(config=self.config)
+        rope_rows = min(int(self.rotary_emb.sin_cached.shape[0]), QWEN3_5_ROPE_CACHE_EXPORT_CAP)
+        self.sin_cached = torch.nn.Parameter(
+            (self.rotary_emb.sin_cached[:rope_rows] * self.rotary_emb.attention_scaling).contiguous()
+        )
+        self.cos_cached = torch.nn.Parameter(
+            (self.rotary_emb.cos_cached[:rope_rows] * self.rotary_emb.attention_scaling).contiguous()
+        )
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -968,8 +991,12 @@ class QEffQwen3_5TextModel(Qwen3_5TextModel):
 
         hidden_states = inputs_embeds
 
-        position_embeddings = self.rotary_emb(hidden_states, position_ids[1:])
-        # position_embeddings = None
+        rope_parameters = getattr(self.config, "rope_parameters", {}) or {}
+        mrope_section = rope_parameters.get("mrope_section", [11, 11, 10])
+        cos, sin = qeff_prepare_mrope_cos_sin(
+            self.cos_cached, self.sin_cached, position_ids[1:], mrope_section, dtype=hidden_states.dtype
+        )
+        position_embeddings = (cos, sin)
         all_hidden_states = () if output_hidden_states else None
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             if output_hidden_states:
