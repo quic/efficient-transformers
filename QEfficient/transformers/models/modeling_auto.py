@@ -1595,7 +1595,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         else:
             offload_pt_weights = kwargs.get("offload_pt_weights", True)
 
-        if not skip_lang and self.lang_model.onnx_path is None:
+        if not skip_lang:
             self.lang_model.export(
                 inputs["lang"],
                 output_names["lang"],

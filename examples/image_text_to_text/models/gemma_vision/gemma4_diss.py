@@ -56,7 +56,6 @@ if not skip_vision:
         mxfp6_matmul=True,
         aic_enable_depth_first=True,
         skip_vision=skip_vision,
-        node_precision_info=True,
         split_model_io=True,
         skip_lang=True,
     )
