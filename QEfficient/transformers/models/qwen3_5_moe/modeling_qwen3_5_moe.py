@@ -663,12 +663,12 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         decay_mask = decay_mask * (~mask_strict).to(decay_mask.dtype)  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
-        for i in range(1, chunk_size):
-            row = attn[..., i, :i].clone()
-            sub = attn[..., :i, :i].clone()
-            # attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
-            attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
-        attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
+        # for i in range(1, chunk_size):
+        #     row = attn[..., i, :i].clone()
+        #     sub = attn[..., :i, :i].clone()
+        #     # attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
+        #     attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
+        # attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
 
         ## Approximation code ##
         # A = attn
@@ -695,18 +695,18 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # attn = L
 
         # Horners Method
-        # A = attn.masked_fill(mask, 0)
-        # acc_dtype = torch.float32
-        # A64 = A.to(acc_dtype)
-        # I64 = torch.eye(chunk_size, device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
-        # strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+        A = attn.masked_fill(mask, 0)
+        acc_dtype = torch.float32
+        A64 = A.to(acc_dtype)
+        I64 = torch.eye(chunk_size, device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
 
-        # K = chunk_size - 1
-        # S64 = I64.clone()
-        # for _ in range(K):
-        #     S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
+        K = chunk_size - 1
+        S64 = I64.clone()
+        for _ in range(K):
+            S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
 
-        # attn = S64.to(A.dtype)
+        attn = S64.to(A.dtype)
 
         # Newton-Schulz
 

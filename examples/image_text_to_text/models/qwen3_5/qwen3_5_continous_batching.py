@@ -42,6 +42,7 @@ qeff_model.compile(
     height=354,
     width=536,
     mxfp6_matmul=True,
+    split_model_io=True,
     mxint8_kv_cache=True,
     aic_enable_depth_first=True,
     mos=1,

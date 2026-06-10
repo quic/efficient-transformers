@@ -14,12 +14,12 @@ from transformers import AutoConfig, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-model_id = "Qwen/Qwen3.5-0.8B"
+model_id = "Qwen/Qwen3.5-27B"
 config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
 config.vision_config.depth = 4
-config.text_config.num_hidden_layers = 2
+# config.text_config.num_hidden_layers = 2
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config, dtype=torch.float32
@@ -49,8 +49,9 @@ if skip_vision:
         prefill_seq_len=PREFILL_SEQ_LEN,
         ctx_len=CTX_LEN,
         num_cores=16,
-        num_devices=1,
+        num_devices=4,
         mxfp6_matmul=True,
+        split_model_io=True,
         mxint8_kv_cache=False,
         aic_enable_depth_first=False,
         skip_vision=True,
@@ -121,6 +122,7 @@ else:
         height=354,
         width=536,
         mxfp6_matmul=False,
+        split_model_io=True,
         mxint8_kv_cache=False,
         aic_enable_depth_first=False,
         mos=1,
