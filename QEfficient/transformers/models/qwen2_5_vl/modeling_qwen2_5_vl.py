@@ -940,10 +940,12 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
         IMAGE_FACTOR = constants.IMAGE_FACTOR_QWEN_2_5
         IMAGE_MIN_TOKEN_NUM = constants.IMAGE_MIN_TOKEN_NUM
         IMAGE_MAX_TOKEN_NUM = constants.IMAGE_MAX_TOKEN_NUM
+        min_pixels = IMAGE_MIN_TOKEN_NUM * IMAGE_FACTOR**2
+        max_pixels = IMAGE_MAX_TOKEN_NUM * IMAGE_FACTOR**2
         mm_processor_kwargs = compiler_options.pop("mm_processor_kwargs", None)
         if mm_processor_kwargs:
-            min_pixels = mm_processor_kwargs.get("min_pixels", IMAGE_MIN_TOKEN_NUM * IMAGE_FACTOR**2)
-            max_pixels = mm_processor_kwargs.get("max_pixels", IMAGE_MAX_TOKEN_NUM * IMAGE_FACTOR**2)
+            min_pixels = mm_processor_kwargs.get("min_pixels", min_pixels)
+            max_pixels = mm_processor_kwargs.get("max_pixels", max_pixels)
 
         vision = []
         max_vision_size = 0
