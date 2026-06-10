@@ -972,13 +972,14 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                     "resolution."
                 )
             else:
-                assert vision_size * f < user_vision_size, (
-                    f"Computed vision_size of {vision_size * f} tokens "
-                    f"(vision_size={vision_size}, num_frames={f}) for image resolution "
-                    f"(width={w}, height={h}) cannot exceed the provided "
-                    f"vision_size={user_vision_size}. Please adjust the image resolution or "
-                    "increase the vision_size."
-                )
+                if vision_size * f > user_vision_size:
+                    logger.warning_once(
+                        f"Computed vision_size of {vision_size * f} tokens "
+                        f"(vision_size={vision_size}, num_frames={f}) for image resolution "
+                        f"(width={w}, height={h}) exceeds the provided "
+                        f"vision_size={user_vision_size}. "
+                        f"Vision embedding needs to be chunked during prefill."
+                    )
 
             vision.append(
                 {
