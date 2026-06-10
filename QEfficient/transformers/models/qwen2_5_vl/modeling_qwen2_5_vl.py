@@ -976,9 +976,9 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                     logger.warning_once(
                         f"Computed vision_size of {vision_size * f} tokens "
                         f"(vision_size={vision_size}, num_frames={f}) for image resolution "
-                        f"(width={w}, height={h}) exceed the provided "
+                        f"(width={w}, height={h}) exceeds the provided "
                         f"vision_size={user_vision_size}. "
-                        f"Vision embedding need to be chunked during prefill."
+                        f"Vision embedding needs to be chunked during prefill."
                     )
 
             vision.append(
