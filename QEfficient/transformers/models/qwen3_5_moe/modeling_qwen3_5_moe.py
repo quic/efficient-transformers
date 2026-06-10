@@ -1794,13 +1794,13 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         image_factor = constants.IMAGE_FACTOR_QWEN_3
         image_min_token_num = constants.IMAGE_MIN_TOKEN_NUM
         image_max_token_num = constants.IMAGE_MAX_TOKEN_NUM
-        mm_processor_kwargs = compiler_options.pop("mm_processor_kwargs", None)
+        # mm_processor_kwargs = compiler_options.pop("mm_processor_kwargs", None)
         # if mm_processor_kwargs:
         #     min_pixels = mm_processor_kwargs.get("min_pixels", image_min_token_num * image_factor**2)
         #     max_pixels = mm_processor_kwargs.get("max_pixels", image_max_token_num * image_factor**2)
         min_pixels = image_min_token_num * image_factor**2
         max_pixels = image_max_token_num * image_factor**2
-        
+
         vision = []
         max_vision_size = 0
         user_vision_size = compiler_options.pop("vision_size", None)
@@ -2086,18 +2086,6 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         inputs.pop("mm_token_type_ids")
         return inputs
 
-
-class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
-    def forward(self, hidden_states):
-        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
-        router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
-        router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1)
-        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
-        router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
-        router_top_value = router_top_value.to(router_logits.dtype)
-        router_scores = router_top_value
-        return router_logits, router_scores, router_indices
-
 class QEffQwen3_5MoeExperts(Qwen3_5MoeExperts):
     def __qeff_init__(self):
         # transformers>=5 uses fused gate_up projections. Keep backward-compatible
@@ -2224,7 +2212,6 @@ class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
         router_top_value = router_top_value.to(router_logits.dtype)
         router_scores = router_top_value
         return router_logits, router_scores, router_indices
-
 
 class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
     supports_moe_prefill_blocking = True
