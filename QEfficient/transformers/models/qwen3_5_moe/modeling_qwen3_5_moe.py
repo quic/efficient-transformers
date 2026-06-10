@@ -328,7 +328,7 @@ def qeff_apply_interleaved_mrope(freqs, mrope_section):
     return freqs_t
 
 
-def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section):
+def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section, dtype=None):
     invalid_pos_mask = position_ids < 0
     safe_position_ids = torch.where(invalid_pos_mask, torch.zeros_like(position_ids), position_ids)
     flat_pos = safe_position_ids.reshape(-1)
@@ -336,6 +336,9 @@ def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section):
     sin = sin.index_select(0, flat_pos).reshape(*safe_position_ids.shape, sin.shape[-1])
     cos = qeff_apply_interleaved_mrope(cos, mrope_section).unsqueeze(1)
     sin = qeff_apply_interleaved_mrope(sin, mrope_section).unsqueeze(1)
+    if dtype is not None:
+        cos = cos.to(dtype=dtype)
+        sin = sin.to(dtype=dtype)
     return cos, sin
 
 
@@ -1089,7 +1092,9 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
         rope_parameters = getattr(self.config, "rope_parameters", {}) or {}
         mrope_section = rope_parameters.get("mrope_section", [11, 11, 10])
-        cos, sin = qeff_prepare_mrope_cos_sin(self.cos_cached, self.sin_cached, position_ids[1:], mrope_section)
+        cos, sin = qeff_prepare_mrope_cos_sin(
+            self.cos_cached, self.sin_cached, position_ids[1:], mrope_section, dtype=hidden_states.dtype
+        )
         position_embeddings = (cos, sin)
         all_hidden_states = () if output_hidden_states else None
         layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
