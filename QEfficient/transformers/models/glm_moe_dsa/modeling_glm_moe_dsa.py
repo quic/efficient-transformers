@@ -5,44 +5,31 @@
 #
 # -----------------------------------------------------------------------------
 
-"""
-QEfficient modeling for GLM-5.1 (``glm_moe_dsa`` / ``GlmMoeDsaForCausalLM``).
+"""QEfficient modeling for ``glm_moe_dsa`` (zai-org/GLM-5.1).
 
-Architecture (native HF, transformers >= 5.4.0):
-  - Multi-head Latent Attention (MLA), DeepSeek-V3 style:
-        x -> q_a_proj -> RMSNorm -> q_b_proj -> split(q_nope, q_pe) -> RoPE(q_pe)
-        x -> kv_a_proj_with_mqa -> split(kv_compressed, k_pe) -> RMSNorm(kv_compressed)
-                                                              -> kv_b_proj -> (k_nope, value)
-    Cache holds the fully-expanded key/value (per-head qk_head_dim / v_head_dim) — the same
-    convention the HF reference uses, so it plugs straight into QEffDynamicCache.
-  - Grouped top-k MoE (256 routed experts, top-8, 1 shared expert). With ``n_group == 1`` the
-    group-masking collapses to a plain global top-k, so we route globally and aggregate the
-    chosen experts with a batched BMM (M3) + einsum reduction (M1).
-  - DSA (Disentangled Sparse Attention) indexer: OMITTED for this integration. The indexer keeps
-    the ``index_topk`` highest-scoring keys per query; with ``index_topk == 2048`` and a compiled
-    ``ctx_len <= 2048`` every key is always retained, so the sparse mask is all-zeros and attention
-    is identical to dense causal MLA. See modeling-summary.md for the ctx bound. If a future compile
-    uses ctx_len > index_topk, the indexer must be added back (see HF GlmMoeDsaIndexer).
+MLA attention (DeepSeek-V3 family) + grouped top-k MoE (256 routed × top-8,
+n_group=1 collapses to global top-k). The DSA indexer is omitted: with
+``index_topk=2048`` and a compiled ``ctx_len <= 2048`` every key is retained,
+so the sparse mask is all-zeros and attention is identical to dense MLA. Any
+``ctx_len > 2048`` requires reintroducing ``GlmMoeDsaIndexer``.
 
-Reference QEff files: deepseek_v3 (MLA) and glm4_moe (grouped-topk MoE + precomputed RoPE).
+Reference siblings: ``glm4_moe`` (grouped-topk MoE + chunked-prefill kernel),
+``deepseek_v3`` (MLA).
 """
 
 from typing import List, Optional, Tuple, Type, Union
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
     GlmMoeDsaAttention,
-    GlmMoeDsaConfig,
     GlmMoeDsaDecoderLayer,
     GlmMoeDsaForCausalLM,
     GlmMoeDsaModel,
     GlmMoeDsaMoE,
-    repeat_kv,
-    rotate_half,
+    GlmMoeDsaRotaryEmbedding,
 )
 from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs
@@ -50,31 +37,25 @@ from transformers.utils import TransformersKwargs
 from QEfficient.blocking.attention_blocking import past_key_value_update
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
+    _cumsum_scatter_gather_update_expert_blocked,
+    eager_attention_forward,
+    qeff_apply_precomputed_rotary_pos_emb,
+)
 
 
-class QEffGlmMoeDsaRotaryEmbedding(nn.Module):
-    """Precomputed (static) RoPE cache for GLM-MoE-DSA.
+class QEffGlmMoeDsaRotaryEmbedding(GlmMoeDsaRotaryEmbedding):
+    """Static cos/sin cache; only the rope slice (``qk_rope_head_dim``) is rotated."""
 
-    ``glm_moe_dsa`` uses the default split-half (NeoX/Llama) RoPE applied only to the rope slice
-    (``qk_rope_head_dim`` dims). ``rope_theta`` and the rotary dim are read from the config.
-    """
-
-    def __init__(self, config: GlmMoeDsaConfig, device=None):
-        super().__init__()
-        self.config = config
-        self.dim = config.qk_rope_head_dim
-        self.base = config.rope_parameters["rope_theta"]
-        self.max_position_embeddings = config.max_position_embeddings
-        self.attention_scaling = 1.0  # rope_type == "default"
-
-        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.int64).float() / self.dim))
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self._set_cos_sin_cache(seq_len=self.max_position_embeddings, device=inv_freq.device, dtype=torch.get_default_dtype())
+    def __init__(self, config, device=None):
+        super().__init__(config=config)
+        self._set_cos_sin_cache(
+            seq_len=config.max_position_embeddings, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+        )
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
-        t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.int64).type_as(self.inv_freq)
+        t = torch.arange(seq_len, device=device, dtype=torch.int64).type_as(self.inv_freq)
         freqs = torch.outer(t, self.inv_freq)
         emb = torch.cat((freqs, freqs), dim=-1)
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
@@ -89,63 +70,12 @@ class QEffGlmMoeDsaRotaryEmbedding(nn.Module):
         )
 
 
-def qeff_apply_precomputed_rotary_pos_emb(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    cos: torch.Tensor,
-    sin: torch.Tensor,
-    rotary_dim: int,
-):
-    """Split-half RoPE on the first ``rotary_dim`` channels; pass the rest through unchanged.
-
-    Here q/k are the rope slices (q_pe / k_pe) whose head dim equals ``rotary_dim`` == qk_rope_head_dim,
-    so ``q_pass`` / ``k_pass`` are empty — but we keep the general form to mirror glm4_moe.
-    """
-    q_rot, q_pass = q[..., :rotary_dim], q[..., rotary_dim:]
-    k_rot, k_pass = k[..., :rotary_dim], k[..., rotary_dim:]
-    half_dim = rotary_dim // 2
-
-    q_half = torch.cat((-q_rot[..., half_dim:], q_rot[..., :half_dim]), dim=-1)
-    k_half = torch.cat((-k_rot[..., half_dim:], k_rot[..., :half_dim]), dim=-1)
-
-    q_embed = (q_rot * cos) + (q_half * sin)
-    k_embed = (k_rot * cos) + (k_half * sin)
-
-    q_embed = torch.cat([q_embed, q_pass], dim=-1)
-    k_embed = torch.cat([k_embed, k_pass], dim=-1)
-    return q_embed.to(q.dtype), k_embed.to(k.dtype)
-
-
-def eager_attention_forward(
-    module: nn.Module,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
-    scaling: float,
-    **kwargs: Unpack[TransformersKwargs],
-):
-    key_states = repeat_kv(key, module.num_key_value_groups)
-    value_states = repeat_kv(value, module.num_key_value_groups)
-
-    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-    if attention_mask is not None:
-        # U1 (masked value via fork constant) + U3 (torch.where, no boolean indexing)
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype), attn_weights
-        )
-
-    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-    attn_output = torch.matmul(attn_weights, value_states)
-    attn_output = attn_output.transpose(1, 2).contiguous()
-    return attn_output, attn_weights
-
-
 class QEffGlmMoeDsaAttention(GlmMoeDsaAttention):
-    """MLA attention with precomputed RoPE, KV-cache update and torch.where masking.
+    """MLA attention with precomputed RoPE + QEffDynamicCache update.
 
-    Caches the fully-expanded key/value (matching the HF reference), so QEffDynamicCache works
-    unchanged. The DSA indexer is intentionally not invoked — see module docstring.
+    Caches fully-expanded per-head K/V (matching the HF reference), so the
+    standard cache works unchanged. The DSA indexer is intentionally not
+    invoked — see module docstring.
     """
 
     def __qeff_init__(self):
@@ -165,29 +95,24 @@ class QEffGlmMoeDsaAttention(GlmMoeDsaAttention):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         bsz, q_len, _ = hidden_states.size()
 
-        # ===== Query (LoRA) path =====
         q = self.q_b_proj(self.q_a_layernorm(self.q_a_proj(hidden_states)))
-        q = q.view(bsz, q_len, self.num_heads, self.qk_head_dim).transpose(1, 2)  # [B, H, S, qk_head_dim]
+        q = q.view(bsz, q_len, self.num_heads, self.qk_head_dim).transpose(1, 2)
         q_nope, q_pe = torch.split(q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
 
-        # ===== KV (MLA compressed) path =====
-        compressed_kv = self.kv_a_proj_with_mqa(hidden_states)  # [B, S, kv_lora_rank + rope]
+        compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
         k_compressed, k_pe = torch.split(compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
-        k_pe = k_pe.view(bsz, q_len, 1, self.qk_rope_head_dim).transpose(1, 2)  # [B, 1, S, rope]
+        k_pe = k_pe.view(bsz, q_len, 1, self.qk_rope_head_dim).transpose(1, 2)
 
         kv = self.kv_b_proj(self.kv_a_layernorm(k_compressed))
         kv = kv.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim).transpose(1, 2)
         k_nope, value_states = torch.split(kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
 
-        # ===== RoPE (precomputed, split-half over the rope slice) =====
-        rotary_dim = self.qk_rope_head_dim
-        q_pe, k_pe = qeff_apply_precomputed_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached, rotary_dim)
+        q_pe, k_pe = qeff_apply_precomputed_rotary_pos_emb(q_pe, k_pe, cos_cached, sin_cached, self.qk_rope_head_dim)
 
-        query_states = torch.cat([q_nope, q_pe], dim=-1)  # [B, H, S, qk_head_dim]
+        query_states = torch.cat([q_nope, q_pe], dim=-1)
         k_pe = k_pe.expand(-1, self.num_heads, -1, -1)
-        key_states = torch.cat([k_nope, k_pe], dim=-1)  # [B, H, S, qk_head_dim]
+        key_states = torch.cat([k_nope, k_pe], dim=-1)
 
-        # ===== KV cache update (handles CCL mask slice — C1) =====
         if past_key_value is not None:
             key_states, value_states, attention_mask, _ = past_key_value_update(
                 module=self,
@@ -210,28 +135,22 @@ class QEffGlmMoeDsaAttention(GlmMoeDsaAttention):
 
 
 class QEffGlmMoeDsaMoE(GlmMoeDsaMoE):
-    """Grouped top-k MoE. With n_group == 1 the grouping is a no-op, so we route globally and
-    aggregate the chosen experts via batched BMM (M3) and einsum reduction (M1)."""
+    """Grouped top-k MoE (n_group=1 → global top-k); batched-BMM aggregation."""
 
     def __qeff_init__(self):
-        # GlmMoeDsaNaiveMoe stores experts as 3D tensors: gate_up_proj [E, 2*I, H], down_proj [E, H, I].
-        gate_proj, up_proj = self.experts.gate_up_proj.chunk(2, dim=1)  # each [E, I, H]
-        self.all_gate_proj = torch.nn.Parameter(gate_proj.transpose(1, 2).contiguous())  # [E, H, I]
-        self.all_up_proj = torch.nn.Parameter(up_proj.transpose(1, 2).contiguous())  # [E, H, I]
-        self.all_down_proj = torch.nn.Parameter(self.experts.down_proj.transpose(1, 2).contiguous())  # [E, I, H]
+        gate_proj, up_proj = self.experts.gate_up_proj.chunk(2, dim=1)
+        self.all_gate_proj = nn.Parameter(gate_proj.transpose(1, 2).contiguous())
+        self.all_up_proj = nn.Parameter(up_proj.transpose(1, 2).contiguous())
+        self.all_down_proj = nn.Parameter(self.experts.down_proj.transpose(1, 2).contiguous())
         self.act_fn = self.experts.act_fn
         self.num_experts = self.experts.num_experts
 
     def route_tokens_to_experts(self, router_logits):
-        # router_logits: [T, E] (raw linear output from the gate)
         router_scores = router_logits.sigmoid()
         scores_for_choice = router_scores + self.gate.e_score_correction_bias.unsqueeze(0)
-        # n_group == 1 / topk_group == 1 → the single group is always selected, so grouped top-k
-        # is identical to a global top-k over all experts.
-        topk_indices = torch.topk(scores_for_choice, k=self.top_k, dim=-1, sorted=False)[1]  # [T, top_k]
-        topk_weights = router_scores.gather(1, topk_indices)  # weights from un-biased scores
+        topk_indices = torch.topk(scores_for_choice, k=self.top_k, dim=-1, sorted=False)[1]
+        topk_weights = router_scores.gather(1, topk_indices)
         if self.norm_topk_prob:
-            # M1/M5: einsum reduction instead of .sum (subfunction-safe)
             denominator = torch.einsum("ab->a", topk_weights).unsqueeze(-1) + 1e-20
             topk_weights = topk_weights / denominator
         topk_weights = topk_weights * self.routed_scaling_factor
@@ -251,7 +170,6 @@ class QEffGlmMoeDsaMoE(GlmMoeDsaMoE):
         expert_output = torch.bmm(hidden, down_proj)
         experts_out = expert_output.view(bs_seq, self.top_k, self.config.hidden_size)
         experts_out = experts_out * topk_weights.unsqueeze(-1)
-        # M1: einsum aggregation over the top-k axis (NOT .sum(dim=1))
         final_hidden_states = torch.einsum("abc->ac", experts_out)
         return final_hidden_states.type(hidden_states.dtype)
 
@@ -267,12 +185,6 @@ class QEffGlmMoeDsaMoE(GlmMoeDsaMoE):
 
 
 class QEffGlmMoeDsaDecoderLayer(GlmMoeDsaDecoderLayer):
-    """Pass-through layer threading the QEff attention signature + precomputed RoPE.
-
-    ``self.mlp`` is either the dense GlmMoeDsaMLP (first ``first_k_dense_replace`` layers) or the
-    transformed QEffGlmMoeDsaMoE — both take a single hidden_states argument.
-    """
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -309,12 +221,12 @@ class QEffGlmMoeDsaDecoderLayer(GlmMoeDsaDecoderLayer):
 
 
 class QEffGlmMoeDsaModel(GlmMoeDsaModel):
-    """L1: single precomputed RoPE at model level, indexed by position_ids and passed to layers."""
+    """Single model-level precomputed RoPE indexed by position_ids."""
 
     def __qeff_init__(self):
         self.rotary_emb = QEffGlmMoeDsaRotaryEmbedding(config=self.config)
-        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
-        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
+        self.sin_cached = nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
+        self.cos_cached = nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
 
     def forward(
         self,
@@ -354,7 +266,7 @@ class QEffGlmMoeDsaModel(GlmMoeDsaModel):
 
         hidden_states = inputs_embeds
         all_hidden_states = () if output_hidden_states else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)  # [B, 1, S, rope]
+        sin = self.sin_cached[position_ids].unsqueeze(1)
         cos = self.cos_cached[position_ids].unsqueeze(1)
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
@@ -377,9 +289,6 @@ class QEffGlmMoeDsaModel(GlmMoeDsaModel):
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
-        # ONNX-tracer compatibility: torch.onnx.export's _flatten() rejects custom
-        # cache objects in the output; convert back to the legacy list-of-list form.
-        # Same shape DeepseekV3 uses (modeling_deepseek.py:1097).
         if past_key_values is not None and hasattr(past_key_values, "to_legacy_cache"):
             past_key_values = past_key_values.to_legacy_cache()
 
@@ -395,27 +304,13 @@ class QEffGlmMoeDsaForCausalLM(GlmMoeDsaForCausalLM):
         return {QEffGlmMoeDsaDecoderLayer}
 
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
-        # MLA K/V have asymmetric per-head dims:
-        #   K = qk_nope_head_dim + qk_rope_head_dim
-        #   V = v_head_dim
-        # The default symmetric kv_cache_shape in modeling_auto._export_inputs
-        # collapses both to head_dim, which is wrong here.
-        k_shape = (
-            batch_size,
-            config.num_attention_heads,
-            seq_len,
-            config.qk_nope_head_dim + config.qk_rope_head_dim,
-        )
+        # MLA: K = qk_nope_head_dim + qk_rope_head_dim, V = v_head_dim (asymmetric).
+        k_shape = (batch_size, config.num_attention_heads, seq_len, config.qk_nope_head_dim + config.qk_rope_head_dim)
         v_shape = (batch_size, config.num_attention_heads, seq_len, config.v_head_dim)
-        dummy_cache = []
-        for _ in range(config.num_hidden_layers):
-            dummy_cache.append(
-                [
-                    torch.zeros(k_shape, dtype=config.torch_dtype),
-                    torch.zeros(v_shape, dtype=config.torch_dtype),
-                ]
-            )
-        return dummy_cache
+        return [
+            [torch.zeros(k_shape, dtype=config.torch_dtype), torch.zeros(v_shape, dtype=config.torch_dtype)]
+            for _ in range(config.num_hidden_layers)
+        ]
 
     def forward(
         self,
@@ -444,7 +339,6 @@ class QEffGlmMoeDsaForCausalLM(GlmMoeDsaForCausalLM):
         )
 
         hidden_states = outputs.last_hidden_state
-        # U2: INT32 logit gather — keep only the last valid position per sequence.
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states).to(hidden_states.dtype)
@@ -457,60 +351,29 @@ class QEffGlmMoeDsaForCausalLM(GlmMoeDsaForCausalLM):
         )
 
 
-# Reuse the canonical chunked-blocked expert kernel from the sibling MoE arch — same
-# expert weight layout (`all_{gate,up,down}_proj` in `[E,H,I]` / `[E,I,H]`).
-from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
-    _cumsum_scatter_gather_update_expert_blocked,
-)
-
-
 class QEffPrefillChunkedGlmMoeDsaMoE(QEffGlmMoeDsaMoE):
-    """Prefill-only chunked variant of the GLM-MoE-DSA MoE block.
-
-    Activated by ``PrefillOnlyChunkedTransform`` for the prefill QPC of a disaggregated
-    compile. Splits the routed experts across ``expert_blocking_num_nsp`` virtual slots and
-    streams tokens through them in packed chunks of ``expert_blocking_packed_chunk_size``.
-    Both attributes are injected by ``modeling_auto`` after the transform applies.
-
-    The expert-side math is identical to ``QEffGlm4MoeMoE``'s prefill-chunked path because
-    the routed-expert weight layout is the same (3D fused gate_up_proj / down_proj). The
-    only GLM-MoE-DSA specifics are kept in the parent class: the sigmoid-gated router with
-    ``e_score_correction_bias`` for selection (un-biased scores for weighting), and the
-    shared-experts add at the end of ``forward``.
-    """
+    """Prefill-only chunked MoE. Reuses ``glm4_moe``'s ``_cumsum_scatter_gather_update_expert_blocked``
+    kernel (same expert weight layout)."""
 
     supports_moe_prefill_blocking = True
 
-    def _forward_expert_blocked(
-        self,
-        hidden_states: torch.Tensor,
-        topk_indices: torch.Tensor,
-        topk_weights: torch.Tensor,
-    ) -> torch.Tensor:
+    def _forward_expert_blocked(self, hidden_states, topk_indices, topk_weights):
         T, H = hidden_states.shape
         num_experts = self.num_experts
         num_nsp = self.expert_blocking_num_nsp
         if num_experts % num_nsp != 0:
-            raise ValueError(
-                f"num_experts ({num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})"
-            )
+            raise ValueError(f"num_experts ({num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})")
 
         routing_weights = hidden_states.new_zeros((T, num_experts))
         routing_weights.scatter_(1, topk_indices, topk_weights)
 
         local_experts = num_experts // num_nsp
-        rw = (
-            routing_weights.transpose(0, 1)
-            .contiguous()
-            .view(local_experts, num_nsp, T)
-            .transpose(0, 1)
-            .contiguous()
-        )
+        rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
         W_g = self.all_gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
         W_u = self.all_up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
         W_d = self.all_down_proj.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
         expert_out = hidden_states.new_zeros((num_nsp, T, H))
-        routing_weights_unsqueezed = rw.unsqueeze(-1)
+        rw_unsq = rw.unsqueeze(-1)
 
         for slot in range(local_experts):
             expert_out = _cumsum_scatter_gather_update_expert_blocked(
@@ -519,12 +382,11 @@ class QEffPrefillChunkedGlmMoeDsaMoE(QEffGlmMoeDsaMoE):
                 W_g=W_g[:, slot],
                 W_u=W_u[:, slot],
                 W_d=W_d[:, slot],
-                routing_weight=routing_weights_unsqueezed[:, slot],
+                routing_weight=rw_unsq[:, slot],
                 expert_out=expert_out,
                 act_fn=self.act_fn,
                 packed_chunk_size=self.expert_blocking_packed_chunk_size,
             )
-
         return expert_out.sum(dim=0)
 
     def forward(self, hidden_states):
