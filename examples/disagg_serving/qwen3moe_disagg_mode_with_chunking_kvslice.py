@@ -25,10 +25,10 @@ import math
 import time
 
 import numpy as np
-from QEfficient.generation.cloud_infer_KV_share import QAICInferenceSession
 from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
+from QEfficient.generation.cloud_infer_KV_share import QAICInferenceSession
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration

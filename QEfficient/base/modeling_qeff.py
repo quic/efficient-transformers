@@ -13,7 +13,7 @@ import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 import onnx
 import torch
@@ -897,11 +897,12 @@ class QEFFBaseModel(ABC):
         if mdp_ts_json_path:
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
             mdp_ts_json = load_json(str(mdp_ts_json_path))
-        elif mdp_num_partitions > 1:
+        elif mdp_num_partitions > 1 or "stages" in compiler_options:
             # Disaggregated (pipeline-parallel) MDP: generate a fully-populated
             # nodeList per partition directly from the ONNX graph — no compiler
             # round-trip required.
 
+            mdp_num_partitions = compiler_options.pop("stages", None)
             num_layers = getattr(self, "num_layers", None)
             if getattr(self, "model", None) and getattr(self.model, "language_model", None) and not num_layers:
                 num_layers = getattr(self.model.language_model.config, "num_hidden_layers", None)
