@@ -30,6 +30,102 @@ from QEfficient.utils.constants import KWARGS_INCLUSION_LIST, QEFF_MODELS_DIR, C
 from QEfficient.utils.hash_utils import json_serializable
 from QEfficient.utils.logging_utils import logger
 
+# Retained-state buffer name stems that correspond to the LLM KV cache. Only these are eligible for
+# the optional vLLM KV-cache prefix; vision/multimodal retained buffers (vision_embeds, pixel_values,
+# image_idx, deepstack_features, ...) are intentionally excluded.
+_KV_RETAINED_STEMS = ("past_key.", "past_value.", "compressed_kv.", "k_pe.")
+_RETAINED_STATE_SUFFIX = "_RetainedState"
+
+
+def validate_kv_cache_prefix(kv_cache_prefix: Optional[str]) -> Optional[str]:
+    """
+    Validate the optional KV-cache buffer-name prefix.
+
+    The prefix is injected as an infix token into KV retained-state names
+    (``past_key.0_RetainedState`` -> ``past_key.0_<prefix>_RetainedState``), so it must be a plain
+    alphanumeric token. Disallowing ``.`` and ``_`` keeps the ``past_key.{layer}_{prefix}`` structure
+    unambiguous for downstream regex matching.
+
+    Returns the prefix unchanged when valid, or ``None`` when not provided.
+    """
+    if kv_cache_prefix is None:
+        return None
+    if not isinstance(kv_cache_prefix, str) or not kv_cache_prefix.isalnum():
+        raise ValueError(
+            "kv_cache_prefix must be a non-empty alphanumeric string (no '.', '_' or whitespace); "
+            f"got {kv_cache_prefix!r}"
+        )
+    return kv_cache_prefix
+
+
+def _infix_kv_prefix(name: str, kv_cache_prefix: str) -> str:
+    """Insert ``_<prefix>`` before the ``_RetainedState`` suffix for LLM KV-cache buffers only."""
+    if not name.endswith(_RETAINED_STATE_SUFFIX):
+        return name
+    stem = name[: -len(_RETAINED_STATE_SUFFIX)]
+    if not any(stem.startswith(kv_stem) for kv_stem in _KV_RETAINED_STEMS):
+        return name
+    return f"{stem}_{kv_cache_prefix}{_RETAINED_STATE_SUFFIX}"
+
+
+def apply_kv_cache_prefix(output_names, kv_cache_prefix: Optional[str]):
+    """
+    Insert an infix token into LLM KV-cache retained-state output names.
+
+    ``past_key.0_RetainedState`` -> ``past_key.0_<prefix>_RetainedState`` (and likewise for
+    ``past_value`` / ``compressed_kv`` / ``k_pe``). The matching device input buffer is named by the
+    compiler by stripping ``_RetainedState`` (``past_key.0_<prefix>``), so KV retention pairing is
+    preserved. Vision/multimodal retained buffers are left untouched.
+
+    Accepts either a flat ``List[str]`` (CausalLM / single-QPC VLM) or the
+    ``{"vision": [...], "lang": [...]}`` dict (dual-QPC VLM); for the dict form only the ``lang`` list
+    is rewritten. No-op when ``kv_cache_prefix`` is falsy. The input is not mutated in place.
+    """
+    if not kv_cache_prefix:
+        return output_names
+    validate_kv_cache_prefix(kv_cache_prefix)
+
+    if isinstance(output_names, dict):
+        result = dict(output_names)
+        if result.get("lang") is not None:
+            result["lang"] = [_infix_kv_prefix(name, kv_cache_prefix) for name in result["lang"]]
+        return result
+    return [_infix_kv_prefix(name, kv_cache_prefix) for name in output_names]
+
+
+def align_kv_input_names_to_retained_outputs(input_names, output_names):
+    """
+    Rename KV-cache *input* buffers so each pairs with its retained-state *output*.
+
+    The AIC compiler retains a KV buffer by matching an output ``X_RetainedState`` to the input named
+    ``X`` (suffix stripped). When the retained outputs carry an injected prefix
+    (``past_key.0_<prefix>_RetainedState``), the corresponding input must be renamed from
+    ``past_key.0`` to ``past_key.0_<prefix>`` for the pairing to hold.
+
+    This derives the rename purely from ``output_names`` (which already carry any prefix), so callers
+    that build prefixed outputs do not need to thread the prefix separately. It is a no-op for inputs
+    that already match a retained output exactly, and for non-KV inputs. ``input_names`` is not mutated.
+    """
+    # Stripped target names from retained KV outputs, e.g. {"past_key.0_VLLM", "past_value.0_VLLM"}.
+    retained_targets = []
+    for name in output_names:
+        if not name.endswith(_RETAINED_STATE_SUFFIX):
+            continue
+        stem = name[: -len(_RETAINED_STATE_SUFFIX)]
+        if any(stem.startswith(kv_stem) for kv_stem in _KV_RETAINED_STEMS):
+            retained_targets.append(stem)
+    retained_set = set(retained_targets)
+
+    aligned = []
+    for name in input_names:
+        if not any(name.startswith(stem) for stem in _KV_RETAINED_STEMS) or name in retained_set:
+            aligned.append(name)
+            continue
+        # Find a retained target that is this input with an extra "_<prefix>" infix.
+        match = next((t for t in retained_targets if t == name or t.startswith(name + "_")), None)
+        aligned.append(match if match is not None else name)
+    return aligned
+
 
 class LRUCache:
     """Simple LRU cache with size limit for vision outputs"""
