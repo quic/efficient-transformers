@@ -22,6 +22,7 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeTextAttention,
     Qwen3VLMoeTextConfig,
     Qwen3VLMoeTextDecoderLayer,
+    Qwen3VLMoeTextExperts,
     Qwen3VLMoeTextModel,
     Qwen3VLMoeTextRotaryEmbedding,
     Qwen3VLMoeTextSparseMoeBlock,
@@ -72,7 +73,7 @@ def qeff_apply_interleaved_mrope(freqs, mrope_section):
     return freqs_t
 
 
-def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section):
+def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section, dtype=None):
     invalid_pos_mask = position_ids < 0
     safe_position_ids = torch.where(invalid_pos_mask, torch.zeros_like(position_ids), position_ids)
     flat_pos = safe_position_ids.reshape(-1)
@@ -80,6 +81,9 @@ def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section):
     sin = sin.index_select(0, flat_pos).reshape(*safe_position_ids.shape, sin.shape[-1])
     cos = qeff_apply_interleaved_mrope(cos, mrope_section).unsqueeze(1)
     sin = qeff_apply_interleaved_mrope(sin, mrope_section).unsqueeze(1)
+    if dtype is not None:
+        cos = cos.to(dtype=dtype)
+        sin = sin.to(dtype=dtype)
     return cos, sin
 
 
@@ -586,7 +590,11 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids[1:])
         cos, sin = qeff_prepare_mrope_cos_sin(
-            self.cos_cached, self.sin_cached, position_ids[1:], self.config.rope_scaling["mrope_section"]
+            self.cos_cached,
+            self.sin_cached,
+            position_ids[1:],
+            self.config.rope_scaling["mrope_section"],
+            dtype=hidden_states.dtype,
         )
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
@@ -682,20 +690,12 @@ class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBloc
 
         for e in range(num_experts):
             routing_weight = routing_weights[:, e].unsqueeze(-1)
-
-            W_gate_up_e = self.experts.gate_up_proj[e]  # [H, 2I]
-            W_dn_e = self.experts.down_proj[e]  # [I, H]
-            if W_gate_up_e.shape[0] != H:
-                W_gate_up_e = W_gate_up_e.transpose(0, 1)
-            gate_up = x @ W_gate_up_e  # [T, 2I]
-
-            I2 = gate_up.shape[-1] // 2
-            gate = gate_up[:, :I2]  # [T, I]
-            up = gate_up[:, I2:]  # [T, I]
-            intermediate = up * act(gate)
-            if W_dn_e.shape[0] != I2:
-                W_dn_e = W_dn_e.transpose(0, 1)
-            down = intermediate @ W_dn_e
+            W_g = self.experts.gate_proj[e]  # [H, I]
+            W_u = self.experts.up_proj[e]  # [H, I]
+            W_d = self.experts.down_proj_t[e]  # [I, H]
+            gate = x @ W_g
+            up = x @ W_u
+            down = (up * act(gate)) @ W_d
             masked_down = torch.where(
                 routing_weight > 0, down * routing_weight, torch.zeros_like(expert_out, dtype=down.dtype)
             )  # TODO: verify and remove
@@ -793,6 +793,16 @@ class QEffQwen3VLMoeTextTopKRouter(Qwen3VLMoeTextTopKRouter):
         router_top_value = router_top_value.to(router_logits.dtype)
         router_scores = router_top_value
         return router_logits, router_scores, router_indices
+
+
+class QEffQwen3VLMoeTextExperts(Qwen3VLMoeTextExperts):
+    def __qeff_init__(self):
+        # HF 5.x keeps fused gate_up projections. Keep backward-compatible
+        # aliases expected by QEff MoE execution paths.
+        self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
+        self.gate_proj = nn.Parameter(self.gate_up_proj[:, : self.expert_dim, :].detach().clone().transpose(1, 2))
+        self.up_proj = nn.Parameter(self.gate_up_proj[:, self.expert_dim :, :].detach().clone().transpose(1, 2))
+        self.down_proj_t = nn.Parameter(self.down_proj.detach().clone().transpose(1, 2))
 
 
 class QEffQwen3VLDecoderWrapper(nn.Module):
@@ -958,16 +968,15 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         top_w = F.softmax(top_w, dim=-1, dtype=torch.float)
         top_w = top_w.to(x.dtype)
         idx = top_i.reshape(-1)
-        w_up = self.experts.gate_up_proj.transpose(1, 2).index_select(0, idx)
-        w_dn = self.experts.down_proj.transpose(1, 2).index_select(0, idx)
+        gate_proj = self.experts.gate_proj[idx.flatten()]
+        up_proj = self.experts.up_proj[idx.flatten()]
+        w_dn = self.experts.down_proj_t[idx.flatten()]
 
         top_k = top_i.shape[-1]
         xk = x.unsqueeze(1).expand(-1, top_k, -1).contiguous()
         xk = xk.view(-1, 1, H)
-        gate_up = torch.bmm(xk, w_up)
-        I2 = gate_up.size(-1)
-        half = I2 // 2
-        gate, up = gate_up[..., :half], gate_up[..., half:]
+        gate = torch.bmm(xk, gate_proj)
+        up = torch.bmm(xk, up_proj)
         intermediate = up * self.experts.act_fn(gate)
         experts_out = torch.bmm(intermediate, w_dn)
         experts_out = experts_out.view(T, top_k, H) * top_w.unsqueeze(-1)
@@ -1144,13 +1153,14 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                     "resolution."
                 )
             else:
-                assert vision_size * f < user_vision_size, (
-                    f"Computed vision_size of {vision_size * f} tokens "
-                    f"(vision_size={vision_size}, num_frames={f}) for image resolution "
-                    f"(width={w}, height={h}) cannot exceed the provided "
-                    f"vision_size={user_vision_size}. Please adjust the image resolution or "
-                    "increase the vision_size."
-                )
+                if vision_size * f > user_vision_size:
+                    logger.warning_once(
+                        f"Computed vision_size of {vision_size * f} tokens "
+                        f"(vision_size={vision_size}, num_frames={f}) for image resolution "
+                        f"(width={w}, height={h}) exceeds the provided "
+                        f"vision_size={user_vision_size}. "
+                        f"Vision embedding needs to be chunked during prefill."
+                    )
 
             vision.append(
                 {

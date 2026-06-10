@@ -73,8 +73,10 @@ from QEfficient.transformers.quantizers.quant_transforms import (
     Mxfp4GptOssExpertDequantizeTransform,
 )
 from QEfficient.utils import (
+    apply_kv_cache_prefix,
     constants,
     get_padding_shape_from_config,
+    validate_kv_cache_prefix,
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.logging_utils import logger
@@ -1493,6 +1495,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         enable_chunking: bool = False,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
+        kv_cache_prefix: Optional[str] = None,
         **kwargs,
     ) -> str:
         """
@@ -1551,6 +1554,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
             )
         output_names = self.model.get_output_names(kv_offload=True)
+        # Prefix only the language-side KV-cache retained buffers (vision buffers are untouched).
+        output_names = apply_kv_cache_prefix(output_names, validate_kv_cache_prefix(kv_cache_prefix))
         if self.lang_model.model.qaic_config is not None and self.lang_model.model.qaic_config.get(
             "include_sampler", False
         ):
@@ -1784,6 +1789,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         qaic_config: Optional[dict] = None,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
+        kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ) -> str:
         """
@@ -1913,7 +1919,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # Infer kv_cache_batch_size if not provided
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
 
+        kv_cache_prefix = validate_kv_cache_prefix(kv_cache_prefix)
         output_names = self.model.get_output_names(kv_offload=True)
+        # Prefix only the language-side KV-cache retained buffers (vision buffers are untouched) so the
+        # derived custom_io_lang keys match the prefixed names written into the exported graph.
+        output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
 
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
@@ -1983,6 +1993,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 enable_chunking=enable_chunking,
                 prefill_seq_len=prefill_seq_len,
                 _layerwise_cache_probe=layerwise_cache_probe,
+                kv_cache_prefix=kv_cache_prefix,
             )
             if layerwise_cache_probe:
                 return self.lang_model.onnx_path
@@ -2641,6 +2652,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         prefill_seq_len: Optional[int] = None,
         prefill_only: bool = False,
         enable_chunking: bool = False,
+        kv_cache_prefix: Optional[str] = None,
         **kwargs,
     ) -> str:
         """
@@ -2673,6 +2685,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         inputs = self.model.get_dummy_inputs(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         dynamic_axes = self.model.get_onnx_dynamic_axes(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         output_names = self.model.get_output_names()
+        # Prefix only the LLM KV-cache retained buffers (vision/multimodal buffers untouched).
+        output_names = apply_kv_cache_prefix(output_names, validate_kv_cache_prefix(kv_cache_prefix))
         return self._export(
             inputs,
             output_names=output_names,
@@ -2701,6 +2715,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         num_speculative_tokens: Optional[int] = None,
         use_onnx_subfunctions: bool = False,
         qaic_config: Optional[dict] = None,
+        kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ) -> str:
         """
@@ -2759,7 +2774,11 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
         # Infer kv_cache_batch_size if not provided
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
+        kv_cache_prefix = validate_kv_cache_prefix(kv_cache_prefix)
         output_names = self.model.get_output_names()
+        # Prefix only the LLM KV-cache retained buffers so the derived custom_io (and the names baked
+        # into the exported graph) stay consistent; vision/multimodal buffers are untouched.
+        output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
 
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
@@ -2829,6 +2848,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             aic_num_cores=num_cores,
             mxint8_kv_cache=mxint8_kv_cache,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            kv_cache_prefix=kv_cache_prefix,
             **compiler_options,
         )
         return self.qpc_path
@@ -3681,6 +3701,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
+        kv_cache_prefix: Optional[str] = None,
         **kwargs,
     ) -> str:
         """
@@ -3958,6 +3979,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.model.forward = _qeff_patched_forward
             self.model._qeff_export_gemma3_cache_patch = True
 
+        # Optionally inject a user-provided infix token into the LLM KV-cache retained-state names
+        # (e.g. past_key.0_RetainedState -> past_key.0_<prefix>_RetainedState) so downstream consumers
+        # (vLLM disaggregated serving) can regex-select only the LLM KV buffers for transfer.
+        kv_cache_prefix = validate_kv_cache_prefix(kv_cache_prefix)
+        if kv_cache_prefix:
+            output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
+            self.hash_params["kv_cache_prefix"] = kv_cache_prefix
+
         if QEFFBaseModel._layerwise_active:
             return self._export_layerwise(
                 example_inputs,
@@ -4132,6 +4161,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         retain_full_kv: Optional[bool] = None,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
+        kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ) -> str:
         """
@@ -4436,13 +4466,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[target_dtype]
         # --- Compilation ---
+        # When a KV-cache prefix is requested, the exported buffers are named
+        # past_key.{i}_<prefix> (input) and past_key.{i}_<prefix>_RetainedState (output); the custom_io
+        # keys must match those names so the compiler pairs and retains them correctly.
+        kv_cache_prefix = validate_kv_cache_prefix(kv_cache_prefix)
+        kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
         custom_io = {}
         if not cache_compressed:
             for suffix in ["", "_RetainedState"]:
                 for i in range(self.num_layers):
                     for kv in ["key", "value"]:
                         name = _compile_io_name(
-                            f"past_{kv}.{i}{suffix}",
+                            f"past_{kv}.{i}{kv_infix}{suffix}",
                             use_onnx_subfunctions=use_onnx_subfunctions,
                         )
                         custom_io[name] = kv_cache_dtype
@@ -4451,7 +4486,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 for i in range(self.num_layers):
                     for prefix in ("compressed_kv", "k_pe"):
                         name = _compile_io_name(
-                            f"{prefix}.{i}{suffix}",
+                            f"{prefix}.{i}{kv_infix}{suffix}",
                             use_onnx_subfunctions=use_onnx_subfunctions,
                         )
                         custom_io[name] = kv_cache_dtype
@@ -4476,6 +4511,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             offload_pt_weights=offload_pt_weights,
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,
+            kv_cache_prefix=kv_cache_prefix,
             **compiler_options,
         )
 
