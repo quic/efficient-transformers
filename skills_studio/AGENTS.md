@@ -50,7 +50,7 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
 - Do not add license/copyright headers unless explicitly requested.
 
 ## Required user inputs
-- Always ask the user for the virtualenv path before running commands.
+- Ask the user for the virtualenv path only when there is a real need to execute Python-dependent commands, such as `python`, `pip`, `pytest`, `ruff`, or `pre-commit`; otherwise do not ask.
 - Ask the user for `HF_HUB_CACHE` before downloading or loading any model.
 - Ask the user for `QEFF_HOME` before export/compile work that produces QEff artifacts.
 
@@ -79,3 +79,7 @@ Use a skill when the task matches its description. Open the `SKILL.md` for the f
 - `transformers-mainline-rebase` — Rebase QEff wrappers onto a newer HF Transformers
   release with minimal divergence while preserving runtime/export parity.
   (`skills_studio/skills/transformers-mainline-rebase/SKILL.md`)
+- `qeff-transform-authoring` — Add, modify, or review QEfficient transform code,
+  including module mappers, external method mappers, mutators, bespoke transforms,
+  registration, and transform tests.
+  (`skills_studio/skills/qeff-transform-authoring/SKILL.md`)
