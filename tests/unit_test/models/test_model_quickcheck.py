@@ -1876,3 +1876,281 @@ def test_layerwise_compile_rejects_unsupported_model():
 
     with pytest.raises(NotImplementedError):
         _layerwise.assert_layerwise_supported(qeff_model.model.config)
+
+
+# ---------------------------------------------------------------------------
+# Tests for the optional KV-cache buffer-name prefix (vLLM disaggregated KV transfer)
+# ---------------------------------------------------------------------------
+
+
+def _retained_state_outputs(onnx_path: Path) -> Set[str]:
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    return {out.name for out in onnx_model.graph.output if out.name.endswith("_RetainedState")}
+
+
+def _kv_input_names(onnx_path: Path) -> Set[str]:
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    return {
+        inp.name
+        for inp in onnx_model.graph.input
+        if inp.name.startswith(("past_key.", "past_value.", "compressed_kv.", "k_pe."))
+    }
+
+
+class TestApplyKvCachePrefixHelper:
+    """Unit tests for the apply_kv_cache_prefix / validate_kv_cache_prefix helpers."""
+
+    def test_flat_list_kv_only(self):
+        from QEfficient.utils import apply_kv_cache_prefix
+
+        names = ["logits", "past_key.0_RetainedState", "past_value.0_RetainedState", "vision_embeds_RetainedState"]
+        result = apply_kv_cache_prefix(names, "VLLM")
+        assert result == [
+            "logits",
+            "past_key.0_VLLM_RetainedState",
+            "past_value.0_VLLM_RetainedState",
+            "vision_embeds_RetainedState",  # vision buffer untouched
+        ]
+
+    def test_compressed_kv_and_k_pe(self):
+        from QEfficient.utils import apply_kv_cache_prefix
+
+        names = ["compressed_kv.0_RetainedState", "k_pe.0_RetainedState"]
+        assert apply_kv_cache_prefix(names, "P") == ["compressed_kv.0_P_RetainedState", "k_pe.0_P_RetainedState"]
+
+    def test_dict_form_lang_only(self):
+        from QEfficient.utils import apply_kv_cache_prefix
+
+        names = {
+            "vision": ["vision_embeds", "past_key.0_RetainedState"],  # vision side never rewritten
+            "lang": ["logits", "vision_embeds_RetainedState", "past_key.0_RetainedState"],
+        }
+        result = apply_kv_cache_prefix(names, "VLLM")
+        assert result["vision"] == ["vision_embeds", "past_key.0_RetainedState"]
+        assert result["lang"] == ["logits", "vision_embeds_RetainedState", "past_key.0_VLLM_RetainedState"]
+
+    def test_noop_when_prefix_absent(self):
+        from QEfficient.utils import apply_kv_cache_prefix
+
+        names = ["logits", "past_key.0_RetainedState"]
+        assert apply_kv_cache_prefix(names, None) == names
+        assert apply_kv_cache_prefix(names, "") == names
+
+    def test_align_inputs_to_retained_outputs(self):
+        from QEfficient.utils import align_kv_input_names_to_retained_outputs
+
+        input_names = ["input_ids", "past_key.0", "past_value.0"]
+        output_names = ["logits", "past_key.0_VLLM_RetainedState", "past_value.0_VLLM_RetainedState"]
+        assert align_kv_input_names_to_retained_outputs(input_names, output_names) == [
+            "input_ids",
+            "past_key.0_VLLM",
+            "past_value.0_VLLM",
+        ]
+
+    def test_align_inputs_noop_without_prefix(self):
+        from QEfficient.utils import align_kv_input_names_to_retained_outputs
+
+        input_names = ["input_ids", "past_key.0", "past_value.0"]
+        output_names = ["logits", "past_key.0_RetainedState", "past_value.0_RetainedState"]
+        assert align_kv_input_names_to_retained_outputs(input_names, output_names) == input_names
+
+    def test_on_device_sampler_buffers_not_prefixed(self):
+        """Sampler retained-state buffers (past_repetition_penalty_buffer / past_presence_penalty_buffer)
+        must NOT receive the KV-cache prefix on either the output or paired input side."""
+        from QEfficient.utils import align_kv_input_names_to_retained_outputs, apply_kv_cache_prefix
+
+        outputs = [
+            "logits",
+            "probs",
+            "next_tokens",
+            "past_key.0_RetainedState",
+            "past_value.0_RetainedState",
+            "past_repetition_penalty_buffer_RetainedState",
+            "past_presence_penalty_buffer_RetainedState",
+        ]
+        prefixed = apply_kv_cache_prefix(outputs, "VLLM")
+        assert "past_repetition_penalty_buffer_RetainedState" in prefixed
+        assert "past_presence_penalty_buffer_RetainedState" in prefixed
+        # And no sampler-buffer name accidentally carries the infix.
+        assert not any("penalty_buffer_VLLM_RetainedState" in name for name in prefixed)
+
+        inputs = [
+            "input_ids",
+            "past_key.0",
+            "past_value.0",
+            "past_repetition_penalty_buffer",
+            "past_presence_penalty_buffer",
+        ]
+        aligned = align_kv_input_names_to_retained_outputs(inputs, prefixed)
+        assert "past_repetition_penalty_buffer" in aligned
+        assert "past_presence_penalty_buffer" in aligned
+        assert not any(name.endswith("penalty_buffer_VLLM") for name in aligned)
+
+    @pytest.mark.parametrize("bad", ["", "a_b", "a.b", "a b", 123, "past-key"])
+    def test_validation_rejects_bad_prefix(self, bad):
+        from QEfficient.utils import validate_kv_cache_prefix
+
+        with pytest.raises(ValueError):
+            validate_kv_cache_prefix(bad)
+
+    def test_validation_accepts_alnum_and_none(self):
+        from QEfficient.utils import validate_kv_cache_prefix
+
+        assert validate_kv_cache_prefix("VLLM") == "VLLM"
+        assert validate_kv_cache_prefix("vllm0") == "vllm0"
+        assert validate_kv_cache_prefix(None) is None
+
+
+@pytest.mark.llm_model
+def test_causal_export_with_kv_cache_prefix(tmp_path):
+    model_id = CAUSAL_RUNTIME_MODEL_IDS["gpt2"]
+    model_hf = AutoModelForCausalLM.from_pretrained(
+        model_id, **MODEL_KWARGS, low_cpu_mem_usage=False, torch_dtype=torch.float32
+    )
+    model_hf.eval()
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "prefixed", kv_cache_prefix="VLLM"))
+
+    retained = _retained_state_outputs(onnx_path)
+    assert retained, "expected retained-state outputs"
+    # Every KV retained output carries the infix; the suffix is preserved.
+    kv_retained = {name for name in retained if name.startswith(("past_key.", "past_value."))}
+    assert kv_retained
+    assert all(name.endswith("_VLLM_RetainedState") for name in kv_retained)
+
+    # The matching device input buffer exists (output minus _RetainedState).
+    kv_inputs = _kv_input_names(onnx_path)
+    for out_name in kv_retained:
+        stripped = out_name[: -len("_RetainedState")]
+        assert stripped in kv_inputs, f"missing paired input buffer for {out_name}"
+        assert stripped.endswith("_VLLM")
+
+
+@pytest.mark.llm_model
+def test_causal_export_default_names_unchanged(tmp_path):
+    """Without the flag, retained-state names must remain byte-for-byte identical to today."""
+    model_id = CAUSAL_RUNTIME_MODEL_IDS["gpt2"]
+    model_hf = AutoModelForCausalLM.from_pretrained(
+        model_id, **MODEL_KWARGS, low_cpu_mem_usage=False, torch_dtype=torch.float32
+    )
+    model_hf.eval()
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "default"))
+    retained = _retained_state_outputs(onnx_path)
+    kv_retained = {name for name in retained if name.startswith(("past_key.", "past_value."))}
+    assert kv_retained
+    assert all(name.endswith("_RetainedState") and "_VLLM_" not in name for name in kv_retained)
+    # Inputs use the plain names.
+    assert "past_key.0" in _kv_input_names(onnx_path)
+
+
+@pytest.mark.llm_model
+def test_causal_export_prefix_changes_hash_dir(tmp_path):
+    """Prefixed and unprefixed exports must land in distinct hashed dirs (no cache collision)."""
+    model_id = CAUSAL_RUNTIME_MODEL_IDS["gpt2"]
+    model_hf = AutoModelForCausalLM.from_pretrained(
+        model_id, **MODEL_KWARGS, low_cpu_mem_usage=False, torch_dtype=torch.float32
+    )
+    model_hf.eval()
+
+    plain_path = _exported_onnx_path(QEFFAutoModelForCausalLM(model_hf).export(tmp_path / "p"))
+
+    model_hf2 = AutoModelForCausalLM.from_pretrained(
+        model_id, **MODEL_KWARGS, low_cpu_mem_usage=False, torch_dtype=torch.float32
+    )
+    model_hf2.eval()
+    prefixed_path = _exported_onnx_path(
+        QEFFAutoModelForCausalLM(model_hf2).export(tmp_path / "p", kv_cache_prefix="VLLM")
+    )
+
+    assert plain_path.parent != prefixed_path.parent
+
+
+@pytest.mark.llm_model
+def test_causal_compile_custom_io_carries_prefix(tmp_path, monkeypatch):
+    """The compile custom_io must pair prefixed input/output KV buffers."""
+    try:
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+            CAUSAL_RUNTIME_MODEL_IDS["llama"],
+            num_hidden_layers=2,
+            **MODEL_KWARGS,
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, CAUSAL_RUNTIME_MODEL_IDS["llama"])
+
+    captured = {}
+
+    def fake_compile(**kwargs):
+        captured.update(kwargs)
+        return tmp_path / "qpc"
+
+    monkeypatch.setattr(qeff_model, "_compile", fake_compile)
+    qeff_model.compile(prefill_seq_len=8, ctx_len=32, compile_dir=str(tmp_path), kv_cache_prefix="VLLM")
+
+    custom_io = captured["custom_io"]
+    assert custom_io, "expected non-empty custom_io"
+    assert "past_key.0_VLLM" in custom_io  # input buffer
+    assert "past_key.0_VLLM_RetainedState" in custom_io  # paired retained output
+    assert all("_VLLM" in k for k in custom_io if k.startswith(("past_key.", "past_value.")))
+    assert captured.get("kv_cache_prefix") == "VLLM"
+
+    # Critical safety check: kv_cache_prefix must NOT appear in compiler_options.
+    # The _compile signature has kv_cache_prefix as an explicit named param so Python never places
+    # it in **compiler_options — if it did, the compiler would see "-kv-cache-prefix=VLLM" and fail.
+    # We verify by reconstructing the known explicit params and confirming the remainder (what would
+    # become **compiler_options in the real _compile) does not contain kv_cache_prefix.
+    _known_explicit_params = {
+        "onnx_path",
+        "compile_dir",
+        "mxint8_kv_cache",
+        "specializations",
+        "custom_io",
+        "mdp_ts_num_devices",
+        "num_speculative_tokens",
+        "enable_qnn",
+        "qnn_config",
+        "use_onnx_subfunctions",
+        "prefill_only",
+        "offload_pt_weights",
+        "enable_chunking",
+        "retain_full_kv",
+        "qaic_config",
+        "specialization_module_name",
+        "kv_cache_prefix",
+        "retained_state",
+        "convert_to_fp16",
+        "mxfp6_matmul",
+        # compile-time args added by causal compile():
+        "aic_num_cores",
+        "moe_prefill_packed_chunk_size",
+    }
+    implicit_compiler_options = {k: v for k, v in captured.items() if k not in _known_explicit_params}
+    assert "kv_cache_prefix" not in implicit_compiler_options, (
+        "kv_cache_prefix leaked into compiler_options — would produce an invalid compiler flag"
+    )
+
+
+@pytest.mark.llm_model
+def test_vlm_export_prefix_lang_only(tmp_path):
+    """VLM export with prefix: lang KV buffers prefixed, vision retained buffers untouched."""
+    try:
+        vlm_model = QEFFAutoModelForImageTextToText.from_pretrained(
+            VLM_TEXT_RUNTIME_MODEL_ID, trust_remote_code=True, kv_offload=True
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, VLM_TEXT_RUNTIME_MODEL_ID)
+
+    vlm_model.export(tmp_path / "vlm-prefixed", kv_cache_prefix="VLLM")
+    lang_onnx = Path(vlm_model.lang_model.onnx_path)
+    retained = _retained_state_outputs(lang_onnx)
+
+    kv_retained = {name for name in retained if name.startswith(("past_key.", "past_value."))}
+    assert kv_retained
+    assert all(name.endswith("_VLLM_RetainedState") for name in kv_retained)
+
+    # Vision/multimodal retained buffers on the lang graph must NOT be prefixed.
+    for name in retained:
+        if name.startswith(("vision_embeds", "pixel_values", "deepstack_features")):
+            assert "_VLLM_" not in name

@@ -11,6 +11,8 @@ from QEfficient.transformers.quantizers.auto import (  # noqa: F401
 )
 from QEfficient.utils._utils import (  # noqa: F401
     LRUCache,
+    align_kv_input_names_to_retained_outputs,
+    apply_kv_cache_prefix,
     check_and_assign_cache_dir,
     create_json,
     create_model_params,
@@ -37,6 +39,7 @@ from QEfficient.utils._utils import (  # noqa: F401
     qpc_exists,
     require_value,
     to_named_specializations,
+    validate_kv_cache_prefix,
 )
 from QEfficient.utils.compile_layerwise import (  # noqa: F401
     run_compile_layerwise,
