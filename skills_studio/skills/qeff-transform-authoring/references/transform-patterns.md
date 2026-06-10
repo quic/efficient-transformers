@@ -21,6 +21,13 @@
 - `PoolingTransform` wraps embedding models during `QEFFAutoModel.__init__` when a pooling option is provided.
 - `BlockingAttentionTransform` is applied by `QEFFBaseModel.transform` after compile-time blocking config is built.
 
+## Mapping Paths By Transform Family
+- Quantizer selection is mapped before/while loading models: `QEfficient/transformers/quantizers/auto.py` replaces Transformers `AUTO_QUANTIZER_MAPPING` and `AUTO_QUANTIZATION_CONFIG_MAPPING` with QEff quantizer/config classes. Normal QEff loads use `@with_replaced_quantizers` on `QEFFTransformersBase.from_pretrained`; manual flows can call `replace_transformers_quantizers()`/`undo_transformers_quantizers()`.
+- Quantized module shape is then handled by QEff quantizers and mutators: quantizers may insert placeholder/dequant modules during weight loading, and `quant_transforms.py` mutators convert loaded AWQ/GPTQ/FP8/MXFP4 modules into runtime-friendly QEff or Torch modules.
+- Non-quant PyTorch mapping is declared in `QEfficient/transformers/models/pytorch_transforms.py`: class mappers use `_module_mapping`, external method mappers use class/string method maps, and bespoke transforms implement their own `apply`.
+- Model applicability is model-wise, not automatic globally: add the transform to the relevant `_pytorch_transforms` list in `modeling_auto.py` so only that wrapper family runs it and ordering stays explicit.
+- Mode-dependent transforms are not just list entries: prefill, sampler, SPD, pooling, VLM offload, and blocking transforms are applied where their mode flags or compile-time config are available.
+
 ## Mapper Guidelines
 - Prefer exact class mappings when the upstream class is imported in-tree and full class behavior should change.
 - Prefer external method mapping when classes come from dynamic/external model code or the model cannot be safely imported as a static dependency.

@@ -25,6 +25,7 @@ Use this skill to add transforms with the same architecture and safety expectati
    - For mappers, add or reuse QEff classes/methods near the relevant model wrapper.
    - For mutators, implement deterministic `mutate(original_module, parent_module)` and return a fully initialized replacement module.
 2. Wire the transform in the narrowest registry.
+   - Quantizer loading behavior maps through `QEfficient/transformers/quantizers/auto.py`; `from_pretrained` temporarily replaces Transformers quantizer/config registries with QEff entries.
    - Generic model class swaps: `QEfficient/transformers/models/pytorch_transforms.py`.
    - Quantized weight conversions: `QEfficient/transformers/quantizers/quant_transforms.py`.
    - Model wrapper pipelines: `_pytorch_transforms` in `QEfficient/transformers/models/modeling_auto.py`.
