@@ -1795,10 +1795,12 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         image_min_token_num = constants.IMAGE_MIN_TOKEN_NUM
         image_max_token_num = constants.IMAGE_MAX_TOKEN_NUM
         mm_processor_kwargs = compiler_options.pop("mm_processor_kwargs", None)
-        if mm_processor_kwargs:
-            min_pixels = mm_processor_kwargs.get("min_pixels", image_min_token_num * image_factor**2)
-            max_pixels = mm_processor_kwargs.get("max_pixels", image_max_token_num * image_factor**2)
-
+        # if mm_processor_kwargs:
+        #     min_pixels = mm_processor_kwargs.get("min_pixels", image_min_token_num * image_factor**2)
+        #     max_pixels = mm_processor_kwargs.get("max_pixels", image_max_token_num * image_factor**2)
+        min_pixels = image_min_token_num * image_factor**2
+        max_pixels = image_max_token_num * image_factor**2
+        
         vision = []
         max_vision_size = 0
         user_vision_size = compiler_options.pop("vision_size", None)

@@ -24,24 +24,16 @@ config = AutoConfig.from_pretrained(model_id)
 LAYERWISE = True
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
-<<<<<<< HEAD
 config.vision_config.depth = 4
 config.text_config.num_hidden_layers = 4
-config.torch_dtype = "float16"
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id,
     attn_implementation="eager",
     kv_offload=True,
     config=config,
+    dtype=torch.float32,
     layerwise=LAYERWISE,
-=======
-config.vision_config.depth = 5
-config.text_config.num_hidden_layers = 2
-
-qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=True, config=config, dtype=torch.float32
->>>>>>> 2932096 (Adding fp16 support and comments addresses)
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -98,12 +90,9 @@ prefill_qpc_path = qeff_model.compile(
     enable_chunking=True,
     skip_vision=True,
     use_onnx_subfunctions=False,
-<<<<<<< HEAD
     layerwise_window_size=1,
     layerwise=LAYERWISE,
     offload_pt_weights=False,
-=======
->>>>>>> 3d3435c (updating moe code and minor fixes)
     # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 
@@ -125,11 +114,8 @@ decode_qpc_path = qeff_model.compile(
     prefill_only=False,
     skip_vision=True,
     use_onnx_subfunctions=False,
-<<<<<<< HEAD
     layerwise=LAYERWISE,
     layerwise_window_size=1,
-=======
->>>>>>> 3d3435c (updating moe code and minor fixes)
     # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 
