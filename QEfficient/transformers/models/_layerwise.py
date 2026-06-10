@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import functools
 import random
+import time
 import warnings
 from contextlib import contextmanager
+from numbers import Integral
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -28,6 +30,7 @@ import torch
 import transformers
 
 import QEfficient
+from QEfficient.utils.logging_utils import logger
 
 # Architectures whose modeling files declare _start/_end class attributes the
 # layer-wise driver pokes. Keep this list narrow on purpose - adding a new
@@ -160,8 +163,21 @@ def _ensure_pretrained_window_attrs() -> None:
 def _build_layer_windows(total_layers: int, window_size: int) -> List[Tuple[int, int]]:
     if total_layers <= 0:
         raise ValueError(f"Invalid total_layers={total_layers}; expected > 0.")
+    if window_size is None:
+        raise ValueError(
+            "layerwise=True requires `layerwise_window_size` to be a positive integer. "
+            "Got None. Pass an explicit value (for example, layerwise_window_size=1)."
+        )
+    if isinstance(window_size, bool) or not isinstance(window_size, Integral):
+        raise TypeError(
+            "layerwise=True requires `layerwise_window_size` to be a positive integer. "
+            f"Got {type(window_size).__name__}: {window_size!r}."
+        )
+    window_size = int(window_size)
     if window_size <= 0:
-        raise ValueError(f"Invalid window_size={window_size}; expected > 0.")
+        raise ValueError(
+            f"layerwise=True requires `layerwise_window_size` to be a positive integer. Got {window_size}."
+        )
     windows: List[Tuple[int, int]] = []
     start = 0
     while start < total_layers:
@@ -607,6 +623,22 @@ def run_layerwise(
     _install_window_patches_for(model_type)
 
     windows = _build_layer_windows(text_total_layers, window_size)
+    logger.info(
+        "Layerwise export start: model_type=%s total_layers=%d window_size=%d windows=%d "
+        "torch_threads=%d torch_interop_threads=%d",
+        model_type,
+        text_total_layers,
+        window_size,
+        len(windows),
+        torch.get_num_threads(),
+        torch.get_num_interop_threads(),
+    )
+    if torch.get_num_threads() <= 1:
+        logger.warning(
+            "Layerwise export is running with torch.get_num_threads()=%d; ONNX export may appear single-core. "
+            "For faster export, increase PyTorch/OMP threads (for example, TORCH_NUM_THREADS or OMP_NUM_THREADS).",
+            torch.get_num_threads(),
+        )
     first_onnx_path: Optional[Path] = None
     last_qeff_model = None
     needs_deterministic_init = model_type in {"qwen3_5_moe", "qwen3_5_moe_text"} and not _checkpoint_has_shard_index(
@@ -649,12 +681,15 @@ def run_layerwise(
             cached_probe = probe_qeff_model or _build_window_model()
             cached_onnx_path = _cached_layerwise_onnx_path(cached_probe, compile_kwargs)
             if cached_onnx_path is not None:
+                logger.info("Layerwise cache hit: reusing merged ONNX at %s", cached_onnx_path)
                 first_onnx_path = cached_onnx_path
                 last_qeff_model = cached_probe
 
             for text_start, text_end in windows:
                 if cached_onnx_path is not None:
                     break
+                window_t0 = time.perf_counter()
+                logger.info("Layerwise window export start: [%d, %d)", text_start, text_end)
                 _set_layer_windows(text_start, text_end, text_total_layers)
                 if needs_deterministic_init:
                     _LAYERWISE_STATE["force_full_init"] = 1
@@ -690,6 +725,12 @@ def run_layerwise(
                     else:
                         lang_path = onnx_path
                     first_onnx_path = Path(str(lang_path))
+                logger.info(
+                    "Layerwise window export done: [%d, %d) in %.2fs",
+                    text_start,
+                    text_end,
+                    time.perf_counter() - window_t0,
+                )
     finally:
         _reset_layer_windows()
 
@@ -698,6 +739,7 @@ def run_layerwise(
 
     export_root = _resolve_export_root(first_onnx_path)
     final_artifact = _stitch_layerwise_if_available(export_root, text_total_layers)
+    logger.info("Layerwise merged ONNX: %s", final_artifact)
 
     if not final_compile:
         return final_artifact

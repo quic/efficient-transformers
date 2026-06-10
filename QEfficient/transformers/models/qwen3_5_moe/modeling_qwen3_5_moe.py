@@ -11,7 +11,6 @@ from typing import List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn.functional as F
-from qwen_vl_utils import smart_resize
 from torch import nn
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
@@ -20,6 +19,7 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     Qwen3_5MoeAttention,
     Qwen3_5MoeCausalLMOutputWithPast,
     Qwen3_5MoeDecoderLayer,
+    Qwen3_5MoeExperts,
     Qwen3_5MoeForCausalLM,
     Qwen3_5MoeForConditionalGeneration,
     Qwen3_5MoeGatedDeltaNet,
@@ -444,7 +444,8 @@ class QEffQwen3_5MoeAttention(Qwen3_5MoeAttention):
     """
 
     def __qeff_init__(self):
-        # pass
+        # Keep RoPE construction on the capped QEff wrapper to avoid oversized
+        # export-time tables while preserving runtime behavior.
         self.rotary_emb = QEffQwen3_5MoeTextRotaryEmbedding(config=self.config)
 
     def forward(
@@ -1008,8 +1009,6 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
     _start = 0
     _end = 0
     _total_layers = None
-    # def __qeff_init__(self):
-    #     self.rotary_emb = QEffQwen3_5MoeTextRotaryEmbedding(config=self.config)
 
     def forward(
         self,
@@ -1748,11 +1747,11 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         batch_size: int,
         prefill_seq_len: int,
         ctx_len: int,
-        height: int | List[int] = None,
-        width: int | List[int] = None,
-        img_size=None,
+        img_size: None,
+        height: int = None,
+        width: int = None,
         time: int = 1,
-        num_frames: int | List[int] = 1,
+        num_frames: int = 1,
         kv_offload: bool = False,
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
@@ -1768,10 +1767,6 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             logger.warning(
                 f"Setting height and width to be {height} and {width} respectively, as it was neither passed nor found in vision_config"
             )
-
-        height = [height] if isinstance(height, int) else height
-        width = [width] if isinstance(width, int) else width
-        num_frames = [num_frames] * len(height) if isinstance(num_frames, int) else num_frames
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
@@ -1789,53 +1784,61 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         if mm_processor_kwargs:
             min_pixels = mm_processor_kwargs.get("min_pixels", min_pixels)
             max_pixels = mm_processor_kwargs.get("max_pixels", max_pixels)
+        # IMAGE_FACTOR = 32
+        # MIN_PIXELS = 64 * 32 * 32
+        # MAX_PIXELS = 16384 * 32 * 32
+        MAX_RATIO = 200
 
-        vision = []
-        max_vision_size = 0
-        user_vision_size = compiler_options.pop("vision_size", None)
-        if user_vision_size:
-            assert user_vision_size < ctx_len, "vision_size must be less than ctx_len"
-            max_vision_size = user_vision_size
+        def round_by_factor(number: int, factor: int) -> int:
+            return round(number / factor) * factor
 
-        for h, w, f in zip(height, width, num_frames):
-            resized_height, resized_width = smart_resize(
-                height=h, width=w, factor=image_factor, min_pixels=min_pixels, max_pixels=max_pixels
-            )
-            grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
-            grid_height = grid_h * grid_w
-            grid_width = patch_size * patch_size * temporal_patch_size * channel
-            vision_size = (grid_height // 4) * time
-            grid_height = grid_height * time * batch_size
+        def ceil_by_factor(number: int, factor: int) -> int:
+            return math.ceil(number / factor) * factor
 
-            if not user_vision_size:
-                max_vision_size = max(max_vision_size, vision_size * f)
-                assert max_vision_size < ctx_len, (
-                    f"Computed vision_size of {vision_size * f} tokens "
-                    f"(vision_size={vision_size}, num_frames={f}) for image resolution "
-                    f"(width={w}, height={h}) must be less than ctx_len. Please adjust the image "
-                    "resolution."
+        def floor_by_factor(number: int, factor: int) -> int:
+            return math.floor(number / factor) * factor
+
+        def smart_resize(
+            height: int,
+            width: int,
+            factor: int = image_factor,
+            min_pixels: int = min_pixels,
+            max_pixels: int = max_pixels,
+        ) -> tuple[int, int]:
+            if max(height, width) / min(height, width) > MAX_RATIO:
+                raise ValueError(
+                    f"absolute aspect ratio must be smaller than {MAX_RATIO}, got {max(height, width) / min(height, width)}"
                 )
-            else:
-                if vision_size * f > user_vision_size:
-                    logger.warning_once(
-                        f"Computed vision_size of {vision_size * f} tokens "
-                        f"(vision_size={vision_size}, num_frames={f}) for image resolution "
-                        f"(width={w}, height={h}) exceeds the provided "
-                        f"vision_size={user_vision_size}. "
-                        f"Vision embedding needs to be chunked during prefill."
-                    )
+            h_bar = max(factor, round_by_factor(height, factor))
+            w_bar = max(factor, round_by_factor(width, factor))
+            if h_bar * w_bar > max_pixels:
+                beta = math.sqrt((height * width) / max_pixels)
+                h_bar = floor_by_factor(height / beta, factor)
+                w_bar = floor_by_factor(width / beta, factor)
+            elif h_bar * w_bar < min_pixels:
+                beta = math.sqrt(min_pixels / (height * width))
+                h_bar = ceil_by_factor(height * beta, factor)
+                w_bar = ceil_by_factor(width * beta, factor)
+            return h_bar, w_bar
 
-            vision.append(
-                {
-                    "batch_size": batch_size,
-                    "vision_size": vision_size,
-                    "grid_height": grid_height,
-                    "grid_width": grid_width,
-                    "time": time,
-                    "grid_h": grid_h,
-                    "grid_w": grid_w,
-                }
-            )
+        resized_height, resized_width = smart_resize(height=height, width=width)
+        grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+        grid_height = grid_h * grid_w
+        grid_width = patch_size * patch_size * temporal_patch_size * channel
+        vision_size = (grid_height // 4) * num_frames * time
+        grid_height = grid_height * time * batch_size
+
+        vision = [
+            {
+                "batch_size": batch_size,
+                "vision_size": vision_size,
+                "grid_height": grid_height,
+                "grid_width": grid_width,
+                "time": time,
+                "grid_h": grid_h,
+                "grid_w": grid_w,
+            }
+        ]
 
         def _build_lang_spec(seq_len_val, comp_ctx_len=None):
             spec = {
@@ -1846,7 +1849,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
                 "ctx_len": ctx_len,
             }
             if kv_offload:
-                spec["vision_size"] = max_vision_size
+                spec["vision_size"] = vision_size
                 spec["vision_batch_size"] = batch_size
             if comp_ctx_len is not None:
                 spec["comp_ctx_lengths"] = comp_ctx_len
@@ -2081,7 +2084,7 @@ class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
     def forward(self, hidden_states):
         hidden_states = hidden_states.reshape(-1, self.hidden_dim)
         router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
-        router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1)
+        router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1).to(router_logits.dtype)
         router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
         router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
         router_top_value = router_top_value.to(router_logits.dtype)
@@ -2089,27 +2092,36 @@ class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
         return router_logits, router_scores, router_indices
 
 
+class QEffQwen3_5MoeExperts(Qwen3_5MoeExperts):
+    def __qeff_init__(self):
+        # HF 5.x keeps fused gate_up projections. Keep aliases expected by
+        # QEff MoE execution paths without changing checkpoint behavior.
+        self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
+        self.gate_proj = nn.Parameter(self.gate_up_proj[:, : self.expert_dim, :].detach().clone().transpose(1, 2))
+        self.up_proj = nn.Parameter(self.gate_up_proj[:, self.expert_dim :, :].detach().clone().transpose(1, 2))
+        self.down_proj_t = nn.Parameter(self.down_proj.detach().clone().transpose(1, 2))
+
+
 class QEffQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
-    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         B, S, H = hidden_states.shape
         T = B * S
         x = hidden_states.view(T, H)
-        prob, top_w, top_i = self.gate(hidden_states)
-        top_w = top_w.to(x.dtype)
+        _, top_w, top_i = self.gate(hidden_states)
         idx = top_i.reshape(-1)
 
-        w_up = self.experts.gate_up_proj[idx.flatten()]
-        w_dn = self.experts.down_proj[idx.flatten()]
+        gate_proj = self.experts.gate_proj[idx.flatten()]
+        up_proj = self.experts.up_proj[idx.flatten()]
+        w_dn = self.experts.down_proj_t[idx.flatten()]
 
         xk = x.unsqueeze(1).expand(-1, self.gate.top_k, -1).contiguous()
         xk = xk.view(-1, 1, H)
 
-        gate_proj, up_proj = torch.chunk(w_up, 2, dim=1)
-        gate = torch.bmm(xk, gate_proj.transpose(1, 2))
-        up = torch.bmm(xk, up_proj.transpose(1, 2))
+        gate = torch.bmm(xk, gate_proj)
+        up = torch.bmm(xk, up_proj)
 
         intermediate = up * self.experts.act_fn(gate)
-        experts_out = torch.bmm(intermediate, w_dn.transpose(1, 2))
+        experts_out = torch.bmm(intermediate, w_dn)
         experts_out = experts_out.view(T, self.gate.top_k, H) * top_w.unsqueeze(-1)
         experts_out = torch.einsum("bnd->bd", experts_out)
 
@@ -2151,33 +2163,23 @@ def _cumsum_scatter_gather_update_expert_blocked(
     W_u: torch.Tensor,
     W_d: torch.Tensor,
     routing_weight: torch.Tensor,
-    experts_out: torch.Tensor,
+    expert_out: torch.Tensor,
     act_fn,
-    T: int,
     packed_chunk_size: int,
 ) -> torch.Tensor:
     """Cumsum-scatter-gather-update expert helper for NSP-blocked dispatch.
 
-    Accumulates one local expert's contribution in-place onto ``experts_out``.
+    Accumulates one local expert's contribution in-place onto ``expert_out``.
     Uses a packed/cumsum layout so the MLP runs only over active rows, then
     scatters the weighted output back to original token positions.
-
-    Shapes:
-        x               : [T, H]
-        T2Ei            : [num_nsp, T]            (bool)
-        W_g, W_u        : [num_nsp, H, I]
-        W_d             : [num_nsp, I, H]
-        routing_weight  : [num_nsp, T]
-        experts_out      : [num_nsp, T, H]         (accumulator, in-out)
     """
     batch_size, seq_len = T2Ei.shape
-    packed_chunk_size = int(max(1, min(packed_chunk_size, seq_len)))
+    packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
 
     matched_idx = _build_matched_idx_from_cumsum(T2Ei)
-    valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
+    valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
     row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
-    rw_expanded = routing_weight.unsqueeze(-1)
     for packed_start in range(0, seq_len, packed_chunk_size):
         packed_stop = packed_start + packed_chunk_size
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
@@ -2188,132 +2190,73 @@ def _cumsum_scatter_gather_update_expert_blocked(
         up_prime = x_chunk @ W_u
         down_chunk = (up_prime * act_fn(gate_prime)) @ W_d
 
-        rw_chunk = CtxGatherFunc3DGeneralized.apply(rw_expanded, chunk_matched_idx)
+        rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
         down_chunk = down_chunk * rw_chunk
 
-        expert_out_chunk = CtxGatherFunc3DGeneralized.apply(experts_out, chunk_matched_idx)
+        expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
         updated_chunk = expert_out_chunk + down_chunk
 
-        chunk_valid_rows = torch.clamp(valid_rows - packed_start, min=0, max=packed_chunk_size)
+        chunk_valid_rows = torch.clamp(
+            valid_rows - packed_start,
+            min=torch.zeros_like(valid_rows),
+            max=torch.full_like(valid_rows, packed_chunk_size),
+        )
         updated_chunk = torch.where(
             (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
         )
-        experts_out = CtxScatterFunc3DGeneralized.apply(experts_out, chunk_matched_idx, updated_chunk)
+        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
 
-    return experts_out
+    return expert_out
 
 
 class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
-    def _forward_expert_blocked(self, x: torch.Tensor, routing_weights: torch.Tensor) -> torch.Tensor:
-        act_fn = getattr(self.experts, "act_fn", F.silu)
-        T, H = x.shape
-        num_nsp = EXPERT_BLOCKING_NUM_NSP
-        if self.gate.num_experts % num_nsp != 0:
+    supports_moe_prefill_blocking = True
+
+    def __qeff_init__(self):
+        self.top_k = getattr(self.gate, "top_k", None)
+        self.norm_topk_prob = getattr(self.gate, "norm_topk_prob", False)
+        self.num_experts = getattr(self.gate, "num_experts", self.experts.gate_proj.shape[0])
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        B, S, H = hidden_states.shape
+        T = B * S
+        x = hidden_states.view(T, H)
+        router_logits, top_w, top_i = self.gate(x)
+        if self.norm_topk_prob:
+            top_w /= top_w.sum(-1, keepdim=True)
+        top_w = top_w.to(hidden_states.dtype)
+        routing_weights = torch.zeros_like(router_logits)
+        routing_weights.scatter_(1, top_i, top_w)
+
+        num_nsp = getattr(self, "expert_blocking_num_nsp", self.num_experts)
+        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
+        if self.num_experts % num_nsp != 0:
             raise ValueError(
-                f"num_experts ({self.gate.num_experts}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})"
+                f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})"
             )
-        local_experts = self.gate.num_experts // num_nsp
+
+        local_experts = self.num_experts // num_nsp
         rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        experts_out = x.new_zeros((num_nsp, T, H))
-        inter = self.experts.gate_up_proj.shape[1] // 2
-
-        # gate_up_proj is [E, 2I, H]. After split we get [E, I, H], so transpose to [E, H, I]
-        # before grouping into [num_nsp, local_experts, H, I].
-        wt_g, wt_u = torch.split(self.experts.gate_up_proj, inter, dim=1)
-        wt_g = wt_g.transpose(1, 2).contiguous()
-        wt_u = wt_u.transpose(1, 2).contiguous()
-        W_g = wt_g.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_u = wt_u.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-
-        # down_proj is [E, H, I]; blocked matmul expects [num_nsp, local_experts, I, H].
-        W_d = self.experts.down_proj.transpose(1, 2).contiguous()
-        W_d = W_d.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
-
+        W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_u = self.experts.up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_d = self.experts.down_proj_t.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
+        expert_out = x.new_zeros((num_nsp, T, H))
+        routing_weights_unsqueezed = rw.unsqueeze(-1)
+        act_fn = getattr(self.experts, "act_fn", F.silu)
         for slot in range(local_experts):
-            routing_weight = rw[:, slot, :]
-            T2Ei = routing_weight > 0
-            experts_out = _cumsum_scatter_gather_update_expert_blocked(
+            T2Ei = rw[:, slot, :] > 0
+            expert_out = _cumsum_scatter_gather_update_expert_blocked(
                 x=x,
                 T2Ei=T2Ei,
                 W_g=W_g[:, slot],
                 W_u=W_u[:, slot],
                 W_d=W_d[:, slot],
-                routing_weight=routing_weight,
-                experts_out=experts_out,
+                routing_weight=routing_weights_unsqueezed[:, slot],
+                expert_out=expert_out,
                 act_fn=act_fn,
-                T=T,
-                packed_chunk_size=EXPERT_BLOCKING_PACKED_CHUNK_SIZE,
+                packed_chunk_size=packed_chunk_size,
             )
-        return experts_out.sum(dim=0)
-
-    # def orig_forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    #     B, S, H = hidden_states.shape
-    #     T = B * S
-    #     x = hidden_states.view(T, H)
-    #     router_logits = self.gate(x)  # [T, E]
-    #     prob = F.softmax(router_logits, -1, dtype=torch.float)
-    #     top_w, top_i = torch.topk(prob, self.top_k, -1)
-    #     if self.norm_topk_prob:  # only diff with mixtral sparse moe block!
-    #         top_w /= top_w.sum(-1, keepdim=True)
-    #     top_w = top_w.to(hidden_states.dtype)
-    #     masked_logits = torch.zeros_like(router_logits)
-    #     masked_logits.scatter_(1, top_i, top_w)
-    #     routing_weights = masked_logits
-    #     experts_out = x.new_zeros((T, H))
-    #     for e in range(self.gate.num_experts):
-    #         routing_weight = routing_weights[:, e].unsqueeze(-1)
-    #         W_g, W_u = self.experts[e].gate_proj.weight.T, self.experts[e].up_proj.weight.T
-    #         W_d = self.experts[e].down_proj.weight.T
-    #         gate = x @ W_g
-    #         up = x @ W_u
-    #         down = (up * self.experts[e].act_fn(gate)) @ W_d
-    #         experts_out += down * routing_weight
-
-    #     shared_expert_output = self.shared_expert(x)
-    #     shared_expert_output = F.sigmoid(self.shared_expert_gate(x)) * shared_expert_output
-
-    #     experts_out = experts_out + shared_expert_output
-    #     return experts_out.view(B, S, H), router_logits
-
-    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        B, S, H = hidden_states.shape
-        T = B * S
-        x = hidden_states.view(T, H)
-        act = getattr(self.experts, "act_fn", F.silu)
-
-        prob, top_w, top_i = self.gate(hidden_states)
-        top_w = top_w.to(x.dtype)
-        routing_weights = torch.zeros((T, self.gate.num_experts), dtype=x.dtype)
-        routing_weights.scatter_(1, top_i, top_w)
-
-        # if self.gate.num_experts % EXPERT_BLOCKING_NUM_NSP == 0:
-        #     experts_out = self._forward_expert_blocked(x=x, routing_weights=routing_weights)
-
-        #     shared_expert_output = self.shared_expert(x)
-        #     shared_expert_output = F.sigmoid(self.shared_expert_gate(x)) * shared_expert_output
-        #     expert_output = experts_out + shared_expert_output
-        #     return expert_output.view(B, S, H)
-
-        experts_out = torch.zeros_like(x, dtype=x.dtype)
-        # breakpoint()
-        for e in range(self.gate.num_experts):
-            routing_weight = routing_weights[:, e].unsqueeze(-1)
-
-            W_gate_up_e = self.experts.gate_up_proj[e]  # [H, 2I]
-            W_dn_e = self.experts.down_proj[e]  # [I, H]
-            #
-            gate_up = x @ W_gate_up_e.T  # [T, 2I]
-
-            I2 = gate_up.shape[-1] // 2
-            gate = gate_up[:, :I2]  # [T, I]
-            up = gate_up[:, I2:]  # [T, I]
-            intermediate = up * act(gate)
-            down = intermediate @ W_dn_e.T
-            masked_down = torch.where(
-                routing_weight > 0, down * routing_weight, torch.zeros_like(experts_out, dtype=down.dtype)
-            )
-            # masked_down = down * routing_weight
-            experts_out += masked_down
+        experts_out = torch.einsum("ijk->jk", expert_out)
 
         shared_expert_output = self.shared_expert(x)
         shared_expert_output = F.sigmoid(self.shared_expert_gate(x)) * shared_expert_output

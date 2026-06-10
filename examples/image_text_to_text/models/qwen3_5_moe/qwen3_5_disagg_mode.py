@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 from time import perf_counter
 
 import numpy as np
@@ -18,22 +19,35 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-model_id = "Qwen/Qwen3.6-35B-A3B"
+# model_id = "Qwen/Qwen3.6-35B-A3B"
+model_id = "tiny-random/qwen3.6-moe"
+LAYERWISE = False
+LAYERWISE_WINDOW_SIZE = 1
+DECODE_NUM_DEVICES = int(os.environ.get("QEFF_DECODE_NUM_DEVICES", "1"))
 config = AutoConfig.from_pretrained(model_id)
 
-LAYERWISE = True
-
 # For faster execution user can run with lesser layers, For Testing Purpose Only
-config.vision_config.depth = 4
-config.text_config.num_hidden_layers = 4
+# config.vision_config.depth = 5
+# config.text_config.num_hidden_layers = 2
 config.torch_dtype = "float16"
+layer_types = list(getattr(config.text_config, "layer_types", []))
+if len(layer_types) < config.text_config.num_hidden_layers:
+    layer_types.extend(["full_attention"] * (config.text_config.num_hidden_layers - len(layer_types)))
+config.text_config.layer_types = layer_types[: config.text_config.num_hidden_layers]
+
+
+def _update_retained_states(target_inputs, source_outputs):
+    for layer_idx, layer_type in enumerate(config.text_config.layer_types):
+        if layer_type == "full_attention":
+            target_inputs[f"past_key.{layer_idx}"] = source_outputs[f"past_key.{layer_idx}_RetainedState"]
+            target_inputs[f"past_value.{layer_idx}"] = source_outputs[f"past_value.{layer_idx}_RetainedState"]
+        else:
+            target_inputs[f"conv_state.{layer_idx}"] = source_outputs[f"conv_state.{layer_idx}_RetainedState"]
+            target_inputs[f"recurrent_state.{layer_idx}"] = source_outputs[f"recurrent_state.{layer_idx}_RetainedState"]
+
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id,
-    attn_implementation="eager",
-    kv_offload=True,
-    config=config,
-    layerwise=LAYERWISE,
+    model_id, attn_implementation="eager", kv_offload=True, config=config, layerwise=LAYERWISE
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -68,7 +82,9 @@ if not skip_vision:
         skip_vision=skip_vision,
         split_model_io=True,
         skip_lang=True,
-        use_onnx_subfunctions=False,
+        use_onnx_subfunctions=True,
+        layerwise=LAYERWISE,
+        layerwise_window_size=LAYERWISE_WINDOW_SIZE,
     )
 
 prefill_qpc_path = qeff_model.compile(
@@ -89,10 +105,9 @@ prefill_qpc_path = qeff_model.compile(
     prefill_only=True,
     enable_chunking=True,
     skip_vision=True,
-    use_onnx_subfunctions=False,
-    layerwise_window_size=1,
+    use_onnx_subfunctions=True,
     layerwise=LAYERWISE,
-    offload_pt_weights=False,
+    layerwise_window_size=LAYERWISE_WINDOW_SIZE,
     # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 
@@ -104,7 +119,7 @@ decode_qpc_path = qeff_model.compile(
     height=354,
     width=536,
     num_cores=16,
-    num_devices=4,
+    num_devices=DECODE_NUM_DEVICES,
     mxfp6_matmul=True,
     mxint8_kv_cache=False,
     retain_full_kv=True,
@@ -113,9 +128,9 @@ decode_qpc_path = qeff_model.compile(
     aic_enable_depth_first=True,
     prefill_only=False,
     skip_vision=True,
-    use_onnx_subfunctions=False,
+    use_onnx_subfunctions=True,
     layerwise=LAYERWISE,
-    layerwise_window_size=1,
+    layerwise_window_size=LAYERWISE_WINDOW_SIZE,
     # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 
@@ -255,9 +270,7 @@ for i in range(num_chunks):
     chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
     chunk_inputs["position_ids"] = lang_inputs["position_ids"][..., i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
     outputs = lang_prefill_session.run(chunk_inputs)
-    for i in range(config.text_config.num_hidden_layers):
-        chunk_inputs[f"past_key.{i}"] = outputs[f"past_key.{i}_RetainedState"]
-        chunk_inputs[f"past_value.{i}"] = outputs[f"past_value.{i}_RetainedState"]
+    _update_retained_states(chunk_inputs, outputs)
     chunk_inputs["image_idx"] = outputs["image_idx_output"]
 prefill_time = perf_counter() - lang_start + vision_end - vision_start
 print(f"Prefill time : {prefill_time:.2f} secs")
@@ -268,9 +281,7 @@ decode_inputs = {
     "position_ids": np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1,
 }
 
-for i in range(config.text_config.num_hidden_layers):
-    decode_inputs[f"past_key.{i}"] = outputs[f"past_key.{i}_RetainedState"]
-    decode_inputs[f"past_value.{i}"] = outputs[f"past_value.{i}_RetainedState"]
+_update_retained_states(decode_inputs, outputs)
 
 decode_inputs["image_idx"] = outputs["image_idx_output"]
 
@@ -288,9 +299,7 @@ loop_decode_inputs = {
     "position_ids": pos_id,
 }
 
-for i in range(config.text_config.num_hidden_layers):
-    loop_decode_inputs[f"past_key.{i}"] = decode_out[f"past_key.{i}_RetainedState"]
-    loop_decode_inputs[f"past_value.{i}"] = decode_out[f"past_value.{i}_RetainedState"]
+_update_retained_states(loop_decode_inputs, decode_out)
 
 loop_decode_inputs["image_idx"] = decode_out["image_idx_output"]
 
@@ -303,9 +312,7 @@ for i in range(generation_len - 2):
     decode_out = lang_decode_session.run(loop_decode_inputs)
     all_outputs.append(np.argmax(decode_out["logits"]))
     pos_id += 1
-    for j in range(config.text_config.num_hidden_layers):
-        loop_decode_inputs[f"past_key.{j}"] = decode_out[f"past_key.{j}_RetainedState"]
-        loop_decode_inputs[f"past_value.{j}"] = decode_out[f"past_value.{j}_RetainedState"]
+    _update_retained_states(loop_decode_inputs, decode_out)
     loop_decode_inputs.update(
         {
             "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
