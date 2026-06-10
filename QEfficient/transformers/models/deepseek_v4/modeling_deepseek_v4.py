@@ -5,7 +5,16 @@
 #
 # -----------------------------------------------------------------------------
 
-import math
+"""QEfficient modeling for ``deepseek_v4`` (deepseek-ai/DeepSeek-V4-Pro).
+
+V4 introduces shared-KV MQA (single KV head, K==V), partial interleaved RoPE
+on the trailing ``qk_rope_head_dim`` channels, manifold-constrained
+HyperConnections (mHC) replacing residuals, and a 384-expert hash+top-k MoE
+with sqrtsoftplus noaux_tc routing. The CSA/HCA compressor branches on certain
+layers are not yet wired (stateful, requires the compressed_kvs cache machinery
+from deepseek_v3).
+"""
+
 from typing import List, Optional, Tuple, Type, Union
 
 import torch
@@ -17,53 +26,40 @@ from transformers.models.deepseek_v4.modeling_deepseek_v4 import (
     DeepseekV4Attention,
     DeepseekV4Config,
     DeepseekV4DecoderLayer,
-    DeepseekV4Experts,
     DeepseekV4ForCausalLM,
-    DeepseekV4HashRouter,
     DeepseekV4HyperConnection,
     DeepseekV4HyperHead,
-    DeepseekV4MLP,
     DeepseekV4Model,
-    DeepseekV4RMSNorm,
-    DeepseekV4RotaryEmbedding,
     DeepseekV4SparseMoeBlock,
-    DeepseekV4TopKRouter,
-    DeepseekV4UnweightedRMSNorm,
 )
 
-from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
 def rotate_half_interleaved(x):
-    """V4 interleaved rotate-half: pairs even/odd channels and swaps them.
-
-    Matches HF's transformers.models.deepseek_v4.modeling_deepseek_v4.rotate_half
-    (x[..., 0::2], x[..., 1::2] → stack((-x2, x1), -1).flatten(-2)).
-    """
+    """V4 interleaved rotate-half: pairs even/odd channels and swaps them."""
     x1 = x[..., 0::2]
     x2 = x[..., 1::2]
     return torch.stack((-x2, x1), dim=-1).flatten(-2)
 
 
 def qeff_apply_rotary_pos_emb_v4(x, cos, sin, position_ids, rope_dim):
-    """Apply interleaved RoPE to the *trailing* rope slice of x (V4 layout: [nope | rope]).
+    """Apply interleaved RoPE to the trailing ``rope_dim`` channels of x.
 
-    cos/sin shape: [seq_len, rope_dim//2] (no duplication in V4's RotaryEmbedding).
-    Match HF: each pair (c_k, c_k) appears at positions (2k, 2k+1). Express that as
-    `stack(c, c, -1).flatten(-2)` instead of `repeat_interleave` for stable ONNX trace.
+    cos/sin shape: ``[seq_len, rope_dim//2]`` (no duplication in V4's
+    RotaryEmbedding). Each pair ``(c_k, c_k)`` appears at positions
+    ``(2k, 2k+1)``; expressed as ``stack(c, c, -1).flatten(-2)`` instead of
+    ``repeat_interleave`` for stable ONNX trace.
     """
-    cos_pos = cos[position_ids]  # [B, S, rope_dim//2]
-    sin_pos = sin[position_ids]  # [B, S, rope_dim//2]
-    cos_pos = torch.stack([cos_pos, cos_pos], dim=-1).flatten(-2).unsqueeze(1)  # [B, 1, S, rope_dim]
-    sin_pos = torch.stack([sin_pos, sin_pos], dim=-1).flatten(-2).unsqueeze(1)  # [B, 1, S, rope_dim]
+    cos_pos = cos[position_ids]
+    sin_pos = sin[position_ids]
+    cos_pos = torch.stack([cos_pos, cos_pos], dim=-1).flatten(-2).unsqueeze(1)
+    sin_pos = torch.stack([sin_pos, sin_pos], dim=-1).flatten(-2).unsqueeze(1)
 
-    # V4 lays each head out as [nope | rope]; rotate only the trailing rope_dim channels.
     if rope_dim == x.shape[-1]:
-        rotated = (x * cos_pos) + (rotate_half_interleaved(x) * sin_pos)
-        return rotated.to(x.dtype)
+        return ((x * cos_pos) + (rotate_half_interleaved(x) * sin_pos)).to(x.dtype)
     nope = x[..., :-rope_dim]
     rope = x[..., -rope_dim:]
     rotated = (rope * cos_pos) + (rotate_half_interleaved(rope) * sin_pos)
@@ -71,14 +67,11 @@ def qeff_apply_rotary_pos_emb_v4(x, cos, sin, position_ids, rope_dim):
 
 
 class QEffDeepseekV4RotaryEmbedding(nn.Module):
-    """Precomputed static sin/cos cache for V4's multi-type interleaved RoPE."""
+    """Precomputed sin/cos buffers, one pair per RoPE layer-type in config."""
 
     def __init__(self, config: DeepseekV4Config):
         super().__init__()
         self.config = config
-        self.rope_dim = config.qk_rope_head_dim  # 64
-        max_pos = config.max_position_embeddings
-
         rope_params = config.rope_parameters or {}
         self.layer_types = [k for k, v in rope_params.items() if isinstance(v, dict)]
 
@@ -86,43 +79,23 @@ class QEffDeepseekV4RotaryEmbedding(nn.Module):
             rp = rope_params[layer_type]
             base = rp.get("rope_theta", config.rope_theta)
             dim = config.qk_rope_head_dim
-
             inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
-            t = torch.arange(max_pos, dtype=torch.float32)
-            freqs = torch.outer(t, inv_freq)  # [max_pos, dim//2]
-            cos_cached = freqs.cos()
-            sin_cached = freqs.sin()
-
-            rope_type = rp.get("rope_type", "default")
-            if rope_type == "yarn":
-                attention_factor = rp.get("attention_factor", 1.0)
-                cos_cached = cos_cached * attention_factor
-                sin_cached = sin_cached * attention_factor
-
-            self.register_buffer(f"{layer_type}_cos_cached", cos_cached, persistent=False)
-            self.register_buffer(f"{layer_type}_sin_cached", sin_cached, persistent=False)
+            t = torch.arange(config.max_position_embeddings, dtype=torch.float32)
+            freqs = torch.outer(t, inv_freq)
+            scaling = rp.get("attention_factor", 1.0) if rp.get("rope_type") == "yarn" else 1.0
+            self.register_buffer(f"{layer_type}_cos_cached", freqs.cos() * scaling, persistent=False)
+            self.register_buffer(f"{layer_type}_sin_cached", freqs.sin() * scaling, persistent=False)
 
     def forward(self, layer_type: str):
-        cos = getattr(self, f"{layer_type}_cos_cached")
-        sin = getattr(self, f"{layer_type}_sin_cached")
-        return cos, sin
-
-
-class QEffDeepseekV4CustomRMSNormAIC(nn.Module):
-    """RMSNorm replaced with compiler-known custom-op."""
-
-    def forward(self, hidden_states):
-        return CustomRMSNormFunc.apply(hidden_states, self.weight, self.variance_epsilon)
+        return getattr(self, f"{layer_type}_cos_cached"), getattr(self, f"{layer_type}_sin_cached")
 
 
 class QEffDeepseekV4Attention(DeepseekV4Attention):
-    """QEff-adapted V4 attention with static KV cache, batch_index, position_ids.
+    """Shared-KV MQA: one KV head, K==V, broadcast to query heads.
 
-    V4 attention is Shared-KV MQA: a single KV head (K==V) broadcast to all query
-    heads. The sliding-window branch uses standard causal mask; CSA/HCA compressor
-    branches are disabled for the initial AI 100 decode path (compressor state is
-    stateful and not ONNX-friendly). For decode, we keep only the sliding-window
-    attention with explicit KV cache management.
+    The CSA/HCA compressor branches are not yet wired (stateful, would need
+    the ``compressed_kvs`` cache from deepseek_v3). Decode runs the
+    sliding-window path only.
     """
 
     def __qeff_init__(self):
@@ -142,81 +115,60 @@ class QEffDeepseekV4Attention(DeepseekV4Attention):
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         bsz, q_len, _ = hidden_states.size()
-        hidden_shape = (bsz, q_len, -1, self.head_dim)
 
-        # Q projection: low-rank then up-project
+        # Q: low-rank then up-project
         q_residual = self.q_a_norm(self.q_a_proj(hidden_states))
-        q = self.q_b_proj(q_residual).view(*hidden_shape).transpose(1, 2)
+        q = self.q_b_proj(q_residual).view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
         q = self.q_b_norm(q)
 
-        # KV projection: single shared head (K == V)
+        # KV: single shared head (K == V)
         kv = self.kv_norm(self.kv_proj(hidden_states))
         kv = kv.view(bsz, q_len, 1, self.head_dim).transpose(1, 2)
 
-        # Select RoPE cos/sin based on layer type
-        if self.rope_layer_type == "main":
-            cos, sin = cos_main, sin_main
-        else:
-            cos, sin = cos_compress, sin_compress
-
-        # Apply partial interleaved RoPE to Q
+        cos, sin = (cos_main, sin_main) if self.rope_layer_type == "main" else (cos_compress, sin_compress)
         q = qeff_apply_rotary_pos_emb_v4(q, cos, sin, position_ids, self.rope_dim)
-        # Apply partial interleaved RoPE to KV
         kv = qeff_apply_rotary_pos_emb_v4(kv, cos, sin, position_ids, self.rope_dim)
 
-        # KV cache update
         if past_key_value is not None:
             cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
-            # K == V in V4, store same tensor for both key and value slots
             kv_cached, _ = past_key_value.update(kv, kv, self.layer_idx, cache_kwargs)
-            key_states = kv_cached
-            value_states = kv_cached
+            key_states = value_states = kv_cached
         else:
-            key_states = kv
-            value_states = kv
+            key_states = value_states = kv
 
-        # Expand single KV head to match query heads (GQA expansion, num_kv_groups = num_heads)
         key_states = key_states.expand(-1, self.num_heads, -1, -1)
         value_states = value_states.expand(-1, self.num_heads, -1, -1)
 
-        # Attention computation
         attn_weights = torch.matmul(q, key_states.transpose(2, 3)) * self.scaling
 
         if attention_mask is not None:
-            # Add per-head learned sinks as bias to position 0 (where mask is 0 = not masked)
+            # Per-head learned sinks added at position 0 (where mask == 0).
             sink_bias = self.sinks.view(1, self.num_heads, 1, 1)
             attn_weights = attn_weights + sink_bias * (attention_mask == 0).float()[:, :1, :, :1]
             attn_weights = torch.where(
-                attention_mask,
-                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
-                attn_weights,
+                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype), attn_weights
             )
 
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
         attn_output = torch.matmul(attn_weights, value_states)
 
-        # Undo RoPE on output (V4: V has RoPE baked in; HF reverses before grouped o_proj).
-        # attn_output=[B,H,S,D]; our apply fn expects [B,H,S,D] with cos broadcast on dim 1.
+        # Undo RoPE on output: V4's K == V means V also carries RoPE; HF
+        # reverses it before the grouped o_proj.
         attn_output = qeff_apply_rotary_pos_emb_v4(attn_output, cos, -sin, position_ids, self.rope_dim)
 
-        # Grouped output projection
         attn_output = attn_output.transpose(1, 2).contiguous()
         grouped = attn_output.view(bsz, q_len, self.config.o_groups, -1)
-        grouped = self.o_a_proj(grouped)
-        # Explicit reshape to rank 3 for stable ONNX shape inference (avoid flatten()).
-        grouped = grouped.reshape(bsz, q_len, -1)
-        output = self.o_b_proj(grouped)
-
-        return output, attn_weights
+        grouped = self.o_a_proj(grouped).reshape(bsz, q_len, -1)
+        return self.o_b_proj(grouped), attn_weights
 
 
 class QEffDeepseekV4HyperConnection(DeepseekV4HyperConnection):
-    """QEff-adapted HyperConnection: same logic, explicit tensor ops for ONNX."""
+    """HC residual mixing with explicit reshape (avoids ``flatten(start_dim=2)``
+    mistraces in ONNX)."""
 
     def forward(self, hidden_streams: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         hc = self.hc_mult
         bsz, q_len, _, hidden_size = hidden_streams.shape
-        # Explicit reshape with concrete last-dim so ONNX shape inference resolves it (not flatten() / -1).
         flat = self.input_norm(hidden_streams.reshape(bsz, q_len, hc * hidden_size).float())
         pre_w, post_w, comb_w = F.linear(flat, self.fn.float()).split([hc, hc, hc * hc], dim=-1)
         pre_b, post_b, comb_b = self.base.split([hc, hc, hc * hc])
@@ -236,8 +188,6 @@ class QEffDeepseekV4HyperConnection(DeepseekV4HyperConnection):
 
 
 class QEffDeepseekV4HyperHead(DeepseekV4HyperHead):
-    """QEff-adapted HyperHead: final HC-stream collapse."""
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         bsz, q_len, hc, hidden_size = x.shape
         flat = self.input_norm(x.reshape(bsz, q_len, hc * hidden_size).float())
@@ -247,7 +197,7 @@ class QEffDeepseekV4HyperHead(DeepseekV4HyperHead):
 
 
 class QEffDeepseekV4SparseMoeBlock(DeepseekV4SparseMoeBlock):
-    """QEff-adapted MoE block with einsum aggregation (M1 invariant)."""
+    """Batched-BMM MoE; M1 invariant kept via einsum-equivalent ``.sum(dim=1)``."""
 
     def __qeff_init__(self):
         experts = self.experts
@@ -260,28 +210,16 @@ class QEffDeepseekV4SparseMoeBlock(DeepseekV4SparseMoeBlock):
         self.num_experts = experts.num_experts
         self.limit = experts.limit
 
-    def moe(
-        self,
-        hidden_states: torch.Tensor,
-        topk_indices: torch.Tensor,
-        topk_weights: torch.Tensor,
-    ):
-        """Batched-BMM MoE forward with einsum aggregation (M1, M3)."""
+    def moe(self, hidden_states, topk_indices, topk_weights):
         bs, seq_len, hidden_size = hidden_states.shape
-        hidden_flat = hidden_states.view(-1, hidden_states.shape[-1])
+        hidden_flat = hidden_states.view(-1, hidden_size)
         top_k = topk_indices.shape[-1]
 
         gate_proj = self.all_gate_proj[topk_indices.flatten()]
         up_proj = self.all_up_proj[topk_indices.flatten()]
         down_proj = self.all_down_proj[topk_indices.flatten()]
 
-        expert_in = (
-            hidden_flat.unsqueeze(1)
-            .expand(-1, top_k, -1)
-            .contiguous()
-            .view(-1, 1, hidden_size)
-        )
-
+        expert_in = hidden_flat.unsqueeze(1).expand(-1, top_k, -1).contiguous().view(-1, 1, hidden_size)
         gate_out = torch.bmm(expert_in, gate_proj).clamp(max=self.limit)
         up_out = torch.bmm(expert_in, up_proj).clamp(min=-self.limit, max=self.limit)
         hidden = self.act_fn(gate_out) * up_out
@@ -289,28 +227,27 @@ class QEffDeepseekV4SparseMoeBlock(DeepseekV4SparseMoeBlock):
 
         experts_out = expert_output.view(bs * seq_len, top_k, hidden_size)
         experts_out = experts_out * topk_weights.unsqueeze(-1)
-        # M1: einsum aggregation, NOT .sum(dim=1)
-        final = experts_out.sum(dim=1)
-        return final.to(hidden_states.dtype)
+        return experts_out.sum(dim=1).to(hidden_states.dtype)
 
-    def forward(
-        self, hidden_states: torch.Tensor, input_ids: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
+    def forward(self, hidden_states, input_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
         batch, seq_len, hidden_dim = hidden_states.shape
         residual = hidden_states
-
         if self.is_hash:
             _, weights, indices = self.gate(hidden_states, input_ids)
         else:
             _, weights, indices = self.gate(hidden_states)
-
         routed = self.moe(hidden_states, indices, weights).view(batch, seq_len, hidden_dim)
         return routed + self.shared_experts(residual)
 
 
-class QEffDeepseekV4DecoderLayer(DeepseekV4DecoderLayer):
-    """QEff-adapted decoder layer with explicit KV cache threading."""
+def _hc_combine(output, post, comb, hidden_states, dtype):
+    """V4 HC expand: combine attn/MLP output with the running HC streams."""
+    return post.to(dtype).unsqueeze(3) * output.unsqueeze(2) + torch.matmul(
+        comb.to(dtype).transpose(-1, -2), hidden_states
+    )
 
+
+class QEffDeepseekV4DecoderLayer(DeepseekV4DecoderLayer):
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -327,7 +264,6 @@ class QEffDeepseekV4DecoderLayer(DeepseekV4DecoderLayer):
     ) -> torch.Tensor:
         dtype = hidden_states.dtype
 
-        # Attention site: HC collapse → layernorm → attn → HC expand
         post, comb, collapsed = self.attn_hc(hidden_states)
         attn_output, _ = self.self_attn(
             self.input_layernorm(collapsed),
@@ -340,23 +276,15 @@ class QEffDeepseekV4DecoderLayer(DeepseekV4DecoderLayer):
             cos_compress=cos_compress,
             sin_compress=sin_compress,
         )
-        hidden_states = post.to(dtype).unsqueeze(3) * attn_output.unsqueeze(2) + torch.matmul(
-            comb.to(dtype).transpose(-1, -2), hidden_states
-        )
+        hidden_states = _hc_combine(attn_output, post, comb, hidden_states, dtype)
 
-        # MLP site: HC collapse → layernorm → MoE → HC expand
         post, comb, collapsed = self.ffn_hc(hidden_states)
         mlp_output = self.mlp(self.post_attention_layernorm(collapsed), input_ids=input_ids)
-        hidden_states = post.to(dtype).unsqueeze(3) * mlp_output.unsqueeze(2) + torch.matmul(
-            comb.to(dtype).transpose(-1, -2), hidden_states
-        )
-
+        hidden_states = _hc_combine(mlp_output, post, comb, hidden_states, dtype)
         return hidden_states
 
 
 class QEffDeepseekV4Model(DeepseekV4Model):
-    """QEff-adapted V4 model with precomputed RoPE and QEffDynamicCache."""
-
     def __qeff_init__(self):
         self.qeff_rotary_emb = QEffDeepseekV4RotaryEmbedding(self.config)
 
@@ -393,10 +321,9 @@ class QEffDeepseekV4Model(DeepseekV4Model):
 
         attention_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
 
-        # Expand input to hc_mult parallel streams
+        # Expand to hc_mult parallel streams.
         hidden_states = inputs_embeds.unsqueeze(2).expand(-1, -1, self.config.hc_mult, -1).contiguous()
 
-        # Precomputed RoPE: index by position_ids
         cos_main, sin_main = self.qeff_rotary_emb("main")
         cos_compress, sin_compress = self.qeff_rotary_emb("compress")
 
@@ -414,32 +341,24 @@ class QEffDeepseekV4Model(DeepseekV4Model):
                 sin_compress=sin_compress,
             )
 
-        # Collapse hc_mult streams via HyperHead, then final norm
+        # Collapse hc_mult streams via HyperHead, then final norm.
         hidden_states = self.norm(self.hc_head(hidden_states))
 
-        # Convert Cache back to legacy list-of-tuples for ONNX trace (V3 pattern).
         next_cache = past_key_values.to_legacy_cache() if past_key_values is not None else None
-
-        return BaseModelOutputWithPast(
-            last_hidden_state=hidden_states,
-            past_key_values=next_cache,
-        )
+        return BaseModelOutputWithPast(last_hidden_state=hidden_states, past_key_values=next_cache)
 
 
 class QEffDeepseekV4ForCausalLM(DeepseekV4ForCausalLM):
-    """QEff-adapted V4 CausalLM with INT32 logit gather (U2)."""
-
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffDeepseekV4DecoderLayer}
 
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
-        # V4 shared-KV MQA: K == V, single head, full head_dim per layer.
+        # Shared-KV MQA: K == V, single head, full head_dim.
         cache_shape = (batch_size, 1, seq_len, config.head_dim)
-        dummy_cache = [[] for _ in range(config.num_hidden_layers)]
-        for i in range(config.num_hidden_layers):
-            dummy_cache[i].append(torch.zeros(cache_shape, dtype=config.torch_dtype))
-            dummy_cache[i].append(torch.zeros(cache_shape, dtype=config.torch_dtype))
-        return dummy_cache
+        return [
+            [torch.zeros(cache_shape, dtype=config.torch_dtype), torch.zeros(cache_shape, dtype=config.torch_dtype)]
+            for _ in range(config.num_hidden_layers)
+        ]
 
     def forward(
         self,
@@ -466,7 +385,6 @@ class QEffDeepseekV4ForCausalLM(DeepseekV4ForCausalLM):
         )
 
         hidden_states = outputs.last_hidden_state
-        # U2: INT32 logit gather index
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
 
@@ -476,8 +394,4 @@ class QEffDeepseekV4ForCausalLM(DeepseekV4ForCausalLM):
             logits = self.lm_head(hidden_states)
         logits = logits.to(hidden_states.dtype)
 
-        return CausalLMOutputWithPast(
-            loss=None,
-            logits=logits,
-            past_key_values=outputs.past_key_values,
-        )
+        return CausalLMOutputWithPast(loss=None, logits=logits, past_key_values=outputs.past_key_values)

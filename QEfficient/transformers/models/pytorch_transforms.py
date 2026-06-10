@@ -339,7 +339,6 @@ from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
 )
 from QEfficient.transformers.models.deepseek_v4.modeling_deepseek_v4 import (
     QEffDeepseekV4Attention,
-    QEffDeepseekV4CustomRMSNormAIC,
     QEffDeepseekV4DecoderLayer,
     QEffDeepseekV4ForCausalLM,
     QEffDeepseekV4HyperConnection,
@@ -685,7 +684,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Glm4MoeRMSNorm: CustomRMSNormAIC,
-        DeepseekV4RMSNorm: QEffDeepseekV4CustomRMSNormAIC,
+        DeepseekV4RMSNorm: CustomRMSNormAIC,
         Wav2Vec2Encoder: QEffWav2Vec2Encoder,
         Wav2Vec2EncoderStableLayerNorm: QEffWav2Vec2EncoderStableLayerNorm,
         # BERT-family: replace _create_attention_masks (uses create_bidirectional_mask,
