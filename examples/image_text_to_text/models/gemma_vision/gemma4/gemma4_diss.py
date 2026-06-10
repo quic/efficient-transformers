@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 
+from pathlib import Path
 from time import perf_counter
 
 # from qwen_vl_utils import process_vision_info
@@ -42,6 +43,8 @@ remove_fp16clip_transform_if_disabled(qeff_model, ENABLE_FP16_CLIP)
 PREFILL_SEQ_LEN = 296
 CTX_LEN = 4096
 BS = 1
+gemma_vision_dir = Path(__file__).resolve().parent.parent
+vision_npi_file = str(gemma_vision_dir / "configs" / "fp32_nodes_gemma4_26B_A4B_it_vision_diss.yaml")
 
 
 skip_vision = False
@@ -56,6 +59,7 @@ if not skip_vision:
         mxfp6_matmul=True,
         aic_enable_depth_first=True,
         skip_vision=skip_vision,
+        node_precision_info=vision_npi_file,
         split_model_io=True,
         skip_lang=True,
     )
