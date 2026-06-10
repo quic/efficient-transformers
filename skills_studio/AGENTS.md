@@ -49,6 +49,11 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
 - Do not add new test files when an existing test (or the quickcheck gate) can carry the regression.
 - Do not add license/copyright headers unless explicitly requested.
 
+## Required user inputs
+- Always ask the user for the virtualenv path before running commands.
+- Ask the user for `HF_HUB_CACHE` before downloading or loading any model.
+- Ask the user for `QEFF_HOME` before export/compile work that produces QEff artifacts.
+
 ## Contribution policy
 - Follow the fork → branch → PR flow in `CONTRIBUTING.md`; sync from `upstream/main`.
 - Run `pre-commit run --all-files` and the relevant tests before opening a PR.
@@ -74,6 +79,3 @@ Use a skill when the task matches its description. Open the `SKILL.md` for the f
 - `transformers-mainline-rebase` — Rebase QEff wrappers onto a newer HF Transformers
   release with minimal divergence while preserving runtime/export parity.
   (`skills_studio/skills/transformers-mainline-rebase/SKILL.md`)
-- `auto-perf` — Optimize model PyTorch code for lower latency / higher throughput on
-  QAIC by iterating the export → compile → on-device pipeline with hardware-aware tactics.
-  (`skills_studio/skills/auto-perf/SKILL.md`)
