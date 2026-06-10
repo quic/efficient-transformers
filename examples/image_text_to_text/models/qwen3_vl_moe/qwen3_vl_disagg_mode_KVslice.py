@@ -75,6 +75,8 @@ PREFILL_SEQ_LEN = 128
 CTX_LEN = 4096
 BS = 1
 STAGES = 4  # pipeline stages for lang prefill; set >1 for pipelined PP prefill
+PREFILL_DEVICE_IDS = [1, 2, 3, 4, 5, 6, 7, 8]
+DECODE_DEVICE_IDS = [9]
 
 config = AutoConfig.from_pretrained(model_id)
 config.dtype = "float16"
@@ -85,7 +87,7 @@ config.dtype = "float16"
 # config.vision_config.deepstack_visual_indexes = [8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=True, config=config, dtype=torch.float16, layerwise=True
+    model_id, attn_implementation="eager", kv_offload=True, config=config, dtype=torch.float16, layerwise=False
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -111,7 +113,7 @@ if not skip_vision:
         split_model_io=True,
         skip_lang=True,
         use_onnx_subfunctions=True,
-        layerwise=True,
+        layerwise=False,
     )
 
 prefill_qpc_path = qeff_model.compile(
@@ -132,7 +134,7 @@ prefill_qpc_path = qeff_model.compile(
     enable_chunking=True,
     skip_vision=True,
     use_onnx_subfunctions=True,
-    layerwise=True,
+    layerwise=False,
     layerwise_window_size=1,
     stages=STAGES,
 )
@@ -155,7 +157,7 @@ decode_qpc_path = qeff_model.compile(
     prefill_only=False,
     skip_vision=True,
     use_onnx_subfunctions=True,
-    layerwise=True,
+    layerwise=False,
     layerwise_window_size=1,
 )
 
@@ -171,7 +173,7 @@ print("\nLoading lang prefill session (cluster_id='prefill') …")
 lang_prefill_session = _KVShareSession(
     qpc_path=prefill_qpc_path.get("lang_prefill_qpc_path"),
     full_batch_size=BS,
-    device_ids=[1, 2, 3, 4, 5, 6, 7, 8],
+    device_ids=PREFILL_DEVICE_IDS,
     cluster_id="prefill",
     stages=STAGES,
 )
@@ -184,7 +186,7 @@ print("\nLoading lang decode session (cluster_id='decode') …")
 lang_decode_session = _KVShareSession(
     qpc_path=decode_qpc_path.get("lang_decode_qpc_path"),
     full_batch_size=BS,
-    device_ids=[9],
+    device_ids=DECODE_DEVICE_IDS,
     cluster_id="decode",
 )
 print("  lang_decode_session loaded ✓")
