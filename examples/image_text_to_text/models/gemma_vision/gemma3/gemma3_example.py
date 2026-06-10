@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-import os
+from pathlib import Path
 
 import torch
 import transformers
@@ -25,14 +25,16 @@ config = AutoConfig.from_pretrained(model_id)
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id)
 
-# Path to Node Precision Info YAML file, please refer to the README.md file located at gemma_vision/README.md for more details.
-npi_file_path = "configs/gemma_updated_npi.yaml"
-npi_file_full_path = os.path.join(os.getcwd(), npi_file_path)
+# Path to Node Precision Info YAML file.
+# Refer to the README.md file in the current gemma3 folder for details.
+gemma_vision_dir = Path(__file__).resolve().parent.parent
+npi_file_full_path = str(gemma_vision_dir / "configs" / "gemma_updated_npi.yaml")
 
 # For single QPC: kv_offload=False, For dual QPC: kv_offload=True
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, config=config, attn_implementation="eager", kv_offload=True
 )
+
 
 ### use skip_vision=True, if want to run only text, or false ###
 skip_vision = False
