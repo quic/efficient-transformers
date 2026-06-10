@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 """
-cloud_infer_KV_share.py
 =======================
 optimised KV-cache handoff via shared DMA buffers and slice operations.
 
@@ -19,12 +18,8 @@ On the last prefill chunk, before calling np_run_pipeline():
         kv_cache_buffers,                          # shared numpy arrays
         [("batch_index", bidx), ("ctx_start", 0)], # slice offsets
         exec_obj_idx,
-        session.prefill_buff_map[:-1],             # KV outputs only (no logits)
+        session.kv_only_buff_map,                  # KV outputs only (no logits)
     )
-
-This calls execObj.setDataWithSlices() which wires the prefill RetainedState
-output buffers directly into the decode session's KV input slots via a sliced
-DMA descriptor — the KV tensors never pass through Python/numpy.
 
 """
 
@@ -199,9 +194,6 @@ class QAICInferenceSession:
             assert self.context.setLogLevel(qaicrt.QLogLevel.QL_DEBUG) == qaicrt.QStatus.QS_SUCCESS, (
                 "Failed to setLogLevel"
             )
-
-        # One thread per queue — avoids head-of-line blocking between
-        # concurrent prefill and decode enqueues
         _qprops = qaicrt.QAicQueueProperties()
         _qprops.numThreadsPerQueue = 1
         self.queue.initProperties(_qprops)
@@ -239,8 +231,6 @@ class QAICInferenceSession:
             self.activate()
 
         # ── Per-exec-obj qbuffers and buf_dims ───────────────────────────────
-        # Each exec-obj gets its own buffer list so concurrent in-flight
-        # submissions don't clobber each other's buffer descriptors.
         self.qbuffers: list[list[qaicrt.QBuffer]] = [
             [qaicrt.QBuffer(bytes(b.size)) for b in self.bindings] for _ in range(self.queue_len)
         ]
@@ -294,7 +284,6 @@ class QAICInferenceSession:
         # decode_rs_buff_map : output RetainedState KV bindings (past_key.*_RetainedState)
         # Stores OUTPUT binding indices — used by set_data_for_kv_handoff on the
         # decode session to wire RetainedState outputs directly into kv_cache arrays.
-        # Distinct from decode_buff_map which stores INPUT binding indices.
         self.decode_rs_buff_map: list[tuple[str, int]] = sorted(
             [
                 (name.replace("_RetainedState", ""), self.binding_index_map[name])
@@ -303,6 +292,13 @@ class QAICInferenceSession:
             ],
             key=_kv_sort_key,
         )
+
+        # decode_rs_kv_only_buff_map : subset of decode_rs_buff_map containing only past_key.* / past_value.* RetainedState output entries.
+        self.decode_rs_kv_only_buff_map: list[tuple[str, int]] = [
+            entry
+            for entry in self.decode_rs_buff_map
+            if entry[0].startswith("past_key") or entry[0].startswith("past_value")
+        ]
 
         self.prefill_buff_map: list[tuple[str, int]] = sorted(
             [
@@ -316,6 +312,19 @@ class QAICInferenceSession:
         for name in self.output_names:
             if name.startswith("log"):
                 self.prefill_buff_map.append((name, self.binding_index_map[name]))
+
+        # kv_only_buff_map : subset of prefill_buff_map containing only
+        # past_key.* / past_value.* RetainedState output entries.
+        # prefill_buff_map may also contain vision RetainedState outputs
+        # (e.g. vision_embeds_RetainedState, deepstack_features_RetainedState)
+        # for VLMs compiled with kv_offload=True.  Using prefill_buff_map[:-1]
+        # directly for KV handoff would mismatch buffer sizes on those models.
+        # kv_only_buff_map is always safe for both text-only and VLM QPCs.
+        self.kv_only_buff_map: list[tuple[str, int]] = [
+            entry
+            for entry in self.prefill_buff_map
+            if entry[0].startswith("past_key") or entry[0].startswith("past_value")
+        ]
 
         # ── Skip KV buffers by default (retained-state managed via handoff) ──
         for slot in range(self.queue_len):
@@ -551,7 +560,7 @@ class QAICInferenceSession:
         index : int
             Exec-obj slot index.
         buff_map : list[tuple[str, int]] | None
-            Typically session.prefill_buff_map[:-1] (KV only, no logits).
+            Typically session.kv_only_buff_map (past_key.*/past_value.* only, safe for VLMs).
         """
         return self._set_data_with_slices(
             kv_cache_buffers,
@@ -585,8 +594,6 @@ class QAICInferenceSession:
         is_prefill: bool = True,
     ) -> int:
         """
-        Fire-and-forget enqueue for decode or non-pipelined prefill.
-
         Blocks until an exec-obj slot is available (prefill pool or fixed
         decode slot), then calls setData / setDataWithSlices and enqueues.
         Returns the exec-obj index so the caller can call complete_inf() later.
@@ -607,22 +614,22 @@ class QAICInferenceSession:
             assert self.decode_execObj_idx is not None, "decode_execObj_idx is None — session not configured for decode"
             exec_idx = self.decode_execObj_idx
 
-        # Copy input arrays into qbuffers/buf_dims so all buffers — inputs and
-        # outputs — are registered in a single setData(qbuffers, buf_dims) call.
-        # Overload-4 setData(tuple_list) replaces the entire registration, so
-        # calling it with only inputs would wipe out the logits output slot.
-        self.set_buffers(inputs, exec_idx)
-
-        if slicing_parameters is None:
-            status = self.execObj[exec_idx].setData(self.qbuffers[exec_idx], self.buf_dims[exec_idx])
-            assert status == qaicrt.QStatus.QS_SUCCESS, "setData failed"
-        else:
+        if slicing_parameters is not None:
             self._make_inputs_contiguous(inputs)
             slices = self.get_tuple_list_from_dict(inputs)
             status, _ = self.execObj[exec_idx].setDataWithSlices(
                 slices, self.kv_slicing_spec_handle, slicing_parameters
             )
             assert status == qaicrt.QStatus.QS_SUCCESS, "setDataWithSlices failed"
+        elif not is_prefill:
+            self._make_inputs_contiguous(inputs)
+            tuple_list = self.get_tuple_list_from_dict(inputs)
+            status = self.execObj[exec_idx].setData(tuple_list)
+            assert status == qaicrt.QStatus.QS_SUCCESS, "setData (decode tuple_list) failed"
+        else:
+            self.set_buffers(inputs, exec_idx)
+            status = self.execObj[exec_idx].setData(self.qbuffers[exec_idx], self.buf_dims[exec_idx])
+            assert status == qaicrt.QStatus.QS_SUCCESS, "setData failed"
 
         try:
             assert self.queue.enqueue(self.execObj[exec_idx]) == qaicrt.QStatus.QS_SUCCESS, "enqueue failed"
@@ -679,19 +686,19 @@ class QAICInferenceSession:
                     ("ctx_start", 0),
                 ],
                 exec_idx,
-                self.prefill_buff_map[:-1],  # KV entries only, exclude logits
+                self.kv_only_buff_map,
             )
 
         # Must use overload-4 setData(tuple_list) here — NOT setData(qbuffers, buf_dims).
         #
-        # Reason: setDataWithSlices (called above in set_data_for_kv_handoff) wires
-        # the KV RetainedState output slots (idx 6-9) to the shared kv_cache arrays.
-        # Per the SDK docs, setData(qbuffers, buf_dims) — overload 1 — overwrites ALL
-        # slots including 6-9, destroying the KV handoff wiring regardless of call order.
+        # setDataWithSlices (called above in set_data_for_kv_handoff) wires
+        # the KV RetainedState output slots (idx) to the shared kv_cache arrays.
+        # setData(qbuffers, buf_dims) — overload 1 — overwrites ALL
+        # slots, destroying the KV handoff wiring regardless of call order.
         #
         # setData(tuple_list) — overload 4 — only touches the indices explicitly listed.
         # get_tuple_list_from_dict(inputs) produces [(0, input_ids), (1, position_ids),
-        # (10, logits_buf)] — indices 6-9 are absent, so the setDataWithSlices wiring
+        # (10, logits_buf)] — indices in between  are absent, so the setDataWithSlices wiring
         # on those slots is never touched and survives intact.
         self._make_inputs_contiguous(inputs)
         tuple_list = self.get_tuple_list_from_dict(inputs)
@@ -733,9 +740,6 @@ class QAICInferenceSession:
 
         Returns a dict of {output_name: numpy_array} for all non-empty outputs.
 
-        Shape is read from binding metadata (always correct) rather than from
-        buf_dims, because np_run / np_run_pipeline use the tuple-list setData
-        path which bypasses set_buffers() and never updates buf_dims.
         """
         status, out_qbuffers = self.execObj[index].getData()
         assert status == qaicrt.QStatus.QS_SUCCESS, "getData failed"
@@ -753,18 +757,9 @@ class QAICInferenceSession:
         return outputs
 
     def run(self, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-        """
-        Synchronous convenience wrapper — mirrors the original cloud_infer.py
-        QAICInferenceSession.run() interface.
-
-        Uses np_run(is_prefill=True) + complete_inf() + get_outputs() so
-        existing callers need no changes.
-        """
         exec_idx = self.np_run(inputs, is_prefill=True)
         self.complete_inf(exec_idx, is_prefill=True)
         return self.get_outputs(exec_idx)
-
-    # ── Misc helpers (kept for API compatibility) ─────────────────────────────
 
     def create_numpy_buffers(
         self,

@@ -25,10 +25,10 @@ import math
 import time
 
 import numpy as np
-from QEfficient.generation.cloud_infer_KV_share import QAICInferenceSession
 from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
+from QEfficient.generation.cloud_infer_KV_share import QAICInferenceSession
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
@@ -39,17 +39,13 @@ CTX_LEN = 256  # = PREFILL_SEQ_LEN * 2
 STAGES = 2  # prefill pp stages
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(MODEL_ID, num_hidden_layers=2)
-# PREFILL_QPC_PATH = (
-#     "/home/akuruvil/.cache/qeff_models/Qwen3MoeForCausalLM"
-#     "/Qwen3MoeForCausalLM-f1cbdb820a692ad8/qpc-80e97a2d0087a383/qpc"
-# )
 PREFILL_QPC_PATH = qeff_model.compile(
     prefill_seq_len=PREFILL_SEQ_LEN,
     ctx_len=CTX_LEN,
     num_cores=16,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
-    num_devices=8,  #  TS=2 num_devices/STAGES
+    num_devices=2,  #  TS num_devices/STAGES
     split_retained_state_io=True,
     mos=1,
     aic_enable_depth_first=True,
@@ -66,7 +62,7 @@ DECODE_QPC_PATH = qeff_model.compile(
     num_cores=16,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
-    num_devices=2,
+    num_devices=1,
     split_retained_state_io=True,
     mos=1,
     aic_enable_depth_first=True,
@@ -121,7 +117,7 @@ print("\nLoading prefill session (cluster_id='prefill', stages) …")
 prefill_session = QAICInferenceSession(
     qpc_path=PREFILL_QPC_PATH,
     full_batch_size=1,
-    device_ids=[0, 1, 2, 3, 4, 5, 6, 7],
+    device_ids=[0, 1],
     cluster_id="prefill",
     stages=STAGES,
 )
@@ -133,7 +129,7 @@ print("\nLoading decode session (cluster_id='decode') …")
 decode_session = QAICInferenceSession(
     qpc_path=DECODE_QPC_PATH,
     full_batch_size=1,
-    device_ids=[8, 9],  # 2-device MQ decode
+    device_ids=[3],  # 2-device MQ decode
     cluster_id="decode",
 )
 print("  decode_session loaded ✓")
