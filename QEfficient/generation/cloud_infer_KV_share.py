@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 # ── Env-var names (match vllm convention) ────────────────────────────────────
 _PREFILL_QUEUE_LEN_ENV = "VLLM_QAIC_PREFILL_QUEUE_LEN"
-_ASYNC_SCHEDULING_TIMEOUT_ENV = "VLLM_QAIC_ASYNC_SCHEDULING_EXEC_TIMEOUT"
+_EXEC_TIMEOUT_ENV = "VLLM_QAIC_ASYNC_SCHEDULING_EXEC_TIMEOUT"
 
 # ── dtype mapping ─────────────────────────────────────────────────────────────
 AIC_TO_NP: dict[int, np.dtype] = {
@@ -122,9 +122,6 @@ class QAICInferenceSession:
         "prefill"  → only prefill exec-objs, no decode slot.
         "decode"   → only one decode exec-obj, no prefill pool.
         None       → combined mode: one decode slot + prefill pool.
-    use_async_scheduling : bool
-        When True (and cluster_id is None) allocates an extra prefill exec-obj
-        so a new chunk can be enqueued before the previous one completes.
     """
 
     def __init__(
@@ -136,12 +133,11 @@ class QAICInferenceSession:
         enable_debug_logs: bool = False,
         stages: int | None = 1,
         cluster_id: str | None = None,
-        use_async_scheduling: bool = False,
     ) -> None:
         self.stages: int = stages if stages is not None else 1
         self.cluster_id = cluster_id
         self.full_batch_size = full_batch_size
-        self.async_scheduling_exec_timeout: int = int(os.getenv(_ASYNC_SCHEDULING_TIMEOUT_ENV, 300))
+        self.exec_timeout: int = int(os.getenv(_EXEC_TIMEOUT_ENV, 300))
 
         # ── Exec-obj pool layout ─────────────────────────────────────────────
         # Layout in self.execObj list:
@@ -150,7 +146,7 @@ class QAICInferenceSession:
         #
         # cluster_id="decode"  : 1 decode slot, 0 prefill
         # cluster_id="prefill" : 0 decode slots, stages+1 prefill
-        # cluster_id=None      : 1 decode slot + 1 (or 2 if async) prefill
+        # cluster_id=None      : 1 decode slot + 1 prefill slot (combined)
         if cluster_id == "decode":
             self.prefill_num_execObj: int = 0
             self.decode_num_execObj: int = 1
@@ -160,8 +156,7 @@ class QAICInferenceSession:
             self.decode_num_execObj = 0
             self.decode_execObj_idx = None
         else:
-            _default_prefill = 2 if use_async_scheduling else 1
-            self.prefill_num_execObj = int(os.getenv(_PREFILL_QUEUE_LEN_ENV, _default_prefill))
+            self.prefill_num_execObj = int(os.getenv(_PREFILL_QUEUE_LEN_ENV, 1))
             self.decode_num_execObj = 1
             self.decode_execObj_idx = 0
 
@@ -174,9 +169,8 @@ class QAICInferenceSession:
             self.prefill_available_exec_objs.put(i)
 
         logger.debug(
-            "cluster_id=%s  async=%s  prefill_exec_objs=%d  decode_exec_objs=%d",
+            "cluster_id=%s  prefill_exec_objs=%d  decode_exec_objs=%d",
             cluster_id,
-            use_async_scheduling,
             self.prefill_num_execObj,
             self.decode_num_execObj,
         )
@@ -216,14 +210,10 @@ class QAICInferenceSession:
         prog_props = qaicrt.QAicProgramProperties()
         prog_props.dataPathTimeoutMs = 60_000
 
-        _dev_id_non_mq = None
-        if device_ids:
-            if len(device_ids) == 1:
-                _dev_id_non_mq = device_ids[0]
-            else:
-                prog_props.devMapping = ":".join(map(str, device_ids))
+        if device_ids and len(device_ids) > 1:
+            prog_props.devMapping = ":".join(map(str, device_ids))
 
-        self.program = qaicrt.Program(self.context, _dev_id_non_mq, qpc, prog_props)
+        self.program = qaicrt.Program(self.context, None, qpc, prog_props)
         assert self.program.load() == qaicrt.QStatus.QS_SUCCESS, "Failed to load program"
 
         self.activate_done = False
@@ -244,12 +234,17 @@ class QAICInferenceSession:
         self.kv_slicing_spec_handle = None
         self.repetition_penalty_spec_handle = None
 
-        if "past_key.0_RetainedState" in self.binding_index_map:
-            _rs_binding = self.bindings[self.binding_index_map["past_key.0_RetainedState"]]
+        _first_kv_rs_name: str | None = next(
+            (n for n in self.binding_index_map if n.startswith("past_key.") and n.endswith("_RetainedState")),
+            None,
+        )
+        if _first_kv_rs_name is not None:
+            _rs_binding = self.bindings[self.binding_index_map[_first_kv_rs_name]]
             # kv_shape / kv_size used externally to allocate shared KV buffers
             self.kv_shape: list[int] = list(_rs_binding.dims)
             self.kv_shape[0] = 1  # per-batch-slot shape
             self.kv_size: np.dtype = AIC_TO_NP[_rs_binding.type]
+            self._first_kv_layer_name: str = _first_kv_rs_name.replace("_RetainedState", "")
             self.kv_slicing_spec_handle = self.get_slicing_spec_handle(self.get_json_for_kv_cache_slicing())
 
         if "past_repetition_penalty_buffer" in self.input_names:
@@ -310,7 +305,7 @@ class QAICInferenceSession:
         )
         # Append logits at the end of prefill_buff_map
         for name in self.output_names:
-            if name.startswith("log"):
+            if name == "logits":
                 self.prefill_buff_map.append((name, self.binding_index_map[name]))
 
         # kv_only_buff_map : subset of prefill_buff_map containing only
@@ -365,7 +360,7 @@ class QAICInferenceSession:
         single batch slot starting at a given context position without copying
         the full KV tensor.
         """
-        elem_size = AIC_TO_NP[self.bindings[self.binding_index_map["past_key.0"]].type].itemsize
+        elem_size = AIC_TO_NP[self.bindings[self.binding_index_map[self._first_kv_layer_name]].type].itemsize
         spec = {
             "BufferSpecs": [
                 {
@@ -609,7 +604,7 @@ class QAICInferenceSession:
             False → use fixed decode_execObj_idx slot.
         """
         if is_prefill:
-            exec_idx = self.prefill_available_exec_objs.get(timeout=self.async_scheduling_exec_timeout)
+            exec_idx = self.prefill_available_exec_objs.get(timeout=self.exec_timeout)
         else:
             assert self.decode_execObj_idx is not None, "decode_execObj_idx is None — session not configured for decode"
             exec_idx = self.decode_execObj_idx
@@ -672,7 +667,7 @@ class QAICInferenceSession:
             last_chunk=True.
         """
         logger.debug("Waiting for prefill exec-obj (pipeline)")
-        exec_idx = self.prefill_available_exec_objs.get(timeout=self.async_scheduling_exec_timeout)
+        exec_idx = self.prefill_available_exec_objs.get(timeout=self.exec_timeout)
         logger.debug("Got prefill exec-obj %d", exec_idx)
 
         if last_chunk:

@@ -74,18 +74,19 @@ model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 PREFILL_SEQ_LEN = 128
 CTX_LEN = 4096
 BS = 1
-STAGES = 4  # pipeline stages for lang prefill; set >1 for pipelined PP prefill
-
+STAGES = 2  # pipeline stages for lang prefill; set >1 for pipelined PP prefill
+PREFILL_NUM_DEVICES = 2
+DECODE_NUM_DEVICES = 2
 config = AutoConfig.from_pretrained(model_id)
 config.dtype = "float16"
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
-# config.vision_config.depth = 9
-# config.text_config.num_hidden_layers = 6
-# config.vision_config.deepstack_visual_indexes = [8]
+config.vision_config.depth = 9
+config.text_config.num_hidden_layers = 6
+config.vision_config.deepstack_visual_indexes = [8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=True, config=config, dtype=torch.float16, layerwise=True
+    model_id, attn_implementation="eager", kv_offload=True, config=config, dtype=torch.float16, layerwise=False
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -111,7 +112,7 @@ if not skip_vision:
         split_model_io=True,
         skip_lang=True,
         use_onnx_subfunctions=True,
-        layerwise=True,
+        layerwise=False,
     )
 
 prefill_qpc_path = qeff_model.compile(
@@ -121,7 +122,7 @@ prefill_qpc_path = qeff_model.compile(
     height=354,
     width=536,
     num_cores=16,
-    num_devices=8,
+    num_devices=PREFILL_NUM_DEVICES,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     split_retained_state_io=True,  # enables DMA KV-slice handoff
@@ -132,9 +133,10 @@ prefill_qpc_path = qeff_model.compile(
     enable_chunking=True,
     skip_vision=True,
     use_onnx_subfunctions=True,
-    layerwise=True,
+    layerwise=False,
     layerwise_window_size=1,
-    stages=STAGES,
+    mdp_num_partitions=STAGES,
+    mdp_strategy="onnx",
 )
 
 decode_qpc_path = qeff_model.compile(
@@ -144,18 +146,17 @@ decode_qpc_path = qeff_model.compile(
     height=354,
     width=536,
     num_cores=16,
-    num_devices=1,
+    num_devices=DECODE_NUM_DEVICES,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     split_retained_state_io=True,  # enables DMA KV-slice handoff
-    retain_full_kv=True,
     split_model_io=True,
     mos=1,
     aic_enable_depth_first=True,
     prefill_only=False,
     skip_vision=True,
     use_onnx_subfunctions=True,
-    layerwise=True,
+    layerwise=False,
     layerwise_window_size=1,
 )
 
@@ -171,7 +172,6 @@ print("\nLoading lang prefill session (cluster_id='prefill') …")
 lang_prefill_session = _KVShareSession(
     qpc_path=prefill_qpc_path.get("lang_prefill_qpc_path"),
     full_batch_size=BS,
-    device_ids=[1, 2, 3, 4, 5, 6, 7, 8],
     cluster_id="prefill",
     stages=STAGES,
 )
@@ -184,7 +184,6 @@ print("\nLoading lang decode session (cluster_id='decode') …")
 lang_decode_session = _KVShareSession(
     qpc_path=decode_qpc_path.get("lang_decode_qpc_path"),
     full_batch_size=BS,
-    device_ids=[9],
     cluster_id="decode",
 )
 print("  lang_decode_session loaded ✓")
