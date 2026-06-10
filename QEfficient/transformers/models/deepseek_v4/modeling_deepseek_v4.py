@@ -250,14 +250,18 @@ class QEffDeepseekV4Attention(DeepseekV4Attention):
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         bsz, q_len, _ = hidden_states.size()
+        in_dtype = hidden_states.dtype
 
-        # Q: low-rank then up-project
-        q_residual = self.q_a_norm(self.q_a_proj(hidden_states))
+        # Q: low-rank then up-project. q_a_norm/kv_norm/q_b_norm live in
+        # _keep_in_fp32_modules_strict (DeepseekV4PreTrainedModel) and emit fp32
+        # even when the model is loaded in fp16/bf16 — cast back at each linear
+        # boundary so q_b_proj / kv_proj weights (in input dtype) match.
+        q_residual = self.q_a_norm(self.q_a_proj(hidden_states)).to(in_dtype)
         q = self.q_b_proj(q_residual).view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
-        q = self.q_b_norm(q)
+        q = self.q_b_norm(q).to(in_dtype)
 
         # KV: single shared head (K == V)
-        kv = self.kv_norm(self.kv_proj(hidden_states))
+        kv = self.kv_norm(self.kv_proj(hidden_states)).to(in_dtype)
         kv = kv.view(bsz, q_len, 1, self.head_dim).transpose(1, 2)
 
         cos, sin = (cos_main, sin_main) if self.rope_layer_type == "main" else (cos_compress, sin_compress)
@@ -277,13 +281,20 @@ class QEffDeepseekV4Attention(DeepseekV4Attention):
                 # cache re-derives the whole window history — verified ≡ HF to 0.0).
                 comp_in_4d = hidden_states.view(bsz, q_len, 1, -1).transpose(1, 2)  # [B,1,S,hidden]
                 kv_cached, comp_gathered = past_key_value.update(kv, comp_in_4d, self.layer_idx, cache_kwargs)
-                comp_in = comp_gathered.transpose(1, 2).reshape(bsz, -1, hidden_states.shape[-1])
+                # The compressor's kv_proj / gate_proj are listed in
+                # _keep_in_fp32_modules (HF DeepseekV4PreTrainedModel:1210-1216), so
+                # they stay fp32 even under fp16 model loads. Match the linear's
+                # weight dtype on the gathered prefix input.
+                comp_dtype = self.compressor.kv_proj.weight.dtype
+                comp_in = comp_gathered.transpose(1, 2).reshape(bsz, -1, hidden_states.shape[-1]).to(comp_dtype)
             else:
                 kv_cached, _ = past_key_value.update(kv, kv, self.layer_idx, cache_kwargs)
             key_states = value_states = kv_cached
         else:
             key_states = value_states = kv
-            comp_in = hidden_states
+            comp_in = (
+                hidden_states.to(self.compressor.kv_proj.weight.dtype) if self.compressor is not None else hidden_states
+            )
 
         key_states = key_states.expand(-1, self.num_heads, -1, -1)
         value_states = value_states.expand(-1, self.num_heads, -1, -1)
@@ -300,6 +311,11 @@ class QEffDeepseekV4Attention(DeepseekV4Attention):
             )
             n_comp = compressed_kv.shape[2]
             if n_comp > 0:
+                # The compressor's projections are fp32-strict (HF
+                # _keep_in_fp32_modules); cast its outputs back to the attention's
+                # dtype before concatenating onto attn_weights / value_states.
+                compressed_kv = compressed_kv.to(attn_weights.dtype)
+                block_bias = block_bias.to(attn_weights.dtype)
                 comp_k = compressed_kv.expand(-1, self.num_heads, -1, -1)
                 comp_scores = torch.matmul(q, comp_k.transpose(2, 3)) * self.scaling
                 attn_weights = torch.cat([attn_weights, comp_scores], dim=-1)
@@ -451,7 +467,7 @@ class QEffDeepseekV4DecoderLayer(DeepseekV4DecoderLayer):
 
         post, comb, collapsed = self.attn_hc(hidden_states)
         attn_output, _ = self.self_attn(
-            self.input_layernorm(collapsed),
+            self.input_layernorm(collapsed).to(dtype),
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_value=past_key_value,
@@ -464,7 +480,7 @@ class QEffDeepseekV4DecoderLayer(DeepseekV4DecoderLayer):
         hidden_states = _hc_combine(attn_output, post, comb, hidden_states, dtype)
 
         post, comb, collapsed = self.ffn_hc(hidden_states)
-        mlp_output = self.mlp(self.post_attention_layernorm(collapsed), input_ids=input_ids)
+        mlp_output = self.mlp(self.post_attention_layernorm(collapsed).to(dtype), input_ids=input_ids)
         hidden_states = _hc_combine(mlp_output, post, comb, hidden_states, dtype)
         return hidden_states
 
@@ -527,7 +543,7 @@ class QEffDeepseekV4Model(DeepseekV4Model):
             )
 
         # Collapse hc_mult streams via HyperHead, then final norm.
-        hidden_states = self.norm(self.hc_head(hidden_states))
+        hidden_states = self.norm(self.hc_head(hidden_states)).to(inputs_embeds.dtype)
 
         next_cache = past_key_values.to_legacy_cache() if past_key_values is not None else None
         return BaseModelOutputWithPast(last_hidden_state=hidden_states, past_key_values=next_cache)

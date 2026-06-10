@@ -91,15 +91,17 @@ CAUSAL_MULTI_SUBFUNCTION_MODEL_TYPES = {
     "phi",
     "starcoder2",
     "gpt_oss",
+    "deepseek_v4",
     # "granitemoe" is intentionally not listed in CAUSAL_RUNTIME_MODEL_IDS yet.
 }
 
-# Models whose tiny-random Hub repo ships FP8 block-quantized weights that QEff's
-# from_pretrained dequant path can't construct on CPU (Cloud AI 100 runs FP16, not
-# FP8/bf16). Their HF-load + transform path is still exercised by
-# test_causal_lm_cpu_runtime_parity_with_api_runner (full HF==QEff==ORT parity);
-# only the from_pretrained-construction smoke tests are skipped.
-CAUSAL_FP8_UNSUPPORTED_FROM_PRETRAINED = {"deepseek_v4"}
+# Models whose tiny-random Hub repo ships FP8 block-quantized weights AND has MoE
+# experts: QEff's from_pretrained FP8 expert-replacement path mis-shapes the
+# fused expert matmul on tiny dims (mat1×mat2 mismatch deep in the dequantized
+# expert linear). The HF-load → transform → export path (used by runtime_parity
+# and subfunction_export_smoke) is unaffected. Only the from_pretrained-based
+# subfunction_count test hits the bad path.
+CAUSAL_FP8_MOE_FROM_PRETRAINED_BROKEN = {"deepseek_v4"}
 
 VLM_TEXT_RUNTIME_MODEL_ID = "tiny-random/gemma-3"
 VLM_EXPORT_MODEL_IDS = {
@@ -629,8 +631,6 @@ def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, confi
     ids=sorted(CAUSAL_RUNTIME_MODEL_IDS),
 )
 def test_causal_compile_with_subfunctions_all_models(model_type, model_id, tmp_path):
-    if model_type in CAUSAL_FP8_UNSUPPORTED_FROM_PRETRAINED:
-        pytest.skip(f"{model_type}: FP8 tiny-random repo not constructible via from_pretrained (Cloud AI 100 is FP16)")
     del model_type
     try:
         qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
@@ -714,8 +714,11 @@ def test_causal_subfunction_export_smoke_all_models(model_type, model_id, tmp_pa
     ids=sorted(CAUSAL_RUNTIME_MODEL_IDS),
 )
 def test_causal_subfunction_count_with_onnx_subfunctions(model_type, model_id, tmp_path):
-    if model_type in CAUSAL_FP8_UNSUPPORTED_FROM_PRETRAINED:
-        pytest.skip(f"{model_type}: FP8 tiny-random repo not constructible via from_pretrained (Cloud AI 100 is FP16)")
+    if model_type in CAUSAL_FP8_MOE_FROM_PRETRAINED_BROKEN:
+        pytest.skip(
+            f"{model_type}: FP8+MoE tiny repo trips the from_pretrained expert-replacement path "
+            "(unrelated to architecture; runtime_parity + subfunction_export_smoke both PASS via HF-load+wrap)"
+        )
     try:
         qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True)
     except Exception as exc:

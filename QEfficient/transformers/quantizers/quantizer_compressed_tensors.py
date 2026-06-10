@@ -164,15 +164,15 @@ class FP8BlockWiseDequantLinear(torch.nn.Module):
     def for_fp8_layer_with_blocksize(cls, in_features, out_features, weight_block_size, fmt, bias):
         fp8_dequant_layer = cls(in_features, out_features, weight_block_size, bias)
         assert fmt == "e4m3", "e5m2 is not supposed yet!!"
-        assert (in_features % weight_block_size[0]) == 0 and (out_features % weight_block_size[1]) == 0, (
-            "weight shape is not divisible by block sizes in either rows or columns or both dimensions, \
-            got in_features: {in_features}, out_features: {out_features}, weight_block_size: {weight_block_size}!!"
-        )
+        # Allow non-divisible tail blocks: the scale buffer holds one entry per
+        # block (ceil-div), and blockwise_dequantize broadcasts + trims to weight
+        # shape. Required for tiny test repos whose weight dims are smaller than
+        # the declared block_size; exact for divisible cases.
+        n_block_rows = (out_features + weight_block_size[0] - 1) // weight_block_size[0]
+        n_block_cols = (in_features + weight_block_size[1] - 1) // weight_block_size[1]
         fp8_dequant_layer.register_buffer(
             "weight_scale_inv",
-            torch.empty(
-                (out_features // weight_block_size[0], in_features // weight_block_size[1]), dtype=torch.float32
-            ),
+            torch.empty((n_block_rows, n_block_cols), dtype=torch.float32),
         )
         return fp8_dequant_layer
 
@@ -251,6 +251,7 @@ class QEffFP8Config(QuantizationConfigMixin):
         run_compressed: bool = False,
         fmt: str = None,
         weight_block_size: List[int] = None,
+        **kwargs,
     ):
         self.quant_method = quant_method
         self.activation_scheme = activation_scheme
