@@ -35,6 +35,7 @@ from QEfficient.blocking.attention_blocking import (
     BlockingMode,
     generic_blocked_attention_interface,
     past_key_value_update,
+    prefill_blocked_attention_interface,
 )
 from QEfficient.customop.ctx_scatter_gather import (
     CtxGatherFunc3DGeneralized,
@@ -828,7 +829,17 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
         else:
             attention_mask = attention_mask
 
-        attention_interface: Callable = eager_attention_forward
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+        use_blocking = (
+            blocking_config is not None
+            and (blocking_config.prefill_block_chunks is not None)
+            and (self.sliding_window is None)
+        )
+
+        if use_blocking:
+            attention_interface = prefill_blocked_attention_interface
+        else:
+            attention_interface: Callable = eager_attention_forward
         attn_output, attn_weights = attention_interface(
             self,
             query_states,
@@ -839,6 +850,10 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
             scaling=self.scaling,
             sliding_window=self.sliding_window,
             s_aux=self.sinks,  # diff with Llama
+            layer_idx=self.layer_idx,
+            blocking_config=blocking_config,
+            position_ids=position_ids,
+            past_key_value=past_key_values,
             **kwargs,
         )
 

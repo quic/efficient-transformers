@@ -378,6 +378,170 @@ def blocked_kv_attention_forward_headpar_offline(
     return attn_output.transpose(1, 2).contiguous(), None
 
 
+def blocked_kv_attention_forward_prefill_headpar_offline(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    num_kv_blocks: int,
+    cache_kwargs: Dict[str, Any],
+    layer_idx: int,
+    past_key_value: Cache,
+    *,
+    use_causal_mask: bool = False,
+    sliding_window: Optional[int] = None,
+    skip_kv: bool = False,
+    position_bias: Optional[torch.Tensor] = None,
+    sinks: Optional[torch.Tensor] = None,
+    configured_split: Optional[int] = None,
+    **kwargs,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    B, NQH, QL, D_abs = query.shape
+    kv_lora_rank = module.head_dim
+    num_kv_groups = getattr(module, "num_key_value_groups", None)
+    split = _get_headpar_split(configured_split, num_kv_groups)
+    num_kv_blocks = max(1, num_kv_blocks)
+    n_rep = num_kv_groups
+    Hkv = NQH // num_kv_groups
+    n_rep_chunk = n_rep
+
+    ctx_len = QL
+    position_ids = cache_kwargs.get("position_ids")
+    kv_block_size = -(-ctx_len // num_kv_blocks)
+
+    # ── Q 6D: [B, Hkv, split, n_rep, QL, D_abs] ─────────────────────────────
+    q_fold = query.reshape(B, Hkv, n_rep, QL, D_abs)
+    Q_6d = q_fold.unsqueeze(2).expand(B, Hkv, split, n_rep, QL, D_abs)
+
+    current_position = position_ids.max(dim=-1).values
+
+    max_buf: list = []
+    sum_buf: list = []
+    out_buf: list = []
+
+    for j in range(num_kv_blocks):
+        start_index = j * kv_block_size
+        kv_len_block = ctx_len - start_index if j == num_kv_blocks - 1 else kv_block_size
+        end_index = start_index + kv_len_block
+        T_orig = kv_len_block
+
+        skip_future = None
+        if skip_kv:
+            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+                if skip_future.item():
+                    break
+
+        k_block = past_key_value.read_only_blocked_K(start_index, end_index, layer_idx, cache_kwargs)
+        ckv_for_v = past_key_value.read_only_blocked_V(start_index, end_index, layer_idx, cache_kwargs)
+
+        T_blk = T_orig
+        pad = 0
+        if T_blk % split != 0:
+            pad = split - (T_blk % split)
+            k_block = nn.functional.pad(k_block, (0, 0, 0, pad))
+            ckv_for_v = nn.functional.pad(ckv_for_v, (0, 0, 0, pad))
+            T_blk += pad
+        T_h = T_blk // split
+
+        # 5D K/V: [B, Hkv, split, T_h, D]
+        K_5d = k_block.view(B, Hkv, split, T_h, D_abs)
+        V_5d = ckv_for_v.view(B, Hkv, split, T_h, kv_lora_rank)
+
+        split_causal_masks = []
+        for s in range(split):
+            s_start = start_index + s * T_h
+            mask_s = _create_causal_mask(
+                position_ids=position_ids,
+                target_length=s_start + T_h,
+                sliding_window=sliding_window,
+                start_index=s_start,
+            )
+            split_causal_masks.append(mask_s.unsqueeze(2))  # [B, 1, 1, QL, T_h]
+        causal_mask = torch.stack(split_causal_masks, dim=2)  # [B, 1, split, 1, QL, T_h]
+
+        rep_max: list = []
+        rep_sum: list = []
+        rep_out: list = []
+
+        for r_start in range(0, n_rep, n_rep_chunk):
+            r_end = min(r_start + n_rep_chunk, n_rep)
+            # Q_chunk: [B, Hkv, split, chunk, QL, D_abs]
+            Q_chunk = Q_6d[:, :, :, r_start:r_end, :, :]
+            # [B, Hkv, split, chunk, QL, D] @ [B, Hkv, split, 1, D, T_h]
+            attn_c = torch.matmul(Q_chunk, K_5d.unsqueeze(3).transpose(-1, -2)) * scaling
+
+            if pad > 0:
+                chunk_start = torch.arange(split, device=attn_c.device) * T_h
+                valid_in_chunk = T_orig - chunk_start
+                k_idx = torch.arange(T_h, device=attn_c.device)
+                pad_mask = k_idx.unsqueeze(0) >= valid_in_chunk.unsqueeze(1)
+                attn_c = attn_c.masked_fill(pad_mask.view(1, 1, split, 1, 1, T_h), -3.0e4)
+
+            attn_c = attn_c.masked_fill(causal_mask, -3.0e4)
+
+            m_c = attn_c.max(dim=-1).values               # [B, Hkv, split, chunk, QL]
+            exp_c = torch.exp(attn_c - m_c.unsqueeze(-1))
+
+            if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+                m_c = torch.where(skip_future, torch.full_like(m_c, float(MIN_MASKED_ATTENTION_VALUE)), m_c)
+                exp_c = torch.where(skip_future, torch.zeros_like(exp_c), exp_c)
+
+            sum_c = torch.einsum("bhsrqt->bhsrq", exp_c)
+            out_c = torch.matmul(exp_c, V_5d.unsqueeze(3))  # [B, Hkv, split, chunk, QL, kv_lora_rank]
+
+            if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+                sum_c = torch.where(skip_future, torch.zeros_like(sum_c), sum_c)
+                out_c = torch.where(skip_future, torch.zeros_like(out_c), out_c)
+
+            rep_max.append(m_c)
+            rep_sum.append(sum_c)
+            rep_out.append(out_c)
+
+        # concat over n_rep chunks → [B, Hkv, split, n_rep, QL] / [..., kv_lora_rank]
+        m_blk = torch.cat(rep_max, dim=3)
+        sum_blk = torch.cat(rep_sum, dim=3)
+        out_blk = torch.cat(rep_out, dim=3)
+
+        max_buf.append(m_blk)
+        sum_buf.append(sum_blk)
+        out_buf.append(out_blk)
+
+    # ── Stage 1: merge across KV blocks ──────────────────────────────────────
+    max_stk = torch.stack(max_buf)   # [nkvb, B, Hkv, split, n_rep, QL]
+    sum_stk = torch.stack(sum_buf)
+    out_stk = torch.stack(out_buf)   # [nkvb, B, Hkv, split, n_rep, QL, kv_lora_rank]
+    m1 = max_stk.max(dim=0).values
+    w1 = torch.exp(max_stk - m1.unsqueeze(0))
+    s1 = torch.einsum("nbhsrq->bhsrq", w1 * sum_stk)
+    o1 = torch.einsum("nbhsrqv->bhsrqv", w1.unsqueeze(-1) * out_stk)
+
+    # ── Stage 2: merge across splits ─────────────────────────────────────────
+    m2 = m1.max(dim=2).values                              # [B, Hkv, n_rep, QL]
+    w2 = torch.exp(m1 - m2.unsqueeze(2))
+    s2 = torch.einsum("bhsrq->bhrq", w2 * s1)
+    o2 = torch.einsum("bhsrqv->bhrqv", w2.unsqueeze(-1) * o1)
+
+    if sinks is not None:
+        # sinks: [NQH] → per-head logit, same for all query positions
+        # sink_logits: [B, Hkv, n_rep, QL]
+        sink_logits = sinks.reshape(1, -1, 1, 1).expand(B, -1, QL, -1).reshape(B, Hkv, n_rep, QL, 1).squeeze(-1)
+        new_max = torch.maximum(m2, sink_logits)
+        scale_old = torch.exp(m2 - new_max)
+        scale_sink = torch.exp(sink_logits - new_max)
+        s2 = s2 * scale_old + scale_sink
+        o2 = o2 * scale_old.unsqueeze(-1)
+
+    output = o2 / s2.unsqueeze(-1)
+
+    # ── Unfold + v_up ─────────────────────────────────────────────────────────
+    # [B, Hkv, n_rep, QL, kv_lora_rank] → [B, NQH, QL, kv_lora_rank]
+    attn_output = output.reshape(B, NQH, QL, kv_lora_rank)
+
+    return attn_output.transpose(1, 2).contiguous(), None
+
 def blocked_qkv_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
