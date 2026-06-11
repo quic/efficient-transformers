@@ -800,10 +800,33 @@ class QEffQwen3VLMoeTextExperts(Qwen3VLMoeTextExperts):
     def __qeff_init__(self):
         # HF 5.x keeps fused gate_up projections. Keep backward-compatible
         # aliases expected by QEff MoE execution paths.
-        self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
-        self.gate_proj = nn.Parameter(self.gate_up_proj[:, : self.expert_dim, :].detach().clone().transpose(1, 2))
-        self.up_proj = nn.Parameter(self.gate_up_proj[:, self.expert_dim :, :].detach().clone().transpose(1, 2))
-        self.down_proj_t = nn.Parameter(self.down_proj.detach().clone().transpose(1, 2))
+        gate_up_proj = self.gate_up_proj.detach().clone()
+        hidden_size = int(getattr(self, "hidden_size", min(gate_up_proj.shape[1], gate_up_proj.shape[2])))
+        if gate_up_proj.shape[1] == hidden_size:
+            gate_up_proj_h = gate_up_proj
+        elif gate_up_proj.shape[2] == hidden_size:
+            gate_up_proj_h = gate_up_proj.transpose(1, 2)
+        elif gate_up_proj.shape[1] < gate_up_proj.shape[2]:
+            gate_up_proj_h = gate_up_proj
+        else:
+            gate_up_proj_h = gate_up_proj.transpose(1, 2)
+
+        if gate_up_proj_h.shape[-1] % 2 != 0:
+            raise ValueError(f"gate_up_proj last dim must be even. Got shape={tuple(gate_up_proj_h.shape)}")
+        self.expert_dim = int(getattr(self, "intermediate_size", gate_up_proj_h.shape[-1] // 2))
+        self.gate_proj = nn.Parameter(gate_up_proj_h[:, :, : self.expert_dim].contiguous())
+        self.up_proj = nn.Parameter(gate_up_proj_h[:, :, self.expert_dim :].contiguous())
+
+        down_proj = self.down_proj.detach().clone()
+        if down_proj.shape[-1] == hidden_size:
+            down_proj_t = down_proj
+        elif down_proj.shape[1] == hidden_size:
+            down_proj_t = down_proj.transpose(1, 2)
+        elif down_proj.shape[1] > down_proj.shape[2]:
+            down_proj_t = down_proj
+        else:
+            down_proj_t = down_proj.transpose(1, 2)
+        self.down_proj_t = nn.Parameter(down_proj_t.contiguous())
 
 
 class QEffQwen3VLDecoderWrapper(nn.Module):
@@ -978,9 +1001,15 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         top_k = top_i.shape[-1]
         xk = x.unsqueeze(1).expand(-1, top_k, -1).contiguous()
         xk = xk.view(-1, 1, H)
+        if gate_proj.shape[1] != H:
+            gate_proj = gate_proj.transpose(1, 2)
+        if up_proj.shape[1] != H:
+            up_proj = up_proj.transpose(1, 2)
         gate = torch.bmm(xk, gate_proj)
         up = torch.bmm(xk, up_proj)
         intermediate = up * self.experts.act_fn(gate)
+        if w_dn.shape[1] != intermediate.shape[-1]:
+            w_dn = w_dn.transpose(1, 2)
         experts_out = torch.bmm(intermediate, w_dn)
         experts_out = experts_out.view(T, top_k, H) * top_w.unsqueeze(-1)
         experts_out = torch.einsum("bnd->bd", experts_out)

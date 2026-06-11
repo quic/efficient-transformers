@@ -82,6 +82,25 @@ def _write_sharded_tiny_safetensor_checkpoint(path):
         )
 
 
+def _write_embedding_scale_recipe(path, scale=0.5):
+    path.write_text(
+        "\n".join(
+            [
+                "ModelID: tiny-gpt2",
+                "LayerScales:",
+                "  default_scale: 1.0",
+                "  per_layer:",
+                f"    0: {scale}",
+                "TensorScalingRules:",
+                "  - name: token_embedding",
+                "    tensor_template: transformer.wte.weight",
+                "    operation: scale_all",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_materialize_safetensor_checkpoint_converts_floating_tensors(tmp_path):
     source_path = tmp_path / "source"
     _write_tiny_safetensor_checkpoint(source_path)
@@ -212,3 +231,67 @@ def test_from_pretrained_streams_fp16_checkpoint_without_materialized_copy(tmp_p
 
     assert next(qeff_model.model.parameters()).dtype == torch.float16
     assert not materialized_dir.exists()
+
+
+def test_from_pretrained_applies_layer_scale_yaml_without_streaming(tmp_path):
+    source_path = tmp_path / "source"
+    config = AutoConfig.for_model(
+        "gpt2",
+        n_layer=1,
+        n_head=2,
+        n_embd=8,
+        vocab_size=17,
+        n_positions=16,
+        n_ctx=16,
+    )
+    source_model = AutoModelForCausalLM.from_config(config, attn_implementation="eager").to(torch.float32)
+    source_model.save_pretrained(source_path, safe_serialization=True)
+    expected_wte = source_model.transformer.wte.weight.detach().cpu() * 0.5
+
+    recipe_path = tmp_path / "layer_scales.yaml"
+    _write_embedding_scale_recipe(recipe_path, scale=0.5)
+
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        str(source_path),
+        qeff_layer_scale_yaml=str(recipe_path),
+    )
+
+    scaled_wte = qeff_model.model.transformer.wte.weight.detach().cpu()
+    assert torch.allclose(scaled_wte, expected_wte, atol=1e-6, rtol=1e-5)
+    assert qeff_model.model.config.qeff_layer_scales == {"0": 0.5}
+    assert qeff_model.model.config.qeff_layer_scale_default == 1.0
+    assert qeff_model.model.config.qeff_layer_scale_mode == "checkpoint_scaled_mlp_and_residual_branch"
+    assert qeff_model.model.config.qeff_layer_scale_recipe == str(recipe_path.resolve())
+
+
+def test_from_pretrained_streaming_applies_layer_scale_yaml(tmp_path):
+    source_path = tmp_path / "source"
+    config = AutoConfig.for_model(
+        "gpt2",
+        n_layer=1,
+        n_head=2,
+        n_embd=8,
+        vocab_size=17,
+        n_positions=16,
+        n_ctx=16,
+    )
+    source_model = AutoModelForCausalLM.from_config(config, attn_implementation="eager").to(torch.bfloat16)
+    source_model.save_pretrained(source_path, safe_serialization=True)
+    expected_wte = source_model.transformer.wte.weight.detach().cpu().to(torch.float16) * 0.5
+
+    recipe_path = tmp_path / "layer_scales.yaml"
+    _write_embedding_scale_recipe(recipe_path, scale=0.5)
+
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        str(source_path),
+        torch_dtype=torch.float16,
+        qeff_layer_scale_yaml=str(recipe_path),
+    )
+
+    scaled_wte = qeff_model.model.transformer.wte.weight.detach().cpu()
+    assert scaled_wte.dtype == torch.float16
+    assert torch.allclose(scaled_wte, expected_wte, atol=1e-3, rtol=1e-3)
+    assert qeff_model.model.config.qeff_layer_scales == {"0": 0.5}
+    assert qeff_model.model.config.qeff_layer_scale_default == 1.0
+    assert qeff_model.model.config.qeff_layer_scale_mode == "checkpoint_scaled_mlp_and_residual_branch"
+    assert qeff_model.model.config.qeff_layer_scale_recipe == str(recipe_path.resolve())

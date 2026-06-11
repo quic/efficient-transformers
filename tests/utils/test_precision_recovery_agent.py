@@ -6,13 +6,17 @@
 # -----------------------------------------------------------------------------
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from QEfficient.utils.precision_recovery_agent import (
+    PrecisionRecoveryAgentRequest,
     needs_scale_search,
     parse_scale_candidate_schedules,
+    resolve_model_card_from_loaded_qeff_model,
     resolve_model_id_from_card,
+    run_precision_recovery_agent_from_loaded_qeff_model,
 )
 
 
@@ -76,3 +80,51 @@ def test_needs_scale_search_true_when_matmul_or_mlp_promoted():
         ]
     }
     assert needs_scale_search(summary) is True
+
+
+def test_resolve_model_card_from_loaded_qeff_model_uses_wrapper_attr(tmp_path):
+    model_dir = tmp_path / "cached_model"
+    model_dir.mkdir()
+    qeff_model = SimpleNamespace(_pretrained_model_name_or_path=str(model_dir))
+
+    resolved = resolve_model_card_from_loaded_qeff_model(qeff_model)
+
+    assert resolved == str(model_dir.resolve())
+
+
+def test_resolve_model_card_from_loaded_qeff_model_uses_nested_model_attr():
+    qeff_model = SimpleNamespace(model=SimpleNamespace(pretrained_path="Qwen/Qwen3.5-397B-A17B"))
+
+    resolved = resolve_model_card_from_loaded_qeff_model(qeff_model)
+
+    assert resolved == "Qwen/Qwen3.5-397B-A17B"
+
+
+def test_resolve_model_card_from_loaded_qeff_model_errors_when_unavailable():
+    with pytest.raises(ValueError, match="Could not resolve model card/model id"):
+        resolve_model_card_from_loaded_qeff_model(SimpleNamespace())
+
+
+def test_run_precision_recovery_agent_from_loaded_qeff_model_builds_request(monkeypatch):
+    captured = {}
+
+    def _fake_runner(request):
+        captured["request"] = request
+        return {"ok": True, "model_id": "Qwen/Qwen3.5-397B-A17B"}
+
+    monkeypatch.setattr("QEfficient.utils.precision_recovery_agent.run_precision_recovery_agent", _fake_runner)
+    qeff_model = SimpleNamespace(model=SimpleNamespace(pretrained_path="Qwen/Qwen3.5-397B-A17B"))
+
+    report = run_precision_recovery_agent_from_loaded_qeff_model(
+        qeff_model,
+        prompt="Hello",
+        max_layers=2,
+        output_dir="scripts/debug/artifacts/agent_test",
+    )
+
+    assert report["ok"] is True
+    request = captured["request"]
+    assert isinstance(request, PrecisionRecoveryAgentRequest)
+    assert request.model_card == "Qwen/Qwen3.5-397B-A17B"
+    assert request.prompt == "Hello"
+    assert request.max_layers == 2

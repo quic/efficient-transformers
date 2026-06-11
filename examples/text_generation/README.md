@@ -159,6 +159,16 @@ Runtime scaling behavior:
 - can be forced with `QEFF_QWEN3_5_MOE_ENABLE_LAYER_SCALING=1`,
 - can be force-disabled with `QEFF_QWEN3_5_MOE_ENABLE_LAYER_SCALING=0`,
 - optional external recipe override via `QEFF_QWEN3_5_MOE_LAYER_SCALE_YAML=/path/to/layer_scales.yaml`.
+- for direct inference loading, you can pass `qeff_layer_scale_yaml` into `from_pretrained(...)`:
+```python
+from QEfficient import QEFFAutoModelForCausalLM
+
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+    "/path/to/model_or_hf_id",
+    torch_dtype="float16",
+    qeff_layer_scale_yaml="/path/to/layer_scales.yaml",
+)
+```
 
 ### generate_layer_scale_recipe.py
 Generate a mathematically-equivalent layer-scale recipe YAML from recovery JSON.
@@ -214,6 +224,21 @@ This example:
 - starts an iterative scale-search loop when matmul/MLP fp32 promotions are required,
 - emits a mathematically-equivalent layer-scale YAML recipe when scaling resolves precision issues,
 - records runtime-transform wiring status (causal + image-text auto pipelines) in the final agent report.
+
+Loaded-wrapper API:
+```python
+from QEfficient import QEFFAutoModelForCausalLM
+from QEfficient.utils import run_precision_recovery_agent_from_loaded_qeff_model
+
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained("Qwen/Qwen3.5-397B-A17B")
+report = run_precision_recovery_agent_from_loaded_qeff_model(
+    qeff_model,
+    start_layer=22,
+    max_layers=60,
+    output_dir="scripts/debug/artifacts/precision_recovery_agent",
+)
+print(report["recipe_yaml"])
+```
 
 
 ## CLI Workflow

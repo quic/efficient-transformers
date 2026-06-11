@@ -31,6 +31,13 @@ from QEfficient.utils.precision_recovery import (
 MODEL_ID_KEYS = ("model_id", "model_name", "hf_model_id", "repo_id")
 DEFAULT_SCALE_CANDIDATES = "1.0,0.5,0.25,0.125,0.0625,0.03125,0.015625,0.0078125,0.00390625,0.001953125"
 DEFAULT_SCALE_CANDIDATE_SCHEDULES = (DEFAULT_SCALE_CANDIDATES,)
+_MODEL_CARD_CANDIDATE_ATTRS = (
+    "_pretrained_model_name_or_path",
+    "pretrained_model_name_or_path",
+    "pretrained_path",
+    "_name_or_path",
+    "name_or_path",
+)
 
 
 def parse_scale_candidate_schedules(raw: str | None) -> tuple[str, ...]:
@@ -97,6 +104,95 @@ def resolve_model_id_from_card(model_card: str) -> str:
             f"Expected one of keys {MODEL_ID_KEYS} or a '<org>/<name>' token."
         )
     return model_id
+
+
+def _non_empty_str(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value if value else None
+
+
+def _append_model_card_candidate(candidates: list[str], value: Any) -> None:
+    candidate = _non_empty_str(value)
+    if candidate is None:
+        return
+    candidates.append(candidate)
+
+
+def _collect_model_card_candidates_from_object(obj: Any, candidates: list[str]) -> None:
+    if obj is None:
+        return
+
+    for attr_name in _MODEL_CARD_CANDIDATE_ATTRS:
+        _append_model_card_candidate(candidates, getattr(obj, attr_name, None))
+
+    hash_params = getattr(obj, "hash_params", None)
+    if isinstance(hash_params, dict):
+        _append_model_card_candidate(candidates, hash_params.get("pretrained_model_name_or_path"))
+
+    config = getattr(obj, "config", None)
+    if config is not None and config is not obj:
+        for attr_name in ("_name_or_path", "name_or_path"):
+            _append_model_card_candidate(candidates, getattr(config, attr_name, None))
+
+
+def resolve_model_card_from_loaded_qeff_model(qeff_model: Any) -> str:
+    candidates: list[str] = []
+    _collect_model_card_candidates_from_object(qeff_model, candidates)
+    _collect_model_card_candidates_from_object(getattr(qeff_model, "model", None), candidates)
+    _collect_model_card_candidates_from_object(getattr(qeff_model, "lang_model", None), candidates)
+    _collect_model_card_candidates_from_object(
+        getattr(getattr(qeff_model, "lang_model", None), "model", None), candidates
+    )
+    _collect_model_card_candidates_from_object(getattr(qeff_model, "vision_model", None), candidates)
+    _collect_model_card_candidates_from_object(
+        getattr(getattr(qeff_model, "vision_model", None), "model", None), candidates
+    )
+
+    seen = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        candidate_path = Path(candidate).expanduser()
+        if candidate_path.exists():
+            return str(candidate_path.resolve())
+        return candidate
+
+    raise ValueError(
+        "Could not resolve model card/model id from loaded QEff model. "
+        "Pass model_card explicitly to run_precision_recovery_agent_from_loaded_qeff_model(...)."
+    )
+
+
+def run_precision_recovery_agent_from_loaded_qeff_model(
+    qeff_model: Any,
+    *,
+    model_card: str | None = None,
+    **request_kwargs: Any,
+) -> dict[str, Any]:
+    """
+    Run the precision-recovery agent starting from a loaded QEff wrapper.
+
+    Parameters
+    ----------
+    qeff_model:
+        A loaded QEff auto-wrapper instance (for example, `QEFFAutoModelForCausalLM.from_pretrained(...)`).
+    model_card:
+        Optional explicit model card/model id override. When not provided, it is inferred from the loaded wrapper.
+    **request_kwargs:
+        Additional `PrecisionRecoveryAgentRequest` fields.
+    """
+
+    if "model_card" in request_kwargs:
+        if model_card is not None:
+            raise ValueError("Pass model_card either as an explicit argument or in request_kwargs, not both.")
+        model_card = request_kwargs.pop("model_card")
+
+    resolved_model_card = model_card or resolve_model_card_from_loaded_qeff_model(qeff_model)
+    request = PrecisionRecoveryAgentRequest(model_card=resolved_model_card, **request_kwargs)
+    return run_precision_recovery_agent(request)
 
 
 def needs_scale_search(analysis_summary: dict[str, Any]) -> bool:

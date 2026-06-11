@@ -59,6 +59,7 @@ from QEfficient.utils.layer_scale_checkpoint import (  # noqa: F401
     build_layer_scale_recipe_from_recovery_result,
     build_tensor_scale_specs,
     dump_layer_scale_recipe_yaml,
+    inject_layer_scale_metadata_to_loaded_model,
     load_layer_scale_recipe,
     serialize_layer_scale_recipe,
 )
@@ -78,6 +79,8 @@ from QEfficient.utils.precision_recovery_agent import (  # noqa: F401
     PrecisionRecoveryAgentRequest,
     needs_scale_search,
     parse_scale_candidate_schedules,
+    resolve_model_card_from_loaded_qeff_model,
     resolve_model_id_from_card,
     run_precision_recovery_agent,
+    run_precision_recovery_agent_from_loaded_qeff_model,
 )

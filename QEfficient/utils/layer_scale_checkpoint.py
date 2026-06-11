@@ -568,6 +568,17 @@ def _inject_scale_metadata_to_loaded_model(model: torch.nn.Module, recipe: Layer
         setattr(text_config, key, value)
 
 
+def inject_layer_scale_metadata_to_loaded_model(
+    *,
+    model: torch.nn.Module,
+    recipe_path: str | Path,
+) -> dict[str, Any]:
+    recipe_path = Path(recipe_path).expanduser().resolve()
+    recipe = load_layer_scale_recipe(recipe_path)
+    _inject_scale_metadata_to_loaded_model(model, recipe, recipe_path)
+    return _build_config_metadata_patch(recipe, recipe_path)
+
+
 def _collect_named_model_tensors(model: torch.nn.Module) -> dict[str, torch.Tensor]:
     tensor_map: dict[str, torch.Tensor] = {}
     for name, param in model.named_parameters():
@@ -600,7 +611,9 @@ def apply_layer_scale_recipe_to_loaded_model(
         matched.append((spec, tensor))
 
     if strict and missing_specs:
-        raise KeyError(f"{len(missing_specs)} recipe tensor keys missing in model tensors. First few: {missing_specs[:8]}")
+        raise KeyError(
+            f"{len(missing_specs)} recipe tensor keys missing in model tensors. First few: {missing_specs[:8]}"
+        )
 
     audit_rows: list[dict[str, Any]] = []
     for spec, tensor in matched:
