@@ -212,7 +212,7 @@ qeff_supported_architectures = ModelArchitectures(
 
 
 # This is for supporting different seq_len for different layers for Sliding window attn, chunked attn etc.
-DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma3", "gemma3_text", "gemma4_text", "llama4", "llama4_text"}
+DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma3", "gemma3_text", "gemma4_text", "glm_moe_dsa", "llama4", "llama4_text"}
 
 # This is for supporting different modelling classes specially written for prefill-only model
 SPECIALIZED_DISAGG_SERVING_MODEL_ARCH = {"gpt_oss", "qwen3_moe", "glm4_moe", "kimi_k2", "kimi_k25"}

@@ -64,6 +64,7 @@ CAUSAL_RUNTIME_MODEL_IDS = {
     "gpt2": "hf-internal-testing/tiny-random-GPT2LMHeadModel",
     "codegen": "hf-internal-testing/tiny-random-CodeGenForCausalLM",
     "falcon": "hf-internal-testing/tiny-random-FalconForCausalLM",
+    "glm_moe_dsa": "yujiepan/glm-moe-dsa-tiny-random",
     "gptj": "hf-internal-testing/tiny-random-GPTJForCausalLM",
     "llama": "hf-internal-testing/tiny-random-LlamaForCausalLM",
     "mistral": "hf-internal-testing/tiny-random-MistralForCausalLM",
@@ -90,6 +91,7 @@ CAUSAL_MULTI_SUBFUNCTION_MODEL_TYPES = {
     "phi",
     "starcoder2",
     "gpt_oss",
+    "glm_moe_dsa",  # first_k_dense_replace=3 → dense layers + MoE layers trace as two distinct subfunctions.
     # "granitemoe" is intentionally not listed in CAUSAL_RUNTIME_MODEL_IDS yet.
 }
 

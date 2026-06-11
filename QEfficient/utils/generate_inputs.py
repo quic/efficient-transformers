@@ -54,6 +54,15 @@ class InputHandler:
         )
 
     def _get_layer_cache_shape(self, layer_idx):
+        # MLA (DeepSeek-V3 family, GLM-MoE-DSA): K and V have different per-head
+        # dims. Return distinct shapes so the caller can allocate them separately.
+        if hasattr(self.config, "kv_lora_rank") and self.config.kv_lora_rank is not None:
+            batch = self.full_batch_size if self.full_batch_size else self.padding_shape[0]
+            n_heads = self.config.num_attention_heads
+            qk_dim = self.config.qk_nope_head_dim + self.config.qk_rope_head_dim
+            v_dim = self.config.v_head_dim
+            return ([batch, n_heads, self.ctx_len, qk_dim], [batch, n_heads, self.ctx_len, v_dim])
+
         if not hasattr(self.config, "layer_types") or self.config.layer_types is None:
             if hasattr(self.config, "sliding_window") and hasattr(self.config, "sliding_window_pattern"):
                 is_sliding = bool((layer_idx + 1) % self.config.sliding_window_pattern)
@@ -133,8 +142,13 @@ class InputHandler:
         past_key_values = []
         for i in range(self.n_layer):
             pad_shape = self._get_layer_cache_shape(i)
-            past_key = torch.zeros((pad_shape), dtype=self.dtype)
-            past_value = torch.zeros((pad_shape), dtype=self.dtype)
+            # MLA: tuple of (k_shape, v_shape); else single shape used for both.
+            if isinstance(pad_shape, tuple):
+                k_shape, v_shape = pad_shape
+            else:
+                k_shape = v_shape = pad_shape
+            past_key = torch.zeros((k_shape), dtype=self.dtype)
+            past_value = torch.zeros((v_shape), dtype=self.dtype)
             pkv = (past_key, past_value)
             past_key_values.append(pkv)
         inputs["past_key_values"] = tuple(past_key_values)
@@ -209,8 +223,12 @@ class InputHandler:
 
         for i in range(self.n_layer):
             pad_shape = self._get_layer_cache_shape(i)
-            inputs["past_key." + str(i)] = np.zeros((pad_shape), dtype=np.float32)
-            inputs["past_value." + str(i)] = np.zeros((pad_shape), dtype=np.float32)
+            if isinstance(pad_shape, tuple):
+                k_shape, v_shape = pad_shape
+            else:
+                k_shape = v_shape = pad_shape
+            inputs["past_key." + str(i)] = np.zeros((k_shape), dtype=np.float32)
+            inputs["past_value." + str(i)] = np.zeros((v_shape), dtype=np.float32)
         if self.full_batch_size:
             inputs["batch_index"] = np.arange(self.full_batch_size).reshape(-1, 1)
         return inputs

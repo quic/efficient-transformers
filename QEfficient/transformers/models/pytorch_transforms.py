@@ -68,6 +68,14 @@ from transformers.models.glm4_moe.modeling_glm4_moe import (
     Glm4MoeRotaryEmbedding,
     Glm4MoeTopkRouter,
 )
+from transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+    GlmMoeDsaAttention,
+    GlmMoeDsaDecoderLayer,
+    GlmMoeDsaForCausalLM,
+    GlmMoeDsaModel,
+    GlmMoeDsaMoE,
+    GlmMoeDsaRMSNorm,
+)
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
     GPTBigCodeAttention,
@@ -373,6 +381,15 @@ from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
     QEffGlm4MoeTopkRouter,
     QEffPrefillChunkedGlm4MoeMoE,
 )
+
+from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
+    QEffGlmMoeDsaAttention,
+    QEffGlmMoeDsaDecoderLayer,
+    QEffGlmMoeDsaForCausalLM,
+    QEffGlmMoeDsaModel,
+    QEffGlmMoeDsaMoE,
+    QEffPrefillChunkedGlmMoeDsaMoE,
+)
 from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2Attention,
     QEffGPT2Block,
@@ -663,6 +680,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Glm4MoeRMSNorm: CustomRMSNormAIC,
+        GlmMoeDsaRMSNorm: CustomRMSNormAIC,
         Wav2Vec2Encoder: QEffWav2Vec2Encoder,
         Wav2Vec2EncoderStableLayerNorm: QEffWav2Vec2EncoderStableLayerNorm,
         # BERT-family: replace _create_attention_masks (uses create_bidirectional_mask,
@@ -687,6 +705,12 @@ class KVCacheTransform(ModuleMappingTransform):
         Glm4MoeRotaryEmbedding: QEffGlm4MoeRotaryEmbedding,
         Glm4MoeMoE: QEffGlm4MoeMoE,
         Glm4MoeTopkRouter: QEffGlm4MoeTopkRouter,
+        # GlmMoeDsa (GLM-5.1)
+        GlmMoeDsaModel: QEffGlmMoeDsaModel,
+        GlmMoeDsaForCausalLM: QEffGlmMoeDsaForCausalLM,
+        GlmMoeDsaAttention: QEffGlmMoeDsaAttention,
+        GlmMoeDsaDecoderLayer: QEffGlmMoeDsaDecoderLayer,
+        GlmMoeDsaMoE: QEffGlmMoeDsaMoE,
         # CodeGen
         CodeGenAttention: QEffCodeGenAttention,
         CodeGenBlock: QEffCodeGenBlock,
@@ -934,6 +958,8 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
         # GLM4 Moe
         QEffGlm4MoeMoE: QEffPrefillChunkedGlm4MoeMoE,
+        # GlmMoeDsa
+        QEffGlmMoeDsaMoE: QEffPrefillChunkedGlmMoeDsaMoE,
         # Qwen3_5Moe
         QEffQwen3_5MoeSparseMoeBlock: QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
         # Gemma4_Moe
@@ -953,6 +979,8 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffPrefillChunkedQwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
         # GLM4 Moe
         QEffPrefillChunkedGlm4MoeMoE: QEffGlm4MoeMoE,
+        # GlmMoeDsa
+        QEffPrefillChunkedGlmMoeDsaMoE: QEffGlmMoeDsaMoE,
         # Qwen3 VL Moe
         QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
         # Qwen3_5Moe
