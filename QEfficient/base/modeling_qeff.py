@@ -48,6 +48,7 @@ from QEfficient.utils import (
     require_value,
     to_named_specializations,
 )
+from QEfficient.utils.config_utils import calculate_num_replicate_kv_heads
 from QEfficient.utils.export_utils import export_wrapper
 from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
@@ -788,23 +789,48 @@ class QEFFBaseModel(ABC):
         **compiler_options,
     ):
         # Apply the transformations that are dependent on compilation parameters
+        def _transform_tracking_root(module: torch.nn.Module) -> torch.nn.Module:
+            """
+            Use the shared wrapped model as transform-tracking root when available.
+            This lets encoder/decoder wrappers coordinate one-time transforms.
+            """
+            wrapped = getattr(module, "model", None)
+            return wrapped if isinstance(wrapped, torch.nn.Module) else module
 
         qaic_config = qaic_config if qaic_config else getattr(self.model, "qaic_config", None)
 
-        model_config = getattr(self.model, "config", None) or getattr(self.model.model, "config", None)
+        model_config = getattr(self.model, "config", None) or getattr(
+            getattr(self.model, "model", None), "config", None
+        )
+        num_replicate_kv_heads = 1
+        if model_config is not None:
+            num_replicate_kv_heads = calculate_num_replicate_kv_heads(
+                num_devices=num_devices,
+                text_model_config=model_config,
+            )
 
         if model_config:
-            if "DeepseekV3ForCausalLM" in (getattr(model_config, "architectures", None) or []):
-                if qaic_config:
-                    if qaic_config.get("blocking_mode", None) == "h":
-                        qaic_config["head_block_size"] = qaic_config.get("head_block_size", num_devices)
-                    num_kv_heads_repeat = qaic_config.get("num_kv_heads_repeat", 1)
+            if qaic_config is not None:
+                num_replicate_kv_heads = qaic_config.get("num_replicate_kv_heads", num_replicate_kv_heads)
+                qaic_config["num_replicate_kv_heads"] = num_replicate_kv_heads
+                transform_root = _transform_tracking_root(self.model)
+                applied_transforms = getattr(transform_root, "_qeff_runtime_transforms_applied", set())
+                should_apply_repeat_kv = num_replicate_kv_heads is not None and num_replicate_kv_heads > 1
+                if not should_apply_repeat_kv:
+                    replicate_kv_transformed = False
+                elif ReplicateKVHeadTransform.__name__ in applied_transforms:
+                    replicate_kv_transformed = False
+                    logger.warning("Skipping RepeatKVTransform: already applied on this model instance.")
+                else:
                     self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(
-                        self.model, num_kv_heads_repeat
+                        self.model,
+                        num_replicate_kv_heads,
                     )
                     if replicate_kv_transformed:
-                        self.hash_params["config"] = self.model.config.to_diff_dict()
-
+                        applied_transforms.add(ReplicateKVHeadTransform.__name__)
+                        setattr(transform_root, "_qeff_runtime_transforms_applied", applied_transforms)
+                if replicate_kv_transformed:
+                    self.hash_params["config"] = self.model.config.to_diff_dict()
             blocking_config = build_transformer_blocking_config_for_transform(
                 model_config,
                 ctx_len=ctx_len,
@@ -821,6 +847,7 @@ class QEFFBaseModel(ABC):
         if blocking_config is not None:
             self.model, _ = BlockingAttentionTransform.apply(self.model, attn_blocking_config=blocking_config)
             self.hash_params["blocking_kwargs"] = blocking_config
+        self.hash_params["num_replicate_kv_heads"] = num_replicate_kv_heads
 
     @dump_qconfig
     def _compile(

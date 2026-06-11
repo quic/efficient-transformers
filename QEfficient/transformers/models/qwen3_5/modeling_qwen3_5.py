@@ -1636,7 +1636,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
 
         for h, w, f in zip(height, width, num_frames):
             resized_height, resized_width = smart_resize(
-                height=h, width=w, factor=image_factor, min_pixels=min_pixels, max_pixels=max_pixels
+                height=h, width=w, factor=IMAGE_FACTOR, min_pixels=min_pixels, max_pixels=max_pixels
             )
             grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
             grid_height = grid_h * grid_w
