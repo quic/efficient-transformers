@@ -21,6 +21,7 @@ from QEfficient.blocking.blocked_attention_forwards import (
     blocked_hqkv_attention_forward,
     blocked_kv_attention_forward,
     blocked_kv_attention_forward_headpar_offline,
+    blocked_kv_attention_forward_prefill_headpar_offline,
     blocked_kv_mla_attention_forward,
     blocked_q_attention_forward,
     blocked_qkv_attention_forward,
@@ -58,7 +59,7 @@ class AttentionBlockingConfig:
     skip_kv: Optional[bool] = True
     num_batch_blocks: Optional[int] = None
     kv_blocking_headpar_split: Optional[int] = None
-
+    prefill_block_chunks: Optional[int] = None
 
 def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
     return past_key_value is not None and hasattr(past_key_value, "read_only_blockedKV")
@@ -256,3 +257,42 @@ def generic_blocked_mla_attention_interface(
     )
 
     return attn_output, attn_weights
+
+
+def prefill_blocked_attention_interface(
+    module,
+    query: torch.Tensor,
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    layer_idx: int,
+    blocking_config: AttentionBlockingConfig,
+    position_ids: Optional[torch.Tensor] = None,
+    past_seen_tokens: Optional[int] = None,
+    sinks: Optional[torch.Tensor] = None,
+    sliding_window: Optional[int] = None,
+    past_key_value: Optional[Cache] = None,
+    **kwargs,
+):
+    cache_kwargs = {
+        "position_ids": position_ids,
+        "past_seen_tokens": past_seen_tokens,
+    }
+    return blocked_kv_attention_forward_prefill_headpar_offline(
+        module=module,
+        query=query,
+        key=k_cache,
+        value=v_cache,
+        attention_mask=attention_mask,
+        scaling=scaling,
+        num_kv_blocks=blocking_config.prefill_block_chunks,
+        cache_kwargs=cache_kwargs,
+        layer_idx=layer_idx,
+        past_key_value=past_key_value,
+        skip_kv=blocking_config.skip_kv or False,
+        sliding_window=sliding_window,
+        sinks=sinks,
+        configured_split=blocking_config.kv_blocking_headpar_split,
+        **kwargs,
+    )
