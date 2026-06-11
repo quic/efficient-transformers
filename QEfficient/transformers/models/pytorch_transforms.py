@@ -620,16 +620,6 @@ from QEfficient.transformers.models.t5.modeling_t5 import (
     QEffT5LayerNorm,
     QEffT5Stack,
 )
-
-# from QEfficient.transformers.models.repeat_kv_utils import (
-#     duplicate_kv_projection_weights,
-#     get_attention_module,
-#     get_projection_layer,
-#     get_text_model,
-#     is_mla_model,
-#     is_replication_applied,
-#     replication_targets,
-# )
 from QEfficient.transformers.models.wav2vec2.modeling_wav2vec2 import (
     QEffWav2Vec2Encoder,
     QEffWav2Vec2EncoderStableLayerNorm,
