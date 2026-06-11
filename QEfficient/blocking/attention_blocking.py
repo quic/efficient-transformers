@@ -24,6 +24,7 @@ from QEfficient.blocking.blocked_attention_forwards import (
     blocked_kv_attention_forward_prefill_headpar_offline,
     blocked_kv_mla_attention_forward,
     blocked_q_attention_forward,
+    blocked_q_attention_forward_prefill,
     blocked_qkv_attention_forward,
 )
 
@@ -60,6 +61,7 @@ class AttentionBlockingConfig:
     num_batch_blocks: Optional[int] = None
     kv_blocking_headpar_split: Optional[int] = None
     prefill_block_chunks: Optional[int] = None
+    prefill_blocking_mode: Optional[str] = None  # "q" (default) or "kv"
 
 def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
     return past_key_value is not None and hasattr(past_key_value, "read_only_blockedKV")
@@ -279,14 +281,32 @@ def prefill_blocked_attention_interface(
         "position_ids": position_ids,
         "past_seen_tokens": past_seen_tokens,
     }
-    return blocked_kv_attention_forward_prefill_headpar_offline(
+    if blocking_config.prefill_blocking_mode == "kv":
+        return blocked_kv_attention_forward_prefill_headpar_offline(
+            module=module,
+            query=query,
+            key=k_cache,
+            value=v_cache,
+            attention_mask=attention_mask,
+            scaling=scaling,
+            num_kv_blocks=blocking_config.num_kv_blocks,
+            cache_kwargs=cache_kwargs,
+            layer_idx=layer_idx,
+            past_key_value=past_key_value,
+            skip_kv=blocking_config.skip_kv or False,
+            sliding_window=sliding_window,
+            sinks=sinks,
+            configured_split=blocking_config.kv_blocking_headpar_split,
+            **kwargs,
+        )
+    return blocked_q_attention_forward_prefill(
         module=module,
         query=query,
         key=k_cache,
         value=v_cache,
         attention_mask=attention_mask,
         scaling=scaling,
-        num_kv_blocks=blocking_config.prefill_block_chunks,
+        num_q_blocks=blocking_config.prefill_block_chunks,
         cache_kwargs=cache_kwargs,
         layer_idx=layer_idx,
         past_key_value=past_key_value,

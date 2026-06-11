@@ -84,6 +84,12 @@ def parse_args():
         action="store_true",
         help="Use ONNX subfunctions during export",
     )
+    parser.add_argument(
+        "--moe-prefill-packed-chunk-size",
+        type=int,
+        default=256,
+        help="MoE prefill packed chunk size (passed to compiler for MoE models)",
+    )
     return parser.parse_args()
 
 
@@ -180,6 +186,7 @@ def main():
         "num_kv_blocks": args.num_kv_blocks,
         "kv_blocking_headpar_split": headpar_split,
         "prefill_block_chunks": 2,
+        "prefill_blocking_mode": "q", # supported modes are q and kv, kv is with head parallel softmax
     }
 
     compile_kwargs = dict(
@@ -212,8 +219,8 @@ def main():
         qaic_config=prefill_qaic_config,
         prefill_only=True,
         enable_chunking=True,
-        user_tiled=True,
-        moe_prefill_packed_chunk_size=256,
+        aic_enable_depth_first=True,
+        moe_prefill_packed_chunk_size=args.moe_prefill_packed_chunk_size,
         **compile_kwargs,
     )
     print(f"  -> {prefill_qpc_path}")
@@ -236,6 +243,7 @@ def main():
             prefill_only=True,
             enable_chunking=True,
             aic_enable_depth_first=True,
+            moe_prefill_packed_chunk_size=args.moe_prefill_packed_chunk_size,
             **compile_kwargs,
         )
         print(f"  -> decode:  {baseline_decode_qpc}")

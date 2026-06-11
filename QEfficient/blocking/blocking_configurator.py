@@ -373,6 +373,9 @@ def build_transformer_blocking_config_for_transform(
     if qaic_config.get("prefill_block_chunks", False):
         blocking_config.prefill_block_chunks = qaic_config.get("prefill_block_chunks")
 
+    if qaic_config.get("prefill_blocking_mode", False):
+        blocking_config.prefill_blocking_mode = qaic_config.get("prefill_blocking_mode")
+
     if qaic_config.get("kv_blocking_headpar_split", None) is not None:
         kv_blocking_headpar_split = qaic_config.get("kv_blocking_headpar_split")
         # if default head parallel split, we split based on num cores
