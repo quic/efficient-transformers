@@ -1461,6 +1461,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
 
         _resolve_torch_dtype(kwargs)
+        num_replicate_kv_heads = kwargs.pop("num_replicate_kv_heads", 1)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -1469,6 +1470,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             model,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             qaic_config=qaic_config,
+            num_replicate_kv_heads=num_replicate_kv_heads,
             **kwargs,
         )
 
@@ -1593,7 +1595,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if prefill_only and prefill_seq_len > 1:
             offload_pt_weights = False  # to keep weight for decode onnx
         else:
-            offload_pt_weights = kwargs.get("offload_pt_weights", True)
+            num_replicate_kv_heads = (
+                (self.lang_model.model.qaic_config or {}).get("num_replicate_kv_heads", 1)
+                if hasattr(self.lang_model.model, "qaic_config")
+                else 1
+            )
+            offload_pt_weights = kwargs.get("offload_pt_weights", num_replicate_kv_heads <= 1)
 
         if not skip_lang:
             self.lang_model.export(
@@ -2616,6 +2623,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
         _resolve_torch_dtype(kwargs)
+        num_replicate_kv_heads = kwargs.pop("num_replicate_kv_heads", 1)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -2624,6 +2632,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             model,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             qaic_config=qaic_config,
+            num_replicate_kv_heads=num_replicate_kv_heads,
             **kwargs,
         )
 
@@ -3275,6 +3284,7 @@ class QEFFAutoModelForImageTextToText:
         )
 
         _resolve_torch_dtype(kwargs)
+        num_replicate_kv_heads = kwargs.pop("num_replicate_kv_heads", 1)
         if layerwise:
             # Layer-wise mode: build the outer model on the meta device so the
             # caller's ``from_pretrained`` does not pull the full checkpoint
@@ -3293,6 +3303,7 @@ class QEFFAutoModelForImageTextToText:
             continuous_batching=continuous_batching,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             qaic_config=qaic_config,
+            num_replicate_kv_heads=num_replicate_kv_heads,
             **kwargs,
         )
         # Mark the wrapper so its compile() can default ``layerwise=True`` if
@@ -3550,6 +3561,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         )
 
         _resolve_torch_dtype(kwargs)
+        num_replicate_kv_heads = kwargs.pop("num_replicate_kv_heads", 1)
         if layerwise:
             # Layer-wise mode: build the outer model on the meta device. The
             # caller still gets a typed wrapper, but no checkpoint weights are
@@ -3570,6 +3582,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 pretrained_model_name_or_path=pretrained_model_name_or_path,
                 qaic_config=qaic_config,
                 continuous_batching=continuous_batching,
+                num_replicate_kv_heads=num_replicate_kv_heads,
                 **kwargs,
             )
         instance = cls(
@@ -3578,6 +3591,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             qaic_config=qaic_config,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             max_seq_len_cached=max_seq_len_cached,
+            num_replicate_kv_heads=num_replicate_kv_heads,
             **kwargs,
         )
         if layerwise:
