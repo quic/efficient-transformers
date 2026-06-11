@@ -1,0 +1,40 @@
+ModelID: Qwen/Qwen3.5-397B-A17B
+SourceArtifacts:
+ - scripts/debug/artifacts/qwen3_5_moe_full_depth_iterative_fp32_recovery_smoketest.json
+ - scripts/debug/artifacts/qwen3_5_moe_full_depth_iterative_fp32_recovery_full.json
+
+PromotedLayers:
+ - 22
+ - 26
+ - 30
+ - 54
+
+PromotedPatchSequence:
+ - sparse_moe_post_ops_fp32
+ - shared_expert_matmul_fp32_keep_fp32
+
+FP32NodeInstanceNames:
+ - model.language_model.layers.22.mlp.shared_expert.gate_proj
+ - model.language_model.layers.22.mlp.shared_expert.up_proj
+ - model.language_model.layers.22.mlp.shared_expert.down_proj
+ - model.language_model.layers.22.mlp::sigmoid(shared_expert_gate_output)
+ - model.language_model.layers.22.mlp::mul(sigmoid_gate,shared_expert_output)
+ - model.language_model.layers.22.mlp::add(experts_out,shared_expert_output)
+ - model.language_model.layers.26.mlp.shared_expert.gate_proj
+ - model.language_model.layers.26.mlp.shared_expert.up_proj
+ - model.language_model.layers.26.mlp.shared_expert.down_proj
+ - model.language_model.layers.26.mlp::sigmoid(shared_expert_gate_output)
+ - model.language_model.layers.26.mlp::mul(sigmoid_gate,shared_expert_output)
+ - model.language_model.layers.26.mlp::add(experts_out,shared_expert_output)
+ - model.language_model.layers.30.mlp.shared_expert.gate_proj
+ - model.language_model.layers.30.mlp.shared_expert.up_proj
+ - model.language_model.layers.30.mlp.shared_expert.down_proj
+ - model.language_model.layers.30.mlp::sigmoid(shared_expert_gate_output)
+ - model.language_model.layers.30.mlp::mul(sigmoid_gate,shared_expert_output)
+ - model.language_model.layers.30.mlp::add(experts_out,shared_expert_output)
+ - model.language_model.layers.54.mlp.shared_expert.gate_proj
+ - model.language_model.layers.54.mlp.shared_expert.up_proj
+ - model.language_model.layers.54.mlp.shared_expert.down_proj
+ - model.language_model.layers.54.mlp::sigmoid(shared_expert_gate_output)
+ - model.language_model.layers.54.mlp::mul(sigmoid_gate,shared_expert_output)
+ - model.language_model.layers.54.mlp::add(experts_out,shared_expert_output)

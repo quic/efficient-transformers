@@ -48,6 +48,39 @@ from QEfficient.utils.hash_utils import (  # noqa: F401
     create_export_hash,
     hash_dict_params,
 )
+from QEfficient.utils.layer_scale_checkpoint import (  # noqa: F401
+    SUPPORTED_RUNTIME_EQUIVALENCE_MODES,
+    LayerScaleRecipe,
+    TensorScaleSpec,
+    TensorScalingRule,
+    apply_layer_scale_recipe_to_loaded_model,
+    apply_layer_scale_recipe_to_snapshot,
+    build_layer_scale_recipe_from_recovery_json,
+    build_layer_scale_recipe_from_recovery_result,
+    build_tensor_scale_specs,
+    dump_layer_scale_recipe_yaml,
+    inject_layer_scale_metadata_to_loaded_model,
+    load_layer_scale_recipe,
+    serialize_layer_scale_recipe,
+)
 from QEfficient.utils.layerwise_pipeline import (  # noqa: F401
     layerwise_pipeline,
+)
+from QEfficient.utils.precision_recovery import (  # noqa: F401
+    DEFAULT_ITERATIVE_MLP_CANDIDATES,
+    PrecisionRecoveryRequest,
+    detect_precision_recovery_backend,
+    run_precision_recovery,
+    summarize_precision_recovery_result,
+)
+from QEfficient.utils.precision_recovery_agent import (  # noqa: F401
+    DEFAULT_SCALE_CANDIDATE_SCHEDULES,
+    PrecisionRecoveryAgent,
+    PrecisionRecoveryAgentRequest,
+    needs_scale_search,
+    parse_scale_candidate_schedules,
+    resolve_model_card_from_loaded_qeff_model,
+    resolve_model_id_from_card,
+    run_precision_recovery_agent,
+    run_precision_recovery_agent_from_loaded_qeff_model,
 )

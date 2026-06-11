@@ -1682,6 +1682,35 @@ LAYERWISE_TINY_MODEL_IDS = {
 }
 
 
+def _write_qwen3_5_moe_layer_scale_recipe(path: Path, scale: float = 0.5) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "ModelID: tiny-random/qwen3.5-moe",
+                "LayerScales:",
+                "  default_scale: 1.0",
+                "  per_layer:",
+                f"    0: {scale}",
+                "RuntimeEquivalence:",
+                "  mode: checkpoint_scaled_mlp_and_residual_branch",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _find_qwen3_5_moe_text_model_with_scaling(module):
+    for child in module.modules():
+        if not hasattr(child, "_qeff_layer_scaling_enabled"):
+            continue
+        if not hasattr(child, "_qeff_layer_scales"):
+            continue
+        if not hasattr(child, "layers"):
+            continue
+        return child
+    raise AssertionError("Qwen3.5-MoE text model with runtime scaling metadata was not found")
+
+
 @pytest.mark.llm_model
 def test_layerwise_window_helpers():
     """Pure-Python coverage of the windowing helpers - no model load required."""
@@ -1875,6 +1904,50 @@ def test_layerwise_matches_default_path_for_qwen3_5_moe():
         _layerwise._reset_layer_windows()
 
     assert torch.equal(default_out[0], hidden_states), "Qwen3.5-MoE layerwise logits diverged from default logits"
+
+
+@pytest.mark.llm_model
+def test_qwen3_5_moe_from_pretrained_yaml_invokes_runtime_scaling_transform(tmp_path):
+    """YAML-driven scaling metadata must reach QEff decoder transform wiring."""
+    import QEfficient
+
+    model_id = LAYERWISE_TINY_MODEL_IDS["qwen3_5_moe"]
+    recipe_path = tmp_path / "qwen3_5_moe_layer_scale_recipe.yaml"
+    _write_qwen3_5_moe_layer_scale_recipe(recipe_path, scale=0.5)
+
+    try:
+        config = AutoConfig.from_pretrained(model_id)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+    config.torch_dtype = "float32"
+
+    try:
+        qeff_model = QEfficient.QEFFAutoModelForImageTextToText.from_pretrained(
+            model_id,
+            attn_implementation="eager",
+            kv_offload=True,
+            config=config,
+            dtype=torch.float32,
+            qeff_layer_scale_yaml=str(recipe_path),
+            layerwise=False,
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    language_decoder = qeff_model.model.get_qeff_language_decoder().model
+    text_model = _find_qwen3_5_moe_text_model_with_scaling(language_decoder)
+    decoder_layer = text_model.layers[0]
+
+    assert text_model._qeff_layer_scaling_enabled is True
+    assert text_model._qeff_layer_scales.get(0) == pytest.approx(0.5)
+    assert text_model._qeff_layer_scale_default == pytest.approx(1.0)
+    assert text_model._qeff_layer_scale_mode == "checkpoint_scaled_mlp_and_residual_branch"
+    assert text_model.config.qeff_layer_scale_recipe == str(recipe_path.resolve())
+
+    assert decoder_layer._qeff_layer_scaling_enabled is True
+    assert decoder_layer._qeff_layer_scales.get(0) == pytest.approx(0.5)
+    assert decoder_layer._qeff_layer_scale_default == pytest.approx(1.0)
+    assert decoder_layer._qeff_layer_scale_mode == "checkpoint_scaled_mlp_and_residual_branch"
 
 
 @pytest.mark.llm_model

@@ -24,6 +24,13 @@ from transformers import AutoConfig
 
 from QEfficient.utils import constants
 from QEfficient.utils.constants import QEFF_MODELS_DIR
+from QEfficient.utils.layer_scale_checkpoint import (
+    TensorScaleSpec,
+    apply_layer_scale_recipe_to_loaded_model,
+    build_tensor_scale_specs,
+    inject_layer_scale_metadata_to_loaded_model,
+    load_layer_scale_recipe,
+)
 from QEfficient.utils.logging_utils import logger
 
 QEFF_MATERIALIZED_CHECKPOINT_DIR_ENV = "QEFF_MATERIALIZED_CHECKPOINT_DIR"
@@ -35,6 +42,7 @@ _MARKER_FILE = "qeff_materialized_checkpoint.json"
 _WEIGHT_SUFFIXES = (".safetensors", ".bin", ".pt", ".pth", ".ckpt", ".h5", ".msgpack")
 _QEFF_STREAMING_CHECKPOINT_PATH_KWARG = "_qeff_streaming_checkpoint_path"
 _QEFF_STREAMING_CHECKPOINT_DTYPE_KWARG = "_qeff_streaming_checkpoint_dtype"
+_QEFF_LAYER_SCALE_YAML_KWARG = "qeff_layer_scale_yaml"
 
 _TORCH_DTYPE_TO_CONFIG = {
     torch.float16: "float16",
@@ -255,14 +263,46 @@ def load_hf_model_with_optional_safetensor_streaming(
 ):
     """Load a Hugging Face model, streaming safetensors into a meta model when prepared."""
 
+    layer_scale_recipe_path = kwargs.pop(_QEFF_LAYER_SCALE_YAML_KWARG, None)
+    if layer_scale_recipe_path is not None:
+        layer_scale_recipe_path = str(Path(layer_scale_recipe_path).expanduser().resolve())
+
     streaming_checkpoint_path = kwargs.pop(_QEFF_STREAMING_CHECKPOINT_PATH_KWARG, None)
     streaming_dtype = kwargs.pop(_QEFF_STREAMING_CHECKPOINT_DTYPE_KWARG, None)
     if streaming_checkpoint_path is None:
-        return auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        model = auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        if layer_scale_recipe_path is not None:
+            scale_audit = apply_layer_scale_recipe_to_loaded_model(
+                model=model,
+                recipe_path=layer_scale_recipe_path,
+                strict=True,
+                inject_config_metadata=True,
+            )
+            logger.info(
+                "Applied layer-scale recipe %s to loaded model tensors: scaled=%d missing=%d",
+                layer_scale_recipe_path,
+                scale_audit["scaled_tensor_count"],
+                len(scale_audit["missing_recipe_keys"]),
+            )
+        return model
 
     if args:
         logger.warning("QEfficient streaming checkpoint load does not support positional model args; using HF loader.")
-        return auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        model = auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        if layer_scale_recipe_path is not None:
+            scale_audit = apply_layer_scale_recipe_to_loaded_model(
+                model=model,
+                recipe_path=layer_scale_recipe_path,
+                strict=True,
+                inject_config_metadata=True,
+            )
+            logger.info(
+                "Applied layer-scale recipe %s to loaded model tensors: scaled=%d missing=%d",
+                layer_scale_recipe_path,
+                scale_audit["scaled_tensor_count"],
+                len(scale_audit["missing_recipe_keys"]),
+            )
+        return model
 
     config = kwargs.get("config")
     if config is None:
@@ -286,7 +326,14 @@ def load_hf_model_with_optional_safetensor_streaming(
         model = auto_class.from_config(config, **constructor_kwargs)
     if normalized_streaming_dtype is not None:
         _set_config_torch_dtype(getattr(model, "config", None), normalized_streaming_dtype)
-    load_summary = load_safetensor_checkpoint_into_model(model, streaming_checkpoint_path, target_dtype=streaming_dtype)
+    load_summary = load_safetensor_checkpoint_into_model(
+        model,
+        streaming_checkpoint_path,
+        target_dtype=streaming_dtype,
+        layer_scale_recipe_path=layer_scale_recipe_path,
+    )
+    if layer_scale_recipe_path is not None:
+        inject_layer_scale_metadata_to_loaded_model(model=model, recipe_path=layer_scale_recipe_path)
     logger.info(
         "Loaded %s tensors (%s bytes) through QEfficient streaming safetensor loader",
         load_summary.loaded_tensor_count,
@@ -323,16 +370,24 @@ def load_safetensor_checkpoint_into_model(
     model: torch.nn.Module,
     checkpoint_path: Union[str, os.PathLike],
     target_dtype: Any = None,
+    layer_scale_recipe_path: Union[str, os.PathLike, None] = None,
 ) -> StreamingLoadResult:
     """Stream safetensor shards into matching parameters and buffers on CPU."""
 
     checkpoint_path = Path(checkpoint_path).expanduser().resolve()
     layout = _load_safetensor_layout(checkpoint_path)
     normalized_dtype = _normalize_torch_dtype(target_dtype)
+    layer_scale_specs = _load_layer_scale_specs(layer_scale_recipe_path)
 
     expected_parameters = dict(model.named_parameters())
     expected_buffers = dict(model.named_buffers())
     expected_names = set(expected_parameters) | set(expected_buffers)
+    missing_scale_keys = sorted(name for name in layer_scale_specs if name not in expected_names)
+    if missing_scale_keys:
+        raise KeyError(
+            "Layer-scale recipe keys missing from model tensors. "
+            f"Missing={missing_scale_keys[:8]} total_missing={len(missing_scale_keys)}"
+        )
     checkpoint_name_to_shard = _index_safetensor_names(checkpoint_path, layout["shards"])
     legacy_expert_source_names = _collect_legacy_expert_source_names(expected_parameters, checkpoint_name_to_shard)
     loaded_names = set()
@@ -352,6 +407,7 @@ def load_safetensor_checkpoint_into_model(
                 tensor = reader.get_tensor(name)
                 if normalized_dtype is not None and tensor.is_floating_point() and tensor.dtype != normalized_dtype:
                     tensor = tensor.to(dtype=normalized_dtype)
+                tensor = _maybe_apply_layer_scale(tensor, layer_scale_specs.get(name))
                 loaded_tensors.append((name, tensor))
         return loaded_tensors, shard_unexpected_names
 
@@ -372,6 +428,7 @@ def load_safetensor_checkpoint_into_model(
         checkpoint_path,
         checkpoint_name_to_shard,
         normalized_dtype,
+        layer_scale_specs,
     )
     loaded_tensor_count += packed_count
     loaded_tensor_bytes += packed_bytes
@@ -461,6 +518,7 @@ def _materialize_legacy_expert_parameters(
     checkpoint_path: Path,
     checkpoint_name_to_shard: Dict[str, str],
     target_dtype: Optional[torch.dtype],
+    layer_scale_specs: Dict[str, TensorScaleSpec],
 ) -> tuple[int, int, set[str]]:
     loaded_tensor_count = 0
     loaded_tensor_bytes = 0
@@ -481,6 +539,7 @@ def _materialize_legacy_expert_parameters(
             continue
         if tensor is None:
             continue
+        tensor = _maybe_apply_layer_scale(tensor, layer_scale_specs.get(target_name))
         _set_module_tensor(model, target_name, tensor)
         packed_names.add(target_name)
         loaded_tensor_count += 1
@@ -489,6 +548,36 @@ def _materialize_legacy_expert_parameters(
         gc.collect()
 
     return loaded_tensor_count, loaded_tensor_bytes, packed_names
+
+
+def _load_layer_scale_specs(
+    recipe_path: Union[str, os.PathLike, None],
+) -> Dict[str, TensorScaleSpec]:
+    if recipe_path is None:
+        return {}
+    recipe = load_layer_scale_recipe(Path(recipe_path).expanduser().resolve())
+    return {spec.tensor_key: spec for spec in build_tensor_scale_specs(recipe)}
+
+
+def _maybe_apply_layer_scale(tensor: torch.Tensor, spec: Optional[TensorScaleSpec]) -> torch.Tensor:
+    if spec is None:
+        return tensor
+    out = tensor.clone()
+    scalar = out.new_tensor(float(spec.scale))
+    if spec.operation == "scale_all":
+        out.mul_(scalar)
+        return out
+    if spec.operation == "scale_second_half_dim1":
+        if out.ndim < 2:
+            raise ValueError(f"scale_second_half_dim1 requires rank>=2. Got rank={out.ndim}")
+        dim1 = int(out.shape[1])
+        if dim1 % 2 != 0:
+            raise ValueError(f"scale_second_half_dim1 requires even dim1. Got dim1={dim1}")
+        half = dim1 // 2
+        index = (slice(None), slice(half, None), *([slice(None)] * (out.ndim - 2)))
+        out[index].mul_(scalar)
+        return out
+    raise ValueError(f"Unsupported layer-scale operation={spec.operation!r}")
 
 
 def _load_legacy_gate_up_experts(

@@ -70,6 +70,102 @@ from QEfficient.utils.logging_utils import logger
 QWEN3_5_MOE_ROPE_CACHE_EXPORT_CAP = 76800
 
 
+def _parse_layer_scale_map(raw_layer_scales) -> dict[int, float]:
+    if raw_layer_scales is None:
+        return {}
+    if isinstance(raw_layer_scales, dict):
+        items = raw_layer_scales.items()
+    elif isinstance(raw_layer_scales, list):
+        items = []
+        for row in raw_layer_scales:
+            if not isinstance(row, dict):
+                raise ValueError(
+                    f"List-form layer scales must be dict rows with `layer_idx`/`scale`, got {type(row).__name__}."
+                )
+            if "layer_idx" not in row or "scale" not in row:
+                raise ValueError(f"Layer scale row missing required keys: {row}")
+            items.append((row["layer_idx"], row["scale"]))
+    else:
+        raise ValueError(
+            "`qeff_layer_scales` must be dict[layer_idx->scale] or "
+            f"list[{{layer_idx, scale}}]. Got {type(raw_layer_scales).__name__}."
+        )
+    out = {}
+    for key, value in items:
+        layer_idx = int(key)
+        scale = float(value)
+        if layer_idx < 0:
+            raise ValueError(f"Layer index must be >= 0. Got {layer_idx}")
+        if scale <= 0.0:
+            raise ValueError(f"Layer scale must be > 0. Got layer={layer_idx}, scale={scale}")
+        out[layer_idx] = scale
+    return out
+
+
+def _parse_optional_bool_env(var_name: str) -> Optional[bool]:
+    raw = os.environ.get(var_name, None)
+    if raw is None:
+        return None
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "y", "on"}:
+        return True
+    if value in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ValueError(f"{var_name} must be one of [1/0,true/false,yes/no,on/off], got {raw!r}")
+
+
+def _load_layer_scale_recipe_from_yaml(recipe_yaml_path: str) -> tuple[dict[int, float], float, str]:
+    from QEfficient.utils.layer_scale_checkpoint import load_layer_scale_recipe
+
+    recipe = load_layer_scale_recipe(recipe_yaml_path)
+    return dict(recipe.layer_scales), float(recipe.default_scale), str(recipe.config_mode_value)
+
+
+def _resolve_layer_scale_runtime_config(config) -> tuple[bool, dict[int, float], float, str]:
+    expected_mode = "checkpoint_scaled_mlp_and_residual_branch"
+    enable_override = _parse_optional_bool_env("QEFF_QWEN3_5_MOE_ENABLE_LAYER_SCALING")
+    recipe_yaml_path = os.environ.get("QEFF_QWEN3_5_MOE_LAYER_SCALE_YAML", "").strip()
+
+    config_scales = _parse_layer_scale_map(getattr(config, "qeff_layer_scales", None))
+    config_default = float(getattr(config, "qeff_layer_scale_default", 1.0))
+    config_mode = str(getattr(config, "qeff_layer_scale_mode", expected_mode))
+    if config_default <= 0.0:
+        raise ValueError(f"`qeff_layer_scale_default` must be > 0. Got {config_default}.")
+
+    has_scale_source = bool(recipe_yaml_path) or bool(config_scales) or (config_default != 1.0)
+    scaling_enabled = enable_override if enable_override is not None else has_scale_source
+    if not scaling_enabled:
+        return False, {}, 1.0, expected_mode
+
+    if recipe_yaml_path:
+        layer_scales, layer_scale_default, layer_scale_mode = _load_layer_scale_recipe_from_yaml(recipe_yaml_path)
+    else:
+        layer_scales = config_scales
+        layer_scale_default = config_default
+        layer_scale_mode = config_mode
+
+    if layer_scale_default <= 0.0:
+        raise ValueError(f"`qeff_layer_scale_default` must be > 0. Got {layer_scale_default}.")
+    if layer_scale_mode != expected_mode:
+        raise ValueError(
+            f"Unsupported qeff layer-scale mode={layer_scale_mode!r}. "
+            f"Supported mode is {expected_mode!r} for mathematical-equivalence guarantees."
+        )
+    return True, layer_scales, layer_scale_default, layer_scale_mode
+
+
+def _mul_by_scalar(tensor: torch.Tensor, scalar: float) -> torch.Tensor:
+    if scalar == 1.0:
+        return tensor
+    return tensor * tensor.new_tensor(scalar)
+
+
+def _div_by_scalar(tensor: torch.Tensor, scalar: float) -> torch.Tensor:
+    if scalar == 1.0:
+        return tensor
+    return tensor / tensor.new_tensor(scalar)
+
+
 class QEffQwen3_5MoeGatedDeltaNetCustomRMSNormAIC(nn.Module):
     """
     RMSNorm module that works by replacing the current module with compiler known custom-op.
@@ -963,6 +1059,14 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
             self.self_attn.__class__ = QEffQwen3_5MoeAttention
             self.self_attn.__qeff_init__()
 
+        # Optional mathematically-equivalent recovery path for checkpoints that
+        # were offline-scaled at selected MLP layers.
+        self._qeff_layer_scaling_enabled = False
+        self._qeff_layer_scales = {}
+        self._qeff_layer_scale_default = 1.0
+        self._qeff_layer_scale_mode = "checkpoint_scaled_mlp_and_residual_branch"
+        self._qeff_layer_index_offset = 0
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -977,6 +1081,28 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
         **kwargs,
     ) -> torch.FloatTensor:
         del use_cache
+        layer_scaling_enabled = bool(
+            kwargs.pop("qeff_layer_scaling_enabled", getattr(self, "_qeff_layer_scaling_enabled", False))
+        )
+        layer_scales = kwargs.pop("qeff_layer_scales", self._qeff_layer_scales)
+        layer_scale_default = float(kwargs.pop("qeff_layer_scale_default", self._qeff_layer_scale_default))
+        if not layer_scaling_enabled:
+            layer_scales = {}
+            layer_scale_default = 1.0
+        elif layer_scale_default <= 0.0:
+            raise ValueError(f"`qeff_layer_scale_default` must be > 0. Got {layer_scale_default}.")
+
+        global_layer_idx = kwargs.pop("qeff_global_layer_idx", None)
+        if global_layer_idx is None:
+            global_layer_idx = int(getattr(self, "layer_idx", 0)) + self._qeff_layer_index_offset
+        else:
+            global_layer_idx = int(global_layer_idx)
+
+        # Previous layer may have emitted a scaled residual/MLP sum. Undo here
+        # before this layer's input RMSNorm to keep exact model math.
+        prev_scale = layer_scales.get(global_layer_idx - 1, layer_scale_default)
+        hidden_states = _div_by_scalar(hidden_states, prev_scale)
+
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
 
@@ -1009,7 +1135,12 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
         # For the MoE layers, we need to unpack
         if isinstance(hidden_states, tuple):
             hidden_states, _ = hidden_states
-        hidden_states = residual + hidden_states
+
+        # For scaled checkpoints, this layer's MLP output is pre-scaled by s.
+        # Multiply residual by s before add so output is s * (residual + mlp).
+        # The next layer divides by s at its input (see prev_scale block above).
+        layer_scale = layer_scales.get(global_layer_idx, layer_scale_default)
+        hidden_states = _mul_by_scalar(residual, layer_scale) + hidden_states
         return hidden_states
 
 
@@ -1027,6 +1158,13 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         self.cos_cached = torch.nn.Parameter(
             (self.rotary_emb.cos_cached[:rope_rows] * self.rotary_emb.attention_scaling).contiguous()
         )
+        (
+            self._qeff_layer_scaling_enabled,
+            self._qeff_layer_scales,
+            self._qeff_layer_scale_default,
+            self._qeff_layer_scale_mode,
+        ) = _resolve_layer_scale_runtime_config(self.config)
+        self._qeff_layer_index_offset = int(getattr(self.config, "qeff_layer_index_offset", 0))
 
     def forward(
         self,
@@ -1098,12 +1236,14 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         position_embeddings = (cos, sin)
         all_hidden_states = () if output_hidden_states else None
         layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
+        last_layer_idx_ran = None
 
         for layer_idx, decoder_layer in enumerate(self.layers):
             if layer_idx < start or layer_idx >= end:
                 continue
             if layer_indices_to_run is not None and layer_idx not in layer_indices_to_run:
                 continue
+            last_layer_idx_ran = layer_idx
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -1118,12 +1258,20 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
                 batch_index=batch_index,
                 use_cache=use_cache,
                 cache_position=cache_position,
+                qeff_global_layer_idx=self._qeff_layer_index_offset + layer_idx,
+                qeff_layer_scaling_enabled=self._qeff_layer_scaling_enabled,
+                qeff_layer_scales=self._qeff_layer_scales,
+                qeff_layer_scale_default=self._qeff_layer_scale_default,
                 **kwargs,
             )
 
             # break
 
         if is_last_layer_window(QEffQwen3_5MoeTextModel, len(self.layers)):
+            if self._qeff_layer_scaling_enabled and last_layer_idx_ran is not None:
+                final_global_layer_idx = self._qeff_layer_index_offset + int(last_layer_idx_ran)
+                final_scale = self._qeff_layer_scales.get(final_global_layer_idx, self._qeff_layer_scale_default)
+                hidden_states = _div_by_scalar(hidden_states, final_scale)
             hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
