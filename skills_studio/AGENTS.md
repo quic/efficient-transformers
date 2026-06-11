@@ -51,6 +51,7 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
   integration, call that out to the user with the reason.
 - Before committing, run the relevant linter/formatter for the files changed and
   address the findings instead of committing avoidable style issues.
+- Always use signed-off commits with `git commit -s`.
 - Keep code standards high: follow PEP 8 for Python, avoid commented-out code,
   and never leave breakpoints, ad-hoc debug prints, or temporary debugging hooks.
 - Do not add new test files when an existing test (or the quickcheck gate) can carry the regression.
