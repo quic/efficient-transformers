@@ -203,13 +203,18 @@ class FP8BlockWiseDequantQwen3VLMoeTextExperts(torch.nn.Module):
         self.register_buffer(
             "down_proj", torch.empty((self.num_experts, self.expert_dim, self.hidden_size), dtype=FP8_DTYPE)
         )
+        # Ceil-div for non-divisible tail blocks (same pattern as FP8BlockWiseDequantLinear).
+        n_gate_up_rows = (self.hidden_size + r - 1) // r
+        n_gate_up_cols = (2 * self.expert_dim + c - 1) // c
+        n_down_rows = (self.expert_dim + r - 1) // r
+        n_down_cols = (self.hidden_size + c - 1) // c
         self.register_buffer(
             "gate_up_proj_scale_inv",
-            torch.empty((self.num_experts, self.hidden_size // r, (2 * self.expert_dim) // c), dtype=torch.float32),
+            torch.empty((self.num_experts, n_gate_up_rows, n_gate_up_cols), dtype=torch.float32),
         )
         self.register_buffer(
             "down_proj_scale_inv",
-            torch.empty((self.num_experts, self.expert_dim // r, self.hidden_size // c), dtype=torch.float32),
+            torch.empty((self.num_experts, n_down_rows, n_down_cols), dtype=torch.float32),
         )
         self.act_fn = act_fn
 
@@ -230,8 +235,8 @@ class FP8BlockWiseDequantQwen3VLMoeTextExperts(torch.nn.Module):
         hidden_states = hidden_states.reshape(-1, self.hidden_size)  # (num_tokens, hidden_size)
         hidden_states = hidden_states.repeat(self.num_experts, 1)
         hidden_states = hidden_states.view(self.num_experts, -1, self.hidden_size)
-        gate_up_proj = blockwise_dequantize(self.gate_up_proj, self.gate_up_proj_inv_scale, self.weights_block_size)
-        down_proj = blockwise_dequantize(self.down_proj, self.down_proj_inv_scale, self.weights_block_size)
+        gate_up_proj = blockwise_dequantize(self.gate_up_proj, self.gate_up_proj_scale_inv, self.weights_block_size)
+        down_proj = blockwise_dequantize(self.down_proj, self.down_proj_scale_inv, self.weights_block_size)
         gate_up = torch.bmm(hidden_states, gate_up_proj)
         gate, up = gate_up.chunk(2, dim=-1)  # not supported for DTensors
         next_states = torch.bmm((up * self.act_fn(gate)), down_proj)
