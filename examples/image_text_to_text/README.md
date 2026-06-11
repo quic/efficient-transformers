@@ -110,6 +110,21 @@ Some models have specialized examples demonstrating advanced features:
 
 For reranker examples, see [../reranker/](../reranker/).
 
+### Qwen3.5-MoE YAML Scaling + Layerwise Decode Export
+
+Use this when you want to scale checkpoint shards from a YAML recipe first, then
+load through `QEFFAutoModelForImageTextToText` and export decode-only layerwise ONNX:
+
+```bash
+python models/qwen3_5_moe/qwen3_5_moe_scale_yaml_then_layerwise_decode.py \
+    --model-name Qwen/Qwen3.5-397B-A17B \
+    --recipe-yaml ../../QEfficient/transformers/models/qwen3_5_moe/configs/layer_scales_qwen3_5_397b_mlp_equivalent.yaml \
+    --scaled-dir ../../scripts/debug/artifacts/qwen3_5_397b_scaled_snapshot_v3 \
+    --reuse-scaled-dir \
+    --prefill-seq-len 1 \
+    --layerwise-window-size 1
+```
+
 
 ## Documentation
 - **Full Guide**: [VLM Documentation](../../docs/source/quick_start.md#vision-language-models)

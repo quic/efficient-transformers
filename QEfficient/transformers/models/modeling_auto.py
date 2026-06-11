@@ -55,6 +55,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     PrefillOnlyChunkedTransform,
     PrefillOnlyExternalModuleMapperTransform,
     PrefillOnlyTransform,
+    Qwen3_5MoeLayerScaleMetadataTransform,
     RevertPrefillKeepAttentionTransform,
     RevertPrefillOnlyExternalModuleMapperTransform,
     RevertPrefillOnlyTransform,
@@ -1209,6 +1210,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         FP8BlockWiseDequantLinearToLinearTransform,
         CustomOpsTransform,
         KVCacheTransform,
+        Qwen3_5MoeLayerScaleMetadataTransform,
         VlmKVOffloadTransform,
         SplitGateUpWeightsTransform,
     ]
@@ -2535,6 +2537,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         GPTQToMatmulNbitsTransform,
         CustomOpsTransform,
         KVCacheTransform,
+        Qwen3_5MoeLayerScaleMetadataTransform,
         KVCacheExternalModuleMapperTransform,
         VlmNoKVOffloadTransform,
         SplitGateUpWeightsTransform,
@@ -3368,6 +3371,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Mxfp4GptOssExpertDequantizeTransform,
         CustomOpsTransform,
         KVCacheTransform,
+        Qwen3_5MoeLayerScaleMetadataTransform,
         SplitGateUpWeightsTransform,
         KVCacheExternalModuleMapperTransform,
     ]

@@ -1,0 +1,105 @@
+ModelID: Qwen/Qwen3.5-397B-A17B
+Method: branch_aware_mlp_scale_equivalent
+Description: >
+  Offline-scale selected MLP weights and apply matching residual scale/unscale
+  in decoder forward so end-to-end math remains equivalent to original model.
+
+LayerScales:
+  default_scale: 1.0
+  per_layer:
+    22: 0.125
+    26: 0.125
+    30: 0.5
+    54: 0.25
+
+TensorScalingRules:
+  - name: experts_gate_up_proj_up_half
+    tensor_template: model.language_model.layers.{layer_idx}.mlp.experts.gate_up_proj
+    operation: scale_second_half_dim1
+  - name: shared_expert_up_proj
+    tensor_template: model.language_model.layers.{layer_idx}.mlp.shared_expert.up_proj.weight
+    operation: scale_all
+
+RuntimeEquivalence:
+  mode: checkpoint_scaled_mlp_and_residual_branch
+  compensation_points:
+    - name: pre_input_inverse
+      module: QEffQwen3_5MoeDecoderLayer.forward
+      location: before input_layernorm
+      equation: "hidden_in = hidden_in / scale(layer_idx - 1)"
+    - name: scaled_residual_add
+      module: QEffQwen3_5MoeDecoderLayer.forward
+      location: final residual + mlp add
+      equation: "layer_out_scaled = scale(layer_idx) * residual + mlp_out_scaled"
+    - name: final_unscale_before_norm
+      module: QEffQwen3_5MoeTextModel.forward
+      location: before final norm on last layer window
+      equation: "hidden_before_norm = hidden_before_norm / scale(last_layer_idx)"
+  checkpoint_assumption:
+    mlp_out_scaled: "mlp_out_scaled = scale(layer_idx) * mlp_out_original"
+  decoder_adjustments:
+    pre_input_inverse: "hidden_in = hidden_in / scale(layer_idx - 1)"
+    scaled_residual_add: "layer_out_scaled = scale(layer_idx) * residual + mlp_out_scaled"
+
+ScaledTensorSpecs:
+  - layer_idx: 22
+    tensor_key: model.language_model.layers.22.mlp.experts.gate_up_proj
+    operation: scale_second_half_dim1
+    scale: 0.125
+    rule_name: experts_gate_up_proj_up_half
+  - layer_idx: 22
+    tensor_key: model.language_model.layers.22.mlp.shared_expert.up_proj.weight
+    operation: scale_all
+    scale: 0.125
+    rule_name: shared_expert_up_proj
+  - layer_idx: 26
+    tensor_key: model.language_model.layers.26.mlp.experts.gate_up_proj
+    operation: scale_second_half_dim1
+    scale: 0.125
+    rule_name: experts_gate_up_proj_up_half
+  - layer_idx: 26
+    tensor_key: model.language_model.layers.26.mlp.shared_expert.up_proj.weight
+    operation: scale_all
+    scale: 0.125
+    rule_name: shared_expert_up_proj
+  - layer_idx: 30
+    tensor_key: model.language_model.layers.30.mlp.experts.gate_up_proj
+    operation: scale_second_half_dim1
+    scale: 0.5
+    rule_name: experts_gate_up_proj_up_half
+  - layer_idx: 30
+    tensor_key: model.language_model.layers.30.mlp.shared_expert.up_proj.weight
+    operation: scale_all
+    scale: 0.5
+    rule_name: shared_expert_up_proj
+  - layer_idx: 54
+    tensor_key: model.language_model.layers.54.mlp.experts.gate_up_proj
+    operation: scale_second_half_dim1
+    scale: 0.25
+    rule_name: experts_gate_up_proj_up_half
+  - layer_idx: 54
+    tensor_key: model.language_model.layers.54.mlp.shared_expert.up_proj.weight
+    operation: scale_all
+    scale: 0.25
+    rule_name: shared_expert_up_proj
+
+ConfigMetadata:
+  layer_scale_key: qeff_layer_scales
+  default_scale_key: qeff_layer_scale_default
+  mode_key: qeff_layer_scale_mode
+  mode_value: checkpoint_scaled_mlp_and_residual_branch
+
+Artifacts:
+  - scripts/debug/artifacts/qwen3_5_moe_full_depth_mlp_scale_recovery_smoketest_v2.json
+  - scripts/debug/artifacts/qwen3_5_moe_full_depth_mlp_scale_recovery_full_v2.json
+
+FinalTokenParity:
+  hf_fp32:
+    pred_id: 198
+    pred_token: "\n"
+  hf_fp16_scaled:
+    pred_id: 198
+    pred_token: "\n"
+  qeff_fp16_scaled:
+    pred_id: 198
+    pred_token: "\n"

@@ -117,6 +117,104 @@ This example:
 - Works with Qwen, Mixtral, and other MoE models
 - Supports explicit ONNX subfunction enablement with `--use-onnx-subfunctions`
 
+### precision_recovery_analysis.py
+Layerwise fp16 to fp32 iterative recovery analysis for MoE debugging.
+
+**Usage:**
+```bash
+python precision_recovery_analysis.py \
+    --model-name Qwen/Qwen3.5-397B-A17B \
+    --prompt "Tell me about yourself." \
+    --start-layer 22 \
+    --max-layers 60 \
+    --output-json scripts/debug/artifacts/qwen3_5_moe_full_depth_iterative_fp32_recovery_from_api.json
+```
+
+This example:
+- Runs full-depth layerwise comparison: HF fp32 vs HF fp16 vs QEff fp16
+- Detects non-finite layer outputs and applies minimal cumulative fp32 promotions
+- Prioritizes non-matmul fp32 candidates before matmul/full-MLP fallbacks
+- Reports per-layer MAD drift and final next-token predictions for fp32 vs recovered paths
+
+### apply_layer_scales_to_safetensors.py
+Offline checkpoint scaling for mathematically-equivalent fp16 recovery runs.
+
+**Usage:**
+```bash
+python apply_layer_scales_to_safetensors.py \
+    --source-dir /path/to/original_qwen397_snapshot \
+    --output-dir /path/to/scaled_qwen397_snapshot \
+    --recipe-yaml ../../QEfficient/transformers/models/qwen3_5_moe/configs/layer_scales_qwen3_5_397b_mlp_equivalent.yaml
+```
+
+This example:
+- Applies per-layer scale factors to configured safetensor keys only
+- Leaves unchanged shards hard-linked by default for low disk usage
+- Writes `qeff_layer_scale_audit.json` with exact tensors, shards, and before/after stats
+- Injects `qeff_layer_scales` metadata into output `config.json` so QEff decoder runtime applies matching residual scale/unscale
+
+Runtime scaling behavior:
+- default is no-op when no scaling metadata is present,
+- auto-enables when `qeff_layer_scales` exists in model `config.json`,
+- can be forced with `QEFF_QWEN3_5_MOE_ENABLE_LAYER_SCALING=1`,
+- can be force-disabled with `QEFF_QWEN3_5_MOE_ENABLE_LAYER_SCALING=0`,
+- optional external recipe override via `QEFF_QWEN3_5_MOE_LAYER_SCALE_YAML=/path/to/layer_scales.yaml`.
+
+### generate_layer_scale_recipe.py
+Generate a mathematically-equivalent layer-scale recipe YAML from recovery JSON.
+
+**Usage:**
+```bash
+python generate_layer_scale_recipe.py \
+    --recovery-json ../../scripts/debug/artifacts/qwen3_5_moe_full_depth_mlp_scale_recovery_full_v2.json \
+    --output-yaml ../../QEfficient/transformers/models/qwen3_5_moe/configs/layer_scales_qwen3_5_397b_mlp_equivalent.yaml \
+    --model-name Qwen/Qwen3.5-397B-A17B
+```
+
+This example:
+- converts selected per-layer scales from recovery output into a reusable YAML recipe,
+- emits explicit `ScaledTensorSpecs` (tensor keys + operations + factors),
+- emits `RuntimeEquivalence` compensation points consumed by runtime guards.
+
+### qwen3_5_397b_scale_and_verify.py
+One-shot Qwen3.5-397B workflow: scale checkpoint and verify full-depth token parity.
+
+**Usage:**
+```bash
+python qwen3_5_397b_scale_and_verify.py \
+    --model-name Qwen/Qwen3.5-397B-A17B \
+    --scaled-dir ../../scripts/debug/artifacts/qwen3_5_397b_scaled_snapshot \
+    --recipe-yaml ../../QEfficient/transformers/models/qwen3_5_moe/configs/layer_scales_qwen3_5_397b_mlp_equivalent.yaml \
+    --compare-output-json ../../scripts/debug/artifacts/qwen3_5_397b_scaled_chunked_compare.json \
+    --strict-token-check
+```
+
+This example:
+- Applies scaling recipe to safetensors (or reuses existing scaled snapshot)
+- Runs full-depth chunked compare over all layers on scaled weights
+- Reports final tokens for HF fp32 / HF fp16 / QEff fp16 and validates expected token id
+- Supports optional runtime YAML override with `--runtime-layer-scale-yaml`
+- Supports forcing no-op scaling path with `--disable-runtime-layer-scaling`
+
+### agentic_precision_recovery.py
+Agent-driven precision-debug pipeline from model card to YAML recipe.
+
+**Usage:**
+```bash
+python agentic_precision_recovery.py \
+    --model-card Qwen/Qwen3.5-397B-A17B \
+    --start-layer 22 \
+    --max-layers 60 \
+    --output-dir ../../scripts/debug/artifacts/precision_recovery_agent_qwen397
+```
+
+This example:
+- accepts either a model card file (`.json/.yaml/.md/.txt`) or direct model id,
+- runs fp32/fp16 layerwise analysis to identify fp32 promotions,
+- starts an iterative scale-search loop when matmul/MLP fp32 promotions are required,
+- emits a mathematically-equivalent layer-scale YAML recipe when scaling resolves precision issues,
+- records runtime-transform wiring status (causal + image-text auto pipelines) in the final agent report.
+
 
 ## CLI Workflow
 

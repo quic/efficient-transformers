@@ -299,7 +299,7 @@ from transformers.models.whisper.modeling_whisper import (
 )
 from transformers.models.xlm_roberta.modeling_xlm_roberta import XLMRobertaModel
 
-from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform, ModuleMappingTransform
+from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform, ModuleMappingTransform, PytorchTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
 from QEfficient.transformers.models.bert.modeling_bert import (
@@ -572,6 +572,7 @@ from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     QEffQwen3_5MoeTopKRouter,
     QEffQwen3_5MoeVisionAttention,
     QEffQwen3_5MoeVisionModel,
+    _resolve_layer_scale_runtime_config,
 )
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffPrefillChunkedQwen3MoeSparseMoeBlock,
@@ -911,6 +912,121 @@ class KVCacheTransform(ModuleMappingTransform):
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         model, transformed = super().apply(model)
+        return model, transformed
+
+
+class Qwen3_5MoeLayerScaleMetadataTransform(PytorchTransform):
+    """Sync Qwen3.5-MoE layer-scale metadata onto active text configs post-KV transform."""
+
+    _metadata_keys = (
+        "qeff_layer_scales",
+        "qeff_layer_scale_default",
+        "qeff_layer_scale_mode",
+        "qeff_layer_scale_recipe",
+        "qeff_layer_index_offset",
+    )
+
+    @classmethod
+    def _get_config_objects(cls, model: nn.Module) -> list:
+        configs = []
+        seen = set()
+
+        def _append(cfg):
+            if cfg is None:
+                return
+            cfg_id = id(cfg)
+            if cfg_id in seen:
+                return
+            seen.add(cfg_id)
+            configs.append(cfg)
+
+        root_cfg = getattr(model, "config", None)
+        _append(root_cfg)
+        _append(getattr(root_cfg, "text_config", None))
+
+        for module in model.modules():
+            _append(getattr(module, "config", None))
+
+        return configs
+
+    @classmethod
+    def _score_metadata_value(cls, key: str, value) -> int:
+        if value is None:
+            return -1
+        if key == "qeff_layer_scales":
+            if isinstance(value, dict):
+                return 3 if len(value) > 0 else 0
+            if isinstance(value, list):
+                return 3 if len(value) > 0 else 0
+            return 2
+        if key == "qeff_layer_scale_default":
+            try:
+                return 2 if float(value) != 1.0 else 0
+            except Exception:
+                return 1
+        if key == "qeff_layer_scale_mode":
+            return 1 if str(value) else 0
+        if key == "qeff_layer_scale_recipe":
+            return 2 if str(value) else 0
+        if key == "qeff_layer_index_offset":
+            try:
+                return 2 if int(value) != 0 else 0
+            except Exception:
+                return 1
+        return 0
+
+    @classmethod
+    def _collect_metadata(cls, configs: list) -> dict:
+        metadata = {}
+        for key in cls._metadata_keys:
+            best_value = None
+            best_score = -1
+            for cfg in configs:
+                value = getattr(cfg, key, None)
+                score = cls._score_metadata_value(key, value)
+                if score > best_score:
+                    best_score = score
+                    best_value = value
+            if best_score >= 0:
+                metadata[key] = best_value
+        return metadata
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        text_models = [module for module in model.modules() if isinstance(module, QEffQwen3_5MoeTextModel)]
+        if len(text_models) == 0:
+            return model, False
+
+        transformed = False
+        configs = cls._get_config_objects(model)
+        metadata = cls._collect_metadata(configs)
+
+        # Broadcast the most informative metadata we found to all nested configs
+        # so text_model.config resolves scaling consistently in every Auto path.
+        for cfg in configs:
+            for key, value in metadata.items():
+                if getattr(cfg, key, None) != value:
+                    setattr(cfg, key, value)
+                    transformed = True
+
+        for text_model in text_models:
+            (
+                text_model._qeff_layer_scaling_enabled,
+                text_model._qeff_layer_scales,
+                text_model._qeff_layer_scale_default,
+                text_model._qeff_layer_scale_mode,
+            ) = _resolve_layer_scale_runtime_config(text_model.config)
+            text_model._qeff_layer_index_offset = int(getattr(text_model.config, "qeff_layer_index_offset", 0))
+
+            for layer in text_model.layers:
+                if not isinstance(layer, QEffQwen3_5MoeDecoderLayer):
+                    continue
+                layer._qeff_layer_scaling_enabled = text_model._qeff_layer_scaling_enabled
+                layer._qeff_layer_scales = text_model._qeff_layer_scales
+                layer._qeff_layer_scale_default = text_model._qeff_layer_scale_default
+                layer._qeff_layer_scale_mode = text_model._qeff_layer_scale_mode
+                layer._qeff_layer_index_offset = text_model._qeff_layer_index_offset
+
         return model, transformed
 
 
