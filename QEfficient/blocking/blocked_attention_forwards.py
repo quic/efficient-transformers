@@ -542,6 +542,84 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
 
     return attn_output.transpose(1, 2).contiguous(), None
 
+
+def blocked_q_attention_forward_prefill(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    num_q_blocks: int,
+    cache_kwargs: Dict[str, Any],
+    *,
+    sliding_window: Optional[int] = None,
+    position_bias: Optional[torch.Tensor] = None,
+    sinks: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """Q-blocked prefill attention.
+
+    Query tokens are sliced into num_q_blocks blocks; each block attends over
+    the full K/V using a causal mask derived from position_ids.
+    """
+    batch_size, num_heads, q_len, _ = query.shape
+    num_q_blocks = max(1, _normalize_int(num_q_blocks))
+    key_states, value_states = _get_kv_states(module, key, value)
+    position_ids = cache_kwargs.get("position_ids")
+
+    if hasattr(module, "config"):
+        mask_dtype = module.config.torch_dtype
+    else:
+        mask_dtype = value.dtype
+    masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
+
+    q_block_starts = [-(-i * q_len) // num_q_blocks for i in range(num_q_blocks)]
+    q_output_blocks = []
+    q_attn_blocks = []
+
+    for q_block_idx in range(num_q_blocks):
+        q_start = q_block_starts[q_block_idx]
+        q_len_block = (
+            q_len - q_start
+            if q_block_idx == num_q_blocks - 1
+            else q_block_starts[q_block_idx + 1] - q_start
+        )
+
+        q_block = query[:, :, q_start : q_start + q_len_block, :]
+        position_ids_block = position_ids[:, q_start : q_start + q_len_block]
+
+        attn_weights = torch.matmul(q_block, key_states.transpose(2, 3)) * scaling
+
+        if position_bias is not None:
+            attn_weights = attn_weights + position_bias
+
+        causal_mask = _create_causal_mask(
+            position_ids=position_ids_block,
+            target_length=key_states.shape[2],
+            sliding_window=sliding_window,
+            start_index=0,
+        )
+        attn_weights = torch.where(causal_mask, masked_tensor, attn_weights)
+
+        if sinks is not None:
+            sinks_g = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, q_len_block, -1)
+            combined_logits = torch.cat([attn_weights, sinks_g], dim=3)
+            attn_weights = combined_logits - combined_logits.max(dim=3, keepdim=True).values
+
+        attn_weights = torch.softmax(attn_weights, dim=3, dtype=torch.float32).to(query.dtype)
+
+        if sinks is not None:
+            attn_weights = attn_weights[..., : key.shape[2]]
+
+        q_output_blocks.append(torch.matmul(attn_weights, value_states))
+        q_attn_blocks.append(attn_weights)
+
+    attn_output = torch.cat(q_output_blocks, dim=2).transpose(1, 2).contiguous()
+    attn_weights = torch.cat(q_attn_blocks, dim=2)
+    return attn_output, attn_weights
+
+
 def blocked_qkv_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
