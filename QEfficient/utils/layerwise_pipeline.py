@@ -113,7 +113,6 @@ def split_layer_graph(
     if shard_idx != total_shards - 1 and "position_ids" in graph_inputs and "position_ids" not in output_names:
         output_names.append("position_ids")
 
-    # import pdb; pdb.set_trace()
     model_ir.graph = onnx_ir.convenience.extract(
         model_ir.graph,
         input_names,

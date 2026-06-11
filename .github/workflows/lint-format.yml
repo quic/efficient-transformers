@@ -1,6 +1,32 @@
 name: Lint & Format
 on: [pull_request]
 jobs:
+  debug-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for debugger artifacts
+        run: |
+          set -euo pipefail
+
+          debugger_pattern='break[p]oints?[[:space:]]*\(|i[p]db|p[d]b[[:space:]]*\.[[:space:]]*set_trace|set_trace[[:space:]]*\('
+
+          set +e
+          matches="$(git grep -nIE "${debugger_pattern}" -- .)"
+          status=$?
+          set -e
+
+          if [ "${status}" -eq 0 ]; then
+            printf '%s\n' "${matches}"
+            debugger_names='breakpoint / pdb / i'"pdb"
+            echo "::error::Remove debugger artifacts before committing (${debugger_names} calls/imports, including commented-out lines)."
+            exit 1
+          fi
+
+          if [ "${status}" -ne 1 ]; then
+            exit "${status}"
+          fi
+
   lint:
     runs-on: ubuntu-latest
     steps:
