@@ -200,7 +200,8 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
                 packed_chunk_size=packed_chunk_size,
             )
 
-        return expert_out.sum(dim=0).view(B, S, H), router_logits
+        expert_out_sum = torch.einsum("nth->th", expert_out)
+        return expert_out_sum.view(B, S, H), router_logits
 
 
 class QEffPrefillOnlyGptOssMLP(GptOssMLP):
@@ -460,7 +461,7 @@ class QEffGptOssMLP(GptOssMLP):
 
         # Apply routing weights AFTER expert computation (This is before on Llama4)
         experts_out = experts_out * router_top_value.unsqueeze(-1)
-        experts_out = experts_out.sum(dim=1)
+        experts_out = torch.einsum("bnd->bd", experts_out)
 
         return experts_out, router_logits
 
