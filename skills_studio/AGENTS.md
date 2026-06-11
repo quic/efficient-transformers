@@ -46,6 +46,9 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
 - Keep tuple-cache compatibility wherever shared export/runtime code expects the legacy layout.
 - Prefer feature detection (`hasattr`, optional imports, safe `getattr`) over HF-version checks.
 - Keep compatibility shims at boundaries (input/output normalization), not deep in model math.
+- Follow SOLID principles when writing code. If a change must intentionally diverge
+  from SOLID for compatibility, performance, export constraints, or minimal-risk
+  integration, call that out to the user with the reason.
 - Do not add new test files when an existing test (or the quickcheck gate) can carry the regression.
 - Do not add license/copyright headers unless explicitly requested.
 
