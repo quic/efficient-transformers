@@ -261,7 +261,8 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
                 act_fn=act_fn,
                 packed_chunk_size=packed_chunk_size,
             )
-        return expert_out.sum(dim=0).view(B, S, H), router_logits
+        expert_out_sum = torch.einsum("nth->th", expert_out)
+        return expert_out_sum.view(B, S, H), router_logits
 
 
 class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
