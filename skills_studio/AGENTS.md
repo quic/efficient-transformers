@@ -49,6 +49,10 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
 - Follow SOLID principles when writing code. If a change must intentionally diverge
   from SOLID for compatibility, performance, export constraints, or minimal-risk
   integration, call that out to the user with the reason.
+- Before committing, run the relevant linter/formatter for the files changed and
+  address the findings instead of committing avoidable style issues.
+- Keep code standards high: follow PEP 8 for Python, avoid commented-out code,
+  and never leave breakpoints, ad-hoc debug prints, or temporary debugging hooks.
 - Do not add new test files when an existing test (or the quickcheck gate) can carry the regression.
 - Do not add license/copyright headers unless explicitly requested.
 
