@@ -899,7 +899,6 @@ class QEffGemma4EncoderWrapper(nn.Module):
 
         valid_tokens = ~padding_positions
         vision_attention_mask = (~valid_tokens).unsqueeze(1).unsqueeze(2).to(dtype=inputs_embeds.dtype)
-        vision_attention_mask = vision_attention_mask * torch.finfo(inputs_embeds.dtype).min
         vision_attention_mask = vision_attention_mask.expand(-1, 1, inputs_embeds.shape[1], -1)
 
         hidden_states = inputs_embeds
