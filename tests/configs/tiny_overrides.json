@@ -1,6 +1,5 @@
 {
-  "_README": "Per-PR profile (dummy_layers_model / few_layers_model) tiny-random overrides. The full_layers_model profile (nightly) ignores this file. Generated from CI_TINY_MODEL_AUDIT.md (2026-06-11).",
-  "_no_remap_README": "Models known to fail tiny-random remap due to test-side flat-logit assumptions, adapter-dim mismatches, or quantization tooling. These pass through unchanged so existing tests keep their pre-CI-opt behavior.",
+  "_README": "Per-PR profile (dummy_layers_model / few_layers_model) tiny-random overrides. The full_layers_model profile (nightly) ignores this file.",
   "overrides": {
     "TinyLlama/TinyLlama-1.1B-Chat-v1.0": "hf-internal-testing/tiny-random-LlamaForCausalLM",
     "allenai/OLMo-2-0425-1B": "hf-internal-testing/tiny-random-Olmo2ForCausalLM",
@@ -24,20 +23,13 @@
     "ibm-granite/granite-3.1-2b-instruct": "hf-internal-testing/tiny-random-GraniteForCausalLM",
     "Qwen/Qwen3.5-0.8B": "tiny-random/qwen3.5-moe",
     "Qwen/Qwen2.5-VL-3B-Instruct": "optimum-intel-internal-testing/tiny-random-qwen2.5-vl",
-    "Qwen/Qwen3-VL-2B-Instruct": "tiny-random/qwen3-vl",
-    "Qwen/Qwen3-VL-30B-A3B-Instruct": "tiny-random/qwen3-vl-moe",
     "OpenGVLab/InternVL2_5-1B": "optimum-intel-internal-testing/tiny-random-internvl2",
     "OpenGVLab/InternVL3_5-1B": "optimum-intel-internal-testing/tiny-random-internvl2",
-    "google/gemma-3-4b-it": "tiny-random/gemma-3",
-    "llava-hf/llava-1.5-7b-hf": "hf-internal-testing/tiny-random-LlavaForConditionalGeneration",
-    "mistralai/Mistral-Small-3.1-24B-Instruct-2503": "hf-internal-testing/tiny-random-MistralForCausalLM",
     "openai/gpt-oss-20b": "tiny-random/gpt-oss-bf16",
     "sentence-transformers/nli-bert-base-cls-pooling": "hf-internal-testing/tiny-random-BertModel",
     "jinaai/jina-embeddings-v2-base-code": "hf-internal-testing/tiny-random-BertModel",
     "unsloth/gemma-2b": "optimum-intel-internal-testing/tiny-random-gemma2",
     "meta-llama/Llama-4-Scout-17B-16E-Instruct": "optimum-intel-internal-testing/tiny-random-llama4",
-    "Qwen/Qwen3-VL-Embedding-8B": "optimum-intel-internal-testing/tiny-random-qwen3-vl-embedding",
-    "TheBloke/Llama-2-7B-GPTQ": "TheBlokeAI/Mixtral-tiny-GPTQ",
     "Qwen/Qwen3.6-35B-A3B": "tiny-random/qwen3.6-moe",
     "meta-llama/Meta-Llama-3-8B": "llamafactory/tiny-random-Llama-3",
     "hallisky/lora-type-narrative-llama-3-8b": "llamafactory/tiny-random-Llama-3-lora",
@@ -46,8 +38,6 @@
   },
   "skip_no_tiny": [
     "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
-    "Qwen/Qwen3-VL-Reranker-2B",
-    "Qwen/Qwen3-VL-Reranker-8B",
     "allenai/Molmo-7B-D-0924"
   ]
 }
