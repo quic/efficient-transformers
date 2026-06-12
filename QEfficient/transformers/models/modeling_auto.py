@@ -2017,6 +2017,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         compiler_options.pop("full_batch_size", None)
         self.qpc_paths = {}
         if not skip_vision:
+            compiler_options_vision = compiler_options.copy()
+            compiler_options_vision["node_precision_info"] = False
             vision_qpc_path = self.vision_model._compile(
                 onnx_path=self.vision_model.onnx_path,
                 compile_dir=compile_dir,
@@ -2029,7 +2031,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 custom_io=custom_io_vision,
                 mxint8_kv_cache=mxint8_kv_cache,
                 use_onnx_subfunctions=use_onnx_subfunctions,
-                **compiler_options,
+                **compiler_options_vision,
             )
             self.qpc_paths["vision_qpc_path"] = vision_qpc_path
 
