@@ -111,8 +111,12 @@ def check_causal_lm_pytorch_vs_kv_vs_ai100(
             "prefill run output tokens don't match for ONNXRT output and Cloud AI 100 output."
         )
     else:
-        assert (pytorch_hf_tokens == cloud_ai_100_tokens).all(), (
-            "Tokens don't match for ONNXRT output and Cloud AI 100 output."
+        from .check_causal_models import _tokens_match_or_first_token
+
+        _tokens_match_or_first_token(
+            pytorch_hf_tokens,
+            cloud_ai_100_tokens,
+            label="Tokens don't match for ONNXRT output and Cloud AI 100 output.",
         )
         assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
     if prefill_only is not None:

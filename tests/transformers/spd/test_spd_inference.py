@@ -480,10 +480,12 @@ def _verify_tlm_spec(tlm_session, k, ref_tokens, ref_logits, start_pos, vocab_si
 @pytest.mark.parametrize(
     "decode_ks",
     [
-        [0],  # fallback-only (seq_len=1)
-        [3],  # full-K only  (seq_len=4)
-        [0, 3],  # fallback + full-K (typical PLD config)
-        [1, 2, 3],  # suffix-decoding range
+        # Single combined entry: TLM is compiled once with the UNION of all K values
+        # [0, 1, 2, 3] (4 graph specialisations) and the test verifies every subset
+        # against that single QPC. Previously this was 4 parametrize entries, each
+        # re-compiling TLM from scratch — collapsed to save ~3 × TLM-compile time
+        # (~75s) per CI run. The list passed here IS the union to compile against.
+        [0, 1, 2, 3],
     ],
 )
 def test_multi_spec_qpc_logit_correctness(decode_ks, manual_cleanup):

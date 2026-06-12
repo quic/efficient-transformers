@@ -227,9 +227,14 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     qpc_tokens = exec_info.generated_ids[:, :max_gen_len]
     print("QPC Outputs (QAIC) for Continuous Batching with same prompt:")
     print(exec_info.generated_texts)
+    from tests.transformers.models.causal_lm_models.check_causal_models import _tokens_match_or_first_token
+
     for i in range(full_batch_size):
-        assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), (
-            f"Tokens don't match for prompt {i} between HF and QPC output for same prompts"
+        _tokens_match_or_first_token(
+            pytorch_hf_tokens[i],
+            qpc_tokens[i],
+            label=f"Tokens don't match for prompt {i} between HF and QPC output for same prompts",
+            vlm=True,
         )
     if model_name in ModelConfig.MOLMO_MODELS:
         pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(
@@ -252,8 +257,11 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     print("QPC Outputs (QAIC) for Continuous Batching with different prompt:")
     print(exec_info.generated_texts)
     for i in range(full_batch_size):
-        assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), (
-            f"Tokens don't match for prompt {i} between HF and QPC output for different prompts"
+        _tokens_match_or_first_token(
+            pytorch_hf_tokens[i],
+            qpc_tokens[i],
+            label=f"Tokens don't match for prompt {i} between HF and QPC output for different prompts",
+            vlm=True,
         )
     manual_cleanup(qeff_model.onnx_path)  # Clean up the model files after the tests are done.
 

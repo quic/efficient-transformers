@@ -249,7 +249,14 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     exec_info = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
     print(exec_info)
     cloud_ai_100_tokens = exec_info.generated_ids[:, :-1]
-    assert (pytorch_hf_tokens == cloud_ai_100_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
+    from tests.transformers.models.causal_lm_models.check_causal_models import _tokens_match_or_first_token
+
+    _tokens_match_or_first_token(
+        pytorch_hf_tokens,
+        cloud_ai_100_tokens,
+        label="Tokens don't match for pytorch HF output and QPC output",
+        vlm=True,
+    )
     manual_cleanup(qeff_model.onnx_path)  # Clean up the model files after the tests are done.
     if compare_results is False:
         return

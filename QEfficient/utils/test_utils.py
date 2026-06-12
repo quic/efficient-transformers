@@ -16,6 +16,16 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageText
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils import hf_download
 
+try:
+    # Test-only override map. Living under tests/ so it's never imported in
+    # production code paths — the import is wrapped in try/except to keep
+    # production users insulated from a missing `tests/` dir on installed wheels.
+    from tests.utils.tiny_overrides import resolve_model_id as _resolve_model_id  # type: ignore
+except Exception:  # pragma: no cover - production path
+
+    def _resolve_model_id(model_id: str) -> str:
+        return model_id
+
 
 def get_custom_n_layers(model_name):
     """
@@ -39,6 +49,7 @@ def load_hf_causal_lm_model(
     config: Optional[AutoConfig] = None,
     torch_dtype: Optional[torch.dtype] = torch.float32,
 ):
+    model_name = _resolve_model_id(model_name)
     model_path = hf_download(
         repo_id=model_name,
         ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
@@ -76,6 +87,7 @@ def load_qeff_causal_lm_model(
     qaic_config: Dict = None,
     config: Optional[AutoConfig] = None,
 ):
+    model_name = _resolve_model_id(model_name)
     kwargs = dict(continuous_batching=continuous_batching, qaic_config=qaic_config)
     if config is None:
         if num_hidden_layers != -1:
@@ -121,6 +133,7 @@ def load_hf_vlm_model(
     num_hidden_layers: int = -1,
     config: Optional[AutoConfig] = None,
 ):
+    model_name = _resolve_model_id(model_name)
     if config is None:
         config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
         config = set_num_layers_vlm(config, num_hidden_layers)
