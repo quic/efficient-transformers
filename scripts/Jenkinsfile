@@ -1,19 +1,21 @@
 // Optimized per-PR pipeline: parallel sharding across 4 QAic cards via pytest-xdist.
-// See CI_OPTIMIZATION_PLAN.md for the full design. Drop-in replacement for
-// scripts/Jenkinsfile once the per-worker QAic device fixture in tests/conftest.py
-// has bedded in. Original Jenkinsfile is preserved alongside this one.
 //
-// Notes:
-// - QAic-bound stages run with `pytest -n <QAIC_N> --dist worksteal`. Each
-//   xdist worker gets pinned to a single QAic card via QAIC_VISIBLE_DEVICES
-//   (set by the _qaic_device_for_xdist_worker fixture in tests/conftest.py).
-//   `worksteal` (xdist >=3.0) keeps slower workers from blocking faster ones,
-//   and unlike `loadfile` it does NOT pin all parametrize variants of a test
-//   to a single worker — important for parametrize-heavy stages where every
-//   model in tests/configs/causal_model_configs.json is one parametrize id.
-// - CPU-only stages (export/compile, unit) run with `-n auto`.
-// - Per-worker QEFF_HOME isolates compile dirs so workers don't clobber each other.
-// - Timeouts tightened for dummy_layers / few_layers (the per-PR profiles).
+// Card scheduling strategy (all inside one docker container, 4 physical cards):
+//
+//  ┌─────────────────────────────────────────────────────────────────────────┐
+//  │ CPU/CLI  (parallel, no cards)                                           │
+//  │─────────────────────────────────────────────────────────────────────────│
+//  │ Round 1: LLM              cards 0-3  (-n 4)            ~14 min          │
+//  │ Round 2: Feature(0,1) + Diffusion(2,3) in parallel     ~max(5,10)=10min │
+//  │ Round 3: MM               cards 0-3  (-n 4)             ~7 min          │
+//  │ Round 4: Reranker         serial                        ~5 min          │
+//  │─────────────────────────────────────────────────────────────────────────│
+//  │ Total QAic: 14+10+7+5 = ~36 min  (vs 2h before)                        │
+//  └─────────────────────────────────────────────────────────────────────────┘
+//
+// QEFF_QAIC_CARD_OFFSET lets two stages share 4 cards without collision:
+//   stage A: QEFF_NUM_QAIC_CARDS=2, QEFF_QAIC_CARD_OFFSET=0  → cards 0,1
+//   stage B: QEFF_NUM_QAIC_CARDS=2, QEFF_QAIC_CARD_OFFSET=2  → cards 2,3
 
 def testFilter(String profile) {
     switch (profile) {
@@ -90,9 +92,10 @@ pipeline {
             }
         }
 
-        stage('Test Matrix') {
+        // ── Phase 1: CPU-only + LLM (CPU parallel with LLM using all 4 cards) ──────
+        stage('Phase 1: CPU + LLM') {
             parallel {
-                stage('CPU: Export & Compile (HL non-qaic)') {
+                stage('CPU: Export & Compile') {
                     when { expression { params.RUN_HL_APIS } }
                     steps {
                         timeout(time: qaicTimeoutMinutes(params.TEST_PROFILE, 30),
@@ -103,8 +106,7 @@ pipeline {
                             . preflight_qeff/bin/activate &&
                             mkdir -p $PWD/Non_cli_qaic &&
                             export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                            export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                    export TOKENIZERS_PARALLELISM=false &&
+                            export TOKENIZERS_PARALLELISM=false &&
                             export QEFF_HOME=$PWD/Non_cli_qaic &&
                             pytest tests -m '(not on_qaic) and (not finetune) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n auto --dist worksteal --junitxml=tests/tests_log1.xml --durations=10 &&
                             junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
@@ -124,8 +126,7 @@ pipeline {
                             . preflight_qeff/bin/activate &&
                             mkdir -p $PWD/cli &&
                             export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                            export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                    export TOKENIZERS_PARALLELISM=false &&
+                            export TOKENIZERS_PARALLELISM=false &&
                             export QEFF_HOME=$PWD/cli &&
                             pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log3.xml --durations=10 &&
                             junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
@@ -135,122 +136,123 @@ pipeline {
                     }
                 }
 
-                // QAic stages run sequentially inside this nested stage so all 4 cards
-                // are dedicated to one stage at a time. Running them in parallel would
-                // cause multiple pytest-xdist workers from different stages to claim the
-                // same card simultaneously → flaky failures on large VLM / disagg tests.
-                // Each stage still uses -n 4 --dist worksteal internally for 4× speedup.
-                stage('QAIC: Sequential stages') {
-                    stages {
-                        stage('QAIC: LLM (sharded)') {
-                            when { expression { params.RUN_HL_APIS } }
-                            steps {
-                                timeout(time: qaicTimeoutMinutes(params.TEST_PROFILE, 45),
-                                        unit: qaicTimeoutUnit(params.TEST_PROFILE)) {
-                                    sh '''
-                                    sudo docker exec ${BUILD_TAG} bash -c "
-                                    cd /efficient-transformers &&
-                                    . preflight_qeff/bin/activate &&
-                                    mkdir -p $PWD/Non_qaic_llm &&
-                                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                stage('QAIC: LLM (cards 0-3)') {
+                    when { expression { params.RUN_HL_APIS } }
+                    steps {
+                        timeout(time: qaicTimeoutMinutes(params.TEST_PROFILE, 45),
+                                unit: qaicTimeoutUnit(params.TEST_PROFILE)) {
+                            sh '''
+                            sudo docker exec ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            mkdir -p $PWD/Non_qaic_llm &&
+                            export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
                             export TOKENIZERS_PARALLELISM=false &&
-                                    export QEFF_HOME=$PWD/Non_qaic_llm &&
-                                    export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
-                                    pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${QAIC_N} --dist worksteal --junitxml=tests/tests_log2.xml --durations=10 &&
-                                    junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
-                                    deactivate"
-                                    '''
-                                }
-                            }
-                        }
-
-                        stage('QAIC: Feature (sharded)') {
-                            when { expression { params.RUN_QAIC_FEATURE } }
-                            steps {
-                                timeout(time: qaicTimeoutMinutes(params.TEST_PROFILE, 30),
-                                        unit: qaicTimeoutUnit(params.TEST_PROFILE)) {
-                                    sh '''
-                                    sudo docker exec ${BUILD_TAG} bash -c "
-                                    cd /efficient-transformers &&
-                                    . preflight_qeff/bin/activate &&
-                                    mkdir -p $PWD/Non_qaic_feature &&
-                                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                            export TOKENIZERS_PARALLELISM=false &&
-                                    export QEFF_HOME=$PWD/Non_qaic_feature &&
-                                    export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
-                                    pytest tests -m '(on_qaic) and (feature) and (not qnn) and ${TEST_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${QAIC_N} --dist worksteal --junitxml=tests/tests_log2_feature.xml --durations=10 &&
-                                    junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml &&
-                                    deactivate"
-                                    '''
-                                }
-                            }
-                        }
-
-                        stage('QAIC: Multimodal (sharded)') {
-                            when { expression { params.RUN_QAIC_MM } }
-                            steps {
-                                timeout(time: qaicTimeoutMinutes(params.TEST_PROFILE, 45),
-                                        unit: qaicTimeoutUnit(params.TEST_PROFILE)) {
-                                    sh '''
-                                    sudo docker exec ${BUILD_TAG} bash -c "
-                                    cd /efficient-transformers &&
-                                    . preflight_qeff/bin/activate &&
-                                    mkdir -p $PWD/Non_cli_qaic_multimodal &&
-                                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                            export TOKENIZERS_PARALLELISM=false &&
-                                    export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
-                                    export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
-                                    pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${QAIC_N} --dist worksteal --junitxml=tests/tests_log6.xml --durations=10 &&
-                                    junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
-                                    deactivate"
-                                    '''
-                                }
-                            }
-                        }
-
-                        stage('QAIC: Reranker') {
-                            when { expression { params.RUN_QAIC_MM } }
-                            steps {
-                                timeout(time: 15, unit: 'MINUTES') {
-                                    sh '''
-                                    sudo docker exec ${BUILD_TAG} bash -c "
-                                    cd /efficient-transformers &&
-                                    . preflight_qeff/bin/activate &&
-                                    mkdir -p $PWD/Non_cli_qaic_reranker &&
-                                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                            export TOKENIZERS_PARALLELISM=false &&
-                                    export QEFF_HOME=$PWD/Non_cli_qaic_reranker &&
-                                    export QEFF_RERANKER_DOC_LIMIT=1 &&
-                                    pytest -q tests/transformers/models/reranker/test_reranker_mad.py --maxfail=1 --junitxml=tests/tests_log_reranker.xml --durations=10 &&
-                                    junitparser merge tests/tests_log_reranker.xml tests/tests_log.xml &&
-                                    deactivate"
-                                    '''
-                                }
-                            }
-                        }
-
-                        stage('QAIC: Diffusion (sharded)') {
-                            when { expression { params.RUN_QAIC_DIFFUSION } }
-                            steps {
-                                timeout(time: 60, unit: 'MINUTES') {
-                                    sh '''
-                                    sudo docker exec ${BUILD_TAG} bash -c "
-                                    cd /efficient-transformers &&
-                                    . preflight_qeff/bin/activate &&
-                                    mkdir -p $PWD/Non_cli_qaic_diffusion &&
-                                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                            export TOKENIZERS_PARALLELISM=false &&
-                                    export QEFF_HOME=$PWD/Non_cli_qaic_diffusion &&
-                                    export HF_HUB_CACHE=/huggingface_hub &&
-                                    export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
-                                    pytest tests -m 'diffusion_models' --ignore tests/vllm  --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${QAIC_N} --dist worksteal --junitxml=tests/tests_log_diffusion.xml --durations=10 &&
-                                    junitparser merge tests/tests_log_diffusion.xml tests/tests_log.xml &&
-                                    deactivate"
-                                    '''
-                                }
-                            }
+                            export QEFF_HOME=$PWD/Non_qaic_llm &&
+                            export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
+                            export QEFF_QAIC_CARD_OFFSET=0 &&
+                            pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${QAIC_N} --dist worksteal --junitxml=tests/tests_log2.xml --durations=10 &&
+                            junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
                         }
                     }
+                }
+            }
+        }
+
+        // ── Phase 2: Feature (cards 0,1) + Diffusion (cards 2,3) in parallel ────
+        stage('Phase 2: Feature + Diffusion') {
+            parallel {
+                stage('QAIC: Feature (cards 0,1)') {
+                    when { expression { params.RUN_QAIC_FEATURE } }
+                    steps {
+                        timeout(time: qaicTimeoutMinutes(params.TEST_PROFILE, 20),
+                                unit: qaicTimeoutUnit(params.TEST_PROFILE)) {
+                            sh '''
+                            sudo docker exec ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            mkdir -p $PWD/Non_qaic_feature &&
+                            export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=$PWD/Non_qaic_feature &&
+                            export QEFF_NUM_QAIC_CARDS=2 &&
+                            export QEFF_QAIC_CARD_OFFSET=0 &&
+                            pytest tests -m '(on_qaic) and (feature) and (not qnn) and ${TEST_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 2 --dist worksteal --junitxml=tests/tests_log2_feature.xml --durations=10 &&
+                            junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
+                }
+
+                stage('QAIC: Diffusion (cards 2,3)') {
+                    when { expression { params.RUN_QAIC_DIFFUSION } }
+                    steps {
+                        timeout(time: 60, unit: 'MINUTES') {
+                            sh '''
+                            sudo docker exec ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            mkdir -p $PWD/Non_cli_qaic_diffusion &&
+                            export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=$PWD/Non_cli_qaic_diffusion &&
+                            export HF_HUB_CACHE=/huggingface_hub &&
+                            export QEFF_NUM_QAIC_CARDS=2 &&
+                            export QEFF_QAIC_CARD_OFFSET=2 &&
+                            pytest tests -m 'diffusion_models' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 2 --dist worksteal --junitxml=tests/tests_log_diffusion.xml --durations=10 &&
+                            junitparser merge tests/tests_log_diffusion.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Phase 3: MM (all 4 cards) then Reranker (serial) ─────────────────────
+        stage('QAIC: Multimodal (cards 0-3)') {
+            when { expression { params.RUN_QAIC_MM } }
+            steps {
+                timeout(time: qaicTimeoutMinutes(params.TEST_PROFILE, 30),
+                        unit: qaicTimeoutUnit(params.TEST_PROFILE)) {
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    mkdir -p $PWD/Non_cli_qaic_multimodal &&
+                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
+                    export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
+                    export QEFF_QAIC_CARD_OFFSET=0 &&
+                    pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${QAIC_N} --dist worksteal --junitxml=tests/tests_log6.xml --durations=10 &&
+                    junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
+                }
+            }
+        }
+
+        stage('QAIC: Reranker') {
+            when { expression { params.RUN_QAIC_MM } }
+            steps {
+                timeout(time: 15, unit: 'MINUTES') {
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    mkdir -p $PWD/Non_cli_qaic_reranker &&
+                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=$PWD/Non_cli_qaic_reranker &&
+                    export QEFF_RERANKER_DOC_LIMIT=1 &&
+                    pytest -q tests/transformers/models/reranker/test_reranker_mad.py --maxfail=1 --junitxml=tests/tests_log_reranker.xml --durations=10 &&
+                    junitparser merge tests/tests_log_reranker.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
                 }
             }
         }

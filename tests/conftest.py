@@ -141,6 +141,10 @@ def _qaic_device_for_xdist_worker():
     are left untouched. Under ``pytest -n 4`` on a 4-card host, gw0..gw3 each
     own one card — so .compile()/.generate() across workers run in parallel,
     while same-worker calls remain sequential on that card.
+
+    QEFF_QAIC_CARD_OFFSET allows two stages to run simultaneously on non-
+    overlapping card slices. E.g. stage A sets QEFF_NUM_QAIC_CARDS=2 + offset=0
+    → cards 0,1; stage B sets QEFF_NUM_QAIC_CARDS=2 + offset=2 → cards 2,3.
     """
     if "QAIC_VISIBLE_DEVICES" in os.environ:
         return
@@ -148,7 +152,8 @@ def _qaic_device_for_xdist_worker():
     if idx is None:
         return
     cards = max(1, int(os.environ.get("QEFF_NUM_QAIC_CARDS", _QAIC_CARDS_DEFAULT)))
-    os.environ["QAIC_VISIBLE_DEVICES"] = str(idx % cards)
+    offset = int(os.environ.get("QEFF_QAIC_CARD_OFFSET", 0))
+    os.environ["QAIC_VISIBLE_DEVICES"] = str(offset + (idx % cards))
 
 
 @pytest.fixture(scope="session", autouse=True)
