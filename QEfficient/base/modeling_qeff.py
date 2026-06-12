@@ -91,10 +91,7 @@ class QEFFBaseModel(ABC):
             return tuple(pkv_obj)
 
         if hasattr(pkv_obj, "layers"):
-            return tuple(
-                (getattr(layer, "keys", None), getattr(layer, "values", None))
-                for layer in pkv_obj.layers
-            )
+            return tuple((getattr(layer, "keys", None), getattr(layer, "values", None)) for layer in pkv_obj.layers)
 
         self_attention_cache = getattr(pkv_obj, "self_attention_cache", None)
         cross_attention_cache = getattr(pkv_obj, "cross_attention_cache", None)

@@ -94,7 +94,7 @@ class VisionHandler:
 
     @staticmethod
     def _split_processor_inputs(
-        inputs: Dict[str, torch.Tensor]
+        inputs: Dict[str, torch.Tensor],
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, torch.Tensor]]:
         """Split mixed processor outputs into QAIC vision inputs and language inputs."""
         vision_inputs: Dict[str, np.ndarray] = {}
@@ -167,9 +167,7 @@ class VisionHandler:
 
         return self._split_processor_inputs(inputs)
 
-    def prepare_molmo_inputs(
-        self, image_url: str, query: str
-    ) -> Tuple[Dict[str, np.ndarray], Dict[str, torch.Tensor]]:
+    def prepare_molmo_inputs(self, image_url: str, query: str) -> Tuple[Dict[str, np.ndarray], Dict[str, torch.Tensor]]:
         """
         Download and preprocess image into model inputs
         Args:

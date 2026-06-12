@@ -74,12 +74,18 @@ from QEfficient.transformers.quantizers.quant_transforms import (
 )
 from QEfficient.utils import (
     apply_kv_cache_prefix,
-    compile_io_name as _shared_compile_io_name,
     constants,
-    filter_custom_io_for_onnx as _shared_filter_custom_io_for_onnx,
     get_padding_shape_from_config,
-    state_input_name as _shared_state_input_name,
     validate_kv_cache_prefix,
+)
+from QEfficient.utils import (
+    compile_io_name as _shared_compile_io_name,
+)
+from QEfficient.utils import (
+    filter_custom_io_for_onnx as _shared_filter_custom_io_for_onnx,
+)
+from QEfficient.utils import (
+    state_input_name as _shared_state_input_name,
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.logging_utils import logger
@@ -1540,10 +1546,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         layerwise_export = self.lang_model._is_layerwise_active()
 
-        should_export = not skip_vision and (
-            not layerwise_export
-            or self.lang_model._is_last_layerwise_window()
-        )
+        should_export = not skip_vision and (not layerwise_export or self.lang_model._is_last_layerwise_window())
         if should_export and not layerwise_cache_probe:
             self.vision_model.export(
                 inputs["vision"],
