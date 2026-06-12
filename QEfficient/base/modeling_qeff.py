@@ -375,6 +375,13 @@ class QEFFBaseModel(ABC):
                 elif param == "indexer_key_cache":
                     for i in range(len(example_inputs["indexer_key_cache"])):
                         input_names.append(f"indexer_key_cache.{i}")
+                elif param == "deepseek_v4_compression_states":
+                    from QEfficient.transformers.models.deepseek_v4 import get_deepseek_v4_compression_state_names
+
+                    state_names = get_deepseek_v4_compression_state_names(self.model.config)
+                    for i, layer_states in enumerate(example_inputs["deepseek_v4_compression_states"]):
+                        for state_name, _ in zip(state_names[i], layer_states):
+                            input_names.append(f"deepseek_v4_{state_name}.{i}")
                 else:
                     input_names.append(param)
 
@@ -393,6 +400,10 @@ class QEFFBaseModel(ABC):
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
             model = onnx.load(onnx_path, load_external_data=False)
+            if getattr(self.model.config, "model_type", None) == "deepseek_v4":
+                from QEfficient.transformers.models.deepseek_v4 import rename_deepseek_v4_compression_onnx_inputs
+
+                model = rename_deepseek_v4_compression_onnx_inputs(model, self.model.config)
 
             needs_external_tensor_data = any(
                 transform in self._onnx_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)

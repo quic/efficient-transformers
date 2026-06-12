@@ -3387,6 +3387,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if glm_dsa_blocked_decode and seq_len == 1 and ctx_len is not None and ctx_len > 0:
             start_pos = max(0, ctx_len - 2)
             example_inputs["position_ids"] = torch.full((bs, 1), start_pos, dtype=torch.int64)
+        if self.model.config.model_type == "deepseek_v4" and seq_len == 1 and ctx_len is not None and ctx_len > 0:
+            example_inputs["position_ids"] = torch.full((bs, 1), ctx_len, dtype=torch.int64)
         dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
@@ -3454,6 +3456,23 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     )
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_RetainedState")
+
+        if getattr(self.model.config, "model_type", None) == "deepseek_v4":
+            from QEfficient.transformers.models.deepseek_v4 import (
+                get_deepseek_v4_compression_state_initializers,
+                get_deepseek_v4_compression_state_names,
+            )
+
+            compression_state_names = get_deepseek_v4_compression_state_names(self.model.config)
+            example_inputs["deepseek_v4_compression_states"] = get_deepseek_v4_compression_state_initializers(
+                self.model.config,
+                fbs if self.continuous_batching else bs,
+                cache_example_len,
+                dtype=self.model.config.torch_dtype,
+            )
+            for layer_idx, layer_inputs in enumerate(example_inputs["deepseek_v4_compression_states"]):
+                for state_name, _ in zip(compression_state_names[layer_idx], layer_inputs):
+                    output_names.append(f"deepseek_v4_{state_name}.{layer_idx}_RetainedState")
 
         architectures = getattr(self.model.config, "architectures", None) or []
         has_mla_cache = any(arch in architectures for arch in ("DeepseekV3ForCausalLM", "GlmMoeDsaForCausalLM"))
@@ -3577,6 +3596,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         bound_args.arguments["past_key_values"] = DynamicCache(tuple(past_key_values))
                 outputs = model_forward(*bound_args.args, **bound_args.kwargs)
                 if torch.onnx.is_in_onnx_export():
+                    if (
+                        getattr(self.model.config, "model_type", None) == "deepseek_v4"
+                        and hasattr(outputs, "logits")
+                        and hasattr(outputs, "past_key_values")
+                    ):
+                        from QEfficient.transformers.models.deepseek_v4 import extract_deepseek_v4_compression_states
+
+                        compression_states = extract_deepseek_v4_compression_states(
+                            bound_args.arguments["past_key_values"]
+                        )
+                        return outputs.logits, _legacyify_cache(outputs.past_key_values), compression_states
                     if hasattr(outputs, "logits") and hasattr(outputs, "past_key_values"):
                         return outputs.logits, _legacyify_cache(outputs.past_key_values)
                     return _legacyify_cache(outputs)
@@ -4047,6 +4077,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 for i in range(self.num_layers):
                     custom_io[f"compressed_kv.{i}{suffix}"] = kv_cache_dtype
                     custom_io[f"k_pe.{i}{suffix}"] = kv_cache_dtype
+
+        if getattr(self.model.config, "model_type", None) == "deepseek_v4":
+            from QEfficient.transformers.models.deepseek_v4 import get_deepseek_v4_compression_state_names
+
+            for suffix in ["", "_RetainedState"]:
+                for i, layer_state_names in enumerate(get_deepseek_v4_compression_state_names(self.model.config)):
+                    for state_name in layer_state_names:
+                        custom_io[f"deepseek_v4_{state_name}.{i}{suffix}"] = kv_cache_dtype
 
         def filter_custom_io(custom_io_lang, onnx_path):
             # Extract filename
