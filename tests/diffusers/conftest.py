@@ -14,7 +14,6 @@ tiny substitute at collection time so no auth token is needed.
 """
 
 import os
-import sys
 
 
 def pytest_configure(config):
