@@ -12,8 +12,9 @@ import shutil
 import subprocess
 import warnings
 from abc import ABC, abstractmethod
+from itertools import zip_longest
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import onnx
 import torch
@@ -52,6 +53,9 @@ from QEfficient.utils.export_utils import export_wrapper
 
 logger = logging.getLogger(__name__)
 
+PKVLayerState = Tuple[Any, ...]
+ResolvedPKVLayers = Tuple[PKVLayerState, ...]
+
 
 class QEFFBaseModel(ABC):
     """
@@ -71,20 +75,26 @@ class QEFFBaseModel(ABC):
     _onnx_transforms = [BaseOnnxTransform]
 
     def _transform_names(self) -> List[str]:
+        """Return the transform class names applied by this wrapper."""
         return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
 
     @staticmethod
-    def _resolve_pkv_layers(pkv_obj):
+    def _resolve_pkv_layers(pkv_obj: Any) -> Optional[ResolvedPKVLayers]:
+        """Normalize supported cache containers into per-layer state tuples.
+
+        Export code accepts several cache layouts depending on the upstream
+        Transformers version and model family. This helper converts the
+        supported layouts into a stable tuple-of-tuples representation so the
+        export path can name inputs and outputs without branching on cache type.
+        """
         if isinstance(pkv_obj, (list, tuple)):
-            return pkv_obj
+            return tuple(pkv_obj)
 
         if hasattr(pkv_obj, "layers"):
-            layers = []
-            for layer in pkv_obj.layers:
-                keys = getattr(layer, "keys", None)
-                values = getattr(layer, "values", None)
-                layers.append((keys, values))
-            return tuple(layers)
+            return tuple(
+                (getattr(layer, "keys", None), getattr(layer, "values", None))
+                for layer in pkv_obj.layers
+            )
 
         self_attention_cache = getattr(pkv_obj, "self_attention_cache", None)
         cross_attention_cache = getattr(pkv_obj, "cross_attention_cache", None)
@@ -92,10 +102,7 @@ class QEFFBaseModel(ABC):
             layers = []
             self_layers = getattr(self_attention_cache, "layers", [])
             cross_layers = getattr(cross_attention_cache, "layers", [])
-            total_layers = max(len(self_layers), len(cross_layers))
-            for layer_idx in range(total_layers):
-                self_layer = self_layers[layer_idx] if layer_idx < len(self_layers) else None
-                cross_layer = cross_layers[layer_idx] if layer_idx < len(cross_layers) else None
+            for self_layer, cross_layer in zip_longest(self_layers, cross_layers, fillvalue=None):
                 self_key = getattr(self_layer, "keys", None)
                 self_value = getattr(self_layer, "values", None)
                 cross_key = getattr(cross_layer, "keys", None)
@@ -111,7 +118,8 @@ class QEFFBaseModel(ABC):
 
         return None
 
-    def _resolve_pkv_names(self, layer_idx, layer_state):
+    def _resolve_pkv_names(self, layer_idx: int, layer_state: PKVLayerState) -> List[str]:
+        """Return ONNX input/output names for one normalized cache layer state."""
         if hasattr(self.model, "get_onnx_past_key_value_names"):
             names = self.model.get_onnx_past_key_value_names(layer_idx, layer_state)
             if names is not None:
@@ -135,18 +143,21 @@ class QEFFBaseModel(ABC):
 
     @staticmethod
     def _is_layerwise_active() -> bool:
+        """Return whether export or compile is currently running in layerwise mode."""
         from QEfficient.transformers.models import _layerwise
 
         return _layerwise.is_layerwise_active()
 
     @staticmethod
     def _get_layerwise_window() -> Tuple[int, int, int]:
+        """Return the active ``(start, end, total_layers)`` layerwise window."""
         from QEfficient.transformers.models import _layerwise
 
         return _layerwise.current_layer_window()
 
     @classmethod
     def _is_last_layerwise_window(cls) -> bool:
+        """Return whether the active layerwise window reaches the final layer."""
         _, end_idx, total_layers = cls._get_layerwise_window()
         return total_layers > 0 and end_idx >= total_layers
 
@@ -354,12 +365,12 @@ class QEFFBaseModel(ABC):
         example_inputs: Dict[str, torch.Tensor],
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
-        onnx_transform_kwargs: Optional[Dict[str, any]] = None,
+        onnx_transform_kwargs: Optional[Dict[str, Any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
         **export_kwargs,
-    ) -> str:
+    ) -> Optional[Path]:
         """
         Export the PyTorch model to ONNX and apply ONNX transforms
 
@@ -546,12 +557,12 @@ class QEFFBaseModel(ABC):
         example_inputs: Dict[str, torch.Tensor],
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
-        onnx_transform_kwargs: Optional[Dict[str, any]] = None,
+        onnx_transform_kwargs: Optional[Dict[str, Any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
         **export_kwargs,
-    ) -> str:
+    ) -> Optional[Path]:
         cache_probe = export_kwargs.pop("_layerwise_cache_probe", False)
         idx, end_idx, total_layers = self._get_layerwise_window()
         if end_idx <= idx:
@@ -587,39 +598,6 @@ class QEFFBaseModel(ABC):
         # Setup temporary paths
         tmp_onnx_dir = export_dir / "onnx_layerwise_tmp"
         tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
-
-        def _resolve_pkv_layers(pkv_obj):
-            if isinstance(pkv_obj, (list, tuple)):
-                return pkv_obj
-            if hasattr(pkv_obj, "to_legacy_cache"):
-                return pkv_obj.to_legacy_cache()
-            if hasattr(pkv_obj, "layers"):
-                layers = []
-                for layer in pkv_obj.layers:
-                    keys = getattr(layer, "keys", None)
-                    values = getattr(layer, "values", None)
-                    layers.append((keys, values))
-                return tuple(layers)
-            return None
-
-        def _resolve_pkv_names(layer_idx, layer_state):
-            if hasattr(self.model, "get_onnx_past_key_value_names"):
-                names = self.model.get_onnx_past_key_value_names(layer_idx, layer_state)
-                if names is not None:
-                    return list(names)
-            state_len = len(layer_state)
-            if state_len == 2:
-                return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
-            if state_len == 4:
-                return [
-                    f"past_key_self.{layer_idx}",
-                    f"past_value_self.{layer_idx}",
-                    f"past_key_cross.{layer_idx}",
-                    f"past_value_cross.{layer_idx}",
-                ]
-            raise ValueError(
-                f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {state_len}"
-            )
 
         is_vision = hasattr(self.model, "language_model")
         output_name = []
@@ -834,7 +812,7 @@ class QEFFBaseModel(ABC):
         specialization_module_name: Optional[str] = None,
         kv_cache_prefix: Optional[str] = None,
         **compiler_options,
-    ) -> str:
+    ) -> Optional[Union[str, Path]]:
         """
         Interface for qaic-compile compiler
 

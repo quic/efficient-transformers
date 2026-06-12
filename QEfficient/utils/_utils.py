@@ -696,7 +696,11 @@ def create_model_params(qeff_model, **kwargs) -> Dict:
     return model_params
 
 
-def execute_command(process: str, command: str, output_file_path: Optional[str] = None):
+def execute_command(
+    process: str,
+    command: str,
+    output_file_path: Optional[str] = None,
+):
     """
     Executes the give command using subprocess.
 
@@ -707,29 +711,28 @@ def execute_command(process: str, command: str, output_file_path: Optional[str] 
         :output_file_path (str): If provided stdout & stderr for the executed command will be dumped to a file. ``Defaults to None.``
 
     """
-    print(f"Running {process} command : \n {command}")
+    logger.info("Running %s command:\n%s", process, command)
     try:
         result = subprocess.run(command, capture_output=True, text=True, shell=True)
     except Exception as e:
-        print("Execution failed: %s", e)
+        raise RuntimeError(f"{process} execution failed before completion: {e}") from e
 
     if result.returncode != 0:
         raise RuntimeError(f"{process} failed Failed!!\n\nSTDOUT\n{result.stdout}\n\nSTDERR\n{result.stderr}")
-    else:
-        if output_file_path:
-            stdout_path = os.path.join(output_file_path, f"{process}_stdout.txt")
-            stderr_path = os.path.join(output_file_path, f"{process}_stderr.txt")
-            # Write the output to a file
-            try:
-                with open(stdout_path, "w") as file:
-                    file.write(result.stdout)
-            except Exception as e:
-                print(f"Failed to create {stdout_path}: {e}")
-            try:
-                with open(stderr_path, "w") as file:
-                    file.write(result.stderr)
-            except Exception as e:
-                print(f"Failed to create {stderr_path}: {e}")
+    if output_file_path:
+        stdout_path = os.path.join(output_file_path, f"{process}_stdout.txt")
+        stderr_path = os.path.join(output_file_path, f"{process}_stderr.txt")
+        # Write the output to a file
+        try:
+            with open(stdout_path, "w") as file:
+                file.write(result.stdout)
+        except Exception as e:
+            logger.warning("Failed to create %s: %s", stdout_path, e)
+        try:
+            with open(stderr_path, "w") as file:
+                file.write(result.stderr)
+        except Exception as e:
+            logger.warning("Failed to create %s: %s", stderr_path, e)
 
 
 def load_yaml(file_path: str) -> Dict[Any, Any]:

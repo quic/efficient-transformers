@@ -96,20 +96,22 @@ class VisionHandler:
     def _split_processor_inputs(
         inputs: Dict[str, torch.Tensor]
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, torch.Tensor]]:
-        vision_inputs = {}
+        """Split mixed processor outputs into QAIC vision inputs and language inputs."""
+        vision_inputs: Dict[str, np.ndarray] = {}
         for key, value in inputs.items():
             if key in VISION_INPUT_KEYS:
-                vision_inputs[key] = np.array(value)
+                vision_inputs[key] = np.asarray(value)
 
         for key in VISION_FP16_INPUT_KEYS:
             if key in vision_inputs:
-                vision_inputs[key] = vision_inputs[key].astype("float16")
+                vision_inputs[key] = vision_inputs[key].astype(np.float16)
 
-        lang_inputs = {key: value for key, value in inputs.items() if key not in vision_inputs}
+        lang_inputs = {key: value for key, value in inputs.items() if key not in VISION_INPUT_KEYS}
         return vision_inputs, lang_inputs
 
     @staticmethod
     def _chat_template_kwargs(is_gemma4: bool) -> Dict[str, Any]:
+        """Return chat-template kwargs for models with minor processor differences."""
         kwargs = {
             "tokenize": False,
             "add_generation_prompt": True,
@@ -118,13 +120,18 @@ class VisionHandler:
             kwargs["enable_thinking"] = False
         return kwargs
 
-    def prepare_internVL_inputs(self, img_url: str, prompt: str) -> Dict[str, np.ndarray]:
+    def prepare_internVL_inputs(
+        self, img_url: str, prompt: str
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, torch.Tensor]]:
         """
         Prepare inputs for InternVL model
 
         Args:
-            image_url: URL or path to image
+            img_url: URL or path to image
             prompt: Text query to process with image
+
+        Returns:
+            Tuple of ``(vision_inputs, language_inputs)``.
         """
         if not self._tokenizer:
             raise ValueError("Tokenizer is required for InternVL input preparation")
@@ -160,14 +167,16 @@ class VisionHandler:
 
         return self._split_processor_inputs(inputs)
 
-    def prepare_molmo_inputs(self, image_url: str, query: str) -> Dict[str, np.ndarray]:
+    def prepare_molmo_inputs(
+        self, image_url: str, query: str
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, torch.Tensor]]:
         """
         Download and preprocess image into model inputs
         Args:
             image_url: URL or path to image
             query: Text query to process with image
         Returns:
-            Dictionary of vision model inputs
+            Tuple of ``(vision_inputs, language_inputs)``.
         Raises:
             ValueError: If vision handler is not properly initialized
             RuntimeError: If image processing fails
@@ -194,7 +203,9 @@ class VisionHandler:
         except Exception as e:
             raise RuntimeError(f"Failed to process image {image_url}: {str(e)}")
 
-    def prepare_vlm_inputs(self, image_url: str, query: str, prefill_seq_len: int) -> Dict[str, np.ndarray]:
+    def prepare_vlm_inputs(
+        self, image_url: str, query: str, prefill_seq_len: int
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, torch.Tensor]]:
         """
         Download and preprocess image into model inputs
 
@@ -204,7 +215,7 @@ class VisionHandler:
             prefill_seq_len: Padded sequence length for language model
 
         Returns:
-            Dictionary of vision model inputs
+            Tuple of ``(vision_inputs, language_inputs)``.
 
         Raises:
             ValueError: If vision handler is not properly initialized
@@ -403,8 +414,19 @@ class VisionHandler:
         except Exception as e:
             raise RuntimeError(f"Failed to setup vision buffers: {str(e)}")
 
+    def prepare_vision_inputs(
+        self, image_url: str, query: str, prefill_seq_len: int = 128
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, torch.Tensor]]:
+        """Dispatch to the model-family-specific vision input preparation path."""
+        model_type = getattr(self._qeff_model.model.config, "model_type", "")
+        if model_type == "internvl_chat":
+            return self.prepare_internVL_inputs(image_url, query)
+        if model_type == "molmo":
+            return self.prepare_molmo_inputs(image_url, query)
+        return self.prepare_vlm_inputs(image_url, query, prefill_seq_len)
+
     def prepare_complete_vision_language_inputs(
-        self, image_url: str, query: str
+        self, image_url: str, query: str, prefill_seq_len: int = 128
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
         """
         Complete pipeline: prepare inputs and run vision inference
@@ -412,12 +434,13 @@ class VisionHandler:
         Args:
             image_url: URL or path to image
             query: Text query
+            prefill_seq_len: Padded sequence length for language model.
 
         Returns:
             Tuple of (vision_inputs, vision_outputs)
         """
         # Prepare vision inputs
-        vision_inputs = self.prepare_vision_inputs(image_url, query)
+        vision_inputs, _ = self.prepare_vision_inputs(image_url, query, prefill_seq_len)
 
         # Setup buffers
         self.setup_vision_buffers()
@@ -429,35 +452,23 @@ class VisionHandler:
 
     def get_processed_inputs(
         self, image_url: str, query: str, prefill_seq_len: int
-    ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], int]:
         """
         Process vision inputs and prepare language model inputs
 
         Args:
             image_url: URL or path to image
             query: Text query
-            padded_len: Padded sequence length for language model
+            prefill_seq_len: Padded sequence length for language model.
 
         Returns:
-            Tuple of (language_inputs, vision_outputs)
+            Tuple of ``(language_inputs, vision_outputs, num_chunks)``.
         """
         if not self.is_available():
             raise ValueError("Vision handler not properly initialized")
 
         try:
-            ## Get vlm inputs ##
-            if (
-                hasattr(self._qeff_model.model.config, "model_type")
-                and self._qeff_model.model.config.model_type == "internvl_chat"
-            ):
-                vision_inputs, lang_inputs = self.prepare_internVL_inputs(image_url, query)
-            elif (
-                hasattr(self._qeff_model.model.config, "model_type")
-                and self._qeff_model.model.config.model_type == "molmo"
-            ):
-                vision_inputs, lang_inputs = self.prepare_molmo_inputs(image_url, query)
-            else:
-                vision_inputs, lang_inputs = self.prepare_vlm_inputs(image_url, query, prefill_seq_len)
+            vision_inputs, lang_inputs = self.prepare_vision_inputs(image_url, query, prefill_seq_len)
 
             # Handle padding for language model
             pad_token_id = 1
