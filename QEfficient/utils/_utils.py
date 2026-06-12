@@ -12,8 +12,10 @@ import os
 import subprocess
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import onnx
 import requests
 import torch
 import yaml
@@ -35,6 +37,7 @@ from QEfficient.utils.logging_utils import logger
 # image_idx, deepstack_features, ...) are intentionally excluded.
 _KV_RETAINED_STEMS = ("past_key.", "past_value.", "compressed_kv.", "k_pe.")
 _RETAINED_STATE_SUFFIX = "_RetainedState"
+_INTERNAL_RETAINED_STATE_SUFFIX = "_InternalRetainedState"
 
 
 def validate_kv_cache_prefix(kv_cache_prefix: Optional[str]) -> Optional[str]:
@@ -125,6 +128,64 @@ def align_kv_input_names_to_retained_outputs(input_names, output_names):
         match = next((t for t in retained_targets if t == name or t.startswith(name + "_")), None)
         aligned.append(match if match is not None else name)
     return aligned
+
+
+def compile_io_name(name: str, *, use_onnx_subfunctions: bool) -> str:
+    """Return the compiler-visible retained-state name for an exported ONNX binding."""
+    if not use_onnx_subfunctions or not name.endswith(_RETAINED_STATE_SUFFIX):
+        return name
+    if any(token in name for token in ("key", "value", "conv_state", "recurrent_state", "compressed_kv", "k_pe")):
+        return name[: -len(_RETAINED_STATE_SUFFIX)] + _INTERNAL_RETAINED_STATE_SUFFIX
+    return name
+
+
+def state_input_name(output_name: str) -> str:
+    """Map a retained-state output binding back to its paired runtime input binding."""
+    for suffix in (_INTERNAL_RETAINED_STATE_SUFFIX, _RETAINED_STATE_SUFFIX):
+        if output_name.endswith(suffix):
+            return output_name[: -len(suffix)]
+    return output_name
+
+
+def filter_custom_io_for_onnx(custom_io: Dict[str, str], onnx_path: Optional[Union[str, Path]]) -> Dict[str, str]:
+    """Keep only custom-IO entries that exist in the exported ONNX graph.
+
+    Layerwise stitched graphs may prefix names (for example ``layer_0/``) and
+    subfunction exports may surface either public or internal retained-state
+    suffixes. Matching against graph basenames and both suffix spellings keeps
+    compiler custom-IO stable across those graph shapes.
+    """
+    if onnx_path is None:
+        return custom_io
+
+    try:
+        model = onnx.load(onnx_path, load_external_data=False)
+    except Exception:
+        return custom_io
+
+    io_names = {value.name for value in list(model.graph.input) + list(model.graph.output)}
+    basename_to_name = {name.rsplit("/", 1)[-1]: name for name in io_names}
+
+    def resolve_name(name: str) -> Optional[str]:
+        candidates = [name]
+        if name.endswith(_INTERNAL_RETAINED_STATE_SUFFIX):
+            candidates.append(name[: -len(_INTERNAL_RETAINED_STATE_SUFFIX)] + _RETAINED_STATE_SUFFIX)
+        elif name.endswith(_RETAINED_STATE_SUFFIX):
+            candidates.append(name[: -len(_RETAINED_STATE_SUFFIX)] + _INTERNAL_RETAINED_STATE_SUFFIX)
+
+        for candidate in candidates:
+            if candidate in io_names:
+                return candidate
+            if candidate in basename_to_name:
+                return basename_to_name[candidate]
+        return None
+
+    filtered = {}
+    for name, dtype in custom_io.items():
+        resolved_name = resolve_name(name)
+        if resolved_name is not None:
+            filtered[resolved_name] = dtype
+    return filtered
 
 
 class LRUCache:

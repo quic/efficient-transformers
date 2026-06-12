@@ -74,8 +74,11 @@ from QEfficient.transformers.quantizers.quant_transforms import (
 )
 from QEfficient.utils import (
     apply_kv_cache_prefix,
+    compile_io_name as _shared_compile_io_name,
     constants,
+    filter_custom_io_for_onnx as _shared_filter_custom_io_for_onnx,
     get_padding_shape_from_config,
+    state_input_name as _shared_state_input_name,
     validate_kv_cache_prefix,
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
@@ -138,6 +141,11 @@ def _resolve_torch_dtype(kwargs: dict) -> None:
         kwargs["dtype"] = kwargs["torch_dtype"]
 
 
+def _set_config_attr_unsafe(config, attr_name: str, value) -> None:
+    """Assign config attributes even when newer HF config wrappers reject the field."""
+    object.__setattr__(config, attr_name, value)
+
+
 def _build_layerwise_vision_export_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
     """Load a VLM with vision weights and only the first language window.
 
@@ -195,59 +203,18 @@ def _build_meta_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
 
 
 def _compile_io_name(name: str, *, use_onnx_subfunctions: bool) -> str:
-    """Return the compiler-visible name for retained-state ONNX outputs."""
-    if not use_onnx_subfunctions or not name.endswith("_RetainedState"):
-        return name
-    if any(token in name for token in ("key", "value", "conv_state", "recurrent_state", "compressed_kv", "k_pe")):
-        return name[: -len("_RetainedState")] + "_InternalRetainedState"
-    return name
+    """Backward-compatible wrapper around the shared retained-state naming helper."""
+    return _shared_compile_io_name(name, use_onnx_subfunctions=use_onnx_subfunctions)
 
 
 def _state_input_name(output_name: str) -> str:
-    """Map a retained-state output name to its matching state input name."""
-    for suffix in ("_InternalRetainedState", "_RetainedState"):
-        if output_name.endswith(suffix):
-            return output_name[: -len(suffix)]
-    return output_name
+    """Backward-compatible wrapper around the shared retained-state naming helper."""
+    return _shared_state_input_name(output_name)
 
 
 def _filter_custom_io_for_onnx(custom_io: dict, onnx_path: Optional[Union[str, Path]]) -> dict:
-    """Keep custom-IO entries that exist in the ONNX graph.
-
-    Layerwise stitched graphs may prefix I/O names (for example ``layer_0/``)
-    and may expose public retained-state names even when subfunction export used
-    internal names during per-window export. Matching by basename keeps compiler
-    custom-IO compatible with both graph shapes.
-    """
-    if onnx_path is None:
-        return custom_io
-    try:
-        model = onnx.load(onnx_path, load_external_data=False)
-    except Exception:
-        return custom_io
-
-    io_names = {value.name for value in list(model.graph.input) + list(model.graph.output)}
-    basename_to_name = {name.rsplit("/", 1)[-1]: name for name in io_names}
-
-    def resolve_name(name: str) -> Optional[str]:
-        candidates = [name]
-        if name.endswith("_InternalRetainedState"):
-            candidates.append(name[: -len("_InternalRetainedState")] + "_RetainedState")
-        elif name.endswith("_RetainedState"):
-            candidates.append(name[: -len("_RetainedState")] + "_InternalRetainedState")
-        for candidate in candidates:
-            if candidate in io_names:
-                return candidate
-            if candidate in basename_to_name:
-                return basename_to_name[candidate]
-        return None
-
-    filtered = {}
-    for name, dtype in custom_io.items():
-        resolved_name = resolve_name(name)
-        if resolved_name is not None:
-            filtered[resolved_name] = dtype
-    return filtered
+    """Backward-compatible wrapper around the shared ONNX custom-IO filter helper."""
+    return _shared_filter_custom_io_for_onnx(custom_io, onnx_path)
 
 
 class QEFFTransformersBase(QEFFBaseModel):
@@ -431,7 +398,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         if getattr(self.model.config, "is_decoder", False) or getattr(self.model.config, "is_encoder_decoder", False):
             self.model.base_model.config.use_cache = True
         else:
-            object.__setattr__(self.model.base_model.config, "use_cache", None)
+            _set_config_attr_unsafe(self.model.base_model.config, "use_cache", None)
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
@@ -1226,15 +1193,15 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     ):
         if enable:
             if enable_chunking:
-                self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
+                self.model, _ = PrefillOnlyChunkedTransform.apply(self.model)
             else:
-                self.model, tf = PrefillOnlyTransform.apply(self.model)
+                self.model, _ = PrefillOnlyTransform.apply(self.model)
 
         else:
             if retain_full_kv:
-                self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
+                self.model, _ = RevertPrefillKeepAttentionTransform.apply(self.model)
             else:
-                self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
+                self.model, _ = RevertPrefillOnlyTransform.apply(self.model)
 
     def export(
         self,
@@ -1272,7 +1239,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Path to the generated ONNX graph file for the language decoder.
         """
         if prefill_only:
-            assert prefill_seq_len > 1
+            if prefill_seq_len is None or prefill_seq_len <= 1:
+                raise ValueError("prefill_only=True requires prefill_seq_len > 1.")
             if not enable_chunking and self.continuous_batching:
                 raise NotImplementedError(
                     "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
@@ -1280,10 +1248,10 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             self.hash_params["prefill_only"] = True
             self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
         else:
-            self.hash_params["prefill_only"] = False
+            self.hash_params.pop("prefill_only", None)
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
-        if QEfficient.base.modeling_qeff.QEFFBaseModel._layerwise_active:
+        if self._is_layerwise_active():
             return self._export_layerwise(
                 inputs,
                 output_names=output_names,
@@ -1570,15 +1538,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 qaic_config=self.lang_model.model.qaic_config,
             )
 
-        layerwise_export = QEFFBaseModel._layerwise_active
+        layerwise_export = self.lang_model._is_layerwise_active()
 
         should_export = not skip_vision and (
             not layerwise_export
-            or (
-                layerwise_export
-                and QEfficient.base.modeling_qeff.QEFFBaseModel._end
-                == QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers
-            )
+            or self.lang_model._is_last_layerwise_window()
         )
         if should_export and not layerwise_cache_probe:
             self.vision_model.export(
@@ -2635,15 +2599,15 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
     ):
         if enable:
             if enable_chunking:
-                self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
+                self.model, _ = PrefillOnlyChunkedTransform.apply(self.model)
             else:
-                self.model, tf = PrefillOnlyTransform.apply(self.model)
+                self.model, _ = PrefillOnlyTransform.apply(self.model)
 
         else:
             if retain_full_kv:
-                self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
+                self.model, _ = RevertPrefillKeepAttentionTransform.apply(self.model)
             else:
-                self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
+                self.model, _ = RevertPrefillOnlyTransform.apply(self.model)
 
     def export(
         self,
@@ -2671,7 +2635,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             Path to the generated ONNX graph file.
         """
         if prefill_only:
-            assert prefill_seq_len > 1
+            if prefill_seq_len is None or prefill_seq_len <= 1:
+                raise ValueError("prefill_only=True requires prefill_seq_len > 1.")
             if not enable_chunking and self.continuous_batching:
                 raise NotImplementedError(
                     "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
@@ -2679,7 +2644,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             self.hash_params["prefill_only"] = True
             self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
         else:
-            self.hash_params["prefill_only"] = False
+            self.hash_params.pop("prefill_only", None)
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
         inputs = self.model.get_dummy_inputs(comp_ctx_lengths=self.comp_ctx_lengths_decode)
@@ -3351,18 +3316,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         retain_full_kv: Optional[bool] = False,
     ):
         if enable:
-            self.model, tf = PrefillOnlyExternalModuleMapperTransform.apply(self.model)
+            self.model, _ = PrefillOnlyExternalModuleMapperTransform.apply(self.model)
             if enable_chunking:
-                self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
+                self.model, _ = PrefillOnlyChunkedTransform.apply(self.model)
             else:
-                self.model, tf = PrefillOnlyTransform.apply(self.model)
+                self.model, _ = PrefillOnlyTransform.apply(self.model)
 
         else:
-            self.model, tf = RevertPrefillOnlyExternalModuleMapperTransform.apply(self.model)
+            self.model, _ = RevertPrefillOnlyExternalModuleMapperTransform.apply(self.model)
             if retain_full_kv:
-                self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
+                self.model, _ = RevertPrefillKeepAttentionTransform.apply(self.model)
             else:
-                self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
+                self.model, _ = RevertPrefillOnlyTransform.apply(self.model)
 
     def __update_prefill_transform(
         self,
@@ -3371,18 +3336,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         retain_full_kv: Optional[bool] = False,
     ):
         if enable:
-            self.model, tf = PrefillOnlyExternalModuleMapperTransform.apply(self.model)
+            self.model, _ = PrefillOnlyExternalModuleMapperTransform.apply(self.model)
             if enable_chunking:
-                self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
+                self.model, _ = PrefillOnlyChunkedTransform.apply(self.model)
             else:
-                self.model, tf = PrefillOnlyTransform.apply(self.model)
+                self.model, _ = PrefillOnlyTransform.apply(self.model)
 
         else:
-            self.model, tf = RevertPrefillOnlyExternalModuleMapperTransform.apply(self.model)
+            self.model, _ = RevertPrefillOnlyExternalModuleMapperTransform.apply(self.model)
             if retain_full_kv:
-                self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
+                self.model, _ = RevertPrefillKeepAttentionTransform.apply(self.model)
             else:
-                self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
+                self.model, _ = RevertPrefillOnlyTransform.apply(self.model)
 
     def __init__(
         self,
@@ -3987,7 +3952,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
             self.hash_params["kv_cache_prefix"] = kv_cache_prefix
 
-        if QEFFBaseModel._layerwise_active:
+        if self._is_layerwise_active():
             return self._export_layerwise(
                 example_inputs,
                 output_names=output_names,

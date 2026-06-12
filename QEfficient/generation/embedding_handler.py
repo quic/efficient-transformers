@@ -25,6 +25,17 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
 from QEfficient.utils.logging_utils import logger
 
+VISION_INPUT_KEYS = {
+    "pixel_values",
+    "image_position_ids",
+    "image_masks",
+    "image_input_idx",
+    "valid_idx",
+    "aspect_ratio_ids",
+    "aspect_ratio_mask",
+}
+VISION_FP16_INPUT_KEYS = {"pixel_values", "image_masks"}
+
 
 class VisionHandler:
     """
@@ -81,6 +92,32 @@ class VisionHandler:
         """
         return self._vision_session is not None and self._processor is not None
 
+    @staticmethod
+    def _split_processor_inputs(
+        inputs: Dict[str, torch.Tensor]
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, torch.Tensor]]:
+        vision_inputs = {}
+        for key, value in inputs.items():
+            if key in VISION_INPUT_KEYS:
+                vision_inputs[key] = np.array(value)
+
+        for key in VISION_FP16_INPUT_KEYS:
+            if key in vision_inputs:
+                vision_inputs[key] = vision_inputs[key].astype("float16")
+
+        lang_inputs = {key: value for key, value in inputs.items() if key not in vision_inputs}
+        return vision_inputs, lang_inputs
+
+    @staticmethod
+    def _chat_template_kwargs(is_gemma4: bool) -> Dict[str, Any]:
+        kwargs = {
+            "tokenize": False,
+            "add_generation_prompt": True,
+        }
+        if is_gemma4:
+            kwargs["enable_thinking"] = False
+        return kwargs
+
     def prepare_internVL_inputs(self, img_url: str, prompt: str) -> Dict[str, np.ndarray]:
         """
         Prepare inputs for InternVL model
@@ -121,28 +158,7 @@ class VisionHandler:
         inputs = self._tokenizer(prompt, return_tensors="pt")
         inputs["pixel_values"] = pixel_values.clone()
 
-        # Convert to numpy arrays
-        vision_inputs = {}
-        for k, v in inputs.items():
-            if k in {
-                "pixel_values",
-                "image_masks",
-                "image_input_idx",
-                "valid_idx",
-                "aspect_ratio_ids",
-                "aspect_ratio_mask",
-            }:
-                vision_inputs[k] = np.array(v)
-
-        # Convert specific inputs to float16
-        vision_inputs_fp16 = {"pixel_values", "image_masks"}
-        for k in vision_inputs_fp16:
-            if k in vision_inputs:
-                vision_inputs[k] = vision_inputs[k].astype("float16")
-
-        lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
-
-        return vision_inputs, lang_inputs
+        return self._split_processor_inputs(inputs)
 
     def prepare_molmo_inputs(self, image_url: str, query: str) -> Dict[str, np.ndarray]:
         """
@@ -174,28 +190,7 @@ class VisionHandler:
             inputs["valid_idx"] = torch.nonzero(valid)[:, 1].unsqueeze(0)
             inputs["pixel_values"] = inputs.pop("images")
 
-            # Convert to numpy arrays
-            vision_inputs = {}
-            for k, v in inputs.items():
-                if k in {
-                    "pixel_values",
-                    "image_masks",
-                    "image_input_idx",
-                    "valid_idx",
-                    "aspect_ratio_ids",
-                    "aspect_ratio_mask",
-                }:
-                    vision_inputs[k] = np.array(v)
-
-            # Convert specific inputs to float16
-            vision_inputs_fp16 = {"pixel_values", "image_masks"}
-            for k in vision_inputs_fp16:
-                if k in vision_inputs:
-                    vision_inputs[k] = vision_inputs[k].astype("float16")
-
-            lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
-
-            return vision_inputs, lang_inputs
+            return self._split_processor_inputs(inputs)
         except Exception as e:
             raise RuntimeError(f"Failed to process image {image_url}: {str(e)}")
 
@@ -253,21 +248,10 @@ class VisionHandler:
                 },
             ]
 
-            # Apply chat template
-            if is_gemma4:
-                prompt = self._processor.apply_chat_template(
-                    conversation,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                    enable_thinking=False,
-                )
-            else:
-                prompt = self._processor.apply_chat_template(
-                    conversation,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                )
-            # Process image and text
+            prompt = self._processor.apply_chat_template(
+                conversation,
+                **self._chat_template_kwargs(is_gemma4),
+            )
             inputs = self._processor(images=image, text=prompt, return_tensors="pt")
             model_type = getattr(getattr(self._qeff_model, "model", None).config, "model_type", "")
             if model_type in {
@@ -284,30 +268,7 @@ class VisionHandler:
             # Convert to float32 if needed
             if "pixel_values" in inputs:
                 inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
-
-            # Convert to numpy arrays
-            vision_inputs = {}
-            for k, v in inputs.items():
-                if k in {
-                    "pixel_values",
-                    "image_position_ids",
-                    "image_masks",
-                    "image_input_idx",
-                    "valid_idx",
-                    "aspect_ratio_ids",
-                    "aspect_ratio_mask",
-                }:
-                    vision_inputs[k] = np.array(v)
-
-            # Convert specific inputs to float16
-            vision_inputs_fp16 = {"pixel_values", "image_masks"}
-            for k in vision_inputs_fp16:
-                if k in vision_inputs:
-                    vision_inputs[k] = vision_inputs[k].astype("float16")
-
-            lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
-
-            return vision_inputs, lang_inputs
+            return self._split_processor_inputs(inputs)
 
         except Exception as e:
             raise RuntimeError(f"Failed to process image {image_url}: {str(e)}")

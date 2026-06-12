@@ -13,7 +13,7 @@ import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import onnx
 import torch
@@ -40,6 +40,7 @@ from QEfficient.utils import (
     create_json,
     create_model_params,
     dump_qconfig,
+    filter_custom_io_for_onnx,
     generate_mdp_partition_config,
     get_attr_or_key,
     hash_dict_params,
@@ -71,6 +72,83 @@ class QEFFBaseModel(ABC):
 
     def _transform_names(self) -> List[str]:
         return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
+
+    @staticmethod
+    def _resolve_pkv_layers(pkv_obj):
+        if isinstance(pkv_obj, (list, tuple)):
+            return pkv_obj
+
+        if hasattr(pkv_obj, "layers"):
+            layers = []
+            for layer in pkv_obj.layers:
+                keys = getattr(layer, "keys", None)
+                values = getattr(layer, "values", None)
+                layers.append((keys, values))
+            return tuple(layers)
+
+        self_attention_cache = getattr(pkv_obj, "self_attention_cache", None)
+        cross_attention_cache = getattr(pkv_obj, "cross_attention_cache", None)
+        if self_attention_cache is not None and cross_attention_cache is not None:
+            layers = []
+            self_layers = getattr(self_attention_cache, "layers", [])
+            cross_layers = getattr(cross_attention_cache, "layers", [])
+            total_layers = max(len(self_layers), len(cross_layers))
+            for layer_idx in range(total_layers):
+                self_layer = self_layers[layer_idx] if layer_idx < len(self_layers) else None
+                cross_layer = cross_layers[layer_idx] if layer_idx < len(cross_layers) else None
+                self_key = getattr(self_layer, "keys", None)
+                self_value = getattr(self_layer, "values", None)
+                cross_key = getattr(cross_layer, "keys", None)
+                cross_value = getattr(cross_layer, "values", None)
+                if cross_layer is None:
+                    layers.append((self_key, self_value))
+                else:
+                    layers.append((self_key, self_value, cross_key, cross_value))
+            return tuple(layers)
+
+        if hasattr(pkv_obj, "to_legacy_cache"):
+            return pkv_obj.to_legacy_cache()
+
+        return None
+
+    def _resolve_pkv_names(self, layer_idx, layer_state):
+        if hasattr(self.model, "get_onnx_past_key_value_names"):
+            names = self.model.get_onnx_past_key_value_names(layer_idx, layer_state)
+            if names is not None:
+                return list(names)
+
+        state_len = len(layer_state)
+        if state_len == 2:
+            return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
+        if state_len == 4:
+            return [
+                f"past_key_self.{layer_idx}",
+                f"past_value_self.{layer_idx}",
+                f"past_key_cross.{layer_idx}",
+                f"past_value_cross.{layer_idx}",
+            ]
+
+        raise ValueError(
+            "Unknown shape of past_key_values! Expected each layer to contain either "
+            f"2 or 4 tensors, but got {state_len}."
+        )
+
+    @staticmethod
+    def _is_layerwise_active() -> bool:
+        from QEfficient.transformers.models import _layerwise
+
+        return _layerwise.is_layerwise_active()
+
+    @staticmethod
+    def _get_layerwise_window() -> Tuple[int, int, int]:
+        from QEfficient.transformers.models import _layerwise
+
+        return _layerwise.current_layer_window()
+
+    @classmethod
+    def _is_last_layerwise_window(cls) -> bool:
+        _, end_idx, total_layers = cls._get_layerwise_window()
+        return total_layers > 0 and end_idx >= total_layers
 
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
@@ -319,50 +397,17 @@ class QEFFBaseModel(ABC):
 
         export_dir.mkdir(parents=True, exist_ok=True)
 
-        def _resolve_pkv_layers(pkv_obj):
-            if isinstance(pkv_obj, (list, tuple)):
-                return pkv_obj
-            if hasattr(pkv_obj, "to_legacy_cache"):
-                return pkv_obj.to_legacy_cache()
-            if hasattr(pkv_obj, "layers"):
-                layers = []
-                for layer in pkv_obj.layers:
-                    keys = getattr(layer, "keys", None)
-                    values = getattr(layer, "values", None)
-                    layers.append((keys, values))
-                return tuple(layers)
-            return None
-
-        def _resolve_pkv_names(layer_idx, layer_state):
-            if hasattr(self.model, "get_onnx_past_key_value_names"):
-                names = self.model.get_onnx_past_key_value_names(layer_idx, layer_state)
-                if names is not None:
-                    return list(names)
-            state_len = len(layer_state)
-            if state_len == 2:
-                return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
-            if state_len == 4:
-                return [
-                    f"past_key_self.{layer_idx}",
-                    f"past_value_self.{layer_idx}",
-                    f"past_key_cross.{layer_idx}",
-                    f"past_value_cross.{layer_idx}",
-                ]
-            raise ValueError(
-                f"Unknown shape of past_key_values! Expected length of past_key_values for each layer to be either 2 or 4 but got {state_len}"
-            )
-
         # Create input_names from example_inputs
         input_names = []
         for param in inspect.signature(self.model.forward).parameters:
             if param in example_inputs:
                 if param == "past_key_values":
-                    pkv_layers = _resolve_pkv_layers(example_inputs["past_key_values"])
+                    pkv_layers = self._resolve_pkv_layers(example_inputs["past_key_values"])
                     if pkv_layers is None:
                         input_names.append(param)
                         continue
                     for i in range(len(pkv_layers)):
-                        input_names.extend(_resolve_pkv_names(i, pkv_layers[i]))
+                        input_names.extend(self._resolve_pkv_names(i, pkv_layers[i]))
                 elif param == "compressed_kvs":
                     for i in range(len(example_inputs["compressed_kvs"])):
                         input_names.extend(
@@ -508,8 +553,7 @@ class QEFFBaseModel(ABC):
         **export_kwargs,
     ) -> str:
         cache_probe = export_kwargs.pop("_layerwise_cache_probe", False)
-        idx = int(QEFFBaseModel._start)
-        end_idx = int(getattr(QEFFBaseModel, "_end", idx + 1))
+        idx, end_idx, total_layers = self._get_layerwise_window()
         if end_idx <= idx:
             raise ValueError(f"Invalid export window: start={idx}, end={end_idx}")
 
@@ -528,7 +572,6 @@ class QEFFBaseModel(ABC):
         # example without changes goes straight to the QPC compile.
         final_data_dir = export_dir / "final_data"
         if final_data_dir.is_dir():
-            total_layers = int(getattr(QEFFBaseModel, "_total_layers", 0) or 0)
             cached_merged = final_data_dir / f"merged_0-{total_layers}.onnx"
             if total_layers > 0 and cached_merged.is_file():
                 self.onnx_path = cached_merged
@@ -591,7 +634,7 @@ class QEFFBaseModel(ABC):
             "_InternalRetainedState" if export_kwargs.get("use_onnx_subfunctions", False) else "_RetainedState"
         )
         for layer_idx in range(idx, end_idx):
-            layer_states = _resolve_pkv_layers(example_inputs.get("past_key_values"))
+            layer_states = self._resolve_pkv_layers(example_inputs.get("past_key_values"))
             if layer_states is None:
                 output_name.append(f"past_key.{layer_idx}{retained_state_suffix}")
                 output_name.append(f"past_value.{layer_idx}{retained_state_suffix}")
@@ -599,7 +642,7 @@ class QEFFBaseModel(ABC):
                 output_name.extend(
                     [
                         f"{name}{retained_state_suffix}"
-                        for name in _resolve_pkv_names(layer_idx, layer_states[layer_idx])
+                        for name in self._resolve_pkv_names(layer_idx, layer_states[layer_idx])
                     ]
                 )
 
@@ -632,7 +675,7 @@ class QEFFBaseModel(ABC):
         #         val for i, val in enumerate(example_inputs["past_key_values"]) if i < window_size
         #     ]
         if "past_key_values" in example_inputs:
-            pkv_layers = _resolve_pkv_layers(example_inputs["past_key_values"])
+            pkv_layers = self._resolve_pkv_layers(example_inputs["past_key_values"])
             if pkv_layers is not None:
                 if idx >= len(pkv_layers):
                     raise ValueError(
@@ -644,7 +687,7 @@ class QEFFBaseModel(ABC):
         for param in inspect.signature(self.model.forward).parameters:
             if param in example_inputs:
                 if param == "past_key_values":
-                    pkv_layers = _resolve_pkv_layers(example_inputs["past_key_values"])
+                    pkv_layers = self._resolve_pkv_layers(example_inputs["past_key_values"])
                     if pkv_layers is None:
                         input_names.append(param)
                         continue
@@ -653,7 +696,7 @@ class QEFFBaseModel(ABC):
                         for layer_offset in range(len(example_inputs["past_key_values"])):
                             layer_idx = idx + layer_offset
                             input_names.extend(
-                                _resolve_pkv_names(layer_idx, example_inputs["past_key_values"][layer_offset])
+                                self._resolve_pkv_names(layer_idx, example_inputs["past_key_values"][layer_offset])
                             )
                         break
                 elif param == "compressed_kvs":
@@ -840,7 +883,7 @@ class QEFFBaseModel(ABC):
                     kv_cache_prefix=kv_cache_prefix,
                     **compiler_options,
                 )
-        if QEFFBaseModel._layerwise_active:
+        if self._is_layerwise_active():
             if onnx_path is None:
                 return None
             onnx_path = Path(onnx_path)
@@ -915,26 +958,8 @@ class QEFFBaseModel(ABC):
         # This only rewrites retained-state aliases:
         # *_InternalRetainedState <-> *_RetainedState.
         # Any other custom-IO key is preserved as-is for backward compatibility.
-        if custom_io is not None and onnx_path is not None:
-            try:
-                model = onnx.load(onnx_path, load_external_data=False)
-                io_names = {value.name for value in list(model.graph.input) + list(model.graph.output)}
-                normalized_custom_io = {}
-                for io_name, dtype in custom_io.items():
-                    resolved_name = io_name
-                    if io_name not in io_names:
-                        if io_name.endswith("_InternalRetainedState"):
-                            candidate = io_name[: -len("_InternalRetainedState")] + "_RetainedState"
-                            if candidate in io_names:
-                                resolved_name = candidate
-                        elif io_name.endswith("_RetainedState"):
-                            candidate = io_name[: -len("_RetainedState")] + "_InternalRetainedState"
-                            if candidate in io_names:
-                                resolved_name = candidate
-                    normalized_custom_io[resolved_name] = dtype
-                custom_io = normalized_custom_io
-            except Exception:
-                pass
+        if custom_io is not None:
+            custom_io = filter_custom_io_for_onnx(custom_io, onnx_path)
 
         if use_onnx_subfunctions:
             logger.info("Using ONNX subfunctions for compilation.")
@@ -975,7 +1000,7 @@ class QEFFBaseModel(ABC):
         # Write custom_io.yaml file
         model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
         pkv_in_bfloat16 = (custom_io is not None) and any(
-            "past_" in key and "bfloat16" in value for key, value in custom_io.items()
+            key.startswith(("past_", "pixel_values")) and "bfloat16" in value for key, value in custom_io.items()
         )
         if custom_io is not None:
             custom_io_yaml = compile_dir / "custom_io.yaml"

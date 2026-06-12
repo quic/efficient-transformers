@@ -27,13 +27,30 @@ from QEfficient.customop import (
 
 
 # HybridCache and HybridChunkedCache were removed from transformers in 5.3+.
-# Define lightweight local stubs so downstream QEff wrappers can still inherit from them.
+# QEff still carries a few legacy wrappers that inherit from those names, so keep
+# the compatibility layer local to this module instead of patching transformers at
+# package import time.
 class HybridCache:  # type: ignore[no-redef]
-    pass
+    """Minimal compatibility base for legacy QEff hybrid-cache wrappers."""
+
+    def __init__(self, config, batch_size: int, max_cache_len: int, **_kwargs):
+        self.config = config
+        self.batch_size = batch_size
+        self.max_batch_size = batch_size
+        self.max_cache_len = max_cache_len
 
 
-class HybridChunkedCache:  # type: ignore[no-redef]
-    pass
+class HybridChunkedCache(HybridCache):  # type: ignore[no-redef]
+    """Minimal compatibility base for legacy QEff chunked hybrid-cache wrappers."""
+
+    def __init__(self, config, max_batch_size: int = 1, max_cache_len: int = 2048, **_kwargs):
+        super().__init__(config, batch_size=max_batch_size, max_cache_len=max_cache_len)
+        sliding_window_pattern = getattr(config, "sliding_window_pattern", None)
+        num_layers = getattr(config, "num_hidden_layers", 0)
+        if sliding_window_pattern:
+            self.is_sliding = [bool((layer_idx + 1) % sliding_window_pattern) for layer_idx in range(num_layers)]
+        else:
+            self.is_sliding = [False] * num_layers
 
 
 class InvalidIndexProvider:
@@ -864,9 +881,14 @@ class QEffHybridCache(HybridCache):
 class QEffHybridChunkedCache(HybridChunkedCache):
     def __init__(self, config, max_batch_size: int = 1, max_cache_len: int = 2048):
         self.config = config
-        sliding_window_pattern = config.sliding_window_pattern
+        self.max_batch_size = max_batch_size
+        self.max_cache_len = max_cache_len
+        sliding_window_pattern = getattr(config, "sliding_window_pattern", None)
         num_layers = config.num_hidden_layers
-        self.is_sliding = [bool((i + 1) % sliding_window_pattern) for i in range(num_layers)]
+        if sliding_window_pattern:
+            self.is_sliding = [bool((i + 1) % sliding_window_pattern) for i in range(num_layers)]
+        else:
+            self.is_sliding = [False] * num_layers
         self.key_cache: List[torch.Tensor] = [None] * num_layers
         self.value_cache: List[torch.Tensor] = [None] * num_layers
 

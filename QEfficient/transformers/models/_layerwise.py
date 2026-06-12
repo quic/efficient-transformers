@@ -117,6 +117,14 @@ def is_layerwise_active() -> bool:
     return bool(_LAYERWISE_STATE["active"])
 
 
+def current_layer_window() -> Tuple[int, int, int]:
+    """Return the active layerwise window as ``(start, end, total_layers)``."""
+    start = int(_LAYERWISE_STATE["text_start"] or _LAYERWISE_STATE["start"] or 0)
+    end = int(_LAYERWISE_STATE["text_end"] or _LAYERWISE_STATE["end"] or 0)
+    total_layers = int(_LAYERWISE_STATE["text_total_layers"] or _LAYERWISE_STATE["total_layers"] or 0)
+    return start, end, total_layers
+
+
 def resolve_layer_window(model_cls, total_layers: int) -> Tuple[int, int]:
     """Return the ``[start, end)`` decoder-layer window to run this forward.
 
