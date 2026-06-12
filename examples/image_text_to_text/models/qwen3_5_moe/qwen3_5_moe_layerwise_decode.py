@@ -16,7 +16,8 @@ from transformers import AutoConfig
 import QEfficient
 from QEfficient import QEFFAutoModelForImageTextToText
 
-MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
+# MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
+MODEL_ID = "Qwen/Qwen3.6-35B-A3B"
 PREFILL_SEQ_LEN = 1
 CTX_LEN = 4096
 TEXT_WINDOW_SIZE = 1
@@ -27,7 +28,7 @@ TEXT_WINDOW_SIZE = 1
 # Export controls
 BATCH_SIZE = 1
 NUM_CORES = 16
-NUM_DEVICES = 1
+NUM_DEVICES = 4
 HEIGHT = 354
 WIDTH = 536
 

@@ -105,6 +105,7 @@ TINY_WHISPER_MODEL_ID = "hf-internal-testing/tiny-random-WhisperForConditionalGe
 TINY_SEQ_CLASSIFICATION_MODEL_ID = "ydshieh/tiny-random-BertForSequenceClassification"
 TINY_AWQ_MODEL_ID = "optimum-intel-internal-testing/tiny-mixtral-AWQ-4bit"
 GLM_MOE_DSA_MODEL_ID = "tiny-random/glm-5.1"
+DEEPSEEK_V4_MODEL_ID = "silence09/DeepSeek-V4-Pro-Tiny"
 
 MODEL_KWARGS = {"attn_implementation": "eager"}
 PREFIX_CACHING_MODEL_ID = "hf-internal-testing/tiny-random-GPT2LMHeadModel"
@@ -359,6 +360,46 @@ def test_glm_moe_dsa_export_smoke(tmp_path):
     output_names = {output.name for output in onnx_model.graph.output}
     assert any(name.startswith("indexer_key_cache.") and name.endswith("_RetainedState") for name in output_names)
     assert _count_decoder_block_subfunctions(onnx_model, qeff_model) == 0
+
+
+@pytest.mark.llm_model
+def test_deepseek_v4_qeff_pytorch_parity_when_upstream_available():
+    try:
+        from transformers.models.deepseek_v4.modeling_deepseek_v4 import DeepseekV4ForCausalLM
+
+        from QEfficient.transformers.models.deepseek_v4.modeling_deepseek_v4 import build_deepseek_v4_cache
+    except Exception as exc:
+        pytest.skip(
+            "Installed Transformers does not include upstream DeepSeek-V4 modeling/cache support yet: "
+            f"{type(exc).__name__}: {exc}"
+        )
+
+    try:
+        model_hf = AutoModelForCausalLM.from_pretrained(
+            DEEPSEEK_V4_MODEL_ID,
+            low_cpu_mem_usage=False,
+            trust_remote_code=True,
+            torch_dtype=torch.float32,
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, DEEPSEEK_V4_MODEL_ID)
+
+    if not isinstance(model_hf, DeepseekV4ForCausalLM):
+        pytest.skip(f"{DEEPSEEK_V4_MODEL_ID} did not load as DeepseekV4ForCausalLM")
+
+    model_hf.eval()
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+    input_ids = torch.tensor([[1, 2, 3, 4]], dtype=torch.long)
+
+    with torch.no_grad():
+        hf_logits = model_hf(
+            input_ids=input_ids, past_key_values=build_deepseek_v4_cache(model_hf.config), use_cache=True
+        ).logits
+        qeff_logits = qeff_model.model(
+            input_ids=input_ids, past_key_values=build_deepseek_v4_cache(model_hf.config), use_cache=True
+        ).logits
+
+    torch.testing.assert_close(qeff_logits, hf_logits, atol=0, rtol=0)
 
 
 @pytest.mark.llm_model

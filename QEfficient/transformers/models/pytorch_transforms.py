@@ -334,6 +334,11 @@ from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
     QEffDeepseekV3MoE,
     QEffPrefillOnlyDeepseekV3MoE,
 )
+from QEfficient.transformers.models.deepseek_v4.modeling_deepseek_v4 import (
+    QEffDeepseekV4Experts,
+    QEffDeepseekV4ForCausalLM,
+    QEffDeepseekV4RMSNorm,
+)
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
     QEffFalconDecoderLayer,
@@ -1287,6 +1292,13 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "DeepseekV3RMSNorm": {
             "forward": QEffDeepseekV3CustomRMSNormAIC.forward,
         },
+        "DeepseekV4ForCausalLM": {
+            "forward": QEffDeepseekV4ForCausalLM.forward,
+            "get_submodules_for_export": QEffDeepseekV4ForCausalLM.get_submodules_for_export,
+            "get_dummy_pkv_cache": QEffDeepseekV4ForCausalLM.get_dummy_pkv_cache,
+        },
+        "DeepseekV4Experts": {"forward": QEffDeepseekV4Experts.forward},
+        "DeepseekV4RMSNorm": {"forward": QEffDeepseekV4RMSNorm.forward},
     }
 
 

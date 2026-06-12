@@ -3055,7 +3055,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params["mla_absorption"] = mla_absorption
                 setattr(self.model, "mla_absorption", mla_absorption)
             if self.model.config.model_type == "glm_moe_dsa":
-                self.hash_params["glm_moe_dsa_export_version"] = 7
+                self.hash_params["glm_moe_dsa_export_version"] = 11
                 dsa_impl = qaic_config.get("dsa_impl")
                 if dsa_impl is not None:
                     self.hash_params["dsa_impl"] = dsa_impl
@@ -3320,9 +3320,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             and self.model.qaic_config.get("mla_absorption", {}).get("cache_compressed", False)
         ):
             seq_len = prefill_seq_len
+        if self.model.config.model_type == "deepseek_v4" and prefill_seq_len is not None:
+            seq_len = prefill_seq_len
 
         cache_example_len = seq_len
         if glm_dsa_blocked_decode and ctx_len is not None:
+            cache_example_len = ctx_len
+        if self.model.config.model_type == "deepseek_v4" and ctx_len is not None:
             cache_example_len = ctx_len
 
         kv_cache_shape = get_padding_shape_from_config(
@@ -3524,12 +3528,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 qaic_config=self.model.qaic_config,
             )
 
-        # transformers>=5.3 Gemma3 models require Cache I/O internally; keep tensor/list
+        # transformers>=5.3 Gemma3 and DeepSeek-V4 models require Cache I/O internally; keep tensor/list
         # inputs for tracing and bridge to cache objects inside a temporary wrapper.
         if (
             hasattr(self.model.config, "model_type")
-            and str(self.model.config.model_type).startswith("gemma3")
-            and not getattr(self.model, "_qeff_export_gemma3_cache_patch", False)
+            and (
+                str(self.model.config.model_type).startswith("gemma3") or self.model.config.model_type == "deepseek_v4"
+            )
+            and not getattr(self.model, "_qeff_export_cache_patch", False)
         ):
             import functools
             import inspect
@@ -3561,7 +3567,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 bound_args = model_forward_sig.bind_partial(*args, **kwargs)
                 past_key_values = bound_args.arguments.get("past_key_values", None)
                 if past_key_values is not None and not isinstance(past_key_values, Cache):
-                    bound_args.arguments["past_key_values"] = DynamicCache(tuple(past_key_values))
+                    if getattr(self.model.config, "model_type", None) == "deepseek_v4":
+                        from QEfficient.transformers.models.deepseek_v4 import build_deepseek_v4_cache
+
+                        bound_args.arguments["past_key_values"] = build_deepseek_v4_cache(
+                            self.model.config, past_key_values
+                        )
+                    else:
+                        bound_args.arguments["past_key_values"] = DynamicCache(tuple(past_key_values))
                 outputs = model_forward(*bound_args.args, **bound_args.kwargs)
                 if torch.onnx.is_in_onnx_export():
                     if hasattr(outputs, "logits") and hasattr(outputs, "past_key_values"):
@@ -3570,7 +3583,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 return outputs
 
             self.model.forward = _qeff_patched_forward
-            self.model._qeff_export_gemma3_cache_patch = True
+            self.model._qeff_export_cache_patch = True
 
         if os.environ.get("LAYERWISE_EXPORT", "False") == "True":
             return self._export_layerwise(
@@ -4024,9 +4037,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # --- Compilation ---
         custom_io = {}
         if not cache_compressed:
+            kv_names = ["key"] if getattr(self.model.config, "model_type", None) == "deepseek_v4" else ["key", "value"]
             for suffix in ["", "_RetainedState"]:
                 for i in range(self.num_layers):
-                    for kv in ["key", "value"]:
+                    for kv in kv_names:
                         custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
         else:
             for suffix in ["", "_RetainedState"]:

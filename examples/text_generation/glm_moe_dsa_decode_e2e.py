@@ -29,7 +29,7 @@ def main():
     parser.add_argument("--num-devices", type=int, default=1)
     parser.add_argument("--device-id", type=int, nargs="+", default=[0])
     parser.add_argument("--prompt", default="hello world")
-    parser.add_argument("--dtype", default="float32", choices=["float16", "float32", "bfloat16"])
+    parser.add_argument("--dtype", default="float16", choices=["float16", "float32", "bfloat16"])
     args = parser.parse_args()
 
     if args.prefill_seq_len != 1:
@@ -40,6 +40,14 @@ def main():
         "dsa_impl": "dsa_par",
         "par_num_split": 4,
     }
+
+    # qaic_config = {
+    #   "mla_absorption": {"cache_compressed": True, "absorption": True, "online": False},
+    #   "dsa_impl": "dsa_par_blocked",
+    #   "num_kv_blocks": 8,
+    #   "par_num_split": 4,
+    # }
+
     dtype = getattr(torch, args.dtype)
 
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
@@ -57,7 +65,7 @@ def main():
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
         num_devices=args.num_devices,
-        use_onnx_subfunctions=False,
+        use_onnx_subfunctions=True,
         mxfp6_matmul=False,
     )
     qeff_model.generate(
