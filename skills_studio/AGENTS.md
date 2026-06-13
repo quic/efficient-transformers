@@ -1,11 +1,7 @@
 # QEfficient — Agent Instructions
 
-This is the canonical guidance for AI agents (Codex, Claude, Cursor, Copilot, etc.)
-working in the `efficient-transformers` (QEfficient) repository. The root
-`AGENTS.md` and `CLAUDE.md` are symlinks to this file.
-
 QEfficient adapts Hugging Face Transformers models to run efficiently on Qualcomm
-Cloud AI 100 (QAIC) hardware via a PyTorch → ONNX export → compile → on-device
+Cloud AI 100/ AI200 (QAIC) hardware via a PyTorch → ONNX export → AOT compile → on-device
 runtime pipeline. The guiding principle is **minimal divergence from upstream HF**
 while preserving PyTorch ↔ ONNX ↔ on-device parity.
 
@@ -44,18 +40,13 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
 - Keep changes surgical and consistent with surrounding code; prefer fixing root causes.
 - Preserve HF → QEff PyTorch parity before treating ONNX/compile success as sufficient.
 - Keep tuple-cache compatibility wherever shared export/runtime code expects the legacy layout.
-- Prefer feature detection (`hasattr`, optional imports, safe `getattr`) over HF-version checks.
-- Keep compatibility shims at boundaries (input/output normalization), not deep in model math.
 - Follow SOLID principles when writing code. If a change must intentionally diverge
   from SOLID for compatibility, performance, export constraints, or minimal-risk
   integration, call that out to the user with the reason.
-- Before committing, run the relevant linter/formatter for the files changed and
-  address the findings instead of committing avoidable style issues.
 - Always use signed-off commits with `git commit -s`.
 - Keep code standards high: follow PEP 8 for Python, avoid commented-out code,
   and never leave breakpoints, ad-hoc debug prints, or temporary debugging hooks.
 - Do not add new test files when an existing test (or the quickcheck gate) can carry the regression.
-- Do not add license/copyright headers unless explicitly requested.
 
 ## Required user inputs
 - Ask the user for the virtualenv path only when there is a real need to execute Python-dependent commands, such as `python`, `pip`, `pytest`, `ruff`, or `pre-commit`; otherwise do not ask.
@@ -64,10 +55,12 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
 
 ## Contribution policy
 - Follow the fork → branch → PR flow in `CONTRIBUTING.md`; sync from `upstream/main`.
-- Run `pre-commit run --all-files` and the relevant tests before opening a PR.
+- Before committing, run the relevant linter/formatter for the files changed and
+  address the findings instead of committing avoidable style issues.
 - A human submitter must understand and be able to defend every AI-assisted change
   end-to-end, and must review every changed line and run the relevant tests.
 - Disclose AI assistance and the exact test commands run in the PR description.
+- Do not raise PRs without human validation, and state what's chaging from existing arch to the user for validation.
 - Do not open low-value busywork PRs or duplicate existing open PRs/issues.
 
 ## Local agent setup
