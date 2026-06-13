@@ -503,6 +503,7 @@ class ModelConfig:
         "Qwen/Qwen3-VL-Reranker-8B",
         "Qwen/Qwen3.5-0.8B",
         "Qwen/Qwen3.6-35B-A3B",
+        "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
     }
 
     EXTERNAL_MODELS = {

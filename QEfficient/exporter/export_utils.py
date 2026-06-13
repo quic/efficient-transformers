@@ -127,13 +127,22 @@ def export_onnx(
     onnx.checker.check_model(os.path.join(gen_models_path, f"{model_base_name}.onnx"), full_check=True)
 
     # Run shape inference in intial model itself
-    onnx.shape_inference.infer_shapes_path(
-        os.path.join(gen_models_path, f"{model_base_name}.onnx"),
-        os.path.join(gen_models_path, f"{model_base_name}.onnx"),
-        True,
-        True,
-        True,
-    )
+    # Suppress C++ stderr from onnx (e.g. "shape inference of CtxGather3D type is missing")
+    _devnull = open(os.devnull, "w")
+    _saved_stderr_fd = os.dup(2)
+    os.dup2(_devnull.fileno(), 2)
+    try:
+        onnx.shape_inference.infer_shapes_path(
+            os.path.join(gen_models_path, f"{model_base_name}.onnx"),
+            os.path.join(gen_models_path, f"{model_base_name}.onnx"),
+            True,
+            True,
+            True,
+        )
+    finally:
+        os.dup2(_saved_stderr_fd, 2)
+        os.close(_saved_stderr_fd)
+        _devnull.close()
 
     info(f"input names {input_names}")
     info(f"output names {output_names}")
