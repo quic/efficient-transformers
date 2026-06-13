@@ -159,18 +159,29 @@ def _qaic_device_for_xdist_worker():
 @pytest.fixture(scope="session", autouse=True)
 def _qeff_home_per_xdist_worker():
     """Give each xdist worker its own QEFF_HOME subdir so compile-cache writes
-    don't race. Serial runs are untouched. The fixture only nudges the env var
-    for the lifetime of the worker process; cleanup of the per-worker subtree
-    happens via the existing pytest_sessionfinish hook."""
+    don't race. Serial runs are untouched.
+
+    Setting os.environ alone is not enough because QEfficient.utils.cache and
+    QEfficient.utils.export_utils bind QEFF_HOME to a module-level constant at
+    import time.  We patch those constants directly so every runtime call to
+    _prepare_export_directory() resolves to the per-worker path.
+    """
     idx = _xdist_worker_index()
     if idx is None:
         return
     base = os.environ.get("QEFF_HOME")
     if not base:
         return
-    worker_home = os.path.join(base, f"worker_{idx}")
-    os.makedirs(worker_home, exist_ok=True)
-    os.environ["QEFF_HOME"] = worker_home
+    from pathlib import Path
+
+    import QEfficient.utils.cache as _cache_mod
+    import QEfficient.utils.export_utils as _export_mod
+
+    worker_home = Path(base) / f"worker_{idx}"
+    worker_home.mkdir(parents=True, exist_ok=True)
+    os.environ["QEFF_HOME"] = str(worker_home)
+    _cache_mod.QEFF_HOME = worker_home
+    _export_mod.QEFF_HOME = worker_home
 
 
 def pytest_sessionstart(session):
