@@ -590,18 +590,47 @@ class QEFFBaseModel(ABC):
         retained_state_suffix = (
             "_InternalRetainedState" if export_kwargs.get("use_onnx_subfunctions", False) else "_RetainedState"
         )
+        # Build a lookup from plain default retained-state names to the caller-supplied names so that
+        # any KV-cache prefix injected by the caller (e.g. "past_key.3_vllmKvCache_RetainedState")
+        # is preserved in the per-window ONNX and therefore in the final stitched merged ONNX.
+        # Key: "past_key.3_RetainedState" (or _InternalRetainedState), Value: caller's prefixed name.
+        _kv_stems = ("past_key.", "past_value.", "compressed_kv.", "k_pe.")
+        _caller_retained_map: dict = {}
+        for _name in output_names:
+            for _sfx in ("_InternalRetainedState", "_RetainedState"):
+                if not _name.endswith(_sfx):
+                    continue
+                _stem = _name[: -len(_sfx)]  # e.g. "past_key.3_vllmKvCache"
+                if not any(_stem.startswith(_ks) for _ks in _kv_stems):
+                    break
+                # Derive the plain stem (without any infix) by keeping only "prefix.N".
+                # "past_key.3_vllmKvCache" → dot-split gives ["past_key", "3_vllmKvCache"];
+                # strip everything after the first "_" in the layer part.
+                _parts = _stem.split(".", 1)
+                if len(_parts) == 2:
+                    _layer_part = _parts[1].split("_", 1)[0]  # "3" from "3_vllmKvCache"
+                    _plain_stem = f"{_parts[0]}.{_layer_part}"  # "past_key.3"
+                else:
+                    _plain_stem = _stem
+                # Register under both suffix forms so the lookup succeeds regardless of
+                # whether the caller used _RetainedState or _InternalRetainedState.
+                for _reg_sfx in ("_RetainedState", "_InternalRetainedState"):
+                    _key = f"{_plain_stem}{_reg_sfx}"
+                    # Rewrite the stored name's suffix to match retained_state_suffix at lookup time.
+                    _stored = f"{_stem}{retained_state_suffix}"
+                    _caller_retained_map[_key] = _stored
+                break
+
         for layer_idx in range(idx, end_idx):
             layer_states = _resolve_pkv_layers(example_inputs.get("past_key_values"))
             if layer_states is None:
-                output_name.append(f"past_key.{layer_idx}{retained_state_suffix}")
-                output_name.append(f"past_value.{layer_idx}{retained_state_suffix}")
+                for _stem in (f"past_key.{layer_idx}", f"past_value.{layer_idx}"):
+                    _default = f"{_stem}{retained_state_suffix}"
+                    output_name.append(_caller_retained_map.get(_default, _default))
             else:
-                output_name.extend(
-                    [
-                        f"{name}{retained_state_suffix}"
-                        for name in _resolve_pkv_names(layer_idx, layer_states[layer_idx])
-                    ]
-                )
+                for _stem_name in _resolve_pkv_names(layer_idx, layer_states[layer_idx]):
+                    _default = f"{_stem_name}{retained_state_suffix}"
+                    output_name.append(_caller_retained_map.get(_default, _default))
 
         # For some decoder wrappers (e.g. VLM language wrappers), forward does not accept
         # `inputs_embeds`; keep `input_ids` in those cases.
@@ -677,6 +706,13 @@ class QEFFBaseModel(ABC):
         layer_onnx_path = str(current_layer_dir / f"{self.model_name}_layer_{idx}_{end_idx}.onnx")
         layer_onnx_path_tmp = str(current_layer_dir / f"{self.model_name}_layer_tmp_{idx}_{end_idx}.onnx")
         output_names = output_name
+        # Align KV input names to match any prefix injected into the retained-state output names
+        # (e.g. past_key.3 → past_key.3_vllmKvCache when output is past_key.3_vllmKvCache_RetainedState).
+        aligned_input_names = align_kv_input_names_to_retained_outputs(input_names, output_names)
+        if aligned_input_names != input_names:
+            rename_map = {old: new for old, new in zip(input_names, aligned_input_names) if old != new}
+            dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
+            input_names = aligned_input_names
         if not os.path.isfile(layer_onnx_path):
             torch.onnx.export(
                 self.model,

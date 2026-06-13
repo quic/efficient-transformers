@@ -1529,6 +1529,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 layerwise_window_size=layerwise_window_size,
+                kv_cache_prefix=kv_cache_prefix,
                 **kwargs,
             )
         dummy_inputs_kwargs = {}
@@ -1874,6 +1875,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     prefill_only=prefill_only,
                     enable_chunking=enable_chunking,
                     qaic_config=qaic_config,
+                    kv_cache_prefix=kv_cache_prefix,
                     **compiler_options,
                 )
                 self.vision_model.onnx_path = vision_wrapper.vision_model.onnx_path
@@ -1903,6 +1905,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 enable_chunking=enable_chunking,
                 qaic_config=qaic_config,
                 layerwise_window_size=layerwise_window_size,
+                kv_cache_prefix=kv_cache_prefix,
                 **compiler_options,
             )
 
