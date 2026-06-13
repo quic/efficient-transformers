@@ -70,8 +70,8 @@ To add a new model:
 - `mistralai/Mistral-7B-v0.1`: not remapped — LoRA adapter dim must match base
 - `openai/whisper-tiny`: already tiny, no remap needed
 - `facebook/wav2vec2-base-960h`: pre-existing test failure, not remapped
-- `TheBloke/Llama-2-7B-GPTQ`: in `skip_no_tiny` — GPTQ models bypass AutoConfig wrapping entirely (`ModelConfig.QUANTIZED_MODELS` path in test_causal_lm_models.py), so tiny remap can't intercept; must skip
-- `Qwen/Qwen3-VL-Reranker-2B/8B`: in `skip_no_tiny` — no public tiny reranker variants available
+- `TheBloke/Llama-2-7B-GPTQ` → `yujiepan/llama-3-tiny-random-gptq-w4`: `load_hf_causal_lm_model` in `QEfficient/utils/test_utils.py` already calls `_resolve_model_id()` internally, so the remap works even for the QUANTIZED_MODELS branch
+- `Qwen/Qwen3-VL-Reranker-2B/8B`: in `skip_no_tiny` — no public tiny reranker variants
 - `Snowflake/SwiftKV`, `allenai/Molmo-7B-D`: in `skip_no_tiny` — pre-existing, no tiny available
 
 ## Running tests locally
