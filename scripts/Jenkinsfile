@@ -41,7 +41,12 @@ def qaicTimeoutUnit(String profile) {
 pipeline {
     agent { node { label params.NODE_LABEL } }
 
-    options { disableConcurrentBuilds() }
+    options {
+        disableConcurrentBuilds()
+        // Skip the automatic checkout so we can chown first (previous Docker
+        // runs leave preflight_qeff/ owned by root, which blocks git clean).
+        skipDefaultCheckout()
+    }
 
     parameters {
         string(name: 'NODE_LABEL', defaultValue: 'qeff_node',
@@ -75,6 +80,10 @@ pipeline {
     stages {
         stage('Install QEfficient') {
             steps {
+                // Fix ownership left by previous Docker run (container ran as root),
+                // then do the checkout that skipDefaultCheckout() deferred.
+                sh 'sudo chown -R ubuntu . || true'
+                checkout scm
                 sh '''
                     . ~/.bashrc
                     mkdir -p ${QEFF_QPC_CACHE}
