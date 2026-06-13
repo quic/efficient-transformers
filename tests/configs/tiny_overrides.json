@@ -34,10 +34,20 @@
     "meta-llama/Meta-Llama-3-8B": "llamafactory/tiny-random-Llama-3",
     "hallisky/lora-type-narrative-llama-3-8b": "llamafactory/tiny-random-Llama-3-lora",
     "hallisky/lora-grade-elementary-llama-3-8b": "llamafactory/tiny-random-Llama-3-lora",
-    "distilbert/distilgpt2": "hf-internal-testing/tiny-random-GPT2LMHeadModel"
+    "distilbert/distilgpt2": "hf-internal-testing/tiny-random-GPT2LMHeadModel",
+    "ibm-granite/granite-guardian-3.1-2b": "hf-internal-testing/tiny-random-GraniteForCausalLM",
+    "Qwen/Qwen3-VL-Embedding-8B": "optimum-intel-internal-testing/tiny-random-qwen3-vl-embedding",
+    "Qwen/Qwen3-VL-2B-Instruct": "tiny-random/qwen3-vl-moe",
+    "Qwen/Qwen3-VL-30B-A3B-Instruct": "tiny-random/qwen3-vl-moe",
+    "google/gemma-3-4b-it": "yujiepan/gemma-3-tiny-random",
+    "llava-hf/llava-1.5-7b-hf": "optimum-intel-internal-testing/tiny-random-llava",
+    "mistralai/Mistral-Small-3.1-24B-Instruct-2503": "yujiepan/mistral-small-4-tiny-random"
   },
   "skip_no_tiny": [
     "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
-    "allenai/Molmo-7B-D-0924"
+    "allenai/Molmo-7B-D-0924",
+    "TheBloke/Llama-2-7B-GPTQ",
+    "Qwen/Qwen3-VL-Reranker-2B",
+    "Qwen/Qwen3-VL-Reranker-8B"
   ]
 }
