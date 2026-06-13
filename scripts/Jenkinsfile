@@ -74,6 +74,10 @@ pipeline {
         TEST_FILTER       = testFilter(params.TEST_PROFILE)
         QAIC_N            = "${params.QAIC_WORKERS}"
         QEFF_TEST_PROFILE = "${params.TEST_PROFILE}"
+        // Persistent QPC cache shared across CI runs to avoid cold-cache recompile.
+        // Keyed the same way as HF_PATH so QPCs built on run N are reused on run N+1.
+        QEFF_QPC_CACHE    = "/home/ubuntu/.cache/qeff_qpcs"
+        DOCKER_QPC_CACHE  = "/root/.cache/qeff_qpcs"
     }
 
     stages {
@@ -81,7 +85,8 @@ pipeline {
             steps {
                 sh '''
                     . ~/.bashrc
-                    sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
+                    mkdir -p ${QEFF_QPC_CACHE}
+                    sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} -v ${QEFF_QPC_CACHE}:${DOCKER_QPC_CACHE} ${DOCKER_LATEST}:master_latest
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     apt update &&
@@ -115,7 +120,7 @@ pipeline {
                             mkdir -p $PWD/Non_cli_qaic &&
                             export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
                             export TOKENIZERS_PARALLELISM=false &&
-                            export QEFF_HOME=$PWD/Non_cli_qaic &&
+                            export QEFF_HOME=${DOCKER_QPC_CACHE}/cpu &&
                             ${pytestCmd("pytest tests -m '(not on_qaic) and (not finetune) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n auto --dist worksteal --junitxml=tests/tests_log1.xml --durations=10")} &&
                             junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
                             deactivate"
@@ -135,7 +140,7 @@ pipeline {
                             mkdir -p $PWD/cli &&
                             export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
                             export TOKENIZERS_PARALLELISM=false &&
-                            export QEFF_HOME=$PWD/cli &&
+                            export QEFF_HOME=${DOCKER_QPC_CACHE}/cli &&
                             ${pytestCmd("pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log3.xml --durations=10")} &&
                             junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
                             deactivate"
@@ -156,7 +161,7 @@ pipeline {
                             mkdir -p $PWD/Non_qaic_llm &&
                             export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
                             export TOKENIZERS_PARALLELISM=false &&
-                            export QEFF_HOME=$PWD/Non_qaic_llm &&
+                            export QEFF_HOME=${DOCKER_QPC_CACHE}/llm &&
                             export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
                             export QEFF_QAIC_CARD_OFFSET=0 &&
                             ${pytestCmd("pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${QAIC_N} --dist worksteal --junitxml=tests/tests_log2.xml --durations=10")} &&
@@ -184,7 +189,7 @@ pipeline {
                             mkdir -p $PWD/Non_qaic_feature &&
                             export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
                             export TOKENIZERS_PARALLELISM=false &&
-                            export QEFF_HOME=$PWD/Non_qaic_feature &&
+                            export QEFF_HOME=${DOCKER_QPC_CACHE}/feature &&
                             export QEFF_NUM_QAIC_CARDS=2 &&
                             export QEFF_QAIC_CARD_OFFSET=0 &&
                             ${pytestCmd("pytest tests -m '(on_qaic) and (feature) and (not qnn) and ${TEST_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 2 --dist worksteal --junitxml=tests/tests_log2_feature.xml --durations=10")} &&
@@ -206,7 +211,7 @@ pipeline {
                             mkdir -p $PWD/Non_cli_qaic_diffusion &&
                             export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
                             export TOKENIZERS_PARALLELISM=false &&
-                            export QEFF_HOME=$PWD/Non_cli_qaic_diffusion &&
+                            export QEFF_HOME=${DOCKER_QPC_CACHE}/diffusion &&
                             export HF_HUB_CACHE=/huggingface_hub &&
                             export QEFF_NUM_QAIC_CARDS=2 &&
                             export QEFF_QAIC_CARD_OFFSET=2 &&
@@ -233,7 +238,7 @@ pipeline {
                     mkdir -p $PWD/Non_cli_qaic_multimodal &&
                     export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
                     export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
+                    export QEFF_HOME=${DOCKER_QPC_CACHE}/multimodal &&
                     export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
                     export QEFF_QAIC_CARD_OFFSET=0 &&
                     ${pytestCmd("pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${QAIC_N} --dist worksteal --junitxml=tests/tests_log6.xml --durations=10")} &&
@@ -255,7 +260,7 @@ pipeline {
                     mkdir -p $PWD/Non_cli_qaic_reranker &&
                     export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
                     export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/Non_cli_qaic_reranker &&
+                    export QEFF_HOME=${DOCKER_QPC_CACHE}/reranker &&
                     export QEFF_RERANKER_DOC_LIMIT=1 &&
                     ${pytestCmd("pytest -q tests/transformers/models/reranker/test_reranker_mad.py --maxfail=1 --junitxml=tests/tests_log_reranker.xml --durations=10")} &&
                     junitparser merge tests/tests_log_reranker.xml tests/tests_log.xml &&
@@ -278,7 +283,7 @@ pipeline {
                     mkdir -p $PWD/cli_qaic_finetuning &&
                     export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
                     export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/cli_qaic_finetuning &&
+                    export QEFF_HOME=${DOCKER_QPC_CACHE}/finetune &&
                     ${pytestCmd("pytest tests -m '(finetune)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log_finetune.xml --durations=10")} &&
                     junitparser merge tests/tests_log_finetune.xml tests/tests_log.xml &&
                     deactivate"
