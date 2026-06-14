@@ -20,6 +20,13 @@ from transformers.models.codegen.modeling_codegen import (
 from transformers.models.deberta_v2.modeling_deberta_v2 import (
     DisentangledSelfAttention,
 )
+from transformers.models.deepseek_v3.modeling_deepseek_v3 import (
+    DeepseekV3Attention,
+    DeepseekV3DecoderLayer,
+    DeepseekV3ForCausalLM,
+    DeepseekV3Model,
+    DeepseekV3RMSNorm,
+)
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
     FalconDecoderLayer,
@@ -539,6 +546,8 @@ class CustomOpsTransform(ModuleMappingTransform):
         Olmo2RMSNorm: CustomRMSNormAIC,
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
+        # DeepSeekV3
+        DeepseekV3RMSNorm: QEffDeepseekV3CustomRMSNormAIC,
     }
 
 
@@ -1036,6 +1045,10 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "DeepseekV3DecoderLayer": {
             "forward": QEffDeepseekV3DecoderLayer.forward,
         },
+        # Replace DeepseekV3MoE with the efficient fused batched-matmul implementation.
+        # QEffDeepseekV3MoE.__qeff_init__ fuses all expert weights into all_gate/up/down_proj tensors,
+        # enabling batched bmm instead of a per-expert loop — no NonZero operator, fast export.
+        # The updated __qeff_init__ handles both quantized (compressor) and standard nn.Linear experts.
         "DeepseekV3MoE": {
             "forward": QEffDeepseekV3MoE.forward,
             "moe": QEffDeepseekV3MoE.moe,

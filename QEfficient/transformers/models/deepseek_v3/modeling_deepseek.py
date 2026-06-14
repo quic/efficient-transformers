@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Tuple, Type, Union
 import torch
 import torch.nn.functional as F
 from torch import nn
-from transformers.cache_utils import Cache
+from transformers.cache_utils import Cache, DynamicCache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 
 from QEfficient.blocking.attention_blocking import (
@@ -301,6 +301,8 @@ class QEffDeepseekV3Attention(nn.Module):
 
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
 
+        # Support both old (softmax_scale) and new (scaling) transformers attribute names
+        softmax_scale = getattr(self, "softmax_scale", getattr(self, "scaling", 1.0))
         attn_output, attn_weights = generic_blocked_mla_attention_interface(
             module=self,
             q_a_proj_out=q_a_proj_out,
@@ -314,7 +316,7 @@ class QEffDeepseekV3Attention(nn.Module):
             per_head_v_up=self.per_head_v_up,
             per_head_k_up_normal=self.per_head_k_up_normal,
             attention_mask=attention_mask,
-            scaling=self.softmax_scale,
+            scaling=softmax_scale,
             mla_absorption=mla_absorption,
             blocking_config=blocking_config,
             position_ids=position_ids,
@@ -388,13 +390,15 @@ class QEffDeepseekV3Attention(nn.Module):
 
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
 
+        # Support both old (softmax_scale) and new (scaling) transformers attribute names
+        softmax_scale = getattr(self, "softmax_scale", getattr(self, "scaling", 1.0))
         attn_output, attn_weights = generic_blocked_mla_attention_interface(
             module=self,
             query=query,
             per_head_k_up_normal=self.per_head_k_up_normal,
             per_head_v_up=self.per_head_v_up,
             attention_mask=attention_mask,
-            scaling=self.softmax_scale,
+            scaling=softmax_scale,
             layer_idx=self.layer_idx,
             compressed_kvs=compressed_kvs,
             mla_absorption=mla_absorption,
@@ -511,7 +515,9 @@ class QEffDeepseekV3Attention(nn.Module):
                 )
             key_states = torch.cat((k_nope, k_pe_expanded), dim=-1)
 
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
+        # Support both old (softmax_scale) and new (scaling) transformers attribute names
+        softmax_scale = getattr(self, "softmax_scale", getattr(self, "scaling", 1.0))
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * softmax_scale
 
         if attention_mask is not None:
             attn_weights = torch.where(
@@ -603,11 +609,13 @@ class QEffDeepseekV3Attention(nn.Module):
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
+        # Support both old (q_head_dim) and new (qk_head_dim) transformers attribute names
+        q_head_dim = getattr(self, "q_head_dim", getattr(self, "qk_head_dim", self.qk_nope_head_dim + self.qk_rope_head_dim))
         if self.q_lora_rank is None:
             q = self.q_proj(hidden_states)
         else:
             q = self.q_b_proj(self.q_a_layernorm(self.q_a_proj(hidden_states)))
-        q = q.view(bsz, q_len, self.num_heads, self.q_head_dim).transpose(1, 2)
+        q = q.view(bsz, q_len, self.num_heads, q_head_dim).transpose(1, 2)
 
         q_nope = q[:, :, :, : self.qk_nope_head_dim]
         q_pe = q[:, :, :, self.qk_nope_head_dim :]
@@ -627,7 +635,11 @@ class QEffDeepseekV3Attention(nn.Module):
         k_nope = kv[:, :, :, : self.qk_nope_head_dim]
         value_states = kv[:, :, :, self.qk_nope_head_dim :]
 
-        cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
+        # Use position_embeddings if rotary_emb is not on the attention module (new transformers style)
+        if hasattr(self, "rotary_emb"):
+            cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
+        else:
+            cos, sin = position_embeddings
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
 
         query_states = torch.cat((q_nope, q_pe), -1)
@@ -638,7 +650,9 @@ class QEffDeepseekV3Attention(nn.Module):
             cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
+        # Support both old (softmax_scale) and new (scaling) transformers attribute names
+        softmax_scale = getattr(self, "softmax_scale", getattr(self, "scaling", 1.0))
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * softmax_scale
 
         if attention_mask is not None:  # no matter the length, we just slice it
             attn_weights = torch.where(
@@ -668,12 +682,14 @@ class QEffDeepseekV3Attention(nn.Module):
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
+        # Support both old (q_head_dim) and new (qk_head_dim) transformers attribute names
+        q_head_dim = getattr(self, "q_head_dim", getattr(self, "qk_head_dim", self.qk_nope_head_dim + self.qk_rope_head_dim))
 
         if self.q_lora_rank is None:
             q = self.q_proj(hidden_states)
         else:
             q = self.q_b_proj(self.q_a_layernorm(self.q_a_proj(hidden_states)))
-        q = q.view(bsz, q_len, self.num_heads, self.q_head_dim).transpose(1, 2)
+        q = q.view(bsz, q_len, self.num_heads, q_head_dim).transpose(1, 2)
 
         q_nope = q[:, :, :, : self.qk_nope_head_dim]
         q_pe = q[:, :, :, self.qk_nope_head_dim :]
@@ -695,7 +711,11 @@ class QEffDeepseekV3Attention(nn.Module):
         k_nope = kv[:, :, :, : self.qk_nope_head_dim]
         value_states = kv[:, :, :, self.qk_nope_head_dim :]
 
-        cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
+        # Use position_embeddings if rotary_emb is not on the attention module (new transformers style)
+        if hasattr(self, "rotary_emb"):
+            cos, sin = self.rotary_emb(value_states, seq_len=32 * 1024)
+        else:
+            cos, sin = position_embeddings
         q_pe, k_pe = orig_apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
 
         query_states = torch.cat((q_nope, q_pe), -1)
@@ -703,6 +723,8 @@ class QEffDeepseekV3Attention(nn.Module):
         key_states = torch.cat((k_nope, k_pe_new), -1)
 
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+        # Support both old (softmax_scale) and new (scaling) transformers attribute names
+        softmax_scale = getattr(self, "softmax_scale", getattr(self, "scaling", 1.0))
 
         attn_output, attn_weights = generic_blocked_attention_interface(
             module=self,
@@ -710,7 +732,7 @@ class QEffDeepseekV3Attention(nn.Module):
             key=key_states,
             value=value_states,
             attention_mask=attention_mask,
-            scaling=self.softmax_scale,
+            scaling=softmax_scale,
             layer_idx=self.layer_idx,
             past_key_value=past_key_value,
             blocking_config=blocking_config,
@@ -768,22 +790,21 @@ class QEffDeepseekV3MoE(nn.Module):
     def __qeff_init__(
         self,
     ):
+        def _get_weight(linear):
+            """Extract weight matrix, handling both quantized (compressor) and standard nn.Linear."""
+            if hasattr(linear, "compressor"):
+                return linear.compressor.decompress_module(linear).T.unsqueeze(0)
+            else:
+                return linear.weight.T.unsqueeze(0)
+
         self.all_gate_proj = torch.nn.Parameter(
-            torch.cat(
-                [exp.gate_proj.compressor.decompress_module(exp.gate_proj).T.unsqueeze(0) for exp in self.experts],
-                dim=0,
-            )
+            torch.cat([_get_weight(exp.gate_proj) for exp in self.experts], dim=0)
         )
         self.all_up_proj = torch.nn.Parameter(
-            torch.cat(
-                [exp.up_proj.compressor.decompress_module(exp.up_proj).T.unsqueeze(0) for exp in self.experts], dim=0
-            )
+            torch.cat([_get_weight(exp.up_proj) for exp in self.experts], dim=0)
         )
         self.all_down_proj = torch.nn.Parameter(
-            torch.cat(
-                [exp.down_proj.compressor.decompress_module(exp.down_proj).T.unsqueeze(0) for exp in self.experts],
-                dim=0,
-            )
+            torch.cat([_get_weight(exp.down_proj) for exp in self.experts], dim=0)
         )
         self.act_fn = self.experts[0].act_fn
 
@@ -994,14 +1015,20 @@ class QEffDeepseekV3Model(nn.Module):
             ]
             if key in self.config.rope_scaling
         }
+        # Support both old (torch_dtype on config) and new transformers configs
+        dtype = getattr(self.config, "torch_dtype", torch.float16)
         self.rotary_emb = DeepseekV3YarnRotaryEmbedding(
-            self.config.torch_dtype,
+            dtype,
             self.config.qk_rope_head_dim,
             max_position_embeddings=MAX_POSITION_EMBEDDINGS,
             scaling_factor=scaling_factor,
             base=self.config.rope_theta,
             **kwargs,
         )
+        # Propagate rotary_emb to each attention layer so attention forward methods can use it
+        for layer in self.layers:
+            if hasattr(layer, "self_attn"):
+                layer.self_attn.rotary_emb = self.rotary_emb
 
     def forward(
         self,
@@ -1045,7 +1072,19 @@ class QEffDeepseekV3Model(nn.Module):
             compressed_kvs = QEffDynamicCompressedKVRopeCache.from_legacy_cache(compressed_kvs)
             target_len = compressed_kvs.layers[0].ckv.shape[-2]
         else:
-            target_len = past_key_values[0][0].shape[2]
+            # Handle QEffDynamicCache (Cache subclass with .layers),
+            # DynamicCache (new transformers with .key_cache), and legacy list-of-tuples
+            if isinstance(past_key_values, DynamicCache) and len(past_key_values.key_cache) > 0:
+                # New transformers DynamicCache
+                target_len = past_key_values.key_cache[0].shape[2]
+            elif isinstance(past_key_values, Cache):
+                # QEffDynamicCache or other Cache subclass — use get_seq_length()
+                target_len = past_key_values.get_seq_length()
+            elif past_key_values is not None:
+                # Legacy list-of-tuples cache
+                target_len = past_key_values[0][0].shape[2]
+            else:
+                target_len = 0
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
@@ -1211,8 +1250,10 @@ class QEffDeepseekV3ForCausalLM(nn.Module):
             )
             cache_shape_2 = (batch_size, config.num_attention_heads, seq_len, config.v_head_dim)
 
+        # Support both old (torch_dtype on config) and new transformers configs
+        _dtype = getattr(config, "torch_dtype", torch.float16)
         for i in range(config.num_hidden_layers):
-            dummy_cache[i].append(torch.zeros(cache_shape_1, dtype=config.torch_dtype))
-            dummy_cache[i].append(torch.zeros(cache_shape_2, dtype=config.torch_dtype))
+            dummy_cache[i].append(torch.zeros(cache_shape_1, dtype=_dtype))
+            dummy_cache[i].append(torch.zeros(cache_shape_2, dtype=_dtype))
 
         return dummy_cache
