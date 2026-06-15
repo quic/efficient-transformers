@@ -38,35 +38,34 @@ logger = logging.getLogger(__name__)
 
 class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
     """
-    QEfficient class for loading and running Causal Language Models with PEFT adapters (currently only LoRA is supported).
+        QEfficient class for loading and running Causal Language Models with PEFT adapters (currently only LoRA is supported).
 
-    This class enables efficient inference and deployment of PEFT-adapted models on Cloud AI 100 hardware.
-    Once exported and compiled for an adapter, the same base model can be reused with other compatible adapters.
+        This class enables efficient inference and deployment of PEFT-adapted models on Cloud AI 100 hardware.
+        Once exported and compiled for an adapter, the same base model can be reused with other compatible adapters.
 
-    Example:
-        .. code-block:: python
-
+        Example:
+            ```python
             from transformers import AutoTokenizer, TextStreamer
             from QEfficient import QEffAutoPeftModelForCausalLM
+    ```
+                base_model_name = "mistralai/Mistral-7B-v0.1"
+                tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+                streamer = TextStreamer(tokenizer)
 
-            base_model_name = "mistralai/Mistral-7B-v0.1"
-            tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-            streamer = TextStreamer(tokenizer)
+                m = QEffAutoPeftModelForCausalLM.from_pretrained("predibase/magicoder", "magicoder")
+                m.export()
+                m.compile(prefill_seq_len=32, ctx_len=1024)
 
-            m = QEffAutoPeftModelForCausalLM.from_pretrained("predibase/magicoder", "magicoder")
-            m.export()
-            m.compile(prefill_seq_len=32, ctx_len=1024)
+                # Magicoder adapter
+                m.set_adapter("magicoder")
+                inputs = tokenizer("def fibonacci", return_tensors="pt")
+                m.generate(**inputs, streamer=streamer, max_new_tokens=1024)
 
-            # Magicoder adapter
-            m.set_adapter("magicoder")
-            inputs = tokenizer("def fibonacci", return_tensors="pt")
-            m.generate(**inputs, streamer=streamer, max_new_tokens=1024)
-
-            # Math problems
-            m.load_adapter("predibase/gsm8k", "gsm8k")
-            m.set_adapter("gsm8k")
-            inputs = tokenizer("James decides to run 3 sprints 3 times a week. He runs 60 meters each sprint. How many total meters does he run a week?",return_tensors="pt")
-            m.generate(**inputs, streamer=streamer, max_new_tokens=1024)
+                # Math problems
+                m.load_adapter("predibase/gsm8k", "gsm8k")
+                m.set_adapter("gsm8k")
+                inputs = tokenizer("James decides to run 3 sprints 3 times a week. He runs 60 meters each sprint. How many total meters does he run a week?",return_tensors="pt")
+                m.generate(**inputs, streamer=streamer, max_new_tokens=1024)
     """
 
     _pytorch_transforms: List[PytorchTransform] = [CustomOpsTransform, KVCacheTransform, PeftModelInputsTransform]

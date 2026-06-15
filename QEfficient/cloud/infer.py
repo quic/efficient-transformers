@@ -219,18 +219,16 @@ def main(
     -------
     To run inference from the command line:
 
-    .. code-block:: bash
-
-        python -m QEfficient.cloud.infer --model-name gpt2 --num-cores 16 --prompt "Hello world"
-
+    ```bash
+    python -m QEfficient.cloud.infer --model-name gpt2 --num-cores 16 --prompt "Hello world"
+```
     For advanced compilation options:
 
-    .. code-block:: bash
-
-        python -m QEfficient.cloud.infer --model-name meta-llama/Llama-3.2-11B-Vision-Instruct \\
-            --num-cores 16 --prompt "Describe this image." --image-url "https://example.com/image.jpg" \\
-            --ctx-len 512 --img-size 560 --mxfp6-matmul
-
+    ```bash
+    python -m QEfficient.cloud.infer --model-name meta-llama/Llama-3.2-11B-Vision-Instruct \\
+        --num-cores 16 --prompt "Describe this image." --image-url "https://example.com/image.jpg" \\
+        --ctx-len 512 --img-size 560 --mxfp6-matmul
+```
     """
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
 

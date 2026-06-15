@@ -1,0 +1,172 @@
+name: Documentation
+
+on:
+  push:
+    branches:
+      - main
+      - "release/v*"
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+  delete:
+
+permissions:
+  contents: write
+
+jobs:
+  # Runs on every PR: build-check + broken-link detection
+  validate:
+    name: Build & Link Check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install doc dependencies
+        run: |
+          pip install "mkdocs>=1.6" "mkdocs-material>=9.5" "mkdocstrings[python]>=0.25" "mike>=2.0"
+          pip install -e . --no-deps --no-build-isolation
+
+      - name: Build docs (strict mode)
+        run: mkdocs build --strict
+
+      - name: Check for broken links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >
+            --base site/
+            --no-progress
+            --exclude-all-private
+            --exclude "https://huggingface.co"
+            site/**/*.html
+          fail: true
+
+  # Push to main → deploy as "main"
+  deploy-main:
+    name: Deploy (main)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install doc dependencies
+        run: |
+          pip install "mkdocs>=1.6" "mkdocs-material>=9.5" "mkdocstrings[python]>=0.25" "mike>=2.0"
+          pip install -e . --no-deps --no-build-isolation
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Deploy main branch docs
+        run: |
+          mike deploy --push main "main branch"
+          mike set-default --push main
+
+  # Push to release/vX.Y branch → deploy that version
+  deploy-release-branch:
+    name: Deploy (release branch)
+    if: >
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/heads/release/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install doc dependencies
+        run: |
+          pip install "mkdocs>=1.6" "mkdocs-material>=9.5" "mkdocstrings[python]>=0.25" "mike>=2.0"
+          pip install -e . --no-deps --no-build-isolation
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Deploy release branch docs
+        run: |
+          if [ ! -f mkdocs.yml ]; then
+            echo "No mkdocs.yml on this branch — skipping docs deploy"
+            exit 0
+          fi
+          BRANCH_VERSION="${GITHUB_REF#refs/heads/release/}"
+          mike deploy --push "$BRANCH_VERSION"
+
+  # Push tag vX.Y.Z → deploy as stable
+  deploy-tag:
+    name: Deploy (stable release)
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install doc dependencies
+        run: |
+          pip install "mkdocs>=1.6" "mkdocs-material>=9.5" "mkdocstrings[python]>=0.25" "mike>=2.0"
+          pip install -e . --no-deps --no-build-isolation
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Deploy tagged release as stable
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/}"
+          mike deploy --push --update-aliases "$TAG_VERSION" stable
+          mike set-default --push stable
+
+  # Branch deleted → remove its docs version
+  delete-version:
+    name: Delete docs version
+    if: >
+      github.event_name == 'delete' &&
+      github.event.ref_type == 'branch' &&
+      startsWith(github.event.ref, 'release/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install mike
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Delete docs version
+        run: |
+          VERSION="${{ github.event.ref }}"
+          VERSION="${VERSION#release/}"
+          mike delete --push "$VERSION"

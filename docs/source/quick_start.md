@@ -23,30 +23,28 @@ By default, the library exported models and Qaic Program Container (QPC) files, 
 ---
 
 ## Command Line Interface Execution
-```{NOTE}
-Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group``should be in single quotes e.g.  ``'--device_group [0]'``
-```
+!!! note
+    Use `bash terminal`, else if using `ZSH terminal` then `device_group` should be in single quotes e.g. `'--device_group [0]'`
 ### Inference
-Below are the Command Line APIs we support for infernce in the library.
+Below are the Command Line APIs we support for inference in the library.
 
 #### Export
-**CLI API:** [`QEfficient.cloud.export`](#export_api)
+**CLI API:** [`QEfficient.cloud.export`](cli_api.md#export_api)
 
-User can export a model to ONNX using the CLI command. This will convert the model to an ONNX format and store the resulting ONNX model file in the QEfficient cache folder. [Click here](#export_api) for more information about the export command and arguments explanation.
+User can export a model to ONNX using the CLI command. This will convert the model to an ONNX format and store the resulting ONNX model file in the QEfficient cache folder. [Click here](cli_api.md#export_api) for more information about the export command and arguments explanation.
 
 ```bash
 python -m QEfficient.cloud.export --model_name gpt2
 ```
+
 ---
 
 #### Compile
-**CLI API:** [`QEfficient.cloud.compile`](#compile_api)
+**CLI API:** [`QEfficient.cloud.compile`](cli_api.md#compile_api)
 
-```{warning}
-The `QEfficient.cloud.compile` API is **deprecated** and **not supported** for direct use. It will be removed in future versions.
-Please use the unified `QEfficient.cloud.infer` API instead, which handles both compilation and execution.
-```
-Users can also use `compile` API to compile pre exported onnx models using QNN SDK. Refer [Compile API doc](#compile_api) for more details.
+!!! warning
+    The `QEfficient.cloud.compile` API is **deprecated** and **not supported** for direct use. It will be removed in future versions. Please use the unified `QEfficient.cloud.infer` API instead, which handles both compilation and execution.
+Users can also use `compile` API to compile pre exported onnx models using QNN SDK. Refer [Compile API doc](cli_api.md#compile_api) for more details.
 
 Without QNN Config
 ```bash
@@ -92,24 +90,25 @@ QNN Context Binary Stage:
 
 #### Execute
 
-**CLI API:** [`QEfficient.cloud.execute`](#execute_api)
+**CLI API:** [`QEfficient.cloud.execute`](cli_api.md#execute_api)
 
 Once we have compiled the QPC using `infer` or `compile` API, we can now use the precompiled QPC in `execute` API to run for different prompts.
 
-Make sure to pass same `--device_group` as used during infer. Refer [Execute API doc](#execute_api) for more details.
+Make sure to pass same `--device_group` as used during infer. Refer [Execute API doc](cli_api.md#execute_api) for more details.
 
 ```bash
 python -m QEfficient.cloud.execute --model_name gpt2 --qpc_path qeff_models/gpt2/qpc_qnn_16cores_1BS_32PL_128CL_1devices_mxfp6/qpcs --prompt "Once upon a time in" --device_group [0]
 ```
+
 ---
 
 
 #### Infer
-**CLI API:** [`QEfficient.cloud.infer`](#infer_api)
+**CLI API:** [`QEfficient.cloud.infer`](cli_api.md#infer_api)
 
-This is the single e2e CLI API, which takes `model_card` name as input along with other compilation arguments. Check [Infer API doc](#infer_api) for more details.
+This is the single e2e CLI API, which takes `model_card` name as input along with other compilation arguments. Check [Infer API doc](cli_api.md#infer_api) for more details.
 
-* HuggingFace model files Download → Optimize for Cloud AI 100 → Export to `ONNX` → Compile on Cloud AI 100 → [Execute](#execute_api)
+* HuggingFace model files Download → Optimize for Cloud AI 100 → Export to `ONNX` → Compile on Cloud AI 100 → [Execute](cli_api.md#execute_api)
 * It skips the export/compile stage based if `ONNX` or `qpc` files are found. If you use infer second time with different compilation arguments, it will automatically skip `ONNX` model creation and directly jump to compile stage.
 * ONNX subfunctions can be enabled explicitly using `--use-onnx-subfunctions`.
 
@@ -153,9 +152,9 @@ python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 3
 ---
 
 ### Finetune
-**CLI API:** [`QEfficient.cloud.finetune`](#finetune_api)
+**CLI API:** [`QEfficient.cloud.finetune`](cli_api.md#finetune_api)
 
-You can run the finetune with set of predefined existing datasets on QAIC using the eager pipeline. Check [Finetune API doc](#finetune_api) for more details.
+You can run the finetune with set of predefined existing datasets on QAIC using the eager pipeline. Check [Finetune API doc](cli_api.md#finetune_api) for more details.
 
 ```bash
 python -m QEfficient.cloud.finetune --device qaic:0 --use-peft --output_dir ./meta-sam --num_epochs 2 --context_length 256
@@ -171,7 +170,7 @@ To Know more about the QEFF Auto Classes, refer the link [QEFFAutoClasses](qeff_
 
 ### 1. Model download and Optimize for Cloud AI 100
 
-If your models falls into the model architectures that are [already supported](validated_models), Below steps should work fine.
+If your models falls into the model architectures that are [already supported](validate.md), Below steps should work fine.
 Please raise an [issue](https://github.com/quic/efficient-transformers/issues), in case of trouble.
 
 

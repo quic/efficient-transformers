@@ -80,36 +80,35 @@ def main(
     mxint8_kv_cache: Optional[bool] = False,
 ) -> None:
     """
-    Main function for the QEfficient ONNX export CLI application.
+        Main function for the QEfficient ONNX export CLI application.
 
-    This function serves as the entry point for exporting a PyTorch model, loaded
-    via QEFFCommonLoader, to the ONNX format. It prepares the necessary
-    paths and calls `get_onnx_path_and_setup_customIO`.
+        This function serves as the entry point for exporting a PyTorch model, loaded
+        via QEFFCommonLoader, to the ONNX format. It prepares the necessary
+        paths and calls `get_onnx_path_and_setup_customIO`.
 
-    Parameters
-    ----------
-    model_name : str
-        Hugging Face Model Card name (e.g., ``gpt2``).
+        Parameters
+        ----------
+        model_name : str
+            Hugging Face Model Card name (e.g., ``gpt2``).
 
-    Other Parameters
-    ----------------
-    cache_dir : str, optional
-        Cache directory where downloaded HuggingFace files are stored. Default is None.
-    hf_token : str, optional
-        HuggingFace login token to access private repositories. Default is None.
-    local_model_dir : str, optional
-        Path to custom model weights and config files. Default is None.
-    full_batch_size : int, optional
-        Sets the full batch size to enable continuous batching mode. Default is None.
+        Other Parameters
+        ----------------
+        cache_dir : str, optional
+            Cache directory where downloaded HuggingFace files are stored. Default is None.
+        hf_token : str, optional
+            HuggingFace login token to access private repositories. Default is None.
+        local_model_dir : str, optional
+            Path to custom model weights and config files. Default is None.
+        full_batch_size : int, optional
+            Sets the full batch size to enable continuous batching mode. Default is None.
 
-    Example
-    -------
-    To export a model from the command line:
+        Example
+        -------
+        To export a model from the command line:
 
-    .. code-block:: bash
-
+        ```bash
         python -m QEfficient.cloud.export --model-name gpt2 --cache-dir /path/to/cache
-
+    ```
     """
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
     get_onnx_path_and_setup_customIO(
