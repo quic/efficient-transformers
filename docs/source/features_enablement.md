@@ -1,7 +1,7 @@
-# Fetaures Enablement Guide
+# Features Enablement Guide
+
 Below guide highlights the steps to enable supported features in QEfficient.
 
-(id-continuous-batching)=
 ## Continuous Batching
 
 Users can compile a model utilizing the continuous batching feature by specifying full_batch_size <full_batch_size_value> in the infer and compiler APIs. If full_batch_size is not provided, the model will be compiled in the regular way.
@@ -16,7 +16,6 @@ python -m QEfficient.cloud.infer --model_name TinyLlama/TinyLlama_v1.1 --prompt_
 
 ---
 
-(id-multi-qranium-inference)=
 ## Multi-Qranium Inference
 
 You can also enable MQ, just based on the number of devices. Based on the `--device-group` as input it will create TS config on the fly. If `--device-group [0,1]` it will create TS config for 2 devices and use it for compilation, if `--device-group [0]` then TS compilation is skipped and single soc execution is enabled.
@@ -39,7 +38,6 @@ python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 3
 
 ---
 
-(id-qnn-compilation-via-python-api)=
 ## QNN Compilation via Python API
 
 Users can also use python API to export, compile and execute onnx models using QNN SDK.
@@ -64,9 +62,9 @@ generated_qpc_path = qeff_model.compile(
     qnn_config = qnn_config_file_path # QNN compilation configuration is passed.
 )
 ```
+
 ---
 
-(id-draft-based-speculative-decoding)=
 ## Draft-Based Speculative Decoding
 Draft-based speculative decoding is a technique where a small Draft Language Model (DLM) makes `num_speculative_tokens` autoregressive speculations ahead of the Target Language Model (TLM). The objective is to predict what the TLM would have predicted if it would have been used instead of the DLM. This approach is beneficial when the autoregressive decode phase of the TLM is memory bound and thus, we can leverage the extra computing resources of our hardware by batching the speculations of the DLM as an input to TLM to validate the speculations.
 

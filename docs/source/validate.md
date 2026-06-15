@@ -1,4 +1,3 @@
-(validated_models)=
 # Validated Models
 
 ## Text-only Language Models
@@ -53,7 +52,7 @@
 | **MPNetForMaskedLM** | MPNet | [sentence-transformers/multi-qa-mpnet-base-cos-v1](https://huggingface.co/sentence-transformers/multi-qa-mpnet-base-cos-v1) | ✔️         |
 | **NomicBertModel** | NomicBERT② | [nomic-ai/nomic-embed-text-v1.5](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5) | ✕          |
 | **RobertaModel**     | RoBERTa |  [ibm-granite/granite-embedding-30m-english](https://huggingface.co/ibm-granite/granite-embedding-30m-english)<br> [ibm-granite/granite-embedding-125m-english](https://huggingface.co/ibm-granite/granite-embedding-125m-english) | ✔️          |
-| **XLMRobertaForSequenceClassification** | XLM-RoBERTa | [bge-reranker-v2-m3bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3) | ✔️          |
+| **XLMRobertaForSequenceClassification** | XLM-RoBERTa | [bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3) | ✔️          |
 | **XLMRobertaModel**    | XLM-RoBERTa  |[ibm-granite/granite-embedding-107m-multilingual](https://huggingface.co/ibm-granite/granite-embedding-107m-multilingual)<br> [ibm-granite/granite-embedding-278m-multilingual](https://huggingface.co/ibm-granite/granite-embedding-278m-multilingual) <br> [intfloat/multilingual-e5-large](https://huggingface.co/intfloat/multilingual-e5-large) | ✔️          |
 
 ---
@@ -76,7 +75,7 @@
 
 > **⚠️ Deprecation Notice:** Support for **MllamaForConditionalGeneration** (Llama 3.2 Vision) is deprecated and will be removed in a future release. Users are encouraged to migrate to [Llama-4](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct) which provides equivalent vision-language capabilities with continued support.
 
-| Architecture                        | Model Family | Representative Models                                                                 | Qeff Single Qpc | Qeff Dual Qpc | vllm Single Qpc | vllm Dual Qpc |
+| Architecture                        | Model Family | Representative Models                                                                 | Qeff Single Qpc | Qeff Dual Qpc | vLLM Single Qpc | vLLM Dual Qpc |
 |------------------------------------|--------------|----------------------------------------------------------------------------------------|------------|---------------------|-------------------|-----------------|
 | **LlavaForConditionalGeneration**  | LLaVA-1.5   | [llava-hf/llava-1.5-7b-hf](https://huggingface.co/llava-hf/llava-1.5-7b-hf)         | ✔️               | ✔️                       | ✔️                      | ✔️                      |
 | **MllamaForConditionalGeneration** ⚠️ *(Deprecated)* | Llama 3.2   | [meta-llama/Llama-3.2-11B-Vision Instruct](https://huggingface.co/meta-llama/Llama-3.2-11B-Vision-Instruct)<br>[meta-llama/Llama-3.2-90B-Vision-Instruct](https://huggingface.co/meta-llama/Llama-3.2-90B-Vision-Instruct)           | ✔️                       | ✔️                      | ✔️                      | ✔️                      |
@@ -111,10 +110,9 @@ In the single QPC(Qualcomm Program Container) setup, the entire model—includin
 
 
 
-```{NOTE}
-The choice between Single and Dual QPC is determined during model instantiation using the `kv_offload` setting.
-If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `False` model runs in single QPC mode.
-```
+!!! note
+    The choice between Single and Dual QPC is determined during model instantiation using the `kv_offload` setting.
+    If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `False` model runs in single QPC mode.
 
 ### Audio Models
 (Automatic Speech Recognition) - Transcription Task
@@ -124,7 +122,7 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 | Architecture | Model Family | Representative Models                                                                 | vLLM Support |
 |--------------|--------------|----------------------------------------------------------------------------------------|--------------|
 | **Whisper**  | Whisper      | [openai/whisper-tiny](https://huggingface.co/openai/whisper-tiny)<br>[openai/whisper-base](https://huggingface.co/openai/whisper-base)<br>[openai/whisper-small](https://huggingface.co/openai/whisper-small)<br>[openai/whisper-medium](https://huggingface.co/openai/whisper-medium)<br>[openai/whisper-large](https://huggingface.co/openai/whisper-large)<br>[openai/whisper-large-v3-turbo](https://huggingface.co/openai/whisper-large-v3-turbo) | ✔️          |
-| **Wav2Vec2** | Wav2Vec2     | [facebook/wav2vec2-base](https://huggingface.co/facebook/wav2vec2-base)<br>[facebook/wav2vec2-large](https://huggingface.co/facebook/wav2vec2-large) |           |
+| **Wav2Vec2** | Wav2Vec2     | [facebook/wav2vec2-base](https://huggingface.co/facebook/wav2vec2-base)<br>[facebook/wav2vec2-large](https://huggingface.co/facebook/wav2vec2-large) | ✕          |
 
 ---
 
@@ -176,19 +174,17 @@ Reference examples:
 
 ---
 
-```{NOTE}
-① Intern-VL and Molmo models are Vision-Language Models but use `QEFFAutoModelForCausalLM` for inference to stay compatible with HuggingFace Transformers.
+!!! note
+    ① Intern-VL and Molmo models are Vision-Language Models but use `QEFFAutoModelForCausalLM` for inference to stay compatible with HuggingFace Transformers.
 
-② Set `trust_remote_code=True` for end-to-end inference with vLLM.
+    ② Set `trust_remote_code=True` for end-to-end inference with vLLM.
 
-③ Pass `disable_sliding_window` for few family models when using vLLM.
-```
+    ③ Pass `disable_sliding_window` for few family models when using vLLM.
 ---
 
 
 
-(models_coming_soon)=
-# Models Coming Soon
+## Models Coming Soon
 
 | Architecture            | Model Family | Representative Models                      |
 |-------------------------|--------------|--------------------------------------------|

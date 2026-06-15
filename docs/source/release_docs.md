@@ -114,7 +114,7 @@ Simplified setup and deployment process for new users
 ---
 
 
-# Efficient Transformer Library - 1.20.0 Release Notes
+## Efficient Transformer Library - 1.20.0 Release Notes
 
 Welcome to the official release of **Efficient Transformer Library v1.20.0**! This release introduces advanced attention mechanisms, expanded model support, optimized serving capabilities, and significant improvements to fine-tuning and deployment workflows.
 

@@ -1,12 +1,12 @@
 ![alt text](image/Cloud_AI_100.png)
 
 
-# Introduction Qualcomm ``efficient-transformers`` library
+# Introduction Qualcomm `efficient-transformers` library
  
 **Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain**
 
 This library provides reimplemented blocks of LLMs which are used to make the models functional and highly performant on Qualcomm Cloud AI 100.
-We support wide range of [models](validated_models) architectures, for easy efficient deployment on Cloud AI 100 cards. Users only need to provide model card from HuggingFace or Path to the local model and the library will take care of transforming model to it's efficient implementation for Cloud AI 100.
+We support wide range of [models](validate.md) architectures, for easy efficient deployment on Cloud AI 100 cards. Users only need to provide model card from HuggingFace or Path to the local model and the library will take care of transforming model to it's efficient implementation for Cloud AI 100.
 
 For other models, there is comprehensive documentation to inspire upon the changes needed and How-To(s).
 
@@ -22,7 +22,7 @@ For other models, there is comprehensive documentation to inspire upon the chang
 
 ***Latest news*** : <br>
 
-- [coming soon] Support for more popular [models](models_coming_soon)<br>
+- [coming soon] Support for more popular [models](validate.md#models-coming-soon)<br>
 - [04/2026] Added WAN non-unified execution support in `QEffWanPipeline` with separate `transformer_high` and `transformer_low` modules
 - [04/2026] Added first-block-cache support for WAN non-unified mode and FLUX (`QEffWanPipeline`, `QEffFluxPipeline`)
 - [12/2025] Enabled [disaggregated serving](https://github.com/quic/efficient-transformers/tree/main/examples/disagg_serving) for GPT-OSS model
@@ -71,7 +71,7 @@ For other models, there is comprehensive documentation to inspire upon the chang
 - [09/2024] Added support for [granite-20b-code-base](https://huggingface.co/ibm-granite/granite-20b-code-base-8k)
 - [09/2024] Added support for [granite-20b-code-instruct-8k](https://huggingface.co/ibm-granite/granite-20b-code-instruct-8k)
 - [09/2024] Added support for [Starcoder1-15B](https://huggingface.co/bigcode/starcoder)
-- [08/2024] Added support for inference optimization technique ```continuous batching```
+- [08/2024] Added support for inference optimization technique `continuous batching`
 - [08/2024] Added support for [Jais-adapted-70b](https://huggingface.co/inceptionai/jais-adapted-70b)
 - [08/2024] Added support for [Jais-adapted-13b-chat](https://huggingface.co/inceptionai/jais-adapted-13b-chat)
 - [08/2024] Added support for [Jais-adapted-7b](https://huggingface.co/inceptionai/jais-adapted-7b)

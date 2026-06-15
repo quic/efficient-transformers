@@ -357,7 +357,7 @@ class QEffWanPipeline:
                 - False: Compile modules sequentially for lower resource usage
             height (int, default=192): Target image height in pixels.
             width (int, default=320): Target image width in pixels.
-            num_frames (int, deafult=81) : Target num of frames in pixel space
+            num_frames (int, default=81): Target number of frames in pixel space
             use_onnx_subfunctions (bool, default=False): Whether to export models with ONNX
                 subfunctions before compilation if not already exported.
 

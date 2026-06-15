@@ -1,68 +1,70 @@
 # Diffuser Classes
 
-
 ## Pipeline API
 
-(QEffTextEncoder)=
-### `QEffTextEncoder`
+### `QEffTextEncoder` { #QEffTextEncoder }
 
-```{eval-rst}
-.. autoclass:: QEfficient.diffusers.pipelines.pipeline_module.QEffTextEncoder
-   :members:
-   :no-show-inheritance:
-```
-
----
-
-(QEffUNet)=
-### `QEffUNet`
-
-```{eval-rst}
-.. autoclass:: QEfficient.diffusers.pipelines.pipeline_module.QEffUNet
-   :members:
-   :no-show-inheritance:
-```
+::: QEfficient.diffusers.pipelines.pipeline_module.QEffTextEncoder
+    options:
+      members:
+        - export
+        - compile
+        - get_model_config
+        - get_onnx_params
 
 ---
 
-(QEffVAE)=
-### `QEffVAE`
+### `QEffUNet` { #QEffUNet }
 
-```{eval-rst}
-.. autoclass:: QEfficient.diffusers.pipelines.pipeline_module.QEffVAE
-   :members:
-   :no-show-inheritance:
-```
+::: QEfficient.diffusers.pipelines.pipeline_module.QEffUNet
+    options:
+      members:
+        - export
+        - compile
+        - get_model_config
 
 ---
 
-(QEffFluxTransformerModel)=
-### `QEffFluxTransformerModel`
+### `QEffVAE` { #QEffVAE }
 
-```{eval-rst}
-.. autoclass:: QEfficient.diffusers.pipelines.pipeline_module.QEffFluxTransformerModel
-   :members:
-   :no-show-inheritance:
-```
+::: QEfficient.diffusers.pipelines.pipeline_module.QEffVAE
+    options:
+      members:
+        - export
+        - compile
+        - get_model_config
+        - get_onnx_params
+        - get_video_onnx_params
 
-----
+---
 
-(QEffWanUnifiedTransformer)=
-### `QEffWanUnifiedTransformer`
+### `QEffFluxTransformerModel` { #QEffFluxTransformerModel }
 
-```{eval-rst}
-.. autoclass:: QEfficient.diffusers.pipelines.pipeline_module.QEffWanUnifiedTransformer
-   :members:
-   :no-show-inheritance:
-```
+::: QEfficient.diffusers.pipelines.pipeline_module.QEffFluxTransformerModel
+    options:
+      members:
+        - export
+        - compile
+        - get_model_config
+        - get_onnx_params
 
-----
+---
 
+### `QEffWanUnifiedTransformer` { #QEffWanUnifiedTransformer }
+
+::: QEfficient.diffusers.pipelines.pipeline_module.QEffWanUnifiedTransformer
+    options:
+      members:
+        - export
+        - compile
+        - get_model_config
+        - get_onnx_params
+
+---
 
 ## Model Classes
 
-(QEffWanPipeline)=
-### `QEffWanPipeline`
+### `QEffWanPipeline` { #QEffWanPipeline }
 
 WAN supports two execution architectures:
 
@@ -94,24 +96,27 @@ See examples:
 - `examples/diffusers/wan/wan_lightning_custom.py`
 - `examples/diffusers/wan/wan_first_block_cache.py`
 
-```{eval-rst}
-.. autoclass:: QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline
-   :members:
-   :no-show-inheritance:
-```
+::: QEfficient.diffusers.pipelines.wan.pipeline_wan.QEffWanPipeline
+    options:
+      members:
+        - from_pretrained
+        - compile
+        - generate
 
-(QEffWanImageToVideoPipeline)=
-### `QEffWanImageToVideoPipeline`
+---
 
-```{eval-rst}
-.. autoclass:: QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline
-   :members:
-   :no-show-inheritance:
-```
-----
+### `QEffWanImageToVideoPipeline` { #QEffWanImageToVideoPipeline }
 
-(QEffFluxPipeline)=
-### `QEffFluxPipeline`
+::: QEfficient.diffusers.pipelines.wan.pipeline_wan_i2v.QEffWanImageToVideoPipeline
+    options:
+      members:
+        - from_pretrained
+        - compile
+        - generate
+
+---
+
+### `QEffFluxPipeline` { #QEffFluxPipeline }
 
 FLUX supports optional first-block-cache via runtime monkey patching:
 
@@ -138,10 +143,9 @@ See examples:
 - `examples/diffusers/flux/flux_1_shnell_custom.py`
 - `examples/diffusers/flux/flux_1_schnell_first_block_cache.py`
 
-```{eval-rst}
-.. autoclass:: QEfficient.diffusers.pipelines.flux.pipeline_flux.QEffFluxPipeline
-   :members:
-   :no-show-inheritance:
-```
-
-----
+::: QEfficient.diffusers.pipelines.flux.pipeline_flux.QEffFluxPipeline
+    options:
+      members:
+        - from_pretrained
+        - compile
+        - generate

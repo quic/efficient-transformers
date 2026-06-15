@@ -348,24 +348,23 @@ def main(**kwargs) -> None:
         Additional arguments used to override default parameters in `TrainConfig`
         and PEFT configuration. These are typically parsed from command-line arguments.
 
-    Example
-    -------
-    To fine-tune a model using a YAML configuration file for PEFT:
+    Example:
+        To fine-tune a model using a YAML configuration file for PEFT:
 
-    .. code-block:: bash
-
+        ```bash
         python -m QEfficient.cloud.finetune \\
             --model_name "meta-llama/Llama-3.2-1B" \\
             --lr 5e-4 \\
             --peft_config_file "lora_config.yaml"
+        ```
 
-    To fine-tune a model using a default LoRA configuration:
+        To fine-tune a model using a default LoRA configuration:
 
-    .. code-block:: bash
-
+        ```bash
         python -m QEfficient.cloud.finetune \\
             --model_name "meta-llama/Llama-3.2-1B" \\
             --lr 5e-4
+        ```
     """
     train_config = TrainConfig()
     update_config(train_config, **kwargs)

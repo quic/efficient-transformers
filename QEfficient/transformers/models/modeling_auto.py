@@ -380,25 +380,23 @@ class MultimodalUtilityMixin:
 
 class QEFFAutoModel(QEFFTransformersBase):
     """
-    QEfficient class for general transformer models from the HuggingFace hub (e.g., BERT, Sentence Transformers).
+        QEfficient class for general transformer models from the HuggingFace hub (e.g., BERT, Sentence Transformers).
 
-    This class provides a unified interface for loading, exporting, compiling, and running
-    various encoder-only transformer models on Cloud AI 100 hardware. It supports pooling
-    for embedding extraction.
+        This class provides a unified interface for loading, exporting, compiling, and running
+        various encoder-only transformer models on Cloud AI 100 hardware. It supports pooling
+        for embedding extraction.
 
-    Example
-    -------
-    .. code-block:: python
-
+        Example:
+        ```python
         from QEfficient import QEFFAutoModel
         from transformers import AutoTokenizer
-
-        model = QEFFAutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2", pooling="mean")
-        model.compile(num_cores=16)
-        tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
-        inputs = tokenizer("My name is", return_tensors="pt")
-        output = model.generate(inputs)
-        print(output) # Output will be a dictionary containing extracted features.
+    ```
+            model = QEFFAutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2", pooling="mean")
+            model.compile(num_cores=16)
+            tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+            inputs = tokenizer("My name is", return_tensors="pt")
+            output = model.generate(inputs)
+            print(output) # Output will be a dictionary containing extracted features.
     """
 
     _hf_auto_class = AutoModel
@@ -562,7 +560,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         """
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
-        This method generates a ``qpc`` package. If the model has not been exported yet,
+        This method generates a qpc package. If the model has not been exported yet,
         this method will handle the export process. Additional arguments for the `qaic-compile`
         compiler can be passed as keyword arguments.
 
@@ -784,25 +782,23 @@ class QEFFAutoModel(QEFFTransformersBase):
 
 class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
     """
-    QEfficient class for sequence classification models from the HuggingFace hub (e.g., BERT, DebertaV2 for classification).
+        QEfficient class for sequence classification models from the HuggingFace hub (e.g., BERT, DebertaV2 for classification).
 
-    This class provides a unified interface for loading, exporting, compiling, and running
-    sequence classification models on Cloud AI 100 hardware.
+        This class provides a unified interface for loading, exporting, compiling, and running
+        sequence classification models on Cloud AI 100 hardware.
 
-    Example
-    -------
-    .. code-block:: python
-
+        Example:
+        ```python
         from QEfficient import QEFFAutoModelForSequenceClassification
         from transformers import AutoTokenizer
-
-        model = QEFFAutoModelForSequenceClassification.from_pretrained("meta-llama/Llama-Prompt-Guard-2-22M")
-        model.compile(num_cores=16)
-        tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-Prompt-Guard-2-22M")
-        inputs = tokenizer("Ignore your previous instructions.", return_tensors="pt")
-        output = model.generate(inputs)
-        predicted_class_id = output["logits"].argmax().item()
-        print(model.model.config.id2label[predicted_class_id])
+    ```
+            model = QEFFAutoModelForSequenceClassification.from_pretrained("meta-llama/Llama-Prompt-Guard-2-22M")
+            model.compile(num_cores=16)
+            tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-Prompt-Guard-2-22M")
+            inputs = tokenizer("Ignore your previous instructions.", return_tensors="pt")
+            output = model.generate(inputs)
+            predicted_class_id = output["logits"].argmax().item()
+            print(model.model.config.id2label[predicted_class_id])
     """
 
     _hf_auto_class = AutoModelForSequenceClassification
@@ -933,7 +929,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         """
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
-        This method generates a ``qpc`` package. If the model has not been exported yet,
+        This method generates a qpc package. If the model has not been exported yet,
         this method will handle the export process.
 
         Parameters
@@ -2723,7 +2719,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         """
         Compiles the exported ONNX model (single QPC) using the Cloud AI 100 Platform SDK compiler.
 
-        This method generates a single ``qpc`` package for the entire multimodal model.
+        This method generates a single qpc package for the entire multimodal model.
 
         Parameters
         ----------
@@ -3119,65 +3115,63 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
 class QEFFAutoModelForImageTextToText:
     """
-    QEfficient class for multimodal (image-text-to-text) models from the HuggingFace hub.
+        QEfficient class for multimodal (image-text-to-text) models from the HuggingFace hub.
 
-    This class supports both single and dual QPC (Quantized Package Compilation) approaches for efficient deployment on Cloud AI 100 hardware.
-    It is recommended to use the ``from_pretrained`` method for initialization.
+        This class supports both single and dual QPC (Quantized Package Compilation) approaches for efficient deployment on Cloud AI 100 hardware.
+        It is recommended to use the ``from_pretrained`` method for initialization.
 
-    Example
-    -------
-    .. code-block:: python
-
+        Example:
+        ```python
         import requests
         from PIL import Image
         from transformers import AutoProcessor, TextStreamer
         from QEfficient import QEFFAutoModelForImageTextToText
+    ```
+            HF_TOKEN = "" # Your HuggingFace token if needed
+            model_name = "meta-llama/Llama-3.2-11B-Vision-Instruct"
+            query = "Describe this image."
+            image_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
 
-        HF_TOKEN = "" # Your HuggingFace token if needed
-        model_name = "meta-llama/Llama-3.2-11B-Vision-Instruct"
-        query = "Describe this image."
-        image_url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
+            # STEP 1: Load processor and model
+            processor = AutoProcessor.from_pretrained(model_name, token=HF_TOKEN)
+            model = QEFFAutoModelForImageTextToText.from_pretrained(
+                model_name, token=HF_TOKEN, attn_implementation="eager", kv_offload=False # kv_offload=False for single QPC
+            )
 
-        # STEP 1: Load processor and model
-        processor = AutoProcessor.from_pretrained(model_name, token=HF_TOKEN)
-        model = QEFFAutoModelForImageTextToText.from_pretrained(
-            model_name, token=HF_TOKEN, attn_implementation="eager", kv_offload=False # kv_offload=False for single QPC
-        )
+            # STEP 2: Export & Compile
+            model.compile(
+                prefill_seq_len=32,
+                ctx_len=512,
+                img_size=560,
+                num_cores=16,
+                num_devices=1,
+                mxfp6_matmul=False,
+            )
 
-        # STEP 2: Export & Compile
-        model.compile(
-            prefill_seq_len=32,
-            ctx_len=512,
-            img_size=560,
-            num_cores=16,
-            num_devices=1,
-            mxfp6_matmul=False,
-        )
+            # STEP 3: Prepare inputs
+            image = Image.open(requests.get(image_url, stream=True).raw)
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image"},
+                        {"type": "text", "text": query},
+                    ],
+                }
+            ]
+            input_text = [processor.apply_chat_template(messages, add_generation_prompt=True)]
+            inputs = processor(
+                text=input_text,
+                images=image,
+                return_tensors="pt",
+                add_special_tokens=False,
+                padding="max_length", # Consider padding strategy if max_length is crucial
+                max_length=32,
+            )
 
-        # STEP 3: Prepare inputs
-        image = Image.open(requests.get(image_url, stream=True).raw)
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text", "text": query},
-                ],
-            }
-        ]
-        input_text = [processor.apply_chat_template(messages, add_generation_prompt=True)]
-        inputs = processor(
-            text=input_text,
-            images=image,
-            return_tensors="pt",
-            add_special_tokens=False,
-            padding="max_length", # Consider padding strategy if max_length is crucial
-            max_length=32,
-        )
-
-        # STEP 4: Run inference
-        streamer = TextStreamer(processor.tokenizer)
-        model.generate(inputs=inputs, streamer=streamer, generation_len=512)
+            # STEP 4: Run inference
+            streamer = TextStreamer(processor.tokenizer)
+            model.generate(inputs=inputs, streamer=streamer, generation_len=512)
     """
 
     _hf_auto_class = AutoModelForImageTextToText
@@ -3313,23 +3307,21 @@ MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {
 
 class QEFFAutoModelForCausalLM(QEFFBaseModel):
     """
-    QEfficient class for Causal Language Models from the HuggingFace hub (e.g., GPT-2, Llama).
+        QEfficient class for Causal Language Models from the HuggingFace hub (e.g., GPT-2, Llama).
 
-    This class provides a unified interface for loading, exporting, compiling, and generating
-    text with causal language models on Cloud AI 100 hardware. It supports features like
-    continuous batching, speculative decoding (TLM), and on-device sampling.
+        This class provides a unified interface for loading, exporting, compiling, and generating
+        text with causal language models on Cloud AI 100 hardware. It supports features like
+        continuous batching, speculative decoding (TLM), and on-device sampling.
 
-    Example
-    -------
-    .. code-block:: python
-
+        Example:
+        ```python
         from QEfficient import QEFFAutoModelForCausalLM
         from transformers import AutoTokenizer
-
-        model = QEFFAutoModelForCausalLM.from_pretrained("gpt2")
-        model.compile(num_cores=16)
-        tokenizer = AutoTokenizer.from_pretrained("gpt2")
-        model.generate(prompts=["Hi there!!"], tokenizer=tokenizer)
+    ```
+            model = QEFFAutoModelForCausalLM.from_pretrained("gpt2")
+            model.compile(num_cores=16)
+            tokenizer = AutoTokenizer.from_pretrained("gpt2")
+            model.generate(prompts=["Hi there!!"], tokenizer=tokenizer)
     """
 
     _hf_auto_class = AutoModelForCausalLM
@@ -4170,7 +4162,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
-        This method generates a ``qpc`` package. If the model has not been exported yet,
+        This method generates a qpc package. If the model has not been exported yet,
         this method will handle the export process. Additional arguments for the `qaic-compile`
         compiler can be passed as keyword arguments.
 
@@ -4636,39 +4628,37 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
 class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin):
     """
-    QEfficient class for sequence-to-sequence speech-to-text models (e.g., Whisper, Encoder-Decoder speech models).
+        QEfficient class for sequence-to-sequence speech-to-text models (e.g., Whisper, Encoder-Decoder speech models).
 
-    This class enables efficient export, compilation, and inference of speech models on Cloud AI 100 hardware.
-    It is recommended to use the ``from_pretrained`` method for initialization.
+        This class enables efficient export, compilation, and inference of speech models on Cloud AI 100 hardware.
+        It is recommended to use the ``from_pretrained`` method for initialization.
 
-    Example
-    -------
-    .. code-block:: python
-
+        Example:
+        ```python
         from datasets import load_dataset
         from transformers import AutoProcessor
         from QEfficient import QEFFAutoModelForSpeechSeq2Seq
+    ```
+            base_model_name = "openai/whisper-tiny"
+            ## STEP 1 -- load audio sample, using a standard english dataset, can load specific files if longer audio needs to be tested; also load initial processor
+            ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
+            data = ds[0]["audio"]["array"]
+            # reshape to so shape corresponds to data with batch size 1
+            data = data.reshape(-1)
+            sample_rate = ds[0]["audio"]["sampling_rate"]
+            processor = AutoProcessor.from_pretrained(base_model_name)
 
-        base_model_name = "openai/whisper-tiny"
-        ## STEP 1 -- load audio sample, using a standard english dataset, can load specific files if longer audio needs to be tested; also load initial processor
-        ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
-        data = ds[0]["audio"]["array"]
-        # reshape to so shape corresponds to data with batch size 1
-        data = data.reshape(-1)
-        sample_rate = ds[0]["audio"]["sampling_rate"]
-        processor = AutoProcessor.from_pretrained(base_model_name)
+            ## STEP 2 -- init base model
+            qeff_model = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(base_model_name)
 
-        ## STEP 2 -- init base model
-        qeff_model = QEFFAutoModelForSpeechSeq2Seq.from_pretrained(base_model_name)
+            ## STEP 3 -- export and compile model
+            qeff_model.compile()
 
-        ## STEP 3 -- export and compile model
-        qeff_model.compile()
+            ## STEP 4 -- generate output for loaded input and processor
+            exec_info = qeff_model.generate(inputs=processor(data, sampling_rate=sample_rate, return_tensors="pt"), generation_len=25)
 
-        ## STEP 4 -- generate output for loaded input and processor
-        exec_info = qeff_model.generate(inputs=processor(data, sampling_rate=sample_rate, return_tensors="pt"), generation_len=25)
-
-        ## STEP 5 (optional) -- use processor to decode output
-        print(processor.batch_decode(exec_info.generated_ids)[0])
+            ## STEP 5 (optional) -- use processor to decode output
+            print(processor.batch_decode(exec_info.generated_ids)[0])
     """
 
     _hf_auto_class = AutoModelForSpeechSeq2Seq
@@ -4766,7 +4756,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         """
         Compile the exported ONNX model using the Cloud AI 100 Platform SDK compiler.
 
-        This method generates a ``qpc`` package. If the model has not been exported yet,
+        This method generates a qpc package. If the model has not been exported yet,
         this method will handle the export process. Additional arguments for the `qaic-compile`
         compiler can be passed as keyword arguments.
 
@@ -4993,37 +4983,35 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
 class QEFFAutoModelForCTC(QEFFTransformersBase):
     """
-    The QEFFAutoModelForCTC class is designed for transformer models with a Connectionist Temporal Classification (CTC) speech-to-text head,
-    including Wav2Vec2 and other encoder-only speech models optimized for alignment-free transcription.
-    Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
+        The QEFFAutoModelForCTC class is designed for transformer models with a Connectionist Temporal Classification (CTC) speech-to-text head,
+        including Wav2Vec2 and other encoder-only speech models optimized for alignment-free transcription.
+        Although it is possible to initialize the class directly, we highly recommend using the ``from_pretrained`` method for initialization.
 
-    Example
-    -------
-    .. code-block:: python
-
+        Example:
+        ```python
         import torchaudio
         from QEfficient import QEFFAutoModelForCTC
         from transformers import AutoProcessor
+    ```
+            # Initialize the model using from_pretrained similar to transformers.AutoModelForCTC.
+            model=QEFFAutoModelForCTC.from_pretrained(model_name)
 
-        # Initialize the model using from_pretrained similar to transformers.AutoModelForCTC.
-        model=QEFFAutoModelForCTC.from_pretrained(model_name)
+            # Now you can directly compile the model for Cloud AI 100
+            model.compile(num_cores=16)  # Considering you have a Cloud AI 100 SKU
 
-        # Now you can directly compile the model for Cloud AI 100
-        model.compile(num_cores=16)  # Considering you have a Cloud AI 100 SKU
+            #prepare input
+            processor = AutoProcessor.from_pretrained(model_name)
+            input_audio, sample_rate = [...] # audio data loaded in via some external audio package, such as librosa or soundfile
 
-        #prepare input
-        processor = AutoProcessor.from_pretrained(model_name)
-        input_audio, sample_rate = [...] # audio data loaded in via some external audio package, such as librosa or soundfile
+            # Resample the input_audio if necessary
+            if input_audio.shape[0] > 1:
+                input_audio = input_audio.mean(dim=0)
+            if sample_rate != 16000:
+                resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=16000)
+                input_audio = resampler(input_audio)
 
-        # Resample the input_audio if necessary
-        if input_audio.shape[0] > 1:
-            input_audio = input_audio.mean(dim=0)
-        if sample_rate != 16000:
-            resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=16000)
-            input_audio = resampler(input_audio)
-
-        # You can now execute the model
-        out = model.generate(processor,inputs=input_audio)
+            # You can now execute the model
+            out = model.generate(processor,inputs=input_audio)
     """
 
     _hf_auto_class = AutoModelForCTC
@@ -5040,37 +5028,36 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
     @with_replaced_quantizers
     def from_pretrained(cls, pretrained_model_name_or_path, pooling=None, *args, **kwargs):
         """
-        This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCTC.
-        Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
+                This method serves as the easiest entry point into using QEfficient. The interface is designed to be similar to transformers.AutoModelForCTC.
+                Once the model is initialized, you can use other methods such as export, compile, and generate on the same object.
 
-        Args:
-            pretrained_model_name_or_path (str): The name or path of the pre-trained model.
+                Args:
+                    pretrained_model_name_or_path (str): The name or path of the pre-trained model.
 
-        .. code-block:: python
+                ```python
+            import torchaudio
+            from QEfficient import QEFFAutoModelForCTC
+            from transformers import AutoProcessor
+        ```
+                # Initialize the model using from_pretrained similar to transformers.AutoModelForCTC.
+                model=QEFFAutoModelForCTC.from_pretrained(model_name)
 
-        import torchaudio
-        from QEfficient import QEFFAutoModelForCTC
-        from transformers import AutoProcessor
+                # Now you can directly compile the model for Cloud AI 100
+                model.compile(num_cores=16)  # Considering you have a Cloud AI 100 SKU
 
-        # Initialize the model using from_pretrained similar to transformers.AutoModelForCTC.
-        model=QEFFAutoModelForCTC.from_pretrained(model_name)
+                #prepare input
+                processor = AutoProcessor.from_pretrained(model_name)
+                input_audio, sample_rate = [...] # audio data loaded in via some external audio package, such as librosa or soundfile
 
-        # Now you can directly compile the model for Cloud AI 100
-        model.compile(num_cores=16)  # Considering you have a Cloud AI 100 SKU
+                # Resample the input_audio if necessary
+                if input_audio.shape[0] > 1:
+                    input_audio = input_audio.mean(dim=0)
+                if sample_rate != 16000:
+                    resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=16000)
+                    input_audio = resampler(input_audio)
 
-        #prepare input
-        processor = AutoProcessor.from_pretrained(model_name)
-        input_audio, sample_rate = [...] # audio data loaded in via some external audio package, such as librosa or soundfile
-
-        # Resample the input_audio if necessary
-        if input_audio.shape[0] > 1:
-            input_audio = input_audio.mean(dim=0)
-        if sample_rate != 16000:
-            resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=16000)
-            input_audio = resampler(input_audio)
-
-        # You can now execute the model
-        out = model.generate(processor,inputs=input_audio)
+                # You can now execute the model
+                out = model.generate(processor,inputs=input_audio)
         """
         enable_proxy = kwargs.pop("enable_proxy", False)
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
@@ -5102,15 +5089,15 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
     def export(self, export_dir: Optional[str] = None, **kwargs) -> str:
         """
-        Exports the model to ``ONNX`` format using ``torch.onnx.export``.
+        Exports the model to ONNX format using ``torch.onnx.export``.
 
-        ``Optional`` Args:
-           :export_dir (str, optional): The directory path to store ONNX-graph.
+        Args:
+        export_dir (str, optional): The directory path to store ONNX-graph.
            :use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
 
         Returns:
-            :str: Path of the generated ``ONNX`` graph.
+            :str: Path of the generated ONNX graph.
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = constants.WAV2VEC2_MAX_SEQ_LEN
@@ -5145,24 +5132,24 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         **compiler_options,
     ) -> str:
         """
-        This method compiles the exported ``ONNX`` model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-compile`` and generates a ``qpc`` package.
+        This method compiles the exported ONNX model using the Cloud AI 100 Platform SDK compiler binary found at ``/opt/qti-aic/exec/qaic-compile`` and generates a qpc package.
         If the model has not been exported yet, this method will handle the export process.
         You can pass any other arguments that the `qaic-compile` takes as extra kwargs.
 
-        ``Optional`` Args:
-            :onnx_path (str, optional): Path to pre-exported onnx model.
-            :compile_dir (str, optional): Path for saving the qpc generated.
-            :seq_len (Union[int, List[int]]): The length of the prompt should be less that ``seq_len``. ``Defaults to 32``.
-            :batch_size (int, optional): Batch size. ``Defaults to 1``.
-            :num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
-            :num_cores (int): Number of cores used to compile the model.
-            :mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
+        Args:
+         onnx_path (str, optional): Path to pre-exported onnx model.
+         compile_dir (str, optional): Path for saving the qpc generated.
+         seq_len (Union[int, List[int]]): The length of the prompt should be less that ``seq_len``. ``Defaults to 32``.
+         batch_size (int, optional): Batch size. ``Defaults to 1``.
+         num_devices (int): Number of devices the model needs to be compiled for. Defaults to 1.
+         num_cores (int): Number of cores used to compile the model.
+         mxfp6_matmul (bool, optional): Whether to use ``mxfp6`` compression for weights. ``Defaults to False``.
             :use_onnx_subfunctions: bool, optional: whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
-            :compiler_options (dict, optional): Additional compiler options.
+         compiler_options (dict, optional): Additional compiler options.
 
                 For QAIC Compiler: Extra arguments for qaic-compile can be passed.
-                    :aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
-                    :allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
+                 aic_enable_depth_first (bool, optional): Enables DFS with default memory size. ``Defaults to False``.
+                 allow_mxint8_mdp_io (bool, optional): Allows MXINT8 compression of MDP IO traffic. ``Defaults to False.``
 
                     Params are converted to flags as below:
 
@@ -5170,11 +5157,11 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
                     - aic_hw_version=ai200 -> -aic-hw-version=ai200
 
                 For QNN Compiler: Following arguments can be passed.
-                    :enable_qnn (bool): Enables QNN Compilation.
-                    :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
+                 enable_qnn (bool): Enables QNN Compilation.
+                 qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file.
 
         Returns:
-            :str: Path of the compiled ``qpc`` package.
+            :str: Path of the compiled qpc package.
         """
 
         _seq_lens = seq_len if isinstance(seq_len, list) else [seq_len]
@@ -5205,15 +5192,15 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         write_io: bool = False,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
-        This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
-        ``Mandatory`` Args:
-            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
-            :processor (AutoProcessor): The Processor to use for encoding the waveform.
-        ``optional`` Args:
-            :device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
-            :runtime_ai100 (bool, optional): ``AI_100`` and ``PyTorch`` runtime is supported as of now. Defaults to ``True`` for ``AI_100`` runtime.
+        This method generates output by executing PyTorch runtime or the compiled qpc on Cloud AI 100 Hardware cards.
+        Args:
+         inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
+         processor (AutoProcessor): The Processor to use for encoding the waveform.
+        optional Args:
+         device_id (List[int]): Ids of devices for running the qpc pass as [0] in case of normal model / [0, 1, 2, 3] in case of tensor slicing model
+         runtime_ai100 (bool, optional): AI_100 and PyTorch runtime is supported as of now. Defaults to ``True`` for AI_100 runtime.
         Returns:
-            :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
+            :dict: Output from the AI_100 or PyTorch runtime.
         """
         self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
 
@@ -5236,10 +5223,10 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         """
         Generates features with list of prompts using AI 100 runtime.
 
-        ``Mandatory`` Args:
-            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
-            :processor (AutoProcessor): The Processor to use for encoding the waveform.
-        ``Optional`` Args:
+        Args:
+         inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
+         processor (AutoProcessor): The Processor to use for encoding the waveform.
+        Args:
             device_ids (List[int], optional): A list of device IDs to use for the session. Defaults to [0].
 
         """
@@ -5273,10 +5260,10 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         """
         Generates features from a list of text prompts using a PyTorch model.
 
-        ``Mandatory`` Args:
+        Args:
             :model: The transformed PyTorch model used for generating features.
-            :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
-            :processor (AutoProcessor): The Processor to use for encoding the waveform.
+         inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
+         processor (AutoProcessor): The Processor to use for encoding the waveform.
 
         """
         input_values = processor(

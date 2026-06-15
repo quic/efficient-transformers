@@ -7,8 +7,6 @@ System Requirements:
 
 ---
 
-# Installation 
-
 ## 1. Download Apps SDK
    * [Cloud AI 100 Apps SDK install](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/)  
 
@@ -41,9 +39,8 @@ sudo chmod a+x /opt/qti-aic/exec/*
 
 ### Using GitHub Repository
 
-```{warning}
-Efficient Transformers have been validated to work with the same compatible SDK. Upgrading this may result in certain models becoming incompatible.
-```
+!!! warning
+    Efficient Transformers have been validated to work with the same compatible SDK. Upgrading this may result in certain models becoming incompatible.
 
 ```bash
 # Create Python virtual env and activate it. (Required Python 3.10)
@@ -59,10 +56,10 @@ pip install git+https://github.com/quic/efficient-transformers
 
 ---
 
-# Sanity Check
+## Sanity Check
 
-After above installation methods, you can check if ``QEfficient`` is installed correctly by using
+After above installation methods, you can check if `QEfficient` is installed correctly by using
 ```bash
 python -c "import QEfficient; print(QEfficient.__version__)"
 ```
-If the above line executes successfully, you are good to go ahead and start deploying models on ``Cloud AI 100`` cards using ``QEfficient`` library.
+If the above line executes successfully, you are good to go ahead and start deploying models on `Cloud AI 100` cards using `QEfficient` library.

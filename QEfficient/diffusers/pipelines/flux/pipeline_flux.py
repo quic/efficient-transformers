@@ -222,7 +222,7 @@ class QEffFluxPipeline:
                 uses the default export directory structure based on model name and configuration.
                 The directory will be created if it doesn't exist.
             use_onnx_subfunctions (bool, default=False): Whether to enable ONNX subfunction
-                optimization for supported modules. This can optimize thegraph and
+                optimization for supported modules. This can optimize the graph and
                 improve compilation efficiency for models like the transformer.
 
         Returns:

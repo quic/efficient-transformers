@@ -1,0 +1,84 @@
+site_name: Efficient Transformers
+site_description: QEfficient - Inference optimization library for Qualcomm Cloud AI 100
+site_url: https://quic.github.io/efficient-transformers/
+repo_url: https://github.com/quic/efficient-transformers
+repo_name: GitHub
+edit_uri: edit/main/
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: readthedocs
+  prev_next_buttons_location: none
+  hljs_languages:
+    - python
+    - bash
+    - yaml
+    - json
+
+extra: {}
+
+extra_css:
+  - _static/my_theme.css
+
+extra_javascript:
+  - _static/cleanup_docstrings.js
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["."]
+          options:
+            docstring_style: google
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: true
+            show_if_no_docstring: true
+            heading_level: 3
+            members_order: source
+            show_docstring_description: true
+            show_docstring_examples: true
+            show_docstring_parameters: true
+            show_docstring_returns: true
+            merge_init_into_class: true
+            separate_signature: true
+            show_signature_annotations: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - attr_list
+  - def_list
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Release Documents:
+      - Release Notes: source/release_docs.md
+  - Getting Started:
+      - Introduction: source/introduction.md
+      - Supported Features: source/supported_features.md
+      - Validated Models: source/validate.md
+  - Installation:
+      - Pre-requisites & Installation: source/installation.md
+  - Inference on Cloud AI 100:
+      - Quick Start: source/quick_start.md
+      - Features Enablement Guide: source/features_enablement.md
+  - API Reference:
+      - QEfficient Auto Classes: source/qeff_autoclasses.md
+      - Diffuser Classes: source/diffuser_classes.md
+      - CLI API Reference: source/cli_api.md
+  - QAIC Finetune:
+      - Finetune Infra: source/finetune.md
+  - Blogs:
+      - Blog Posts: source/blogs.md
+  - Reference:
+      - External Links: source/reference.md

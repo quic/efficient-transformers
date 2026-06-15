@@ -25,57 +25,55 @@ def main(
     full_batch_size: Optional[int] = None,
 ):
     """
-    Main function for the QEfficient execution CLI application.
+        Main function for the QEfficient execution CLI application.
 
-    This function serves as the entry point for running a compiled model
-    (QPC package) on the Cloud AI 100 Platform. It loads the necessary
-    tokenizer and then orchestrates the text generation inference.
+        This function serves as the entry point for running a compiled model
+        (QPC package) on the Cloud AI 100 Platform. It loads the necessary
+        tokenizer and then orchestrates the text generation inference.
 
-    Parameters
-    ----------
-    model_name : str
-        Hugging Face Model Card name (e.g., ``gpt2``) for loading the tokenizer.
-    qpc_path : str
-        Path to the generated binary (QPC package) after compilation.
+        Parameters
+        ----------
+        model_name : str
+            Hugging Face Model Card name (e.g., ``gpt2``) for loading the tokenizer.
+        qpc_path : str
+            Path to the generated binary (QPC package) after compilation.
 
-    Other Parameters
-    ----------------
-    device_group : List[int], optional
-        List of device IDs to be used for inference. If `len(device_group) > 1`,
-        a multi-card setup is enabled. Default is None.
-    local_model_dir : str, optional
-        Path to custom model weights and config files, used if not loading tokenizer
-        from Hugging Face Hub. Default is None.
-    prompt : str, optional
-        Sample prompt(s) for the model text generation. For batch size > 1,
-        pass multiple prompts separated by a pipe (``|``) symbol. Default is None.
-    prompts_txt_file_path : str, optional
-        Path to a text file containing multiple input prompts, one per line. Default is None.
-    generation_len : int, optional
-        Maximum number of tokens to be generated during inference. Default is None.
-    cache_dir : str, optional
-        Cache directory where downloaded HuggingFace files (like tokenizer) are stored.
-        Default is None.
-    hf_token : str, optional
-        HuggingFace login token to access private repositories. Default is None.
-    full_batch_size : int, optional
-        Ignored in this context as continuous batching is managed by the compiled QPC.
-        However, it might be passed through from CLI arguments. Default is None.
+        Other Parameters
+        ----------------
+        device_group : List[int], optional
+            List of device IDs to be used for inference. If `len(device_group) > 1`,
+            a multi-card setup is enabled. Default is None.
+        local_model_dir : str, optional
+            Path to custom model weights and config files, used if not loading tokenizer
+            from Hugging Face Hub. Default is None.
+        prompt : str, optional
+            Sample prompt(s) for the model text generation. For batch size > 1,
+            pass multiple prompts separated by a pipe (``|``) symbol. Default is None.
+        prompts_txt_file_path : str, optional
+            Path to a text file containing multiple input prompts, one per line. Default is None.
+        generation_len : int, optional
+            Maximum number of tokens to be generated during inference. Default is None.
+        cache_dir : str, optional
+            Cache directory where downloaded HuggingFace files (like tokenizer) are stored.
+            Default is None.
+        hf_token : str, optional
+            HuggingFace login token to access private repositories. Default is None.
+        full_batch_size : int, optional
+            Ignored in this context as continuous batching is managed by the compiled QPC.
+            However, it might be passed through from CLI arguments. Default is None.
 
-    Example
-    -------
-    To execute a compiled model from the command line:
+        Example
+        -------
+        To execute a compiled model from the command line:
 
-    .. code-block:: bash
-
+        ```bash
         python -m QEfficient.cloud.execute --model-name gpt2 --qpc-path /path/to/qpc/binaries --prompt "Hello world"
+    ```
+        For multi-device inference:
 
-    For multi-device inference:
-
-    .. code-block:: bash
-
+        ```bash
         python -m QEfficient.cloud.execute --model-name gpt2 --qpc-path /path/to/qpc/binaries --device-group "[0,1]" --prompt "Hello | Hi"
-
+    ```
     """
     tokenizer = load_hf_tokenizer(
         pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
