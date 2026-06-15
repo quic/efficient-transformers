@@ -1,0 +1,4 @@
+schema_version: v1
+display_name: QEff FP16 Sensitivity Recovery
+short_description: LLM/VLM/diffusion precision recovery + validated NPI
+default_prompt: Run CPU fp32-vs-fp16 sensitivity localization, cache boundaries, apply fp32 post-op promotion or mathematically equivalent scaling, and emit validated NPI YAML from exact ONNX output names.
