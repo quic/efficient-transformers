@@ -11,6 +11,7 @@ import pytest
 
 import QEfficient
 from QEfficient.cloud.infer import main as infer
+from tests.utils.tiny_overrides import is_skipped_model
 
 
 def check_infer(
@@ -99,10 +100,13 @@ def test_infer_qnn_fbs(mocker):
 @pytest.mark.on_qaic
 @pytest.mark.cli
 def test_infer_vlm(mocker):
+    model_name = "llava-hf/llava-1.5-7b-hf"
+    if is_skipped_model(model_name):
+        pytest.skip(f"No tiny variant for {model_name} in per-PR profile")
     # testing infer for MM models
     check_infer(
         mocker,
-        model_name="llava-hf/llava-1.5-7b-hf",
+        model_name=model_name,
         prompt="Describe the image.",
         image_url="https://i.etsystatic.com/8155076/r/il/0825c2/1594869823/il_fullxfull.1594869823_5x0w.jpg",
     )

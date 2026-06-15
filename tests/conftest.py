@@ -117,6 +117,73 @@ def manual_cleanup():
     return qeff_models_clean_up
 
 
+# Number of QAic cards on the CI machine. Workers are sharded round-robin
+# across these cards via QAIC_VISIBLE_DEVICES. Override with QEFF_NUM_QAIC_CARDS
+# if a host has a different count.
+_QAIC_CARDS_DEFAULT = 4
+
+
+def _xdist_worker_index():
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if not worker or not worker.startswith("gw"):
+        return None
+    try:
+        return int(worker[2:])
+    except ValueError:
+        return None
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _qaic_device_for_xdist_worker():
+    """Pin each pytest-xdist worker to one of the QAic cards.
+
+    Serial runs (no xdist) and runs that already export QAIC_VISIBLE_DEVICES
+    are left untouched. Under ``pytest -n 4`` on a 4-card host, gw0..gw3 each
+    own one card — so .compile()/.generate() across workers run in parallel,
+    while same-worker calls remain sequential on that card.
+
+    QEFF_QAIC_CARD_OFFSET allows two stages to run simultaneously on non-
+    overlapping card slices. E.g. stage A sets QEFF_NUM_QAIC_CARDS=2 + offset=0
+    → cards 0,1; stage B sets QEFF_NUM_QAIC_CARDS=2 + offset=2 → cards 2,3.
+    """
+    if "QAIC_VISIBLE_DEVICES" in os.environ:
+        return
+    idx = _xdist_worker_index()
+    if idx is None:
+        return
+    cards = max(1, int(os.environ.get("QEFF_NUM_QAIC_CARDS", _QAIC_CARDS_DEFAULT)))
+    offset = int(os.environ.get("QEFF_QAIC_CARD_OFFSET", 0))
+    os.environ["QAIC_VISIBLE_DEVICES"] = str(offset + (idx % cards))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _qeff_home_per_xdist_worker():
+    """Give each xdist worker its own QEFF_HOME subdir so compile-cache writes
+    don't race. Serial runs are untouched.
+
+    Setting os.environ alone is not enough because QEfficient.utils.cache and
+    QEfficient.utils.export_utils bind QEFF_HOME to a module-level constant at
+    import time.  We patch those constants directly so every runtime call to
+    _prepare_export_directory() resolves to the per-worker path.
+    """
+    idx = _xdist_worker_index()
+    if idx is None:
+        return
+    base = os.environ.get("QEFF_HOME")
+    if not base:
+        return
+    from pathlib import Path
+
+    import QEfficient.utils.cache as _cache_mod
+    import QEfficient.utils.export_utils as _export_mod
+
+    worker_home = Path(base) / f"worker_{idx}"
+    worker_home.mkdir(parents=True, exist_ok=True)
+    os.environ["QEFF_HOME"] = str(worker_home)
+    _cache_mod.QEFF_HOME = worker_home
+    _export_mod.QEFF_HOME = worker_home
+
+
 def pytest_sessionstart(session):
     logger.info("PYTEST Session Starting ...")
     # Skip cleanup for nightly_pipeline tests
@@ -135,6 +202,217 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "feature: mark test as a feature-specific test (SPD, sampler, prefix caching, LoRA, etc.)"
     )
+    _install_tiny_model_remap_if_active()
+
+
+def pytest_collection_modifyitems(config, items):
+    """Under the per-PR tiny lane, auto-skip parametrize cases whose model_id
+    appears in skip_no_tiny (no usable tiny on HF, no dummy-config path yet).
+    Matches against the parametrize id token in the nodeid."""
+    try:
+        from tests.utils.tiny_overrides import _load_skip_set, _tiny_lane_active
+    except Exception:
+        return
+    if not _tiny_lane_active():
+        return
+    skip_set = _load_skip_set()
+    if not skip_set:
+        return
+    skip_marker = pytest.mark.skip(reason="No tiny variant available on HF; skipped under per-PR profile.")
+    for item in items:
+        nodeid = item.nodeid
+        for skip_id in skip_set:
+            # parametrize ids are bracketed in the nodeid as [foo/bar-...]
+            if f"[{skip_id}" in nodeid or f"-{skip_id}]" in nodeid or f"-{skip_id}-" in nodeid:
+                item.add_marker(skip_marker)
+                break
+
+
+def _install_tiny_model_remap_if_active() -> None:
+    """When QEFF_TEST_PROFILE is dummy_layers_model or few_layers_model, wrap
+    `from_pretrained` on every QEFFAuto* class and on the AutoModelFor* classes
+    that tests use directly, so the first positional/`pretrained_model_name_or_path`
+    arg is rewritten via tests/utils/tiny_overrides.resolve_model_id.
+
+    full_layers_model (nightly) and unset profile leave class methods untouched.
+    Idempotent: tagged with __qeff_tiny_remap__ so a re-call on the same class
+    is a no-op.
+    """
+    try:
+        from tests.utils.tiny_overrides import resolve_model_id, _tiny_lane_active  # noqa
+    except Exception:
+        return
+    if not _tiny_lane_active():
+        return
+
+    import functools
+
+    def _wrap(cls):
+        # Pull the underlying function via __dict__ to avoid the descriptor protocol —
+        # cls.from_pretrained returns a bound method, which trips functools.wraps.
+        # We deliberately ignore inherited from_pretrained: wrapping a subclass that
+        # inherits from an already-wrapped base would double-wrap. The base wrap
+        # already handles the subclass via classmethod dispatch (cls -> child class).
+        original_classmethod = cls.__dict__.get("from_pretrained")
+        if original_classmethod is None:
+            return
+        original_func = getattr(original_classmethod, "__func__", original_classmethod)
+        if getattr(original_func, "__qeff_tiny_remap__", False):
+            return
+
+        def remapped(klass, *args, **kwargs):
+            if args:
+                args = (resolve_model_id(args[0]),) + args[1:]
+            elif "pretrained_model_name_or_path" in kwargs:
+                kwargs["pretrained_model_name_or_path"] = resolve_model_id(kwargs["pretrained_model_name_or_path"])
+            return original_func(klass, *args, **kwargs)
+
+        functools.update_wrapper(remapped, original_func)
+        remapped.__qeff_tiny_remap__ = True
+        cls.from_pretrained = classmethod(remapped)
+
+    def _wrap_load_config(cls):
+        # Wrap load_config for diffusers/transformers pipeline classes so that
+        # `ClassName.load_config("black-forest-labs/FLUX.1-schnell", ...)` is
+        # intercepted and the repo id is remapped to its tiny substitute.
+        original_classmethod = cls.__dict__.get("load_config")
+        if original_classmethod is None:
+            return
+        original_func = getattr(original_classmethod, "__func__", original_classmethod)
+        if getattr(original_func, "__qeff_tiny_remap__", False):
+            return
+
+        def remapped_cfg(klass, *args, **kwargs):
+            if args:
+                args = (resolve_model_id(args[0]),) + args[1:]
+            elif "pretrained_model_name_or_path" in kwargs:
+                kwargs["pretrained_model_name_or_path"] = resolve_model_id(kwargs["pretrained_model_name_or_path"])
+            return original_func(klass, *args, **kwargs)
+
+        functools.update_wrapper(remapped_cfg, original_func)
+        remapped_cfg.__qeff_tiny_remap__ = True
+        cls.load_config = classmethod(remapped_cfg)
+
+    targets = []
+    try:
+        from QEfficient.transformers.models.modeling_auto import (
+            QEFFAutoModel,
+            QEFFAutoModelForCausalLM,
+            QEFFAutoModelForCTC,
+            QEFFAutoModelForImageTextToText,
+            QEFFAutoModelForSequenceClassification,
+            QEFFAutoModelForSpeechSeq2Seq,
+        )
+
+        targets.extend(
+            [
+                QEFFAutoModel,
+                QEFFAutoModelForCausalLM,
+                QEFFAutoModelForCTC,
+                QEFFAutoModelForImageTextToText,
+                QEFFAutoModelForSequenceClassification,
+                QEFFAutoModelForSpeechSeq2Seq,
+            ]
+        )
+    except Exception:
+        pass
+
+    try:
+        from transformers import (
+            AutoConfig,
+            AutoModel,
+            AutoModelForCausalLM,
+            AutoModelForCTC,
+            AutoModelForImageTextToText,
+            AutoModelForSequenceClassification,
+            AutoModelForSpeechSeq2Seq,
+            AutoTokenizer,
+        )
+
+        targets.extend(
+            [
+                AutoConfig,
+                AutoModel,
+                AutoModelForCausalLM,
+                AutoModelForCTC,
+                AutoModelForImageTextToText,
+                AutoModelForSequenceClassification,
+                AutoModelForSpeechSeq2Seq,
+                AutoTokenizer,
+            ]
+        )
+    except Exception:
+        pass
+
+    for cls in targets:
+        try:
+            _wrap(cls)
+        except Exception:
+            continue
+
+    # Wrap load_config on diffusers pipeline/model classes so that
+    # ClassName.load_config("black-forest-labs/FLUX.1-schnell", ...) is remapped.
+    # load_config lives on ConfigMixin, not on each subclass, so wrap it there.
+    try:
+        from diffusers.configuration_utils import ConfigMixin
+
+        _orig_lc = ConfigMixin.__dict__.get("load_config")
+        if _orig_lc is not None and not getattr(getattr(_orig_lc, "__func__", _orig_lc), "__qeff_tiny_remap__", False):
+            _orig_func = getattr(_orig_lc, "__func__", _orig_lc)
+
+            def _remapped_load_config(klass, pretrained_model_name_or_path, *args, **kwargs):
+                return _orig_func(klass, resolve_model_id(pretrained_model_name_or_path), *args, **kwargs)
+
+            import functools as _ft
+
+            _ft.update_wrapper(_remapped_load_config, _orig_func)
+            _remapped_load_config.__qeff_tiny_remap__ = True
+            ConfigMixin.load_config = classmethod(_remapped_load_config)
+    except Exception:
+        pass
+
+    # Also remap module-level helpers `load_hf_tokenizer` / `load_hf_processor`.
+    # These call `hf_download(repo_id=...)` *before* AutoTokenizer.from_pretrained,
+    # turning the model id into a local snapshot dir; once it's a path, our
+    # AutoTokenizer wrap above can't tell which repo it came from. So we have to
+    # rewrite the id at the entry point of these helpers.
+    try:
+        from QEfficient.utils import _utils as _qeff_utils
+
+        for fn_name in ("load_hf_tokenizer", "load_hf_processor"):
+            fn = getattr(_qeff_utils, fn_name, None)
+            if fn is None or getattr(fn, "__qeff_tiny_remap__", False):
+                continue
+            original_fn = fn
+
+            def make_wrapper(orig):
+                def wrapper(pretrained_model_name_or_path, *args, **kwargs):
+                    return orig(resolve_model_id(pretrained_model_name_or_path), *args, **kwargs)
+
+                functools.update_wrapper(wrapper, orig)
+                wrapper.__qeff_tiny_remap__ = True
+                return wrapper
+
+            setattr(_qeff_utils, fn_name, make_wrapper(original_fn))
+    except Exception:
+        pass
+
+    # Remap `load_adapter(adapter_model_id, ...)` on QEffAutoLoraModelForCausalLM
+    # so adapter IDs (hallisky/*, predibase/*) are swapped to tiny siblings that
+    # match the remapped base model dimensions.
+    try:
+        from QEfficient.peft.lora.auto import QEffAutoLoraModelForCausalLM as _LoraModel
+
+        _orig_load_adapter = _LoraModel.load_adapter
+        if not getattr(_orig_load_adapter, "__qeff_tiny_remap__", False):
+
+            def _wrapped_load_adapter(self, adapter_model_id, *args, **kwargs):
+                return _orig_load_adapter(self, resolve_model_id(adapter_model_id), *args, **kwargs)
+
+            _wrapped_load_adapter.__qeff_tiny_remap__ = True
+            _LoraModel.load_adapter = _wrapped_load_adapter
+    except Exception:
+        pass
 
 
 def pytest_sessionfinish(session, exitstatus):

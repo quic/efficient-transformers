@@ -140,18 +140,19 @@ def tokenize_conversation(processor, conversation: List[Dict[str, Any]]) -> Dict
     conversations = [conversation]
     text = processor.apply_chat_template(conversations, tokenize=False, add_generation_prompt=True)
 
-    images, videos, video_kwargs = _process_vision_info(
-        conversations,
-        image_patch_size=16,
-        return_video_kwargs=True,
-        return_video_metadata=True,
-    )
-
-    if videos is not None:
-        videos, video_metadatas = zip(*videos)
-        videos = list(videos)
-        video_metadatas = list(video_metadatas)
+    vision_info = _process_vision_info(conversations)
+    # qwen-vl-utils>=0.0.14 returns (images, videos); newer versions return (images, videos, video_kwargs)
+    if len(vision_info) == 3:
+        images, videos, video_kwargs = vision_info
+        if videos is not None:
+            videos, video_metadatas = zip(*videos)
+            videos = list(videos)
+            video_metadatas = list(video_metadatas)
+        else:
+            video_metadatas = None
     else:
+        images, videos = vision_info
+        video_kwargs = {}
         video_metadatas = None
 
     inputs = processor(
