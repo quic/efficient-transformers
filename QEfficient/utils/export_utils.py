@@ -7,6 +7,7 @@
 
 import copy
 import inspect
+import os
 import re
 import warnings
 from pathlib import Path
@@ -112,9 +113,19 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     bound_args = new_sig.bind(*args, **kwargs)
     bound_args.apply_defaults()
     all_args = bound_args.arguments
+    export_kwargs = dict(all_args.get("export_kwargs") or {})
     if func.__name__ == "_export_layerwise":
-        export_kwargs = dict(all_args.get("export_kwargs") or {})
         export_kwargs["_qeff_layerwise_export"] = True
+
+    do_constant_folding_env = os.environ.get("QEFF_ONNX_DO_CONSTANT_FOLDING")
+    if do_constant_folding_env is not None and "do_constant_folding" not in export_kwargs:
+        export_kwargs["_qeff_env_onnx_do_constant_folding"] = do_constant_folding_env.strip().lower()
+
+    disabled_safe_passes_env = os.environ.get("QEFF_ONNX_DISABLE_SAFE_EXPORT_PASSES")
+    if disabled_safe_passes_env is not None:
+        export_kwargs["_qeff_env_onnx_disable_safe_export_passes"] = disabled_safe_passes_env.strip().lower()
+
+    if export_kwargs:
         all_args["export_kwargs"] = export_kwargs
 
     # Use the model's current configuration for hashing to ensure any post-load modifications are captured

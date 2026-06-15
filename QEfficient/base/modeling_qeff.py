@@ -5,11 +5,14 @@
 #
 # ----------------------------------------------------------------------------
 
+import contextlib
 import gc
 import inspect
 import logging
+import os
 import shutil
 import subprocess
+import time
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -51,6 +54,136 @@ from QEfficient.utils import (
 from QEfficient.utils.export_utils import export_wrapper
 
 logger = logging.getLogger(__name__)
+
+
+_SAFE_ONNX_EXPORT_PASS_NAMES = (
+    "_jit_pass_constant_propagation",
+    "_jit_pass_dce",
+    "_jit_pass_cse",
+    "_jit_pass_canonicalize_graph_fuser_ops",
+    "_jit_pass_peephole",
+    "_jit_pass_fuse_addmm",
+    "_jit_pass_onnx_eval_peephole",
+    "_jit_pass_onnx_constant_fold",
+    "_jit_pass_dce_allow_deleting_nodes_with_side_effects",
+    "_jit_pass_canonicalize",
+    "_jit_pass_onnx_graph_shape_type_inference",
+    "_jit_pass_onnx_deduplicate_initializers",
+)
+
+
+def _qeff_noop(*args, **kwargs):
+    return None
+
+
+def _qeff_false_noop(*args, **kwargs):
+    return False
+
+
+def _qeff_first_arg(*args, **kwargs):
+    return args[0] if args else None
+
+
+def _qeff_second_arg_or_empty_dict(*args, **kwargs):
+    if len(args) >= 2:
+        return args[1]
+    return kwargs.get("params_dict", {})
+
+
+_SAFE_ONNX_EXPORT_PASS_REPLACEMENTS = {
+    "_jit_pass_constant_propagation": _qeff_noop,
+    "_jit_pass_dce": _qeff_noop,
+    "_jit_pass_cse": _qeff_false_noop,
+    "_jit_pass_canonicalize_graph_fuser_ops": _qeff_noop,
+    "_jit_pass_peephole": _qeff_noop,
+    "_jit_pass_fuse_addmm": _qeff_noop,
+    "_jit_pass_onnx_eval_peephole": _qeff_second_arg_or_empty_dict,
+    "_jit_pass_onnx_constant_fold": _qeff_second_arg_or_empty_dict,
+    "_jit_pass_dce_allow_deleting_nodes_with_side_effects": _qeff_noop,
+    "_jit_pass_canonicalize": _qeff_first_arg,
+    "_jit_pass_onnx_graph_shape_type_inference": _qeff_noop,
+    "_jit_pass_onnx_deduplicate_initializers": _qeff_second_arg_or_empty_dict,
+}
+
+
+def _safe_onnx_export_passes_from_env() -> tuple[str, ...]:
+    disabled_passes = os.environ.get("QEFF_ONNX_DISABLE_SAFE_EXPORT_PASSES")
+    if disabled_passes is None:
+        return ()
+
+    normalized_value = disabled_passes.strip().lower()
+    if normalized_value in {"", "0", "false", "no", "off"}:
+        return ()
+    if normalized_value in {"1", "true", "yes", "on", "safe", "all"}:
+        return _SAFE_ONNX_EXPORT_PASS_NAMES
+
+    requested_passes = []
+    for raw_name in disabled_passes.split(","):
+        pass_name = raw_name.strip()
+        if not pass_name:
+            continue
+        if not pass_name.startswith("_jit_pass_"):
+            pass_name = f"_jit_pass_{pass_name}"
+        if pass_name not in _SAFE_ONNX_EXPORT_PASS_REPLACEMENTS:
+            raise ValueError(
+                "QEFF_ONNX_DISABLE_SAFE_EXPORT_PASSES can only include safe passes. "
+                f"Unknown or unsafe pass: {raw_name!r}. "
+                f"Allowed passes: {', '.join(_SAFE_ONNX_EXPORT_PASS_NAMES)}"
+            )
+        requested_passes.append(pass_name)
+    return tuple(dict.fromkeys(requested_passes))
+
+
+@contextlib.contextmanager
+def _disable_safe_onnx_export_passes_from_env():
+    pass_names = _safe_onnx_export_passes_from_env()
+    if not pass_names:
+        yield
+        return
+
+    originals = []
+    for pass_name in pass_names:
+        if not hasattr(torch._C, pass_name):
+            raise AttributeError(f"torch._C has no ONNX export pass named {pass_name}")
+        originals.append((pass_name, getattr(torch._C, pass_name)))
+        setattr(torch._C, pass_name, _SAFE_ONNX_EXPORT_PASS_REPLACEMENTS[pass_name])
+    logger.info("Disabled safe torch.onnx export passes: %s", ", ".join(pass_names))
+    try:
+        yield
+    finally:
+        for pass_name, original in reversed(originals):
+            setattr(torch._C, pass_name, original)
+
+
+def _apply_onnx_export_env_kwargs(export_kwargs: Dict) -> None:
+    do_constant_folding = os.environ.get("QEFF_ONNX_DO_CONSTANT_FOLDING")
+    if do_constant_folding is None or "do_constant_folding" in export_kwargs:
+        return
+
+    normalized_value = do_constant_folding.strip().lower()
+    if normalized_value in {"1", "true", "yes", "on"}:
+        export_kwargs["do_constant_folding"] = True
+    elif normalized_value in {"0", "false", "no", "off"}:
+        export_kwargs["do_constant_folding"] = False
+    else:
+        raise ValueError(
+            "QEFF_ONNX_DO_CONSTANT_FOLDING must be one of "
+            "1/0, true/false, yes/no, or on/off. "
+            f"Got: {do_constant_folding!r}"
+        )
+
+
+def _timed_torch_onnx_export(onnx_path: str, *args, **kwargs) -> None:
+    export_start_time = time.time()
+    try:
+        torch.onnx.export(*args, **kwargs)
+    finally:
+        export_end_time = time.time()
+        print(
+            f"[onnx export subprocess-independent profile] path={onnx_path} "
+            f"time={export_end_time - export_start_time:.2f}s",
+            flush=True,
+        )
 
 
 class QEFFBaseModel(ABC):
@@ -389,18 +522,22 @@ class QEFFBaseModel(ABC):
             dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
             input_names = aligned_input_names
 
+        _apply_onnx_export_env_kwargs(export_kwargs)
+
         try:
-            torch.onnx.export(
-                self.model,
-                (),
-                str(onnx_path),
-                kwargs=example_inputs,
-                input_names=input_names,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
-                **export_kwargs,
-            )
+            with _disable_safe_onnx_export_passes_from_env():
+                _timed_torch_onnx_export(
+                    str(onnx_path),
+                    self.model,
+                    (),
+                    str(onnx_path),
+                    kwargs=example_inputs,
+                    input_names=input_names,
+                    output_names=output_names,
+                    dynamic_axes=dynamic_axes,
+                    opset_version=constants.ONNX_EXPORT_OPSET,
+                    **export_kwargs,
+                )
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
             model = onnx.load(onnx_path, load_external_data=False)
@@ -692,18 +829,21 @@ class QEFFBaseModel(ABC):
             rename_map = {old: new for old, new in zip(input_names, aligned_input_names) if old != new}
             dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
             input_names = aligned_input_names
+        _apply_onnx_export_env_kwargs(export_kwargs)
         if not os.path.isfile(layer_onnx_path):
-            torch.onnx.export(
-                self.model,
-                (),
-                layer_onnx_path_tmp,
-                kwargs=example_inputs,
-                input_names=input_names,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
-                **export_kwargs,
-            )
+            with _disable_safe_onnx_export_passes_from_env():
+                _timed_torch_onnx_export(
+                    layer_onnx_path_tmp,
+                    self.model,
+                    (),
+                    layer_onnx_path_tmp,
+                    kwargs=example_inputs,
+                    input_names=input_names,
+                    output_names=output_names,
+                    dynamic_axes=dynamic_axes,
+                    opset_version=constants.ONNX_EXPORT_OPSET,
+                    **export_kwargs,
+                )
             total_end = time.time()
             print(f"\nTotal export time: {total_end - start_time:.2f} seconds")
 
@@ -1007,9 +1147,16 @@ class QEFFBaseModel(ABC):
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
 
+        compiler_subprocess_start_time = time.time()
         try:
             subprocess.run(command, capture_output=True, check=True)
+            compiler_subprocess_end_time = time.time()
         except subprocess.CalledProcessError as e:
+            compiler_subprocess_end_time = time.time()
+            print(
+                f"[compiler subprocess profile] time={compiler_subprocess_end_time - compiler_subprocess_start_time:.2f}s",
+                flush=True,
+            )
             raise RuntimeError(
                 "\n".join(
                     [
@@ -1021,6 +1168,10 @@ class QEFFBaseModel(ABC):
                     ]
                 )
             )
+        print(
+            f"[compiler subprocess profile] time={compiler_subprocess_end_time - compiler_subprocess_start_time:.2f}s",
+            flush=True,
+        )
         # Dump JSON file with hashed parameters
         hashed_compile_params_path = compile_dir / "hashed_compile_params.json"
         create_json(hashed_compile_params_path, compile_hash_params)
