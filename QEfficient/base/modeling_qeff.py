@@ -8,6 +8,7 @@
 import gc
 import inspect
 import logging
+import os
 import shutil
 import subprocess
 import warnings
@@ -48,8 +49,56 @@ from QEfficient.utils import (
     to_named_specializations,
 )
 from QEfficient.utils.export_utils import export_wrapper
+from QEfficient.utils.mem_profile import (
+    ExportMemoryProfiler,
+    flatten_torch_tensors,
+    onnx_initializer_summary,
+    profile_torch_onnx_internals,
+)
+from QEfficient.utils.onnx_external_weights import (
+    attach_external_initializers_from_torch,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class LowMemoryExternalInitializerError(RuntimeError):
+    """Raised when low-memory ONNX initializer reconstruction is incomplete."""
+
+
+def _validate_low_memory_external_initializers(
+    model, external_summary: Dict[str, object], input_names: List[str]
+) -> None:
+    """Validate that externalized torch weights are no longer graph inputs."""
+
+    unsupported_count = int(external_summary.get("unsupported_initializer_input_count", 0))
+    if unsupported_count:
+        raise LowMemoryExternalInitializerError(
+            "Low-memory ONNX export could not externalize graph inputs with unsupported dtypes: "
+            f"{external_summary.get('unsupported_initializer_inputs', [])}"
+        )
+
+    missing_count = int(external_summary.get("missing_initializer_input_count", 0))
+    if missing_count:
+        raise LowMemoryExternalInitializerError(
+            "Low-memory ONNX export left torch parameter/buffer inputs unattached: "
+            f"{external_summary.get('missing_initializer_inputs', [])}"
+        )
+
+    graph_input_names = {graph_input.name for graph_input in model.graph.input}
+    initializer_names = {initializer.name for initializer in model.graph.initializer}
+    overlapping_names = sorted(graph_input_names & initializer_names)
+    if overlapping_names:
+        raise LowMemoryExternalInitializerError(
+            f"Low-memory ONNX export left initializer names in graph inputs: {overlapping_names[:10]}"
+        )
+
+    unexpected_graph_inputs = sorted(graph_input_names - set(input_names))
+    if unexpected_graph_inputs:
+        raise LowMemoryExternalInitializerError(
+            "Low-memory ONNX export could not resolve unexpected graph inputs after external initializer "
+            f"attachment: {unexpected_graph_inputs[:10]}"
+        )
 
 
 class QEFFBaseModel(ABC):
@@ -307,6 +356,18 @@ class QEFFBaseModel(ABC):
         """
         # TODO: Hack for retain_full_kv, handle this outside
         export_kwargs.pop("retain_full_kv", None)
+        low_memory_external_initializers = export_kwargs.pop("_qeff_low_memory_external_initializers", False)
+        export_params_disabled = export_kwargs.get("export_params") is False or os.environ.get(
+            "QEFF_ONNX_EXPORT_PARAMS", ""
+        ).lower() in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+        low_memory_external_initializers = low_memory_external_initializers or export_params_disabled
+        if low_memory_external_initializers:
+            export_kwargs.setdefault("export_params", False)
         onnx_path = export_dir / f"{self.model_name}.onnx"
 
         # Return early if ONNX already exists
@@ -388,51 +449,120 @@ class QEFFBaseModel(ABC):
             dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
             input_names = aligned_input_names
 
-        try:
-            torch.onnx.export(
-                self.model,
-                (),
-                str(onnx_path),
-                kwargs=example_inputs,
-                input_names=input_names,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
-                **export_kwargs,
-            )
-            logger.info("PyTorch export successful")
-            _ = self._offload_model_weights(offload_pt_weights)
-            model = onnx.load(onnx_path, load_external_data=False)
+        with ExportMemoryProfiler(f"{self.model_name}._export") as mem_profiler:
+            mem_profiler.tensor_summary("model.parameters", self.model.parameters())
+            mem_profiler.tensor_summary("model.buffers", self.model.buffers())
+            mem_profiler.tensor_summary("example_inputs", flatten_torch_tensors(example_inputs))
 
-            needs_external_tensor_data = any(
-                transform in self._onnx_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)
-            )
-            transform_kwargs = {
-                "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
-                "model_name": self.model_name,
-            }
-            if onnx_transform_kwargs is not None:
-                transform_kwargs.update(onnx_transform_kwargs)
+            def _cleanup_partial_low_memory_export():
+                for path in (
+                    onnx_path,
+                    onnx_path.with_name(f"{onnx_path.name}.data"),
+                    onnx_path.with_suffix(onnx_path.suffix + ".tmp"),
+                ):
+                    path.unlink(missing_ok=True)
 
-            onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
-            model, transformed = onnx_transforms.apply(model, **transform_kwargs)
+            def _run_torch_onnx_export(current_export_kwargs, stage_name):
+                with mem_profiler.stage(stage_name), profile_torch_onnx_internals(mem_profiler):
+                    torch.onnx.export(
+                        self.model,
+                        (),
+                        str(onnx_path),
+                        kwargs=example_inputs,
+                        input_names=input_names,
+                        output_names=output_names,
+                        dynamic_axes=dynamic_axes,
+                        opset_version=constants.ONNX_EXPORT_OPSET,
+                        **current_export_kwargs,
+                    )
+                logger.info("PyTorch export successful")
+                mem_profiler.snapshot(
+                    f"{stage_name}.file",
+                    {
+                        "onnx_path": str(onnx_path),
+                        "file_size_bytes": onnx_path.stat().st_size if onnx_path.exists() else None,
+                    },
+                )
 
-            # Add metadata to the model
-            model.metadata_props.append(
-                onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
-            )
-            logger.info("ONNX transforms applied")
+            def _load_model_with_external_initializers():
+                with mem_profiler.stage("onnx.load.graph_only", {"load_external_data": False}):
+                    graph_model = onnx.load(onnx_path, load_external_data=False)
+                with mem_profiler.stage("onnx.attach_external_initializers"):
+                    external_summary = attach_external_initializers_from_torch(graph_model, self.model, onnx_path)
+                _validate_low_memory_external_initializers(graph_model, external_summary, input_names)
+                mem_profiler.snapshot("onnx.attach_external_initializers.summary", external_summary)
+                return graph_model
 
-            onnx_path_tmp = onnx_path.with_suffix(onnx_path.suffix + ".tmp")
-            onnx.save(model, onnx_path_tmp)
-            onnx_path_tmp.replace(onnx_path)
-            del model
-            gc.collect()
-            logger.info("Transformed ONNX saved")
+            try:
+                _run_torch_onnx_export(export_kwargs, "torch.onnx.export")
 
-        except Exception as e:
-            logger.error(f"ONNX export or transforms failed: {e}")
-            raise e
+                needs_external_tensor_data = any(
+                    transform in self._onnx_transforms for transform in (FP16ClipTransform, SplitTensorsTransform)
+                )
+                if low_memory_external_initializers and needs_external_tensor_data:
+                    raise RuntimeError(
+                        "QEFF_LOW_MEMORY_ONNX_EXPORT is incompatible with ONNX transforms that need tensor data "
+                        "loaded into the ModelProto. Disable FP16ClipTransform/SplitTensorsTransform or unset "
+                        "QEFF_LOW_MEMORY_ONNX_EXPORT."
+                    )
+
+                if low_memory_external_initializers:
+                    try:
+                        model = _load_model_with_external_initializers()
+                    except LowMemoryExternalInitializerError as exc:
+                        logger.warning(
+                            "Low-memory ONNX external initializer reconstruction failed with default constant "
+                            "folding; retrying once with do_constant_folding=False. Error: %s",
+                            exc,
+                        )
+                        _cleanup_partial_low_memory_export()
+                        retry_export_kwargs = dict(export_kwargs)
+                        retry_export_kwargs["do_constant_folding"] = False
+                        _run_torch_onnx_export(retry_export_kwargs, "torch.onnx.export.retry_without_constant_folding")
+                        model = _load_model_with_external_initializers()
+                    with mem_profiler.stage("offload_pt_weights", {"enabled": offload_pt_weights}):
+                        _ = self._offload_model_weights(offload_pt_weights)
+                else:
+                    with mem_profiler.stage("offload_pt_weights", {"enabled": offload_pt_weights}):
+                        _ = self._offload_model_weights(offload_pt_weights)
+                    with mem_profiler.stage("onnx.load", {"load_external_data": False}):
+                        model = onnx.load(onnx_path, load_external_data=False)
+                mem_profiler.snapshot("onnx.load.summary", onnx_initializer_summary(model))
+
+                transform_kwargs = {
+                    "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
+                    "model_name": self.model_name,
+                }
+                if onnx_transform_kwargs is not None:
+                    transform_kwargs.update(onnx_transform_kwargs)
+
+                onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
+                with mem_profiler.stage("onnx.transforms", {"transforms": ",".join(self._transform_names())}):
+                    model, transformed = onnx_transforms.apply(model, **transform_kwargs)
+
+                # Add metadata to the model
+                model.metadata_props.append(
+                    onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
+                )
+                logger.info("ONNX transforms applied")
+
+                onnx_path_tmp = onnx_path.with_suffix(onnx_path.suffix + ".tmp")
+                with mem_profiler.stage("onnx.save"):
+                    if low_memory_external_initializers:
+                        with open(onnx_path_tmp, "wb") as onnx_file:
+                            onnx_file.write(model.SerializeToString())
+                    else:
+                        onnx.save(model, onnx_path_tmp)
+                with mem_profiler.stage("onnx.replace"):
+                    onnx_path_tmp.replace(onnx_path)
+                with mem_profiler.stage("onnx.model.free"):
+                    del model
+                    gc.collect()
+                logger.info("Transformed ONNX saved")
+
+            except Exception as e:
+                logger.error(f"ONNX export or transforms failed: {e}")
+                raise e
 
         self.onnx_path = onnx_path
         return onnx_path

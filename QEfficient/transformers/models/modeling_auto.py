@@ -16,6 +16,7 @@ import onnx
 import torch
 import torch.nn as nn
 from transformers import (
+    AutoConfig,
     AutoImageProcessor,
     AutoModel,
     AutoModelForCausalLM,
@@ -80,6 +81,10 @@ from QEfficient.utils import (
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.safetensor_materializer import (
+    load_hf_model_with_optional_safetensor_streaming,
+    prepare_safetensor_streaming_from_pretrained_source,
+)
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
 CUSTOM_IO_DTYPE_MAP = {
@@ -311,8 +316,12 @@ class QEFFTransformersBase(QEFFBaseModel):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        _resolve_torch_dtype(kwargs)
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
+            pretrained_model_name_or_path, kwargs
+        )
+        model = load_hf_model_with_optional_safetensor_streaming(
+            cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs
+        )
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
@@ -479,8 +488,12 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        _resolve_torch_dtype(kwargs)
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
+            pretrained_model_name_or_path, kwargs
+        )
+        model = load_hf_model_with_optional_safetensor_streaming(
+            cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs
+        )
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)
@@ -860,8 +873,12 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        _resolve_torch_dtype(kwargs)
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
+            pretrained_model_name_or_path, kwargs
+        )
+        model = load_hf_model_with_optional_safetensor_streaming(
+            cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs
+        )
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
 
@@ -1460,8 +1477,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             }
         )
 
-        _resolve_torch_dtype(kwargs)
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
+            pretrained_model_name_or_path, kwargs
+        )
+        model = load_hf_model_with_optional_safetensor_streaming(
+            cls._hf_auto_class, pretrained_model_name_or_path, (), kwargs
+        )
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
@@ -2612,13 +2633,17 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        from transformers import AutoConfig
-
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
-        _resolve_torch_dtype(kwargs)
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
+        kwargs["config"] = config
+        pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
+            pretrained_model_name_or_path, kwargs
+        )
+        model = load_hf_model_with_optional_safetensor_streaming(
+            cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs
+        )
+        kwargs.pop("config", None)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
@@ -3276,8 +3301,8 @@ class QEFFAutoModelForImageTextToText:
             }
         )
 
-        _resolve_torch_dtype(kwargs)
         if layerwise:
+            _resolve_torch_dtype(kwargs)
             # Layer-wise mode: build the outer model on the meta device so the
             # caller's ``from_pretrained`` does not pull the full checkpoint
             # into RAM. compile()/export() rebuilds a real per-window model
@@ -3285,7 +3310,12 @@ class QEFFAutoModelForImageTextToText:
             # only used as a config holder.
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
         else:
-            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+            pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
+                pretrained_model_name_or_path, kwargs
+            )
+            model = load_hf_model_with_optional_safetensor_streaming(
+                cls._hf_auto_class, pretrained_model_name_or_path, (), kwargs
+            )
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
@@ -3551,15 +3581,20 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             }
         )
 
-        _resolve_torch_dtype(kwargs)
         if layerwise:
+            _resolve_torch_dtype(kwargs)
             # Layer-wise mode: build the outer model on the meta device. The
             # caller still gets a typed wrapper, but no checkpoint weights are
             # pulled into RAM. compile()/export() rebuilds a real per-window
             # model internally via the layer-wise driver.
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
         else:
-            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+            pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
+                pretrained_model_name_or_path, kwargs
+            )
+            model = load_hf_model_with_optional_safetensor_streaming(
+                cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs
+            )
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
 
@@ -5081,8 +5116,12 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
-        _resolve_torch_dtype(kwargs)
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
+            pretrained_model_name_or_path, kwargs
+        )
+        model = load_hf_model_with_optional_safetensor_streaming(
+            cls._hf_auto_class, pretrained_model_name_or_path, args, kwargs
+        )
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)

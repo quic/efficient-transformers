@@ -759,8 +759,9 @@ class QEffQwen3VLMoeModel(Qwen3VLMoeModel):
 class QEffQwen3VLEncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
-        self.model = model.model
-        self.model.vision_model = self.model.visual
+        self.config = model.config
+        self.visual = model.model.visual
+        self.vision_model = self.visual
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
@@ -769,10 +770,10 @@ class QEffQwen3VLEncoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.visual.blocks[0].__class__}
+        return {self.visual.blocks[0].__class__}
 
     def forward(self, pixel_values, image_grid_thw):
-        image_embeds, deepstack_feature_lists = self.model.visual(pixel_values, grid_thw=image_grid_thw)
+        image_embeds, deepstack_feature_lists = self.visual(pixel_values, grid_thw=image_grid_thw)
         bs = image_grid_thw.shape[0]
         split_size = torch.floor_divide(torch.tensor(image_embeds.size(0)), bs)
         image_embeds = image_embeds.reshape(bs, split_size, image_embeds.size(1))
@@ -811,8 +812,10 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
 
     def __init__(self, model):
         super().__init__()
-        self.model = model
-        self.language_model = self.model.model.language_model
+        self.config = model.config
+        self.image_token_id = model.config.image_token_id
+        self.language_model = model.model.language_model
+        self.lm_head = model.lm_head
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
@@ -836,7 +839,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
         if inputs_embeds is None:
-            inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
+            inputs_embeds = self.language_model.embed_tokens(input_ids)
         else:
             inputs_embeds = inputs_embeds
 
@@ -844,7 +847,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             # Default (non-layerwise) path: image merge + full decoder + lm_head in
             # a single forward, identical to the pre-layerwise behavior/output contract.
             B, N, C = inputs_embeds.shape
-            selected = input_ids == self.model.config.image_token_id
+            selected = input_ids == self.image_token_id
             indices1 = selected.to(torch.int64).cumsum(1) - 1
             indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
             indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
@@ -875,13 +878,13 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
             hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-            logits = self.model.lm_head(hidden_states)
+            logits = self.lm_head(hidden_states)
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
 
         if QEffQwen3VLMoeTextModel._start == 0:
             B, N, C = inputs_embeds.shape
-            selected = input_ids == self.model.config.image_token_id
+            selected = input_ids == self.image_token_id
             indices1 = selected.to(torch.int64).cumsum(1) - 1
             indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
             indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
@@ -935,7 +938,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
             hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-            logits = self.model.lm_head(hidden_states)
+            logits = self.lm_head(hidden_states)
             return logits, outputs.past_key_values
 
         else:

@@ -119,7 +119,6 @@ pip install dist/qefficient-0.0.1.dev0-py3-none-any.whl
 
 For more details about using ``QEfficient`` via Cloud AI 100 Apps SDK, visit [Linux Installation Guide](https://quic.github.io/efficient-transformers/source/installation.html)
 
-
 ## Documentation
 
 * [Quick Start Guide](https://quic.github.io/efficient-transformers/source/quick_start.html)

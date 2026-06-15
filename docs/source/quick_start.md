@@ -37,6 +37,15 @@ User can export a model to ONNX using the CLI command. This will convert the mod
 ```bash
 python -m QEfficient.cloud.export --model_name gpt2
 ```
+
+**Low-memory export options**
+
+When `torch_dtype` is passed to `QEFFAutoModelForCausalLM.from_pretrained`, QEfficient treats it as the load/export precision. For safetensor checkpoints, floating tensors are streamed directly into a meta-initialized model and cast one tensor at a time. For example, `torch_dtype=torch.float16` loads fp16 weights without creating a second converted checkpoint copy on disk.
+
+If `torch_dtype` is omitted, QEfficient follows the existing default load path. ONNX initializer offload is opt-in and is not enabled by default. Set `QEFF_LOW_MEMORY_ONNX_EXPORT=1`, pass `export_params=False` to `export()`, or set `QEFF_ONNX_EXPORT_PARAMS=0` to export the ONNX graph first and then attach PyTorch weights as external ONNX initializers. This keeps initializer bytes out of the in-memory `ModelProto` during transform/save while preserving the exporter default constant-folding behavior unless explicitly overridden.
+
+`QEFF_LOW_MEMORY_ONNX_EXPORT=1` is ignored for ONNX subfunctions and transforms that need tensor data loaded in memory; explicit `export_params=False` or `QEFF_ONNX_EXPORT_PARAMS=0` remains a hard request and will fail if those transforms require initializer tensors in the graph.
+
 ---
 
 #### Compile

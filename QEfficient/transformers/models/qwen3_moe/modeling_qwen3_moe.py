@@ -208,7 +208,7 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         if self.norm_topk_prob:
             top_w /= top_w.sum(-1, keepdim=True)
         top_w = top_w.to(hidden_states.dtype)
-        routing_weights = torch.zeros_like(router_logits)
+        routing_weights = hidden_states.new_zeros(router_logits.shape)
         routing_weights.scatter_(1, top_i, top_w)
 
         gate_proj_w, up_proj_w, down_proj_w = self._split_expert_weights(H)
@@ -229,7 +229,7 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         if self.norm_topk_prob:
             top_w /= top_w.sum(-1, keepdim=True)
         top_w = top_w.to(hidden_states.dtype)
-        routing_weights = torch.zeros_like(router_logits)
+        routing_weights = hidden_states.new_zeros(router_logits.shape)
         routing_weights.scatter_(1, top_i, top_w)
 
         num_nsp = getattr(self, "expert_blocking_num_nsp", self.num_experts)

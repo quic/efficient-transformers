@@ -7,6 +7,7 @@
 
 import argparse
 
+import torch
 from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
@@ -22,6 +23,17 @@ def main():
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
     parser.add_argument("--aic-hw-version", type=str, default="ai100", help="Version of aic hardware")
     parser.add_argument(
+        "--torch-dtype",
+        choices=["float16", "bfloat16", "float32"],
+        default=None,
+        help=(
+            "Optional load/export precision. For example, float16 streams floating "
+            "safetensor weights into the model as fp16 one tensor at a time, avoiding "
+            "an extra checkpoint copy during export. If omitted, QEfficient uses its "
+            "existing default loading behavior."
+        ),
+    )
+    parser.add_argument(
         "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         default=None,
@@ -29,9 +41,15 @@ def main():
     )
     args = parser.parse_args()
 
-    # Load tokenizer and model
+    # Load tokenizer and model. If --torch-dtype is set, QEfficient uses that
+    # precision for load/export and streams safetensors directly into the model to
+    # reduce host RAM during export. Leaving it unset preserves the existing
+    # default loader path.
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
+    model_kwargs = {}
+    if args.torch_dtype is not None:
+        model_kwargs["torch_dtype"] = getattr(torch, args.torch_dtype)
+    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, **model_kwargs)
 
     # Compile the model
     qpc_path = model.compile(

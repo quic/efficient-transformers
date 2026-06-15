@@ -5,10 +5,17 @@
 #
 # -----------------------------------------------------------------------------
 
+import onnx
 import pytest
-from transformers import AutoConfig, AutoModelForCausalLM
+from onnx import TensorProto
+from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForSequenceClassification
 
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+from QEfficient.base import modeling_qeff
+from QEfficient.transformers.models.modeling_auto import (
+    QEFFAutoModelForCausalLM,
+    QEFFAutoModelForSequenceClassification,
+)
+from QEfficient.utils.export_utils import _apply_low_memory_export_defaults
 
 # Simple test config for memory reduction testing
 test_config = AutoConfig.for_model(
@@ -79,6 +86,105 @@ def test_re_export_behavior_with_offloaded_weights(tmp_cache):
     # Re-export should fail with RuntimeError due to offloaded weights
     with pytest.raises(RuntimeError, match="weights have been offloaded"):
         qeff_model.export()
+
+
+def test_default_export_keeps_initializers_inline(tmp_cache):
+    """Low-memory ONNX initializer offload is opt-in, not the default export path."""
+    model = AutoModelForCausalLM.from_config(test_config, **model_kwargs)
+    qeff_model = QEFFAutoModelForCausalLM(model, continuous_batching=False)
+
+    onnx_path = qeff_model.export(tmp_cache / "default", offload_pt_weights=False)
+    graph_only_model = onnx.load(onnx_path, load_external_data=False)
+
+    assert graph_only_model.graph.initializer
+    assert all(initializer.data_location != TensorProto.EXTERNAL for initializer in graph_only_model.graph.initializer)
+
+
+def test_low_memory_export_keeps_constant_folding_default(monkeypatch):
+    monkeypatch.setenv("QEFF_LOW_MEMORY_ONNX_EXPORT", "1")
+    kwargs = {}
+
+    class DummyQEFFModel:
+        _onnx_transforms = []
+
+    _apply_low_memory_export_defaults(DummyQEFFModel(), kwargs)
+
+    assert kwargs["export_params"] is False
+    assert "do_constant_folding" not in kwargs
+
+
+def _tiny_sequence_classification_qeff_model():
+    config = AutoConfig.for_model(
+        "bert",
+        hidden_size=8,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        intermediate_size=16,
+        vocab_size=17,
+        max_position_embeddings=64,
+        num_labels=2,
+    )
+    model = AutoModelForSequenceClassification.from_config(config)
+    model.eval()
+    return QEFFAutoModelForSequenceClassification(model)
+
+
+def test_low_memory_export_retries_without_constant_folding_on_externalizer_validation_failure(tmp_cache, monkeypatch):
+    monkeypatch.setenv("QEFF_LOW_MEMORY_ONNX_EXPORT", "1")
+    export_constant_folding_values = []
+    original_export = modeling_qeff.torch.onnx.export
+
+    def export_spy(*args, **kwargs):
+        export_constant_folding_values.append(kwargs.get("do_constant_folding", "unset"))
+        return original_export(*args, **kwargs)
+
+    original_attach = modeling_qeff.attach_external_initializers_from_torch
+    attach_call_count = 0
+
+    def attach_spy(*args, **kwargs):
+        nonlocal attach_call_count
+        attach_call_count += 1
+        summary = dict(original_attach(*args, **kwargs))
+        if attach_call_count == 1:
+            summary["missing_initializer_input_count"] = 1
+            summary["missing_initializer_inputs"] = ["bert.embeddings.word_embeddings.weight"]
+        return summary
+
+    monkeypatch.setattr(modeling_qeff.torch.onnx, "export", export_spy)
+    monkeypatch.setattr(modeling_qeff, "attach_external_initializers_from_torch", attach_spy)
+    qeff_model = _tiny_sequence_classification_qeff_model()
+
+    onnx_path = qeff_model.export(tmp_cache / "retry")
+
+    assert onnx_path.is_file()
+    assert attach_call_count == 2
+    assert export_constant_folding_values == ["unset", False]
+
+
+def test_low_memory_export_externalizes_initializers(tmp_cache, monkeypatch):
+    """Low-memory export keeps ONNX initializer bytes out of the in-memory ModelProto."""
+    monkeypatch.setenv("QEFF_LOW_MEMORY_ONNX_EXPORT", "1")
+    model = AutoModelForCausalLM.from_config(test_config, **model_kwargs)
+    qeff_model = QEFFAutoModelForCausalLM(model, continuous_batching=False)
+
+    onnx_path = qeff_model.export(tmp_cache / "lowmem", offload_pt_weights=False)
+    onnx.checker.check_model(str(onnx_path), full_check=False)
+    graph_only_model = onnx.load(onnx_path, load_external_data=False)
+
+    external_initializers = [
+        initializer
+        for initializer in graph_only_model.graph.initializer
+        if initializer.data_location == TensorProto.EXTERNAL
+    ]
+    assert external_initializers
+    assert all(len(initializer.raw_data) == 0 for initializer in external_initializers)
+
+    graph_input_names = {graph_input.name for graph_input in graph_only_model.graph.input}
+    initializer_names = {initializer.name for initializer in graph_only_model.graph.initializer}
+    assert graph_input_names.isdisjoint(initializer_names)
+
+    loaded_model = onnx.load(onnx_path, load_external_data=True)
+    assert sum(len(initializer.raw_data) for initializer in loaded_model.graph.initializer) > 0
 
 
 def test_vlm_dual_qpc_memory_offload_behavior():
