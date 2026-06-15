@@ -1,0 +1,36 @@
+name: Docs Check
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    name: Build & Link Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install doc dependencies
+        run: |
+          pip install "mkdocs>=1.6" "mkdocs-material>=9.5" "mkdocstrings[python]>=0.25" "mike>=2.0"
+          pip install -e . --no-deps --no-build-isolation
+
+      - name: Build docs (strict mode)
+        run: mkdocs build --strict
+
+      - name: Check for broken links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >
+            --base site/
+            --no-progress
+            --exclude-all-private
+            --exclude "https://huggingface.co"
+            site/**/*.html
+          fail: true
