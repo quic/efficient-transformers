@@ -1216,6 +1216,15 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.model = model.get_qeff_language_decoder()
         self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+        if str(getattr(self.model.config, "model_type", "")).startswith("qwen3_5_moe"):
+            qwen35_graph_flags = {
+                "QEFF_QWEN35_MOE_TANH_SHARED_GATE": "tanh_shared_gate",
+                "QEFF_QWEN35_MOE_TANH_LINEAR_BETA": "tanh_linear_beta",
+                "QEFF_QWEN35_MOE_TANH_ATTN_GATE": "tanh_attn_gate",
+                "QEFF_QWEN35_MOE_FORCE_RECURRENT_DECODE": "force_recurrent_decode",
+            }
+            for env_name, hash_name in qwen35_graph_flags.items():
+                self.hash_params[env_name] = os.environ.get(env_name, "0")
         self.continuous_batching = False
 
     def __update_prefill_transform(
@@ -2233,13 +2242,31 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         batch_size, ctx_len, fbs = get_compilation_dims(self.lang_model.qpc_path)
 
         pad_token_id = 1
+        internal_retained_state_outputs = {
+            _state_input_name(output_name): output_name
+            for output_name in lang_session.output_names
+            if output_name.endswith("_InternalRetainedState")
+        }
+
+        def _is_internal_retained_state_io(name):
+            return name in internal_retained_state_outputs or name in internal_retained_state_outputs.values()
+
+        def _zero_binding(name):
+            binding = lang_session.bindings[lang_session.binding_index_map[name]]
+            dtype = lang_session.aic_to_np_dtype_mapping[binding.type]
+            return np.zeros(tuple(binding.dims), dtype=dtype)
+
+        def _update_internal_retained_states(target_inputs, outputs):
+            for input_name, output_name in internal_retained_state_outputs.items():
+                if output_name in outputs:
+                    target_inputs[input_name] = outputs[output_name]
 
         # Skip inputs/outputs
         lang_session.skip_buffers(
             [
                 x
                 for x in lang_session.input_names + lang_session.output_names
-                if is_retained_state_name(x) or x.endswith("_RetainedState")
+                if (is_retained_state_name(x) or x.endswith("_RetainedState")) and not _is_internal_retained_state_io(x)
             ]
         )
 
@@ -2333,6 +2360,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         lang_session.activate()
 
         lang_session.set_buffers(vision_outputs)
+        for input_name in internal_retained_state_outputs:
+            if input_name in lang_session.input_names and input_name not in lang_inputs:
+                lang_inputs[input_name] = _zero_binding(input_name)
 
         if self.comp_ctx_lengths_prefill is not None:
             list_of_comp_ctx_lengths_prefill = [
@@ -2410,6 +2440,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 lang_session.set_buffers({"logits": np.zeros(logits_shape, dtype=logits_dtype)})
             outputs = lang_session.run(chunk_inputs)
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
+            _update_internal_retained_states(chunk_inputs, outputs)
+            _update_internal_retained_states(lang_inputs, outputs)
 
             if self._write_io_dir is not None:
                 write_io_files(lang_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
@@ -2420,7 +2452,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             [
                 x
                 for x in lang_session.input_names + lang_session.output_names
-                if is_retained_state_name(x) or x.endswith("_RetainedState")
+                if (is_retained_state_name(x) or x.endswith("_RetainedState")) and not _is_internal_retained_state_io(x)
             ]
         )
         if not_mllama:
@@ -2475,6 +2507,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 self._write_io_dir = None
 
             # Prepare inputs for next iteration
+            _update_internal_retained_states(lang_inputs, outputs)
             lang_inputs["input_ids"] = outputs["logits"].argmax(2)
             lang_inputs["position_ids"] += 1
             if "mm_token_type_ids" in lang_inputs:
@@ -3655,6 +3688,15 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.hash_params["NUM_Q_BLOCKS"] = num_q_blocks
         self.hash_params["NUM_FFN_BLOCKS"] = num_ffn_blocks
         self.hash_params["ENABLE_OPT_SWA"] = os.environ.get("ENABLE_OPT_SWA", "0")
+        if str(getattr(self.model.config, "model_type", "")).startswith("qwen3_5_moe"):
+            qwen35_graph_flags = {
+                "QEFF_QWEN35_MOE_TANH_SHARED_GATE": "tanh_shared_gate",
+                "QEFF_QWEN35_MOE_TANH_LINEAR_BETA": "tanh_linear_beta",
+                "QEFF_QWEN35_MOE_TANH_ATTN_GATE": "tanh_attn_gate",
+                "QEFF_QWEN35_MOE_FORCE_RECURRENT_DECODE": "force_recurrent_decode",
+            }
+            for env_name, hash_name in qwen35_graph_flags.items():
+                self.hash_params[env_name] = os.environ.get(env_name, "0")
         return (
             min_seq_len
             if min_seq_len > constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN

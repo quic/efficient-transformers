@@ -9,8 +9,10 @@ import math
 import os
 from typing import List, Optional, Tuple, Type, Union
 
+import onnx
 import torch
 import torch.nn.functional as F
+import yaml
 from torch import nn
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
@@ -538,7 +540,12 @@ class QEffQwen3_5MoeAttention(Qwen3_5MoeAttention):
             )
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-        attn_output = attn_output * torch.sigmoid(gate)
+        if os.getenv("QEFF_QWEN35_MOE_TANH_ATTN_GATE", "0") == "1":
+            gate = 0.5 * (torch.tanh(0.5 * gate.float()) + 1.0)
+            gate = gate.to(attn_output.dtype)
+        else:
+            gate = torch.sigmoid(gate)
+        attn_output = attn_output * gate
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
 
@@ -808,7 +815,12 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # ── Projections ──────────────────────────────────────
         mixed_qkv = self.in_proj_qkv(hidden_states).transpose(1, 2)
         z = self.in_proj_z(hidden_states).reshape(batch_size, seq_len, -1, self.head_v_dim)
-        beta = self.in_proj_b(hidden_states).sigmoid()
+        beta_logits = self.in_proj_b(hidden_states)
+        if os.getenv("QEFF_QWEN35_MOE_TANH_LINEAR_BETA", "0") == "1":
+            beta = 0.5 * (torch.tanh(0.5 * beta_logits.float()) + 1.0)
+            beta = beta.to(beta_logits.dtype)
+        else:
+            beta = beta_logits.sigmoid()
         g = -self.A_log.float().exp() * F.softplus(self.in_proj_a(hidden_states).float() + self.dt_bias)
 
         # ── Conv (unified, handles T=1 and T=N) ──────────────
@@ -880,31 +892,35 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             # Shape: (B, 1, H, d_v), (B, H, d_k, d_v)
             recurrent_out, recurrent_S = self._recurrent_step_batched(query, key, value, g, beta, recurrent_state)
 
-            # Prefill branch — chunked parallel scan
-            # Shape: (B, T, H, d_v), (B, H, d_k, d_v)
-            chunk_out, chunk_S = self.chunk_gated_delta_rule(
-                query,
-                key,
-                value,
-                g=g,
-                beta=beta,
-                position_ids=position_ids,
-                initial_state=recurrent_state,
-                output_final_state=True,
-                use_qk_l2norm_in_kernel=True,
-                mask_causal=self._mask_causal,
-                mask_strict=self._mask_strict,
-                ones_lower=self._ones_lower,
-                eye=self._eye,
-            )
+            if os.getenv("QEFF_QWEN35_MOE_FORCE_RECURRENT_DECODE", "0") == "1":
+                core_attn_out = recurrent_out
+                last_recurrent_state = recurrent_S
+            else:
+                # Prefill branch — chunked parallel scan
+                # Shape: (B, T, H, d_v), (B, H, d_k, d_v)
+                chunk_out, chunk_S = self.chunk_gated_delta_rule(
+                    query,
+                    key,
+                    value,
+                    g=g,
+                    beta=beta,
+                    position_ids=position_ids,
+                    initial_state=recurrent_state,
+                    output_final_state=True,
+                    use_qk_l2norm_in_kernel=True,
+                    mask_causal=self._mask_causal,
+                    mask_strict=self._mask_strict,
+                    ones_lower=self._ones_lower,
+                    eye=self._eye,
+                )
 
-            # Select based on seq_len
-            # is_decode is SCALAR — torch.where broadcasts efficiently
-            # HW predicates entire branch at runtime
-            is_decode = hidden_states.shape[1] == torch.tensor(1)
+                # Select based on seq_len
+                # is_decode is SCALAR — torch.where broadcasts efficiently
+                # HW predicates entire branch at runtime
+                is_decode = hidden_states.shape[1] == torch.tensor(1)
 
-            core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
-            last_recurrent_state = torch.where(is_decode, recurrent_S, chunk_S)
+                core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
+                last_recurrent_state = torch.where(is_decode, recurrent_S, chunk_S)
 
             if batch_index is not None:
                 recurrent_batch_index = (batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)).to(
@@ -1140,6 +1156,63 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
 
 class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
+    _NPI_PROFILES = {
+        "gemma_like": {"Cast", "Pow", "ReduceMean", "Add", "Mul", "Div", "Softmax", "Tanh", "Clip", "CustomRMSNorm"},
+    }
+    _NPI_EXCLUDED_OPS_GEMMA_LIKE = {
+        "Constant",
+        "ConstantOfShape",
+        "Concat",
+        "Equal",
+        "Gather",
+        "MatMul",
+        "Range",
+        "Reshape",
+        "Shape",
+        "Slice",
+        "Transpose",
+        "Unsqueeze",
+    }
+
+    def generate_npi_file(
+        self,
+        onnx_path: Union[str, os.PathLike],
+        model_name: Optional[str] = None,
+        profile: str = "gemma_like",
+    ) -> str:
+        del model_name
+        if onnx_path is None:
+            raise ValueError("ONNX path is required to generate Qwen3.5-MoE NPI file.")
+        if profile not in self._NPI_PROFILES:
+            supported = ", ".join(sorted(self._NPI_PROFILES.keys()))
+            raise ValueError(f"Unsupported NPI profile '{profile}'. Supported profiles: {supported}")
+
+        onnx_path = os.fspath(onnx_path)
+        model = onnx.load(onnx_path, load_external_data=False)
+        fp32_names = []
+
+        if profile == "gemma_like":
+            for node in model.graph.node:
+                if node.op_type in self._NPI_EXCLUDED_OPS_GEMMA_LIKE:
+                    continue
+                fp32_names.extend(
+                    out_name for out_name in node.output if out_name and not out_name.endswith("_RetainedState")
+                )
+            for function in model.functions:
+                if "DecoderLayer" not in function.name:
+                    continue
+                for node in function.node:
+                    if node.op_type in self._NPI_EXCLUDED_OPS_GEMMA_LIKE:
+                        continue
+                    fp32_names.extend(output_name for output_name in node.output if output_name)
+            fp32_names = [name for name in fp32_names if "MatMul" not in name]
+
+        fp32_names = list(dict.fromkeys(fp32_names))
+        npi_path = os.path.splitext(onnx_path)[0] + f"_qwen3_5_moe_{profile}_npi.yaml"
+        with open(npi_path, "w") as fp:
+            yaml.safe_dump({"FP32NodeInstanceNames": fp32_names}, fp, sort_keys=False)
+        return npi_path
+
     def get_submodules_for_export(self) -> Type[nn.Module]:
         layer_types = getattr(self.config, "layer_types", None)
         if layer_types and len(set(layer_types)) > 1:
@@ -1675,6 +1748,33 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
     def get_qeff_language_decoder(self):
         return QEffQwen3_5MoeDecoderWrapper(self)
 
+    def generate_npi_file(
+        self,
+        onnx_path: Union[str, os.PathLike],
+        model_name: Optional[str] = None,
+        profile: str = "gemma_like",
+    ) -> str:
+        language_model = getattr(self, "language_model", None)
+        if language_model is None and hasattr(self, "model"):
+            language_model = getattr(self.model, "language_model", None)
+        language_config = getattr(language_model, "config", None)
+        if language_config is None:
+            language_config = getattr(self.config, "text_config", self.config)
+
+        class _NpiProxy:
+            pass
+
+        proxy = _NpiProxy()
+        proxy.config = language_config
+        proxy._NPI_PROFILES = QEffQwen3_5MoeForCausalLM._NPI_PROFILES
+        proxy._NPI_EXCLUDED_OPS_GEMMA_LIKE = QEffQwen3_5MoeForCausalLM._NPI_EXCLUDED_OPS_GEMMA_LIKE
+        return QEffQwen3_5MoeForCausalLM.generate_npi_file(
+            proxy,
+            onnx_path,
+            model_name=model_name,
+            profile=profile,
+        )
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -1952,7 +2052,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
     ):
         inputs_shapes = {}
 
-        dummy_seq_len = 32
+        dummy_seq_len = 1 if os.getenv("QEFF_QWEN35_MOE_FORCE_RECURRENT_DECODE", "0") == "1" else 32
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, dummy_seq_len)
 
         inputs_shapes["position_ids"] = (
@@ -2148,7 +2248,13 @@ class QEffQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
         experts_out = torch.einsum("bnd->bd", experts_out)
 
         shared_expert_output = self.shared_expert(x)
-        shared_expert_output = F.sigmoid(self.shared_expert_gate(x)) * shared_expert_output
+        shared_expert_gate = self.shared_expert_gate(x)
+        if os.getenv("QEFF_QWEN35_MOE_TANH_SHARED_GATE", "0") == "1":
+            shared_expert_gate = 0.5 * (torch.tanh(0.5 * shared_expert_gate.float()) + 1.0)
+            shared_expert_gate = shared_expert_gate.to(shared_expert_output.dtype)
+        else:
+            shared_expert_gate = F.sigmoid(shared_expert_gate)
+        shared_expert_output = shared_expert_gate * shared_expert_output
 
         expert_output = experts_out + shared_expert_output
         return expert_output.reshape(B, S, H)
@@ -2281,7 +2387,13 @@ class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
         experts_out = torch.einsum("ijk->jk", expert_out)
 
         shared_expert_output = self.shared_expert(x)
-        shared_expert_output = F.sigmoid(self.shared_expert_gate(x)) * shared_expert_output
+        shared_expert_gate = self.shared_expert_gate(x)
+        if os.getenv("QEFF_QWEN35_MOE_TANH_SHARED_GATE", "0") == "1":
+            shared_expert_gate = 0.5 * (torch.tanh(0.5 * shared_expert_gate.float()) + 1.0)
+            shared_expert_gate = shared_expert_gate.to(shared_expert_output.dtype)
+        else:
+            shared_expert_gate = F.sigmoid(shared_expert_gate)
+        shared_expert_output = shared_expert_gate * shared_expert_output
 
         expert_output = experts_out + shared_expert_output
         return expert_output.reshape(B, S, H)
