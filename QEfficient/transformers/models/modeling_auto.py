@@ -1541,7 +1541,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 kv_offload=True,
                 continuous_batching=self.continuous_batching,
                 comp_ctx_lengths=self.comp_ctx_lengths_decode,
-                **dummy_inputs_kwargs,
             )
             dynamic_axes = self.model.get_onnx_dynamic_axes(
                 kv_offload=True,
@@ -2066,6 +2065,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             elif prefill_seq_len == 1:
                 specializations = specializations["lang"][-1:]
                 qpc_key = "lang_decode_qpc_path"
+            elif prefill_seq_len is not None and ctx_len is not None and prefill_seq_len == ctx_len:
+                # Single-shot mode (e.g. reranker): no decode steps, only prefill kernel needed.
+                specializations = specializations["lang"][:1]
+                qpc_key = "lang_qpc_path"
             else:
                 specializations = specializations["lang"]
                 qpc_key = "lang_qpc_path"
@@ -2818,6 +2821,11 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             **compiler_options,
         )
 
+        # Single-shot mode (reranker/embedding): no decode steps, only prefill kernel needed.
+        single_shot = prefill_seq_len is not None and ctx_len is not None and prefill_seq_len == ctx_len
+        if single_shot:
+            specializations = specializations[:1]
+
         if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
             compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
 
@@ -2834,6 +2842,11 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                     CUSTOM_IO_DTYPE_MAP[target_dtype] if "pixel_values" in input_name else kv_cache_dtype
                 )
 
+        # Single-shot mode has no retained state; pixel_values is a direct input so
+        # its dtype must still be set explicitly (float16 for hardware).
+        if single_shot:
+            custom_io["pixel_values"] = CUSTOM_IO_DTYPE_MAP[target_dtype]
+
         # TODO this hould be removed once the continous batching is supported for all the models.
         compiler_options.pop("continuous_batching", None)
         compiler_options.pop("kv_cache_batch_size", None)
@@ -2841,7 +2854,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
-            retained_state=True,
+            # Single-shot (reranker/embedding): no decode, no need for retained-state enforcement.
+            retained_state=not single_shot,
             specializations=specializations,
             convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
             mxfp6_matmul=mxfp6_matmul,

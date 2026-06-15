@@ -40,7 +40,6 @@ With compile parameters:
 ```bash
 python examples/embeddings/qwen3vl/qwen3_vl_embedding.py \
   --model-name Qwen/Qwen3-VL-Embedding-8B \
-  --ctx-len 2048 \
   --num-cores 16 \
   --num-devices 1 \
   --compile-prefill-seq-len 4096 \
