@@ -460,13 +460,15 @@ def blockwise_dequantize(
         block_size = (quantized.shape[-2], quantized.shape[-1])
 
     block_m, block_n = block_size
+    n_block_rows = (rows + block_m - 1) // block_m
+    n_block_cols = (cols + block_n - 1) // block_n
 
-    if rows % block_m != 0 or cols % block_n != 0:
-        raise ValueError(f"Matrix dimensions ({rows}, {cols}) must be divisible by block sizes ({block_m}, {block_n}).")
     quantized = quantized.to(scales.dtype)
-    reshaped = quantized.reshape(-1, rows // block_m, block_m, cols // block_n, block_n)
-    expanded_scales = scales.reshape(-1, rows // block_m, cols // block_n)
-    expanded_scales = expanded_scales.unsqueeze(-1).unsqueeze(2)
-    dequantized = reshaped * expanded_scales
-
-    return dequantized.reshape(quantized.shape)
+    # Broadcast each block-scale to its block via repeat_interleave, then trim to
+    # the actual matrix dims. Handles non-aligned tail blocks (e.g. tiny weights
+    # smaller than block_size); divisible cases are exact and bit-equivalent to
+    # the reshape form.
+    expanded_scales = scales.reshape(-1, n_block_rows, n_block_cols)
+    expanded_scales = expanded_scales.repeat_interleave(block_m, dim=-2).repeat_interleave(block_n, dim=-1)
+    expanded_scales = expanded_scales[..., :rows, :cols].reshape(quantized.shape)
+    return quantized * expanded_scales

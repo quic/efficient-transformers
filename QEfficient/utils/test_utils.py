@@ -546,7 +546,8 @@ class ModelConfig:
                 391,
                 391,
             ],
-        }
+        },
+        "deepseek-ai/DeepSeek-V4-Pro": {},
     }
 
     SWIFTKV_MODELS = {

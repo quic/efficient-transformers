@@ -164,15 +164,15 @@ class FP8BlockWiseDequantLinear(torch.nn.Module):
     def for_fp8_layer_with_blocksize(cls, in_features, out_features, weight_block_size, fmt, bias):
         fp8_dequant_layer = cls(in_features, out_features, weight_block_size, bias)
         assert fmt == "e4m3", "e5m2 is not supposed yet!!"
-        assert (in_features % weight_block_size[0]) == 0 and (out_features % weight_block_size[1]) == 0, (
-            "weight shape is not divisible by block sizes in either rows or columns or both dimensions, \
-            got in_features: {in_features}, out_features: {out_features}, weight_block_size: {weight_block_size}!!"
-        )
+        # Allow non-divisible tail blocks: the scale buffer holds one entry per
+        # block (ceil-div), and blockwise_dequantize broadcasts + trims to weight
+        # shape. Required for tiny test repos whose weight dims are smaller than
+        # the declared block_size; exact for divisible cases.
+        n_block_rows = (out_features + weight_block_size[0] - 1) // weight_block_size[0]
+        n_block_cols = (in_features + weight_block_size[1] - 1) // weight_block_size[1]
         fp8_dequant_layer.register_buffer(
             "weight_scale_inv",
-            torch.empty(
-                (out_features // weight_block_size[0], in_features // weight_block_size[1]), dtype=torch.float32
-            ),
+            torch.empty((n_block_rows, n_block_cols), dtype=torch.float32),
         )
         return fp8_dequant_layer
 
@@ -203,13 +203,18 @@ class FP8BlockWiseDequantQwen3VLMoeTextExperts(torch.nn.Module):
         self.register_buffer(
             "down_proj", torch.empty((self.num_experts, self.expert_dim, self.hidden_size), dtype=FP8_DTYPE)
         )
+        # Ceil-div for non-divisible tail blocks (same pattern as FP8BlockWiseDequantLinear).
+        n_gate_up_rows = (self.hidden_size + r - 1) // r
+        n_gate_up_cols = (2 * self.expert_dim + c - 1) // c
+        n_down_rows = (self.expert_dim + r - 1) // r
+        n_down_cols = (self.hidden_size + c - 1) // c
         self.register_buffer(
             "gate_up_proj_scale_inv",
-            torch.empty((self.num_experts, self.hidden_size // r, (2 * self.expert_dim) // c), dtype=torch.float32),
+            torch.empty((self.num_experts, n_gate_up_rows, n_gate_up_cols), dtype=torch.float32),
         )
         self.register_buffer(
             "down_proj_scale_inv",
-            torch.empty((self.num_experts, self.expert_dim // r, self.hidden_size // c), dtype=torch.float32),
+            torch.empty((self.num_experts, n_down_rows, n_down_cols), dtype=torch.float32),
         )
         self.act_fn = act_fn
 
@@ -230,8 +235,8 @@ class FP8BlockWiseDequantQwen3VLMoeTextExperts(torch.nn.Module):
         hidden_states = hidden_states.reshape(-1, self.hidden_size)  # (num_tokens, hidden_size)
         hidden_states = hidden_states.repeat(self.num_experts, 1)
         hidden_states = hidden_states.view(self.num_experts, -1, self.hidden_size)
-        gate_up_proj = blockwise_dequantize(self.gate_up_proj, self.gate_up_proj_inv_scale, self.weights_block_size)
-        down_proj = blockwise_dequantize(self.down_proj, self.down_proj_inv_scale, self.weights_block_size)
+        gate_up_proj = blockwise_dequantize(self.gate_up_proj, self.gate_up_proj_scale_inv, self.weights_block_size)
+        down_proj = blockwise_dequantize(self.down_proj, self.down_proj_scale_inv, self.weights_block_size)
         gate_up = torch.bmm(hidden_states, gate_up_proj)
         gate, up = gate_up.chunk(2, dim=-1)  # not supported for DTensors
         next_states = torch.bmm((up * self.act_fn(gate)), down_proj)
@@ -251,6 +256,7 @@ class QEffFP8Config(QuantizationConfigMixin):
         run_compressed: bool = False,
         fmt: str = None,
         weight_block_size: List[int] = None,
+        **kwargs,
     ):
         self.quant_method = quant_method
         self.activation_scheme = activation_scheme
