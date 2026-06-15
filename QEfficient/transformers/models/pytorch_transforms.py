@@ -1346,6 +1346,8 @@ class BlockingAttentionTransform:
     @classmethod
     def apply(cls, model: nn.Module, attn_blocking_config) -> Tuple[nn.Module, bool]:
         transformed = False
+        model_config = getattr(model, "config", None) or getattr(getattr(model, "model", None), "config", None)
+        model_architectures = getattr(model_config, "architectures", None) or []
         supported_attention_classes = {
             qeff_class
             for qeff_class in KVCacheTransform._module_mapping.values()
@@ -1355,9 +1357,7 @@ class BlockingAttentionTransform:
             if type(module) in cls._skip_classes:
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
                 continue
-            if type(module) in supported_attention_classes or "DeepseekV3ForCausalLM" in (
-                getattr(model.config, "architectures", None) or []
-            ):
+            if type(module) in supported_attention_classes or "DeepseekV3ForCausalLM" in model_architectures:
                 module.attn_blocking_config = attn_blocking_config
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
