@@ -35,6 +35,7 @@ from QEfficient.utils.logging_utils import logger
 # image_idx, deepstack_features, ...) are intentionally excluded.
 _KV_RETAINED_STEMS = ("past_key.", "past_value.", "compressed_kv.", "k_pe.")
 _RETAINED_STATE_SUFFIX = "_RetainedState"
+_RETAINED_STATE_SUFFIXES = ("_InternalRetainedState", "_RetainedState")
 
 
 def validate_kv_cache_prefix(kv_cache_prefix: Optional[str]) -> Optional[str]:
@@ -59,13 +60,18 @@ def validate_kv_cache_prefix(kv_cache_prefix: Optional[str]) -> Optional[str]:
 
 
 def _infix_kv_prefix(name: str, kv_cache_prefix: str) -> str:
-    """Insert ``_<prefix>`` before the ``_RetainedState`` suffix for LLM KV-cache buffers only."""
-    if not name.endswith(_RETAINED_STATE_SUFFIX):
-        return name
-    stem = name[: -len(_RETAINED_STATE_SUFFIX)]
-    if not any(stem.startswith(kv_stem) for kv_stem in _KV_RETAINED_STEMS):
-        return name
-    return f"{stem}_{kv_cache_prefix}{_RETAINED_STATE_SUFFIX}"
+    """Insert ``_<prefix>`` before the retained-state suffix for LLM KV-cache buffers only.
+
+    Handles both ``_RetainedState`` (standard) and ``_InternalRetainedState`` (subfunction exports)
+    so that ``apply_kv_cache_prefix`` works correctly regardless of which suffix form is in use.
+    """
+    for suffix in _RETAINED_STATE_SUFFIXES:
+        if name.endswith(suffix):
+            stem = name[: -len(suffix)]
+            if not any(stem.startswith(kv_stem) for kv_stem in _KV_RETAINED_STEMS):
+                return name
+            return f"{stem}_{kv_cache_prefix}{suffix}"
+    return name
 
 
 def apply_kv_cache_prefix(output_names, kv_cache_prefix: Optional[str]):
