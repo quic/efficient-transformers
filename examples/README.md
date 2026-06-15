@@ -4,6 +4,15 @@ Examples for running models on Qualcomm Cloud AI 100.
 
 For detailed documentation, see https://quic.github.io/efficient-transformers/
 
+
+## Layerwise Requirements
+
+For running layerwise pipelines, the following dependency is required:
+
+- Install `onnx-ir` (specific version):
+```bash
+pip install onnx_ir==0.2.1
+```
 ## Quick Navigation
 
 ### Text Generation
@@ -33,8 +42,18 @@ Sentence and document embeddings.
 | Example | Model | Script |
 |---------|-------|--------|
 | Text Embeddings | all-MiniLM-L6-v2 | [embeddings/text_embeddings.py](embeddings/text_embeddings.py) |
+| Qwen3-VL Embedding | Qwen/Qwen3-VL-Embedding-8B | [embeddings/qwen3vl/qwen3_vl_embedding.py](embeddings/qwen3vl/qwen3_vl_embedding.py) |
 
 [See all embedding examples →](embeddings/)
+
+### Reranker
+Multimodal reranker scoring examples.
+
+| Example | Model | Script |
+|---------|-------|--------|
+| Qwen3-VL Reranker | Qwen/Qwen3-VL-Reranker-{2B,8B} | [reranker/qwen3vl/qwen3_vl_reranker.py](reranker/qwen3vl/qwen3_vl_reranker.py) |
+
+[See all reranker examples →](reranker/)
 
 ### Audio
 Speech processing models.

@@ -2,8 +2,9 @@
 
 a) For Gemma3-4B model user is adviced to use the NPI file namely fp32_nodes_gemma3_4b.yaml
     example compile command -
-    npi_file_path = "configs/fp32_nodes_gemma3_4b.yaml"
-    npi_file_full_path = os.path.join(os.getcwd(), npi_file_path)
+    from pathlib import Path
+    gemma_vision_dir = Path(__file__).resolve().parent.parent
+    npi_file_full_path = str(gemma_vision_dir / "configs" / "fp32_nodes_gemma3_4b.yaml")
 
     qeff_model.compile(
         prefill_seq_len=128,
@@ -22,8 +23,9 @@ a) For Gemma3-4B model user is adviced to use the NPI file namely fp32_nodes_gem
 b) For Gemma3-27B model user is adviced to use the NPI file namely gemma_updated_npi.yaml
 
     example compile command -
-    npi_file_path = "configs/gemma_updated_npi.yaml"
-    npi_file_full_path = os.path.join(os.getcwd(), npi_file_path)
+    from pathlib import Path
+    gemma_vision_dir = Path(__file__).resolve().parent.parent
+    npi_file_full_path = str(gemma_vision_dir / "configs" / "gemma_updated_npi.yaml")
 
     qeff_model.compile(
         prefill_seq_len=128,

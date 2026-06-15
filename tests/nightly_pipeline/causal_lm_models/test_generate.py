@@ -24,7 +24,6 @@ test_models = config["causal_lm_models"]
 
 @pytest.mark.parametrize("model_name", test_models)
 def test_generate_causal_lm(model_name, causal_model_artifacts, get_pipeline_config):
-
     compile_params, generate_params = pre_generate_utils(
         model_name, "causal_pipeline_configs", get_pipeline_config, causal_model_artifacts
     )

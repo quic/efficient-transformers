@@ -39,7 +39,6 @@ test_models = config["image_text_to_text_models"]
 def test_generate_image_text_to_text_model(
     model_name, kv_offload, image_text_to_text_model_artifacts, get_pipeline_config
 ):
-
     compile_params, generate_params = pre_generate_utils(
         model_name, "image_text_to_text_model_configs", get_pipeline_config, image_text_to_text_model_artifacts
     )
@@ -143,6 +142,8 @@ def test_generate_image_text_to_text_model(
             "qwen2_5_vl",
             "qwen3_vl",
             "qwen3_vl_moe",
+            "qwen3_5",
+            "qwen3_5_moe",
         ]:
             inputs = qeff_model.model.prepare_inputs_for_generation(
                 inputs=inputs, prefill_seq_len=prompt_len, batch_size=batch_size

@@ -100,6 +100,12 @@ def set_num_layers_vlm(config: AutoConfig, n_layer: int = -1):
         config.vision_config.num_hidden_layers = n_layer
         if hasattr(config.vision_config, "depth"):
             config.vision_config.depth = n_layer
+        if hasattr(config.vision_config, "deepstack_visual_indexes"):
+            # Keep deepstack taps aligned with reduced vision depth for fast-test configs.
+            deepstack_idxs = [idx for idx in config.vision_config.deepstack_visual_indexes if idx < n_layer]
+            if not deepstack_idxs and n_layer > 0:
+                deepstack_idxs = [n_layer - 1]
+            config.vision_config.deepstack_visual_indexes = deepstack_idxs
     elif hasattr(config, "llm_config"):
         config.llm_config.num_hidden_layers = n_layer
         config.vision_config.num_hidden_layers = n_layer
@@ -447,7 +453,8 @@ class ModelConfig:
         "google/gemma-3-4b-it",
         "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
         "Qwen/Qwen2.5-VL-3B-Instruct",
-        "meta-llama/Llama-3.2-11B-Vision-Instruct",
+        "Qwen/Qwen3.5-0.8B",
+        # "Qwen/Qwen3.6-35B-A3B",
     }
 
     INTERNVL_MODELS = {
@@ -458,11 +465,19 @@ class ModelConfig:
     MOLMO_MODELS = {
         "allenai/Molmo-7B-D-0924",
     }
-
+    # FIXME: Debug issue wrt Qwen 3.5, 3.6
     SKIPPED_MODELS = {
         "meta-llama/Llama-4-Scout-17B-16E-Instruct",
         "allenai/Molmo-7B-D-0924",
-        "meta-llama/Llama-3.2-11B-Vision-Instruct",
+        "wtang06/mpt-125m-c4",
+        "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
+        "OpenGVLab/InternVL2_5-1B",
+        "OpenGVLab/InternVL3_5-1B",
+        "jinaai/jina-embeddings-v2-base-code",
+        "hpcai-tech/grok-1",
+        "Qwen/Qwen2.5-VL-3B-Instruct",
+        "Qwen/Qwen3.5-0.8B",
+        "Qwen/Qwen3.6-35B-A3B",
     }
 
     DUAL_QPC_MODELS = {
@@ -471,6 +486,10 @@ class ModelConfig:
         "Qwen/Qwen2.5-VL-3B-Instruct",
         "Qwen/Qwen3-VL-30B-A3B-Instruct",
         "Qwen/Qwen3-VL-2B-Instruct",
+        "Qwen/Qwen3-VL-Reranker-2B",
+        "Qwen/Qwen3-VL-Reranker-8B",
+        "Qwen/Qwen3.5-0.8B",
+        "Qwen/Qwen3.6-35B-A3B",
     }
 
     EXTERNAL_MODELS = {

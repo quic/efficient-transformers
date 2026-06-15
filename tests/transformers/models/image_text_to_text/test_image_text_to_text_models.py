@@ -224,6 +224,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             "qwen2_5_vl",
             "qwen3_vl",
             "qwen3_vl_moe",
+            "qwen3_5",
+            "qwen3_5_moe",
         ]:
             inputs = qeff_model.model.prepare_inputs_for_generation(
                 inputs=inputs, prefill_seq_len=prompt_len, batch_size=batch_size

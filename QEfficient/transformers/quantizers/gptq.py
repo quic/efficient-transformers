@@ -62,7 +62,13 @@ class QuantLinearGPTQ(nn.Module):
             "scales",
             torch.zeros((math.ceil(in_features / self.group_size), out_features), dtype=torch.float16),
         )
-        self.g_idx = torch.tensor([i // group_size for i in range(in_features)], dtype=torch.int32)
+        # g_idx must be a registered buffer so it is moved off the meta device
+        # when the model is loaded via from_pretrained. A plain attribute stays on
+        # meta, causing scales2[g_idx] to return all-zero tensors in dequantize_gptq.
+        self.register_buffer(
+            "g_idx",
+            torch.tensor([i // group_size for i in range(in_features)], dtype=torch.int32),
+        )
         if bias:
             self.register_buffer(
                 "bias",
@@ -75,6 +81,7 @@ class QuantLinearGPTQ(nn.Module):
         # Only Inference supported
         out, _, _ = dequantize_gptq(self.qweight.T, self.qzeros, self.scales, self.bits, self.g_idx)
         out = torch.matmul(x.float(), out.float())
-        out = out + self.bias if self.bias is not None else out
+        # Cast bias to match out dtype so PyTorch and ONNX/ORT stay consistent.
+        out = out + self.bias.to(out.dtype) if self.bias is not None else out
 
         return out

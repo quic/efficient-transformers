@@ -77,11 +77,18 @@ CAUSAL_RUNTIME_MODEL_IDS = {
     "olmo2": "hf-internal-testing/tiny-random-Olmo2ForCausalLM",
     "gpt_oss": "tiny-random/gpt-oss-bf16",
 }
+
+#   In PyTorch ≤2.3 (used with transformers v4.57.3), torch.onnx.export with
+#   export_modules_as_functions created one ONNX function definition per module instance — so a Mixtral
+#   model with 2 decoder layers produced 2 separate QeffMixtralDecoderLayer function definitions in the
+#   ONNX.
+#   In PyTorch 2.7 (used with transformers v5.5.4), the same export creates one shared function
+#   definition per module class, called once per instance. So 2 decoder layers → 1 function definition
+#   called 2 times.
 CAUSAL_MULTI_SUBFUNCTION_MODEL_TYPES = {
     "codegen",
     "phi",
     "starcoder2",
-    "mixtral",
     "gpt_oss",
     # "granitemoe" is intentionally not listed in CAUSAL_RUNTIME_MODEL_IDS yet.
 }
@@ -97,6 +104,51 @@ TINY_AUDIO_CTC_MODEL_ID = "hf-internal-testing/tiny-random-wav2vec2"
 TINY_WHISPER_MODEL_ID = "hf-internal-testing/tiny-random-WhisperForConditionalGeneration"
 TINY_SEQ_CLASSIFICATION_MODEL_ID = "ydshieh/tiny-random-BertForSequenceClassification"
 TINY_AWQ_MODEL_ID = "optimum-intel-internal-testing/tiny-mixtral-AWQ-4bit"
+
+TINY_MOE_PREFILL_SUBFUNCTION_CONFIGS = {
+    "glm4_moe": dict(
+        max_position_embeddings=128,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        hidden_size=64,
+        intermediate_size=128,
+        moe_intermediate_size=32,
+        vocab_size=127,
+        num_key_value_heads=2,
+        n_routed_experts=4,
+        num_experts_per_tok=2,
+        first_k_dense_replace=0,
+        n_group=1,
+        topk_group=1,
+        head_dim=16,
+    ),
+    "qwen3_moe": dict(
+        max_position_embeddings=128,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        hidden_size=64,
+        intermediate_size=128,
+        moe_intermediate_size=32,
+        vocab_size=127,
+        num_key_value_heads=2,
+        num_experts=4,
+        num_experts_per_tok=2,
+    ),
+    "gpt_oss": dict(
+        max_position_embeddings=128,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        hidden_size=32,
+        intermediate_size=32,
+        vocab_size=127,
+        num_key_value_heads=2,
+        num_local_experts=4,
+        num_experts_per_tok=2,
+        head_dim=16,
+        sliding_window=128,
+        rope_scaling=None,
+    ),
+}
 
 MODEL_KWARGS = {"attn_implementation": "eager"}
 PREFIX_CACHING_MODEL_ID = "hf-internal-testing/tiny-random-GPT2LMHeadModel"
@@ -195,6 +247,30 @@ def _count_decoder_block_subfunctions(onnx_model, qeff_model) -> int:
     return sum(any(block_name in func.name for block_name in block_names) for func in onnx_model.functions)
 
 
+def _decoder_block_subfunction_names(onnx_model, qeff_model) -> Set[str]:
+    get_submodules = getattr(qeff_model.model, "get_submodules_for_export", None)
+    assert callable(get_submodules)
+
+    submodules = get_submodules()
+    assert submodules
+
+    if not isinstance(submodules, (set, list, tuple)):
+        submodules = [submodules]
+
+    block_names = {module.__name__ for module in submodules if hasattr(module, "__name__")}
+    assert block_names
+    return {func.name for func in onnx_model.functions if any(block_name in func.name for block_name in block_names)}
+
+
+def _function_op_types(onnx_model, function_names: Set[str]) -> Set[str]:
+    return {
+        node.op_type
+        for function_proto in onnx_model.functions
+        if function_proto.name in function_names
+        for node in function_proto.node
+    }
+
+
 def _assert_has_retained_state_outputs(onnx_path: Path) -> None:
     onnx_model = onnx.load(onnx_path, load_external_data=False)
     retained_outputs = [output.name for output in onnx_model.graph.output if output.name.endswith("_RetainedState")]
@@ -217,16 +293,25 @@ def _run_whisper_export_smoke(qeff_model: QEFFAutoModelForSpeechSeq2Seq, out_dir
 def _assert_proxy_only_onnx_transform_policy(
     qeff_model, enable_proxy: bool, always_on_transforms: Optional[Set[str]] = None
 ) -> None:
+    pytorch_transform_names = {transform.__name__ for transform in qeff_model._pytorch_transforms}
     transform_names = {transform.__name__ for transform in qeff_model._onnx_transforms}
+    proxy_pytorch_transform = "QeffProxyModuleTransform"
     proxy_only_transforms = {"FP16ClipTransform", "SplitTensorsTransform"}
     always_on_transforms = always_on_transforms or set()
     conditional_proxy_transforms = proxy_only_transforms - always_on_transforms
 
     if enable_proxy:
+        assert proxy_pytorch_transform in pytorch_transform_names
         assert proxy_only_transforms.issubset(transform_names)
     else:
+        assert proxy_pytorch_transform not in pytorch_transform_names
         assert conditional_proxy_transforms.isdisjoint(transform_names)
         assert always_on_transforms.issubset(transform_names)
+
+
+def _assert_dual_qpc_vlm_proxy_transform_policy(qeff_model, enable_proxy: bool) -> None:
+    _assert_proxy_only_onnx_transform_policy(qeff_model.vision_model, enable_proxy=enable_proxy)
+    _assert_proxy_only_onnx_transform_policy(qeff_model.lang_model, enable_proxy=enable_proxy)
 
 
 def _skip_on_model_fetch_error(exc: Exception, model_id: str) -> None:
@@ -472,7 +557,9 @@ def test_whisper_export_smoke(tmp_path):
 @pytest.mark.llm_model
 def test_causal_subfunction_export_smoke(tmp_path):
     model_id = CAUSAL_RUNTIME_MODEL_IDS["gpt2"]
-    model_hf = AutoModelForCausalLM.from_pretrained(model_id, **MODEL_KWARGS, low_cpu_mem_usage=False)
+    model_hf = AutoModelForCausalLM.from_pretrained(
+        model_id, **MODEL_KWARGS, low_cpu_mem_usage=False, torch_dtype=torch.float32
+    )
     model_hf.eval()
     qeff_model = QEFFAutoModelForCausalLM(model_hf)
 
@@ -493,6 +580,42 @@ def test_causal_subfunction_export_smoke(tmp_path):
 
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
+    ("model_type", "config_kwargs"),
+    sorted(TINY_MOE_PREFILL_SUBFUNCTION_CONFIGS.items()),
+    ids=sorted(TINY_MOE_PREFILL_SUBFUNCTION_CONFIGS),
+)
+def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, config_kwargs, tmp_path):
+    config = AutoConfig.for_model(model_type, **config_kwargs)
+    model_hf = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
+    model_hf.eval()
+    qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=False)
+
+    onnx_path = _exported_onnx_path(
+        qeff_model.export(
+            tmp_path / f"{model_type}-prefill-subfunctions",
+            prefill_only=True,
+            enable_chunking=True,
+            prefill_seq_len=64,
+            num_cores=2,
+            moe_prefill_packed_chunk_size=32,
+            use_onnx_subfunctions=True,
+            offload_pt_weights=False,
+        )
+    )
+
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    decoder_function_names = _decoder_block_subfunction_names(onnx_model, qeff_model)
+    decoder_op_types = _function_op_types(onnx_model, decoder_function_names)
+
+    assert len(decoder_function_names) == config.num_hidden_layers
+    assert "Einsum" in decoder_op_types
+    assert "CtxGather3D" in decoder_op_types
+    assert "CtxScatter3D" in decoder_op_types
+    assert "CtxScatter3DInt" in decoder_op_types
+
+
+@pytest.mark.llm_model
+@pytest.mark.parametrize(
     ("model_type", "model_id"),
     sorted(CAUSAL_RUNTIME_MODEL_IDS.items()),
     ids=sorted(CAUSAL_RUNTIME_MODEL_IDS),
@@ -500,7 +623,9 @@ def test_causal_subfunction_export_smoke(tmp_path):
 def test_causal_compile_with_subfunctions_all_models(model_type, model_id, tmp_path):
     del model_type
     try:
-        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True)
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+            model_id, trust_remote_code=True, torch_dtype=torch.float32
+        )
     except Exception as exc:
         _skip_on_model_fetch_error(exc, model_id)
 
@@ -608,6 +733,7 @@ def test_causal_subfunction_and_proxy_export_smoke_gpt2(tmp_path):
             model_id,
             trust_remote_code=True,
             enable_proxy=True,
+            torch_dtype=torch.float32,
         )
     except Exception as exc:
         _skip_on_model_fetch_error(exc, model_id)
@@ -622,7 +748,9 @@ def test_causal_subfunction_and_proxy_export_smoke_gpt2(tmp_path):
 
 @pytest.mark.llm_model
 def test_prefix_caching_continuous_batching_export_and_ort_smoke(tmp_path):
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(PREFIX_CACHING_MODEL_ID, continuous_batching=True)
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+        PREFIX_CACHING_MODEL_ID, continuous_batching=True, torch_dtype=torch.float32
+    )
     onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "prefix-caching"))
     onnx_model = onnx.load(onnx_path, load_external_data=False)
 
@@ -639,7 +767,9 @@ def test_prefix_caching_continuous_batching_export_and_ort_smoke(tmp_path):
 def test_awq_export_smoke(tmp_path):
     replace_transformers_quantizers()
     try:
-        model_hf = AutoModelForCausalLM.from_pretrained(TINY_AWQ_MODEL_ID, low_cpu_mem_usage=False)
+        model_hf = AutoModelForCausalLM.from_pretrained(
+            TINY_AWQ_MODEL_ID, low_cpu_mem_usage=False, torch_dtype=torch.float32
+        )
     except Exception as exc:
         _skip_on_model_fetch_error(exc, TINY_AWQ_MODEL_ID)
     model_hf.eval()
@@ -656,8 +786,12 @@ def test_awq_export_smoke(tmp_path):
 def test_proxy_toggle_onnx_transform_policy_for_causal_lm():
     model_id = CAUSAL_RUNTIME_MODEL_IDS["gpt2"]
     try:
-        qeff_default = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True)
-        qeff_proxy = QEFFAutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True, enable_proxy=True)
+        qeff_default = QEFFAutoModelForCausalLM.from_pretrained(
+            model_id, trust_remote_code=True, torch_dtype=torch.float32
+        )
+        qeff_proxy = QEFFAutoModelForCausalLM.from_pretrained(
+            model_id, trust_remote_code=True, enable_proxy=True, torch_dtype=torch.float32
+        )
     except Exception as exc:
         _skip_on_model_fetch_error(exc, model_id)
 
@@ -681,6 +815,21 @@ def test_proxy_toggle_onnx_transform_policy_for_embedding():
 
 
 @pytest.mark.llm_model
+def test_proxy_toggle_onnx_transform_policy_for_sequence_classification():
+    model_id = TINY_SEQ_CLASSIFICATION_MODEL_ID
+    try:
+        qeff_default = QEFFAutoModelForSequenceClassification.from_pretrained(model_id, trust_remote_code=True)
+        qeff_proxy = QEFFAutoModelForSequenceClassification.from_pretrained(
+            model_id, trust_remote_code=True, enable_proxy=True
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    _assert_proxy_only_onnx_transform_policy(qeff_default, enable_proxy=False)
+    _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
+
+
+@pytest.mark.llm_model
 def test_proxy_toggle_onnx_transform_policy_for_whisper():
     model_id = TINY_WHISPER_MODEL_ID
     try:
@@ -694,20 +843,33 @@ def test_proxy_toggle_onnx_transform_policy_for_whisper():
 
 
 @pytest.mark.llm_model
-def test_proxy_toggle_onnx_transform_policy_for_vlm():
-    model_id = VLM_TEXT_RUNTIME_MODEL_ID
+def test_proxy_toggle_onnx_transform_policy_for_ctc():
+    model_id = TINY_AUDIO_CTC_MODEL_ID
     try:
-        qeff_default = QEFFAutoModelForImageTextToText.from_pretrained(
-            model_id, trust_remote_code=True, kv_offload=False
-        )
-        qeff_proxy = QEFFAutoModelForImageTextToText.from_pretrained(
-            model_id, trust_remote_code=True, enable_proxy=True, kv_offload=False
-        )
+        qeff_default = QEFFAutoModelForCTC.from_pretrained(model_id, trust_remote_code=True)
+        qeff_proxy = QEFFAutoModelForCTC.from_pretrained(model_id, trust_remote_code=True, enable_proxy=True)
     except Exception as exc:
         _skip_on_model_fetch_error(exc, model_id)
 
     _assert_proxy_only_onnx_transform_policy(qeff_default, enable_proxy=False)
     _assert_proxy_only_onnx_transform_policy(qeff_proxy, enable_proxy=True)
+
+
+@pytest.mark.llm_model
+def test_proxy_toggle_onnx_transform_policy_for_vlm():
+    model_id = VLM_TEXT_RUNTIME_MODEL_ID
+    try:
+        qeff_default = QEFFAutoModelForImageTextToText.from_pretrained(
+            model_id, trust_remote_code=True, kv_offload=True
+        )
+        qeff_proxy = QEFFAutoModelForImageTextToText.from_pretrained(
+            model_id, trust_remote_code=True, enable_proxy=True, kv_offload=True
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    _assert_dual_qpc_vlm_proxy_transform_policy(qeff_default, enable_proxy=False)
+    _assert_dual_qpc_vlm_proxy_transform_policy(qeff_proxy, enable_proxy=True)
 
 
 class TestCausalLMFlagDiagnostics:
@@ -1225,3 +1387,875 @@ class TestDiffusersNamedSpecializations:
         result = to_named_specializations(flat)
         assert result[0]["name"] == "Prefill"
         assert result[1]["name"] == "Decode"
+
+
+# ---------------------------------------------------------------------------
+# Layer-wise export (provisional, scheduled for deprecation)
+# ---------------------------------------------------------------------------
+
+LAYERWISE_TINY_MODEL_ID = "tiny-random/qwen3-vl-moe"
+LAYERWISE_TINY_MODEL_IDS = {
+    "qwen3_vl_moe": "tiny-random/qwen3-vl-moe",
+    "qwen3_5_moe": "tiny-random/qwen3.5-moe",
+    "qwen3_moe": "tiny-random/qwen3-moe",
+}
+
+
+@pytest.mark.llm_model
+def test_layerwise_window_helpers():
+    """Pure-Python coverage of the windowing helpers - no model load required."""
+    from QEfficient.transformers.models import _layerwise
+
+    assert _layerwise._build_layer_windows(4, 1) == [(0, 1), (1, 2), (2, 3), (3, 4)]
+    assert _layerwise._build_layer_windows(5, 2) == [(0, 2), (2, 4), (4, 5)]
+    with pytest.raises(ValueError):
+        _layerwise._build_layer_windows(0, 1)
+    with pytest.raises(ValueError):
+        _layerwise._build_layer_windows(4, 0)
+
+
+@pytest.mark.llm_model
+def test_layerwise_supported_guard_rejects_unrelated_model():
+    """layerwise=True must hard-fail on architectures without windowing hooks."""
+    from QEfficient.transformers.models import _layerwise
+
+    config = AutoConfig.from_pretrained("hf-internal-testing/tiny-random-LlamaForCausalLM")
+    with pytest.raises(NotImplementedError, match="layerwise=True is only supported"):
+        _layerwise.assert_layerwise_supported(config)
+
+
+def test_resolve_torch_dtype_normalizes_dtype_alias():
+    """transformers-v5 ``dtype`` alias must be honored and kept in sync with ``torch_dtype``.
+
+    Regression guard: passing ``dtype=float16`` used to be ignored, leaving the
+    model forced to float32 - breaking the Qwen3.5 float16 export path.
+    """
+    from QEfficient.transformers.models.modeling_auto import _resolve_torch_dtype
+
+    # float16 supplied via the v5 alias must survive and populate torch_dtype.
+    kwargs = {"dtype": torch.float16}
+    _resolve_torch_dtype(kwargs)
+    assert kwargs["torch_dtype"] == torch.float16
+    assert kwargs["dtype"] == torch.float16
+
+    # float16 via the legacy name still works.
+    kwargs = {"torch_dtype": torch.float16}
+    _resolve_torch_dtype(kwargs)
+    assert kwargs["torch_dtype"] == torch.float16
+
+    # bfloat16 is downgraded to float32 on ai100 regardless of which name is used.
+    kwargs = {"dtype": torch.bfloat16}
+    _resolve_torch_dtype(kwargs)
+    assert kwargs["torch_dtype"] == torch.float32
+    assert kwargs["dtype"] == torch.float32
+
+
+def test_qwen3_5_moe_gated_norm_preserves_float16():
+    """GatedDeltaNet RMSNorm must keep the input dtype so the gated output feeds
+    the float16 out_proj without a dtype mismatch (Qwen3.5 float16 export)."""
+    import torch.nn as nn
+
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+        QEffQwen3_5MoeGatedDeltaNetCustomRMSNormAIC,
+    )
+
+    norm = QEffQwen3_5MoeGatedDeltaNetCustomRMSNormAIC()
+    norm.weight = nn.Parameter(torch.ones(16, dtype=torch.float16))
+    norm.eps = 1e-6
+
+    out = norm(torch.randn(4, 16, dtype=torch.float16), torch.randn(4, 16, dtype=torch.float16))
+    assert out.dtype == torch.float16
+
+
+def test_layerwise_matches_default_path_for_qwen3_moe():
+    """Without-layerwise and with-layerwise forwards must produce identical output.
+    This is the core backward-compatibility contract: running every decoder layer
+    in a single forward (default path) must match running the same layers one
+    window at a time and chaining the hidden states (layerwise path), bit for bit.
+    """
+    from transformers.models.qwen3_moe.modeling_qwen3_moe import Qwen3MoeConfig, Qwen3MoeForCausalLM
+
+    import QEfficient
+    from QEfficient.transformers.models import _layerwise
+
+    cfg = Qwen3MoeConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        moe_intermediate_size=64,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=16,
+        num_experts=4,
+        num_experts_per_tok=2,
+        vocab_size=128,
+        max_position_embeddings=128,
+        decoder_sparse_step=1,
+        norm_topk_prob=True,
+    )
+    torch.manual_seed(0)
+    hf = Qwen3MoeForCausalLM(cfg).eval()
+    qeff_model = QEfficient.QEFFAutoModelForCausalLM(hf, continuous_batching=False)
+    inner = qeff_model.model.model
+
+    B, S, ctx, num_layers = 1, 8, 16, cfg.num_hidden_layers
+    n_kv, head_dim = cfg.num_key_value_heads, cfg.head_dim
+    ids = torch.randint(0, cfg.vocab_size, (B, S))
+    position_ids = torch.arange(S).view(1, -1)
+
+    def fresh_pkv():
+        return tuple(
+            (torch.zeros(B, n_kv, ctx, head_dim), torch.zeros(B, n_kv, ctx, head_dim)) for _ in range(num_layers)
+        )
+
+    # Default (non-layerwise) path: all layers in one shot.
+    with torch.no_grad():
+        default_out = inner(
+            input_ids=ids,
+            position_ids=position_ids,
+            past_key_values=fresh_pkv(),
+            cache_position=torch.arange(S),
+        )
+
+    # Layerwise path: window size 1, chaining hidden states across windows.
+    hidden_states = inner.embed_tokens(ids)
+    try:
+        with _layerwise._layerwise_export_env():
+            for window in range(num_layers):
+                _layerwise._set_layer_windows(window, window + 1, num_layers)
+                with torch.no_grad():
+                    out = inner(
+                        inputs_embeds=hidden_states,
+                        position_ids=position_ids,
+                        past_key_values=fresh_pkv(),
+                        cache_position=torch.arange(S),
+                    )
+                hidden_states = out.last_hidden_state
+    finally:
+        _layerwise._reset_layer_windows()
+
+    assert torch.equal(default_out.last_hidden_state, hidden_states), (
+        "layerwise windowed forward diverged from the default single-shot forward"
+    )
+
+    # The default path must leave the mutable window state untouched.
+    from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import QEffQwen3MoeModel
+
+    assert QEffQwen3MoeModel._start == 0
+    assert QEffQwen3MoeModel._end == 0
+
+
+@pytest.mark.llm_model
+def test_layerwise_matches_default_path_for_qwen3_5_moe():
+    """Qwen3.5-MoE decoder wrapper must preserve logits with layerwise windows."""
+    import QEfficient
+    from QEfficient.transformers.models import _layerwise
+
+    config = AutoConfig.from_pretrained(LAYERWISE_TINY_MODEL_IDS["qwen3_5_moe"])
+    config.torch_dtype = "float32"
+
+    qeff_model = QEfficient.QEFFAutoModelForImageTextToText.from_pretrained(
+        LAYERWISE_TINY_MODEL_IDS["qwen3_5_moe"],
+        attn_implementation="eager",
+        kv_offload=True,
+        config=config,
+        dtype=torch.float32,
+        layerwise=False,
+    )
+    wrapper = qeff_model.model.get_qeff_language_decoder().eval()
+    lang_inputs = qeff_model.model.get_dummy_inputs(kv_offload=True)["lang"]
+
+    with torch.no_grad():
+        default_out = wrapper(**lang_inputs)
+
+    hidden_states = None
+    total_layers = qeff_model.model.config.text_config.num_hidden_layers
+    try:
+        with _layerwise._layerwise_export_env():
+            for window in range(total_layers):
+                _layerwise._set_layer_windows(window, window + 1, total_layers)
+                call_kwargs = {
+                    "position_ids": lang_inputs["position_ids"],
+                    "past_key_values": lang_inputs["past_key_values"],
+                }
+                if window == 0:
+                    call_kwargs.update(
+                        input_ids=lang_inputs["input_ids"],
+                        vision_embeds=lang_inputs["vision_embeds"],
+                        image_idx=lang_inputs["image_idx"],
+                    )
+                else:
+                    call_kwargs["inputs_embeds"] = hidden_states
+
+                with torch.no_grad():
+                    window_out = wrapper(**call_kwargs)
+                hidden_states = window_out[0]
+    finally:
+        _layerwise._reset_layer_windows()
+
+    assert torch.equal(default_out[0], hidden_states), "Qwen3.5-MoE layerwise logits diverged from default logits"
+
+
+@pytest.mark.llm_model
+def test_layerwise_matches_default_path_for_qwen3_vl_moe():
+    """Qwen3-VL-MoE decoder wrapper must preserve logits with layerwise windows."""
+    import QEfficient
+    from QEfficient.transformers.models import _layerwise
+
+    model_id = LAYERWISE_TINY_MODEL_IDS["qwen3_vl_moe"]
+    try:
+        config = AutoConfig.from_pretrained(model_id)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+    config.torch_dtype = "float32"
+
+    qeff_model = QEfficient.QEFFAutoModelForImageTextToText.from_pretrained(
+        model_id,
+        attn_implementation="eager",
+        kv_offload=True,
+        config=config,
+        dtype=torch.float32,
+        layerwise=False,
+    )
+    wrapper = qeff_model.model.get_qeff_language_decoder().eval()
+    lang_inputs = qeff_model.model.get_dummy_inputs(kv_offload=True)["lang"]
+
+    with torch.no_grad():
+        default_out = wrapper(**lang_inputs)
+
+    hidden_states = None
+    total_layers = qeff_model.model.config.text_config.num_hidden_layers
+    try:
+        with _layerwise._layerwise_export_env():
+            for window in range(total_layers):
+                _layerwise._set_layer_windows(window, window + 1, total_layers)
+                call_kwargs = {k: v for k, v in lang_inputs.items() if k not in ("input_ids", "inputs_embeds")}
+                if window == 0:
+                    call_kwargs["input_ids"] = lang_inputs["input_ids"]
+                else:
+                    call_kwargs["inputs_embeds"] = hidden_states
+
+                with torch.no_grad():
+                    window_out = wrapper(**call_kwargs)
+                hidden_states = window_out[0]
+    finally:
+        _layerwise._reset_layer_windows()
+
+    assert torch.equal(default_out[0], hidden_states), "Qwen3-VL-MoE layerwise logits diverged from default logits"
+
+
+def test_split_layer_graph_keeps_qwen3_5_linear_states(tmp_path):
+    """Qwen3.5 layerwise split must retain linear-attention state inputs."""
+    from onnx import TensorProto, helper
+
+    from QEfficient.utils.layerwise_pipeline import split_layer_graph
+
+    layer_dir = tmp_path / "onnx_layerwise_tmp" / "layer_0_1"
+    layer_dir.mkdir(parents=True)
+    model_path = layer_dir / "model_layer_tmp_0_1.onnx"
+
+    graph = helper.make_graph(
+        nodes=[
+            helper.make_node("Identity", ["input_ids"], ["logits"]),
+            helper.make_node("Identity", ["conv_state.0"], ["conv_state.0_RetainedState"]),
+            helper.make_node("Identity", ["recurrent_state.0"], ["recurrent_state.0_RetainedState"]),
+        ],
+        name="qwen35_layer",
+        inputs=[
+            helper.make_tensor_value_info("input_ids", TensorProto.INT64, [1, 8]),
+            helper.make_tensor_value_info("position_ids", TensorProto.INT64, [4, 1, 8]),
+            helper.make_tensor_value_info("conv_state.0", TensorProto.FLOAT, [1, 64, 4]),
+            helper.make_tensor_value_info("recurrent_state.0", TensorProto.FLOAT, [1, 4, 16, 16]),
+        ],
+        outputs=[
+            helper.make_tensor_value_info("logits", TensorProto.INT64, [1, 8]),
+            helper.make_tensor_value_info("conv_state.0_RetainedState", TensorProto.FLOAT, [1, 64, 4]),
+            helper.make_tensor_value_info("recurrent_state.0_RetainedState", TensorProto.FLOAT, [1, 4, 16, 16]),
+        ],
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    onnx.save(model, model_path)
+
+    assert split_layer_graph(0, 1, str(tmp_path), 0, 1) is True
+
+    split_model = onnx.load(layer_dir / "split_graph.onnx", load_external_data=False)
+    input_names = {value.name for value in split_model.graph.input}
+    assert "conv_state.0" in input_names
+    assert "recurrent_state.0" in input_names
+
+
+@pytest.mark.llm_model
+def test_layerwise_supported_guard_accepts_qwen3_vl_moe():
+    from QEfficient.transformers.models import _layerwise
+
+    try:
+        config = AutoConfig.from_pretrained(LAYERWISE_TINY_MODEL_ID)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, LAYERWISE_TINY_MODEL_ID)
+    resolved = _layerwise.assert_layerwise_supported(config)
+    assert resolved in {"qwen3_vl_moe", "qwen3_vl_moe_text"}
+
+
+@pytest.mark.llm_model
+@pytest.mark.parametrize(
+    ("arch", "model_id"),
+    sorted(LAYERWISE_TINY_MODEL_IDS.items()),
+    ids=sorted(LAYERWISE_TINY_MODEL_IDS),
+)
+def test_layerwise_supported_guard_accepts_all_supported(arch, model_id):
+    """Guard must accept each architecture in the layerwise allowlist."""
+    from QEfficient.transformers.models import _layerwise
+
+    try:
+        config = AutoConfig.from_pretrained(model_id)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+    resolved = _layerwise.assert_layerwise_supported(config)
+    assert arch in resolved or resolved.startswith(arch)
+
+
+@pytest.mark.llm_model
+def test_layerwise_off_does_not_set_env_var(tmp_path):
+    """Backward compat: layerwise must be controlled purely via the API,
+    never via environment variables, and must be off by default."""
+    from QEfficient.base.modeling_qeff import QEFFBaseModel
+    from QEfficient.transformers.models import _layerwise  # noqa: F401
+
+    assert os.environ.get("LAYERWISE_EXPORT") is None
+    assert QEFFBaseModel._layerwise_active is False
+
+
+@pytest.mark.llm_model
+def test_layerwise_vision_wrapper_keeps_only_first_text_window():
+    try:
+        config = AutoConfig.from_pretrained(LAYERWISE_TINY_MODEL_ID)
+        qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+            LAYERWISE_TINY_MODEL_ID,
+            kv_offload=True,
+            config=config,
+            layerwise=True,
+        )
+        vision_wrapper = qeff_model._build_layerwise_vision_wrapper()
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, LAYERWISE_TINY_MODEL_ID)
+
+    layers = vision_wrapper.model.model.language_model.layers
+
+    assert getattr(qeff_model, "_layerwise_outer_meta", False) is True
+    assert layers[0] is not None
+    assert sum(layer is not None for layer in layers) == 1
+    assert next(vision_wrapper.model.model.visual.parameters()).device.type != "meta"
+
+    default_model = QEFFAutoModelForImageTextToText.from_pretrained(
+        LAYERWISE_TINY_MODEL_ID,
+        kv_offload=True,
+        config=config,
+    )
+    default_layers = default_model.model.model.language_model.layers
+    assert sum(layer is not None for layer in default_layers) == len(default_layers)
+
+
+@pytest.mark.llm_model
+def test_layerwise_context_manager_toggles_class_flag():
+    """The driver's context manager must flip the class flag and restore it,
+    even on exception, with no env-var side-effects."""
+    from QEfficient.base.modeling_qeff import QEFFBaseModel
+    from QEfficient.transformers.models import _layerwise
+
+    assert QEFFBaseModel._layerwise_active is False
+    with _layerwise._layerwise_export_env():
+        assert QEFFBaseModel._layerwise_active is True
+        assert "LAYERWISE_EXPORT" not in os.environ
+    assert QEFFBaseModel._layerwise_active is False
+
+    try:
+        with _layerwise._layerwise_export_env():
+            raise RuntimeError("boom")
+    except RuntimeError:
+        pass
+    assert QEFFBaseModel._layerwise_active is False
+
+
+@pytest.mark.llm_model
+def test_layerwise_uses_probe_model_for_cached_export(monkeypatch, tmp_path):
+    """A cached merged ONNX must avoid rebuilding per-window models."""
+    from QEfficient.transformers.models import _layerwise
+
+    class DummyConfig:
+        model_type = "qwen3_moe"
+        num_hidden_layers = 2
+
+    class ProbeModel:
+        def __init__(self, cached_path):
+            self.cached_path = cached_path
+
+        def compile(self, **kwargs):
+            assert kwargs.pop("_layerwise_cache_probe") is True
+            return self.cached_path
+
+    cached_path = tmp_path / "Model-hash" / "final_data" / "merged_0-2.onnx"
+    cached_path.parent.mkdir(parents=True)
+    cached_path.touch()
+    factory_called = False
+
+    def fail_factory(*args, **kwargs):
+        nonlocal factory_called
+        factory_called = True
+        raise AssertionError("factory must not run when merged ONNX is cached")
+
+    monkeypatch.setattr(_layerwise, "_install_window_patches_for", lambda model_type: None)
+    result = _layerwise.run_layerwise(
+        model_id="dummy",
+        config=DummyConfig(),
+        qeff_factory=fail_factory,
+        compile_kwargs={},
+        probe_qeff_model=ProbeModel(cached_path),
+        final_compile=False,
+    )
+
+    assert result == str(cached_path)
+    assert factory_called is False
+
+
+@pytest.mark.llm_model
+def test_layerwise_cache_miss_exports_all_windows(monkeypatch, tmp_path):
+    from QEfficient.transformers.models import _layerwise
+
+    class DummyConfig:
+        model_type = "qwen3_moe"
+        num_hidden_layers = 3
+
+    class ProbeModel:
+        def compile(self, **kwargs):
+            assert kwargs.pop("_layerwise_cache_probe") is True
+            return None
+
+    exported_windows = []
+
+    class WindowModel:
+        def __init__(self):
+            self.model = object()
+
+        def compile(self, **kwargs):
+            start = _layerwise._LAYERWISE_STATE["text_start"]
+            end = _layerwise._LAYERWISE_STATE["text_end"]
+            exported_windows.append((start, end))
+            shard = tmp_path / "onnx_layerwise_tmp" / f"layer_{start}_{end}" / f"model_layer_tmp_{start}_{end}.onnx"
+            shard.parent.mkdir(parents=True, exist_ok=True)
+            shard.touch()
+            return str(shard)
+
+    monkeypatch.setattr(_layerwise, "_install_window_patches_for", lambda model_type: None)
+    monkeypatch.setattr(_layerwise, "_null_outside_window_layers", lambda *args, **kwargs: None)
+    monkeypatch.setattr(_layerwise, "_slim_for_window_export", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        _layerwise,
+        "_stitch_layerwise_if_available",
+        lambda export_root, total_layers=None: str(export_root / "merged.onnx"),
+    )
+
+    result = _layerwise.run_layerwise(
+        model_id="dummy",
+        config=DummyConfig(),
+        qeff_factory=lambda *args, **kwargs: WindowModel(),
+        compile_kwargs={},
+        probe_qeff_model=ProbeModel(),
+        window_size=1,
+        final_compile=False,
+    )
+
+    assert exported_windows == [(0, 1), (1, 2), (2, 3)]
+    assert result.endswith("merged.onnx")
+
+
+@pytest.mark.llm_model
+def test_layerwise_cached_merged_prefers_complete_graph(tmp_path):
+    from QEfficient.transformers.models import _layerwise
+
+    final_data = tmp_path / "final_data"
+    final_data.mkdir()
+    partial = final_data / "merged_9-48.onnx"
+    complete = final_data / "merged_0-48.onnx"
+    partial.touch()
+    complete.touch()
+
+    assert _layerwise._cached_merged_onnx(tmp_path, total_layers=48) == complete
+
+
+@pytest.mark.llm_model
+def test_layerwise_export_hash_is_separate_from_default(monkeypatch):
+    from QEfficient.utils import export_utils
+
+    class DummyConfig:
+        def to_diff_dict(self):
+            return {"model_type": "dummy"}
+
+    class DummyModel:
+        config = DummyConfig()
+
+    class DummyQEffModel:
+        model = DummyModel()
+        hash_params = {}
+
+    def normal_export(self, example_inputs, output_names, dynamic_axes, **export_kwargs):
+        pass
+
+    def _export_layerwise(self, example_inputs, output_names, dynamic_axes, **export_kwargs):
+        pass
+
+    captured_export_kwargs = []
+
+    def fake_create_export_hash(**kwargs):
+        captured_export_kwargs.append(kwargs.get("export_kwargs"))
+        return "hash", {}
+
+    monkeypatch.setattr(export_utils, "create_export_hash", fake_create_export_hash)
+
+    export_utils._generate_export_hash(DummyQEffModel(), ({}, ["logits"], {}), {}, normal_export)
+    export_utils._generate_export_hash(DummyQEffModel(), ({}, ["logits"], {}), {}, _export_layerwise)
+
+    assert captured_export_kwargs[0] in (None, {})
+    assert captured_export_kwargs[1]["_qeff_layerwise_export"] is True
+
+
+@pytest.mark.llm_model
+def test_subfunction_compile_io_names_use_internal_retained_state():
+    from QEfficient.transformers.models.modeling_auto import _compile_io_name, _state_input_name
+
+    output_name = _compile_io_name("past_value.1_RetainedState", use_onnx_subfunctions=True)
+
+    assert output_name == "past_value.1_InternalRetainedState"
+    assert _state_input_name(output_name) == "past_value.1"
+    assert _compile_io_name("vision_embeds_RetainedState", use_onnx_subfunctions=True) == "vision_embeds_RetainedState"
+
+
+@pytest.mark.llm_model
+def test_runtime_aliases_internal_retained_state_outputs():
+    from QEfficient.generation.cloud_infer import _add_basename_binding_aliases, _public_retained_state_name
+
+    assert _public_retained_state_name("past_key.0_InternalRetainedState") == "past_key.0_RetainedState"
+    assert _public_retained_state_name("past_value.1_InternalRetainedState") == "past_value.1_RetainedState"
+    assert _public_retained_state_name("logits") is None
+
+    binding_map = {"layer_0/input_ids": 3}
+    bindings = [type("Binding", (), {"name": "layer_0/input_ids", "index": 3})()]
+    _add_basename_binding_aliases(binding_map, bindings)
+    assert binding_map["input_ids"] == 3
+
+
+@pytest.mark.llm_model
+def test_layerwise_compile_hydrates_outer_qpc_paths(monkeypatch, tmp_path):
+    from QEfficient.transformers.models import _layerwise
+    from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
+
+    qpc_path = tmp_path / "qpc"
+    model = object.__new__(_QEffAutoModelForImageTextToTextDualQPC)
+    model._pretrained_model_name_or_path = "dummy"
+    model.config = object()
+    model.vision_model = type("Vision", (), {"qpc_path": None})()
+    model.lang_model = type("Lang", (), {"qpc_path": None})()
+    model._build_layerwise_factory = lambda: None
+
+    monkeypatch.setattr(_layerwise, "run_layerwise", lambda **kwargs: {"lang_decode_qpc_path": qpc_path})
+
+    result = model._run_layerwise_compile(layerwise_window_size=1)
+
+    assert result == {"lang_decode_qpc_path": qpc_path}
+    assert model.qpc_paths == result
+    assert model.lang_model.qpc_path == qpc_path
+
+
+@pytest.mark.llm_model
+def test_layerwise_compile_rejects_unsupported_model():
+    """End-to-end smoke: invoking layerwise=True on llama bubbles the guard error."""
+    try:
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+            "hf-internal-testing/tiny-random-LlamaForCausalLM",
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, "tiny-random/llama")
+    # CausalLM does not expose a layerwise= kwarg today; only DualQPC VLM does.
+    # So this test guards via the helper directly to make the contract explicit
+    # for future surface expansion.
+    from QEfficient.transformers.models import _layerwise
+
+    with pytest.raises(NotImplementedError):
+        _layerwise.assert_layerwise_supported(qeff_model.model.config)
+
+
+# ---------------------------------------------------------------------------
+# Tests for the optional KV-cache buffer-name prefix (vLLM disaggregated KV transfer)
+# ---------------------------------------------------------------------------
+
+
+def _retained_state_outputs(onnx_path: Path) -> Set[str]:
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    return {out.name for out in onnx_model.graph.output if out.name.endswith("_RetainedState")}
+
+
+def _kv_input_names(onnx_path: Path) -> Set[str]:
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    return {
+        inp.name
+        for inp in onnx_model.graph.input
+        if inp.name.startswith(("past_key.", "past_value.", "compressed_kv.", "k_pe."))
+    }
+
+
+class TestApplyKvCachePrefixHelper:
+    """Unit tests for the apply_kv_cache_prefix / validate_kv_cache_prefix helpers."""
+
+    def test_flat_list_kv_only(self):
+        from QEfficient.utils import apply_kv_cache_prefix
+
+        names = ["logits", "past_key.0_RetainedState", "past_value.0_RetainedState", "vision_embeds_RetainedState"]
+        result = apply_kv_cache_prefix(names, "VLLM")
+        assert result == [
+            "logits",
+            "past_key.0_VLLM_RetainedState",
+            "past_value.0_VLLM_RetainedState",
+            "vision_embeds_RetainedState",  # vision buffer untouched
+        ]
+
+    def test_compressed_kv_and_k_pe(self):
+        from QEfficient.utils import apply_kv_cache_prefix
+
+        names = ["compressed_kv.0_RetainedState", "k_pe.0_RetainedState"]
+        assert apply_kv_cache_prefix(names, "P") == ["compressed_kv.0_P_RetainedState", "k_pe.0_P_RetainedState"]
+
+    def test_dict_form_lang_only(self):
+        from QEfficient.utils import apply_kv_cache_prefix
+
+        names = {
+            "vision": ["vision_embeds", "past_key.0_RetainedState"],  # vision side never rewritten
+            "lang": ["logits", "vision_embeds_RetainedState", "past_key.0_RetainedState"],
+        }
+        result = apply_kv_cache_prefix(names, "VLLM")
+        assert result["vision"] == ["vision_embeds", "past_key.0_RetainedState"]
+        assert result["lang"] == ["logits", "vision_embeds_RetainedState", "past_key.0_VLLM_RetainedState"]
+
+    def test_noop_when_prefix_absent(self):
+        from QEfficient.utils import apply_kv_cache_prefix
+
+        names = ["logits", "past_key.0_RetainedState"]
+        assert apply_kv_cache_prefix(names, None) == names
+        assert apply_kv_cache_prefix(names, "") == names
+
+    def test_align_inputs_to_retained_outputs(self):
+        from QEfficient.utils import align_kv_input_names_to_retained_outputs
+
+        input_names = ["input_ids", "past_key.0", "past_value.0"]
+        output_names = ["logits", "past_key.0_VLLM_RetainedState", "past_value.0_VLLM_RetainedState"]
+        assert align_kv_input_names_to_retained_outputs(input_names, output_names) == [
+            "input_ids",
+            "past_key.0_VLLM",
+            "past_value.0_VLLM",
+        ]
+
+    def test_align_inputs_noop_without_prefix(self):
+        from QEfficient.utils import align_kv_input_names_to_retained_outputs
+
+        input_names = ["input_ids", "past_key.0", "past_value.0"]
+        output_names = ["logits", "past_key.0_RetainedState", "past_value.0_RetainedState"]
+        assert align_kv_input_names_to_retained_outputs(input_names, output_names) == input_names
+
+    def test_on_device_sampler_buffers_not_prefixed(self):
+        """Sampler retained-state buffers (past_repetition_penalty_buffer / past_presence_penalty_buffer)
+        must NOT receive the KV-cache prefix on either the output or paired input side."""
+        from QEfficient.utils import align_kv_input_names_to_retained_outputs, apply_kv_cache_prefix
+
+        outputs = [
+            "logits",
+            "probs",
+            "next_tokens",
+            "past_key.0_RetainedState",
+            "past_value.0_RetainedState",
+            "past_repetition_penalty_buffer_RetainedState",
+            "past_presence_penalty_buffer_RetainedState",
+        ]
+        prefixed = apply_kv_cache_prefix(outputs, "VLLM")
+        assert "past_repetition_penalty_buffer_RetainedState" in prefixed
+        assert "past_presence_penalty_buffer_RetainedState" in prefixed
+        # And no sampler-buffer name accidentally carries the infix.
+        assert not any("penalty_buffer_VLLM_RetainedState" in name for name in prefixed)
+
+        inputs = [
+            "input_ids",
+            "past_key.0",
+            "past_value.0",
+            "past_repetition_penalty_buffer",
+            "past_presence_penalty_buffer",
+        ]
+        aligned = align_kv_input_names_to_retained_outputs(inputs, prefixed)
+        assert "past_repetition_penalty_buffer" in aligned
+        assert "past_presence_penalty_buffer" in aligned
+        assert not any(name.endswith("penalty_buffer_VLLM") for name in aligned)
+
+    @pytest.mark.parametrize("bad", ["", "a_b", "a.b", "a b", 123, "past-key"])
+    def test_validation_rejects_bad_prefix(self, bad):
+        from QEfficient.utils import validate_kv_cache_prefix
+
+        with pytest.raises(ValueError):
+            validate_kv_cache_prefix(bad)
+
+    def test_validation_accepts_alnum_and_none(self):
+        from QEfficient.utils import validate_kv_cache_prefix
+
+        assert validate_kv_cache_prefix("VLLM") == "VLLM"
+        assert validate_kv_cache_prefix("vllm0") == "vllm0"
+        assert validate_kv_cache_prefix(None) is None
+
+
+@pytest.mark.llm_model
+def test_causal_export_with_kv_cache_prefix(tmp_path):
+    model_id = CAUSAL_RUNTIME_MODEL_IDS["gpt2"]
+    model_hf = AutoModelForCausalLM.from_pretrained(
+        model_id, **MODEL_KWARGS, low_cpu_mem_usage=False, torch_dtype=torch.float32
+    )
+    model_hf.eval()
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "prefixed", kv_cache_prefix="VLLM"))
+
+    retained = _retained_state_outputs(onnx_path)
+    assert retained, "expected retained-state outputs"
+    # Every KV retained output carries the infix; the suffix is preserved.
+    kv_retained = {name for name in retained if name.startswith(("past_key.", "past_value."))}
+    assert kv_retained
+    assert all(name.endswith("_VLLM_RetainedState") for name in kv_retained)
+
+    # The matching device input buffer exists (output minus _RetainedState).
+    kv_inputs = _kv_input_names(onnx_path)
+    for out_name in kv_retained:
+        stripped = out_name[: -len("_RetainedState")]
+        assert stripped in kv_inputs, f"missing paired input buffer for {out_name}"
+        assert stripped.endswith("_VLLM")
+
+
+@pytest.mark.llm_model
+def test_causal_export_default_names_unchanged(tmp_path):
+    """Without the flag, retained-state names must remain byte-for-byte identical to today."""
+    model_id = CAUSAL_RUNTIME_MODEL_IDS["gpt2"]
+    model_hf = AutoModelForCausalLM.from_pretrained(
+        model_id, **MODEL_KWARGS, low_cpu_mem_usage=False, torch_dtype=torch.float32
+    )
+    model_hf.eval()
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "default"))
+    retained = _retained_state_outputs(onnx_path)
+    kv_retained = {name for name in retained if name.startswith(("past_key.", "past_value."))}
+    assert kv_retained
+    assert all(name.endswith("_RetainedState") and "_VLLM_" not in name for name in kv_retained)
+    # Inputs use the plain names.
+    assert "past_key.0" in _kv_input_names(onnx_path)
+
+
+@pytest.mark.llm_model
+def test_causal_export_prefix_changes_hash_dir(tmp_path):
+    """Prefixed and unprefixed exports must land in distinct hashed dirs (no cache collision)."""
+    model_id = CAUSAL_RUNTIME_MODEL_IDS["gpt2"]
+    model_hf = AutoModelForCausalLM.from_pretrained(
+        model_id, **MODEL_KWARGS, low_cpu_mem_usage=False, torch_dtype=torch.float32
+    )
+    model_hf.eval()
+
+    plain_path = _exported_onnx_path(QEFFAutoModelForCausalLM(model_hf).export(tmp_path / "p"))
+
+    model_hf2 = AutoModelForCausalLM.from_pretrained(
+        model_id, **MODEL_KWARGS, low_cpu_mem_usage=False, torch_dtype=torch.float32
+    )
+    model_hf2.eval()
+    prefixed_path = _exported_onnx_path(
+        QEFFAutoModelForCausalLM(model_hf2).export(tmp_path / "p", kv_cache_prefix="VLLM")
+    )
+
+    assert plain_path.parent != prefixed_path.parent
+
+
+@pytest.mark.llm_model
+def test_causal_compile_custom_io_carries_prefix(tmp_path, monkeypatch):
+    """The compile custom_io must pair prefixed input/output KV buffers."""
+    try:
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+            CAUSAL_RUNTIME_MODEL_IDS["llama"],
+            num_hidden_layers=2,
+            **MODEL_KWARGS,
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, CAUSAL_RUNTIME_MODEL_IDS["llama"])
+
+    captured = {}
+
+    def fake_compile(**kwargs):
+        captured.update(kwargs)
+        return tmp_path / "qpc"
+
+    monkeypatch.setattr(qeff_model, "_compile", fake_compile)
+    qeff_model.compile(prefill_seq_len=8, ctx_len=32, compile_dir=str(tmp_path), kv_cache_prefix="VLLM")
+
+    custom_io = captured["custom_io"]
+    assert custom_io, "expected non-empty custom_io"
+    assert "past_key.0_VLLM" in custom_io  # input buffer
+    assert "past_key.0_VLLM_RetainedState" in custom_io  # paired retained output
+    assert all("_VLLM" in k for k in custom_io if k.startswith(("past_key.", "past_value.")))
+    assert captured.get("kv_cache_prefix") == "VLLM"
+
+    # Critical safety check: kv_cache_prefix must NOT appear in compiler_options.
+    # The _compile signature has kv_cache_prefix as an explicit named param so Python never places
+    # it in **compiler_options — if it did, the compiler would see "-kv-cache-prefix=VLLM" and fail.
+    # We verify by reconstructing the known explicit params and confirming the remainder (what would
+    # become **compiler_options in the real _compile) does not contain kv_cache_prefix.
+    _known_explicit_params = {
+        "onnx_path",
+        "compile_dir",
+        "mxint8_kv_cache",
+        "specializations",
+        "custom_io",
+        "mdp_ts_num_devices",
+        "num_speculative_tokens",
+        "enable_qnn",
+        "qnn_config",
+        "use_onnx_subfunctions",
+        "prefill_only",
+        "offload_pt_weights",
+        "enable_chunking",
+        "retain_full_kv",
+        "qaic_config",
+        "specialization_module_name",
+        "kv_cache_prefix",
+        "retained_state",
+        "convert_to_fp16",
+        "mxfp6_matmul",
+        # compile-time args added by causal compile():
+        "aic_num_cores",
+        "moe_prefill_packed_chunk_size",
+    }
+    implicit_compiler_options = {k: v for k, v in captured.items() if k not in _known_explicit_params}
+    assert "kv_cache_prefix" not in implicit_compiler_options, (
+        "kv_cache_prefix leaked into compiler_options — would produce an invalid compiler flag"
+    )
+
+
+@pytest.mark.llm_model
+def test_vlm_export_prefix_lang_only(tmp_path):
+    """VLM export with prefix: lang KV buffers prefixed, vision retained buffers untouched."""
+    try:
+        vlm_model = QEFFAutoModelForImageTextToText.from_pretrained(
+            VLM_TEXT_RUNTIME_MODEL_ID, trust_remote_code=True, kv_offload=True
+        )
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, VLM_TEXT_RUNTIME_MODEL_ID)
+
+    vlm_model.export(tmp_path / "vlm-prefixed", kv_cache_prefix="VLLM")
+    lang_onnx = Path(vlm_model.lang_model.onnx_path)
+    retained = _retained_state_outputs(lang_onnx)
+
+    kv_retained = {name for name in retained if name.startswith(("past_key.", "past_value."))}
+    assert kv_retained
+    assert all(name.endswith("_VLLM_RetainedState") for name in kv_retained)
+
+    # Vision/multimodal retained buffers on the lang graph must NOT be prefixed.
+    for name in retained:
+        if name.startswith(("vision_embeds", "pixel_values", "deepstack_features")):
+            assert "_VLLM_" not in name
