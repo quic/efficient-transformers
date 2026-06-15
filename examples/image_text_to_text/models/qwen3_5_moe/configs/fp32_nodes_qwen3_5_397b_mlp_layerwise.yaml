@@ -1,0 +1,29 @@
+FP32NodeInstanceNames:
+
+  - layer_22//language_model/layers.22/mlp/shared_expert/gate_proj/MatMul_output_0
+  - layer_22//language_model/layers.22/mlp/shared_expert/up_proj/MatMul_output_0
+  - layer_22//language_model/layers.22/mlp/shared_expert/down_proj/MatMul_output_0
+  - layer_22//language_model/layers.22/mlp/Sigmoid_output_0
+  - layer_22//language_model/layers.22/mlp/Mul_4_output_0
+  - layer_22//language_model/layers.22/mlp/Add_output_0
+
+  - layer_26//language_model/layers.26/mlp/shared_expert/gate_proj/MatMul_output_0
+  - layer_26//language_model/layers.26/mlp/shared_expert/up_proj/MatMul_output_0
+  - layer_26//language_model/layers.26/mlp/shared_expert/down_proj/MatMul_output_0
+  - layer_26//language_model/layers.26/mlp/Sigmoid_output_0
+  - layer_26//language_model/layers.26/mlp/Mul_4_output_0
+  - layer_26//language_model/layers.26/mlp/Add_output_0
+
+  - layer_30//language_model/layers.30/mlp/shared_expert/gate_proj/MatMul_output_0
+  - layer_30//language_model/layers.30/mlp/shared_expert/up_proj/MatMul_output_0
+  - layer_30//language_model/layers.30/mlp/shared_expert/down_proj/MatMul_output_0
+  - layer_30//language_model/layers.30/mlp/Sigmoid_output_0
+  - layer_30//language_model/layers.30/mlp/Mul_4_output_0
+  - layer_30//language_model/layers.30/mlp/Add_output_0
+
+  - layer_54//language_model/layers.54/mlp/shared_expert/gate_proj/MatMul_output_0
+  - layer_54//language_model/layers.54/mlp/shared_expert/up_proj/MatMul_output_0
+  - layer_54//language_model/layers.54/mlp/shared_expert/down_proj/MatMul_output_0
+  - layer_54//language_model/layers.54/mlp/Sigmoid_output_0
+  - layer_54//language_model/layers.54/mlp/Mul_4_output_0
+  - layer_54//language_model/layers.54/mlp/Add_output_0

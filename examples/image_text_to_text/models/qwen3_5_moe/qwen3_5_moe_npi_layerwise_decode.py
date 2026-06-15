@@ -1,0 +1,104 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
+"""Layerwise decode compile example for Qwen3.5-MoE with explicit NPI YAML.
+
+The orchestration loop that previously lived in this script has been moved
+behind the ``layerwise=True`` flag on ``.compile()`` / ``.export()``.
+
+Note: ``layerwise=True`` is a provisional API and is scheduled for deprecation
+once first-class multi-window export lands. Supported model types:
+``qwen3_vl_moe``, ``qwen3_5_moe``, ``qwen3_moe``.
+"""
+
+from pathlib import Path
+
+import torch
+import transformers
+from transformers import AutoConfig, AutoProcessor
+
+from QEfficient import QEFFAutoModelForImageTextToText
+
+# MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
+MODEL_ID = "tiny-random/qwen3.6-moe"
+LAYERWISE = True
+TORCH_DTYPE = torch.float16
+RANDOM_SEED = 42
+NPI_YAML = str(Path(__file__).resolve().parent / "configs" / "fp32_nodes_qwen3_5_397b_mlp_layerwise.yaml")
+
+
+def main():
+    # Tiny random checkpoints have missing params initialized from RNG.
+    # Keep the seed fixed so layerwise/non-layerwise parity checks are stable.
+    torch.manual_seed(RANDOM_SEED)
+
+    config = AutoConfig.from_pretrained(MODEL_ID)
+    config.torch_dtype = TORCH_DTYPE
+    # config.vision_config.depth = 4
+    # config.text_config.num_hidden_layers = 4
+    tokenizer = transformers.AutoTokenizer.from_pretrained(MODEL_ID)
+    processor = AutoProcessor.from_pretrained(MODEL_ID)
+
+    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+        MODEL_ID,
+        attn_implementation="eager",
+        kv_offload=True,
+        config=config,
+        dtype=TORCH_DTYPE,
+        layerwise=LAYERWISE,
+    )
+
+    qpc_path = qeff_model.compile(
+        batch_size=1,
+        prefill_seq_len=1,
+        ctx_len=4096,
+        num_cores=16,
+        num_devices=4,
+        height=354,
+        width=536,
+        mxfp6_matmul=True,
+        mxint8_kv_cache=True,
+        aic_enable_depth_first=True,
+        skip_vision=True,
+        split_retained_state_io=True,
+        use_onnx_subfunctions=False,
+        mos=1,
+        layerwise=LAYERWISE,
+        layerwise_window_size=1,
+        node_precision_info=NPI_YAML,
+    )
+    print(f"NPI YAML: {NPI_YAML}")
+    print(f"Language ONNX path: {qeff_model.lang_model.onnx_path}")
+    print(f"Final QPC path: {qpc_path}")
+
+    batch_size = 1
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Tell me about yourself."},
+            ],
+        },
+    ]
+    messages = [messages] * batch_size
+
+    inputs = processor.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt",
+    )
+    inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
+    output = qeff_model.generate(inputs=inputs, generation_len=100)
+    print(output.generated_ids)
+    print(tokenizer.batch_decode(output.generated_ids))
+    print(output)
+
+
+if __name__ == "__main__":
+    main()
