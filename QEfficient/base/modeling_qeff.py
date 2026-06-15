@@ -36,6 +36,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
 )
 from QEfficient.utils import (
     align_kv_input_names_to_retained_outputs,
+    apply_kv_cache_prefix,
     constants,
     create_json,
     create_model_params,
@@ -505,6 +506,7 @@ class QEFFBaseModel(ABC):
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
+        kv_cache_prefix: Optional[str] = None,
         **export_kwargs,
     ) -> str:
         cache_probe = export_kwargs.pop("_layerwise_cache_probe", False)
@@ -590,47 +592,24 @@ class QEFFBaseModel(ABC):
         retained_state_suffix = (
             "_InternalRetainedState" if export_kwargs.get("use_onnx_subfunctions", False) else "_RetainedState"
         )
-        # Build a lookup from plain default retained-state names to the caller-supplied names so that
-        # any KV-cache prefix injected by the caller (e.g. "past_key.3_vllmKvCache_RetainedState")
-        # is preserved in the per-window ONNX and therefore in the final stitched merged ONNX.
-        # Key: "past_key.3_RetainedState" (or _InternalRetainedState), Value: caller's prefixed name.
-        _kv_stems = ("past_key.", "past_value.", "compressed_kv.", "k_pe.")
-        _caller_retained_map: dict = {}
-        for _name in output_names:
-            for _sfx in ("_InternalRetainedState", "_RetainedState"):
-                if not _name.endswith(_sfx):
-                    continue
-                _stem = _name[: -len(_sfx)]  # e.g. "past_key.3_vllmKvCache"
-                if not any(_stem.startswith(_ks) for _ks in _kv_stems):
-                    break
-                # Derive the plain stem (without any infix) by keeping only "prefix.N".
-                # "past_key.3_vllmKvCache" → dot-split gives ["past_key", "3_vllmKvCache"];
-                # strip everything after the first "_" in the layer part.
-                _parts = _stem.split(".", 1)
-                if len(_parts) == 2:
-                    _layer_part = _parts[1].split("_", 1)[0]  # "3" from "3_vllmKvCache"
-                    _plain_stem = f"{_parts[0]}.{_layer_part}"  # "past_key.3"
-                else:
-                    _plain_stem = _stem
-                # Register under both suffix forms so the lookup succeeds regardless of
-                # whether the caller used _RetainedState or _InternalRetainedState.
-                for _reg_sfx in ("_RetainedState", "_InternalRetainedState"):
-                    _key = f"{_plain_stem}{_reg_sfx}"
-                    # Rewrite the stored name's suffix to match retained_state_suffix at lookup time.
-                    _stored = f"{_stem}{retained_state_suffix}"
-                    _caller_retained_map[_key] = _stored
-                break
-
         for layer_idx in range(idx, end_idx):
             layer_states = _resolve_pkv_layers(example_inputs.get("past_key_values"))
             if layer_states is None:
-                for _stem in (f"past_key.{layer_idx}", f"past_value.{layer_idx}"):
-                    _default = f"{_stem}{retained_state_suffix}"
-                    output_name.append(_caller_retained_map.get(_default, _default))
+                output_name.append(f"past_key.{layer_idx}{retained_state_suffix}")
+                output_name.append(f"past_value.{layer_idx}{retained_state_suffix}")
             else:
-                for _stem_name in _resolve_pkv_names(layer_idx, layer_states[layer_idx]):
-                    _default = f"{_stem_name}{retained_state_suffix}"
-                    output_name.append(_caller_retained_map.get(_default, _default))
+                output_name.extend(
+                    [
+                        f"{name}{retained_state_suffix}"
+                        for name in _resolve_pkv_names(layer_idx, layer_states[layer_idx])
+                    ]
+                )
+
+        # Inject the optional vLLM KV-cache prefix into the freshly built per-window output names
+        # (past_key.3_RetainedState -> past_key.3_<prefix>_RetainedState), using the same helper the
+        # non-layerwise paths use. The matching input buffers are renamed to pair with these outputs
+        # just below via align_kv_input_names_to_retained_outputs. No-op when kv_cache_prefix is falsy.
+        output_name = apply_kv_cache_prefix(output_name, kv_cache_prefix)
 
         # For some decoder wrappers (e.g. VLM language wrappers), forward does not accept
         # `inputs_embeds`; keep `input_ids` in those cases.

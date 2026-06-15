@@ -1246,6 +1246,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         prefill_seq_len: Optional[int] = None,
         prefill_only: bool = False,
         enable_chunking: bool = False,
+        kv_cache_prefix: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -1292,6 +1293,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
                 offload_pt_weights=offload_pt_weights,
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
                 _layerwise_cache_probe=kwargs.get("_layerwise_cache_probe", False),
+                kv_cache_prefix=kv_cache_prefix,
             )
         else:
             return self._export(
@@ -1608,6 +1610,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 enable_chunking=enable_chunking,
                 prefill_seq_len=prefill_seq_len,
                 _layerwise_cache_probe=layerwise_cache_probe,
+                kv_cache_prefix=kv_cache_prefix,
             )
         return self.onnx_path
 
@@ -4001,6 +4004,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
                 prefill_only=prefill_only,
+                kv_cache_prefix=kv_cache_prefix,
             )
         else:
             return self._export(
