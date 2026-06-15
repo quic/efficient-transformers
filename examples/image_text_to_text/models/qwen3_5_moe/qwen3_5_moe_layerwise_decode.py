@@ -163,12 +163,6 @@ def main():
     os.environ.setdefault("TMPDIR", os.path.abspath("build/qwen3_5_moe_compile_tmp"))
     os.makedirs(os.environ["TMPDIR"], exist_ok=True)
 
-    # Required for the validated 397B/4L/4-device FP16/no-MX AIC parity path.
-    os.environ["QEFF_QWEN35_MOE_TANH_SHARED_GATE"] = "1"
-    os.environ["QEFF_QWEN35_MOE_TANH_LINEAR_BETA"] = "1"
-    os.environ["QEFF_QWEN35_MOE_TANH_ATTN_GATE"] = "1"
-    os.environ["QEFF_QWEN35_MOE_FORCE_RECURRENT_DECODE"] = "1"
-
     torch.manual_seed(RANDOM_SEED)
 
     config = AutoConfig.from_pretrained(args.model_id)

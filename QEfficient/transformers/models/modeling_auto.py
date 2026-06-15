@@ -1216,15 +1216,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.model = model.get_qeff_language_decoder()
         self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
-        if str(getattr(self.model.config, "model_type", "")).startswith("qwen3_5_moe"):
-            qwen35_graph_flags = {
-                "QEFF_QWEN35_MOE_TANH_SHARED_GATE": "tanh_shared_gate",
-                "QEFF_QWEN35_MOE_TANH_LINEAR_BETA": "tanh_linear_beta",
-                "QEFF_QWEN35_MOE_TANH_ATTN_GATE": "tanh_attn_gate",
-                "QEFF_QWEN35_MOE_FORCE_RECURRENT_DECODE": "force_recurrent_decode",
-            }
-            for env_name, hash_name in qwen35_graph_flags.items():
-                self.hash_params[env_name] = os.environ.get(env_name, "0")
         self.continuous_batching = False
 
     def __update_prefill_transform(
@@ -3688,15 +3679,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.hash_params["NUM_Q_BLOCKS"] = num_q_blocks
         self.hash_params["NUM_FFN_BLOCKS"] = num_ffn_blocks
         self.hash_params["ENABLE_OPT_SWA"] = os.environ.get("ENABLE_OPT_SWA", "0")
-        if str(getattr(self.model.config, "model_type", "")).startswith("qwen3_5_moe"):
-            qwen35_graph_flags = {
-                "QEFF_QWEN35_MOE_TANH_SHARED_GATE": "tanh_shared_gate",
-                "QEFF_QWEN35_MOE_TANH_LINEAR_BETA": "tanh_linear_beta",
-                "QEFF_QWEN35_MOE_TANH_ATTN_GATE": "tanh_attn_gate",
-                "QEFF_QWEN35_MOE_FORCE_RECURRENT_DECODE": "force_recurrent_decode",
-            }
-            for env_name, hash_name in qwen35_graph_flags.items():
-                self.hash_params[env_name] = os.environ.get(env_name, "0")
         return (
             min_seq_len
             if min_seq_len > constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN

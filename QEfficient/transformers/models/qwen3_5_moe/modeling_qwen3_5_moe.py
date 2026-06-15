@@ -540,11 +540,8 @@ class QEffQwen3_5MoeAttention(Qwen3_5MoeAttention):
             )
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-        if os.getenv("QEFF_QWEN35_MOE_TANH_ATTN_GATE", "0") == "1":
-            gate = 0.5 * (torch.tanh(0.5 * gate.float()) + 1.0)
-            gate = gate.to(attn_output.dtype)
-        else:
-            gate = torch.sigmoid(gate)
+        gate = 0.5 * (torch.tanh(0.5 * gate.float()) + 1.0)
+        gate = gate.to(attn_output.dtype)
         attn_output = attn_output * gate
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
@@ -816,11 +813,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         mixed_qkv = self.in_proj_qkv(hidden_states).transpose(1, 2)
         z = self.in_proj_z(hidden_states).reshape(batch_size, seq_len, -1, self.head_v_dim)
         beta_logits = self.in_proj_b(hidden_states)
-        if os.getenv("QEFF_QWEN35_MOE_TANH_LINEAR_BETA", "0") == "1":
-            beta = 0.5 * (torch.tanh(0.5 * beta_logits.float()) + 1.0)
-            beta = beta.to(beta_logits.dtype)
-        else:
-            beta = beta_logits.sigmoid()
+        beta = 0.5 * (torch.tanh(0.5 * beta_logits.float()) + 1.0)
+        beta = beta.to(beta_logits.dtype)
         g = -self.A_log.float().exp() * F.softplus(self.in_proj_a(hidden_states).float() + self.dt_bias)
 
         # ── Conv (unified, handles T=1 and T=N) ──────────────
@@ -892,13 +886,13 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             # Shape: (B, 1, H, d_v), (B, H, d_k, d_v)
             recurrent_out, recurrent_S = self._recurrent_step_batched(query, key, value, g, beta, recurrent_state)
 
-            if os.getenv("QEFF_QWEN35_MOE_FORCE_RECURRENT_DECODE", "0") == "1":
+            if seq_len == 1:
                 core_attn_out = recurrent_out
                 last_recurrent_state = recurrent_S
             else:
                 # Prefill branch — chunked parallel scan
                 # Shape: (B, T, H, d_v), (B, H, d_k, d_v)
-                chunk_out, chunk_S = self.chunk_gated_delta_rule(
+                core_attn_out, last_recurrent_state = self.chunk_gated_delta_rule(
                     query,
                     key,
                     value,
@@ -913,14 +907,6 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                     ones_lower=self._ones_lower,
                     eye=self._eye,
                 )
-
-                # Select based on seq_len
-                # is_decode is SCALAR — torch.where broadcasts efficiently
-                # HW predicates entire branch at runtime
-                is_decode = hidden_states.shape[1] == torch.tensor(1)
-
-                core_attn_out = torch.where(is_decode, recurrent_out, chunk_out)
-                last_recurrent_state = torch.where(is_decode, recurrent_S, chunk_S)
 
             if batch_index is not None:
                 recurrent_batch_index = (batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)).to(
@@ -2052,7 +2038,9 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
     ):
         inputs_shapes = {}
 
-        dummy_seq_len = 1 if os.getenv("QEFF_QWEN35_MOE_FORCE_RECURRENT_DECODE", "0") == "1" else 32
+        # Export the language decoder on the one-token recurrent path. Larger prompt
+        # chunks should use a separate prefill graph rather than bloating decode NPI.
+        dummy_seq_len = 1
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, dummy_seq_len)
 
         inputs_shapes["position_ids"] = (
@@ -2249,11 +2237,8 @@ class QEffQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
 
         shared_expert_output = self.shared_expert(x)
         shared_expert_gate = self.shared_expert_gate(x)
-        if os.getenv("QEFF_QWEN35_MOE_TANH_SHARED_GATE", "0") == "1":
-            shared_expert_gate = 0.5 * (torch.tanh(0.5 * shared_expert_gate.float()) + 1.0)
-            shared_expert_gate = shared_expert_gate.to(shared_expert_output.dtype)
-        else:
-            shared_expert_gate = F.sigmoid(shared_expert_gate)
+        shared_expert_gate = 0.5 * (torch.tanh(0.5 * shared_expert_gate.float()) + 1.0)
+        shared_expert_gate = shared_expert_gate.to(shared_expert_output.dtype)
         shared_expert_output = shared_expert_gate * shared_expert_output
 
         expert_output = experts_out + shared_expert_output
@@ -2388,11 +2373,8 @@ class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
 
         shared_expert_output = self.shared_expert(x)
         shared_expert_gate = self.shared_expert_gate(x)
-        if os.getenv("QEFF_QWEN35_MOE_TANH_SHARED_GATE", "0") == "1":
-            shared_expert_gate = 0.5 * (torch.tanh(0.5 * shared_expert_gate.float()) + 1.0)
-            shared_expert_gate = shared_expert_gate.to(shared_expert_output.dtype)
-        else:
-            shared_expert_gate = F.sigmoid(shared_expert_gate)
+        shared_expert_gate = 0.5 * (torch.tanh(0.5 * shared_expert_gate.float()) + 1.0)
+        shared_expert_gate = shared_expert_gate.to(shared_expert_output.dtype)
         shared_expert_output = shared_expert_gate * shared_expert_output
 
         expert_output = experts_out + shared_expert_output
