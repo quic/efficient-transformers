@@ -77,8 +77,12 @@ def _update_retained_states(target_inputs, source_outputs):
                 f"past_value.{layer_idx}{kv_infix}_RetainedState"
             ]
         else:
-            target_inputs[f"conv_state.{layer_idx}"] = source_outputs[f"conv_state.{layer_idx}_RetainedState"]
-            target_inputs[f"recurrent_state.{layer_idx}"] = source_outputs[f"recurrent_state.{layer_idx}_RetainedState"]
+            target_inputs[f"conv_state.{layer_idx}{kv_infix}"] = source_outputs[
+                f"conv_state.{layer_idx}{kv_infix}_RetainedState"
+            ]
+            target_inputs[f"recurrent_state.{layer_idx}{kv_infix}"] = source_outputs[
+                f"recurrent_state.{layer_idx}{kv_infix}_RetainedState"
+            ]
 
 
 # ---------------------------------------------------------------------------

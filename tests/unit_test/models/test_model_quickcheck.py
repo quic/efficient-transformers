@@ -1998,7 +1998,9 @@ def _kv_input_names(onnx_path: Path) -> Set[str]:
     return {
         inp.name
         for inp in onnx_model.graph.input
-        if inp.name.startswith(("past_key.", "past_value.", "compressed_kv.", "k_pe."))
+        if inp.name.startswith(
+            ("past_key.", "past_value.", "compressed_kv.", "k_pe.", "conv_state.", "recurrent_state.")
+        )
     }
 
 
@@ -2022,6 +2024,61 @@ class TestApplyKvCachePrefixHelper:
 
         names = ["compressed_kv.0_RetainedState", "k_pe.0_RetainedState"]
         assert apply_kv_cache_prefix(names, "P") == ["compressed_kv.0_P_RetainedState", "k_pe.0_P_RetainedState"]
+
+    def test_conv_recurrent_state_prefixed(self):
+        """Hybrid linear-attention state (conv_state / recurrent_state on Qwen3.5 hybrid models)
+        must receive the same KV-cache prefix as classical attention KV. vision/multimodal
+        retained buffers must remain untouched on the same call."""
+        from QEfficient.utils import apply_kv_cache_prefix
+
+        names = [
+            "logits",
+            "past_key.0_RetainedState",
+            "past_value.0_RetainedState",
+            "conv_state.1_RetainedState",
+            "recurrent_state.1_RetainedState",
+            "vision_embeds_RetainedState",
+            "image_idx_output",
+            "pixel_values_RetainedState",
+        ]
+        result = apply_kv_cache_prefix(names, "VLLM")
+        assert result == [
+            "logits",
+            "past_key.0_VLLM_RetainedState",
+            "past_value.0_VLLM_RetainedState",
+            "conv_state.1_VLLM_RetainedState",
+            "recurrent_state.1_VLLM_RetainedState",
+            "vision_embeds_RetainedState",
+            "image_idx_output",
+            "pixel_values_RetainedState",
+        ]
+
+    def test_align_inputs_handles_conv_recurrent(self):
+        """The input rename map must pair conv_state/recurrent_state inputs with their
+        prefixed retained-state outputs, exactly like past_key/past_value."""
+        from QEfficient.utils import align_kv_input_names_to_retained_outputs
+
+        input_names = [
+            "input_ids",
+            "past_key.0",
+            "past_value.0",
+            "conv_state.1",
+            "recurrent_state.1",
+        ]
+        output_names = [
+            "logits",
+            "past_key.0_VLLM_RetainedState",
+            "past_value.0_VLLM_RetainedState",
+            "conv_state.1_VLLM_RetainedState",
+            "recurrent_state.1_VLLM_RetainedState",
+        ]
+        assert align_kv_input_names_to_retained_outputs(input_names, output_names) == [
+            "input_ids",
+            "past_key.0_VLLM",
+            "past_value.0_VLLM",
+            "conv_state.1_VLLM",
+            "recurrent_state.1_VLLM",
+        ]
 
     def test_dict_form_lang_only(self):
         from QEfficient.utils import apply_kv_cache_prefix

@@ -3746,6 +3746,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 prefill_seq_len=prefill_seq_len,
                 num_cores=num_cores,
                 moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+                kv_cache_prefix=kv_cache_prefix,
                 **kwargs,
             )
 
@@ -4283,6 +4284,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 enable_chunking=enable_chunking,
                 moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                 retain_full_kv=retain_full_kv,
+                kv_cache_prefix=kv_cache_prefix,
                 **compiler_options,
             )
         if self.model.qaic_config is not None and self.model.qaic_config.get("mla_absorption", None) is not None:
