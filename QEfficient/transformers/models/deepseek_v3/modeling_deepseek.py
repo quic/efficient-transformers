@@ -816,7 +816,6 @@ class QEffDeepseekV3MoE(nn.Module):
     ):
         seq_len, _ = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
 
         gate_proj = self.all_gate_proj[topk_indices.flatten()]
         up_proj = self.all_up_proj[topk_indices.flatten()]
@@ -829,11 +828,16 @@ class QEffDeepseekV3MoE(nn.Module):
         hidden = self.act_fn(gate_out) * up_out
         expert_output = torch.bmm(hidden, down_proj)
         experts_out = expert_output.view(seq_len, self.gate.top_k, self.config.hidden_size)
-        experts_out = experts_out * topk_weights.unsqueeze(-1)
 
-        final_hidden_states = torch.einsum("abc->ac", experts_out)
+        # Use bmm to combine expert weighting and reduction in one step.
+        # This avoids a ReduceSum ONNX node (which requires constant axes and can
+        # trigger compiler issues at scale). Equivalent to:
+        #   (experts_out * topk_weights.unsqueeze(-1)).sum(dim=1)
+        # but expressed as a single BatchMatMul:
+        #   (seq_len, 1, top_k) @ (seq_len, top_k, hidden_size) → (seq_len, 1, hidden_size)
+        final_hidden_states = torch.bmm(topk_weights.unsqueeze(1), experts_out).squeeze(1)
 
-        return final_hidden_states.type(hidden_states.dtype)
+        return final_hidden_states.to(dtype=hidden_states.dtype)
 
     def forward(self, hidden_states):
         residuals = hidden_states
