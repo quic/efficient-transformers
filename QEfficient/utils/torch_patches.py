@@ -174,9 +174,9 @@ def _disable_safe_export_pass_patches():
 
 
 @contextmanager
-def layerwise_safe_onnx_export_patches():
-    """Disable expensive ONNX exporter passes only for layerwise exports."""
-    if not _layerwise_safe_export_passes_enabled():
+def layerwise_safe_onnx_export_patches(enabled: bool = True):
+    """Disable expensive ONNX exporter passes only for selected layerwise exports."""
+    if not enabled or not _layerwise_safe_export_passes_enabled():
         yield
         return
 

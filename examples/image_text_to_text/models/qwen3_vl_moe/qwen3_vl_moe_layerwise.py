@@ -46,7 +46,7 @@ def main():
         prefill_seq_len=32,
         ctx_len=4096,
         num_cores=16,
-        num_devices=4,
+        num_devices=1,
         height=354,
         width=536,
         mxfp6_matmul=True,

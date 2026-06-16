@@ -1141,9 +1141,6 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
 class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
     def get_submodules_for_export(self) -> Type[nn.Module]:
-        layer_types = getattr(self.config, "layer_types", None)
-        if layer_types and len(set(layer_types)) > 1:
-            return set()
         return {QEffQwen3_5MoeDecoderLayer}
 
     @staticmethod
@@ -1556,9 +1553,6 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
         self.config = model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
-        layer_types = getattr(self.config.text_config, "layer_types", None)
-        if layer_types and len(set(layer_types)) > 1:
-            return set()
         return {QEffQwen3_5MoeDecoderLayer}
 
     def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
@@ -1610,7 +1604,8 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
 
         if QEffQwen3_5MoeTextModel._start == 0:
             B, S, _ = inputs_embeds.shape
-            input_ids = torch.zeros((B, S), dtype=torch.int64, device=inputs_embeds.device)
+            if input_ids is None:
+                input_ids = torch.zeros((B, S), dtype=torch.int64, device=inputs_embeds.device)
             _, _, channel_size = inputs_embeds.shape
             selected = input_ids == self.model.config.image_token_id
             indices1 = selected.to(torch.int64).cumsum(1) - 1

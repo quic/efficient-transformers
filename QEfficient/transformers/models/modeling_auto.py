@@ -1294,6 +1294,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
                 _layerwise_cache_probe=kwargs.get("_layerwise_cache_probe", False),
                 kv_cache_prefix=kv_cache_prefix,
+                prefill_only=prefill_only,
             )
         else:
             return self._export(

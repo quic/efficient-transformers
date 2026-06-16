@@ -919,6 +919,10 @@ class PrefillOnlyTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
+        QEffGlm4MoeMoE: QEffPrefillChunkedGlm4MoeMoE,
+        QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
+        QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
+        QEffQwen3_5MoeSparseMoeBlock: QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
     }
 
 

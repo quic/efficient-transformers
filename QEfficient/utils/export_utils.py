@@ -41,9 +41,10 @@ def export_wrapper(func):
 
     def wrapper(self, *args, **kwargs):
         cache_probe = kwargs.pop("_layerwise_cache_probe", False)
+        subfunction_state = None
         # 1. Setup ONNX subfunctions if requested
         if use_onnx_subfunctions := kwargs.pop("use_onnx_subfunctions", False):
-            args, kwargs = _setup_onnx_subfunctions(self, args, kwargs)
+            args, kwargs, subfunction_state = _setup_onnx_subfunctions(self, args, kwargs)
 
         # 2. Prepare export directory
         export_dir = _prepare_export_directory(self, kwargs)
@@ -56,16 +57,17 @@ def export_wrapper(func):
         if cache_probe:
             kwargs["_layerwise_cache_probe"] = True
 
-        # 4. Execute the actual export
-        onnx_path = func(self, *args, **kwargs)
+        try:
+            # 4. Execute the actual export
+            onnx_path = func(self, *args, **kwargs)
 
-        # 5. Save export metadata
-        if not cache_probe:
-            _save_export_metadata(export_dir, filtered_hash_params)
-
-        # 6. Always cleanup subfunctions if they were setup
-        if use_onnx_subfunctions:
-            _cleanup_onnx_subfunctions(self)
+            # 5. Save export metadata
+            if not cache_probe:
+                _save_export_metadata(export_dir, filtered_hash_params)
+        finally:
+            # 6. Always cleanup subfunctions if they were setup
+            if use_onnx_subfunctions:
+                _cleanup_onnx_subfunctions(self, subfunction_state)
 
         return onnx_path
 
@@ -186,16 +188,20 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
         )
 
     # Add subfunction-specific ONNX transforms
-    qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
-    qeff_model._onnx_transforms.append(CustomOpTransform)
+    original_transforms = list(qeff_model._onnx_transforms)
+    qeff_model._onnx_transforms = list(original_transforms)
+    if RenameFunctionOutputsTransform not in qeff_model._onnx_transforms:
+        qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
+    if CustomOpTransform not in qeff_model._onnx_transforms:
+        qeff_model._onnx_transforms.append(CustomOpTransform)
 
     submodule_classes = qeff_model.model.get_submodules_for_export()
     if submodule_classes:
         kwargs["export_modules_as_functions"] = submodule_classes
-    return args, kwargs
+    return args, kwargs, {"onnx_transforms": original_transforms}
 
 
-def _cleanup_onnx_subfunctions(qeff_model):
+def _cleanup_onnx_subfunctions(qeff_model, state=None):
     """
     Cleanup ONNX subfunction export environment.
 
@@ -215,8 +221,8 @@ def _cleanup_onnx_subfunctions(qeff_model):
     # Undo torch patches
     undo_torch_patches()
     InvalidIndexProvider.SUBFUNC_ENABLED = False
-    qeff_model._onnx_transforms.remove(RenameFunctionOutputsTransform)
-    qeff_model._onnx_transforms.remove(CustomOpTransform)
+    if state is not None and "onnx_transforms" in state:
+        qeff_model._onnx_transforms = state["onnx_transforms"]
 
 
 def _save_export_metadata(export_dir: Path, filtered_hash_params: Dict):
