@@ -18,6 +18,10 @@ _original_setup_trace_module_map = onnx_utils._setup_trace_module_map
 _original_get_module_attributes = getattr(onnx_utils, "_get_module_attributes", None)
 _safe_export_patch_depth = 0
 _safe_export_original_passes = {}
+_SAFE_EXPORT_REQUIRED_PASSES = {
+    "_jit_pass_dce",
+    "_jit_pass_dce_allow_deleting_nodes_with_side_effects",
+}
 
 
 def _noop(*args, **kwargs):
@@ -148,12 +152,15 @@ def _layerwise_safe_export_passes_enabled():
     return bool(getattr(QEFFBaseModel, "_layerwise_active", False))
 
 
-def _enable_safe_export_pass_patches():
+def _enable_safe_export_pass_patches(keep_passes=None):
     global _safe_export_patch_depth
 
+    keep_passes = _SAFE_EXPORT_REQUIRED_PASSES | set(keep_passes or ())
     if _safe_export_patch_depth == 0:
         _safe_export_original_passes.clear()
         for name, replacement in _SAFE_EXPORT_PASS_REPLACEMENTS.items():
+            if name in keep_passes:
+                continue
             if hasattr(_C, name):
                 _safe_export_original_passes[name] = getattr(_C, name)
                 setattr(_C, name, replacement)
@@ -174,18 +181,20 @@ def _disable_safe_export_pass_patches():
 
 
 @contextmanager
-def layerwise_safe_onnx_export_patches(enabled: bool = True):
+def layerwise_safe_onnx_export_patches(enabled: bool = True, keep_passes=None):
     """Temporarily disable expensive ONNX exporter passes for layerwise prefill.
 
     This is a no-op unless the caller explicitly enables it and the process is
     inside the layerwise export context. Regular/non-layerwise export therefore
-    keeps the original PyTorch ONNX exporter behavior.
+    keeps the original PyTorch ONNX exporter behavior. DCE stays enabled by
+    default because some exported graphs need it to remove aten/prim nodes before
+    PyTorch serializes ONNX. ``keep_passes`` can retain additional passes.
     """
     if not enabled or not _layerwise_safe_export_passes_enabled():
         yield
         return
 
-    _enable_safe_export_pass_patches()
+    _enable_safe_export_pass_patches(keep_passes=keep_passes)
     try:
         yield
     finally:

@@ -34,7 +34,7 @@ def main():
         kv_offload=True,
         config=config,
         torch_dtype=torch.float32,
-        layerwise=True,
+        layerwise=False,
     )
 
     qpc_path = qeff_model.compile(
@@ -45,14 +45,14 @@ def main():
         num_devices=1,
         height=354,
         width=536,
-        mxfp6_matmul=True,
+        mxfp6_matmul=False,
         aic_enable_depth_first=True,
         skip_vision=True,
         split_retained_state_io=True,
         use_onnx_subfunctions=True,
         prefill_only=True,
         mos=1,
-        layerwise=True,
+        layerwise=False,
         layerwise_window_size=1,
     )
     print(f"Final QPC path: {qpc_path}")

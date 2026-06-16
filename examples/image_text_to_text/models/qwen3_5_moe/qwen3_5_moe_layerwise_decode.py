@@ -24,7 +24,7 @@ from QEfficient import QEFFAutoModelForImageTextToText
 # MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
 MODEL_ID = "tiny-random/qwen3.6-moe"
 # MODEL_ID = "Qwen/Qwen3.6-35B-A3B"
-LAYERWISE = True
+LAYERWISE = False
 TORCH_DTYPE = torch.float16
 RANDOM_SEED = 42
 

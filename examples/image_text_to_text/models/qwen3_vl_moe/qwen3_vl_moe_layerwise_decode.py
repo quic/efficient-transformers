@@ -22,8 +22,8 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 
 # MODEL_ID = "Qwen/Qwen3-VL-235B-A22B-Instruct"
-# MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-MODEL_ID = "tiny-random/qwen3-vl-moe"
+MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+# MODEL_ID = "tiny-random/qwen3-vl-moe"
 
 
 def main():
@@ -38,7 +38,7 @@ def main():
         kv_offload=True,
         config=config,
         dtype=torch.float16,
-        layerwise=False,
+        layerwise=True,
     )
     batch_size = 1
     qpc_path = qeff_model.compile(
@@ -56,7 +56,7 @@ def main():
         split_retained_state_io=True,
         use_onnx_subfunctions=True,
         mos=1,
-        layerwise=False,
+        layerwise=True,
         layerwise_window_size=1,
     )
     print(f"Final QPC path: {qpc_path}")

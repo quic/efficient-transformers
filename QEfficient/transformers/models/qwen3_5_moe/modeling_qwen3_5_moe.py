@@ -475,10 +475,11 @@ class QEffQwen3_5MoeAttention(Qwen3_5MoeAttention):
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
-        query_states, gate = torch.chunk(
-            self.q_proj(hidden_states).view(*input_shape, -1, self.head_dim * 2), 2, dim=-1
-        )
-        gate = gate.reshape(*input_shape, -1)
+        query_and_gate = self.q_proj(hidden_states).view(*input_shape, -1, self.head_dim * 2)
+        # Static slicing avoids ONNX SplitToSequence from torch.chunk when
+        # layerwise prefill disables canonicalization passes.
+        query_states = query_and_gate[..., : self.head_dim]
+        gate = query_and_gate[..., self.head_dim :].reshape(*input_shape, -1)
 
         query_states = self.q_norm(query_states.view(hidden_shape)).transpose(1, 2)
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
@@ -651,7 +652,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             x.reshape(x.shape[0], x.shape[1], -1, chunk_size, x.shape[-1]) for x in (query, key, value, k_beta, v_beta)
         ]
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
-        mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=0)
+        mask = mask_causal.to(device=query.device)
 
         #
         # chunk decay
@@ -677,7 +678,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             sub = attn[..., :i, :i].clone()
             # attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
             attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
-        attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
+        attn = attn + eye.to(dtype=attn.dtype, device=attn.device)
 
         ## Approximation code ##
         # A = attn
@@ -726,7 +727,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             else initial_state.to(value)
         )
         core_attn_out = torch.zeros_like(value)
-        mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=1)
+        mask = mask_strict.to(device=query.device)
 
         # for each chunk
         for i in range(0, total_sequence_length // chunk_size):
