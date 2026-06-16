@@ -7,6 +7,7 @@
 
 """PyTorch Mllama model."""
 
+import warnings
 from typing import List, Optional, Tuple, Type, Union
 
 import torch
@@ -44,6 +45,12 @@ from QEfficient.transformers.modeling_utils import (
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+
+_MLLAMA_DEPRECATION_MSG = (
+    "Support for Mllama (Llama 3.2 Vision) in QEfficient is deprecated and will be removed in a future release. "
+    "Please migrate to Llama-4 (meta-llama/Llama-4-Scout-17B-16E-Instruct) which provides equivalent "
+    "vision-language capabilities with continued support."
+)
 
 MAX_NUM_IMG = 1
 NUM_CHANNEL = 3
@@ -688,6 +695,10 @@ class QEffMllamaForCausalLM(MllamaForCausalLM):
         - add new args cache idx for the kv retention
     """
 
+    def __init__(self, *args, **kwargs):
+        warnings.warn(_MLLAMA_DEPRECATION_MSG, DeprecationWarning, stacklevel=2)
+        super().__init__(*args, **kwargs)
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -736,7 +747,7 @@ class QEffMllamaForCausalLM(MllamaForCausalLM):
 class QEffMllamaVisionEncoder(nn.Module):
     def __init__(self, model):
         super().__init__()
-        self.model = model
+        self.model = model.model
         self.cross_attention_layers = self.model.config.get_text_config().cross_attention_layers
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
@@ -760,8 +771,8 @@ class QEffMllamaVisionEncoder(nn.Module):
             aspect_ratio_mask=aspect_ratio_mask,
         )
         cross_attention_states = vision_outputs[0]
-        cross_attention_states = self.model.model.multi_modal_projector(cross_attention_states).reshape(
-            -1, cross_attention_states.shape[-2], self.model.model.hidden_size
+        cross_attention_states = self.model.multi_modal_projector(cross_attention_states).reshape(
+            -1, cross_attention_states.shape[-2], self.model.hidden_size
         )
 
         bsz = pixel_values.shape[0]
@@ -807,7 +818,7 @@ class QEffMllamaModel(MllamaModel):
             if aspect_ratio_ids is None:
                 raise ValueError("`aspect_ratio_ids` must be provided if `pixel_values` is provided")
             # get vision tokens from vision model
-            vision_outputs = self.vision_model(
+            vision_outputs = self.model.vision_model(
                 pixel_values=pixel_values,
                 aspect_ratio_ids=aspect_ratio_ids,
                 aspect_ratio_mask=aspect_ratio_mask,
@@ -854,6 +865,10 @@ class QEffMllamaModel(MllamaModel):
 
 
 class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
+    def __init__(self, *args, **kwargs):
+        warnings.warn(_MLLAMA_DEPRECATION_MSG, DeprecationWarning, stacklevel=2)
+        super().__init__(*args, **kwargs)
+
     def get_qeff_vision_encoder(self):
         return QEffMllamaVisionEncoder(self)
 
@@ -909,9 +924,12 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         logits = self.lm_head(hidden_states).float()
         return logits, image_idx, outputs.past_key_values, pixel_values
 
-    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
+    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, **kwargs):
         BS = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        SEQ_LEN = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        seq_len = kwargs.get("prefill_seq_len")
+        if seq_len is None:
+            seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        SEQ_LEN = int(seq_len)
         CTX_LEN = constants.ONNX_EXPORT_CTX_LEN
 
         txt_cfg = self.config.get_text_config()
@@ -988,7 +1006,7 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, CTX_LEN - 1)
 
         if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int64)
 
         inputs = {}
 

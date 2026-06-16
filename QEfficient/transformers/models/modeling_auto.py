@@ -12,6 +12,7 @@ from time import perf_counter
 from typing import List, Optional, Union
 
 import numpy as np
+import onnx
 import torch
 import torch.nn as nn
 from transformers import (
@@ -31,7 +32,7 @@ import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
-from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfoNew,
     PerfMetrics,
@@ -72,8 +73,10 @@ from QEfficient.transformers.quantizers.quant_transforms import (
     Mxfp4GptOssExpertDequantizeTransform,
 )
 from QEfficient.utils import (
+    apply_kv_cache_prefix,
     constants,
     get_padding_shape_from_config,
+    validate_kv_cache_prefix,
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.logging_utils import logger
@@ -91,6 +94,160 @@ TORCH_TO_NUMPY_DTYPE_MAP = {
     torch.bfloat16: np.float16,  # Since numpy doesn't support bfloat16
     torch.float32: np.float32,
 }
+
+
+def _resolve_torch_dtype(kwargs: dict) -> None:
+    """
+    Resolve torch_dtype in kwargs before calling from_pretrained.
+
+    Rules
+    -----
+    * If the caller already set torch_dtype to something other than
+      bfloat16 (e.g. float16 or float32), leave it untouched.
+    * If torch_dtype is bfloat16 **and** the target HW is ai100
+      (the default), override it to float32 because the ai100 compiler
+      does not support bfloat16.
+    * If torch_dtype is bfloat16 and the target HW is ai200,
+      leave it as-is (ai200 supports bfloat16).
+    * If torch_dtype is not set at all, default to float32 so that
+      models whose config.json declares bfloat16 are still loaded in
+      a dtype that the ai100 compiler accepts.
+
+    Transformers v5 renamed the ``torch_dtype`` argument to ``dtype``. To keep
+    backward compatibility for callers (and examples) that pass either name,
+    a caller-supplied ``dtype`` is folded into ``torch_dtype`` here and the two
+    are kept in sync on the way out so the loaded model and its config agree.
+    """
+    aic_hw_version = constants.DEFAULT_AIC_HW_VERSION
+    # Normalize the transformers-v5 ``dtype`` alias onto ``torch_dtype`` so a
+    # single code path governs the HW dtype policy below.
+    if kwargs.get("torch_dtype", None) is None and kwargs.get("dtype", None) is not None:
+        kwargs["torch_dtype"] = kwargs["dtype"]
+    current_dtype = kwargs.get("torch_dtype", None)
+
+    if (current_dtype is None or current_dtype == torch.bfloat16) and aic_hw_version != "ai200":
+        if current_dtype == torch.bfloat16:
+            logger.warning(
+                "torch_dtype=bfloat16 is not supported on %s. Overriding to torch.float32.",
+                aic_hw_version,
+            )
+        kwargs["torch_dtype"] = torch.float32
+
+    # Keep the v5 alias in sync so HF from_pretrained and config see one dtype.
+    if "dtype" in kwargs:
+        kwargs["dtype"] = kwargs["torch_dtype"]
+
+
+def _build_layerwise_vision_export_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
+    """Load a VLM with vision weights and only the first language window.
+
+    This opt-in path keeps vision export usable while avoiding materializing
+    every decoder layer up front. Language ONNX/QPC export still goes through
+    the regular layerwise driver, which reloads each window independently.
+    """
+    from QEfficient.transformers.models import _layerwise
+
+    config = kwargs.get("config", None)
+    if config is None:
+        from transformers import AutoConfig
+
+        config_kwargs = {
+            key: kwargs[key]
+            for key in ("trust_remote_code", "revision", "token", "subfolder", "cache_dir")
+            if key in kwargs
+        }
+        config = AutoConfig.from_pretrained(pretrained_model_name_or_path, **config_kwargs)
+        kwargs["config"] = config
+    model_type = _layerwise.assert_layerwise_supported(config)
+    total_layers = _layerwise._resolve_text_total_layers(config)
+    _layerwise._ensure_pretrained_window_attrs()
+    _layerwise._install_window_patches_for(model_type)
+
+    with _layerwise._layerwise_export_env():
+        _layerwise._set_layer_windows(0, min(1, total_layers), total_layers)
+        try:
+            return hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        finally:
+            _layerwise._reset_layer_windows()
+
+
+def _build_meta_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
+    """Construct an HF model on the meta device for layer-wise mode.
+
+    Avoids materializing checkpoint weights at the outer ``from_pretrained``
+    call site. The wrapper still has a fully-typed ``nn.Module`` (so config,
+    architectures, and module structure are all real), but every parameter
+    and buffer is a meta tensor — zero RAM. The layer-wise driver later
+    rebuilds a real per-window model when ``compile()``/``export()`` runs.
+    """
+    from transformers import AutoConfig
+
+    config = kwargs.get("config", None)
+    if config is None:
+        config_kwargs = {
+            k: kwargs[k] for k in ("trust_remote_code", "revision", "token", "subfolder", "cache_dir") if k in kwargs
+        }
+        config = AutoConfig.from_pretrained(pretrained_model_name_or_path, **config_kwargs)
+    torch_dtype = kwargs.get("torch_dtype", torch.float32)
+    with torch.device("meta"):
+        model = hf_auto_class.from_config(config, torch_dtype=torch_dtype)
+    return model
+
+
+def _compile_io_name(name: str, *, use_onnx_subfunctions: bool) -> str:
+    """Return the compiler-visible name for retained-state ONNX outputs."""
+    if not use_onnx_subfunctions or not name.endswith("_RetainedState"):
+        return name
+    if any(token in name for token in ("key", "value", "conv_state", "recurrent_state", "compressed_kv", "k_pe")):
+        return name[: -len("_RetainedState")] + "_InternalRetainedState"
+    return name
+
+
+def _state_input_name(output_name: str) -> str:
+    """Map a retained-state output name to its matching state input name."""
+    for suffix in ("_InternalRetainedState", "_RetainedState"):
+        if output_name.endswith(suffix):
+            return output_name[: -len(suffix)]
+    return output_name
+
+
+def _filter_custom_io_for_onnx(custom_io: dict, onnx_path: Optional[Union[str, Path]]) -> dict:
+    """Keep custom-IO entries that exist in the ONNX graph.
+
+    Layerwise stitched graphs may prefix I/O names (for example ``layer_0/``)
+    and may expose public retained-state names even when subfunction export used
+    internal names during per-window export. Matching by basename keeps compiler
+    custom-IO compatible with both graph shapes.
+    """
+    if onnx_path is None:
+        return custom_io
+    try:
+        model = onnx.load(onnx_path, load_external_data=False)
+    except Exception:
+        return custom_io
+
+    io_names = {value.name for value in list(model.graph.input) + list(model.graph.output)}
+    basename_to_name = {name.rsplit("/", 1)[-1]: name for name in io_names}
+
+    def resolve_name(name: str) -> Optional[str]:
+        candidates = [name]
+        if name.endswith("_InternalRetainedState"):
+            candidates.append(name[: -len("_InternalRetainedState")] + "_RetainedState")
+        elif name.endswith("_RetainedState"):
+            candidates.append(name[: -len("_RetainedState")] + "_InternalRetainedState")
+        for candidate in candidates:
+            if candidate in io_names:
+                return candidate
+            if candidate in basename_to_name:
+                return basename_to_name[candidate]
+        return None
+
+    filtered = {}
+    for name, dtype in custom_io.items():
+        resolved_name = resolve_name(name)
+        if resolved_name is not None:
+            filtered[resolved_name] = dtype
+    return filtered
 
 
 class QEFFTransformersBase(QEFFBaseModel):
@@ -154,6 +311,7 @@ class QEFFTransformersBase(QEFFBaseModel):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -269,7 +427,11 @@ class QEFFAutoModel(QEFFTransformersBase):
         if pooling:
             self.model, _ = PoolingTransform.apply(self.model, pooling)
 
-        self.model.base_model.config.use_cache = True
+        # Encoder-only models (e.g. BERT) should not be forced into cache mode.
+        if getattr(self.model.config, "is_decoder", False) or getattr(self.model.config, "is_encoder_decoder", False):
+            self.model.base_model.config.use_cache = True
+        else:
+            object.__setattr__(self.model.base_model.config, "use_cache", None)
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
 
@@ -317,6 +479,7 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
@@ -697,6 +860,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
         return cls(model, pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs)
@@ -791,6 +955,9 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
             Use MXFP6 compression for weights. Default is False.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Defaults to False
+        moe_prefill_packed_chunk_size : int, optional
+            Packed rows per expert-blocked MoE chunk for prefill-only chunked export. Applies only when
+            ``prefill_only=True`` and ``enable_chunking=True``. Default is 256.
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -1049,6 +1216,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.model = model.get_qeff_language_decoder()
         self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+        self.continuous_batching = False
 
     def __update_prefill_transform(
         self,
@@ -1078,6 +1246,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         prefill_seq_len: Optional[int] = None,
         prefill_only: bool = False,
         enable_chunking: bool = False,
+        kv_cache_prefix: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -1115,14 +1284,26 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             self.hash_params["prefill_only"] = False
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
-        return self._export(
-            inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
-            export_dir=export_dir,
-            offload_pt_weights=offload_pt_weights,
-            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
-        )
+        if QEfficient.base.modeling_qeff.QEFFBaseModel._layerwise_active:
+            return self._export_layerwise(
+                inputs,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                export_dir=export_dir,
+                offload_pt_weights=offload_pt_weights,
+                use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+                _layerwise_cache_probe=kwargs.get("_layerwise_cache_probe", False),
+                kv_cache_prefix=kv_cache_prefix,
+            )
+        else:
+            return self._export(
+                inputs,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                export_dir=export_dir,
+                offload_pt_weights=offload_pt_weights,
+                use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+            )
 
     def compile(
         self,
@@ -1229,6 +1410,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
         self.model = model
         self.config = model.config
+        self._pretrained_model_name_or_path = kwargs.get("pretrained_model_name_or_path", None)
 
         self.vision_model = QEffVisionEncoderForTextImageToTextModel(model, **kwargs)
         self.lang_model = QEffCausalLMForTextImageToTextModel(model, qaic_config=qaic_config, **kwargs)
@@ -1268,11 +1450,19 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
+        # Respect an explicit low_cpu_mem_usage=True from the caller (used by the
+        # layer-wise driver to keep RAM bounded by one window's weights via meta
+        # init + sharded materialization). For everyone else, force False to
+        # match prior behavior.
+        explicit_low_cpu = kwargs.get("low_cpu_mem_usage", None) is True
+        kwargs.update(
+            {
+                "attn_implementation": "eager",
+                "low_cpu_mem_usage": True if explicit_low_cpu else False,
+            }
+        )
 
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -1305,6 +1495,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         prefill_seq_len: Optional[int] = None,
         prefill_only: bool = False,
         enable_chunking: bool = False,
+        layerwise: bool = False,
+        layerwise_window_size: int = 1,
+        kv_cache_prefix: Optional[str] = None,
         **kwargs,
     ) -> str:
         """
@@ -1327,12 +1520,31 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         List[str]
             A list containing the paths to the generated ONNX graph files for both components.
         """
+        layerwise_cache_probe = kwargs.pop("_layerwise_cache_probe", False)
+        if layerwise:
+            return self._run_layerwise_export(
+                export_dir=export_dir,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+                skip_vision=skip_vision,
+                skip_lang=skip_lang,
+                prefill_seq_len=prefill_seq_len,
+                prefill_only=prefill_only,
+                enable_chunking=enable_chunking,
+                layerwise_window_size=layerwise_window_size,
+                kv_cache_prefix=kv_cache_prefix,
+                **kwargs,
+            )
+        dummy_inputs_kwargs = {}
+        if prefill_seq_len is not None:
+            dummy_inputs_kwargs["prefill_seq_len"] = int(prefill_seq_len)
+
         # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
         try:
             inputs = self.model.get_dummy_inputs(
                 kv_offload=True,
                 continuous_batching=self.continuous_batching,
                 comp_ctx_lengths=self.comp_ctx_lengths_decode,
+                **dummy_inputs_kwargs,
             )
             dynamic_axes = self.model.get_onnx_dynamic_axes(
                 kv_offload=True,
@@ -1345,6 +1557,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
             )
         output_names = self.model.get_output_names(kv_offload=True)
+        # Prefix only the language-side KV-cache retained buffers (vision buffers are untouched).
+        output_names = apply_kv_cache_prefix(output_names, validate_kv_cache_prefix(kv_cache_prefix))
         if self.lang_model.model.qaic_config is not None and self.lang_model.model.qaic_config.get(
             "include_sampler", False
         ):
@@ -1358,7 +1572,18 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 vocab_size=self.model.language_model.config.vocab_size,
                 qaic_config=self.lang_model.model.qaic_config,
             )
-        if not skip_vision:
+
+        layerwise_export = QEFFBaseModel._layerwise_active
+
+        should_export = not skip_vision and (
+            not layerwise_export
+            or (
+                layerwise_export
+                and QEfficient.base.modeling_qeff.QEFFBaseModel._end
+                == QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers
+            )
+        )
+        if should_export and not layerwise_cache_probe:
             self.vision_model.export(
                 inputs["vision"],
                 output_names["vision"],
@@ -1384,6 +1609,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 prefill_seq_len=prefill_seq_len,
+                _layerwise_cache_probe=layerwise_cache_probe,
+                kv_cache_prefix=kv_cache_prefix,
             )
         return self.onnx_path
 
@@ -1414,6 +1641,132 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             **compiler_options,
         )
 
+    def _layerwise_factory_kwargs(self):
+        """Reproduce the from_pretrained kwargs needed to rebuild this wrapper per window."""
+        # Mirror the dual-QPC from_pretrained surface; the layerwise driver passes
+        # config explicitly per call, so we only carry torch_dtype + attn here.
+        # low_cpu_mem_usage=True works with the shard-window patch to allocate
+        # only the active window's weights instead of the full model.
+        torch_dtype = getattr(self.config, "torch_dtype", None)
+        return {
+            "attn_implementation": "eager",
+            "kv_offload": True,
+            "torch_dtype": torch_dtype,
+            "low_cpu_mem_usage": True,
+        }
+
+    def _build_layerwise_factory(self):
+        """Return a callable suitable for layerwise driver's qeff_factory hook."""
+        from QEfficient import QEFFAutoModelForImageTextToText
+
+        base_kwargs = self._layerwise_factory_kwargs()
+
+        def _factory(model_id, config):
+            return QEFFAutoModelForImageTextToText.from_pretrained(
+                model_id,
+                config=config,
+                **base_kwargs,
+            )
+
+        return _factory
+
+    def _build_layerwise_vision_wrapper(self):
+        """Materialize vision weights while keeping language bounded to one window."""
+        model_id = self._pretrained_model_name_or_path
+        if model_id is None:
+            raise RuntimeError("layerwise=True requires a model loaded via from_pretrained(...).")
+        torch_dtype = getattr(self.config, "torch_dtype", None)
+        kwargs = {
+            "config": self.config,
+            "attn_implementation": "eager",
+            "torch_dtype": torch_dtype,
+            "low_cpu_mem_usage": True,
+        }
+        _resolve_torch_dtype(kwargs)
+        self.config.torch_dtype = kwargs["torch_dtype"]
+        model = _build_layerwise_vision_export_model(self._hf_auto_class, model_id, kwargs)
+        return self.__class__(
+            model,
+            continuous_batching=self.continuous_batching,
+            pretrained_model_name_or_path=model_id,
+        )
+
+    def _run_layerwise_export(
+        self,
+        *,
+        export_dir,
+        use_onnx_subfunctions,
+        skip_vision,
+        skip_lang,
+        prefill_seq_len,
+        prefill_only,
+        enable_chunking,
+        layerwise_window_size,
+        **kwargs,
+    ):
+        from QEfficient.transformers.models import _layerwise
+
+        model_id = self._pretrained_model_name_or_path
+        if model_id is None:
+            raise RuntimeError(
+                "layerwise=True requires the QEff model to be built via "
+                "QEFFAutoModelForImageTextToText.from_pretrained(...). "
+                "Direct __init__ does not preserve the model id needed for per-window reload."
+            )
+        compile_kwargs = dict(
+            export_dir=export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            skip_vision=skip_vision,
+            prefill_seq_len=prefill_seq_len,
+            prefill_only=prefill_only,
+            enable_chunking=enable_chunking,
+            **kwargs,
+        )
+        return _layerwise.run_layerwise(
+            model_id=model_id,
+            config=self.config,
+            qeff_factory=self._build_layerwise_factory(),
+            compile_kwargs=compile_kwargs,
+            probe_qeff_model=self,
+            window_size=layerwise_window_size,
+            final_compile=False,
+        )
+
+    def _run_layerwise_compile(
+        self,
+        *,
+        layerwise_window_size,
+        **compile_kwargs,
+    ):
+        from QEfficient.transformers.models import _layerwise
+
+        model_id = self._pretrained_model_name_or_path
+        if model_id is None:
+            raise RuntimeError(
+                "layerwise=True requires the QEff model to be built via "
+                "QEFFAutoModelForImageTextToText.from_pretrained(...). "
+                "Direct __init__ does not preserve the model id needed for per-window reload."
+            )
+        qpc_paths = _layerwise.run_layerwise(
+            model_id=model_id,
+            config=self.config,
+            qeff_factory=self._build_layerwise_factory(),
+            compile_kwargs=compile_kwargs,
+            probe_qeff_model=self,
+            window_size=layerwise_window_size,
+            final_compile=True,
+        )
+        self.qpc_paths = qpc_paths
+        if isinstance(qpc_paths, dict):
+            self.vision_model.qpc_path = qpc_paths.get("vision_qpc_path") or self.vision_model.qpc_path
+            self.lang_model.qpc_path = (
+                qpc_paths.get("lang_decode_qpc_path")
+                or qpc_paths.get("lang_prefill_qpc_path")
+                or qpc_paths.get("lang_qpc_path")
+                or self.lang_model.qpc_path
+            )
+        return qpc_paths
+
     def compile(
         self,
         img_size: Optional[int] = None,
@@ -1438,6 +1791,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         prefill_only=None,
         enable_chunking=False,
         qaic_config: Optional[dict] = None,
+        layerwise: bool = False,
+        layerwise_window_size: int = 1,
+        kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ) -> str:
         """
@@ -1497,6 +1853,65 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if skip_lang and skip_vision:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
 
+        if layerwise:
+            if skip_lang and not skip_vision:
+                vision_wrapper = self._build_layerwise_vision_wrapper()
+                qpc_paths = vision_wrapper.compile(
+                    img_size=img_size,
+                    vision_onnx_path=vision_onnx_path,
+                    lang_onnx_path=lang_onnx_path,
+                    compile_dir=compile_dir,
+                    prefill_seq_len=prefill_seq_len,
+                    comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+                    comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+                    ctx_len=ctx_len,
+                    batch_size=batch_size,
+                    full_batch_size=full_batch_size,
+                    kv_cache_batch_size=kv_cache_batch_size,
+                    num_devices=num_devices,
+                    num_cores=num_cores,
+                    mxfp6_matmul=mxfp6_matmul,
+                    mxint8_kv_cache=mxint8_kv_cache,
+                    skip_vision=skip_vision,
+                    skip_lang=skip_lang,
+                    use_onnx_subfunctions=use_onnx_subfunctions,
+                    prefill_only=prefill_only,
+                    enable_chunking=enable_chunking,
+                    qaic_config=qaic_config,
+                    kv_cache_prefix=kv_cache_prefix,
+                    **compiler_options,
+                )
+                self.vision_model.onnx_path = vision_wrapper.vision_model.onnx_path
+                self.vision_model.qpc_path = vision_wrapper.vision_model.qpc_path
+                self.qpc_paths = qpc_paths
+                return qpc_paths
+            return self._run_layerwise_compile(
+                img_size=img_size,
+                vision_onnx_path=vision_onnx_path,
+                lang_onnx_path=lang_onnx_path,
+                compile_dir=compile_dir,
+                prefill_seq_len=prefill_seq_len,
+                comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+                comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+                ctx_len=ctx_len,
+                batch_size=batch_size,
+                full_batch_size=full_batch_size,
+                kv_cache_batch_size=kv_cache_batch_size,
+                num_devices=num_devices,
+                num_cores=num_cores,
+                mxfp6_matmul=mxfp6_matmul,
+                mxint8_kv_cache=mxint8_kv_cache,
+                skip_vision=skip_vision,
+                skip_lang=skip_lang,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+                prefill_only=prefill_only,
+                enable_chunking=enable_chunking,
+                qaic_config=qaic_config,
+                layerwise_window_size=layerwise_window_size,
+                kv_cache_prefix=kv_cache_prefix,
+                **compiler_options,
+            )
+
         if self.continuous_batching and full_batch_size is None:
             raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
 
@@ -1505,11 +1920,16 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 "KV caching requires continuous batching. Please set `full_batch_size` and "
                 "enable `continuous_batching=True` in `from_pretrained`."
             )
+        layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
 
         # Infer kv_cache_batch_size if not provided
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
 
+        kv_cache_prefix = validate_kv_cache_prefix(kv_cache_prefix)
         output_names = self.model.get_output_names(kv_offload=True)
+        # Prefix only the language-side KV-cache retained buffers (vision buffers are untouched) so the
+        # derived custom_io_lang keys match the prefixed names written into the exported graph.
+        output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
 
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
@@ -1567,7 +1987,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if lang_onnx_path:
             self.lang_model.onnx_path = lang_onnx_path
 
-        if vision_onnx_path is None or lang_onnx_path is None:
+        needs_vision_export = not skip_vision and vision_onnx_path is None
+        needs_lang_export = not skip_lang and lang_onnx_path is None
+
+        if needs_vision_export or needs_lang_export:
             self.export(
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 skip_vision=skip_vision,
@@ -1575,15 +1998,35 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 prefill_seq_len=prefill_seq_len,
+                _layerwise_cache_probe=layerwise_cache_probe,
+                kv_cache_prefix=kv_cache_prefix,
             )
+            if layerwise_cache_probe:
+                return self.lang_model.onnx_path
 
-        # TODO this hould be removed once the continous batching is supported for all the models.
+        # generating NPI during compile
+        if hasattr(self.model, "generate_npi_file") and "node_precision_info" in compiler_options:
+            if isinstance(compiler_options["node_precision_info"], bool) and compiler_options["node_precision_info"]:
+                if self.lang_model.onnx_path is None and not skip_lang:
+                    raise ValueError("Language ONNX path is required to generate a language NPI file.")
+                if self.lang_model.onnx_path:
+                    compiler_options["node_precision_info"] = self.model.generate_npi_file(self.lang_model.onnx_path)
+            elif (
+                isinstance(compiler_options["node_precision_info"], bool)
+                and not compiler_options["node_precision_info"]
+            ):
+                compiler_options.pop("node_precision_info", None)
+
+        # TODO this should be removed once the continous batching is supported for all the models.
         compiler_options.pop("continuous_batching", None)
         compiler_options.pop("kv_cache_batch_size", None)
         compiler_options.pop("full_batch_size", None)
         self.qpc_paths = {}
         if not skip_vision:
+            compiler_options_vision = compiler_options.copy()
+            compiler_options_vision["node_precision_info"] = False
             vision_qpc_path = self.vision_model._compile(
+                onnx_path=self.vision_model.onnx_path,
                 compile_dir=compile_dir,
                 specializations=specializations["vision"],
                 specialization_module_name="Vision",
@@ -1594,7 +2037,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 custom_io=custom_io_vision,
                 mxint8_kv_cache=mxint8_kv_cache,
                 use_onnx_subfunctions=use_onnx_subfunctions,
-                **compiler_options,
+                **compiler_options_vision,
             )
             self.qpc_paths["vision_qpc_path"] = vision_qpc_path
 
@@ -1604,23 +2047,25 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         if not skip_lang:
             custom_io_lang = {}
-            # Inputs
             for output_name in output_names["lang"]:
                 if output_name.endswith("_RetainedState"):
-                    custom_io_lang[output_name[: -len("_RetainedState")]] = (
+                    compiler_output_name = _compile_io_name(
+                        output_name,
+                        use_onnx_subfunctions=use_onnx_subfunctions,
+                    )
+                    custom_io_lang[_state_input_name(compiler_output_name)] = (
+                        CUSTOM_IO_DTYPE_MAP[target_dtype]
+                        if ("vision_embeds" in output_name or "deepstack_features" in output_name)
+                        else kv_cache_dtype
+                    )
+                    custom_io_lang[compiler_output_name] = (
                         CUSTOM_IO_DTYPE_MAP[target_dtype]
                         if ("vision_embeds" in output_name or "deepstack_features" in output_name)
                         else kv_cache_dtype
                     )
 
-            # outputs
-            for output_name in output_names["lang"]:
-                if output_name.endswith("_RetainedState"):
-                    custom_io_lang[output_name] = (
-                        CUSTOM_IO_DTYPE_MAP[target_dtype]
-                        if ("vision_embeds" in output_name or "deepstack_features" in output_name)
-                        else kv_cache_dtype
-                    )
+            custom_io_lang = _filter_custom_io_for_onnx(custom_io_lang, self.lang_model.onnx_path)
+
             if prefill_only:
                 specializations = specializations["lang"][:1]
                 qpc_key = "lang_prefill_qpc_path"
@@ -1632,6 +2077,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 qpc_key = "lang_qpc_path"
 
             lang_qpc_path = self.lang_model._compile(
+                onnx_path=self.lang_model.onnx_path,
                 compile_dir=compile_dir,
                 retained_state=True,
                 specializations=specializations,
@@ -1660,6 +2106,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         generation_len: Optional[int] = None,
         image_height: Optional[int] = None,
         image_width: Optional[int] = None,
+        multi_specs: Optional[bool] = None,
+        num_frames: Optional[int] = None,
         **kwargs,
     ) -> Union[torch.Tensor, np.ndarray]:
         """
@@ -1708,7 +2156,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path[1]), "io_dir") if write_io else None
 
         # Use VisionLanguageGeneration for image-prompt pairs
-        if (processor and images) or (tokenizer and prompts):
+        if (processor and images) or (tokenizer and prompts) or multi_specs or num_frames:
             # Create VisionLanguageGeneration instance
             batch_size_comp, ctx_len_comp, fbs = get_compilation_dims(self.lang_model.qpc_path)
             vlm_gen = VisionLanguageGeneration(
@@ -1730,6 +2178,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
             # Call generate method
             return vlm_gen.generate(
+                inputs=inputs,
+                num_frames=num_frames,
+                multi_specs=multi_specs,
                 images=images,
                 prompts=prompts,
                 generation_len=generation_len,
@@ -1794,7 +2245,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             [
                 x
                 for x in lang_session.input_names + lang_session.output_names
-                if x.startswith("past_") or x.endswith("_RetainedState")
+                if is_retained_state_name(x) or x.endswith("_RetainedState")
             ]
         )
 
@@ -1827,6 +2278,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         inputs["attention_mask"] = torch.nn.functional.pad(
             inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
         )
+
+        if "mm_token_type_ids" in inputs:
+            inputs["mm_token_type_ids"] = torch.nn.functional.pad(
+                inputs["mm_token_type_ids"], (0, padded_len - input_ids_length), "constant", 0
+            )
+
         if "cross_attention_mask" in inputs:
             inputs["cross_attention_mask"] = torch.nn.functional.pad(
                 inputs["cross_attention_mask"], (0, 0, 0, 0, 0, padded_len - input_ids_length)
@@ -1839,7 +2296,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             k: v
             for k, v in inputs.items()
             if k
-            in {"pixel_values", "image_masks", "image_input_idx", "valid_idx", "aspect_ratio_ids", "aspect_ratio_mask"}
+            in {
+                "pixel_values",
+                "image_masks",
+                "image_position_ids",
+                "image_input_idx",
+                "valid_idx",
+                "aspect_ratio_ids",
+                "aspect_ratio_mask",
+            }
         }
 
         vision_inputs_fp16 = {"pixel_values", "image_masks"}
@@ -1861,6 +2326,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
             )  # Need to use -1 as position_ids for invalid tokens
 
+        if "mm_token_type_ids" not in lang_inputs and "mm_token_type_ids" in lang_session.input_names:
+            # Keep prefill/decode dynamic shapes aligned when callers omit multimodal token type ids.
+            lang_inputs["mm_token_type_ids"] = np.zeros_like(
+                lang_inputs["input_ids"], dtype=lang_inputs["input_ids"].dtype
+            )
         not_mllama = hasattr(self.model.config, "model_type") and self.model.config.model_type != "mllama"
         if not_mllama:
             lang_inputs["image_idx"] = np.array([[0]])
@@ -1872,7 +2342,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         if self.comp_ctx_lengths_prefill is not None:
             list_of_comp_ctx_lengths_prefill = [
-                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_prefill
+                np.zeros(length, dtype=np.int64) for length in self.comp_ctx_lengths_prefill
             ]
             prefill_ccl_id = 0
             lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
@@ -1880,6 +2350,37 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         lang_start = perf_counter()
         # Run prefill
         chunk_inputs = lang_inputs.copy()
+        logits_vocab_size = None
+        logits_dtype = np.float32
+        logits_binding_idx = lang_session.binding_index_map.get("logits")
+        input_ids_binding_idx = lang_session.binding_index_map.get("input_ids")
+        logits_seq_len_by_input_seq = {}
+        default_logits_seq_len = 1
+        if logits_binding_idx is not None and getattr(lang_session, "allowed_shapes", None):
+            allowed_vocab_sizes = [
+                int(shape_spec[logits_binding_idx][1][-1])
+                for shape_spec in lang_session.allowed_shapes
+                if len(shape_spec) > logits_binding_idx and len(shape_spec[logits_binding_idx][1]) >= 3
+            ]
+            if allowed_vocab_sizes:
+                logits_vocab_size = max(allowed_vocab_sizes)
+            if input_ids_binding_idx is not None:
+                for shape_spec in lang_session.allowed_shapes:
+                    if len(shape_spec) <= max(input_ids_binding_idx, logits_binding_idx):
+                        continue
+                    input_dims = shape_spec[input_ids_binding_idx][1]
+                    logits_dims = shape_spec[logits_binding_idx][1]
+                    if len(input_dims) < 2 or len(logits_dims) < 2:
+                        continue
+                    logits_seq_len_by_input_seq[int(input_dims[1])] = int(logits_dims[1])
+        if logits_vocab_size is None and logits_binding_idx is not None:
+            logits_dims = tuple(lang_session.bindings[logits_binding_idx].dims)
+            if logits_dims:
+                logits_vocab_size = int(logits_dims[-1])
+            if len(logits_dims) > 1:
+                default_logits_seq_len = int(logits_dims[1])
+        if logits_binding_idx is not None:
+            logits_dtype = lang_session.aic_to_np_dtype_mapping[lang_session.bindings[logits_binding_idx].type]
         for i in range(num_chunks):
             if (
                 self.comp_ctx_lengths_prefill is not None
@@ -1892,6 +2393,27 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             chunk_inputs["position_ids"] = lang_inputs["position_ids"][
                 ..., i * prefill_seq_len : (i + 1) * prefill_seq_len
             ]
+            if "mm_token_type_ids" in lang_inputs:
+                chunk_inputs["mm_token_type_ids"] = lang_inputs["mm_token_type_ids"][
+                    ..., i * prefill_seq_len : (i + 1) * prefill_seq_len
+                ]
+            if "token_type_ids" in lang_inputs:
+                chunk_inputs["token_type_ids"] = lang_inputs["token_type_ids"][
+                    ..., i * prefill_seq_len : (i + 1) * prefill_seq_len
+                ]
+            if "cross_attention_mask" in lang_inputs:
+                chunk_inputs["cross_attention_mask"] = lang_inputs["cross_attention_mask"][
+                    :, i * prefill_seq_len : (i + 1) * prefill_seq_len, :, :
+                ]
+            if logits_vocab_size is not None:
+                input_seq_len = int(chunk_inputs["input_ids"].shape[1])
+                logits_seq_len = logits_seq_len_by_input_seq.get(input_seq_len, default_logits_seq_len)
+                logits_shape = (
+                    chunk_inputs["input_ids"].shape[0],
+                    logits_seq_len,
+                    logits_vocab_size,
+                )
+                lang_session.set_buffers({"logits": np.zeros(logits_shape, dtype=logits_dtype)})
             outputs = lang_session.run(chunk_inputs)
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
@@ -1904,14 +2426,21 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             [
                 x
                 for x in lang_session.input_names + lang_session.output_names
-                if x.startswith("past_") or x.endswith("_RetainedState")
+                if is_retained_state_name(x) or x.endswith("_RetainedState")
             ]
         )
         if not_mllama:
             lang_session.skip_buffers(vision_outputs.keys())
         # Get first token
         lang_inputs["input_ids"] = outputs["logits"].argmax(2)
+        if lang_inputs["input_ids"].ndim == 2 and lang_inputs["input_ids"].shape[1] > 1:
+            lang_inputs["input_ids"] = lang_inputs["input_ids"][:, -1:]
         lang_inputs["position_ids"] = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
+
+        if "mm_token_type_ids" in lang_inputs:
+            lang_inputs["mm_token_type_ids"] = np.zeros_like(
+                lang_inputs["input_ids"], dtype=lang_inputs["mm_token_type_ids"].dtype
+            )
         if "cross_attention_mask" in lang_inputs:
             bs, _, num_images, img_tiles = lang_inputs["cross_attention_mask"].shape
             lang_inputs["cross_attention_mask"] = torch.ones((bs, 1, num_images, img_tiles), dtype=torch.int64).numpy()
@@ -1924,7 +2453,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if self.comp_ctx_lengths_decode is not None:
             max_ccl_id = len(self.comp_ctx_lengths_decode) - 1
             list_of_comp_ctx_lengths_decode = [
-                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_decode
+                np.zeros(length, dtype=np.int64) for length in self.comp_ctx_lengths_decode
             ]
             max_position_id = np.max(lang_inputs["position_ids"])
             ccl_id_initial = 0
@@ -1934,6 +2463,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     ccl_id = i
                     break
             lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_decode[ccl_id]
+
+        if logits_vocab_size is not None:
+            decode_logits_shape = (lang_inputs["input_ids"].shape[0], 1, logits_vocab_size)
+            lang_session.set_buffers({"logits": np.zeros(decode_logits_shape, dtype=logits_dtype)})
 
         decode_start = perf_counter()
         for num_token in range(1, generation_len):
@@ -1950,6 +2483,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             # Prepare inputs for next iteration
             lang_inputs["input_ids"] = outputs["logits"].argmax(2)
             lang_inputs["position_ids"] += 1
+            if "mm_token_type_ids" in lang_inputs:
+                lang_inputs["mm_token_type_ids"] = np.zeros_like(
+                    lang_inputs["input_ids"], dtype=lang_inputs["mm_token_type_ids"].dtype
+                )
             generated_ids[:, num_token] = lang_inputs["input_ids"].squeeze(1)
             if streamer:
                 streamer.put(lang_inputs["input_ids"][0])
@@ -2086,6 +2623,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
@@ -2097,10 +2635,32 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             **kwargs,
         )
 
+    def __update_prefill_transform(
+        self,
+        enable: Optional[bool] = True,
+        enable_chunking: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = False,
+    ):
+        if enable:
+            if enable_chunking:
+                self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
+            else:
+                self.model, tf = PrefillOnlyTransform.apply(self.model)
+
+        else:
+            if retain_full_kv:
+                self.model, tf = RevertPrefillKeepAttentionTransform.apply(self.model)
+            else:
+                self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
+
     def export(
         self,
         export_dir: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
+        prefill_seq_len: Optional[int] = None,
+        prefill_only: bool = False,
+        enable_chunking: bool = False,
+        kv_cache_prefix: Optional[str] = None,
         **kwargs,
     ) -> str:
         """
@@ -2118,9 +2678,23 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         str
             Path to the generated ONNX graph file.
         """
+        if prefill_only:
+            assert prefill_seq_len > 1
+            if not enable_chunking and self.continuous_batching:
+                raise NotImplementedError(
+                    "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
+                )
+            self.hash_params["prefill_only"] = True
+            self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
+        else:
+            self.hash_params["prefill_only"] = False
+            self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+
         inputs = self.model.get_dummy_inputs(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         dynamic_axes = self.model.get_onnx_dynamic_axes(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         output_names = self.model.get_output_names()
+        # Prefix only the LLM KV-cache retained buffers (vision/multimodal buffers untouched).
+        output_names = apply_kv_cache_prefix(output_names, validate_kv_cache_prefix(kv_cache_prefix))
         return self._export(
             inputs,
             output_names=output_names,
@@ -2149,6 +2723,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         num_speculative_tokens: Optional[int] = None,
         use_onnx_subfunctions: bool = False,
         qaic_config: Optional[dict] = None,
+        kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ) -> str:
         """
@@ -2207,7 +2782,11 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
         # Infer kv_cache_batch_size if not provided
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
+        kv_cache_prefix = validate_kv_cache_prefix(kv_cache_prefix)
         output_names = self.model.get_output_names()
+        # Prefix only the LLM KV-cache retained buffers so the derived custom_io (and the names baked
+        # into the exported graph) stay consistent; vision/multimodal buffers are untouched.
+        output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
 
         # if ccl_enabled is True read Compute-Context-Length lists
         if self.ccl_enabled:
@@ -2251,18 +2830,14 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         custom_io = {}
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[target_dtype]
-        # inputs
         for input_name in output_names:
             if input_name.endswith("_RetainedState"):
-                custom_io[input_name[: -len("_RetainedState")]] = (
+                compiler_output_name = _compile_io_name(input_name, use_onnx_subfunctions=use_onnx_subfunctions)
+                custom_io[_state_input_name(compiler_output_name)] = (
                     CUSTOM_IO_DTYPE_MAP[target_dtype] if "pixel_values" in input_name else kv_cache_dtype
                 )
-
-        # outputs
-        for output_name in output_names:
-            if output_name.endswith("_RetainedState"):
-                custom_io[output_name] = (
-                    CUSTOM_IO_DTYPE_MAP[target_dtype] if "pixel_values" in output_name else kv_cache_dtype
+                custom_io[compiler_output_name] = (
+                    CUSTOM_IO_DTYPE_MAP[target_dtype] if "pixel_values" in input_name else kv_cache_dtype
                 )
 
         # TODO this hould be removed once the continous batching is supported for all the models.
@@ -2281,6 +2856,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             aic_num_cores=num_cores,
             mxint8_kv_cache=mxint8_kv_cache,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            kv_cache_prefix=kv_cache_prefix,
             **compiler_options,
         )
         return self.qpc_path
@@ -2388,7 +2964,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             [
                 x
                 for x in qpc_session.input_names + qpc_session.output_names
-                if x.startswith("past_") or x.endswith("_RetainedState")
+                if is_retained_state_name(x) or x.endswith("_RetainedState")
             ]
         )
 
@@ -2440,7 +3016,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
         if self.comp_ctx_lengths_prefill is not None:
             list_of_comp_ctx_lengths_prefill = [
-                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_prefill
+                np.zeros(length, dtype=np.int64) for length in self.comp_ctx_lengths_prefill
             ]
             prefill_ccl_id = 0
             inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
@@ -2487,7 +3063,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         # Decode loop
         if self.comp_ctx_lengths_decode is not None:
             list_of_comp_ctx_lengths_decode = [
-                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_decode
+                np.zeros(length, dtype=np.int64) for length in self.comp_ctx_lengths_decode
             ]
             max_ccl_id = len(self.comp_ctx_lengths_decode) - 1
             max_position_id = np.max(inputs["position_ids"])
@@ -2654,6 +3230,7 @@ class QEFFAutoModelForImageTextToText:
         kv_offload: Optional[bool] = None,
         continuous_batching: bool = False,
         qaic_config: Optional[dict] = None,
+        layerwise: bool = False,
         **kwargs,
     ):
         """
@@ -2694,15 +3271,31 @@ class QEFFAutoModelForImageTextToText:
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
+        # Respect explicit low_cpu_mem_usage=True (used by the layer-wise driver
+        # to materialize only the active window's weights via meta init +
+        # sharded materialization). Default behavior remains False.
+        explicit_low_cpu = kwargs.get("low_cpu_mem_usage", None) is True
+        kwargs.update(
+            {
+                "attn_implementation": "eager",
+                "low_cpu_mem_usage": True if explicit_low_cpu else False,
+            }
+        )
 
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        _resolve_torch_dtype(kwargs)
+        if layerwise:
+            # Layer-wise mode: build the outer model on the meta device so the
+            # caller's ``from_pretrained`` does not pull the full checkpoint
+            # into RAM. compile()/export() rebuilds a real per-window model
+            # internally via the layer-wise driver, so the outer instance is
+            # only used as a config holder.
+            model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
+        else:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
-        return cls(
+        instance = cls(
             model,
             kv_offload=kv_offload,
             continuous_batching=continuous_batching,
@@ -2710,6 +3303,12 @@ class QEFFAutoModelForImageTextToText:
             qaic_config=qaic_config,
             **kwargs,
         )
+        # Mark the wrapper so its compile() can default ``layerwise=True`` if
+        # the user forgot to pass it (the meta model cannot be exported any
+        # other way) and so the driver knows weights still need to be loaded.
+        if layerwise:
+            instance._layerwise_outer_meta = True
+        return instance
 
 
 MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {
@@ -2889,6 +3488,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         continuous_batching: bool = False,
         qaic_config: Optional[dict] = None,
         max_seq_len_cached: Optional[int] = None,
+        layerwise: bool = False,
         *args,
         **kwargs,
     ):
@@ -2944,13 +3544,28 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
         kv_offload = kwargs.pop("kv_offload", None)
 
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        # Respect explicit low_cpu_mem_usage=True (used by the layer-wise driver
+        # to materialize only the active window's weights via meta init +
+        # sharded materialization). Default behavior remains False.
+        explicit_low_cpu = kwargs.get("low_cpu_mem_usage", None) is True
+        kwargs.update(
+            {
+                "attn_implementation": "eager",
+                "low_cpu_mem_usage": True if explicit_low_cpu else False,
+            }
+        )
+
+        _resolve_torch_dtype(kwargs)
+        if layerwise:
+            # Layer-wise mode: build the outer model on the meta device. The
+            # caller still gets a typed wrapper, but no checkpoint weights are
+            # pulled into RAM. compile()/export() rebuilds a real per-window
+            # model internally via the layer-wise driver.
+            model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
+        else:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
 
@@ -2965,7 +3580,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 continuous_batching=continuous_batching,
                 **kwargs,
             )
-        return cls(
+        instance = cls(
             model,
             continuous_batching=continuous_batching,
             qaic_config=qaic_config,
@@ -2973,6 +3588,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             max_seq_len_cached=max_seq_len_cached,
             **kwargs,
         )
+        if layerwise:
+            instance._layerwise_outer_meta = True
+        return instance
 
     @property
     def get_model_config(self) -> dict:
@@ -2987,11 +3605,27 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         return self.model.config.__dict__
 
     def get_seq_len_and_handle_specialized_prefill_model(
-        self, prefill_seq_len: Optional[int] = None, enable_chunking=False
+        self,
+        prefill_seq_len: Optional[int] = None,
+        enable_chunking=False,
+        num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
     ) -> int:
         self.hash_params["prefill_only"] = True
         if enable_chunking:
             self.hash_params["chunking"] = True
+            compile_seq_len = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+            num_packed_chunks = max(1, -(-compile_seq_len // moe_prefill_packed_chunk_size))
+            for module in self.model.modules():
+                if getattr(module, "supports_moe_prefill_blocking", False):
+                    module.expert_blocking_num_nsp = num_cores
+                    module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
+                    module.expert_blocking_num_packed_chunks = num_packed_chunks
+            self.hash_params["moe_prefill_num_nsp"] = num_cores
+            self.hash_params["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
+            self.hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
+            if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe"}:
+                return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
             return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
         num_q_blocks = (
@@ -3033,11 +3667,49 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         )
 
+    def _run_layerwise(self, *, final_compile: bool, layerwise_window_size: int, **forward_kwargs):
+        """Drive the layer-wise export/compile loop for CausalLM models."""
+        from QEfficient.transformers.models import _layerwise
+
+        model_id = getattr(self.model, "pretrained_path", None)
+        if model_id is None:
+            raise RuntimeError(
+                "layerwise=True requires the QEff model to be built via "
+                "QEFFAutoModelForCausalLM.from_pretrained(...). "
+                "Direct __init__ does not preserve the model id needed for per-window reload."
+            )
+        config = getattr(self.model, "config", None)
+        torch_dtype = getattr(config, "torch_dtype", None)
+
+        def _factory(model_id, config):
+            return QEFFAutoModelForCausalLM.from_pretrained(
+                model_id,
+                config=config,
+                torch_dtype=torch_dtype,
+                continuous_batching=self.continuous_batching,
+                low_cpu_mem_usage=True,
+            )
+
+        return _layerwise.run_layerwise(
+            model_id=model_id,
+            config=config,
+            qeff_factory=_factory,
+            compile_kwargs=forward_kwargs,
+            probe_qeff_model=self,
+            window_size=layerwise_window_size,
+            final_compile=final_compile,
+        )
+
     def export(
         self,
         export_dir: Optional[str] = None,
         prefill_only: Optional[bool] = False,
         prefill_seq_len: Optional[int] = None,
+        num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
+        layerwise: bool = False,
+        layerwise_window_size: int = 1,
+        kv_cache_prefix: Optional[str] = None,
         **kwargs,
     ) -> str:
         """
@@ -3063,6 +3735,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             raise NotImplementedError(
                 "decode_only=True is not supported by QEFFAutoModelForCausalLM.export(). "
                 "Use the default non-prefill export path for standard CausalLM decode graphs."
+            )
+
+        if layerwise:
+            return self._run_layerwise(
+                final_compile=False,
+                layerwise_window_size=layerwise_window_size,
+                export_dir=export_dir,
+                prefill_only=prefill_only,
+                prefill_seq_len=prefill_seq_len,
+                num_cores=num_cores,
+                moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+                kv_cache_prefix=kv_cache_prefix,
+                **kwargs,
             )
 
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
@@ -3103,13 +3788,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("retain_full_kv", None)
                 if "DeepseekV3ForCausalLM" not in (getattr(self.model.config, "architectures", None) or []):
                     seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
-                        prefill_seq_len=prefill_seq_len, enable_chunking=enable_chunking
+                        prefill_seq_len=prefill_seq_len,
+                        enable_chunking=enable_chunking,
+                        num_cores=num_cores,
+                        moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                     )
+                    sliding_window = getattr(self.model.config, "sliding_window", None)
                     kv_cache_shape[2] = (
-                        seq_len
-                        + (self.model.config.sliding_window if self.model.config.sliding_window is not None else 0)
-                        if enable_chunking
-                        else seq_len
+                        seq_len + (sliding_window if sliding_window is not None else 0) if enable_chunking else seq_len
                     )
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
@@ -3118,10 +3804,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("NUM_FFN_BLOCKS", None)
                 self.hash_params.pop("ENABLE_OPT_SWA", None)
                 self.hash_params.pop("chunking", None)
+                self.hash_params.pop("moe_prefill_num_nsp", None)
+                self.hash_params.pop("moe_prefill_packed_chunk_size", None)
+                self.hash_params.pop("moe_prefill_num_packed_chunks", None)
+                self.hash_params.pop("chunking_seq_len", None)
                 if kwargs.get("retain_full_kv", False):
-                    kv_cache_shape[2] = seq_len + (
-                        self.model.config.sliding_window if self.model.config.sliding_window is not None else 0
-                    )
+                    sliding_window = getattr(self.model.config, "sliding_window", None)
+                    kv_cache_shape[2] = seq_len + (sliding_window if sliding_window is not None else 0)
                     self.hash_params["retain_full_kv"] = True
 
         example_inputs = {
@@ -3134,7 +3823,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
         if self.ccl_enabled:
-            example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (512,), dtype=torch.int8)
+            example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (512,), dtype=torch.int64)
             dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
 
         if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
@@ -3159,6 +3848,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if (
             hasattr(self.model.config, "model_type")
             and self.model.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
+            and hasattr(self.model, "get_dummy_pkv_cache")
         ):
             pkv_cache = self.model.get_dummy_pkv_cache(
                 self.model.config, fbs if self.continuous_batching else bs, seq_len
@@ -3250,15 +3940,83 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 qaic_config=self.model.qaic_config,
             )
 
-        return self._export(
-            example_inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
-            export_dir=export_dir,
-            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
-            offload_pt_weights=kwargs.get("offload_pt_weights", True),
-            prefill_only=prefill_only,
-        )
+        # transformers>=5.3 Gemma3 models require Cache I/O internally; keep tensor/list
+        # inputs for tracing and bridge to cache objects inside a temporary wrapper.
+        if (
+            hasattr(self.model.config, "model_type")
+            and str(self.model.config.model_type).startswith("gemma3")
+            and not getattr(self.model, "_qeff_export_gemma3_cache_patch", False)
+        ):
+            import functools
+            import inspect
+
+            from transformers.cache_utils import Cache, DynamicCache
+
+            model_forward = self.model.forward
+            model_forward_sig = inspect.signature(model_forward)
+
+            @functools.wraps(model_forward)
+            def _qeff_patched_forward(*args, **kwargs):
+                def _legacyify_cache(obj):
+                    if hasattr(obj, "to_legacy_cache"):
+                        return obj.to_legacy_cache()
+                    if isinstance(obj, Cache):
+                        if hasattr(obj, "to_legacy_cache"):
+                            return obj.to_legacy_cache()
+                        if hasattr(obj, "layers"):
+                            legacy_cache = ()
+                            for layer in obj.layers:
+                                keys = getattr(layer, "keys", None)
+                                values = getattr(layer, "values", None)
+                                legacy_cache += ((keys, values),)
+                            return legacy_cache
+                    if isinstance(obj, (tuple, list)):
+                        return type(obj)(_legacyify_cache(x) for x in obj)
+                    return obj
+
+                bound_args = model_forward_sig.bind_partial(*args, **kwargs)
+                past_key_values = bound_args.arguments.get("past_key_values", None)
+                if past_key_values is not None and not isinstance(past_key_values, Cache):
+                    bound_args.arguments["past_key_values"] = DynamicCache(tuple(past_key_values))
+                outputs = model_forward(*bound_args.args, **bound_args.kwargs)
+                if torch.onnx.is_in_onnx_export():
+                    if hasattr(outputs, "logits") and hasattr(outputs, "past_key_values"):
+                        return outputs.logits, _legacyify_cache(outputs.past_key_values)
+                    return _legacyify_cache(outputs)
+                return outputs
+
+            self.model.forward = _qeff_patched_forward
+            self.model._qeff_export_gemma3_cache_patch = True
+
+        # Optionally inject a user-provided infix token into the LLM KV-cache retained-state names
+        # (e.g. past_key.0_RetainedState -> past_key.0_<prefix>_RetainedState) so downstream consumers
+        # (vLLM disaggregated serving) can regex-select only the LLM KV buffers for transfer.
+        kv_cache_prefix = validate_kv_cache_prefix(kv_cache_prefix)
+        if kv_cache_prefix:
+            output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
+            self.hash_params["kv_cache_prefix"] = kv_cache_prefix
+
+        if QEFFBaseModel._layerwise_active:
+            return self._export_layerwise(
+                example_inputs,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                export_dir=export_dir,
+                use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+                offload_pt_weights=kwargs.get("offload_pt_weights", True),
+                prefill_only=prefill_only,
+                kv_cache_prefix=kv_cache_prefix,
+            )
+        else:
+            return self._export(
+                example_inputs,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                export_dir=export_dir,
+                use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+                offload_pt_weights=kwargs.get("offload_pt_weights", True),
+                prefill_only=prefill_only,
+            )
 
     def build_prefill_specialization(
         self,
@@ -3360,6 +4118,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             A dictionary defining the decode specialization, or None if it would be a duplicate
             of the prefill specialization (e.g., if prefill_seq_len is 1 and not continuous batching).
         """
+        decode_seq_len = (num_speculative_tokens + 1) if self.is_tlm else 1
+        if decode_seq_len == prefill_seq_len and not self.continuous_batching:
+            return None
         if hasattr(self.model, "get_specializations"):
             spec = self.model.get_specializations(
                 batch_size=full_batch_size if self.continuous_batching else batch_size,
@@ -3401,12 +4162,16 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
-        num_speculative_tokens: Optional[int] = None,
+        num_speculative_tokens: Optional[Union[int, List[int]]] = None,
         prefill_only: Optional[bool] = None,
         use_onnx_subfunctions: bool = False,
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
+        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         retain_full_kv: Optional[bool] = None,
+        layerwise: bool = False,
+        layerwise_window_size: int = 1,
+        kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ) -> str:
         """
@@ -3443,14 +4208,21 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             Use MXFP6 compression for weights. Default is False.
         mxint8_kv_cache : bool, optional
             Use MXINT8 compression for KV cache. Default is False.
-        num_speculative_tokens : int, optional
-            Number of speculative tokens for Speculative Decoding Target Language Model.
-            Required if the model is configured as a Target Language Model (`is_tlm=True`).
+        num_speculative_tokens : int or list[int], optional
+            Proposal length(s) for Speculative Decoding Target Language Model.
+            A plain int K is treated as ``[K]`` (backward compatible).
+            Each value K generates a decode specialization with seq_len=K+1 and
+            num_logits_to_keep=K+1. Include 0 to compile a cheap single-token fallback
+            (e.g. ``[0, 3]`` for a fallback + full K=3 decode). Required if the model is
+            configured as a Target Language Model (``is_tlm=True``).
         prefill_only : bool, optional
             If True, compiles only for the prefill stage. If False, compiles only for
             the decode stage. If None, compiles for both stages. Default is None.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+        moe_prefill_packed_chunk_size : int, optional
+            Packed rows per expert-blocked MoE chunk for prefill-only chunked export. Applies only when
+            ``prefill_only=True`` and ``enable_chunking=True``. Default is 256.
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -3480,14 +4252,41 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         TypeError
             If `prefill_only` is not a boolean.
             If `full_batch_size` is None when `continuous_batching` is True.
-            If `num_speculative_tokens` is None when the model is a TLM.
+            If `num_speculative_tokens` is None or empty when the model is a TLM.
         ValueError
             If KV caching is requested without continuous batching (`full_batch_size`).
-            If `include_sampler` is True and `num_speculative_tokens` is greater than 0.
+            If `include_sampler` is True and `num_speculative_tokens` contains a value > 0.
             If `num_speculative_tokens` is not an integer greater than 1.
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
+        if layerwise:
+            return self._run_layerwise(
+                final_compile=True,
+                layerwise_window_size=layerwise_window_size,
+                onnx_path=onnx_path,
+                compile_dir=compile_dir,
+                prefill_seq_len=prefill_seq_len,
+                ctx_len=ctx_len,
+                comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+                comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+                batch_size=batch_size,
+                full_batch_size=full_batch_size,
+                kv_cache_batch_size=kv_cache_batch_size,
+                num_devices=num_devices,
+                num_cores=num_cores,
+                mxfp6_matmul=mxfp6_matmul,
+                mxint8_kv_cache=mxint8_kv_cache,
+                num_speculative_tokens=num_speculative_tokens,
+                prefill_only=prefill_only,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+                offload_pt_weights=offload_pt_weights,
+                enable_chunking=enable_chunking,
+                moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+                retain_full_kv=retain_full_kv,
+                kv_cache_prefix=kv_cache_prefix,
+                **compiler_options,
+            )
         if self.model.qaic_config is not None and self.model.qaic_config.get("mla_absorption", None) is not None:
             mla_absorption = self.model.qaic_config["mla_absorption"]
             cache_compressed = mla_absorption.get("cache_compressed", False)
@@ -3548,14 +4347,32 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if prefill_only is not None and not isinstance(prefill_only, bool):
             raise TypeError("`prefill_only` must be a boolean.")
 
+        _decode_ks = (
+            sorted(set(num_speculative_tokens))
+            if isinstance(num_speculative_tokens, (list, tuple))
+            else ([num_speculative_tokens] if num_speculative_tokens is not None else None)
+        )
+
         if self.is_tlm:
-            num_speculative_tokens = self.check_and_get_num_speculative_tokens(num_speculative_tokens, prefill_seq_len)
+            _max_k = _decode_ks[-1] if _decode_ks else None
+            validated_k = self.check_and_get_num_speculative_tokens(_max_k, prefill_seq_len)
+            if validated_k is not None and validated_k != _max_k:
+                # speculative_config in model.config overrides num_speculative_tokens.
+                # Warn if the user passed a list — the extra values are discarded.
+                if _decode_ks is not None and len(_decode_ks) > 1:
+                    discarded = [k for k in _decode_ks if k != validated_k]
+                    logger.warning(
+                        f"speculative_config in model.config fixes num_speculative_tokens={validated_k}. "
+                        f"Ignoring user-supplied values {discarded}. "
+                        f"Pass num_speculative_tokens={validated_k} (or [{validated_k}]) to suppress this warning."
+                    )
+                _decode_ks = [validated_k]
 
         if (
             self.model.qaic_config is not None
             and self.model.qaic_config.get("include_sampler", False)
-            and num_speculative_tokens is not None
-            and num_speculative_tokens > 0
+            and _decode_ks is not None
+            and max(_decode_ks) > 0
         ):
             raise ValueError("Currently, sampler does not support `num_speculative_tokens` > 0.")
 
@@ -3601,8 +4418,33 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 )
 
         if (prefill_only is None or not prefill_only) and prefill_seq_len != 1:
-            if self.comp_ctx_lengths_decode is not None:
-                # Adding elements from self.comp_ctx_lengths_decode to decode_specialization
+            if _decode_ks is not None and self.is_tlm:
+                # TLM multi-spec path: one decode specialization per K in num_speculative_tokens.
+                # CCL (comp_ctx_lengths) + multi-spec TLM is not yet supported: the per-K call
+                # to build_decode_specialization would need to iterate over CCL values, producing
+                # len(decode_ks) × len(comp_ctx_lengths_decode) decode specializations whose
+                # naming and ordering is untested.  Reject early so users get a clear error
+                # instead of a silently wrong QPC.
+                if self.comp_ctx_lengths_decode is not None:
+                    raise NotImplementedError(
+                        "TLM multi-spec (num_speculative_tokens as a list) combined with "
+                        "comp_ctx_lengths_decode is not yet supported. Pass a plain int for "
+                        "num_speculative_tokens when using CCL."
+                    )
+                for k in _decode_ks:
+                    spec = self.build_decode_specialization(
+                        num_speculative_tokens=k,
+                        prefill_seq_len=prefill_seq_len,
+                        ctx_len=ctx_len,
+                        batch_size=batch_size,
+                        kv_cache_batch_size=kv_cache_batch_size,
+                        full_batch_size=full_batch_size,
+                    )
+                    if spec is not None:
+                        specializations.append(spec)
+
+            elif self.comp_ctx_lengths_decode is not None:
+                # CCL loop (non-TLM)
                 for i in range(0, len(self.comp_ctx_lengths_decode)):
                     decode_spec = self.build_decode_specialization(
                         prefill_seq_len=prefill_seq_len,
@@ -3611,7 +4453,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         batch_size=batch_size,
                         kv_cache_batch_size=kv_cache_batch_size,
                         full_batch_size=full_batch_size,
-                        num_speculative_tokens=num_speculative_tokens,
+                        num_speculative_tokens=None,
                     )
                     if decode_spec:
                         specializations.append(decode_spec)
@@ -3623,7 +4465,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     batch_size=batch_size,
                     kv_cache_batch_size=kv_cache_batch_size,
                     full_batch_size=full_batch_size,
-                    num_speculative_tokens=num_speculative_tokens,
+                    num_speculative_tokens=None,
                     prefill_only=prefill_only,
                 )
                 if decode_spec:
@@ -3635,17 +4477,32 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[target_dtype]
         # --- Compilation ---
+        # When a KV-cache prefix is requested, the exported buffers are named
+        # past_key.{i}_<prefix> (input) and past_key.{i}_<prefix>_RetainedState (output); the custom_io
+        # keys must match those names so the compiler pairs and retains them correctly.
+        kv_cache_prefix = validate_kv_cache_prefix(kv_cache_prefix)
+        kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
         custom_io = {}
         if not cache_compressed:
             for suffix in ["", "_RetainedState"]:
                 for i in range(self.num_layers):
                     for kv in ["key", "value"]:
-                        custom_io[f"past_{kv}.{i}{suffix}"] = kv_cache_dtype
+                        name = _compile_io_name(
+                            f"past_{kv}.{i}{kv_infix}{suffix}",
+                            use_onnx_subfunctions=use_onnx_subfunctions,
+                        )
+                        custom_io[name] = kv_cache_dtype
         else:
             for suffix in ["", "_RetainedState"]:
                 for i in range(self.num_layers):
-                    custom_io[f"compressed_kv.{i}{suffix}"] = kv_cache_dtype
-                    custom_io[f"k_pe.{i}{suffix}"] = kv_cache_dtype
+                    for prefix in ("compressed_kv", "k_pe"):
+                        name = _compile_io_name(
+                            f"{prefix}.{i}{kv_infix}{suffix}",
+                            use_onnx_subfunctions=use_onnx_subfunctions,
+                        )
+                        custom_io[name] = kv_cache_dtype
+
+        custom_io = _filter_custom_io_for_onnx(custom_io, onnx_path)
 
         qpc_path = self._compile(
             onnx_path=onnx_path,
@@ -3661,9 +4518,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             mxint8_kv_cache=mxint8_kv_cache,
             use_onnx_subfunctions=use_onnx_subfunctions,
             prefill_only=prefill_only,
+            moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
             offload_pt_weights=offload_pt_weights,
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,
+            kv_cache_prefix=kv_cache_prefix,
             **compiler_options,
         )
 
@@ -4001,15 +4860,11 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
         custom_io["input_features"] = kv_cache_dtype
 
-        # Slice output_names to get input names
         for output_name in output_names:
             if output_name.endswith("_RetainedState"):
-                custom_io[output_name[: -len("_RetainedState")]] = kv_cache_dtype
-
-        # Get output names
-        for output_name in output_names:
-            if output_name.endswith("_RetainedState"):
-                custom_io[output_name] = kv_cache_dtype
+                compiler_output_name = _compile_io_name(output_name, use_onnx_subfunctions=use_onnx_subfunctions)
+                custom_io[_state_input_name(compiler_output_name)] = kv_cache_dtype
+                custom_io[compiler_output_name] = kv_cache_dtype
 
         return self._compile(
             onnx_path=onnx_path,
@@ -4088,7 +4943,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         )
 
         self.qpc_session.skip_buffers(
-            [x for x in self.qpc_session.input_names + self.qpc_session.output_names if x.startswith("past_")]
+            [x for x in self.qpc_session.input_names + self.qpc_session.output_names if is_retained_state_name(x)]
         )
 
         outputs = {
@@ -4235,6 +5090,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
+        _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class

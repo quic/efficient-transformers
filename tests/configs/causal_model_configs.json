@@ -203,7 +203,8 @@
           "high_freq_factor": 4.0,
           "low_freq_factor": 1.0,
           "original_max_position_embeddings": 8192,
-          "rope_type": "llama3"
+          "rope_type": "llama3",
+          "rope_theta": 500000.0
         }
       }
     },
@@ -430,12 +431,13 @@
         "rope_scaling": {
           "factor": 32.0,
           "high_freq_factor": 4.0,
-          "low_freq_factor": 1.0,
-          "original_max_position_embeddings": 8192,
-          "rope_type": "llama3"
-        }
-      }
-    },
+         "low_freq_factor": 1.0,
+         "original_max_position_embeddings": 8192,
+         "rope_type": "llama3",
+         "rope_theta": 500000.0
+       }
+     }
+   },
     {
       "model_name": "allenai/OLMo-2-0425-1B",
       "model_type": "olmo2",
@@ -521,7 +523,8 @@
           "high_freq_factor": 4.0,
           "low_freq_factor": 1.0,
           "original_max_position_embeddings": 8192,
-          "rope_type": "llama3"
+          "rope_type": "llama3",
+          "rope_theta": 500000.0
         }
       }
     },
@@ -623,7 +626,8 @@
           "high_freq_factor": 4.0,
           "low_freq_factor": 1.0,
           "original_max_position_embeddings": 8192,
-          "rope_type": "llama3"
+          "rope_type": "llama3",
+          "rope_theta": 500000.0
         }
       }
     },
@@ -715,6 +719,5 @@
         "num_local_experts": 4
       }
     }
-
   ]
 }

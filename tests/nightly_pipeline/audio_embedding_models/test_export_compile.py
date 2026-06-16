@@ -26,7 +26,6 @@ test_models = config["audio_embedding_models"]
 
 @pytest.mark.parametrize("model_name", test_models)
 def test_export_compile_audio_embedding_model(model_name, get_pipeline_config, audio_embedding_model_artifacts):
-
     export_params, compile_params = pre_export_compile_utils(
         model_name, "audio_embedding_model_configs", get_pipeline_config
     )

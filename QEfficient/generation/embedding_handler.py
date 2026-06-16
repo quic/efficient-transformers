@@ -235,27 +235,47 @@ class VisionHandler:
                     image = image.resize(
                         (constants.GRANITEVISION_IMG_SIZE_HEIGHT, constants.GRANITEVISION_IMG_SIZE_WIDTH)
                     )
+            # Gemma4 expects the processor-rendered prompt with the image placeholder ahead of user text.
+            is_gemma4 = (
+                hasattr(self._qeff_model.model.config, "model_type")
+                and self._qeff_model.model.config.model_type == "gemma4"
+            )
 
             # Prepare conversation format
             conversation = [
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "text", "text": query},
-                        {"type": "image"},
-                    ],
+                    "content": (
+                        [{"type": "image"}, {"type": "text", "text": query}]
+                        if is_gemma4
+                        else [{"type": "text", "text": query}, {"type": "image"}]
+                    ),
                 },
             ]
 
             # Apply chat template
-            prompt = self._processor.apply_chat_template(conversation, add_generation_prompt=True)
-
+            if is_gemma4:
+                prompt = self._processor.apply_chat_template(
+                    conversation,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=False,
+                )
+            else:
+                prompt = self._processor.apply_chat_template(
+                    conversation,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
             # Process image and text
             inputs = self._processor(images=image, text=prompt, return_tensors="pt")
-            if hasattr(self._qeff_model.model.config, "model_type") and self._qeff_model.model.config.model_type in {
+            model_type = getattr(getattr(self._qeff_model, "model", None).config, "model_type", "")
+            if model_type in {
                 "qwen2_5_vl",
                 "qwen3_vl_moe",
                 "qwen3_vl",
+                "qwen3_5",
+                "qwen3_5_moe",
             }:
                 inputs = self._qeff_model.model.prepare_inputs_for_generation(
                     inputs=inputs, prefill_seq_len=prefill_seq_len, batch_size=inputs["input_ids"].shape[0]
@@ -270,6 +290,7 @@ class VisionHandler:
             for k, v in inputs.items():
                 if k in {
                     "pixel_values",
+                    "image_position_ids",
                     "image_masks",
                     "image_input_idx",
                     "valid_idx",
@@ -492,6 +513,11 @@ class VisionHandler:
             lang_inputs["attention_mask"] = torch.nn.functional.pad(
                 lang_inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
             )
+
+            if "mm_token_type_ids" in lang_inputs:
+                lang_inputs["mm_token_type_ids"] = torch.nn.functional.pad(
+                    lang_inputs["mm_token_type_ids"], (0, padded_len - input_ids_length), "constant", 0
+                )
 
             if "cross_attention_mask" in lang_inputs:
                 lang_inputs["cross_attention_mask"] = torch.nn.functional.pad(

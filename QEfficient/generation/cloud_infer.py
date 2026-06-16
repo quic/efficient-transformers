@@ -13,6 +13,26 @@ from warnings import warn
 
 import numpy as np
 
+
+def _public_retained_state_name(output_name: str) -> Optional[str]:
+    """Map internal subfunction retained-state outputs to public runtime names."""
+    suffix = "_InternalRetainedState"
+    if output_name.endswith(suffix):
+        return output_name[: -len(suffix)] + "_RetainedState"
+    return None
+
+
+def is_retained_state_name(name: str) -> bool:
+    """Return True when an I/O binding participates in retained-state cache flow."""
+    return name.startswith(("past_", "conv_state.", "recurrent_state.", "compressed_", "k_pe"))
+
+
+def _add_basename_binding_aliases(binding_index_map: Dict[str, int], bindings) -> None:
+    """Allow callers to use unprefixed I/O names for prefixed ONNX graphs."""
+    for binding in bindings:
+        binding_index_map.setdefault(binding.name.rsplit("/", 1)[-1], binding.index)
+
+
 try:
     import qaicrt
 
@@ -101,12 +121,17 @@ class QAICInferenceSession:
         ]
         self.bindings = iodesc.selected_set.bindings
         self.binding_index_map = {binding.name: binding.index for binding in self.bindings}
+        _add_basename_binding_aliases(self.binding_index_map, self.bindings)
         # Create and load Program
         prog_properties = qaicrt.QAicProgramProperties()
         prog_properties.dataPathTimeoutMs = 60_000
-        if device_ids and len(device_ids) > 1:
-            prog_properties.devMapping = ":".join(map(str, device_ids))
-        self.program = qaicrt.Program(self.context, None, qpc, prog_properties)
+        dev_id_non_mq = None
+        if device_ids:
+            if len(device_ids) == 1:
+                dev_id_non_mq = device_ids[0]
+            elif len(device_ids) > 1:
+                prog_properties.devMapping = ":".join(map(str, device_ids))
+        self.program = qaicrt.Program(self.context, dev_id_non_mq, qpc, prog_properties)
         if self.program.load() != qaicrt.QStatus.QS_SUCCESS:
             raise RuntimeError("Failed to load program")
         self.is_active = False
@@ -222,8 +247,15 @@ class QAICInferenceSession:
             buffer_index = self.binding_index_map[output_name]
             if self.qbuffers[buffer_index].size == 0:
                 continue
-            outputs[output_name] = np.frombuffer(
+            output = np.frombuffer(
                 bytes(output_qbuffers[buffer_index]),
                 self.aic_to_np_dtype_mapping[self.bindings[buffer_index].type],
             ).reshape(self.buf_dims[buffer_index][1])
+            outputs[output_name] = output
+            output_basename = output_name.rsplit("/", 1)[-1]
+            outputs.setdefault(output_basename, output)
+            public_name = _public_retained_state_name(output_name)
+            if public_name is not None:
+                outputs[public_name] = output
+                outputs.setdefault(public_name.rsplit("/", 1)[-1], output)
         return outputs

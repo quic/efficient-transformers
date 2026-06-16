@@ -14,6 +14,7 @@ from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.diffusers.models.pytorch_transforms import (
     AttentionTransform,
+    CLIPTextTransform,
     CustomOpsTransform,
     NormalizationTransform,
 )
@@ -37,7 +38,7 @@ class QEffTextEncoder(QEFFBaseModel):
         _onnx_transforms (List): ONNX transformations applied after export
     """
 
-    _pytorch_transforms = [CustomOpsTransform, T5ModelTransform]
+    _pytorch_transforms = [CLIPTextTransform, CustomOpsTransform, T5ModelTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     @property

@@ -346,8 +346,8 @@ class QEffFP8Quantizer(CompressedTensorsHfQuantizer):
 
     def update_torch_dtype(self, torch_dtype):
         if torch_dtype not in [None, torch.float32]:
-            logger.warning(f"Requested dtype {torch_dtype} is not supported, overriding to None")
-        return None
+            logger.warning(f"Requested dtype {torch_dtype} is not supported, overriding to float32")
+        return torch.float32
 
     def _process_model_before_weight_loading(self, model, **kwargs):
         if not self.modules_to_not_convert or "lm_head" not in self.modules_to_not_convert:
@@ -530,8 +530,8 @@ class QEffCompressedTensorsFP8Quantizer(CompressedTensorsHfQuantizer):
 
     def update_torch_dtype(self, torch_dtype):
         if torch_dtype not in [None, torch.float32]:
-            logger.warning(f"Requested dtype {torch_dtype} is not supported, overriding to None")
-        return None
+            logger.warning(f"Requested dtype {torch_dtype} is not supported, overriding to float32")
+        return torch.float32
 
     def _process_model_before_weight_loading(self, model, **kwargs):
         if self.quantization_config.targets != ["Linear"]:

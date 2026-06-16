@@ -39,6 +39,8 @@ def CtxScatterCB(
 class CtxScatterFuncCB(torch.autograd.Function):
     @staticmethod
     def forward(data: torch.Tensor, batch_index: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+        # Avoid mutating graph inputs in-place during export.
+        data = data.clone()
         batch_idx = batch_index.view(-1, 1, 1)
         head_idx = torch.arange(data.shape[1]).view(1, -1, 1)
         ctx_idx = position_ids.unsqueeze(1)
@@ -79,6 +81,8 @@ def CtxScatterCB3D(
 class CtxScatterFuncCB3D(torch.autograd.Function):
     @staticmethod
     def forward(data: torch.Tensor, batch_index: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+        # Avoid mutating graph inputs in-place during export.
+        data = data.clone()
         batch_idx = batch_index.view(-1, 1)
         ctx_idx = position_ids
         data[batch_idx, ctx_idx] = updates

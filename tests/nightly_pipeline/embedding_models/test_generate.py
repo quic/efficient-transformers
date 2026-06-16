@@ -26,7 +26,6 @@ test_models = config["embedding_models"]
 @pytest.mark.parametrize("model_name", test_models)
 @pytest.mark.parametrize("pooling", [None])
 def test_generate_causal_lm(model_name, pooling, get_pipeline_config, embedding_model_artifacts):
-
     compile_params, generate_params = pre_generate_utils(
         model_name, "embedding_model_configs", get_pipeline_config, embedding_model_artifacts
     )

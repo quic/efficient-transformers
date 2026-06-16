@@ -24,7 +24,6 @@ test_models = config["causal_lm_models"]
 
 @pytest.mark.parametrize("model_name", test_models)
 def test_export_compile_causal_lm(model_name, causal_model_artifacts, get_pipeline_config):
-
     export_params, compile_params = pre_export_compile_utils(model_name, "causal_pipeline_configs", get_pipeline_config)
     # Initialize model entry
     if model_name not in causal_model_artifacts:

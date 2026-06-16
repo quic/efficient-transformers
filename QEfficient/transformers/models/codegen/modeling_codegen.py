@@ -175,7 +175,6 @@ class QEffCodeGenModel(CodeGenModel):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
-            self.warn_if_padding_and_no_attention_mask(input_ids, attention_mask)
             input_shape = input_ids.size()
             input_ids = input_ids.view(-1, input_shape[-1])
             batch_size = input_ids.shape[0]
@@ -225,11 +224,8 @@ class QEffCodeGenModel(CodeGenModel):
             # 4d mask is passed through the layers
             attention_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
 
-        # Prepare head mask if needed
-        # 1.0 in head_mask indicate we keep the head
-        # attention_probs has shape bsz x num_attention_heads x N x N
-        # head_mask has shape n_layer x batch x num_attention_heads x N x N
-        head_mask = self.get_head_mask(head_mask, self.config.n_layer)
+        if head_mask is None:
+            head_mask = [None] * self.config.n_layer
 
         hidden_states = inputs_embeds
 

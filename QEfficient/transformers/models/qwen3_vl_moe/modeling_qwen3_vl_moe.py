@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from qwen_vl_utils import smart_resize
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
@@ -21,9 +22,11 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeTextAttention,
     Qwen3VLMoeTextConfig,
     Qwen3VLMoeTextDecoderLayer,
+    Qwen3VLMoeTextExperts,
     Qwen3VLMoeTextModel,
     Qwen3VLMoeTextRotaryEmbedding,
     Qwen3VLMoeTextSparseMoeBlock,
+    Qwen3VLMoeTextTopKRouter,
     Qwen3VLMoeVisionAttention,
     Qwen3VLMoeVisionModel,
     apply_rotary_pos_emb_vision,
@@ -39,10 +42,17 @@ from QEfficient.blocking.attention_blocking import (
 )
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.models._layerwise import (
+    is_last_layer_window,
+    is_layerwise_active,
+    resolve_layer_window,
+)
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
+
+QWEN3_VL_ROPE_CACHE_EXPORT_CAP = 76800
 
 
 def qeff_apply_interleaved_mrope(freqs, mrope_section):
@@ -63,7 +73,7 @@ def qeff_apply_interleaved_mrope(freqs, mrope_section):
     return freqs_t
 
 
-def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section):
+def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section, dtype=None):
     invalid_pos_mask = position_ids < 0
     safe_position_ids = torch.where(invalid_pos_mask, torch.zeros_like(position_ids), position_ids)
     flat_pos = safe_position_ids.reshape(-1)
@@ -71,6 +81,9 @@ def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section):
     sin = sin.index_select(0, flat_pos).reshape(*safe_position_ids.shape, sin.shape[-1])
     cos = qeff_apply_interleaved_mrope(cos, mrope_section).unsqueeze(1)
     sin = qeff_apply_interleaved_mrope(sin, mrope_section).unsqueeze(1)
+    if dtype is not None:
+        cos = cos.to(dtype=dtype)
+        sin = sin.to(dtype=dtype)
     return cos, sin
 
 
@@ -310,7 +323,7 @@ class QEffQwen3VLMoeVisionAttention(Qwen3VLMoeVisionAttention):
         block_mask = row_mask & col_mask  # shape: (num_blocks, seq_len, seq_len)
 
         # Combine all blocks into one mask
-        final_mask = torch.ones((seq_len, seq_len), dtype=torch.float32)
+        final_mask = torch.ones((seq_len, seq_len), dtype=self.config.dtype)
         final_mask[block_mask.any(dim=0)] = 0
 
         final_mask = torch.where(final_mask == 1.0, torch.finfo(q.dtype).min, final_mask)
@@ -385,6 +398,8 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
+        if is_layerwise_active():
+            self.layer_idx = self.layer_idx - getattr(QEffQwen3VLMoeTextModel, "_start", 0)
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
@@ -498,7 +513,7 @@ class QEffQwen3VLMoeTextDecoderLayer(Qwen3VLMoeTextDecoderLayer):
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
         if isinstance(hidden_states, tuple):
-            hidden_states, _ = hidden_states
+            hidden_states = hidden_states[0]
         hidden_states = residual + hidden_states
 
         outputs = (hidden_states,)
@@ -512,10 +527,22 @@ class QEffQwen3VLMoeTextDecoderLayer(Qwen3VLMoeTextDecoderLayer):
 
 
 class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
+    _start = 0
+    _end = 0
+    _total_layers = None
+
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3VLMoeTextRotaryEmbedding(config=self.config)
-        self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
-        self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
+        # Export-only cap to avoid serializing oversized RoPE tables that are
+        # unreachable for deployed context lengths (e.g. 4K/8K/16K). This keeps
+        # non-layerwise QPC size aligned with layerwise exports.
+        rope_rows = min(int(self.rotary_emb.sin_cached.shape[0]), QWEN3_VL_ROPE_CACHE_EXPORT_CAP)
+        self.sin_cached = torch.nn.Parameter(
+            (self.rotary_emb.sin_cached[:rope_rows] * self.rotary_emb.attention_scaling).contiguous()
+        )
+        self.cos_cached = torch.nn.Parameter(
+            (self.rotary_emb.cos_cached[:rope_rows] * self.rotary_emb.attention_scaling).contiguous()
+        )
 
     def forward(
         self,
@@ -563,14 +590,25 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids[1:])
         cos, sin = qeff_prepare_mrope_cos_sin(
-            self.cos_cached, self.sin_cached, position_ids[1:], self.config.rope_scaling["mrope_section"]
+            self.cos_cached,
+            self.sin_cached,
+            position_ids[1:],
+            self.config.rope_scaling["mrope_section"],
+            dtype=hidden_states.dtype,
         )
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
 
         layer_idx = 0
-        for decoder_layer in self.layers:
+        start, end = resolve_layer_window(QEffQwen3VLMoeTextModel, len(self.layers))
+        layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
+
+        for layer_idx, decoder_layer in enumerate(self.layers):
+            if layer_idx < start or layer_idx >= end:
+                continue
+            if layer_indices_to_run is not None and layer_idx not in layer_indices_to_run:
+                continue
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -603,7 +641,8 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
                 )
             layer_idx += 1
 
-        hidden_states = self.norm(hidden_states)
+        if is_last_layer_window(QEffQwen3VLMoeTextModel, len(self.layers)):
+            hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
@@ -627,12 +666,8 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
     ):
         visual_pos_masks = visual_pos_masks.unsqueeze(-1).expand(-1, -1, self.config.hidden_size)
         visual_embeds = visual_embeds.to(hidden_states.device, hidden_states.dtype)
-        hidden_states = hidden_states.clone()
-        mixed_embeds = hidden_states + visual_embeds
-
-        local_this = torch.where(visual_pos_masks, mixed_embeds, hidden_states)
-
-        return local_this
+        visual_mask = visual_pos_masks.to(hidden_states.dtype)
+        return hidden_states + (visual_embeds * visual_mask)
 
 
 class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
@@ -642,28 +677,25 @@ class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBloc
         x = hidden_states.view(T, H)
         act = getattr(self.experts, "act_fn", F.silu)
 
-        router_logits = self.gate(x)  # [T, E]
-        prob = F.softmax(router_logits, dim=-1, dtype=hidden_states.dtype)
-        top_w, top_i = torch.topk(prob, self.top_k, dim=-1)
-        top_w = top_w / torch.einsum("bi->b", top_w)[:, None]
+        router_hidden_states = x.reshape(-1, self.gate.hidden_dim)
+        router_logits = F.linear(router_hidden_states, self.gate.weight)
+        top_w, top_i = torch.topk(router_logits, self.gate.top_k, dim=-1)
+        top_w = F.softmax(top_w, dim=-1, dtype=torch.float)
         top_w = top_w.to(hidden_states.dtype)
-        routing_weights = torch.zeros((T, self.num_experts), dtype=x.dtype)
+        num_experts = getattr(self, "num_experts", self.gate.num_experts)
+        routing_weights = torch.zeros((T, num_experts), dtype=x.dtype)
         routing_weights.scatter_(1, top_i, top_w)
 
         expert_out = torch.zeros_like(x, dtype=x.dtype)
 
-        for e in range(self.num_experts):
+        for e in range(num_experts):
             routing_weight = routing_weights[:, e].unsqueeze(-1)
-
-            W_gate_up_e = self.experts.gate_up_proj[e]  # [H, 2I]
-            W_dn_e = self.experts.down_proj[e]  # [I, H]
-            gate_up = x @ W_gate_up_e  # [T, 2I]
-
-            I2 = gate_up.shape[-1] // 2
-            gate = gate_up[:, :I2]  # [T, I]
-            up = gate_up[:, I2:]  # [T, I]
-            intermediate = up * act(gate)
-            down = intermediate @ W_dn_e
+            W_g = self.experts.gate_proj[e]  # [H, I]
+            W_u = self.experts.up_proj[e]  # [H, I]
+            W_d = self.experts.down_proj_t[e]  # [I, H]
+            gate = x @ W_g
+            up = x @ W_u
+            down = (up * act(gate)) @ W_d
             masked_down = torch.where(
                 routing_weight > 0, down * routing_weight, torch.zeros_like(expert_out, dtype=down.dtype)
             )  # TODO: verify and remove
@@ -727,7 +759,7 @@ class QEffQwen3VLMoeModel(Qwen3VLMoeModel):
 class QEffQwen3VLEncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
-        self.model = model
+        self.model = model.model
         self.model.vision_model = self.model.visual
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
@@ -751,7 +783,32 @@ class QEffQwen3VLEncoderWrapper(nn.Module):
         return image_embeds, deepstack_features
 
 
+class QEffQwen3VLMoeTextTopKRouter(Qwen3VLMoeTextTopKRouter):
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
+        router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
+        router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1)
+        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
+        router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
+        router_top_value = router_top_value.to(router_logits.dtype)
+        router_scores = router_top_value
+        return router_logits, router_scores, router_indices
+
+
+class QEffQwen3VLMoeTextExperts(Qwen3VLMoeTextExperts):
+    def __qeff_init__(self):
+        # HF 5.x keeps fused gate_up projections. Keep backward-compatible
+        # aliases expected by QEff MoE execution paths.
+        self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
+        self.gate_proj = nn.Parameter(self.gate_up_proj[:, : self.expert_dim, :].detach().clone().transpose(1, 2))
+        self.up_proj = nn.Parameter(self.gate_up_proj[:, self.expert_dim :, :].detach().clone().transpose(1, 2))
+        self.down_proj_t = nn.Parameter(self.down_proj.detach().clone().transpose(1, 2))
+
+
 class QEffQwen3VLDecoderWrapper(nn.Module):
+    _deepstack = None
+    _vision_mask = None
+
     def __init__(self, model):
         super().__init__()
         self.model = model
@@ -768,54 +825,136 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
 
     def forward(
         self,
-        input_ids,
-        vision_embeds,
-        deepstack_features,
-        position_ids,
-        image_idx,
-        past_key_values,
+        input_ids=None,
+        inputs_embeds=None,
+        vision_embeds=None,
+        deepstack_features=None,
+        position_ids=None,
+        image_idx=None,
+        past_key_values=None,
         batch_index: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
-        inputs_embeds = self.model.get_input_embeddings()(input_ids)
-        B, N, C = inputs_embeds.shape
-        selected = input_ids == self.model.config.image_token_id
-        indices1 = selected.to(torch.int64).cumsum(1) - 1
-        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-        indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-        image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
+        if inputs_embeds is None:
+            inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
+        else:
+            inputs_embeds = inputs_embeds
 
-        num_features, bs, split_size, C = deepstack_features.shape
-        x = deepstack_features.reshape(num_features, bs * split_size, C)
-        deepstack_features_expanded = x[:, indices1, :]
-        image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-        # inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
-        inputs_embeds = image_input_embeds
+        if not is_layerwise_active():
+            # Default (non-layerwise) path: image merge + full decoder + lm_head in
+            # a single forward, identical to the pre-layerwise behavior/output contract.
+            B, N, C = inputs_embeds.shape
+            selected = input_ids == self.model.config.image_token_id
+            indices1 = selected.to(torch.int64).cumsum(1) - 1
+            indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
+            indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+            image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
 
-        image_mask = selected.clone()
+            num_features, bs, split_size, C = deepstack_features.shape
+            x = deepstack_features.reshape(num_features, bs * split_size, C)
+            deepstack_features_expanded = x[:, indices1, :]
+            image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
+            inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
 
-        visual_pos_masks = None
-        deepstack_visual_embeds = None
+            image_mask = selected.clone()
+            visual_pos_masks = None
+            deepstack_visual_embeds = None
+            if image_mask is not None:
+                visual_pos_masks = image_mask
+                deepstack_visual_embeds = deepstack_features_expanded
 
-        if image_mask is not None:
-            visual_pos_masks = image_mask
-            deepstack_visual_embeds = deepstack_features_expanded
+            outputs = self.language_model(
+                inputs_embeds=inputs_embeds,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                use_cache=True,
+                visual_pos_masks=visual_pos_masks,
+                deepstack_visual_embeds=deepstack_visual_embeds,
+            )
+            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
+            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+            logits = self.model.lm_head(hidden_states)
+            image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+            return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
 
-        outputs = self.language_model(
-            inputs_embeds=inputs_embeds,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            comp_ctx_lengths=comp_ctx_lengths,
-            batch_index=batch_index,
-            use_cache=True,
-            visual_pos_masks=visual_pos_masks,
-            deepstack_visual_embeds=deepstack_visual_embeds,
-        )
-        logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-        logits = self.model.lm_head(hidden_states)
-        image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
+        if QEffQwen3VLMoeTextModel._start == 0:
+            B, N, C = inputs_embeds.shape
+            selected = input_ids == self.model.config.image_token_id
+            indices1 = selected.to(torch.int64).cumsum(1) - 1
+            indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
+            indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+            image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
+
+            num_features, bs, split_size, C = deepstack_features.shape
+            x = deepstack_features.reshape(num_features, bs * split_size, C)
+            deepstack_features_expanded = x[:, indices1, :]
+            image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
+            inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
+
+            image_mask = selected.clone()
+
+            visual_pos_masks = None
+
+            deepstack_visual_embeds = None
+            if image_mask is not None:
+                visual_pos_masks = image_mask
+                QEffQwen3VLDecoderWrapper._vision_mask = visual_pos_masks
+                deepstack_visual_embeds = deepstack_features_expanded
+                QEffQwen3VLDecoderWrapper._deepstack = deepstack_visual_embeds
+
+            outputs = self.language_model(
+                inputs_embeds=inputs_embeds,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                use_cache=True,
+                visual_pos_masks=visual_pos_masks,
+                deepstack_visual_embeds=deepstack_visual_embeds,
+            )
+            if outputs.last_hidden_state.shape[1] > 1:
+                hidden_states = outputs.last_hidden_state
+            else:
+                hidden_states = outputs.last_hidden_state[:, -1:, :]
+            logits = hidden_states
+            image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+            return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
+
+        elif QEffQwen3VLMoeTextModel._end == QEffQwen3VLMoeTextModel._total_layers:
+            outputs = self.language_model(
+                inputs_embeds=inputs_embeds,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                use_cache=True,
+                visual_pos_masks=QEffQwen3VLDecoderWrapper._vision_mask,
+                deepstack_visual_embeds=QEffQwen3VLDecoderWrapper._deepstack,
+            )
+            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
+            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+            logits = self.model.lm_head(hidden_states)
+            return logits, outputs.past_key_values
+
+        else:
+            outputs = self.language_model(
+                inputs_embeds=inputs_embeds,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
+                use_cache=True,
+                visual_pos_masks=QEffQwen3VLDecoderWrapper._vision_mask,
+                deepstack_visual_embeds=QEffQwen3VLDecoderWrapper._deepstack,
+            )
+            if outputs.last_hidden_state.shape[1] > 1:
+                hidden_states = outputs.last_hidden_state
+            else:
+                hidden_states = outputs.last_hidden_state[:, -1:, :]
+            logits = hidden_states
+            return logits, outputs.past_key_values
 
 
 class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
@@ -823,25 +962,24 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         B, S, H = hidden_states.shape
         T = B * S
         x = hidden_states.view(T, H)
-
-        router_logits = self.gate(x)
-        prob = F.softmax(router_logits, dim=-1, dtype=torch.float)
-        top_w, top_i = torch.topk(prob, self.top_k, dim=-1)
-        top_w = top_w / torch.einsum("bi->b", top_w)[:, None]
+        router_hidden_states = x.reshape(-1, self.gate.hidden_dim)
+        router_logits = F.linear(router_hidden_states, self.gate.weight)
+        top_w, top_i = torch.topk(router_logits, self.gate.top_k, dim=-1)
+        top_w = F.softmax(top_w, dim=-1, dtype=torch.float)
         top_w = top_w.to(x.dtype)
         idx = top_i.reshape(-1)
-        w_up = self.experts.gate_up_proj.index_select(0, idx)
-        w_dn = self.experts.down_proj.index_select(0, idx)
+        gate_proj = self.experts.gate_proj[idx.flatten()]
+        up_proj = self.experts.up_proj[idx.flatten()]
+        w_dn = self.experts.down_proj_t[idx.flatten()]
 
-        xk = x.unsqueeze(1).expand(-1, self.top_k, -1).contiguous()
+        top_k = top_i.shape[-1]
+        xk = x.unsqueeze(1).expand(-1, top_k, -1).contiguous()
         xk = xk.view(-1, 1, H)
-        gate_up = torch.bmm(xk, w_up)
-        I2 = gate_up.size(-1)
-        half = I2 // 2
-        gate, up = gate_up[..., :half], gate_up[..., half:]
+        gate = torch.bmm(xk, gate_proj)
+        up = torch.bmm(xk, up_proj)
         intermediate = up * self.experts.act_fn(gate)
         experts_out = torch.bmm(intermediate, w_dn)
-        experts_out = experts_out.view(T, self.top_k, H) * top_w.unsqueeze(-1)
+        experts_out = experts_out.view(T, top_k, H) * top_w.unsqueeze(-1)
         experts_out = torch.einsum("bnd->bd", experts_out)
         return experts_out.view(B, S, H), router_logits
 
@@ -860,8 +998,12 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         continuous_batching: bool = False,
         **kwargs,
     ):
+        prefill_seq_len = kwargs.get("prefill_seq_len")
+        if prefill_seq_len is None:
+            prefill_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        prefill_seq_len = int(prefill_seq_len)
         inputs_shapes = {}
-        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, prefill_seq_len)
         # vision_size = 1024
         vision_size = 187
         inputs_shapes["vision_embeds"] = (
@@ -873,7 +1015,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         inputs_shapes["position_ids"] = (
             3,
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
-            constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+            prefill_seq_len,
         )
         inputs_shapes["pixel_values"] = (748, 1536)
         inputs_shapes["image_idx"] = (1, 1)
@@ -887,21 +1029,27 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
 
         vision_inputs = {}
         lang_inputs = {}
-        vision_inputs["pixel_values"] = torch.zeros((inputs_shapes["pixel_values"]), dtype=torch.float32)
+        vision_inputs["pixel_values"] = torch.zeros(
+            (inputs_shapes["pixel_values"]), dtype=self.model.config.torch_dtype
+        )
         vision_inputs["image_grid_thw"] = torch.zeros((inputs_shapes["image_grid_thw"]), dtype=torch.int64)
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
-        lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=torch.float32)
+        lang_inputs["vision_embeds"] = torch.zeros(
+            (inputs_shapes["vision_embeds"]), dtype=self.model.config.torch_dtype
+        )
         lang_inputs["position_ids"] = (
             (
-                torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
-                .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+                torch.arange(prefill_seq_len, dtype=torch.int64)
+                .view(1, prefill_seq_len)
                 .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
             )
             .unsqueeze(0)
             .repeat(4, 1, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
-        lang_inputs["deepstack_features"] = torch.zeros((inputs_shapes["deepstack_features"]), dtype=torch.float32)
+        lang_inputs["deepstack_features"] = torch.zeros(
+            (inputs_shapes["deepstack_features"]), dtype=self.model.config.torch_dtype
+        )
         # Add data for KV
 
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
@@ -910,19 +1058,21 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
             batch_size=fbs if continuous_batching else bs,
-            seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+            seq_len=prefill_seq_len,
         )
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         for i in range(self.model.config.text_config.num_hidden_layers):
             for kv in ["key", "value"]:
-                lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                lang_inputs["past_key_values"][i].append(
+                    torch.zeros(kv_cache_shape, dtype=self.model.config.torch_dtype)
+                )
 
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
         if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int64)
         inputs = {}
         if kv_offload:
             inputs["vision"] = vision_inputs
@@ -937,12 +1087,11 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         batch_size: int,
         prefill_seq_len: int,
         ctx_len: int,
-        img_size: None,
-        height: int = None,
-        width: int = None,
+        height: int | List[int] = None,
+        width: int | List[int] = None,
+        img_size=None,
         time: int = 1,
-        # dimensions: List = None,
-        num_frames: int = 1,
+        num_frames: int | List[int] = 1,
         kv_offload: bool = False,
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
@@ -957,81 +1106,74 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             logger.warning(
                 f"Setting height and width to be {height} and {width} respectively, as it was neither passed nor found in vision_config"
             )
+
+        height = [height] if isinstance(height, int) else height
+        width = [width] if isinstance(width, int) else width
+        num_frames = [num_frames] * len(height) if isinstance(num_frames, int) else num_frames
+
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         channel = 3
         patch_size = self.config.vision_config.patch_size
         temporal_patch_size = self.config.vision_config.temporal_patch_size
 
-        IMAGE_FACTOR = 32
-        MIN_PIXELS = 64 * 32 * 32
-        MAX_PIXELS = 16384 * 32 * 32
-        MAX_RATIO = 200
+        IMAGE_FACTOR = constants.IMAGE_FACTOR_QWEN_3
+        IMAGE_MIN_TOKEN_NUM = constants.IMAGE_MIN_TOKEN_NUM
+        IMAGE_MAX_TOKEN_NUM = constants.IMAGE_MAX_TOKEN_NUM
+        min_pixels = IMAGE_MIN_TOKEN_NUM * IMAGE_FACTOR**2
+        max_pixels = IMAGE_MAX_TOKEN_NUM * IMAGE_FACTOR**2
+        mm_processor_kwargs = compiler_options.pop("mm_processor_kwargs", None)
+        if mm_processor_kwargs:
+            min_pixels = mm_processor_kwargs.get("min_pixels", min_pixels)
+            max_pixels = mm_processor_kwargs.get("max_pixels", max_pixels)
 
-        def round_by_factor(number: int, factor: int) -> int:
-            """Returns the closest integer to 'number' that is divisible by 'factor'."""
-            return round(number / factor) * factor
+        vision = []
+        max_vision_size = 0
+        user_vision_size = compiler_options.pop("vision_size", None)
+        if user_vision_size:
+            assert user_vision_size < ctx_len, "vision_size must be less than ctx_len"
+            max_vision_size = user_vision_size
 
-        def ceil_by_factor(number: int, factor: int) -> int:
-            """Returns the smallest integer greater than or equal to 'number' that is divisible by 'factor'."""
-            return math.ceil(number / factor) * factor
-
-        def floor_by_factor(number: int, factor: int) -> int:
-            """Returns the largest integer less than or equal to 'number' that is divisible by 'factor'."""
-            return math.floor(number / factor) * factor
-
-        def smart_resize(
-            height: int,
-            width: int,
-            factor: int = IMAGE_FACTOR,
-            min_pixels: int = MIN_PIXELS,
-            max_pixels: int = MAX_PIXELS,
-        ) -> tuple[int, int]:
-            """
-            Rescales the image so that the following conditions are met:
-
-            1. Both dimensions (height and width) are divisible by 'factor'.
-
-            2. The total number of pixels is within the range ['min_pixels', 'max_pixels'].
-
-            3. The aspect ratio of the image is maintained as closely as possible.
-            """
-            if max(height, width) / min(height, width) > MAX_RATIO:
-                raise ValueError(
-                    f"absolute aspect ratio must be smaller than {MAX_RATIO}, got {max(height, width) / min(height, width)}"
+        for h, w, f in zip(height, width, num_frames):
+            resized_height, resized_width = smart_resize(
+                height=h, width=w, factor=IMAGE_FACTOR, min_pixels=min_pixels, max_pixels=max_pixels
+            )
+            grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+            grid_height = grid_h * grid_w
+            grid_width = patch_size * patch_size * temporal_patch_size * channel
+            vision_size = grid_height // 4
+            vision_size = vision_size * time
+            grid_height = grid_height * time * batch_size
+            if not user_vision_size:
+                max_vision_size = max(max_vision_size, vision_size * f)
+                assert max_vision_size < ctx_len, (
+                    f"Computed vision_size of {vision_size * f} tokens "
+                    f"(vision_size={vision_size}, num_frames={f}) for image resolution "
+                    f"(width={w}, height={h}) must be less than ctx_len. Please adjust the image "
+                    "resolution."
                 )
-            h_bar = max(factor, round_by_factor(height, factor))
-            w_bar = max(factor, round_by_factor(width, factor))
-            if h_bar * w_bar > max_pixels:
-                beta = math.sqrt((height * width) / max_pixels)
-                h_bar = floor_by_factor(height / beta, factor)
-                w_bar = floor_by_factor(width / beta, factor)
-            elif h_bar * w_bar < min_pixels:
-                beta = math.sqrt(min_pixels / (height * width))
-                h_bar = ceil_by_factor(height * beta, factor)
-                w_bar = ceil_by_factor(width * beta, factor)
-            return h_bar, w_bar
+            else:
+                if vision_size * f > user_vision_size:
+                    logger.warning_once(
+                        f"Computed vision_size of {vision_size * f} tokens "
+                        f"(vision_size={vision_size}, num_frames={f}) for image resolution "
+                        f"(width={w}, height={h}) exceeds the provided "
+                        f"vision_size={user_vision_size}. "
+                        f"Vision embedding needs to be chunked during prefill."
+                    )
 
-        resized_height, resized_width = smart_resize(height=height, width=width)
-        grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
-        grid_height = grid_h * grid_w
-        grid_width = patch_size * patch_size * temporal_patch_size * channel
-        vision_size = grid_height // 4
-        vision_size = vision_size * num_frames * time
-        grid_height = grid_height * time * batch_size
-
-        vision = [
-            {
-                "batch_size": batch_size,
-                "vision_size": vision_size,
-                "grid_height": grid_height,
-                "grid_width": grid_width,
-                "time": time,
-                "grid_h": grid_h,
-                "grid_w": grid_w,
-                "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
-            }
-        ]
+            vision.append(
+                {
+                    "batch_size": batch_size,
+                    "vision_size": vision_size,
+                    "grid_height": grid_height,
+                    "grid_width": grid_width,
+                    "grid_h": grid_h,
+                    "grid_w": grid_w,
+                    "time": time,
+                    "num_feature_layers": len(self.config.vision_config.deepstack_visual_indexes),
+                }
+            )
 
         if comp_ctx_lengths_prefill is not None:
             lang = []
@@ -1185,12 +1327,23 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
     def prepare_inputs_for_generation(self, inputs, prefill_seq_len=128, batch_size=1):
         input_ids_length = inputs["input_ids"].shape[1]
         inputs["position_ids"] = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
+
+        mm_token_type_ids = inputs.get("mm_token_type_ids")
+        if mm_token_type_ids is None:
+            # transformers>=5.5 get_rope_index expects modality token types (text=0, image=1, video=2).
+            mm_token_type_ids = torch.zeros_like(inputs["input_ids"], dtype=torch.int32)
+            mm_token_type_ids = mm_token_type_ids.masked_fill(inputs["input_ids"] == self.config.image_token_id, 1)
+            mm_token_type_ids = mm_token_type_ids.masked_fill(inputs["input_ids"] == self.config.video_token_id, 2)
+
         pos_ids, rope_deltas = self.model.get_rope_index(
-            inputs["input_ids"],
-            None if "image_grid_thw" not in inputs else inputs["image_grid_thw"],
-            video_grid_thw=None,
+            input_ids=inputs["input_ids"],
+            mm_token_type_ids=mm_token_type_ids,
+            image_grid_thw=None if "image_grid_thw" not in inputs else inputs["image_grid_thw"],
+            video_grid_thw=None if "video_grid_thw" not in inputs else inputs["video_grid_thw"],
+            second_per_grid_ts=None if "second_per_grid_ts" not in inputs else inputs["second_per_grid_ts"],
             attention_mask=inputs["attention_mask"],
         )
+        self.model.rope_deltas = rope_deltas
 
         inputs["position_ids"] = torch.cat((inputs["position_ids"], pos_ids), dim=0)
 
@@ -1206,5 +1359,9 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         return [
             IOInfo(name="input_ids", datatype=torch.int64, shape=("batch_size", "seq_len")),
             IOInfo(name="attention_mask", datatype=torch.int64, shape=("batch_size", "seq_len")),
-            IOInfo(name="pixel_values", datatype=torch.float32, shape=("batch_size", 3, "image_size", "image_size")),
+            IOInfo(
+                name="pixel_values",
+                datatype=self.config.torch_dtype,
+                shape=("batch_size", 3, "image_size", "image_size"),
+            ),
         ]

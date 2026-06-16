@@ -30,7 +30,7 @@ test_configs = [
     ("llama", 32, 2, 2, 32, 64, 127, {"num_key_value_heads": 1}),
     ("mistral", 32, 2, 2, 32, 64, 127, {"num_key_value_heads": 1}),
     ("mixtral", 32, 2, 2, 32, 64, 127, {"num_key_value_heads": 1}),
-    ("mpt", 32, 2, 2, 32, 64, 127, {}),
+    # ("mpt", 32, 2, 2, 32, 64, 127, {}), # disabling for HF issues
     ("phi", 32, 2, 2, 32, 64, 127, {}),
     ("phi3", 32, 2, 2, 32, 64, 127, {"pad_token_id": 0}),
     ("qwen2", 32, 2, 2, 32, 64, 127, {"num_key_value_heads": 1}),

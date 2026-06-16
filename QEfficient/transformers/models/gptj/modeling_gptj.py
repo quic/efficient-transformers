@@ -253,14 +253,10 @@ class QEffGPTJModel(GPTJModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        causal_mask = self._update_causal_mask(
-            attention_mask, inputs_embeds, cache_position, past_key_values, output_attentions
-        )
-        # Prepare head mask if needed
-        # 1.0 in head_mask indicate we keep the head
-        # attention_probs has shape bsz x num_attention_heads x N x N
-        # head_mask has shape n_layer x batch x num_attention_heads x N x N
-        head_mask = self.get_head_mask(head_mask, self.config.n_layer)
+        target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_length
+        causal_mask = _create_causal_mask(position_ids, target_length, None)
+        if head_mask is None:
+            head_mask = [None] * self.config.n_layer
         hidden_states = inputs_embeds
 
         if token_type_ids is not None:
