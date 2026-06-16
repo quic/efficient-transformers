@@ -698,7 +698,7 @@ class QEFFBaseModel(ABC):
             input_names = aligned_input_names
         _apply_onnx_export_env_kwargs(export_kwargs)
         if not os.path.isfile(layer_onnx_path):
-            with _disable_safe_onnx_export_passes_from_env(default_disable_safe_passes=True):
+            with _disable_safe_onnx_export_passes_from_env(default_disable_safe_passes=not bool(prefill_only)):
                 torch.onnx.export(
                     self.model,
                     (),

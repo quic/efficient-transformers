@@ -246,7 +246,10 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     if disabled_safe_passes_env is not None:
         export_kwargs["_qeff_env_onnx_disable_safe_export_passes"] = disabled_safe_passes_env.strip().lower()
     elif is_layerwise_export:
-        export_kwargs["_qeff_layerwise_default_disable_safe_export_passes"] = True
+        if all_args.get("prefill_only"):
+            export_kwargs["_qeff_layerwise_prefill_default_enable_safe_export_passes"] = True
+        else:
+            export_kwargs["_qeff_layerwise_default_disable_safe_export_passes"] = True
 
     if export_kwargs:
         all_args["export_kwargs"] = export_kwargs
