@@ -915,6 +915,8 @@ class QEFFBaseModel(ABC):
                 mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
             )
             mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
+            # TODO: remove below line, fallback when user explicitly sends compile_dir in compile API
+            mdp_ts_json_path.parent.mkdir(parents=True, exist_ok=True)
             create_json(str(mdp_ts_json_path), mdp_ts_json)
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
