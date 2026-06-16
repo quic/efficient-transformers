@@ -36,6 +36,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
 )
 from QEfficient.utils import (
     align_kv_input_names_to_retained_outputs,
+    apply_kv_cache_prefix,
     constants,
     create_json,
     create_model_params,
@@ -505,6 +506,7 @@ class QEFFBaseModel(ABC):
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
+        kv_cache_prefix: Optional[str] = None,
         **export_kwargs,
     ) -> str:
         cache_probe = export_kwargs.pop("_layerwise_cache_probe", False)
@@ -603,6 +605,12 @@ class QEFFBaseModel(ABC):
                     ]
                 )
 
+        # Inject the optional vLLM KV-cache prefix into the freshly built per-window output names
+        # (past_key.3_RetainedState -> past_key.3_<prefix>_RetainedState), using the same helper the
+        # non-layerwise paths use. The matching input buffers are renamed to pair with these outputs
+        # just below via align_kv_input_names_to_retained_outputs. No-op when kv_cache_prefix is falsy.
+        output_name = apply_kv_cache_prefix(output_name, kv_cache_prefix)
+
         # For some decoder wrappers (e.g. VLM language wrappers), forward does not accept
         # `inputs_embeds`; keep `input_ids` in those cases.
         if idx >= 1:
@@ -677,6 +685,13 @@ class QEFFBaseModel(ABC):
         layer_onnx_path = str(current_layer_dir / f"{self.model_name}_layer_{idx}_{end_idx}.onnx")
         layer_onnx_path_tmp = str(current_layer_dir / f"{self.model_name}_layer_tmp_{idx}_{end_idx}.onnx")
         output_names = output_name
+        # Align KV input names to match any prefix injected into the retained-state output names
+        # (e.g. past_key.3 → past_key.3_vllmKvCache when output is past_key.3_vllmKvCache_RetainedState).
+        aligned_input_names = align_kv_input_names_to_retained_outputs(input_names, output_names)
+        if aligned_input_names != input_names:
+            rename_map = {old: new for old, new in zip(input_names, aligned_input_names) if old != new}
+            dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
+            input_names = aligned_input_names
         if not os.path.isfile(layer_onnx_path):
             torch.onnx.export(
                 self.model,

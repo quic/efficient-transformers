@@ -30,10 +30,19 @@ from QEfficient.utils.constants import KWARGS_INCLUSION_LIST, QEFF_MODELS_DIR, C
 from QEfficient.utils.hash_utils import json_serializable
 from QEfficient.utils.logging_utils import logger
 
-# Retained-state buffer name stems that correspond to the LLM KV cache. Only these are eligible for
-# the optional vLLM KV-cache prefix; vision/multimodal retained buffers (vision_embeds, pixel_values,
-# image_idx, deepstack_features, ...) are intentionally excluded.
-_KV_RETAINED_STEMS = ("past_key.", "past_value.", "compressed_kv.", "k_pe.")
+# Retained-state buffer name stems that correspond to per-sequence decoder state vLLM transfers
+# between disaggregated prefill and decode workers: classical attention KV (past_key/past_value),
+# DeepSeek-V3 MLA (compressed_kv/k_pe), and hybrid linear-attention state (conv_state/recurrent_state
+# on Qwen3.5/Qwen3.5-MoE). Vision/multimodal retained buffers (vision_embeds, pixel_values, image_idx,
+# deepstack_features, ...) are intentionally excluded — they are not part of the cross-worker payload.
+_KV_RETAINED_STEMS = (
+    "past_key.",
+    "past_value.",
+    "compressed_kv.",
+    "k_pe.",
+    "conv_state.",
+    "recurrent_state.",
+)
 _RETAINED_STATE_SUFFIX = "_RetainedState"
 
 
