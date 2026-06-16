@@ -2046,20 +2046,21 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         vision_output_names = ["vision_embeds"]
         lang_output_names = ["logits"]
         for layer_idx, layer_type in enumerate(self.model.config.text_config.layer_types):
-            if layer_type == "full_attention":
-                lang_output_names.extend(
-                    [
-                        f"past_key.{layer_idx}_RetainedState",
-                        f"past_value.{layer_idx}_RetainedState",
-                    ]
-                )
-            else:
-                lang_output_names.extend(
-                    [
-                        f"conv_state.{layer_idx}_RetainedState",
-                        f"recurrent_state.{layer_idx}_RetainedState",
-                    ]
-                )
+            if layer_idx < self.model.config.text_config.num_hidden_layers:
+                if layer_type == "full_attention":
+                    lang_output_names.extend(
+                        [
+                            f"past_key.{layer_idx}_RetainedState",
+                            f"past_value.{layer_idx}_RetainedState",
+                        ]
+                    )
+                else:
+                    lang_output_names.extend(
+                        [
+                            f"conv_state.{layer_idx}_RetainedState",
+                            f"recurrent_state.{layer_idx}_RetainedState",
+                        ]
+                    )
 
         output_names = {}
         if kv_offload:
