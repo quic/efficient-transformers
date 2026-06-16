@@ -181,18 +181,18 @@ def _cumsum_scatter_gather_update_expert_blocked(
 class QEffQwen3MoeTopKRouter(Qwen3MoeTopKRouter):
     def forward(self, hidden_states):
         hidden_states = hidden_states.reshape(-1, self.hidden_dim)
-        router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
+        router_logits = F.linear(hidden_states, self.weight)
         router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1).to(router_logits.dtype)
-        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
+        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)
         if self.norm_topk_prob:
             router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
         router_top_value = router_top_value.to(router_logits.dtype)
-        router_scores = router_top_value
-        return router_logits, router_scores, router_indices
+        return router_logits, router_top_value, router_indices
 
 
 class QEffQwen3MoeExperts(Qwen3MoeExperts):
     def __qeff_init__(self):
+        # HF keeps gate/up fused; expose split/transposed weights for QEff MoE paths.
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
         self.gate_proj = nn.Parameter(self.gate_up_proj[:, : self.expert_dim, :].detach().clone().transpose(1, 2))
         self.up_proj = nn.Parameter(self.gate_up_proj[:, self.expert_dim :, :].detach().clone().transpose(1, 2))
@@ -205,7 +205,7 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
     def __qeff_init__(self):
         self.top_k = getattr(self.gate, "top_k", None)
         self.norm_topk_prob = getattr(self.gate, "norm_topk_prob", False)
-        self.num_experts = self.experts.num_experts
+        self.num_experts = getattr(self.gate, "num_experts", self.experts.gate_proj.shape[0])
 
     def orig_forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, S, H = hidden_states.shape
