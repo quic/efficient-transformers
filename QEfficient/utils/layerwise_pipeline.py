@@ -348,6 +348,7 @@ def merge_models(m1, m2, io_map):
     used_function_names = set(m1_funcs + m2_funcs)
 
     def assign_decoder_variant(base_name: str, func: onnx.FunctionProto, src_graph: onnx.GraphProto) -> str:
+        """Assign a unique function name for decoder variants with different signatures."""
         variants = decoder_variants.setdefault(base_name, [])
 
         for existing_func, assigned_name in variants:
@@ -359,6 +360,8 @@ def merge_models(m1, m2, io_map):
         else:
             suffix = len(variants) + 1
             assigned = f"{base_name}__v{suffix}"
+            # A previous merge can already contain __vN; keep probing until the
+            # assigned name is globally unique across both source models.
             while assigned in used_function_names:
                 suffix += 1
                 assigned = f"{base_name}__v{suffix}"

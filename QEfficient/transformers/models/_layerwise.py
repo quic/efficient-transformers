@@ -460,6 +460,7 @@ def _resolve_export_root(onnx_path: Path) -> Path:
 
 
 def _is_cached_merged(onnx_path: Path) -> bool:
+    """Return True for layerwise-stitched ONNX files produced by the merge pipeline."""
     return onnx_path.name.startswith("merged_")
 
 
@@ -482,6 +483,7 @@ def _cached_merged_onnx(export_root: Path, total_layers: Optional[int] = None) -
 
 
 def _cached_root_onnx(export_root: Path, model_name: Optional[str]) -> Optional[Path]:
+    """Return a canonical non-merged ONNX in the hash root, if present."""
     if model_name is None:
         return None
     candidate = export_root / f"{model_name}.onnx"
@@ -489,6 +491,7 @@ def _cached_root_onnx(export_root: Path, model_name: Optional[str]) -> Optional[
 
 
 def _resolve_layerwise_model_name(qeff_model) -> Optional[str]:
+    """Resolve the decoder model name used for canonical ONNX cache lookup."""
     lang_model = getattr(qeff_model, "lang_model", None)
     if lang_model is not None and hasattr(lang_model, "model_name"):
         return lang_model.model_name
@@ -496,7 +499,12 @@ def _resolve_layerwise_model_name(qeff_model) -> Optional[str]:
 
 
 def _relocate_merged_onnx_to_root(export_root: Path, merged_onnx: Path) -> Path:
-    """Move a merged ONNX (and its external tensor blobs) to export_root without duplication."""
+    """Move a merged ONNX and its external tensor blobs into the hash root.
+
+    The move keeps the layerwise cache layout aligned with regular export and
+    avoids copying large external data files, which can temporarily double disk
+    usage for large models.
+    """
     if merged_onnx.parent == export_root:
         return merged_onnx
 
@@ -522,6 +530,7 @@ def _relocate_merged_onnx_to_root(export_root: Path, merged_onnx: Path) -> Path:
 
 
 def _cleanup_layerwise_intermediates(export_root: Path, *, keep_onnx: Optional[Path] = None) -> None:
+    """Remove transient layerwise export directories after final ONNX relocation."""
     for dirname in ("final_data", "onnx_layerwise_tmp"):
         path = export_root / dirname
         if path.is_dir():

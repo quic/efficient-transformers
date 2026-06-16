@@ -160,8 +160,13 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
     - Updates export kwargs with module classes
 
     Args:
-        qeff_model: The QEff model instance
+        qeff_model: The QEff model instance.
+        args: Positional export arguments.
         kwargs: Export keyword arguments (modified in-place).
+
+    Returns:
+        Updated args/kwargs plus cleanup state used to restore the original
+        ONNX transform list after export.
     """
     warnings.warn(
         "The subfunction feature is experimental. Please note that using compile "
@@ -187,7 +192,8 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
             "Ensure `output_names` includes key/value retained states if subfunction compatibility is required."
         )
 
-    # Add subfunction-specific ONNX transforms
+    # Work on an instance-local copy and restore it in cleanup. Without this,
+    # failed or repeated subfunction exports can leak transforms into later exports.
     original_transforms = list(qeff_model._onnx_transforms)
     qeff_model._onnx_transforms = list(original_transforms)
     if RenameFunctionOutputsTransform not in qeff_model._onnx_transforms:

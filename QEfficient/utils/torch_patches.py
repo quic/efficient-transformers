@@ -175,7 +175,12 @@ def _disable_safe_export_pass_patches():
 
 @contextmanager
 def layerwise_safe_onnx_export_patches(enabled: bool = True):
-    """Disable expensive ONNX exporter passes only for selected layerwise exports."""
+    """Temporarily disable expensive ONNX exporter passes for layerwise prefill.
+
+    This is a no-op unless the caller explicitly enables it and the process is
+    inside the layerwise export context. Regular/non-layerwise export therefore
+    keeps the original PyTorch ONNX exporter behavior.
+    """
     if not enabled or not _layerwise_safe_export_passes_enabled():
         yield
         return

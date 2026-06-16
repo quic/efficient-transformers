@@ -421,6 +421,7 @@ class QEFFBaseModel(ABC):
             model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
             def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
+                """Rename a graph value everywhere it can be referenced in the ONNX graph."""
                 if old_name == new_name:
                     return
                 for node in graph.node:
@@ -433,6 +434,9 @@ class QEFFBaseModel(ABC):
                     if value_info.name == old_name:
                         value_info.name = new_name
 
+            # Some ONNX subfunction transforms can replace retained-state output names
+            # with numeric graph values. Restore only retained-state names so runtime
+            # state pairing stays stable without touching normal outputs like logits.
             for output_idx, expected_name in enumerate(output_names):
                 if output_idx >= len(model.graph.output):
                     break
@@ -756,6 +760,7 @@ class QEFFBaseModel(ABC):
         model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
         def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
+            """Rename a graph value everywhere it can be referenced in the ONNX graph."""
             if old_name == new_name:
                 return
             for node in graph.node:
@@ -768,6 +773,8 @@ class QEFFBaseModel(ABC):
                 if value_info.name == old_name:
                     value_info.name = new_name
 
+        # Layer windows are stitched by name, so preserve the requested output
+        # names after transforms normalize function/custom-op outputs.
         for output_idx, expected_name in enumerate(output_names):
             if output_idx >= len(model.graph.output):
                 break
