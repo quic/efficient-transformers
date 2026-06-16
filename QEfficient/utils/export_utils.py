@@ -5,8 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
-import copy
 import contextlib
+import copy
 import inspect
 import os
 import re
@@ -22,7 +22,6 @@ from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.hash_utils import create_export_hash
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.torch_patches import apply_torch_patches, undo_torch_patches
-
 
 _SAFE_ONNX_EXPORT_PASS_NAMES = (
     "_jit_pass_constant_propagation",
