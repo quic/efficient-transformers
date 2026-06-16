@@ -18,10 +18,12 @@ from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     Qwen3MoeAttention,
     Qwen3MoeConfig,
     Qwen3MoeDecoderLayer,
+    Qwen3MoeExperts,
     Qwen3MoeForCausalLM,
     Qwen3MoeModel,
     Qwen3MoeRotaryEmbedding,
     Qwen3MoeSparseMoeBlock,
+    Qwen3MoeTopKRouter,
     repeat_kv,
     rotate_half,
 )
@@ -176,28 +178,34 @@ def _cumsum_scatter_gather_update_expert_blocked(
     return expert_out
 
 
+class QEffQwen3MoeTopKRouter(Qwen3MoeTopKRouter):
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
+        router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
+        router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1).to(router_logits.dtype)
+        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
+        if self.norm_topk_prob:
+            router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
+        router_top_value = router_top_value.to(router_logits.dtype)
+        router_scores = router_top_value
+        return router_logits, router_scores, router_indices
+
+
+class QEffQwen3MoeExperts(Qwen3MoeExperts):
+    def __qeff_init__(self):
+        self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
+        self.gate_proj = nn.Parameter(self.gate_up_proj[:, : self.expert_dim, :].detach().clone().transpose(1, 2))
+        self.up_proj = nn.Parameter(self.gate_up_proj[:, self.expert_dim :, :].detach().clone().transpose(1, 2))
+        self.down_proj_t = nn.Parameter(self.down_proj.detach().clone().transpose(1, 2))
+
+
 class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
     supports_moe_prefill_blocking = True
 
     def __qeff_init__(self):
         self.top_k = getattr(self.gate, "top_k", None)
         self.norm_topk_prob = getattr(self.gate, "norm_topk_prob", False)
-        self.num_experts = getattr(self.gate, "num_experts", self.experts.gate_up_proj.shape[0])
-        self.gate_up_proj_w = self.experts.gate_up_proj
-        self.down_proj_w = self.experts.down_proj
-
-    def _split_expert_weights(self, hidden_size: int):
-        gate_up_proj_w = self.gate_up_proj_w
-        if gate_up_proj_w.shape[1] != hidden_size:
-            gate_up_proj_w = gate_up_proj_w.transpose(1, 2)
-        intermediate_size = gate_up_proj_w.shape[-1] // 2
-        gate_proj_w = gate_up_proj_w[:, :, :intermediate_size]
-        up_proj_w = gate_up_proj_w[:, :, intermediate_size:]
-
-        down_proj_w = self.down_proj_w
-        if down_proj_w.shape[1] != intermediate_size:
-            down_proj_w = down_proj_w.transpose(1, 2)
-        return gate_proj_w, up_proj_w, down_proj_w
+        self.num_experts = self.experts.num_experts
 
     def orig_forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, S, H = hidden_states.shape
@@ -211,13 +219,12 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         routing_weights = torch.zeros_like(router_logits)
         routing_weights.scatter_(1, top_i, top_w)
 
-        gate_proj_w, up_proj_w, down_proj_w = self._split_expert_weights(H)
         expert_out = x.new_zeros((T, H))
         for expert_idx in range(self.num_experts):
             routing_weight = routing_weights[:, expert_idx].unsqueeze(-1)
-            gate = x @ gate_proj_w[expert_idx]
-            up = x @ up_proj_w[expert_idx]
-            down = (up * act_fn(gate)) @ down_proj_w[expert_idx]
+            gate = x @ self.experts.gate_proj[expert_idx]
+            up = x @ self.experts.up_proj[expert_idx]
+            down = (up * act_fn(gate)) @ self.experts.down_proj_t[expert_idx]
             expert_out += down * routing_weight
         return expert_out.view(B, S, H), router_logits
 
@@ -240,11 +247,10 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
             )
 
         local_experts = self.num_experts // num_nsp
-        gate_proj_w, up_proj_w, down_proj_w = self._split_expert_weights(H)
         rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        W_g = gate_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_u = up_proj_w.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_d = down_proj_w.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
+        W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_u = self.experts.up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_d = self.experts.down_proj_t.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
         expert_out = x.new_zeros((num_nsp, T, H))
         routing_weights_unsqueezed = rw.unsqueeze(-1)
         act_fn = getattr(self.experts, "act_fn", F.silu)
@@ -269,9 +275,7 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
     def __qeff_init__(self):
         self.top_k = getattr(self.gate, "top_k", None)
         self.norm_topk_prob = getattr(self.gate, "norm_topk_prob", False)
-
-        self.gate_up_proj_w = self.experts.gate_up_proj
-        self.down_proj_w = self.experts.down_proj
+        self.num_experts = self.experts.num_experts
 
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, S, H = hidden_states.shape
@@ -283,19 +287,14 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         top_w = top_w.to(hidden_states.dtype)
 
         idx = top_i.reshape(-1)
-        gate_up_proj_w = self.gate_up_proj_w.index_select(0, idx)
-        down_proj_w = self.down_proj_w.index_select(0, idx)
-        if gate_up_proj_w.shape[1] != H:
-            gate_up_proj_w = gate_up_proj_w.transpose(1, 2)
+        gate_proj = self.experts.gate_proj[idx.flatten()]
+        up_proj = self.experts.up_proj[idx.flatten()]
+        down_proj = self.experts.down_proj_t[idx.flatten()]
         expert_in = hidden_states.unsqueeze(1).expand(-1, self.top_k, -1).contiguous().view(-1, 1, H)
-        gate_up = torch.bmm(expert_in, gate_up_proj_w)
-        i2 = gate_up.size(-1)
-        half = i2 // 2
-        gate, up = gate_up[..., :half], gate_up[..., half:]
+        gate = torch.bmm(expert_in, gate_proj)
+        up = torch.bmm(expert_in, up_proj)
         intermediate = up * self.experts.act_fn(gate)
-        if down_proj_w.shape[1] != half:
-            down_proj_w = down_proj_w.transpose(1, 2)
-        experts_out = torch.bmm(intermediate, down_proj_w)
+        experts_out = torch.bmm(intermediate, down_proj)
         experts_out = experts_out.view(B * S, self.top_k, H)
         experts_out = experts_out * top_w.unsqueeze(-1)
         experts_out = torch.einsum("bnd->bd", experts_out)
