@@ -1141,9 +1141,12 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
 class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
     def get_submodules_for_export(self) -> Type[nn.Module]:
-        layer_types = getattr(self.config, "layer_types", None)
-        if layer_types and len(set(layer_types)) > 1:
-            return set()
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
         return {QEffQwen3_5MoeDecoderLayer}
 
     @staticmethod
@@ -1526,6 +1529,12 @@ class QEffQwen3_5MoeEncoderWrapper(nn.Module):
         self.config = model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
         if hasattr(self.model.model, "visual") and hasattr(self.model.model.visual, "blocks"):
             return {self.model.model.visual.blocks[0].__class__}
         if hasattr(self.model.model, "vision_model") and hasattr(self.model.model.vision_model, "blocks"):
@@ -1556,9 +1565,12 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
         self.config = model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
-        layer_types = getattr(self.config.text_config, "layer_types", None)
-        if layer_types and len(set(layer_types)) > 1:
-            return set()
+        """
+        Return the set of class used as the repeated layer across the model for subfunction extraction.
+        Notes:
+            This method should return the *class object* (not an instance).
+            Downstream code can use this to find/build subfunctions for repeated blocks.
+        """
         return {QEffQwen3_5MoeDecoderLayer}
 
     def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
