@@ -7,6 +7,8 @@
 
 """Monkey patches for torch.onnx.utils to fix ONNX export issues."""
 
+from contextlib import contextmanager
+
 import torch
 import torch.onnx.utils as onnx_utils
 from torch import _C
@@ -14,6 +16,40 @@ from torch import _C
 # Store original references before patching
 _original_setup_trace_module_map = onnx_utils._setup_trace_module_map
 _original_get_module_attributes = getattr(onnx_utils, "_get_module_attributes", None)
+_safe_export_patch_depth = 0
+_safe_export_original_passes = {}
+
+
+def _noop(*args, **kwargs):
+    return None
+
+
+def _return_false(*args, **kwargs):
+    return False
+
+
+def _return_graph(graph, *args, **kwargs):
+    return graph
+
+
+def _return_params(_graph, params_dict, *args, **kwargs):
+    return params_dict
+
+
+_SAFE_EXPORT_PASS_REPLACEMENTS = {
+    "_jit_pass_constant_propagation": _noop,
+    "_jit_pass_dce": _noop,
+    "_jit_pass_cse": _return_false,
+    "_jit_pass_canonicalize_graph_fuser_ops": _noop,
+    "_jit_pass_peephole": _noop,
+    "_jit_pass_fuse_addmm": _noop,
+    "_jit_pass_onnx_eval_peephole": _return_params,
+    "_jit_pass_onnx_constant_fold": _return_params,
+    "_jit_pass_dce_allow_deleting_nodes_with_side_effects": _noop,
+    "_jit_pass_canonicalize": _return_graph,
+    "_jit_pass_onnx_graph_shape_type_inference": _noop,
+    "_jit_pass_onnx_deduplicate_initializers": _return_params,
+}
 
 
 def _setup_trace_module_map_patched(
@@ -102,6 +138,53 @@ def _get_module_attributes(module):
             _C._jit_onnx_log(f"Skipping module attribute '{k}'")
             continue
     return attrs
+
+
+def _layerwise_safe_export_passes_enabled():
+    try:
+        from QEfficient.base.modeling_qeff import QEFFBaseModel
+    except Exception:
+        return False
+    return bool(getattr(QEFFBaseModel, "_layerwise_active", False))
+
+
+def _enable_safe_export_pass_patches():
+    global _safe_export_patch_depth
+
+    if _safe_export_patch_depth == 0:
+        _safe_export_original_passes.clear()
+        for name, replacement in _SAFE_EXPORT_PASS_REPLACEMENTS.items():
+            if hasattr(_C, name):
+                _safe_export_original_passes[name] = getattr(_C, name)
+                setattr(_C, name, replacement)
+    _safe_export_patch_depth += 1
+
+
+def _disable_safe_export_pass_patches():
+    global _safe_export_patch_depth
+
+    if _safe_export_patch_depth == 0:
+        return
+
+    _safe_export_patch_depth -= 1
+    if _safe_export_patch_depth == 0:
+        for name, original in _safe_export_original_passes.items():
+            setattr(_C, name, original)
+        _safe_export_original_passes.clear()
+
+
+@contextmanager
+def layerwise_safe_onnx_export_patches():
+    """Disable expensive ONNX exporter passes only for layerwise exports."""
+    if not _layerwise_safe_export_passes_enabled():
+        yield
+        return
+
+    _enable_safe_export_pass_patches()
+    try:
+        yield
+    finally:
+        _disable_safe_export_pass_patches()
 
 
 def apply_torch_patches():

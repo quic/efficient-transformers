@@ -55,6 +55,7 @@ def main():
         split_retained_state_io=True,
         use_onnx_subfunctions=True,
         prefill_only=True,
+        enable_chunking=True,
         mos=1,
         layerwise=True,
         layerwise_window_size=1,

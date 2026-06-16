@@ -1777,6 +1777,54 @@ def test_layerwise_context_manager_toggles_class_flag():
 
 
 @pytest.mark.llm_model
+def test_layerwise_safe_export_pass_patch_is_noop_when_inactive():
+    from torch import _C
+
+    from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
+
+    original_constant_prop = _C._jit_pass_constant_propagation
+    original_constant_fold = _C._jit_pass_onnx_constant_fold
+
+    with layerwise_safe_onnx_export_patches():
+        assert _C._jit_pass_constant_propagation is original_constant_prop
+        assert _C._jit_pass_onnx_constant_fold is original_constant_fold
+
+    assert _C._jit_pass_constant_propagation is original_constant_prop
+    assert _C._jit_pass_onnx_constant_fold is original_constant_fold
+
+
+@pytest.mark.llm_model
+def test_layerwise_safe_export_pass_patch_toggles_only_inside_layerwise_context():
+    from torch import _C
+
+    from QEfficient.transformers.models import _layerwise
+    from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
+
+    original_cse = _C._jit_pass_cse
+    original_constant_fold = _C._jit_pass_onnx_constant_fold
+    original_canonicalize = _C._jit_pass_canonicalize
+
+    with _layerwise._layerwise_export_env():
+        with layerwise_safe_onnx_export_patches():
+            assert _C._jit_pass_cse is not original_cse
+            assert _C._jit_pass_onnx_constant_fold is not original_constant_fold
+            assert _C._jit_pass_canonicalize is not original_canonicalize
+            assert _C._jit_pass_cse(None) is False
+            params = {"weight": object()}
+            assert _C._jit_pass_onnx_constant_fold(None, params, 17) is params
+            sentinel_graph = object()
+            assert _C._jit_pass_canonicalize(sentinel_graph) is sentinel_graph
+
+        assert _C._jit_pass_cse is original_cse
+        assert _C._jit_pass_onnx_constant_fold is original_constant_fold
+        assert _C._jit_pass_canonicalize is original_canonicalize
+
+    assert _C._jit_pass_cse is original_cse
+    assert _C._jit_pass_onnx_constant_fold is original_constant_fold
+    assert _C._jit_pass_canonicalize is original_canonicalize
+
+
+@pytest.mark.llm_model
 def test_layerwise_uses_probe_model_for_cached_export(monkeypatch, tmp_path):
     """A cached merged ONNX must avoid rebuilding per-window models."""
     from QEfficient.transformers.models import _layerwise
