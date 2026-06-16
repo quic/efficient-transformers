@@ -90,11 +90,14 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
     limit: float,
     alpha: float,
     packed_chunk_size: int,
+    num_packed_chunks: int = 1,
 ) -> torch.Tensor:
     """Cumsum-scatter-gather-update expert helper for GPT-OSS NSP-blocked dispatch.
 
     Same algorithm as the Qwen3-MOE version but with GPT-OSS biases and GLU
     activation (clamped gate/up, ``(up + 1) * gate * sigmoid(gate * alpha)``).
+    ``num_packed_chunks`` controls the number of ONNX-traced chunk iterations,
+    allowing long prefill specializations to export with a small sequence length.
 
     Shapes:
         x               : [T, H]
@@ -105,17 +108,19 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
         b_d             : [num_nsp, H]
         routing_weight  : [num_nsp, T, 1]
         expert_out      : [num_nsp, T, H]         (accumulator, in-out)
+        num_packed_chunks: static packed chunk iterations to trace
     """
     batch_size, seq_len = T2Ei.shape
-    packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
+    num_packed_chunks = max(1, int(num_packed_chunks))
 
     matched_idx = _build_matched_idx_from_cumsum(T2Ei)
     valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
-    row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
-
-    for packed_start in range(0, seq_len, packed_chunk_size):
-        packed_stop = packed_start + packed_chunk_size
+    chunk_starts = [-(-chunk_idx * seq_len) // num_packed_chunks for chunk_idx in range(num_packed_chunks)]
+    for chunk_idx, packed_start in enumerate(chunk_starts):
+        packed_stop = seq_len if chunk_idx == num_packed_chunks - 1 else chunk_starts[chunk_idx + 1]
+        chunk_rows = packed_stop - packed_start
+        row_range = torch.arange(chunk_rows, dtype=torch.int32, device=x.device).unsqueeze(0)
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
         x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
@@ -137,7 +142,7 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
         chunk_valid_rows = torch.clamp(
             valid_rows - packed_start,
             min=torch.zeros_like(valid_rows),
-            max=torch.full_like(valid_rows, packed_chunk_size),
+            max=torch.full_like(valid_rows, chunk_rows),
         )
         updated_chunk = torch.where(
             (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
@@ -149,6 +154,8 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
 
 class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
     supports_moe_prefill_blocking = True
+    # Trace a fixed packed-chunk loop count so long prefill exports keep small SL.
+    supports_static_moe_prefill_chunks = True
 
     def forward(self, hidden: torch.Tensor):
         B, S, H = hidden.shape
@@ -198,6 +205,7 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
                 limit=self.experts.limit,
                 alpha=self.experts.alpha,
                 packed_chunk_size=packed_chunk_size,
+                num_packed_chunks=getattr(self, "expert_blocking_num_packed_chunks", 1),
             )
 
         expert_out_sum = torch.einsum("nth->th", expert_out)

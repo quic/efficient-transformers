@@ -136,22 +136,25 @@ def _cumsum_scatter_gather_update_expert_blocked(
     expert_out: torch.Tensor,
     act_fn,
     packed_chunk_size: int,
+    num_packed_chunks: int = 1,
 ) -> torch.Tensor:
-    """Cumsum-scatter-gather-update expert helper for NSP-blocked dispatch.
+    """Run one local expert slot over statically traced packed chunks.
 
-    Accumulates one local expert's contribution in-place onto ``expert_out``.
-    Uses a packed/cumsum layout so the MLP runs only over active rows, then
-    scatters the weighted output back to original token positions.
+    ``num_packed_chunks`` controls the number of ONNX-traced chunk iterations.
+    During export the sequence length can stay small while compile-time
+    specialization maps those iterations to the caller's real prefill length.
     """
     batch_size, seq_len = T2Ei.shape
-    packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
+    num_packed_chunks = max(1, int(num_packed_chunks))
 
     matched_idx = _build_matched_idx_from_cumsum(T2Ei)
     valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
-    row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
-    for packed_start in range(0, seq_len, packed_chunk_size):
-        packed_stop = packed_start + packed_chunk_size
+    chunk_starts = [-(-chunk_idx * seq_len) // num_packed_chunks for chunk_idx in range(num_packed_chunks)]
+    for chunk_idx, packed_start in enumerate(chunk_starts):
+        packed_stop = seq_len if chunk_idx == num_packed_chunks - 1 else chunk_starts[chunk_idx + 1]
+        chunk_rows = packed_stop - packed_start
+        row_range = torch.arange(chunk_rows, dtype=torch.int32, device=x.device).unsqueeze(0)
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
         x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
@@ -168,7 +171,7 @@ def _cumsum_scatter_gather_update_expert_blocked(
         chunk_valid_rows = torch.clamp(
             valid_rows - packed_start,
             min=torch.zeros_like(valid_rows),
-            max=torch.full_like(valid_rows, packed_chunk_size),
+            max=torch.full_like(valid_rows, chunk_rows),
         )
         updated_chunk = torch.where(
             (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
@@ -201,6 +204,8 @@ class QEffQwen3MoeExperts(Qwen3MoeExperts):
 
 class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
     supports_moe_prefill_blocking = True
+    # Trace a fixed packed-chunk loop count so long prefill exports keep small SL.
+    supports_static_moe_prefill_chunks = True
 
     def __qeff_init__(self):
         self.top_k = getattr(self.gate, "top_k", None)
@@ -262,6 +267,7 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
                 expert_out=expert_out,
                 act_fn=act_fn,
                 packed_chunk_size=packed_chunk_size,
+                num_packed_chunks=getattr(self, "expert_blocking_num_packed_chunks", 1),
             )
         expert_out_sum = torch.einsum("nth->th", expert_out)
         return expert_out_sum.view(B, S, H), router_logits
