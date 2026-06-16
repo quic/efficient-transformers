@@ -7,6 +7,7 @@
 import copy
 from collections import Counter
 
+import pytest
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM
 
@@ -95,6 +96,7 @@ def test_glm4_moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
         assert op_counts["Sin"] == 0
         assert op_counts["Cos"] == 0
         # prefill_seq_len=512 and packed_chunk_size=256 gives two packed chunks.
+        # Static-chunk export traces those two chunks over export SL=32.
         # With n_routed_experts=4 and num_cores=2, each layer has two expert slots.
         assert op_counts["CtxGather3D"] == 12
         assert op_counts["CtxScatter3D"] == 4
@@ -163,6 +165,97 @@ GPTOSS_CFG = dict(
     vocab_size=127,
     num_key_value_heads=2,
 )
+
+
+def test_static_moe_prefill_export_seq_len_uses_chunk_count():
+    from QEfficient.transformers.models.modeling_auto import _get_static_moe_prefill_export_seq_len
+
+    assert _get_static_moe_prefill_export_seq_len(1) == 32
+    assert _get_static_moe_prefill_export_seq_len(2) == 32
+    assert _get_static_moe_prefill_export_seq_len(3) == 33
+    assert _get_static_moe_prefill_export_seq_len(32) == 32
+    assert _get_static_moe_prefill_export_seq_len(48) == 48
+
+
+def test_static_moe_prefill_export_seq_len_rejects_zero_chunks():
+    from QEfficient.transformers.models.modeling_auto import _get_static_moe_prefill_export_seq_len
+
+    with pytest.raises(ValueError, match="num_packed_chunks"):
+        _get_static_moe_prefill_export_seq_len(0)
+
+
+def test_configure_moe_prefill_blocking_sets_static_chunk_attrs_and_hash():
+    from QEfficient.transformers.models.modeling_auto import _configure_moe_prefill_blocking_modules
+
+    class DummyBlock(torch.nn.Module):
+        supports_moe_prefill_blocking = True
+        supports_static_moe_prefill_chunks = True
+
+    model = torch.nn.Sequential(DummyBlock(), DummyBlock())
+    hash_params = {}
+
+    has_blocking, has_static, num_chunks = _configure_moe_prefill_blocking_modules(
+        model=model,
+        hash_params=hash_params,
+        prefill_seq_len=512,
+        num_cores=4,
+        moe_prefill_packed_chunk_size=256,
+    )
+
+    assert has_blocking is True
+    assert has_static is True
+    assert num_chunks == 2
+    assert hash_params == {
+        "moe_prefill_num_nsp": 4,
+        "moe_prefill_packed_chunk_size": 256,
+        "moe_prefill_num_packed_chunks": 2,
+    }
+    for module in model:
+        assert module.expert_blocking_num_nsp == 4
+        assert module.expert_blocking_packed_chunk_size == 256
+        assert module.expert_blocking_num_packed_chunks == 2
+
+
+def test_configure_moe_prefill_blocking_rejects_invalid_inputs():
+    from QEfficient.transformers.models.modeling_auto import _configure_moe_prefill_blocking_modules
+
+    model = torch.nn.Sequential()
+    with pytest.raises(ValueError, match="moe_prefill_packed_chunk_size"):
+        _configure_moe_prefill_blocking_modules(
+            model=model,
+            hash_params={},
+            prefill_seq_len=512,
+            num_cores=4,
+            moe_prefill_packed_chunk_size=0,
+        )
+    with pytest.raises(ValueError, match="num_cores"):
+        _configure_moe_prefill_blocking_modules(
+            model=model,
+            hash_params={},
+            prefill_seq_len=512,
+            num_cores=0,
+            moe_prefill_packed_chunk_size=256,
+        )
+
+
+def test_configure_moe_prefill_blocking_leaves_non_moe_models_unchanged():
+    from QEfficient.transformers.models.modeling_auto import _configure_moe_prefill_blocking_modules
+
+    model = torch.nn.Sequential(torch.nn.Linear(2, 2))
+    hash_params = {}
+
+    has_blocking, has_static, num_chunks = _configure_moe_prefill_blocking_modules(
+        model=model,
+        hash_params=hash_params,
+        prefill_seq_len=512,
+        num_cores=4,
+        moe_prefill_packed_chunk_size=256,
+    )
+
+    assert has_blocking is False
+    assert has_static is False
+    assert num_chunks == 2
+    assert hash_params == {}
 
 
 # ── Qwen3MOE ──────────────────────────────────────────────────────────────────
@@ -308,7 +401,13 @@ def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
     assert "CtxScatter3DInt" in used_op_types
     assert "CtxScatter3D" in used_op_types
     assert "CtxGather3D" in used_op_types
-    assert [256] in slice_starts
+    # prefill_seq_len=512 and packed_chunk_size=256 gives two static chunks.
+    # The exporter may fold Slice constants, so assert the source config instead
+    # of relying on a literal chunk-start value in ONNX.
+    assert qeff.hash_params["moe_prefill_num_packed_chunks"] == 2
+    assert qeff.hash_params["moe_prefill_packed_chunk_size"] == 256
+    assert qeff.hash_params["moe_prefill_num_nsp"] == 2
+    assert [256] not in slice_starts
 
 
 # ── GPT-OSS ───────────────────────────────────────────────────────────────────
@@ -394,5 +493,11 @@ def test_gptoss_prefill_chunked_export_traces_packed_chunks(tmp_path):
             if node.op_type == "Slice" and len(node.input) > 1 and node.input[1] in constants:
                 slice_starts.append(constants[node.input[1]])
 
-    assert [256] in slice_starts
+    # prefill_seq_len=512 and packed_chunk_size=256 gives two static chunks.
+    # The exporter may fold Slice constants, so assert the source config instead
+    # of relying on a literal chunk-start value in ONNX.
+    assert qeff.hash_params["moe_prefill_num_packed_chunks"] == 2
+    assert qeff.hash_params["moe_prefill_packed_chunk_size"] == 256
+    assert qeff.hash_params["moe_prefill_num_nsp"] == 2
+    assert [256] not in slice_starts
     assert op_types.count("CtxGather3D") >= 2 * op_types.count("CtxScatter3DInt")

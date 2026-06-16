@@ -89,6 +89,79 @@ CUSTOM_IO_DTYPE_MAP = {
     "float32": "float16",  # Since compiler doesn't support fp32
 }
 
+
+def _get_static_moe_prefill_export_seq_len(num_packed_chunks: int) -> int:
+    """Return the small export sequence length needed for static MoE chunk tracing.
+
+    Long prefill requests are represented by a fixed number of packed expert
+    chunk iterations. Export only needs enough rows to trace each iteration
+    once, while compile specialization still carries the caller's real prefill
+    length. Keep the export length divisible by the chunk count so traced chunk
+    slices are balanced.
+    """
+    if num_packed_chunks <= 0:
+        raise ValueError("num_packed_chunks must be greater than zero")
+
+    export_seq_len = max(num_packed_chunks, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+    if export_seq_len % num_packed_chunks != 0:
+        export_seq_len = -(-export_seq_len // num_packed_chunks) * num_packed_chunks
+    return export_seq_len
+
+
+def _configure_moe_prefill_blocking_modules(
+    model: nn.Module,
+    hash_params: dict,
+    prefill_seq_len: Optional[int],
+    num_cores: int,
+    moe_prefill_packed_chunk_size: int,
+) -> tuple[bool, bool, int]:
+    """Configure expert-blocked MoE prefill modules for the current export.
+
+    Returns whether any MoE prefill-blocked module was found, whether those
+    modules support static packed chunk tracing, and the number of packed chunks
+    needed for the requested compile-time prefill length.
+    """
+    if num_cores <= 0:
+        raise ValueError("num_cores must be greater than zero for MoE prefill blocking")
+    moe_prefill_packed_chunk_size = _get_moe_prefill_packed_chunk_size(moe_prefill_packed_chunk_size)
+    compile_seq_len = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+    num_packed_chunks = max(1, -(-compile_seq_len // moe_prefill_packed_chunk_size))
+    has_moe_prefill_blocking = False
+    has_static_moe_prefill_chunks = False
+
+    for module in model.modules():
+        if getattr(module, "supports_moe_prefill_blocking", False):
+            module.expert_blocking_num_nsp = num_cores
+            module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
+            module.expert_blocking_num_packed_chunks = num_packed_chunks
+            configured_num_nsp = getattr(module, "expert_blocking_num_nsp", None)
+            if configured_num_nsp != num_cores:
+                logger.error(
+                    "MoE prefill num_nsp mismatch: expected %s from compile(num_cores), got %s on %s",
+                    num_cores,
+                    configured_num_nsp,
+                    module.__class__.__name__,
+                )
+                raise AssertionError(f"MoE prefill num_nsp mismatch: expected {num_cores}, got {configured_num_nsp}")
+            has_moe_prefill_blocking = True
+            has_static_moe_prefill_chunks |= getattr(module, "supports_static_moe_prefill_chunks", False)
+
+    if has_moe_prefill_blocking:
+        hash_params["moe_prefill_num_nsp"] = num_cores
+        hash_params["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
+        hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
+
+    return has_moe_prefill_blocking, has_static_moe_prefill_chunks, num_packed_chunks
+
+
+def _get_moe_prefill_packed_chunk_size(value: Optional[int]) -> int:
+    """Normalize and validate the optional MoE prefill packed chunk override."""
+    packed_chunk_size = constants.MOE_PREFILL_PACKED_CHUNK_SIZE if value is None else int(value)
+    if packed_chunk_size <= 0:
+        raise ValueError("moe_prefill_packed_chunk_size must be greater than zero")
+    return packed_chunk_size
+
+
 TORCH_TO_NUMPY_DTYPE_MAP = {
     torch.float16: np.float16,
     torch.bfloat16: np.float16,  # Since numpy doesn't support bfloat16
@@ -956,8 +1029,9 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Defaults to False
         moe_prefill_packed_chunk_size : int, optional
-            Packed rows per expert-blocked MoE chunk for prefill-only chunked export. Applies only when
-            ``prefill_only=True`` and ``enable_chunking=True``. Default is 256.
+            Packed rows represented by each expert-blocked MoE prefill chunk. Applies to supported
+            MoE prefill-blocked models when ``prefill_only=True``; it does not require
+            ``enable_chunking=True``. Default is 256.
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -1236,6 +1310,34 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             else:
                 self.model, tf = RevertPrefillOnlyTransform.apply(self.model)
 
+    def prepare_moe_prefill_export(
+        self,
+        prefill_seq_len: Optional[int],
+        enable_chunking: bool,
+        num_cores: int,
+        moe_prefill_packed_chunk_size: int,
+    ) -> Optional[int]:
+        """Apply VLM language prefill transforms and return a small export SL if supported.
+
+        Dual-QPC VLM export builds dummy inputs before calling the language
+        decoder export. This hook configures the transformed MoE prefill modules
+        early so dummy language inputs can use the reduced export sequence length
+        while compile specialization keeps the caller's real prefill length.
+        """
+        self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
+        _, has_static_moe_prefill_chunks, num_packed_chunks = _configure_moe_prefill_blocking_modules(
+            model=self.model,
+            hash_params=self.hash_params,
+            prefill_seq_len=prefill_seq_len,
+            num_cores=num_cores,
+            moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+        )
+        if has_static_moe_prefill_chunks:
+            if enable_chunking:
+                self.hash_params["chunking"] = True
+            return _get_static_moe_prefill_export_seq_len(num_packed_chunks)
+        return None
+
     def export(
         self,
         inputs,
@@ -1246,6 +1348,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         prefill_seq_len: Optional[int] = None,
         prefill_only: bool = False,
         enable_chunking: bool = False,
+        num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         kv_cache_prefix: Optional[str] = None,
         **kwargs,
     ):
@@ -1280,6 +1384,13 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
                 )
             self.hash_params["prefill_only"] = True
             self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
+            _configure_moe_prefill_blocking_modules(
+                model=self.model,
+                hash_params=self.hash_params,
+                prefill_seq_len=prefill_seq_len,
+                num_cores=num_cores,
+                moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+            )
         else:
             self.hash_params["prefill_only"] = False
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
@@ -1496,6 +1607,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         prefill_seq_len: Optional[int] = None,
         prefill_only: bool = False,
         enable_chunking: bool = False,
+        num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
@@ -1531,13 +1644,26 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_seq_len=prefill_seq_len,
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
+                num_cores=num_cores,
+                moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                 layerwise_window_size=layerwise_window_size,
                 kv_cache_prefix=kv_cache_prefix,
                 **kwargs,
             )
+        export_prefill_seq_len = prefill_seq_len
+        if prefill_only and prefill_seq_len is not None and not skip_lang:
+            static_export_seq_len = self.lang_model.prepare_moe_prefill_export(
+                prefill_seq_len=prefill_seq_len,
+                enable_chunking=enable_chunking,
+                num_cores=num_cores,
+                moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+            )
+            if static_export_seq_len is not None:
+                export_prefill_seq_len = static_export_seq_len
+
         dummy_inputs_kwargs = {}
-        if prefill_seq_len is not None:
-            dummy_inputs_kwargs["prefill_seq_len"] = int(prefill_seq_len)
+        if export_prefill_seq_len is not None:
+            dummy_inputs_kwargs["prefill_seq_len"] = int(export_prefill_seq_len)
 
         # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
         try:
@@ -1609,6 +1735,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
+                num_cores=num_cores,
+                moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                 prefill_seq_len=prefill_seq_len,
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
@@ -1791,6 +1919,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         use_onnx_subfunctions: bool = False,
         prefill_only=None,
         enable_chunking=False,
+        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         qaic_config: Optional[dict] = None,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
@@ -1878,6 +2007,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     use_onnx_subfunctions=use_onnx_subfunctions,
                     prefill_only=prefill_only,
                     enable_chunking=enable_chunking,
+                    moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                     qaic_config=qaic_config,
                     kv_cache_prefix=kv_cache_prefix,
                     **compiler_options,
@@ -1907,6 +2037,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
+                moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                 qaic_config=qaic_config,
                 layerwise_window_size=layerwise_window_size,
                 kv_cache_prefix=kv_cache_prefix,
@@ -1998,6 +2129,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 skip_lang=skip_lang,
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
+                num_cores=num_cores,
+                moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                 prefill_seq_len=prefill_seq_len,
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
@@ -3612,20 +3745,27 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
     ) -> int:
+        """Return the ONNX export sequence length for specialized prefill graphs.
+
+        MoE prefill-blocked models may request a long compile-time prefill
+        length but export a smaller trace. Their fixed packed-chunk iteration
+        count is configured here and included in the cache hash.
+        """
         self.hash_params["prefill_only"] = True
-        compile_seq_len = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        num_packed_chunks = max(1, -(-compile_seq_len // moe_prefill_packed_chunk_size))
-        has_moe_prefill_blocking = False
-        for module in self.model.modules():
-            if getattr(module, "supports_moe_prefill_blocking", False):
-                module.expert_blocking_num_nsp = num_cores
-                module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
-                module.expert_blocking_num_packed_chunks = num_packed_chunks
-                has_moe_prefill_blocking = True
-        if has_moe_prefill_blocking:
-            self.hash_params["moe_prefill_num_nsp"] = num_cores
-            self.hash_params["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
-            self.hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
+        has_moe_prefill_blocking, has_static_moe_prefill_chunks, num_packed_chunks = (
+            _configure_moe_prefill_blocking_modules(
+                model=self.model,
+                hash_params=self.hash_params,
+                prefill_seq_len=prefill_seq_len,
+                num_cores=num_cores,
+                moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+            )
+        )
+
+        if has_static_moe_prefill_chunks:
+            if enable_chunking:
+                self.hash_params["chunking"] = True
+            return _get_static_moe_prefill_export_seq_len(num_packed_chunks)
 
         if enable_chunking:
             self.hash_params["chunking"] = True
@@ -4229,8 +4369,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         moe_prefill_packed_chunk_size : int, optional
-            Packed rows per expert-blocked MoE chunk for prefill-only chunked export. Applies only when
-            ``prefill_only=True`` and ``enable_chunking=True``. Default is 256.
+            Packed rows represented by each expert-blocked MoE prefill chunk. Applies to supported
+            MoE prefill-blocked models when ``prefill_only=True``; it does not require
+            ``enable_chunking=True``. Default is 256.
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
