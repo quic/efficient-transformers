@@ -40,6 +40,11 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
     past_key_value_update,
 )
+from QEfficient.customop.ctx_scatter_gather import (
+    CtxGatherFunc3DGeneralized,
+    CtxScatterFunc3DGeneralized,
+    CtxScatterFunc3DInt,
+)
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.models._layerwise import (
@@ -670,38 +675,119 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         return hidden_states + (visual_embeds * visual_mask)
 
 
+def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
+    """Build packed-to-original token indices for blocked MoE prefill."""
+    batch_size, seq_len = T2Ei.shape
+    int32_max = torch.iinfo(torch.int32).max
+    int32_max_scalar = torch.tensor(int32_max, dtype=torch.int32, device=T2Ei.device)
+    token_idx = torch.arange(seq_len, dtype=torch.int32, device=T2Ei.device).unsqueeze(0).expand(batch_size, -1)
+    valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
+    valid_dest = valid_prefix - 1
+    scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
+    matched_idx = int32_max_scalar.expand_as(token_idx)
+    matched_idx = CtxScatterFunc3DInt.apply(
+        matched_idx.unsqueeze(-1),
+        scatter_pos,
+        token_idx.unsqueeze(-1),
+    ).squeeze(-1)
+    return matched_idx
+
+
+def _cumsum_scatter_gather_update_expert_blocked(
+    x: torch.Tensor,
+    T2Ei: torch.Tensor,
+    W_g: torch.Tensor,
+    W_u: torch.Tensor,
+    W_d: torch.Tensor,
+    routing_weight: torch.Tensor,
+    expert_out: torch.Tensor,
+    act_fn,
+    packed_chunk_size: int,
+) -> torch.Tensor:
+    """Run one local expert slot over packed active rows, then scatter back."""
+    batch_size, seq_len = T2Ei.shape
+    packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
+
+    matched_idx = _build_matched_idx_from_cumsum(T2Ei)
+    valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
+    row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
+    x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
+    for packed_start in range(0, seq_len, packed_chunk_size):
+        packed_stop = packed_start + packed_chunk_size
+        chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
+
+        x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
+        gate_prime = x_chunk @ W_g
+        up_prime = x_chunk @ W_u
+        down_chunk = (up_prime * act_fn(gate_prime)) @ W_d
+
+        rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
+        down_chunk = down_chunk * rw_chunk
+        expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
+        updated_chunk = expert_out_chunk + down_chunk
+
+        chunk_valid_rows = torch.clamp(
+            valid_rows - packed_start,
+            min=torch.zeros_like(valid_rows),
+            max=torch.full_like(valid_rows, packed_chunk_size),
+        )
+        updated_chunk = torch.where(
+            (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
+        )
+        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
+
+    return expert_out
+
+
 class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
+    supports_moe_prefill_blocking = True
+
+    def __qeff_init__(self):
+        self.top_k = getattr(self.gate, "top_k", None)
+        self.norm_topk_prob = getattr(self.gate, "norm_topk_prob", False)
+        self.num_experts = getattr(self.gate, "num_experts", self.experts.gate_proj.shape[0])
+
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, S, H = hidden_states.shape
         T = B * S
         x = hidden_states.view(T, H)
-        act = getattr(self.experts, "act_fn", F.silu)
-
-        router_hidden_states = x.reshape(-1, self.gate.hidden_dim)
-        router_logits = F.linear(router_hidden_states, self.gate.weight)
-        top_w, top_i = torch.topk(router_logits, self.gate.top_k, dim=-1)
-        top_w = F.softmax(top_w, dim=-1, dtype=torch.float)
+        router_logits, top_w, top_i = self.gate(x)
+        if self.norm_topk_prob:
+            top_w /= top_w.sum(-1, keepdim=True)
         top_w = top_w.to(hidden_states.dtype)
-        num_experts = getattr(self, "num_experts", self.gate.num_experts)
-        routing_weights = torch.zeros((T, num_experts), dtype=x.dtype)
+        routing_weights = torch.zeros_like(router_logits)
         routing_weights.scatter_(1, top_i, top_w)
 
-        expert_out = torch.zeros_like(x, dtype=x.dtype)
+        num_nsp = getattr(self, "expert_blocking_num_nsp", self.num_experts)
+        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
+        if self.num_experts % num_nsp != 0:
+            raise ValueError(
+                f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})"
+            )
 
-        for e in range(num_experts):
-            routing_weight = routing_weights[:, e].unsqueeze(-1)
-            W_g = self.experts.gate_proj[e]  # [H, I]
-            W_u = self.experts.up_proj[e]  # [H, I]
-            W_d = self.experts.down_proj_t[e]  # [I, H]
-            gate = x @ W_g
-            up = x @ W_u
-            down = (up * act(gate)) @ W_d
-            masked_down = torch.where(
-                routing_weight > 0, down * routing_weight, torch.zeros_like(expert_out, dtype=down.dtype)
-            )  # TODO: verify and remove
-            expert_out += masked_down
-        expert_out = expert_out.to(x.dtype).view(B, S, H)
-        return expert_out, router_logits
+        local_experts = self.num_experts // num_nsp
+        rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
+        W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_u = self.experts.up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_d = self.experts.down_proj_t.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
+        expert_out = x.new_zeros((num_nsp, T, H))
+        routing_weights_unsqueezed = rw.unsqueeze(-1)
+        act_fn = getattr(self.experts, "act_fn", F.silu)
+        for slot in range(local_experts):
+            T2Ei = rw[:, slot, :] > 0
+            expert_out = _cumsum_scatter_gather_update_expert_blocked(
+                x=x,
+                T2Ei=T2Ei,
+                W_g=W_g[:, slot],
+                W_u=W_u[:, slot],
+                W_d=W_d[:, slot],
+                routing_weight=routing_weights_unsqueezed[:, slot],
+                expert_out=expert_out,
+                act_fn=act_fn,
+                packed_chunk_size=packed_chunk_size,
+            )
+        expert_out_sum = torch.einsum("nth->th", expert_out)
+        return expert_out_sum.view(B, S, H), router_logits
 
 
 class QEffQwen3VLMoeModel(Qwen3VLMoeModel):
@@ -786,13 +872,13 @@ class QEffQwen3VLEncoderWrapper(nn.Module):
 class QEffQwen3VLMoeTextTopKRouter(Qwen3VLMoeTextTopKRouter):
     def forward(self, hidden_states):
         hidden_states = hidden_states.reshape(-1, self.hidden_dim)
-        router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
-        router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1)
-        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
-        router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
+        router_logits = F.linear(hidden_states, self.weight)
+        router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1).to(router_logits.dtype)
+        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)
+        if self.norm_topk_prob:
+            router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
         router_top_value = router_top_value.to(router_logits.dtype)
-        router_scores = router_top_value
-        return router_logits, router_scores, router_indices
+        return router_logits, router_top_value, router_indices
 
 
 class QEffQwen3VLMoeTextExperts(Qwen3VLMoeTextExperts):
