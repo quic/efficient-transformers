@@ -1916,6 +1916,23 @@ def test_layerwise_export_hash_is_separate_from_default(monkeypatch):
 
     assert captured_export_kwargs[0] in (None, {})
     assert captured_export_kwargs[1]["_qeff_layerwise_export"] is True
+    assert captured_export_kwargs[1]["_qeff_layerwise_default_disable_safe_export_passes"] is True
+
+
+@pytest.mark.llm_model
+def test_safe_onnx_export_pass_defaults(monkeypatch):
+    from QEfficient.utils import export_utils
+
+    monkeypatch.delenv("QEFF_ONNX_DISABLE_SAFE_EXPORT_PASSES", raising=False)
+
+    assert export_utils._safe_onnx_export_passes_from_env() == ()
+    assert export_utils._safe_onnx_export_passes_from_env(default_disable_safe_passes=True) == (
+        export_utils._SAFE_ONNX_EXPORT_PASS_NAMES
+    )
+
+    monkeypatch.setenv("QEFF_ONNX_DISABLE_SAFE_EXPORT_PASSES", "off")
+
+    assert export_utils._safe_onnx_export_passes_from_env(default_disable_safe_passes=True) == ()
 
 
 @pytest.mark.llm_model

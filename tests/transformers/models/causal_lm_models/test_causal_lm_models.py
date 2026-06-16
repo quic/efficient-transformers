@@ -73,6 +73,26 @@ def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanu
         check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, config=hf_config, manual_cleanup=manual_cleanup)
 
 
+@pytest.mark.dummy_layers
+@pytest.mark.on_qaic
+@pytest.mark.llm_model
+@pytest.mark.parametrize("disable_safe_passes", ["off", "all"])
+def test_tiny_gpt2_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100_with_onnx_pass_toggle(
+    disable_safe_passes, manual_cleanup, monkeypatch
+):
+    model_name = "gpt2"
+    custom_config = model_config_dict[model_name]
+    hf_config = AutoConfig.from_pretrained(
+        model_name,
+        trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
+        **custom_config.get("additional_params", {}),
+    )
+
+    monkeypatch.setenv("QEFF_ONNX_DISABLE_SAFE_EXPORT_PASSES", disable_safe_passes)
+
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, config=hf_config, manual_cleanup=manual_cleanup)
+
+
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
