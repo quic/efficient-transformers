@@ -495,7 +495,8 @@ class ModelConfig:
         "Qwen/Qwen3-VL-Reranker-8B",
         "Qwen/Qwen3.5-0.8B",
         "Qwen/Qwen3.6-35B-A3B",
-        "google/gemma-4-E2B-it",
+        "tiny-random/gemma-4-dense",
+        "tiny-random/gemma-4-moe",
     }
 
     EXTERNAL_MODELS = {
