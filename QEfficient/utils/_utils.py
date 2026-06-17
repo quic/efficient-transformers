@@ -44,6 +44,7 @@ _KV_RETAINED_STEMS = (
     "recurrent_state.",
 )
 _RETAINED_STATE_SUFFIX = "_RetainedState"
+_INTERNAL_RETAINED_STATE_SUFFIX = "_InternalRetainedState"
 
 
 def validate_kv_cache_prefix(kv_cache_prefix: Optional[str]) -> Optional[str]:
@@ -118,9 +119,13 @@ def align_kv_input_names_to_retained_outputs(input_names, output_names):
     # Stripped target names from retained KV outputs, e.g. {"past_key.0_VLLM", "past_value.0_VLLM"}.
     retained_targets = []
     for name in output_names:
-        if not name.endswith(_RETAINED_STATE_SUFFIX):
+        stem = None
+        if name.endswith(_RETAINED_STATE_SUFFIX):
+            stem = name[: -len(_RETAINED_STATE_SUFFIX)]
+        elif name.endswith(_INTERNAL_RETAINED_STATE_SUFFIX):
+            stem = name[: -len(_INTERNAL_RETAINED_STATE_SUFFIX)]
+        if stem is None:
             continue
-        stem = name[: -len(_RETAINED_STATE_SUFFIX)]
         if any(stem.startswith(kv_stem) for kv_stem in _KV_RETAINED_STEMS):
             retained_targets.append(stem)
     retained_set = set(retained_targets)

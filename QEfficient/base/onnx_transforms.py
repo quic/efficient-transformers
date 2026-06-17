@@ -204,7 +204,12 @@ class RemovePrefix(BaseOnnxTransform):
 
 
 class RenameFunctionOutputsTransform(BaseOnnxTransform):
-    """Rename outputs of decoder-related functions for better clarity."""
+    """Rename decoder function retained-state outputs to public graph names.
+
+    When subfunction export emits ``*_InternalRetainedState``, this transform rewrites
+    them to ``*_RetainedState`` while preserving any optional KV prefix infix
+    (for example ``past_key.0_vllmKvCache``).
+    """
 
     @classmethod
     def apply(cls, model: ModelProto, layer_idx=0) -> bool:
@@ -223,16 +228,19 @@ class RenameFunctionOutputsTransform(BaseOnnxTransform):
                     if "_InternalRetainedState" in out_name:
                         renamed = True
                         orig = node.output[i]
-                        if "key" in out_name:
-                            new = f"past_key.{layer_idx}_RetainedState"
-                        elif "value" in out_name:
-                            new = f"past_value.{layer_idx}_RetainedState"
-                        elif "compressed_kv" in out_name:
-                            new = f"compressed_kv.{layer_idx}_RetainedState"
-                        elif "k_pe" in out_name:
-                            new = f"k_pe.{layer_idx}_RetainedState"
+                        if orig.endswith("_InternalRetainedState"):
+                            new = orig[: -len("_InternalRetainedState")] + "_RetainedState"
                         else:
+                            base = out_name[: -len("_InternalRetainedState")]
                             new = orig
+                            for token in ("past_key.", "past_value.", "compressed_kv.", "k_pe."):
+                                if not base.startswith(token):
+                                    continue
+                                tail = base[len(token) :]
+                                _, _, infix = tail.partition("_")
+                                infix = f"_{infix}" if infix else ""
+                                new = f"{token}{layer_idx}{infix}_RetainedState"
+                                break
                         node.output[i] = new
                         if orig in model_out_map:
                             graph.output[model_out_map[orig]].name = new

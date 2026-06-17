@@ -54,6 +54,45 @@ from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 logger = logging.getLogger(__name__)
 
 
+def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
+    """Rename a graph value everywhere it can be referenced in an ONNX graph."""
+    if old_name == new_name:
+        return
+    for node in graph.node:
+        node.input[:] = [new_name if value == old_name else value for value in node.input]
+        node.output[:] = [new_name if value == old_name else value for value in node.output]
+    for initializer in graph.initializer:
+        if initializer.name == old_name:
+            initializer.name = new_name
+    for value_info in list(graph.input) + list(graph.output) + list(graph.value_info):
+        if value_info.name == old_name:
+            value_info.name = new_name
+
+
+def _restore_retained_state_output_names(model: onnx.ModelProto, output_names: List[str]) -> None:
+    """Restore retained-state output names when ONNX subfunction transforms rewrite them."""
+    for output_idx, expected_name in enumerate(output_names):
+        if output_idx >= len(model.graph.output):
+            break
+        expected_name = expected_name.replace("_InternalRetainedState", "_RetainedState")
+        current_name = model.graph.output[output_idx].name
+        if "_RetainedState" not in expected_name:
+            continue
+        if current_name == expected_name:
+            continue
+        if current_name.isdigit() or "_InternalRetainedState" in current_name or "_RetainedState" in current_name:
+            _rename_graph_value(model.graph, current_name, expected_name)
+
+
+def _restore_output_names_exact(model: onnx.ModelProto, output_names: List[str]) -> None:
+    """Force graph output names to match ``output_names`` by positional index."""
+    for output_idx, expected_name in enumerate(output_names):
+        if output_idx >= len(model.graph.output):
+            break
+        current_name = model.graph.output[output_idx].name
+        _rename_graph_value(model.graph, current_name, expected_name)
+
+
 class QEFFBaseModel(ABC):
     """
     Base class for all the model classes (i.e. LLMs, SD, quantized etc.).
@@ -420,38 +459,10 @@ class QEFFBaseModel(ABC):
             onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
             model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
-            def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
-                """Rename a graph value everywhere it can be referenced in the ONNX graph."""
-                if old_name == new_name:
-                    return
-                for node in graph.node:
-                    node.input[:] = [new_name if value == old_name else value for value in node.input]
-                    node.output[:] = [new_name if value == old_name else value for value in node.output]
-                for initializer in graph.initializer:
-                    if initializer.name == old_name:
-                        initializer.name = new_name
-                for value_info in list(graph.input) + list(graph.output) + list(graph.value_info):
-                    if value_info.name == old_name:
-                        value_info.name = new_name
-
-            # Some ONNX subfunction transforms can replace retained-state output names
-            # with numeric graph values. Restore only retained-state names so runtime
-            # state pairing stays stable without touching normal outputs like logits.
-            for output_idx, expected_name in enumerate(output_names):
-                if output_idx >= len(model.graph.output):
-                    break
-                expected_name = expected_name.replace("_InternalRetainedState", "_RetainedState")
-                current_name = model.graph.output[output_idx].name
-                if "_RetainedState" not in expected_name:
-                    continue
-                if current_name == expected_name:
-                    continue
-                if (
-                    current_name.isdigit()
-                    or "_InternalRetainedState" in current_name
-                    or "_RetainedState" in current_name
-                ):
-                    _rename_graph_value(model.graph, current_name, expected_name)
+            # Keep this strictly layerwise-scoped so regular non-layerwise export
+            # remains backward compatible.
+            if QEFFBaseModel._layerwise_active:
+                _restore_retained_state_output_names(model, output_names)
 
             # Add metadata to the model
             model.metadata_props.append(
@@ -759,27 +770,9 @@ class QEFFBaseModel(ABC):
         onnx_transforms = OnnxTransformPipeline(transforms=_onnx_transforms)
         model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
-        def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
-            """Rename a graph value everywhere it can be referenced in the ONNX graph."""
-            if old_name == new_name:
-                return
-            for node in graph.node:
-                node.input[:] = [new_name if value == old_name else value for value in node.input]
-                node.output[:] = [new_name if value == old_name else value for value in node.output]
-            for initializer in graph.initializer:
-                if initializer.name == old_name:
-                    initializer.name = new_name
-            for value_info in list(graph.input) + list(graph.output) + list(graph.value_info):
-                if value_info.name == old_name:
-                    value_info.name = new_name
-
         # Layer windows are stitched by name, so preserve the requested output
         # names after transforms normalize function/custom-op outputs.
-        for output_idx, expected_name in enumerate(output_names):
-            if output_idx >= len(model.graph.output):
-                break
-            current_name = model.graph.output[output_idx].name
-            _rename_graph_value(model.graph, current_name, expected_name)
+        _restore_output_names_exact(model, output_names)
 
         onnx.save(model, layer_onnx_path_tmp)
         self.onnx_path = layer_onnx_path_tmp

@@ -2290,16 +2290,29 @@ def test_subfunction_compile_io_names_use_internal_retained_state():
 
 @pytest.mark.llm_model
 def test_runtime_aliases_internal_retained_state_outputs():
-    from QEfficient.generation.cloud_infer import _add_basename_binding_aliases, _public_retained_state_name
+    from QEfficient.generation.cloud_infer import (
+        _add_basename_binding_aliases,
+        _canonical_kv_binding_name,
+        _public_retained_state_name,
+    )
 
     assert _public_retained_state_name("past_key.0_InternalRetainedState") == "past_key.0_RetainedState"
     assert _public_retained_state_name("past_value.1_InternalRetainedState") == "past_value.1_RetainedState"
     assert _public_retained_state_name("logits") is None
+    assert _canonical_kv_binding_name("past_key.0_vllmKvCache") == "past_key.0"
+    assert _canonical_kv_binding_name("past_key.0_vllmKvCache_RetainedState") == "past_key.0_RetainedState"
+    assert _canonical_kv_binding_name("vision_embeds_RetainedState") is None
 
     binding_map = {"layer_0/input_ids": 3}
-    bindings = [type("Binding", (), {"name": "layer_0/input_ids", "index": 3})()]
+    bindings = [
+        type("Binding", (), {"name": "layer_0/input_ids", "index": 3})(),
+        type("Binding", (), {"name": "past_key.0_vllmKvCache", "index": 4})(),
+        type("Binding", (), {"name": "past_key.0_vllmKvCache_InternalRetainedState", "index": 5})(),
+    ]
     _add_basename_binding_aliases(binding_map, bindings)
     assert binding_map["input_ids"] == 3
+    assert binding_map["past_key.0"] == 4
+    assert binding_map["past_key.0_RetainedState"] == 5
 
 
 @pytest.mark.llm_model
@@ -2751,7 +2764,7 @@ def test_layerwise_export_with_kv_cache_prefix(tmp_path):
     """Regression for the layerwise + kv_cache_prefix path (previously a silent no-op).
 
     The non-layerwise paths already prefix KV buffers; ``_export_layerwise`` rebuilds output
-    names from per-window templates, so the prefix has to be threaded into it and applied there.
+    names from per-window templates, so the prefix has to be threaded into retained outputs.
     This drives the real ``_export_layerwise`` for every window and asserts:
       * each retained-state output carries the ``_<prefix>_RetainedState`` infix (Bug 2), and
       * the matching KV *input* buffer is renamed to ``past_*.{i}_<prefix>`` so the compiler can
