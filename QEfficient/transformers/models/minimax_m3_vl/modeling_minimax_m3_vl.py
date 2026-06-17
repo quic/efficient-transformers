@@ -480,6 +480,9 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
     def get_qeff_language_decoder(self):
         return QEffMiniMaxM3VLDecoderWrapper(self)
 
+    def get_submodules_for_export(self):
+        return [QEffMiniMaxM3VLDecoderLayer]
+
     # Single-QPC fused forward (kv_offload=False).
     def forward(
         self,
