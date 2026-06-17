@@ -461,6 +461,27 @@ from QEfficient.transformers.models.llava_next.modeling_llava_next import (
     QEffLlavaNextDecoderWrapper,
     QEffLlavaNextForConditionalGeneration,
 )
+from QEfficient.transformers.models.minimax_m3_vl.modeling_hf_minimax_m3_vl import (
+    MiniMaxM3SparseForConditionalGeneration,
+    MiniMaxM3VLAttention,
+    MiniMaxM3VLDecoderLayer,
+    MiniMaxM3VLForCausalLM,
+    MiniMaxM3VLIndexer,
+    MiniMaxM3VLRMSNorm,
+    MiniMaxM3VLSparseMoeBlock,
+    MiniMaxM3VLTextModel,
+    MiniMaxM3VLTopKRouter,
+)
+from QEfficient.transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
+    QEffMiniMaxM3SparseForConditionalGeneration,
+    QEffMiniMaxM3VLAttention,
+    QEffMiniMaxM3VLDecoderLayer,
+    QEffMiniMaxM3VLForCausalLM,
+    QEffMiniMaxM3VLIndexer,
+    QEffMiniMaxM3VLSparseMoeBlock,
+    QEffMiniMaxM3VLTextModel,
+    QEffMiniMaxM3VLTopKRouter,
+)
 from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralAttention,
     QEffMistralDecoderLayer,
@@ -642,6 +663,7 @@ class CustomOpsTransform(ModuleMappingTransform):
     _module_mapping = {
         GemmaRMSNorm: GemmaCustomRMSNormAIC,
         Gemma2RMSNorm: GemmaCustomRMSNormAIC,
+        MiniMaxM3VLRMSNorm: GemmaCustomRMSNormAIC,
         GptOssRMSNorm: CustomRMSNormAIC,
         LlamaRMSNorm: CustomRMSNormAIC,
         Llama4TextRMSNorm: CustomRMSNormAIC,
@@ -825,6 +847,15 @@ class KVCacheTransform(ModuleMappingTransform):
         MixtralDecoderLayer: QeffMixtralDecoderLayer,
         MixtralModel: QEffMixtralModel,
         MixtralForCausalLM: QEffMixtralForCausalLM,
+        # MiniMax-M3
+        MiniMaxM3SparseForConditionalGeneration: QEffMiniMaxM3SparseForConditionalGeneration,
+        MiniMaxM3VLForCausalLM: QEffMiniMaxM3VLForCausalLM,
+        MiniMaxM3VLTextModel: QEffMiniMaxM3VLTextModel,
+        MiniMaxM3VLDecoderLayer: QEffMiniMaxM3VLDecoderLayer,
+        MiniMaxM3VLAttention: QEffMiniMaxM3VLAttention,
+        MiniMaxM3VLIndexer: QEffMiniMaxM3VLIndexer,
+        MiniMaxM3VLSparseMoeBlock: QEffMiniMaxM3VLSparseMoeBlock,
+        MiniMaxM3VLTopKRouter: QEffMiniMaxM3VLTopKRouter,
         # Mpt
         MptAttention: QEffMptAttention,
         MptBlock: QEffMptBlock,

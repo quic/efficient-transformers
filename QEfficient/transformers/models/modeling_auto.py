@@ -16,6 +16,7 @@ import onnx
 import torch
 import torch.nn as nn
 from transformers import (
+    AutoConfig,
     AutoImageProcessor,
     AutoModel,
     AutoModelForCausalLM,
@@ -80,6 +81,10 @@ from QEfficient.utils import (
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.safetensor_materializer import (
+    load_hf_model_with_optional_safetensor_streaming,
+    prepare_safetensor_streaming_from_pretrained_source,
+)
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
 CUSTOM_IO_DTYPE_MAP = {
@@ -1461,7 +1466,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
 
         _resolve_torch_dtype(kwargs)
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
+            pretrained_model_name_or_path, kwargs
+        )
+        model = load_hf_model_with_optional_safetensor_streaming(
+            cls._hf_auto_class, pretrained_model_name_or_path, (), kwargs
+        )
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
@@ -3258,6 +3268,24 @@ class QEFFAutoModelForImageTextToText:
         """
         enable_proxy = kwargs.pop("enable_proxy", False)
 
+        config = kwargs.get("config", None)
+        if config is None:
+            config_kwargs = {
+                key: kwargs[key]
+                for key in ("trust_remote_code", "revision", "token", "subfolder", "cache_dir")
+                if key in kwargs
+            }
+            try:
+                config = AutoConfig.from_pretrained(pretrained_model_name_or_path, **config_kwargs)
+            except Exception:
+                config = None
+        model_type = getattr(config, "model_type", "")
+        if model_type == "minimax_m3_vl" and layerwise:
+            logger.warning(
+                "MiniMax-M3 layerwise/materializer export hooks are not wired yet. Falling back to layerwise=False."
+            )
+            layerwise = False
+
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
         if continuous_batching and not kv_offload:
             NotImplementedError("Continuous batching is not supported for kv_offload = False")
@@ -3277,7 +3305,31 @@ class QEFFAutoModelForImageTextToText:
         )
 
         _resolve_torch_dtype(kwargs)
-        if layerwise:
+        if model_type == "minimax_m3_vl":
+            from QEfficient.transformers.models.minimax_m3_vl.configuration_minimax_m3_vl import MiniMaxM3VLConfig
+            from QEfficient.transformers.models.minimax_m3_vl.modeling_hf_minimax_m3_vl import (
+                MiniMaxM3SparseForConditionalGeneration,
+            )
+
+            if config is None:
+                raise ValueError("Unable to resolve config for MiniMax-M3 model.")
+            if not isinstance(config, MiniMaxM3VLConfig):
+                config = MiniMaxM3VLConfig(**config.to_dict())
+            config._attn_implementation = "eager"
+            config.text_config._attn_implementation = "eager"
+            kwargs["config"] = config
+            minimax_kwargs = dict(kwargs)
+            minimax_kwargs.pop("trust_remote_code", None)
+            pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
+                pretrained_model_name_or_path, minimax_kwargs
+            )
+            model = load_hf_model_with_optional_safetensor_streaming(
+                MiniMaxM3SparseForConditionalGeneration,
+                pretrained_model_name_or_path,
+                (),
+                minimax_kwargs,
+            )
+        elif layerwise:
             # Layer-wise mode: build the outer model on the meta device so the
             # caller's ``from_pretrained`` does not pull the full checkpoint
             # into RAM. compile()/export() rebuilds a real per-window model
@@ -3285,7 +3337,12 @@ class QEFFAutoModelForImageTextToText:
             # only used as a config holder.
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
         else:
-            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+            pretrained_model_name_or_path = prepare_safetensor_streaming_from_pretrained_source(
+                pretrained_model_name_or_path, kwargs
+            )
+            model = load_hf_model_with_optional_safetensor_streaming(
+                cls._hf_auto_class, pretrained_model_name_or_path, (), kwargs
+            )
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 

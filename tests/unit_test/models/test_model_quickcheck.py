@@ -43,6 +43,7 @@ from transformers import (
     Qwen2Config,
 )
 
+from QEfficient.transformers.models.minimax_m3_vl import MiniMaxM3SparseForConditionalGeneration, MiniMaxM3VLConfig
 from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModel,
     QEFFAutoModelForCausalLM,
@@ -453,6 +454,124 @@ def test_vlm_text_side_runtime_parity_and_full_export(tmp_path):
 def test_vlm_export_smoke_additional_models(vlm_name, model_id, tmp_path):
     vlm_onnx_path = _export_vlm_with_text_fallback(model_id, tmp_path / f"vlm-{vlm_name}")
     assert vlm_onnx_path.name.endswith(".onnx")
+
+
+@pytest.mark.llm_model
+def test_vlm_export_smoke_minimax_m3_config_derived(tmp_path):
+    text_config = {
+        "vocab_size": 256,
+        "hidden_size": 64,
+        "intermediate_size": 32,
+        "dense_intermediate_size": 128,
+        "shared_intermediate_size": 32,
+        "num_hidden_layers": 2,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "head_dim": 16,
+        "max_position_embeddings": 128,
+        "num_local_experts": 4,
+        "num_experts_per_tok": 2,
+        "routed_scaling_factor": 1.0,
+        "rope_theta": 10000.0,
+        "rotary_dim": 16,
+        "moe_layer_freq": [1, 1],
+        "sparse_attention_config": {
+            "sparse_num_index_heads": 2,
+            "sparse_index_dim": 16,
+            "sparse_topk_blocks": 2,
+            "sparse_block_size": 4,
+            "sparse_local_block": 1,
+            "sparse_attention_freq": [1, 1],
+        },
+    }
+    vision_config = {
+        "hidden_size": 64,
+        "intermediate_size": 128,
+        "num_hidden_layers": 2,
+        "num_attention_heads": 4,
+        "num_channels": 3,
+        "image_size": 56,
+        "patch_size": 14,
+        "temporal_patch_size": 2,
+        "spatial_merge_size": 2,
+        "hidden_act": "gelu",
+    }
+
+    config = MiniMaxM3VLConfig(
+        text_config=text_config,
+        vision_config=vision_config,
+        image_token_index=250,
+        video_token_index=251,
+    )
+    config.torch_dtype = torch.float32
+    model_hf = MiniMaxM3SparseForConditionalGeneration(config)
+    model_hf.eval()
+
+    qeff_model = QEFFAutoModelForImageTextToText(model_hf, kv_offload=False)
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "vlm-minimax-m3", prefill_seq_len=8))
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    assert onnx_path.name.endswith(".onnx")
+    assert any(output.name.endswith("_RetainedState") for output in onnx_model.graph.output)
+
+
+@pytest.mark.llm_model
+def test_vlm_export_smoke_minimax_m3_dual_qpc_skip_vision(tmp_path):
+    text_config = {
+        "vocab_size": 256,
+        "hidden_size": 64,
+        "intermediate_size": 32,
+        "dense_intermediate_size": 128,
+        "shared_intermediate_size": 32,
+        "num_hidden_layers": 2,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "head_dim": 16,
+        "max_position_embeddings": 128,
+        "num_local_experts": 4,
+        "num_experts_per_tok": 2,
+        "routed_scaling_factor": 1.0,
+        "rope_theta": 10000.0,
+        "rotary_dim": 16,
+        "moe_layer_freq": [1, 1],
+        "sparse_attention_config": {
+            "sparse_num_index_heads": 2,
+            "sparse_index_dim": 16,
+            "sparse_topk_blocks": 2,
+            "sparse_block_size": 4,
+            "sparse_local_block": 1,
+            "sparse_attention_freq": [1, 1],
+        },
+    }
+    vision_config = {
+        "hidden_size": 64,
+        "intermediate_size": 128,
+        "num_hidden_layers": 2,
+        "num_attention_heads": 4,
+        "num_channels": 3,
+        "image_size": 56,
+        "patch_size": 14,
+        "temporal_patch_size": 2,
+        "spatial_merge_size": 2,
+        "hidden_act": "gelu",
+    }
+
+    config = MiniMaxM3VLConfig(
+        text_config=text_config,
+        vision_config=vision_config,
+        image_token_index=250,
+        video_token_index=251,
+    )
+    config.torch_dtype = torch.float32
+    model_hf = MiniMaxM3SparseForConditionalGeneration(config)
+    model_hf.eval()
+
+    qeff_model = QEFFAutoModelForImageTextToText(model_hf, kv_offload=True)
+    onnx_path = _exported_onnx_path(
+        qeff_model.export(tmp_path / "vlm-minimax-m3-dual", skip_vision=True, prefill_seq_len=8)
+    )
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    assert onnx_path.name.endswith(".onnx")
+    assert any(output.name.endswith("_RetainedState") for output in onnx_model.graph.output)
 
 
 @pytest.mark.llm_model
