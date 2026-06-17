@@ -8,6 +8,7 @@
 import gc
 import inspect
 import logging
+import os
 import shutil
 import subprocess
 import warnings
@@ -48,7 +49,11 @@ from QEfficient.utils import (
     require_value,
     to_named_specializations,
 )
-from QEfficient.utils.export_utils import export_wrapper
+from QEfficient.utils.export_utils import (
+    _apply_onnx_export_env_kwargs,
+    _disable_safe_onnx_export_passes_from_env,
+    export_wrapper,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -389,18 +394,21 @@ class QEFFBaseModel(ABC):
             dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
             input_names = aligned_input_names
 
+        _apply_onnx_export_env_kwargs(export_kwargs)
+
         try:
-            torch.onnx.export(
-                self.model,
-                (),
-                str(onnx_path),
-                kwargs=example_inputs,
-                input_names=input_names,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
-                **export_kwargs,
-            )
+            with _disable_safe_onnx_export_passes_from_env():
+                torch.onnx.export(
+                    self.model,
+                    (),
+                    str(onnx_path),
+                    kwargs=example_inputs,
+                    input_names=input_names,
+                    output_names=output_names,
+                    dynamic_axes=dynamic_axes,
+                    opset_version=constants.ONNX_EXPORT_OPSET,
+                    **export_kwargs,
+                )
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
             model = onnx.load(onnx_path, load_external_data=False)
@@ -672,11 +680,7 @@ class QEFFBaseModel(ABC):
                     input_names.append(param)
         dynamic_axes = {k: v for k, v in dynamic_axes.items() if k in input_names}
 
-        import os
-        import time
-
         layerwise_dir = export_dir / "onnx_layerwise_tmp"
-        start_time = time.time()
 
         # example_inputs["layer_indices_to_run"] = [i]
         current_layer_dir = layerwise_dir / f"layer_{idx}_{end_idx}"
@@ -692,20 +696,20 @@ class QEFFBaseModel(ABC):
             rename_map = {old: new for old, new in zip(input_names, aligned_input_names) if old != new}
             dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
             input_names = aligned_input_names
+        _apply_onnx_export_env_kwargs(export_kwargs)
         if not os.path.isfile(layer_onnx_path):
-            torch.onnx.export(
-                self.model,
-                (),
-                layer_onnx_path_tmp,
-                kwargs=example_inputs,
-                input_names=input_names,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
-                **export_kwargs,
-            )
-            total_end = time.time()
-            print(f"\nTotal export time: {total_end - start_time:.2f} seconds")
+            with _disable_safe_onnx_export_passes_from_env(default_disable_safe_passes=not bool(prefill_only)):
+                torch.onnx.export(
+                    self.model,
+                    (),
+                    layer_onnx_path_tmp,
+                    kwargs=example_inputs,
+                    input_names=input_names,
+                    output_names=output_names,
+                    dynamic_axes=dynamic_axes,
+                    opset_version=constants.ONNX_EXPORT_OPSET,
+                    **export_kwargs,
+                )
 
         model = onnx.load(layer_onnx_path_tmp, load_external_data=False)
         transform_kwargs = {

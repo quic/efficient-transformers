@@ -1900,7 +1900,7 @@ def test_layerwise_export_hash_is_separate_from_default(monkeypatch):
     def normal_export(self, example_inputs, output_names, dynamic_axes, **export_kwargs):
         pass
 
-    def _export_layerwise(self, example_inputs, output_names, dynamic_axes, **export_kwargs):
+    def _export_layerwise(self, example_inputs, output_names, dynamic_axes, prefill_only=False, **export_kwargs):
         pass
 
     captured_export_kwargs = []
@@ -1913,9 +1913,15 @@ def test_layerwise_export_hash_is_separate_from_default(monkeypatch):
 
     export_utils._generate_export_hash(DummyQEffModel(), ({}, ["logits"], {}), {}, normal_export)
     export_utils._generate_export_hash(DummyQEffModel(), ({}, ["logits"], {}), {}, _export_layerwise)
+    export_utils._generate_export_hash(
+        DummyQEffModel(), ({}, ["logits"], {}), {"prefill_only": True}, _export_layerwise
+    )
 
     assert captured_export_kwargs[0] in (None, {})
     assert captured_export_kwargs[1]["_qeff_layerwise_export"] is True
+    assert captured_export_kwargs[1]["_qeff_layerwise_default_disable_safe_export_passes"] is True
+    assert captured_export_kwargs[2]["_qeff_layerwise_export"] is True
+    assert captured_export_kwargs[2]["_qeff_layerwise_prefill_default_enable_safe_export_passes"] is True
 
 
 @pytest.mark.llm_model

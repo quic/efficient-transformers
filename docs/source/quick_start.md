@@ -20,6 +20,8 @@ By default, the library exported models and Qaic Program Container (QPC) files, 
 2. **XDG_CACHE_HOME**: If `QEFF_HOME` is not set but `XDG_CACHE_HOME` is provided, this path will be used instead. Note that setting `XDG_CACHE_HOME` will reroute the entire `~/.cache` directory to the specified folder, including HF models.
 3. **Default**: If neither `QEFF_HOME` nor `XDG_CACHE_HOME` are set, the default path `~/.cache/qeff_cache` will be used.
 
+For ONNX export troubleshooting, `QEFF_ONNX_DISABLE_SAFE_EXPORT_PASSES` overrides safe Torch ONNX export pass handling. Set it to `off` to force safe passes on, `all` to disable all safe passes, or a comma-separated list of safe pass names to disable selected passes.
+
 ---
 
 ## Command Line Interface Execution
