@@ -147,7 +147,7 @@ def _cumsum_scatter_gather_update_expert_blocked(
     packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
 
     matched_idx = _build_matched_idx_from_cumsum(T2Ei)
-    valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
+    valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
     row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
     for packed_start in range(0, seq_len, packed_chunk_size):
@@ -213,8 +213,6 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         x = hidden_states.view(T, H)
         act_fn = getattr(self.experts, "act_fn", F.silu)
         router_logits, top_w, top_i = self.gate(x)
-        if self.norm_topk_prob:
-            top_w /= top_w.sum(-1, keepdim=True)
         top_w = top_w.to(hidden_states.dtype)
         routing_weights = torch.zeros_like(router_logits)
         routing_weights.scatter_(1, top_i, top_w)
@@ -233,8 +231,6 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         T = B * S
         x = hidden_states.view(T, H)
         router_logits, top_w, top_i = self.gate(x)
-        if self.norm_topk_prob:
-            top_w /= top_w.sum(-1, keepdim=True)
         top_w = top_w.to(hidden_states.dtype)
         routing_weights = torch.zeros_like(router_logits)
         routing_weights.scatter_(1, top_i, top_w)
@@ -282,10 +278,7 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         T = B * S
         hidden_states = hidden_states.view(T, H)
         router_logits, top_w, top_i = self.gate(hidden_states)
-        if self.norm_topk_prob:  # only diff with mixtral sparse moe block!
-            top_w = top_w / torch.einsum("bi->b", top_w)[:, None]
         top_w = top_w.to(hidden_states.dtype)
-
         idx = top_i.reshape(-1)
         gate_proj = self.experts.gate_proj[idx.flatten()]
         up_proj = self.experts.up_proj[idx.flatten()]

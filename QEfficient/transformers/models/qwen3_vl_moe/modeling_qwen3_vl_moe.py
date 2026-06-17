@@ -677,10 +677,7 @@ class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBloc
         x = hidden_states.view(T, H)
         act = getattr(self.experts, "act_fn", F.silu)
 
-        router_hidden_states = x.reshape(-1, self.gate.hidden_dim)
-        router_logits = F.linear(router_hidden_states, self.gate.weight)
-        top_w, top_i = torch.topk(router_logits, self.gate.top_k, dim=-1)
-        top_w = F.softmax(top_w, dim=-1, dtype=torch.float)
+        router_logits, top_w, top_i = self.gate(x)
         top_w = top_w.to(hidden_states.dtype)
         num_experts = getattr(self, "num_experts", self.gate.num_experts)
         routing_weights = torch.zeros((T, num_experts), dtype=x.dtype)
@@ -962,10 +959,7 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         B, S, H = hidden_states.shape
         T = B * S
         x = hidden_states.view(T, H)
-        router_hidden_states = x.reshape(-1, self.gate.hidden_dim)
-        router_logits = F.linear(router_hidden_states, self.gate.weight)
-        top_w, top_i = torch.topk(router_logits, self.gate.top_k, dim=-1)
-        top_w = F.softmax(top_w, dim=-1, dtype=torch.float)
+        router_logits, top_w, top_i = self.gate(x)
         top_w = top_w.to(x.dtype)
         idx = top_i.reshape(-1)
         gate_proj = self.experts.gate_proj[idx.flatten()]

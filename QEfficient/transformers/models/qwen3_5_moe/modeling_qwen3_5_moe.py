@@ -2238,8 +2238,6 @@ class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
         T = B * S
         x = hidden_states.view(T, H)
         router_logits, top_w, top_i = self.gate(x)
-        if self.norm_topk_prob:
-            top_w /= top_w.sum(-1, keepdim=True)
         top_w = top_w.to(hidden_states.dtype)
         routing_weights = torch.zeros_like(router_logits)
         routing_weights.scatter_(1, top_i, top_w)
