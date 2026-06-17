@@ -101,9 +101,7 @@ NIGHTLY_SKIPPED_MODELS = {
     "meta-llama/Llama-4-Scout-17B-16E-Instruct",
     "meta-llama/Llama-3.2-90B-Vision-Instruct",
     "allenai/Molmo-7B-D-0924",
-    "Qwen/Qwen3-VL-30B-A3B-Instruct",
     # Causal Models
-    "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
     "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
     "mistralai/Mixtral-8x7B-v0.1",
