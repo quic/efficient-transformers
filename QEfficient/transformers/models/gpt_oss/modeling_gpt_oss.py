@@ -854,6 +854,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
             blocking_config=blocking_config,
             position_ids=position_ids,
             past_key_value=past_key_values,
+            batch_index=batch_index,
             **kwargs,
         )
 
