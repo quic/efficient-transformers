@@ -69,7 +69,7 @@ _STRATEGIES: Dict[BlockingMode, Callable] = {
 _STRATEGIES_MLA: Dict[BlockingMode, Callable] = {
     BlockingMode.KV: blocked_kv_mla_attention_forward,
     BlockingMode.H: blocked_h_mla_attention_forward,
-    BlockingMode.PAR: blocked_kv_par_mla_attention_forward
+    BlockingMode.PAR: blocked_kv_par_mla_attention_forward,
 }
 
 

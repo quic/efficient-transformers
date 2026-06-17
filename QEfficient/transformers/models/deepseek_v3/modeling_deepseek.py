@@ -25,9 +25,9 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxScatterFunc3DGeneralized,
     CtxScatterFunc3DInt,
 )
-from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.customop.matmulnbits import QMOE, QuantLinearTorchFunction
 from QEfficient.customop.quantization_ops import CastToUInt4Func, DequantizeLinearFunc
+from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MAX_POSITION_EMBEDDINGS, MIN_MASKED_ATTENTION_VALUE
@@ -465,7 +465,7 @@ class QEffDeepseekV3Attention(nn.Module):
                 dq_qup_kupT = torch.matmul(q_a_proj_out, qup_kupT)
             else:
                 dq_qup_kupT = torch.matmul(q_a_proj_out, self.fusedqk)
-            query = torch.cat((dq_qup_kupT, q_pe), dim=-1)   # [B, num_heads, q_len, d_abs]
+            query = torch.cat((dq_qup_kupT, q_pe), dim=-1)  # [B, num_heads, q_len, d_abs]
         else:
             q_nope = torch.bmm(q_a_proj_out, self.q_up)
             q_nope = q_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
@@ -901,7 +901,9 @@ class QEffDeepseekMoEGate(nn.Module):
         if self.topk_method == "noaux_tc":
             assert not self.training
             scores_for_choice = scores.view(bsz * seq_len, -1) + self.e_score_correction_bias.unsqueeze(0)
-            group_scores = torch.einsum("abc->ab", scores_for_choice.view(bsz * seq_len, self.n_group, -1).topk(2, dim=-1)[0]) # [n, n_group]
+            group_scores = torch.einsum(
+                "abc->ab", scores_for_choice.view(bsz * seq_len, self.n_group, -1).topk(2, dim=-1)[0]
+            )  # [n, n_group]
             group_idx = torch.topk(group_scores, k=self.topk_group, dim=-1, sorted=False)[1]  # [n, top_k_group]
             group_mask = torch.zeros_like(group_scores)  # [n, n_group]
             group_mask.scatter_(1, group_idx, 1)  # [n, n_group]

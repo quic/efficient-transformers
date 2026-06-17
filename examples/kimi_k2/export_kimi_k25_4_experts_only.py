@@ -39,7 +39,13 @@ qaic_config = {
 # qaic_config = { "mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "h", "num_kv_heads_repeat": TS}
 # for h blocking, it internally sets head_block_size equal to num_devices/num_kv_heads_repeat
 
-qaic_config = { "mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "par", "par_num_split": 4, "num_kv_blocks": 8}
+qaic_config = {
+    "mla_absorption": mla_absorption,
+    "enable_blocking": True,
+    "blocking_mode": "par",
+    "par_num_split": 4,
+    "num_kv_blocks": 8,
+}
 
 
 MODEL_PATH = Path(
@@ -233,7 +239,7 @@ qpc_path = qeff_model.compile(
     num_devices=TS,
     num_cores=16,
     qaic_config=qaic_config,
-    prefill_only=True
+    prefill_only=True,
 )
 
 qeff_model.generate(prompts=["Once upon a time,"], tokenizer=tokenizer)

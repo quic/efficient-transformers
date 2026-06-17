@@ -359,7 +359,12 @@ def build_transformer_blocking_config_for_transform(
         if qaic_config.get("num_batch_blocks", False) and enable_blocking and "b" in blocking_mode:
             mode_from_config = "b" + mode_from_config
             blocking_config.num_batch_blocks = _get_valid_num_blocks(qaic_config, "num_batch_blocks")
-        if qaic_config.get("par_num_split", False) and qaic_config.get("num_kv_blocks", False) and enable_blocking and "par" in blocking_mode:
+        if (
+            qaic_config.get("par_num_split", False)
+            and qaic_config.get("num_kv_blocks", False)
+            and enable_blocking
+            and "par" in blocking_mode
+        ):
             mode_from_config = "par" + mode_from_config
             blocking_config.num_kv_blocks = _get_valid_num_blocks(qaic_config, "num_kv_blocks")
             blocking_config.par_num_split = _get_valid_num_blocks(qaic_config, "par_num_split")

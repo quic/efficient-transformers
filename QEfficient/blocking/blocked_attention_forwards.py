@@ -11,6 +11,7 @@ import math
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 from transformers.cache_utils import Cache
 
@@ -1004,9 +1005,7 @@ def blocked_kv_par_mla_attention_forward(
     split = max(1, _normalize_int(split))
 
     q_fold = query.reshape(batch_size, num_key_value_heads, q_len * num_heads_per_kv, query_dim)
-    q_5d = q_fold.unsqueeze(2).expand(
-        batch_size, num_key_value_heads, split, q_len * num_heads_per_kv, query_dim
-    )
+    q_5d = q_fold.unsqueeze(2).expand(batch_size, num_key_value_heads, split, q_len * num_heads_per_kv, query_dim)
 
     ctx_len = compressed_kvs.layers[layer_idx].ckv.shape[2]
     kv_block_size = -(-ctx_len // num_kv_blocks)
