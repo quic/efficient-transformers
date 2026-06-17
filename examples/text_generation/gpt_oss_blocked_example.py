@@ -63,7 +63,6 @@ def main():
         else:
             model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
 
-
         # Compile the model
         qpc_path = model.compile(
             prefill_seq_len=args.prefill_seq_len,
