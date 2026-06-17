@@ -24,14 +24,12 @@ from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.torch_patches import apply_torch_patches, undo_torch_patches
 
 _SAFE_ONNX_EXPORT_PASS_NAMES = (
-    "_jit_pass_constant_propagation",
     "_jit_pass_dce",
     "_jit_pass_cse",
     "_jit_pass_canonicalize_graph_fuser_ops",
     "_jit_pass_peephole",
     "_jit_pass_fuse_addmm",
     "_jit_pass_onnx_eval_peephole",
-    "_jit_pass_onnx_constant_fold",
     "_jit_pass_dce_allow_deleting_nodes_with_side_effects",
     "_jit_pass_canonicalize",
     "_jit_pass_onnx_graph_shape_type_inference",
@@ -58,14 +56,12 @@ def _qeff_second_arg_or_empty_dict(*args, **kwargs):
 
 
 _SAFE_ONNX_EXPORT_PASS_REPLACEMENTS = {
-    "_jit_pass_constant_propagation": _qeff_noop,
     "_jit_pass_dce": _qeff_noop,
     "_jit_pass_cse": _qeff_false_noop,
     "_jit_pass_canonicalize_graph_fuser_ops": _qeff_noop,
     "_jit_pass_peephole": _qeff_noop,
     "_jit_pass_fuse_addmm": _qeff_noop,
     "_jit_pass_onnx_eval_peephole": _qeff_second_arg_or_empty_dict,
-    "_jit_pass_onnx_constant_fold": _qeff_second_arg_or_empty_dict,
     "_jit_pass_dce_allow_deleting_nodes_with_side_effects": _qeff_noop,
     "_jit_pass_canonicalize": _qeff_first_arg,
     "_jit_pass_onnx_graph_shape_type_inference": _qeff_noop,
