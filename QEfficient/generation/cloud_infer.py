@@ -13,21 +13,24 @@ from warnings import warn
 
 import numpy as np
 
-from QEfficient.generation.io_name_aliases import (
-    add_basename_binding_aliases as _add_basename_binding_aliases,
-)
-from QEfficient.generation.io_name_aliases import (
-    canonical_kv_binding_name as _canonical_kv_binding_name,
-)
-from QEfficient.generation.io_name_aliases import (
-    is_retained_state_name as _is_retained_state_name,
-)
-from QEfficient.generation.io_name_aliases import (
-    public_retained_state_name as _public_retained_state_name,
-)
 
-# Backward-compatible private aliases used by existing tests/call-sites.
-is_retained_state_name = _is_retained_state_name
+def _public_retained_state_name(output_name: str) -> Optional[str]:
+    """Map internal subfunction retained-state outputs to public runtime names."""
+    suffix = "_InternalRetainedState"
+    if output_name.endswith(suffix):
+        return output_name[: -len(suffix)] + "_RetainedState"
+    return None
+
+
+def is_retained_state_name(name: str) -> bool:
+    """Return True when an I/O binding participates in retained-state cache flow."""
+    return name.startswith(("past_", "conv_state.", "recurrent_state.", "compressed_", "k_pe"))
+
+
+def _add_basename_binding_aliases(binding_index_map: Dict[str, int], bindings) -> None:
+    """Allow callers to use unprefixed I/O names for prefixed ONNX graphs."""
+    for binding in bindings:
+        binding_index_map.setdefault(binding.name.rsplit("/", 1)[-1], binding.index)
 
 
 try:
@@ -251,17 +254,8 @@ class QAICInferenceSession:
             outputs[output_name] = output
             output_basename = output_name.rsplit("/", 1)[-1]
             outputs.setdefault(output_basename, output)
-
-            canonical_name = _canonical_kv_binding_name(output_basename)
-            if canonical_name is not None:
-                outputs.setdefault(canonical_name, output)
-
             public_name = _public_retained_state_name(output_name)
             if public_name is not None:
                 outputs[public_name] = output
-                public_basename = public_name.rsplit("/", 1)[-1]
-                outputs.setdefault(public_basename, output)
-                canonical_public = _canonical_kv_binding_name(public_basename)
-                if canonical_public is not None:
-                    outputs.setdefault(canonical_public, output)
+                outputs.setdefault(public_name.rsplit("/", 1)[-1], output)
         return outputs

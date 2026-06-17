@@ -203,7 +203,7 @@ def _compile_io_name(name: str, *, use_onnx_subfunctions: bool) -> str:
     return name
 
 
-def _state_input_name(output_name: str, kv_cache_prefix: Optional[str] = None) -> str:
+def _state_input_name(output_name: str) -> str:
     """Map a retained-state output name to its matching state input name."""
     for suffix in ("_InternalRetainedState", "_RetainedState"):
         if output_name.endswith(suffix):
@@ -212,6 +212,19 @@ def _state_input_name(output_name: str, kv_cache_prefix: Optional[str] = None) -
     else:
         state_name = output_name
     return state_name
+
+
+def _add_retained_state_custom_io(
+    custom_io: dict,
+    output_name: str,
+    *,
+    dtype: str,
+    use_onnx_subfunctions: bool,
+) -> None:
+    """Add the paired state-input and retained-state output custom-IO entries."""
+    compiler_output_name = _compile_io_name(output_name, use_onnx_subfunctions=use_onnx_subfunctions)
+    custom_io[_state_input_name(compiler_output_name)] = dtype
+    custom_io[compiler_output_name] = dtype
 
 
 def _filter_custom_io_for_onnx(custom_io: dict, onnx_path: Optional[Union[str, Path]]) -> dict:
@@ -2053,19 +2066,16 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             custom_io_lang = {}
             for output_name in output_names["lang"]:
                 if output_name.endswith("_RetainedState"):
-                    compiler_output_name = _compile_io_name(
+                    dtype = (
+                        CUSTOM_IO_DTYPE_MAP[target_dtype]
+                        if ("vision_embeds" in output_name or "deepstack_features" in output_name)
+                        else kv_cache_dtype
+                    )
+                    _add_retained_state_custom_io(
+                        custom_io_lang,
                         output_name,
+                        dtype=dtype,
                         use_onnx_subfunctions=use_onnx_subfunctions,
-                    )
-                    custom_io_lang[_state_input_name(compiler_output_name, kv_cache_prefix=kv_cache_prefix)] = (
-                        CUSTOM_IO_DTYPE_MAP[target_dtype]
-                        if ("vision_embeds" in output_name or "deepstack_features" in output_name)
-                        else kv_cache_dtype
-                    )
-                    custom_io_lang[compiler_output_name] = (
-                        CUSTOM_IO_DTYPE_MAP[target_dtype]
-                        if ("vision_embeds" in output_name or "deepstack_features" in output_name)
-                        else kv_cache_dtype
                     )
 
             custom_io_lang = _filter_custom_io_for_onnx(custom_io_lang, self.lang_model.onnx_path)
@@ -2836,12 +2846,12 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[target_dtype]
         for input_name in output_names:
             if input_name.endswith("_RetainedState"):
-                compiler_output_name = _compile_io_name(input_name, use_onnx_subfunctions=use_onnx_subfunctions)
-                custom_io[_state_input_name(compiler_output_name, kv_cache_prefix=kv_cache_prefix)] = (
-                    CUSTOM_IO_DTYPE_MAP[target_dtype] if "pixel_values" in input_name else kv_cache_dtype
-                )
-                custom_io[compiler_output_name] = (
-                    CUSTOM_IO_DTYPE_MAP[target_dtype] if "pixel_values" in input_name else kv_cache_dtype
+                dtype = CUSTOM_IO_DTYPE_MAP[target_dtype] if "pixel_values" in input_name else kv_cache_dtype
+                _add_retained_state_custom_io(
+                    custom_io,
+                    input_name,
+                    dtype=dtype,
+                    use_onnx_subfunctions=use_onnx_subfunctions,
                 )
 
         # TODO this hould be removed once the continous batching is supported for all the models.
@@ -4494,9 +4504,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         f"past_{kv}.{i}{kv_infix}_RetainedState",
                         use_onnx_subfunctions=use_onnx_subfunctions,
                     )
-                    input_name = _state_input_name(output_name)
-                    custom_io[input_name] = kv_cache_dtype
-                    custom_io[output_name] = kv_cache_dtype
+                    _add_retained_state_custom_io(
+                        custom_io,
+                        output_name,
+                        dtype=kv_cache_dtype,
+                        use_onnx_subfunctions=False,
+                    )
         else:
             kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
             for i in range(self.num_layers):
@@ -4505,9 +4518,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         f"{prefix}.{i}{kv_infix}_RetainedState",
                         use_onnx_subfunctions=use_onnx_subfunctions,
                     )
-                    input_name = _state_input_name(output_name)
-                    custom_io[input_name] = kv_cache_dtype
-                    custom_io[output_name] = kv_cache_dtype
+                    _add_retained_state_custom_io(
+                        custom_io,
+                        output_name,
+                        dtype=kv_cache_dtype,
+                        use_onnx_subfunctions=False,
+                    )
 
         custom_io = _filter_custom_io_for_onnx(custom_io, onnx_path)
 
@@ -4869,9 +4885,12 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
         for output_name in output_names:
             if output_name.endswith("_RetainedState"):
-                compiler_output_name = _compile_io_name(output_name, use_onnx_subfunctions=use_onnx_subfunctions)
-                custom_io[_state_input_name(compiler_output_name)] = kv_cache_dtype
-                custom_io[compiler_output_name] = kv_cache_dtype
+                _add_retained_state_custom_io(
+                    custom_io,
+                    output_name,
+                    dtype=kv_cache_dtype,
+                    use_onnx_subfunctions=use_onnx_subfunctions,
+                )
 
         return self._compile(
             onnx_path=onnx_path,

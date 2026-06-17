@@ -2290,29 +2290,16 @@ def test_subfunction_compile_io_names_use_internal_retained_state():
 
 @pytest.mark.llm_model
 def test_runtime_aliases_internal_retained_state_outputs():
-    from QEfficient.generation.cloud_infer import (
-        _add_basename_binding_aliases,
-        _canonical_kv_binding_name,
-        _public_retained_state_name,
-    )
+    from QEfficient.generation.cloud_infer import _add_basename_binding_aliases, _public_retained_state_name
 
     assert _public_retained_state_name("past_key.0_InternalRetainedState") == "past_key.0_RetainedState"
     assert _public_retained_state_name("past_value.1_InternalRetainedState") == "past_value.1_RetainedState"
     assert _public_retained_state_name("logits") is None
-    assert _canonical_kv_binding_name("past_key.0_vllmKvCache") == "past_key.0"
-    assert _canonical_kv_binding_name("past_key.0_vllmKvCache_RetainedState") == "past_key.0_RetainedState"
-    assert _canonical_kv_binding_name("vision_embeds_RetainedState") is None
 
     binding_map = {"layer_0/input_ids": 3}
-    bindings = [
-        type("Binding", (), {"name": "layer_0/input_ids", "index": 3})(),
-        type("Binding", (), {"name": "past_key.0_vllmKvCache", "index": 4})(),
-        type("Binding", (), {"name": "past_key.0_vllmKvCache_InternalRetainedState", "index": 5})(),
-    ]
+    bindings = [type("Binding", (), {"name": "layer_0/input_ids", "index": 3})()]
     _add_basename_binding_aliases(binding_map, bindings)
     assert binding_map["input_ids"] == 3
-    assert binding_map["past_key.0"] == 4
-    assert binding_map["past_key.0_RetainedState"] == 5
 
 
 @pytest.mark.llm_model
@@ -2475,6 +2462,17 @@ class TestApplyKvCachePrefixHelper:
 
         input_names = ["input_ids", "past_key.0", "past_value.0"]
         output_names = ["logits", "past_key.0_VLLM_RetainedState", "past_value.0_VLLM_RetainedState"]
+        assert align_kv_input_names_to_retained_outputs(input_names, output_names) == [
+            "input_ids",
+            "past_key.0_VLLM",
+            "past_value.0_VLLM",
+        ]
+
+    def test_align_inputs_to_internal_retained_outputs(self):
+        from QEfficient.utils import align_kv_input_names_to_retained_outputs
+
+        input_names = ["input_ids", "past_key.0", "past_value.0"]
+        output_names = ["logits", "past_key.0_VLLM_InternalRetainedState", "past_value.0_VLLM_InternalRetainedState"]
         assert align_kv_input_names_to_retained_outputs(input_names, output_names) == [
             "input_ids",
             "past_key.0_VLLM",
