@@ -1998,7 +1998,9 @@ def _kv_input_names(onnx_path: Path) -> Set[str]:
     return {
         inp.name
         for inp in onnx_model.graph.input
-        if inp.name.startswith(("past_key.", "past_value.", "compressed_kv.", "k_pe."))
+        if inp.name.startswith(
+            ("past_key.", "past_value.", "compressed_kv.", "k_pe.", "conv_state.", "recurrent_state.")
+        )
     }
 
 
@@ -2022,6 +2024,61 @@ class TestApplyKvCachePrefixHelper:
 
         names = ["compressed_kv.0_RetainedState", "k_pe.0_RetainedState"]
         assert apply_kv_cache_prefix(names, "P") == ["compressed_kv.0_P_RetainedState", "k_pe.0_P_RetainedState"]
+
+    def test_conv_recurrent_state_prefixed(self):
+        """Hybrid linear-attention state (conv_state / recurrent_state on Qwen3.5 hybrid models)
+        must receive the same KV-cache prefix as classical attention KV. vision/multimodal
+        retained buffers must remain untouched on the same call."""
+        from QEfficient.utils import apply_kv_cache_prefix
+
+        names = [
+            "logits",
+            "past_key.0_RetainedState",
+            "past_value.0_RetainedState",
+            "conv_state.1_RetainedState",
+            "recurrent_state.1_RetainedState",
+            "vision_embeds_RetainedState",
+            "image_idx_output",
+            "pixel_values_RetainedState",
+        ]
+        result = apply_kv_cache_prefix(names, "VLLM")
+        assert result == [
+            "logits",
+            "past_key.0_VLLM_RetainedState",
+            "past_value.0_VLLM_RetainedState",
+            "conv_state.1_VLLM_RetainedState",
+            "recurrent_state.1_VLLM_RetainedState",
+            "vision_embeds_RetainedState",
+            "image_idx_output",
+            "pixel_values_RetainedState",
+        ]
+
+    def test_align_inputs_handles_conv_recurrent(self):
+        """The input rename map must pair conv_state/recurrent_state inputs with their
+        prefixed retained-state outputs, exactly like past_key/past_value."""
+        from QEfficient.utils import align_kv_input_names_to_retained_outputs
+
+        input_names = [
+            "input_ids",
+            "past_key.0",
+            "past_value.0",
+            "conv_state.1",
+            "recurrent_state.1",
+        ]
+        output_names = [
+            "logits",
+            "past_key.0_VLLM_RetainedState",
+            "past_value.0_VLLM_RetainedState",
+            "conv_state.1_VLLM_RetainedState",
+            "recurrent_state.1_VLLM_RetainedState",
+        ]
+        assert align_kv_input_names_to_retained_outputs(input_names, output_names) == [
+            "input_ids",
+            "past_key.0_VLLM",
+            "past_value.0_VLLM",
+            "conv_state.1_VLLM",
+            "recurrent_state.1_VLLM",
+        ]
 
     def test_dict_form_lang_only(self):
         from QEfficient.utils import apply_kv_cache_prefix
@@ -2259,3 +2316,181 @@ def test_vlm_export_prefix_lang_only(tmp_path):
     for name in retained:
         if name.startswith(("vision_embeds", "pixel_values", "deepstack_features")):
             assert "_VLLM_" not in name
+
+
+def _capture_layerwise_export_names(qeff_model, *, window, total_layers, export_dir, kv_cache_prefix):
+    """Drive the real ``_export_layerwise`` for one decoder window and capture the
+    ``input_names`` / ``output_names`` handed to ``torch.onnx.export``.
+
+    The spy raises to abort before the heavy ONNX transforms/disk writes — we only
+    care about the buffer names the export was invoked with. Window state is always
+    restored in ``finally`` so the class-level flags never leak into other tests.
+    """
+    from QEfficient.base.modeling_qeff import QEFFBaseModel
+    from QEfficient.transformers.models import _layerwise
+
+    captured = {}
+
+    class _StopExport(Exception):
+        pass
+
+    def _spy(*args, **kwargs):
+        captured["input_names"] = list(kwargs.get("input_names") or [])
+        captured["output_names"] = list(kwargs.get("output_names") or [])
+        raise _StopExport()
+
+    orig_export = torch.onnx.export
+    torch.onnx.export = _spy
+    try:
+        with _layerwise._layerwise_export_env():
+            _layerwise._set_layer_windows(window, window + 1, total_layers)
+            QEFFBaseModel._start = window
+            QEFFBaseModel._end = window + 1
+            QEFFBaseModel._total_layers = total_layers
+            try:
+                qeff_model.export(export_dir=str(export_dir), kv_cache_prefix=kv_cache_prefix)
+            except _StopExport:
+                pass
+    finally:
+        torch.onnx.export = orig_export
+        _layerwise._reset_layer_windows()
+        QEFFBaseModel._start = 0
+        QEFFBaseModel._end = 0
+        QEFFBaseModel._total_layers = None
+    assert "output_names" in captured, "torch.onnx.export was never reached"
+    return captured
+
+
+def _tiny_qwen3_moe_causal():
+    from transformers.models.qwen3_moe.modeling_qwen3_moe import Qwen3MoeConfig, Qwen3MoeForCausalLM
+
+    import QEfficient
+
+    cfg = Qwen3MoeConfig(
+        hidden_size=32,
+        intermediate_size=64,
+        moe_intermediate_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        num_experts=4,
+        num_experts_per_tok=2,
+        vocab_size=64,
+        max_position_embeddings=64,
+        decoder_sparse_step=1,
+        norm_topk_prob=True,
+    )
+    cfg.torch_dtype = "float32"
+    torch.manual_seed(0)
+    hf = Qwen3MoeForCausalLM(cfg).eval()
+    return QEfficient.QEFFAutoModelForCausalLM(hf, continuous_batching=False), cfg.num_hidden_layers
+
+
+@pytest.mark.llm_model
+def test_layerwise_export_with_kv_cache_prefix(tmp_path):
+    """Regression for the layerwise + kv_cache_prefix path (previously a silent no-op).
+
+    The non-layerwise paths already prefix KV buffers; ``_export_layerwise`` rebuilds output
+    names from per-window templates, so the prefix has to be threaded into it and applied there.
+    This drives the real ``_export_layerwise`` for every window and asserts:
+      * each retained-state output carries the ``_<prefix>_RetainedState`` infix (Bug 2), and
+      * the matching KV *input* buffer is renamed to ``past_*.{i}_<prefix>`` so the compiler can
+        pair input↔retained-output (Bug 3).
+    """
+    qeff_model, total_layers = _tiny_qwen3_moe_causal()
+
+    for window in range(total_layers):
+        captured = _capture_layerwise_export_names(
+            qeff_model,
+            window=window,
+            total_layers=total_layers,
+            export_dir=tmp_path / f"prefixed_w{window}",
+            kv_cache_prefix="vllmKvCache",
+        )
+        kv_outputs = [n for n in captured["output_names"] if n.startswith(("past_key.", "past_value."))]
+        assert kv_outputs, f"window {window}: expected KV retained outputs"
+        # Bug 2: every per-window KV retained output carries the infix.
+        for name in kv_outputs:
+            assert name == f"past_key.{window}_vllmKvCache_RetainedState" or (
+                name == f"past_value.{window}_vllmKvCache_RetainedState"
+            ), f"window {window}: output not prefixed: {name}"
+        # Bug 3: the paired input buffer is the output minus _RetainedState and carries the infix.
+        kv_inputs = [n for n in captured["input_names"] if n.startswith(("past_key.", "past_value."))]
+        assert kv_inputs, f"window {window}: expected KV input buffers"
+        for out_name in kv_outputs:
+            paired_input = out_name[: -len("_RetainedState")]
+            assert paired_input in kv_inputs, f"window {window}: missing aligned input for {out_name}"
+            assert paired_input.endswith("_vllmKvCache")
+
+
+@pytest.mark.llm_model
+def test_layerwise_export_with_kv_cache_prefix_subfunctions(tmp_path):
+    """Prefix must survive the subfunction export path end-to-end (the config the EPD example ships).
+
+    With ``use_onnx_subfunctions=True`` the decoder emits ``_InternalRetainedState`` function outputs
+    that ``RenameFunctionOutputsTransform`` rewrites to plain ``past_key.{i}_RetainedState``; the
+    positional rename loop in ``_export_layerwise`` then overwrites them with the (prefixed) names we
+    passed. This asserts the *final transformed* per-window shard on disk carries the infix on both the
+    retained-state outputs and the paired input buffers — i.e. the prefix is not lost by the transforms.
+    """
+    from QEfficient.base.modeling_qeff import QEFFBaseModel
+    from QEfficient.transformers.models import _layerwise
+
+    qeff_model, total_layers = _tiny_qwen3_moe_causal()
+    export_dir = tmp_path / "subfn_prefixed"
+    try:
+        with _layerwise._layerwise_export_env():
+            _layerwise._set_layer_windows(0, 1, total_layers)
+            QEFFBaseModel._start = 0
+            QEFFBaseModel._end = 1
+            QEFFBaseModel._total_layers = total_layers
+            qeff_model.export(
+                export_dir=str(export_dir),
+                kv_cache_prefix="vllmKvCache",
+                use_onnx_subfunctions=True,
+            )
+    finally:
+        _layerwise._reset_layer_windows()
+        QEFFBaseModel._start = 0
+        QEFFBaseModel._end = 0
+        QEFFBaseModel._total_layers = None
+
+    # export_dir gets a hash suffix appended by export_wrapper; find the per-window shard under it.
+    shards = list(tmp_path.glob("subfn_prefixed*/onnx_layerwise_tmp/layer_0_1/*_layer_tmp_0_1.onnx"))
+    assert shards, "subfunction per-window shard was not produced"
+    graph = onnx.load(str(shards[0]), load_external_data=False).graph
+    kv_outputs = [o.name for o in graph.output if o.name.startswith(("past_key.", "past_value."))]
+    kv_inputs = [i.name for i in graph.input if i.name.startswith(("past_key.", "past_value."))]
+    assert kv_outputs, "no KV retained outputs in subfunction shard"
+    # Final names use _RetainedState (post-rename) and carry the infix — never raw _InternalRetainedState.
+    for name in kv_outputs:
+        assert name.endswith("_vllmKvCache_RetainedState"), f"prefix lost in subfunction output: {name}"
+        assert "_InternalRetainedState" not in name
+    for out_name in kv_outputs:
+        assert out_name[: -len("_RetainedState")] in kv_inputs, f"missing aligned input for {out_name}"
+
+
+@pytest.mark.llm_model
+def test_layerwise_export_default_names_unchanged(tmp_path):
+    """Backward-compat: without the flag, layerwise per-window names must stay byte-for-byte plain.
+
+    Guards against the prefix plumbing accidentally altering the default (no-prefix) path — the
+    output names and the paired input buffers must remain exactly what they were before the feature.
+    """
+    qeff_model, total_layers = _tiny_qwen3_moe_causal()
+
+    for window in range(total_layers):
+        captured = _capture_layerwise_export_names(
+            qeff_model,
+            window=window,
+            total_layers=total_layers,
+            export_dir=tmp_path / f"default_w{window}",
+            kv_cache_prefix=None,
+        )
+        assert f"past_key.{window}_RetainedState" in captured["output_names"]
+        assert f"past_value.{window}_RetainedState" in captured["output_names"]
+        # Inputs use the plain names; no infix anywhere.
+        assert f"past_key.{window}" in captured["input_names"]
+        assert all("_vllmKvCache" not in n and "_VLLM" not in n for n in captured["output_names"])
+        assert all("_vllmKvCache" not in n and "_VLLM" not in n for n in captured["input_names"])
