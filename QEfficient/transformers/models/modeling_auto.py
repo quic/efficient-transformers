@@ -3322,6 +3322,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             seq_len = prefill_seq_len
 
         cache_example_len = seq_len
+        if ctx_len is not None and seq_len == 1:
+            cache_example_len = ctx_len
         if glm_dsa_blocked_decode and ctx_len is not None:
             cache_example_len = ctx_len
 
@@ -4038,8 +4040,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             # Extract filename
             filename = os.path.basename(onnx_path)
 
-            # Extract range from "merged_0-2.onnx"
+            # Extract range from "merged_0-2.onnx" or "*_layer_tmp_0_1.onnx".
             match = re.search(r"merged_(\d+)-(\d+)\.onnx", filename)
+            if not match:
+                match = re.search(r"layer_tmp_(\d+)_(\d+)\.onnx", filename)
             if not match:
                 return custom_io_lang  # no filtering if pattern not found
 
@@ -4062,8 +4066,20 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
             return filtered
 
-        if onnx_path is not None and "merged" in str(onnx_path):
+        if onnx_path is not None and ("merged" in str(onnx_path) or "layer_tmp" in str(onnx_path)):
             custom_io = filter_custom_io(custom_io, onnx_path)
+        elif os.environ.get("LAYERWISE_EXPORT", "False") == "True":
+            start = int(getattr(QEFFBaseModel, "_start", 0) or 0)
+            end = int(getattr(QEFFBaseModel, "_end", 0) or 0)
+            if end <= start:
+                end = start + 1
+            filtered = {}
+            for key, value in custom_io.items():
+                layer_match = re.search(r"past_(?:key|value)\.(\d+)", key)
+                if layer_match and not (start <= int(layer_match.group(1)) < end):
+                    continue
+                filtered[key] = value
+            custom_io = filtered
 
         qpc_path = self._compile(
             onnx_path=onnx_path,

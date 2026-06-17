@@ -500,7 +500,7 @@ class QEFFBaseModel(ABC):
         idx = int(QEFFBaseModel._start)
         end_idx = int(getattr(QEFFBaseModel, "_end", idx + 1))
         if end_idx <= idx:
-            raise ValueError(f"Invalid export window: start={idx}, end={end_idx}")
+            end_idx = idx + 1
 
         # TODO: Hack for retain_full_kv, handle this outside
         export_kwargs.pop("retain_full_kv", None)
@@ -783,8 +783,6 @@ class QEFFBaseModel(ABC):
                     **compiler_options,
                 )
         onnx_path = Path(onnx_path)
-        if os.environ.get("LAYERWISE_EXPORT", "False") == "True":
-            return onnx_path
 
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"

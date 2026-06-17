@@ -43,6 +43,7 @@ from transformers import (
     Qwen2Config,
 )
 
+from QEfficient.transformers.models.minimax_m3_vl import MiniMaxM3VLForCausalLM, MiniMaxM3VLTextConfig
 from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModel,
     QEFFAutoModelForCausalLM,
@@ -108,6 +109,33 @@ GLM_MOE_DSA_MODEL_ID = "tiny-random/glm-5.1"
 
 MODEL_KWARGS = {"attn_implementation": "eager"}
 PREFIX_CACHING_MODEL_ID = "hf-internal-testing/tiny-random-GPT2LMHeadModel"
+
+
+def _tiny_minimax_m3_text_config(dtype=torch.float32) -> MiniMaxM3VLTextConfig:
+    config = MiniMaxM3VLTextConfig(
+        vocab_size=64,
+        hidden_size=32,
+        intermediate_size=16,
+        dense_intermediate_size=64,
+        shared_intermediate_size=16,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        max_position_embeddings=32,
+        num_local_experts=4,
+        num_experts_per_tok=2,
+        routed_scaling_factor=1.0,
+        layer_types=["sparse", "full_attention"],
+        mlp_layer_types=["sparse", "dense"],
+        index_n_heads=2,
+        index_head_dim=8,
+        index_block_size=4,
+        index_topk_blocks=2,
+        index_local_blocks=1,
+    )
+    config.torch_dtype = dtype
+    return config
 
 
 def _per_test_thread_budget() -> int:
@@ -359,6 +387,81 @@ def test_glm_moe_dsa_export_smoke(tmp_path):
     output_names = {output.name for output in onnx_model.graph.output}
     assert any(name.startswith("indexer_key_cache.") and name.endswith("_RetainedState") for name in output_names)
     assert _count_decoder_block_subfunctions(onnx_model, qeff_model) == 0
+
+
+@pytest.mark.llm_model
+def test_minimax_m3_text_config_derived_pt_and_onnx_runtime_parity(tmp_path):
+    torch.manual_seed(7)
+    config = _tiny_minimax_m3_text_config()
+    model_hf = MiniMaxM3VLForCausalLM(config).eval()
+    input_ids = torch.arange(4, dtype=torch.int64).view(1, 4) % config.vocab_size
+    position_ids = torch.arange(4, dtype=torch.int64).view(1, 4)
+
+    with torch.no_grad():
+        hf_logits = model_hf(input_ids=input_ids, position_ids=position_ids, use_cache=False).logits[:, -1:, :]
+
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+    with torch.no_grad():
+        qeff_logits = qeff_model.model(input_ids=input_ids, position_ids=position_ids, use_cache=False).logits
+
+    assert torch.allclose(hf_logits, qeff_logits, atol=1e-5, rtol=1e-5)
+
+    past_key_values = tuple(
+        (
+            torch.zeros((1, config.num_key_value_heads, input_ids.shape[1], config.head_dim)),
+            torch.zeros((1, config.num_key_value_heads, input_ids.shape[1], config.head_dim)),
+        )
+        for _ in range(config.num_hidden_layers)
+    )
+    with torch.no_grad():
+        qeff_cached_logits = qeff_model.model(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            use_cache=True,
+        ).logits
+
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "minimax-m3-text", prefill_seq_len=4))
+    session = _ort_session(onnx_path)
+    ort_inputs = {}
+    for input_meta in session.get_inputs():
+        shape = [1 if not isinstance(dim, int) else dim for dim in input_meta.shape]
+        if input_meta.name == "input_ids":
+            ort_inputs[input_meta.name] = input_ids.numpy()
+        elif input_meta.name == "position_ids":
+            ort_inputs[input_meta.name] = position_ids.numpy()
+        elif input_meta.name.startswith(("past_key.", "past_value.")):
+            ort_inputs[input_meta.name] = np.zeros(
+                (1, config.num_key_value_heads, input_ids.shape[1], config.head_dim), dtype=np.float32
+            )
+        else:
+            dtype = np.int64 if input_meta.type == "tensor(int64)" else np.float32
+            ort_inputs[input_meta.name] = np.zeros(shape, dtype=dtype)
+
+    ort_logits = session.run(None, ort_inputs)[0]
+    assert ort_logits.shape == (1, 1, config.vocab_size)
+    assert np.allclose(ort_logits, qeff_cached_logits.detach().numpy(), atol=1e-4, rtol=1e-4)
+
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    output_names = {output.name for output in onnx_model.graph.output}
+    assert any(name.startswith("past_key.") and name.endswith("_RetainedState") for name in output_names)
+
+
+@pytest.mark.llm_model
+def test_minimax_m3_text_layerwise_export_smoke(tmp_path, monkeypatch):
+    torch.manual_seed(7)
+    config = _tiny_minimax_m3_text_config()
+    model_hf = MiniMaxM3VLForCausalLM(config).eval()
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+
+    monkeypatch.setenv("LAYERWISE_EXPORT", "True")
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "minimax-m3-layerwise", prefill_seq_len=4))
+
+    assert onnx_path.name == "MiniMaxM3VLForCausalLM_layer_tmp_0_1.onnx"
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    output_names = {output.name for output in onnx_model.graph.output}
+    assert "past_key.0_InternalRetainedState" in output_names
+    assert "past_value.0_InternalRetainedState" in output_names
 
 
 @pytest.mark.llm_model

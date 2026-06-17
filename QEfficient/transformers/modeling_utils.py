@@ -71,6 +71,16 @@ from transformers.models.llama.modeling_llama import (
     LlamaRMSNorm,
     LlamaRotaryEmbedding,
 )
+from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
+    MiniMaxM3VLAttention,
+    MiniMaxM3VLDecoderLayer,
+    MiniMaxM3VLDenseMLP,
+    MiniMaxM3VLForCausalLM,
+    MiniMaxM3VLRMSNorm,
+    MiniMaxM3VLSparseMoeBlock,
+    MiniMaxM3VLTextModel,
+    MiniMaxM3VLTopKRouter,
+)
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
     MistralDecoderLayer,
@@ -108,7 +118,7 @@ from transformers.models.whisper.modeling_whisper import (
 )
 
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
-from QEfficient.customop import CustomRMSNormAIC
+from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.proxy.pytorch_transform import QeffProxyModuleTransform
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
@@ -167,6 +177,15 @@ from .models.llama.modeling_llama import (
     QEffLlamaForCausalLM,
     QEffLlamaModel,
     QEffLlamaRotaryEmbedding,
+)
+from .models.minimax_m3_vl.modeling_minimax_m3_vl import (
+    QEffMiniMaxM3VLAttention,
+    QEffMiniMaxM3VLDecoderLayer,
+    QEffMiniMaxM3VLDenseMLP,
+    QEffMiniMaxM3VLForCausalLM,
+    QEffMiniMaxM3VLSparseMoeBlock,
+    QEffMiniMaxM3VLTextModel,
+    QEffMiniMaxM3VLTopKRouter,
 )
 from .models.mistral.modeling_mistral import (
     QEffMistralAttention,
@@ -227,6 +246,7 @@ qeff_supported_architectures = ModelArchitectures(
         MllamaForCausalLM.__name__,
         WhisperForConditionalGeneration.__name__,
         GlmMoeDsaForCausalLM.__name__,
+        MiniMaxM3VLForCausalLM.__name__,
     ]
 )
 
@@ -308,6 +328,14 @@ TransformersToQEffModulesDict: Dict[Type[nn.Module], Type[nn.Module]] = {
     GlmMoeDsaMoE: QEffGlmMoeDsaMoE,
     GlmMoeDsaTopkRouter: QEffGlmMoeDsaTopkRouter,
     GlmMoeDsaRMSNorm: CustomRMSNormAIC,
+    # MiniMax-M3 text layers
+    MiniMaxM3VLForCausalLM: QEffMiniMaxM3VLForCausalLM,
+    MiniMaxM3VLTextModel: QEffMiniMaxM3VLTextModel,
+    MiniMaxM3VLAttention: QEffMiniMaxM3VLAttention,
+    MiniMaxM3VLDecoderLayer: QEffMiniMaxM3VLDecoderLayer,
+    MiniMaxM3VLSparseMoeBlock: QEffMiniMaxM3VLSparseMoeBlock,
+    MiniMaxM3VLTopKRouter: QEffMiniMaxM3VLTopKRouter,
+    MiniMaxM3VLRMSNorm: GemmaCustomRMSNormAIC,
     # MPT model layers
     MptAttention: QEffMptAttention,
     MptBlock: QEffMptBlock,

@@ -141,6 +141,18 @@ from transformers.models.llava.modeling_llava import (
 from transformers.models.llava_next.modeling_llava_next import (
     LlavaNextForConditionalGeneration,
 )
+from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
+    MiniMaxM3SparseForConditionalGeneration,
+    MiniMaxM3VLAttention,
+    MiniMaxM3VLDecoderLayer,
+    MiniMaxM3VLDenseMLP,
+    MiniMaxM3VLForCausalLM,
+    MiniMaxM3VLIndexer,
+    MiniMaxM3VLRMSNorm,
+    MiniMaxM3VLSparseMoeBlock,
+    MiniMaxM3VLTextModel,
+    MiniMaxM3VLTopKRouter,
+)
 from transformers.models.mistral.modeling_mistral import (
     MistralAttention,
     MistralDecoderLayer,
@@ -480,6 +492,17 @@ from QEfficient.transformers.models.llava_next.modeling_llava_next import (
     QEffLlavaNextDecoderWrapper,
     QEffLlavaNextForConditionalGeneration,
 )
+from QEfficient.transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
+    QEffMiniMaxM3SparseForConditionalGeneration,
+    QEffMiniMaxM3VLAttention,
+    QEffMiniMaxM3VLDecoderLayer,
+    QEffMiniMaxM3VLDenseMLP,
+    QEffMiniMaxM3VLForCausalLM,
+    QEffMiniMaxM3VLIndexer,
+    QEffMiniMaxM3VLSparseMoeBlock,
+    QEffMiniMaxM3VLTextModel,
+    QEffMiniMaxM3VLTopKRouter,
+)
 from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralAttention,
     QEffMistralDecoderLayer,
@@ -681,6 +704,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Glm4MoeRMSNorm: CustomRMSNormAIC,
         GlmMoeDsaRMSNorm: CustomRMSNormAIC,
+        MiniMaxM3VLRMSNorm: GemmaCustomRMSNormAIC,
         Wav2Vec2Encoder: QEffWav2Vec2Encoder,
         Wav2Vec2EncoderStableLayerNorm: QEffWav2Vec2EncoderStableLayerNorm,
         # BERT-family: replace _create_attention_masks (uses create_bidirectional_mask,
@@ -714,6 +738,16 @@ class KVCacheTransform(ModuleMappingTransform):
         GlmMoeDsaMoE: QEffGlmMoeDsaMoE,
         GlmMoeDsaTopkRouter: QEffGlmMoeDsaTopkRouter,
         GlmMoeDsaIndexer: QEffGlmMoeDsaIndexer,
+        # MiniMax-M3
+        MiniMaxM3SparseForConditionalGeneration: QEffMiniMaxM3SparseForConditionalGeneration,
+        MiniMaxM3VLForCausalLM: QEffMiniMaxM3VLForCausalLM,
+        MiniMaxM3VLTextModel: QEffMiniMaxM3VLTextModel,
+        MiniMaxM3VLDecoderLayer: QEffMiniMaxM3VLDecoderLayer,
+        MiniMaxM3VLDenseMLP: QEffMiniMaxM3VLDenseMLP,
+        MiniMaxM3VLAttention: QEffMiniMaxM3VLAttention,
+        MiniMaxM3VLIndexer: QEffMiniMaxM3VLIndexer,
+        MiniMaxM3VLSparseMoeBlock: QEffMiniMaxM3VLSparseMoeBlock,
+        MiniMaxM3VLTopKRouter: QEffMiniMaxM3VLTopKRouter,
         # CodeGen
         CodeGenAttention: QEffCodeGenAttention,
         CodeGenBlock: QEffCodeGenBlock,
@@ -1260,6 +1294,17 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         },
         "GlmMoeDsaTopkRouter": {"forward": QEffGlmMoeDsaTopkRouter.forward},
         "GlmMoeDsaIndexer": {"forward_with_cache": QEffGlmMoeDsaIndexer.forward_with_cache},
+        "MiniMaxM3SparseForConditionalGeneration": {"forward": QEffMiniMaxM3SparseForConditionalGeneration.forward},
+        "MiniMaxM3VLForCausalLM": {
+            "forward": QEffMiniMaxM3VLForCausalLM.forward,
+            "get_submodules_for_export": QEffMiniMaxM3VLForCausalLM.get_submodules_for_export,
+        },
+        "MiniMaxM3VLTextModel": {"forward": QEffMiniMaxM3VLTextModel.forward},
+        "MiniMaxM3VLDecoderLayer": {"forward": QEffMiniMaxM3VLDecoderLayer.forward},
+        "MiniMaxM3VLDenseMLP": {"forward": QEffMiniMaxM3VLDenseMLP.forward},
+        "MiniMaxM3VLAttention": {"forward": QEffMiniMaxM3VLAttention.forward},
+        "MiniMaxM3VLTopKRouter": {"forward": QEffMiniMaxM3VLTopKRouter.forward},
+        "MiniMaxM3VLSparseMoeBlock": {"forward": QEffMiniMaxM3VLSparseMoeBlock.forward},
         "DeepseekV3ForCausalLM": {
             "forward": QEffDeepseekV3ForCausalLM.forward,
             "get_submodules_for_export": QEffDeepseekV3ForCausalLM.get_submodules_for_export,

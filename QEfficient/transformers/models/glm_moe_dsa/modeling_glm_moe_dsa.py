@@ -27,6 +27,14 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
+def _qeff_glm_apply_rotary_pos_emb(hidden_states, cos, sin, unsqueeze_dim=1):
+    try:
+        hidden_states, _ = apply_rotary_pos_emb(hidden_states, hidden_states, cos, sin, unsqueeze_dim=unsqueeze_dim)
+        return hidden_states
+    except TypeError:
+        return apply_rotary_pos_emb(hidden_states, cos, sin, unsqueeze_dim=unsqueeze_dim)
+
+
 class QEffGlmMoeDsaIndexer(GlmMoeDsaIndexer):
     def forward_with_cache(
         self,
@@ -45,13 +53,13 @@ class QEffGlmMoeDsaIndexer(GlmMoeDsaIndexer):
         q = self.wq_b(q_resid).view(batch_size, seq_len, self.n_heads, self.head_dim)
         q_pe = q[..., : self.qk_rope_head_dim]
         q_nope = q[..., self.qk_rope_head_dim :]
-        q_pe = apply_rotary_pos_emb(q_pe, cos, sin, unsqueeze_dim=2)
+        q_pe = _qeff_glm_apply_rotary_pos_emb(q_pe, cos, sin, unsqueeze_dim=2)
         q = torch.cat([q_pe, q_nope], dim=-1)
 
         k = self.k_norm(self.wk(hidden_states))
         k_pe = k[..., : self.qk_rope_head_dim]
         k_nope = k[..., self.qk_rope_head_dim :]
-        k_pe = apply_rotary_pos_emb(k_pe.unsqueeze(2), cos, sin, unsqueeze_dim=2).squeeze(2)
+        k_pe = _qeff_glm_apply_rotary_pos_emb(k_pe.unsqueeze(2), cos, sin, unsqueeze_dim=2).squeeze(2)
         k = torch.cat([k_pe, k_nope], dim=-1)
 
         if indexer_key_cache is not None:
@@ -271,7 +279,7 @@ class QEffGlmMoeDsaAttention(GlmMoeDsaAttention):
         q_pe = torch.matmul(q_resid, self.q_rope)
         q_pe = q_pe.view(batch_size, seq_len, self.num_heads, self.qk_rope_head_dim).transpose(1, 2)
         cos, sin = position_embeddings
-        q_pe = apply_rotary_pos_emb(q_pe, cos, sin, unsqueeze_dim=1)
+        q_pe = _qeff_glm_apply_rotary_pos_emb(q_pe, cos, sin, unsqueeze_dim=1)
         return q_resid, q_pe
 
     def forward(
@@ -317,7 +325,7 @@ class QEffGlmMoeDsaAttention(GlmMoeDsaAttention):
         k_nope = k_nope.transpose(1, 2)
         value_states = value_states.transpose(1, 2)
         k_pe = k_pe.view(batch_size, 1, seq_length, self.qk_rope_head_dim)
-        k_pe = apply_rotary_pos_emb(k_pe, cos, sin, unsqueeze_dim=1)
+        k_pe = _qeff_glm_apply_rotary_pos_emb(k_pe, cos, sin, unsqueeze_dim=1)
         k_pe = k_pe.expand(-1, k_nope.shape[1], -1, -1)
 
         query_states = torch.cat([q_nope, q_pe], dim=-1)
@@ -391,7 +399,7 @@ class QEffGlmMoeDsaAttention(GlmMoeDsaAttention):
         kva = self.kv_a_layernorm(kva).view(batch_size, seq_length, 1, self.kv_lora_rank).transpose(1, 2)
         k_pe = k_pe.view(batch_size, 1, seq_length, self.qk_rope_head_dim)
         cos, sin = position_embeddings
-        k_pe = apply_rotary_pos_emb(k_pe, cos, sin, unsqueeze_dim=1)
+        k_pe = _qeff_glm_apply_rotary_pos_emb(k_pe, cos, sin, unsqueeze_dim=1)
         if len(compressed_kvs.layers) <= self.layer_idx:
             if compressed_kvs.layers:
                 ctx_len = compressed_kvs.layers[0].ckv.shape[2]
