@@ -13,6 +13,7 @@ from time import perf_counter
 from typing import List, Optional, Union
 
 import numpy as np
+import onnx
 import torch
 import torch.nn as nn
 from transformers import (
@@ -1304,6 +1305,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             warnings.warn(
                 "full_batch_size argument is deprecated. Use continuous_batching=True instead.", DeprecationWarning, 2
             )
+        pretrained_model_name_or_path = kwargs.pop("pretrained_model_name_or_path", None)
         self.model = model
         self.config = model.config
 
@@ -1320,6 +1322,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # are done. The role of the sampler is to just add nodes at the output of the
         # previous transform function.
         self.lang_model.model, _ = SamplerTransform.apply(self.lang_model.model, qaic_config, **kwargs)
+        self.model.pretrained_path = pretrained_model_name_or_path
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, qaic_config: Optional[dict] = None, **kwargs):
@@ -1374,6 +1377,42 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         """
         return [self.vision_model.onnx_path, self.lang_model.onnx_path]
 
+    def _run_layerwise(self, *, final_compile: bool, layerwise_window_size: int, **forward_kwargs):
+        from QEfficient.transformers.models import _layerwise
+
+        model_id = getattr(self.model, "pretrained_path", None)
+        if model_id is None:
+            raise RuntimeError(
+                "layerwise=True requires the QEff model to be built via "
+                "QEFFAutoModelForImageTextToText.from_pretrained(...). "
+                "Direct __init__ does not preserve the model id needed for per-window reload."
+            )
+        config = getattr(self.model, "config", None)
+        torch_dtype = getattr(config, "torch_dtype", None)
+        qaic_config = getattr(self.lang_model.model, "qaic_config", None)
+
+        def _factory(model_id, config):
+            return QEFFAutoModelForImageTextToText.from_pretrained(
+                model_id,
+                config=config,
+                dtype=torch_dtype,
+                kv_offload=True,
+                qaic_config=qaic_config,
+                low_cpu_mem_usage=True,
+            )
+
+        return _layerwise.run_layerwise(
+            model_id=model_id,
+            config=config,
+            qeff_factory=_factory,
+            compile_kwargs=forward_kwargs,
+            # VLM dual-QPC wrappers do not support a no-export cache probe on the
+            # outer wrapper yet. Use per-window fresh model instances only.
+            probe_qeff_model=None,
+            window_size=layerwise_window_size,
+            final_compile=final_compile,
+        )
+
     def export(
         self,
         export_dir: Optional[str] = None,
@@ -1383,6 +1422,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         prefill_seq_len: Optional[int] = None,
         prefill_only: bool = False,
         enable_chunking: bool = False,
+        layerwise: bool = False,
+        layerwise_window_size: int = 1,
         **kwargs,
     ) -> str:
         """
@@ -1405,6 +1446,25 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         List[str]
             A list containing the paths to the generated ONNX graph files for both components.
         """
+        if layerwise:
+            if not skip_vision:
+                raise ValueError(
+                    "QEFFAutoModelForImageTextToText.export(..., layerwise=True) currently supports text-only export. "
+                    "Set skip_vision=True."
+                )
+            return self._run_layerwise(
+                final_compile=False,
+                layerwise_window_size=layerwise_window_size,
+                export_dir=export_dir,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+                skip_vision=skip_vision,
+                skip_lang=skip_lang,
+                prefill_seq_len=prefill_seq_len,
+                prefill_only=prefill_only,
+                enable_chunking=enable_chunking,
+                **kwargs,
+            )
+
         dummy_inputs_kwargs = {}
         if prefill_seq_len is not None:
             dummy_inputs_kwargs["prefill_seq_len"] = int(prefill_seq_len)
@@ -1532,6 +1592,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         prefill_only=None,
         enable_chunking=False,
         qaic_config: Optional[dict] = None,
+        layerwise: bool = False,
+        layerwise_window_size: int = 1,
         **compiler_options,
     ) -> str:
         """
@@ -1588,6 +1650,39 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             If `full_batch_size`, `kv_cache_batch_size`, or `num_speculative_tokens` are not None.
             If both `skip_lang` and `skip_vision` are True.
         """
+        if layerwise:
+            if not skip_vision:
+                raise ValueError(
+                    "QEFFAutoModelForImageTextToText.compile(..., layerwise=True) currently supports text-only compile. "
+                    "Set skip_vision=True."
+                )
+            return self._run_layerwise(
+                final_compile=True,
+                layerwise_window_size=layerwise_window_size,
+                img_size=img_size,
+                vision_onnx_path=vision_onnx_path,
+                lang_onnx_path=lang_onnx_path,
+                compile_dir=compile_dir,
+                prefill_seq_len=prefill_seq_len,
+                comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+                comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+                ctx_len=ctx_len,
+                batch_size=batch_size,
+                full_batch_size=full_batch_size,
+                kv_cache_batch_size=kv_cache_batch_size,
+                num_devices=num_devices,
+                num_cores=num_cores,
+                mxfp6_matmul=mxfp6_matmul,
+                mxint8_kv_cache=mxint8_kv_cache,
+                skip_vision=skip_vision,
+                skip_lang=skip_lang,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+                prefill_only=prefill_only,
+                enable_chunking=enable_chunking,
+                qaic_config=qaic_config,
+                **compiler_options,
+            )
+
         if skip_lang and skip_vision:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
 
@@ -1750,8 +1845,37 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
                 return filtered
 
+            def align_custom_io_with_onnx_ios(custom_io_lang, onnx_path):
+                """
+                Keep only keys present in the ONNX graph and tolerate retained-state suffix variants.
+
+                Some layerwise+subfunction exports can emit `_InternalRetainedState` for a subset of
+                outputs. QAIC compile rejects custom_io entries for non-existent names, so align keys
+                to actual graph I/O names here.
+                """
+                try:
+                    onnx_model = onnx.load(onnx_path, load_external_data=False)
+                except Exception:
+                    return custom_io_lang
+
+                io_names = {value.name for value in onnx_model.graph.input}
+                io_names.update(value.name for value in onnx_model.graph.output)
+
+                aligned = {}
+                for key, dtype in custom_io_lang.items():
+                    if key in io_names:
+                        aligned[key] = dtype
+                        continue
+                    if key.endswith("_RetainedState"):
+                        alt_key = key.replace("_RetainedState", "_InternalRetainedState")
+                        if alt_key in io_names:
+                            aligned[alt_key] = dtype
+                return aligned
+
             if self.lang_model.onnx_path is not None and "merged" in str(self.lang_model.onnx_path):
                 custom_io_lang = filter_custom_io_lang(custom_io_lang, self.lang_model.onnx_path)
+            if self.lang_model.onnx_path is not None:
+                custom_io_lang = align_custom_io_with_onnx_ios(custom_io_lang, self.lang_model.onnx_path)
 
             if prefill_only:
                 specializations = specializations["lang"][:1]
@@ -2861,6 +2985,7 @@ class QEFFAutoModelForImageTextToText:
         kv_offload: Optional[bool] = None,
         continuous_batching: bool = False,
         qaic_config: Optional[dict] = None,
+        layerwise: bool = False,
         **kwargs,
     ):
         """
@@ -2892,6 +3017,7 @@ class QEFFAutoModelForImageTextToText:
         NotImplementedError
             If `continuous_batching` is provided as True.
         """
+        pretrained_model_name_or_path = str(pretrained_model_name_or_path)
         enable_proxy = kwargs.pop("enable_proxy", False)
 
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
@@ -2901,17 +3027,17 @@ class QEFFAutoModelForImageTextToText:
         if kwargs.get("attn_implementation", None) not in {None, "eager"}:
             logger.warning('Updating attn_implementation="eager"')
 
-        if kwargs.get("low_cpu_mem_usage", None):
-            logger.warning("Updating low_cpu_mem_usage=False")
-
-        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
+        explicit_low_cpu = kwargs.get("low_cpu_mem_usage", None) is True
+        kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": True if explicit_low_cpu else False})
 
         _resolve_torch_dtype(kwargs)
-        model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        if layerwise:
+            model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
+        else:
+            model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
-
-        return cls(
+        instance = cls(
             model,
             kv_offload=kv_offload,
             continuous_batching=continuous_batching,
@@ -2919,6 +3045,9 @@ class QEFFAutoModelForImageTextToText:
             qaic_config=qaic_config,
             **kwargs,
         )
+        if layerwise:
+            setattr(instance, "_layerwise_outer_meta", True)
+        return instance
 
 
 MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {

@@ -576,15 +576,28 @@ class QEFFBaseModel(ABC):
 
         # For some decoder wrappers (e.g. VLM language wrappers), forward does not accept
         # `inputs_embeds`; keep `input_ids` in those cases.
-        if idx >= 1:
+        forward_params = inspect.signature(self.model.forward).parameters
+        supports_inputs_embeds = "inputs_embeds" in forward_params
+        if idx >= 1 and supports_inputs_embeds:
             z = example_inputs.pop("input_ids")
             if is_vision:
                 hidden_size = self.model.language_model.config.hidden_size
             else:
                 hidden_size = self.model.model.config.hidden_size
-            inputs_embeds = torch.rand(z.shape[0], z.shape[1], hidden_size, device=z.device)
+            embeds_dtype = torch.float32
+            for param in self.model.parameters():
+                if param.dtype.is_floating_point:
+                    embeds_dtype = param.dtype
+                    break
+            inputs_embeds = torch.rand(z.shape[0], z.shape[1], hidden_size, device=z.device, dtype=embeds_dtype)
             example_inputs["inputs_embeds"] = inputs_embeds
             dynamic_axes["inputs_embeds"] = dynamic_axes.pop("input_ids")
+            # Later layer windows consume hidden states directly; keep graph
+            # symbols stable by dropping first-window-only vision side inputs.
+            example_inputs.pop("image_idx", None)
+            dynamic_axes.pop("image_idx", None)
+            example_inputs.pop("vision_embeds", None)
+            dynamic_axes.pop("vision_embeds", None)
 
         window_size = end_idx - idx
         if "compressed_kvs" in example_inputs:

@@ -505,25 +505,35 @@ class QEffMiniMaxM3VLDecoderWrapper(nn.Module):
 
     def forward(
         self,
-        input_ids,
-        vision_embeds,
-        position_ids,
-        image_idx,
-        past_key_values,
+        input_ids=None,
+        vision_embeds=None,
+        position_ids=None,
+        image_idx=None,
+        past_key_values=None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
-        inputs_embeds = self.model.model.language_model.embed_tokens(input_ids)
-        _, _, hidden_dim = inputs_embeds.shape
-        selected = input_ids == self.config.image_token_index
-        indices1 = selected.to(torch.int64).cumsum(1) - 1
-        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-        indices0 = torch.arange(selected.shape[0], device=selected.device).view(-1, 1)
-        image_features_expanded = vision_embeds.reshape(-1, hidden_dim).unsqueeze(0)[indices0, indices1]
-        image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-        inputs_embeds = torch.where(
-            input_ids.shape[1] == torch.tensor(1, device=input_ids.device), inputs_embeds, image_input_embeds
-        )
+        if (input_ids is None) == (inputs_embeds is None):
+            raise ValueError("Exactly one of input_ids or inputs_embeds must be provided.")
+
+        if inputs_embeds is None:
+            inputs_embeds = self.model.model.language_model.embed_tokens(input_ids)
+            _, _, hidden_dim = inputs_embeds.shape
+            selected = input_ids == self.config.image_token_index
+            indices1 = selected.to(torch.int64).cumsum(1) - 1
+            indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
+            indices0 = torch.arange(selected.shape[0], device=selected.device).view(-1, 1)
+            image_features_expanded = vision_embeds.reshape(-1, hidden_dim).unsqueeze(0)[indices0, indices1]
+            image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
+            inputs_embeds = torch.where(
+                input_ids.shape[1] == torch.tensor(1, device=input_ids.device), inputs_embeds, image_input_embeds
+            )
+            image_idx_output = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        else:
+            if image_idx is None:
+                image_idx = torch.zeros((1, 1), dtype=torch.int64, device=inputs_embeds.device)
+            image_idx_output = image_idx
 
         outputs = self.language_model(
             inputs_embeds=inputs_embeds,
@@ -537,10 +547,16 @@ class QEffMiniMaxM3VLDecoderWrapper(nn.Module):
         hidden_states = outputs.last_hidden_state[
             torch.arange(position_ids.shape[0], device=position_ids.device).view(-1, 1), logit_index
         ]
-        logits = self.model.lm_head(hidden_states).float()
-        image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        total_layers = min(len(self.language_model.layers), self.language_model.config.num_hidden_layers)
+        layer_start, _, layerwise_active = _minimax_layerwise_window(total_layers)
+        if _minimax_is_last_layer_window(total_layers):
+            logits = self.model.lm_head(hidden_states).float()
+        else:
+            logits = hidden_states
 
-        return logits, vision_embeds, image_idx, outputs.past_key_values
+        if layerwise_active and layer_start > 0:
+            return logits, outputs.past_key_values
+        return logits, vision_embeds, image_idx_output, outputs.past_key_values
 
 
 class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalGeneration):
@@ -632,6 +648,10 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
     ):
         prefill_seq_len = prefill_seq_len if prefill_seq_len else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         ctx_len = ctx_len if ctx_len else constants.ONNX_EXPORT_CTX_LEN
+        # img_size is accepted by generic VLM compile APIs, but MiniMax-M3 VLM
+        # specialization derives language/vision shapes from patch settings.
+        # Drop it to avoid leaking `-img-size=None` into qaic-compile flags.
+        compiler_options.pop("img_size", None)
         num_image_patches = int(compiler_options.pop("num_image_patches", 4))
         num_images = int(compiler_options.pop("num_images", 1))
         vision_size = int(compiler_options.pop("vision_size", num_image_patches))

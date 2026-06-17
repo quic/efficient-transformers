@@ -297,7 +297,9 @@ def _slim_for_window_export(qeff_model, *, ctx_len: Optional[int]) -> None:
     #    ``inputs_embeds`` directly so the embedding matrix is unreached but
     #    still serialized. Replace its weight with a tiny placeholder of the
     #    same dtype/device so module attributes stay valid.
-    if text_start > 0 and hasattr(lm, "embed_tokens"):
+    # Keep embedding table intact for dual-QPC VLM wrappers where decoder
+    # windows still consume `input_ids` on every window.
+    if text_start > 0 and hasattr(lm, "embed_tokens") and not hasattr(qeff_model, "lang_model"):
         embed = getattr(lm, "embed_tokens", None)
         weight = getattr(embed, "weight", None)
         if weight is not None and weight.dim() == 2 and weight.shape[0] > 1:
@@ -763,12 +765,14 @@ def run_layerwise(
             _set_layer_windows(0, min(window_size, text_total_layers), text_total_layers)
             if needs_deterministic_init:
                 _LAYERWISE_STATE["force_full_init"] = 1
-            cached_probe = probe_qeff_model or _build_window_model()
-            cached_onnx_path = _cached_layerwise_onnx_path(cached_probe, compile_kwargs)
-            if cached_onnx_path is not None:
-                logger.info("Layerwise cache hit: reusing merged ONNX at %s", cached_onnx_path)
-                first_onnx_path = cached_onnx_path
-                last_qeff_model = cached_probe
+            cached_onnx_path = None
+            if probe_qeff_model is not None:
+                cached_probe = probe_qeff_model
+                cached_onnx_path = _cached_layerwise_onnx_path(cached_probe, compile_kwargs)
+                if cached_onnx_path is not None:
+                    logger.info("Layerwise cache hit: reusing merged ONNX at %s", cached_onnx_path)
+                    first_onnx_path = cached_onnx_path
+                    last_qeff_model = cached_probe
 
             for text_start, text_end in windows:
                 if cached_onnx_path is not None:
