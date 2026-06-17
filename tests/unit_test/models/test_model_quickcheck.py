@@ -1520,6 +1520,58 @@ def test_qwen3_5_moe_get_submodules_for_export_keeps_decoder_layer_for_mixed_lay
     assert wrapper.get_submodules_for_export() == {QEffQwen3_5MoeDecoderLayer}
 
 
+def test_qwen3_5_moe_get_specializations_supports_multi_resolution():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeForConditionalGeneration
+
+    model = QEffQwen3_5MoeForConditionalGeneration.__new__(QEffQwen3_5MoeForConditionalGeneration)
+    model.config = SimpleNamespace(vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1))
+
+    specs, _ = model.get_specializations(
+        batch_size=1,
+        prefill_seq_len=64,
+        ctx_len=4096,
+        height=[448, 896],
+        width=[448, 896],
+        num_frames=[1, 2],
+        kv_offload=True,
+    )
+
+    vision_specs = specs["vision"]
+    lang_specs = specs["lang"]
+
+    assert len(vision_specs) == 2
+    expected_vision_size = max(spec["vision_size"] * frames for spec, frames in zip(vision_specs, [1, 2]))
+    assert all(spec["vision_size"] == expected_vision_size for spec in lang_specs)
+    assert all(spec["vision_batch_size"] == 1 for spec in lang_specs)
+
+
+def test_qwen3_5_moe_get_specializations_strips_vision_symbols_for_comp_ctx_variants():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeForConditionalGeneration
+
+    model = QEffQwen3_5MoeForConditionalGeneration.__new__(QEffQwen3_5MoeForConditionalGeneration)
+    model.config = SimpleNamespace(vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1))
+
+    lang_specs, _ = model.get_specializations(
+        batch_size=1,
+        prefill_seq_len=64,
+        ctx_len=4096,
+        height=[448, 672],
+        width=[448, 672],
+        num_frames=[1, 1],
+        comp_ctx_lengths_prefill=[32, 48],
+        comp_ctx_lengths_decode=[96, 128],
+        kv_offload=False,
+    )
+
+    assert [spec["seq_len"] for spec in lang_specs] == [64, 64, 1, 1]
+    assert all("vision_size" not in spec for spec in lang_specs)
+    assert all("vision_batch_size" not in spec for spec in lang_specs)
+
+
 def test_moe_prefill_transform_does_not_require_enable_chunking():
     from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeMoE, QEffPrefillChunkedGlm4MoeMoE
     from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyTransform
