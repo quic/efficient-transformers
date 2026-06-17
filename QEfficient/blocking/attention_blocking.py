@@ -272,6 +272,7 @@ def prefill_blocked_attention_interface(
     blocking_config: AttentionBlockingConfig,
     position_ids: Optional[torch.Tensor] = None,
     past_seen_tokens: Optional[int] = None,
+    batch_index: Optional[int] = None,
     sinks: Optional[torch.Tensor] = None,
     sliding_window: Optional[int] = None,
     past_key_value: Optional[Cache] = None,
@@ -280,6 +281,7 @@ def prefill_blocked_attention_interface(
     cache_kwargs = {
         "position_ids": position_ids,
         "past_seen_tokens": past_seen_tokens,
+        "batch_index": batch_index,
     }
     if blocking_config.prefill_blocking_mode == "kv":
         return blocked_kv_attention_forward_prefill_headpar_offline(

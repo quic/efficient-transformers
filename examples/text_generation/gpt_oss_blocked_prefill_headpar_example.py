@@ -63,6 +63,12 @@ def parse_args():
     parser.add_argument("--num-layers", type=int, default=None, help="Override number of layers (for quick testing)")
     parser.add_argument("--num-kv-blocks", type=int, default=2, help="Number of KV blocks for blocked attention")
     parser.add_argument(
+        "--full-batch-size",
+        type=int,
+        default=1,
+        help="Number of sequences to process in parallel (continuous batching batch size)",
+    )
+    parser.add_argument(
         "--headpar-split",
         type=int,
         default=None,
@@ -131,26 +137,40 @@ def run_chunked_prefill(prefill_session, inputs, num_chunks, prefill_seq_len, nu
 
 
 def run_decode_loop(decode_session, decode_inputs, generation_len, num_hidden_layers):
-    """Autoregressive decode loop. Returns (token list, elapsed seconds)."""
+    """Autoregressive decode loop. Returns (token array [B, gen_len], elapsed seconds)."""
     all_tokens = []
     st = time.time()
     for _ in range(generation_len):
         out = decode_session.run(decode_inputs)
-        next_token = int(np.argmax(out["logits"]))
-        all_tokens.append(next_token)
-        decode_inputs["input_ids"] = np.array([[next_token]])
+        next_tokens = np.argmax(out["logits"], axis=-1)  # [B, 1]
+        all_tokens.append(next_tokens)
+        decode_inputs["input_ids"] = next_tokens
         decode_inputs["position_ids"] = decode_inputs["position_ids"] + 1
         for layer in range(num_hidden_layers):
             decode_inputs[f"past_key.{layer}"] = out[f"past_key.{layer}_RetainedState"]
             decode_inputs[f"past_value.{layer}"] = out[f"past_value.{layer}_RetainedState"]
-    return all_tokens, time.time() - st
+    return np.concatenate(all_tokens, axis=1), time.time() - st  # [B, gen_len]
 
 
-def build_decode_inputs(qpc_out, inputs, num_hidden_layers):
-    """Assemble decode inputs from the last prefill chunk output."""
+def build_decode_inputs(qpc_out, inputs, num_hidden_layers, prefill_seq_len):
+    """Assemble decode inputs from the last prefill chunk output.
+
+    Works for any batch size. For each batch item the first decode token is
+    taken from the logit at the last *valid* (non-padding) position of the last
+    prefill chunk, and the decode position_id is the per-batch maximum valid
+    position plus one.
+    """
+    padded_len = inputs["input_ids"].shape[1]
+    # position_ids for the last chunk: [..., last_valid_pos, -1, -1, ...]
+    last_chunk_pos = inputs["position_ids"][:, padded_len - prefill_seq_len:]
+    # argmax returns index of highest position value = last valid token in chunk
+    # All batch items share the same effective_len (replicated prompt), so [0] suffices
+    last_valid_idx = int(np.argmax(last_chunk_pos[0]))
     decode_inputs = {
-        "input_ids": np.argmax(qpc_out["logits"]).reshape(1, 1),
-        "position_ids": np.max(inputs["position_ids"]).reshape(1, 1) + 1,
+        # [B, 1]: argmax over vocab at the last valid position of the last chunk
+        "input_ids": np.argmax(qpc_out["logits"][:, last_valid_idx, :], axis=-1, keepdims=True),
+        # [B, 1]: per-batch next decode position
+        "position_ids": np.max(inputs["position_ids"], axis=-1, keepdims=True) + 1,
     }
     for layer in range(num_hidden_layers):
         decode_inputs[f"past_key.{layer}"] = qpc_out[f"past_key.{layer}_RetainedState"]
@@ -163,10 +183,15 @@ def main():
 
     headpar_split = args.headpar_split if args.headpar_split is not None else args.num_cores
 
+    # Replicate prompt to fill the requested batch size
+    prompts = [args.prompt] * args.full_batch_size
+
     config = AutoConfig.from_pretrained(args.model_name)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     num_hidden_layers = args.num_layers if args.num_layers else config.num_hidden_layers
     from_pretrained_kwargs = {"num_hidden_layers": num_hidden_layers} if args.num_layers else {}
+    # if args.full_batch_size > 1:
+    #     from_pretrained_kwargs["continuous_batching"] = True
 
     generation_len = args.generation_len
 
@@ -196,6 +221,7 @@ def main():
         mxint8_kv_cache=True,
         use_onnx_subfunctions=args.subf,
         retain_full_kv=True,
+        batch_size=args.full_batch_size, 
     )
 
     # ── Compile decode model ──────────────────────────────────────────────────
@@ -251,7 +277,7 @@ def main():
 
     # ── Prepare inputs ────────────────────────────────────────────────────────
     inputs, prompt_len, num_chunks = prepare_chunked_inputs(
-        tokenizer, args.prompt, args.prefill_seq_len, prompt_len=args.prompt_len
+        tokenizer, prompts, args.prefill_seq_len, prompt_len=args.prompt_len
     )
     generation_len = min(generation_len, args.ctx_len - prompt_len - 1)
     print(f"\nPrompt tokens: {prompt_len}, chunks: {num_chunks}, decode steps: {generation_len}")
@@ -265,17 +291,22 @@ def main():
     qpc_out = run_chunked_prefill(prefill_session, inputs, num_chunks, args.prefill_seq_len, num_hidden_layers)
     t_prefill = time.time() - t0
 
-    decode_inputs = build_decode_inputs(qpc_out, inputs, num_hidden_layers)
+    decode_inputs = build_decode_inputs(qpc_out, inputs, num_hidden_layers, args.prefill_seq_len)
+    first_token_ids = decode_inputs["input_ids"].copy()  # [B, 1], save before decode modifies it
     print(f"\n--- Blocked head-par decode ({generation_len} tokens) ---")
     tokens, t_decode = run_decode_loop(decode_session, decode_inputs, generation_len, num_hidden_layers)
-    blocked_text = tokenizer.decode([int(np.argmax(qpc_out["logits"]))] + tokens)
+    # tokens: [B, gen_len]; prepend first token from prefill to get full generated sequence
+    blocked_texts = [
+        tokenizer.decode(list(first_token_ids[b]) + list(tokens[b]))
+        for b in range(args.full_batch_size)
+    ]
 
     # ── Optionally run baseline ───────────────────────────────────────────────
     t_baseline_prefill = t_baseline_decode = None
-    baseline_text = None
+    baseline_texts = None
     if args.compare_non_blocked:
         inputs_bl, _, _ = prepare_chunked_inputs(
-            tokenizer, args.prompt, args.prefill_seq_len, prompt_len=args.prompt_len
+            tokenizer, prompts, args.prefill_seq_len, prompt_len=args.prompt_len
         )
         baseline_decode_session = QAICInferenceSession(baseline_decode_qpc)
         baseline_prefill_session = QAICInferenceSession(baseline_prefill_qpc)
@@ -287,21 +318,27 @@ def main():
         )
         t_baseline_prefill = time.time() - t0
 
-        decode_inputs_bl = build_decode_inputs(qpc_out_bl, inputs_bl, num_hidden_layers)
+        decode_inputs_bl = build_decode_inputs(qpc_out_bl, inputs_bl, num_hidden_layers, args.prefill_seq_len)
+        first_token_ids_bl = decode_inputs_bl["input_ids"].copy()
         print(f"\n--- Baseline decode ({generation_len} tokens) ---")
         tokens_bl, t_baseline_decode = run_decode_loop(
             baseline_decode_session, decode_inputs_bl, generation_len, num_hidden_layers
         )
-        baseline_text = tokenizer.decode([int(np.argmax(qpc_out_bl["logits"]))] + tokens_bl)
+        baseline_texts = [
+            tokenizer.decode(list(first_token_ids_bl[b]) + list(tokens_bl[b]))
+            for b in range(args.full_batch_size)
+        ]
 
     # ── Summary ───────────────────────────────────────────────────────────────
     print("\n" + "=" * 70)
     print(f"Prompt: {args.prompt}\n")
     print(f"[Blocked head-par]  prefill {t_prefill:.3f}s | decode {generation_len / t_decode:.1f} tok/s")
-    print(f"Output: {blocked_text}")
+    for b, text in enumerate(blocked_texts):
+        print(f"Output[{b}]: {text}")
     if args.compare_non_blocked:
         print(f"\n[Baseline]          prefill {t_baseline_prefill:.3f}s | decode {generation_len / t_baseline_decode:.1f} tok/s")
-        print(f"Output: {baseline_text}")
+        for b, text in enumerate(baseline_texts):
+            print(f"Output[{b}]: {text}")
         print(f"\nPrefill speedup: {t_baseline_prefill / t_prefill:.2f}x")
         print(f"Decode  speedup: {(generation_len / t_decode) / (generation_len / t_baseline_decode):.2f}x")
     print("=" * 70)
