@@ -246,6 +246,7 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
         past_key_values: Optional[Cache] = None,
         position_ids: Optional[torch.LongTensor] = None,
         mm_token_type_ids: Optional[torch.Tensor] = None,
+        batch_index: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         input_shape = hidden_states.shape[:-1]
@@ -279,7 +280,7 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
                     key_states,
                     value_states,
                     self.layer_idx,
-                    {"position_ids": position_ids},
+                    {"position_ids": position_ids, "batch_index": batch_index},
                 )
             if self.store_full_length_kv:
                 if not hasattr(past_key_values, "shared_layers"):
@@ -814,7 +815,7 @@ class QEffGemma4DecoderWrapper(nn.Module):
         comp_ctx_lengths: Optional[List[int]] = None,
         **kwargs,
     ):
-        del batch_index, comp_ctx_lengths, kwargs
+        del kwargs
         if past_key_values is not None and not isinstance(past_key_values, Cache):
             past_key_values = QEffGemma4DynamicCache.from_legacy_cache(self.language_model.config, past_key_values)
 
@@ -863,6 +864,8 @@ class QEffGemma4DecoderWrapper(nn.Module):
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
+                batch_index=batch_index,
                 use_cache=True,
                 per_layer_inputs=per_layer_inputs,
                 mm_token_type_ids=mm_token_type_ids,
@@ -1151,6 +1154,8 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 seq_len=seq_len,
             ),
         }
+        if continuous_batching:
+            lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
         if comp_ctx_lengths is not None:
             lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
         if kv_offload:
