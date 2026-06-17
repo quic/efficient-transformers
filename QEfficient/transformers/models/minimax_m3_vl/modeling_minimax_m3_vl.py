@@ -298,14 +298,14 @@ class QEffMiniMaxM3VLTextModel(MiniMaxM3VLTextModel):
             position_ids = cache_position.unsqueeze(0)
 
         # Invariant V11: explicit causal mask (NOT SDPA-shaped attention_mask).
-        # target_length is the full kv-extent the mask must cover. Prefer the caller's
-        # SDPA mask shape if provided; otherwise fall back to "past + current" (eager
-        # forward) so a no-cache parity run sees a non-zero-width mask. Bare
-        # past_seen_tokens (0 on the first forward) breaks arange(0,0).
+        # target_length is the kv-axis the mask must cover. With QEff's pre-allocated
+        # KV buffer, past_key_values.update() does scatter+gather (no concat), so the
+        # post-update kv-extent equals max(past_seen_tokens, seq_len) — NOT their sum.
+        # Falling back to past_seen_tokens + seq_len double-counts and produces a 2x mask.
         if isinstance(attention_mask, torch.Tensor):
             target_length = attention_mask.shape[-1]
         else:
-            target_length = past_seen_tokens + inputs_embeds.shape[1]
+            target_length = max(past_seen_tokens, inputs_embeds.shape[1])
         causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length)
 
         # Partial-RoPE: only the first rotary_dim head dims are rotated; the model-level
@@ -617,16 +617,31 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
         prefill_seq_len = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         ctx_len = ctx_len or 1024
 
+        # Drain CCL kwargs out of compiler_options before they're passed verbatim to
+        # qaic-compile (without this, a None default leaks through as the literal
+        # string "-comp-ctx-lengths-prefill=None" and the compiler rejects it).
+        comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
+        comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+
         # MiniMax-M3: image_seq_length=576 per tile, dynamic-res tiling.
         image_seq_length = getattr(self.config, "image_seq_length", 576)
         max_num_images = compiler_options.pop("max_num_images", 1)
         vision_size = image_seq_length * max_num_images
+
+        # Vision-side symbols for the pixel_values / image_grid_thw inputs. Each tile
+        # contributes (image_size/patch_size)**2 patches; with spatial_merge=2 those
+        # collapse to image_seq_length tokens. So num_patches per tile is 4*image_seq_length.
+        spatial_merge = getattr(self.config.vision_config, "spatial_merge_size", 2)
+        num_patches = image_seq_length * (spatial_merge * spatial_merge) * max_num_images
+        num_images = max_num_images
 
         vision = [
             {
                 "batch_size": batch_size,
                 "max_num_images": max_num_images,
                 "vision_size": vision_size,
+                "num_patches": num_patches,
+                "num_images": num_images,
             }
         ]
 
@@ -637,6 +652,8 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             "vision_size": vision_size,
             "vision_batch_size": batch_size,
             "max_num_images": max_num_images,
+            "num_patches": num_patches,
+            "num_images": num_images,
         }
         if continuous_batching:
             lang_prefill["full_batch_size"] = kv_cache_batch_size
@@ -652,6 +669,8 @@ class QEffMiniMaxM3SparseForConditionalGeneration(MiniMaxM3SparseForConditionalG
             "vision_size": vision_size,
             "vision_batch_size": batch_size,
             "max_num_images": max_num_images,
+            "num_patches": num_patches,
+            "num_images": num_images,
         }
         if continuous_batching:
             lang_decode["full_batch_size"] = kv_cache_batch_size
