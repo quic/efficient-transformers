@@ -706,6 +706,8 @@ class IOInfo:
 def dump_qconfig(func):
     def wrapper(self, *args, **kwargs):
         result = func(self, *args, **kwargs)
+        if getattr(self, "qpc_path", None) is None:
+            return result
         try:
             create_and_dump_qconfigs(
                 self.qpc_path,
@@ -795,7 +797,7 @@ def create_and_dump_qconfigs(
                 "specializations": make_serializable(specializations),
                 "mdp_ts_num_devices": mdp_ts_num_devices,
                 "num_speculative_tokens": num_speculative_tokens,
-                **compiler_options,
+                **make_serializable(compiler_options),
             },
             "aic_sdk_config": {
                 "qaic_apps_version": get_qaic_sdk_version(Constants.SDK_APPS_XML),

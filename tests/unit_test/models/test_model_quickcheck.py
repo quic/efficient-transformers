@@ -448,20 +448,29 @@ def test_minimax_m3_text_config_derived_pt_and_onnx_runtime_parity(tmp_path):
 
 
 @pytest.mark.llm_model
-def test_minimax_m3_text_layerwise_export_smoke(tmp_path, monkeypatch):
+def test_minimax_m3_text_layerwise_export_smoke(tmp_path):
     torch.manual_seed(7)
     config = _tiny_minimax_m3_text_config()
     model_hf = MiniMaxM3VLForCausalLM(config).eval()
-    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+    model_dir = tmp_path / "minimax-m3-tiny"
+    model_hf.save_pretrained(model_dir)
 
-    monkeypatch.setenv("LAYERWISE_EXPORT", "True")
-    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "minimax-m3-layerwise", prefill_seq_len=4))
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_dir, layerwise=True, torch_dtype=torch.float32)
+    onnx_path = _exported_onnx_path(
+        qeff_model.export(
+            tmp_path / "minimax-m3-layerwise",
+            prefill_seq_len=4,
+            layerwise=True,
+            layerwise_window_size=1,
+            use_onnx_subfunctions=True,
+        )
+    )
 
-    assert onnx_path.name == "MiniMaxM3VLForCausalLM_layer_tmp_0_1.onnx"
+    assert onnx_path.name == "merged_0-2.onnx"
     onnx_model = onnx.load(onnx_path, load_external_data=False)
     output_names = {output.name for output in onnx_model.graph.output}
-    assert "past_key.0_InternalRetainedState" in output_names
-    assert "past_value.0_InternalRetainedState" in output_names
+    assert any(name.startswith("past_key.0") and name.endswith("_RetainedState") for name in output_names)
+    assert any(name.startswith("past_value.0") and name.endswith("_RetainedState") for name in output_names)
 
 
 @pytest.mark.llm_model

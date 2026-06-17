@@ -35,12 +35,7 @@ from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 def _minimax_layerwise_window(total_layers: int) -> tuple[int, int, bool]:
     from QEfficient.base.modeling_qeff import QEFFBaseModel
 
-    is_active = bool(getattr(QEFFBaseModel, "_layerwise_active", False))
-    if not is_active:
-        import os
-
-        is_active = os.environ.get("LAYERWISE_EXPORT", "False") == "True"
-    if not is_active:
+    if not bool(getattr(QEFFBaseModel, "_layerwise_active", False)):
         return 0, total_layers, False
 
     start = int(getattr(QEFFBaseModel, "_start", 0) or 0)
