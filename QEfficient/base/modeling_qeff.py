@@ -694,6 +694,15 @@ class QEFFBaseModel(ABC):
         _onnx_transforms = [SplitTensorsTransform, CustomOpTransform, RenameFunctionOutputsTransform]
         onnx_transforms = OnnxTransformPipeline(transforms=_onnx_transforms)
         model, transformed = onnx_transforms.apply(model, **transform_kwargs)
+        # torch.onnx.export may already have emitted large external data files in this
+        # window directory (e.g. `<model>.onnx.data`). After SplitTensorsTransform we
+        # write a new external-data layout. Remove stale shards first to avoid transient
+        # 2x disk usage (old + new) while saving this window.
+        for stale_shard in current_layer_dir.glob("*.onnx.data"):
+            try:
+                stale_shard.unlink()
+            except OSError:
+                logger.warning("Could not remove stale ONNX external data shard: %s", stale_shard)
         onnx.save(model, layer_onnx_path_tmp)
         self.onnx_path = layer_onnx_path_tmp
         return layer_onnx_path_tmp
