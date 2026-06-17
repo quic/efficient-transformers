@@ -85,21 +85,21 @@ def check_export_compile_execute(mocker, model_name, full_batch_size=None, enabl
     cloud_ai_100_exec_kv_spy.assert_called_once()
 
 
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.cli
 def test_export_compile_execute(mocker):
     # testing export -> compile -> infer without full_batch_size
     check_export_compile_execute(mocker, model_name="gpt2")
 
 
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.cli
 def test_export_compile_execute_fbs(mocker):
     # testing export -> compile -> infer with full_batch_size
     check_export_compile_execute(mocker, model_name="gpt2", full_batch_size=3)
 
 
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.qnn
 @pytest.mark.cli
 def test_export_compile_execute_qnn(mocker):
@@ -107,7 +107,7 @@ def test_export_compile_execute_qnn(mocker):
     check_export_compile_execute(mocker, model_name="gpt2", enable_qnn=True)
 
 
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.qnn
 @pytest.mark.cli
 def test_export_compile_execute_qnn_fbs(mocker):

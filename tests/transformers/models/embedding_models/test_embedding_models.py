@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-import json
 import os
 from typing import Optional
 
@@ -16,16 +15,14 @@ from transformers import AutoModel, AutoTokenizer
 
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModel
-from QEfficient.utils._utils import create_json
-from QEfficient.utils.constants import Constants, QnnConstants
+from QEfficient.utils.constants import Constants
 from QEfficient.utils.test_utils import ModelConfig
+from tests.utils.profile_test_config import load_test_config
 
 from ..check_model_results import dump_and_compare_results
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/embedding_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    embed_test_models = config_data["embedding_models"]
+config_data = load_test_config("embedding_model_configs")
+embed_test_models = config_data["embedding_models"]
 
 
 def load_embedding_model(model_name: str, n_layer: int = -1):
@@ -125,26 +122,25 @@ def check_embed_pytorch_vs_ort_vs_ai100(
     )
 
 
-@pytest.mark.full_layers
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model", embed_test_models)
-def test_full_embed_model_pytorch_vs_onnx_vs_ai100(model, manual_cleanup):
+def test_embed_model_pytorch_vs_onnx_vs_ai100(model):
     """
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output.
     """
     if model["model_name"] in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to issues in HF.")
     check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model["model_name"], seq_len=32, compare_results=True, manual_cleanup=manual_cleanup
+        model_name=model["model_name"],
+        seq_len=32,
     )
 
 
-@pytest.mark.full_layers
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model", embed_test_models)
-def test_full_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model, manual_cleanup):
+def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model):
     """
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with pooling.
     """
@@ -154,133 +150,16 @@ def test_full_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model, manual_cleanup
         model_name=model["model_name"],
         seq_len=32,
         pooling=model["pooling"],
-        compare_results=True,
-        manual_cleanup=manual_cleanup,
     )
 
 
-@pytest.mark.full_layers
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model", embed_test_models[:1])
-def test_full_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model, manual_cleanup):
+def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model):
     """
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with multiple seq_len.
     """
     if model["model_name"] in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to issues in HF.")
-    check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model["model_name"], seq_len=[32, 20], compare_results=True, manual_cleanup=manual_cleanup
-    )
-
-
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.parametrize("model", embed_test_models)
-def test_embed_model_pytorch_vs_onnx_vs_ai100(model, manual_cleanup):
-    """
-    Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output.
-    """
-    if model["model_name"] in ModelConfig.SKIPPED_MODELS:
-        pytest.skip("Test skipped for this model due to issues in HF.")
-    check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model["model_name"], seq_len=32, n_layer=1, manual_cleanup=manual_cleanup
-    )
-
-
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.parametrize("model", embed_test_models)
-def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model, manual_cleanup):
-    """
-    Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with pooling.
-    """
-    if model["model_name"] in ModelConfig.SKIPPED_MODELS:
-        pytest.skip("Test skipped for this model due to issues in HF.")
-    check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model["model_name"], seq_len=32, pooling=model["pooling"], n_layer=1, manual_cleanup=manual_cleanup
-    )
-
-
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.parametrize("model", embed_test_models[:1])
-def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model, manual_cleanup):
-    """
-    Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with multiple seq_len.
-    """
-    if model["model_name"] in ModelConfig.SKIPPED_MODELS:
-        pytest.skip("Test skipped for this model due to issues in HF.")
-    check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model["model_name"], seq_len=[32, 20], n_layer=1, manual_cleanup=manual_cleanup
-    )
-
-
-##########  QNN TESTS ##############
-
-
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.qnn
-@pytest.mark.parametrize("model_name", embed_test_models)
-def test_embed_model_pytorch_vs_onnx_vs_ai100_qnn(model_name, manual_cleanup):
-    """
-    QNN Compilation path test.
-    Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output.
-    """
-    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
-
-    check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model_name["model_name"],
-        seq_len=32,
-        n_layer=1,
-        enable_qnn=True,
-        qnn_config=qnn_config_json_path,
-        manual_cleanup=manual_cleanup,
-    )
-
-
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.qnn
-@pytest.mark.parametrize("model", embed_test_models)
-def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling_qnn(model, manual_cleanup):
-    """
-    QNN Compilation path test.
-    Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with pooling.
-    """
-    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
-
-    check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model["model_name"],
-        seq_len=32,
-        n_layer=1,
-        pooling=model["pooling"],
-        enable_qnn=True,
-        qnn_config=qnn_config_json_path,
-        manual_cleanup=manual_cleanup,
-    )
-
-
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.qnn
-@pytest.mark.parametrize("model", [embed_test_models[0]])
-def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len_qnn(model, manual_cleanup):
-    """
-    QNN Compilation path test.
-    Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with multiple seq_len.
-    """
-    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
-
-    check_embed_pytorch_vs_ort_vs_ai100(
-        model_name=model["model_name"],
-        seq_len=[32, 20],
-        n_layer=1,
-        enable_qnn=True,
-        qnn_config=qnn_config_json_path,
-        manual_cleanup=manual_cleanup,
-    )
+    check_embed_pytorch_vs_ort_vs_ai100(model_name=model["model_name"], seq_len=[32, 20])

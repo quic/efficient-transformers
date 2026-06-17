@@ -1,0 +1,251 @@
+{
+  "_README": "Unified original-model test config. Select with QEFF_TEST_PROFILE unset or full_layers_model.",
+  "causal_lm_models": {
+    "models": [
+      "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "gpt2",
+      "allenai/OLMo-2-0425-1B",
+      "Salesforce/codegen-350M-mono",
+      "ibm-granite/granite-3.1-1b-a400m-base",
+      "microsoft/Phi-3-mini-4k-instruct",
+      "tiiuae/falcon-7b",
+      "Qwen/Qwen3-30B-A3B-Instruct-2507",
+      "Qwen/Qwen2-0.5B",
+      "bigcode/starcoder2-3b",
+      "Felladrin/Minueza-32M-Base",
+      "wtang06/mpt-125m-c4",
+      "hakurei/gpt-j-random-tinier",
+      "mistralai/Mixtral-8x7B-Instruct-v0.1",
+      "meta-llama/Llama-3.2-1B",
+      "unsloth/gemma-2b",
+      "unsloth/gemma-2-2b",
+      "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",
+      "TheBloke/Llama-2-7B-GPTQ",
+      "ibm-granite/granite-20b-code-base",
+      "neuralmagic/Llama-3.2-3B-Instruct-FP8",
+      "neuralmagic/Qwen2-0.5B-Instruct-FP8",
+      "ibm-granite/granite-3.1-2b-instruct",
+      "ibm-granite/granite-guardian-3.1-2b",
+      "Snowflake/Llama-3.1-SwiftKV-8B-Instruct"
+    ]
+  },
+  "causal_lm_fp16_test_models": {
+    "models": [
+      "gpt2",
+      "hf-internal-testing/tiny-random-Gemma2ForCausalLM",
+      "hf-internal-testing/tiny-random-GPTBigCodeForCausalLM",
+      "Qwen/Qwen2-0.5B",
+      "hf-internal-testing/tiny-random-MixtralForCausalLM",
+      "hf-internal-testing/tiny-random-LlamaForCausalLM",
+      "allenai/OLMo-2-0425-1B",
+      "hf-internal-testing/tiny-random-GraniteForCausalLM"
+    ]
+  },
+  "spd_causal_lm_models": {
+    "models": [
+      "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "Qwen/Qwen2-0.5B"
+    ]
+  },
+  "qnn_causal_lm_models": {
+    "models": [
+      "mistralai/Mixtral-8x7B-Instruct-v0.1",
+      "meta-llama/Llama-3.2-1B",
+      "unsloth/gemma-2b",
+      "ibm-granite/granite-guardian-3.1-2b"
+    ]
+  },
+  "prefix_caching_models": {
+    "models": [
+      "gpt2"
+    ]
+  },
+  "blockedKV_causal_lm_models": {
+    "models": [
+      "unsloth/gemma-2b",
+      "unsloth/gemma-2-2b",
+      "ibm-granite/granite-3.1-1b-a400m-base",
+      "meta-llama/Llama-3.2-1B",
+      "wtang06/mpt-125m-c4",
+      "bigcode/starcoder2-3b"
+    ]
+  },
+  "disaggregated_dummy_models": [
+    {
+      "model_name": "openai/gpt-oss-20b",
+      "model_type": "gpt_oss",
+      "tokenizer_id": "gpt2"
+    },
+    {
+      "model_name": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+      "model_type": "qwen3_moe"
+    }
+  ],
+  "causal_lm_models_pl1": {
+    "models": [
+      "gpt2",
+      "openai/gpt-oss-20b"
+    ]
+  },
+  "sampler_config": [
+    {
+      "model_name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "is_vlm": false,
+      "prompts": [
+        "My name is",
+        "My name is"
+      ],
+      "image_urls": [],
+      "prefill_seq_len": 32,
+      "ctx_len": 64,
+      "generation_len": 20,
+      "full_batch_size": 2,
+      "spec_length": 1
+    },
+    {
+      "model_name": "OpenGVLab/InternVL2_5-1B",
+      "is_vlm": true,
+      "prompts": [
+        "Can you describe the image in detail.",
+        "Can you describe the image in detail."
+      ],
+      "image_urls": [
+        "https://picsum.photos/id/237/536/354",
+        "https://picsum.photos/id/237/536/354"
+      ],
+      "prefill_seq_len": 128,
+      "ctx_len": 4096,
+      "generation_len": 20,
+      "full_batch_size": 2,
+      "spec_length": null
+    }
+  ],
+  "spd_config": [
+    {
+      "id": "CB llama",
+      "draft_model_name": "JackFram/llama-160m",
+      "target_model_name": "JackFram/llama-160m",
+      "prompts": [
+        "My name is"
+      ],
+      "num_speculative_tokens": 4,
+      "prefill_seq_len": 32,
+      "ctx_len": 128,
+      "prefill_bsz": 1,
+      "full_batch_size": 1,
+      "max_ngram_size": 3
+    },
+    {
+      "id": "CB qwen",
+      "draft_model_name": "Qwen/Qwen2-0.5B",
+      "target_model_name": "Qwen/Qwen2-0.5B",
+      "prompts": [
+        "My name is"
+      ],
+      "num_speculative_tokens": 4,
+      "prefill_seq_len": 32,
+      "ctx_len": 128,
+      "prefill_bsz": 1,
+      "full_batch_size": 1,
+      "max_ngram_size": 3
+    }
+  ],
+  "embedding_models": [
+    {
+      "model_name": "jinaai/jina-embeddings-v2-base-code",
+      "pooling": "mean"
+    },
+    {
+      "model_name": "sentence-transformers/nli-bert-base-cls-pooling",
+      "pooling": "cls"
+    }
+  ],
+  "image_text_models": {
+    "models": [
+      "llava-hf/llava-1.5-7b-hf",
+      "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+      "google/gemma-3-4b-it",
+      "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+      "Qwen/Qwen2.5-VL-3B-Instruct",
+      "Qwen/Qwen3-VL-2B-Instruct",
+      "Qwen/Qwen3-VL-30B-A3B-Instruct",
+      "Qwen/Qwen3.5-0.8B",
+      "Qwen/Qwen3.6-35B-A3B",
+      "allenai/Molmo-7B-D-0924",
+      "OpenGVLab/InternVL2_5-1B",
+      "OpenGVLab/InternVL3_5-1B"
+    ],
+    "batch_size": 1,
+    "prompt_len": 128,
+    "ctx_len": 4096,
+    "img_size": 1540,
+    "img_url": "https://picsum.photos/id/237/536/354",
+    "text_prompt": "Can you describe the image in detail.",
+    "img_url_list": [
+      "https://picsum.photos/id/237/536/354",
+      "https://picsum.photos/id/238/536/354"
+    ],
+    "text_prompt_list": [
+      "Can you describe the image in detail?",
+      "What are the objects in the image?"
+    ],
+    "full_batch_size": 2
+  },
+  "image_text_subfunction_models": {
+    "models": [
+      "Qwen/Qwen2.5-VL-3B-Instruct"
+    ],
+    "batch_size": 1,
+    "prompt_len": 128,
+    "ctx_len": 4096,
+    "img_size": 1540,
+    "img_url": "https://picsum.photos/id/237/536/354",
+    "text_prompt": "Can you describe the image in detail."
+  },
+  "image_text_custom_dtype_models": {
+    "models": [
+      "OpenGVLab/InternVL2_5-1B",
+      "google/gemma-3-4b-it",
+      "llava-hf/llava-1.5-7b-hf"
+    ],
+    "batch_size": 1,
+    "prompt_len": 128,
+    "ctx_len": 4096,
+    "img_size": 1540,
+    "img_url": "https://picsum.photos/id/237/536/354",
+    "text_prompt": "Can you describe the image in detail."
+  },
+  "image_text_reranker_models": {
+    "models": [
+      "Qwen/Qwen3-VL-Reranker-2B",
+      "Qwen/Qwen3-VL-Reranker-8B"
+    ],
+    "batch_size": 1,
+    "ctx_len": 1024,
+    "num_layers": 1,
+    "img_url": "https://picsum.photos/id/237/536/354",
+    "instruction": "Retrieve candidates relevant to the query.",
+    "query_text": "A woman playing with her dog on a beach at sunset.",
+    "document_text": "A woman and her dog spend time together on a beach during sunset."
+  },
+  "image_text_embedding_models": {
+    "models": [
+      "Qwen/Qwen3-VL-Embedding-8B"
+    ],
+    "ctx_len": 2048,
+    "num_layers": 1,
+    "vision_depth": 9,
+    "deepstack_index": 8,
+    "compile_prefill_seq_len": null,
+    "mad_max_threshold": 0.002
+  },
+  "seq_classification_models": [
+    "meta-llama/Llama-Prompt-Guard-2-22M"
+  ],
+  "speech_seq2seq_models": [
+    "openai/whisper-tiny"
+  ],
+  "audio_embedding_models": [
+    "facebook/wav2vec2-base-960h"
+  ]
+}

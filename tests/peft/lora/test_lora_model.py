@@ -210,7 +210,7 @@ def test_auto_lora_model_for_causal_lm_load_unload_adapter(base_model_name, adap
 
 
 # test the export, export caching, compile and generate workflow in noncb mode
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples[:1])
 def test_auto_lora_model_for_causal_lm_noncb_export_compile_generate(
@@ -252,7 +252,7 @@ def test_auto_lora_model_for_causal_lm_noncb_export_compile_generate(
 
 
 # test the compile and generate workflow in cb mode
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples[:1])
 def test_auto_lora_model_for_causal_lm_cb_compile_generate(base_model_name, adapter_id_0, adapter_id_1, tmp_path):

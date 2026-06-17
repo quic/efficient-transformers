@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 from typing import List, Optional
 
@@ -20,15 +19,14 @@ from transformers import AutoModelForCTC, AutoProcessor
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCTC
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils import hf_download
-from QEfficient.utils._utils import create_json, load_hf_processor
-from QEfficient.utils.constants import WAV2VEC2_MAX_SEQ_LEN, QnnConstants
+from QEfficient.utils._utils import load_hf_processor
+from QEfficient.utils.constants import WAV2VEC2_MAX_SEQ_LEN
+from tests.utils.profile_test_config import load_test_config
 
 from ..check_model_results import dump_and_compare_results
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/audio_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    test_models = config_data["audio_embedding_models"]
+config_data = load_test_config("audio_model_configs")
+test_models = config_data["audio_embedding_models"]
 
 
 def load_ctc_model(model_config, torch_dtype: Optional[torch.dtype] = torch.float32):
@@ -194,48 +192,9 @@ def check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
     )
 
 
-@pytest.mark.full_layers
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
-def test_full_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
+def test_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name):
     torch.manual_seed(42)
-    check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, compare_results=True, manual_cleanup=manual_cleanup, num_devices=4
-    )
-
-
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.parametrize("model_name", test_models)
-def test_few_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
-    torch.manual_seed(42)
-    check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=4, manual_cleanup=manual_cleanup)
-
-
-# =================== QNN Tests ======================
-
-
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.qnn
-@pytest.mark.skip(reason="Wav2Vec2 is currently not supported on QNN")
-@pytest.mark.parametrize("model_name", test_models)
-def test_ctc_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, manual_cleanup):
-    """
-    QNN Compilation path test.
-    Test function to validate the PyTorch model, the PyTorch model after the ONNX model, and the Cloud AI 100 model.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-    """
-    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
-
-    check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name,
-        n_layer=4,
-        enable_qnn=True,
-        qnn_config=qnn_config_json_path,
-        manual_cleanup=manual_cleanup,
-        num_devices=4,
-    )
+    check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name)

@@ -24,11 +24,11 @@ from ..check_model_results import dump_and_compare_results
 
 
 def _tiny_lane_active() -> bool:
-    """True under per-PR profile (random-weight tinies). Token-equality on
+    """True under tiny_model profile (random-weight tinies). Token-equality on
     flat logits is an unreliable proxy here — fp16↔fp32 ULP drift flips argmax
-    constantly. Real-weight runs (full_layers_model / unset) keep strict checks.
+    constantly. Non-tiny / unset runs keep strict checks.
     """
-    return os.environ.get("QEFF_TEST_PROFILE", "").strip() in {"dummy_layers_model", "few_layers_model"}
+    return os.environ.get("QEFF_TEST_PROFILE", "").strip() == "tiny_model"
 
 
 def _tokens_match_or_first_token(reference, candidate, *, label: str, length: int = 24, vlm: bool = False) -> None:
@@ -44,7 +44,7 @@ def _tokens_match_or_first_token(reference, candidate, *, label: str, length: in
     runtime failures further into the decode loop), so we keep the strict
     first-token check until per-VLM mitigations are in.
 
-    Under full_layers_model (nightly) this is the original ``[:length]`` equality.
+    Under non-tiny profiles this is the original ``[:length]`` equality.
     """
     ref = np.asarray(reference)
     cand = np.asarray(candidate)

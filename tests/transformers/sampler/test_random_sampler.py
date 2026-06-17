@@ -5,8 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
-import os
 from typing import Optional
 
 import numpy as np
@@ -20,11 +18,10 @@ from QEfficient.utils.test_utils import (
     load_hf_vlm_model,
     load_qeff_model_with_sampler,
 )
+from tests.utils.profile_test_config import load_test_config
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/feature_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    sampler_models = config_data["sampler_config"]
+config_data = load_test_config("feature_configs")
+sampler_models = config_data["sampler_config"]
 test_models = [model["model_name"] for model in sampler_models]
 model_config_dict = {model["model_name"]: model for model in sampler_models}
 
@@ -269,43 +266,12 @@ def check_random_sampler(
     manual_cleanup(model_wo_sampler.onnx_path)
 
 
-@pytest.mark.full_layers
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models)
-def test_full_random_sampler(model_name, manual_cleanup):
+def test_random_sampler(model_name):
     """
     Test the full random sampler with different models.
     """
     torch.manual_seed(42)
-    check_random_sampler(model_name, manual_cleanup=manual_cleanup)
-
-
-# @pytest.mark.on_qaic
-# @pytest.mark.feature
-# @pytest.mark.parametrize("model_name",test_models)
-# def test_2layers_random_sampler(model_name):
-#     """
-#     Test the random sampler with 2 layers models.
-#     """
-#     torch.manual_seed(42)
-#     golden_texts = model_config_dict[model_name]["dummy_layers_output"]["golden_texts"]
-#     golden_ids = model_config_dict[model_name]["dummy_layers_output"]["golden_ids"]
-#     check_random_sampler(model_name, golden_texts=golden_texts, golden_ids=golden_ids, num_hidden_layers=2)
-
-# @pytest.mark.on_qaic
-# @pytest.mark.feature
-# @pytest.mark.parametrize("model_name",test_models)
-# def test_dummy_random_sampler(model_name):
-#     """
-#     Test the random sampler with dummy models.
-#     """
-#     torch.manual_seed(42)
-#     hf_config = AutoConfig.from_pretrained(
-#         model_name,
-#         trust_remote_code=True,
-#         **model_config_dict[model_name].get("additional_params", {}),
-#     )
-#     golden_texts = model_config_dict[model_name]["dummy_layers_output"]["golden_texts"]
-#     golden_ids = model_config_dict[model_name]["dummy_layers_output"]["golden_ids"]
-#     check_random_sampler(model_name, golden_texts=golden_texts, golden_ids=golden_ids, config=hf_config,)
+    check_random_sampler(model_name)

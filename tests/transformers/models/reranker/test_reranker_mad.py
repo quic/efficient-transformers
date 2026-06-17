@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import json
 import os
 from typing import Dict, List, Tuple
 
@@ -38,8 +37,7 @@ from QEfficient.transformers.models.qwen3_vl._reranker_utils import (
     truncate_tokens_optimized as _shared_truncate_tokens_optimized,
 )
 from QEfficient.utils.test_utils import load_vlm_model, set_num_layers_vlm
-
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
+from tests.utils.profile_test_config import load_test_config
 
 PT_AI100_MAD_MAX = 5e-3
 MAX_LENGTH = 8192
@@ -59,9 +57,8 @@ EXAMPLE_INPUTS = {
     ],
 }
 
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    reranker_models = config_data["image_text_reranker_models"]
+config_data = load_test_config("image_text_model_configs")
+reranker_models = config_data["image_text_reranker_models"]
 
 test_reranker_models = [model_config["model_name"] for model_config in reranker_models]
 reranker_model_config_dict = {model["model_name"]: model for model in reranker_models}
@@ -219,9 +216,8 @@ def _run_ai100_prefill(qpc_paths, prepared_inputs, vision_template):
     return outputs["logits"]
 
 
-@pytest.mark.on_qaic
-@pytest.mark.multimodal
-@pytest.mark.regular
+@pytest.mark.qaic
+@pytest.mark.reranker
 @pytest.mark.parametrize("model_name", test_reranker_models)
 def test_qwen3_vl_reranker_mad_parity(model_name):
     torch.manual_seed(42)

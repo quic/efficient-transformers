@@ -6,8 +6,6 @@
 # ----------------------------------------------------------------------------
 
 import copy
-import json
-import os
 from io import BytesIO
 from typing import List, Optional
 
@@ -24,8 +22,6 @@ from transformers import (
 )
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
-from QEfficient.utils._utils import create_json
-from QEfficient.utils.constants import QnnConstants
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
 from QEfficient.utils.test_utils import (
     InternProcessor,
@@ -34,13 +30,12 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
+from tests.utils.profile_test_config import load_test_config
 
 from ..check_model_results import dump_and_compare_results
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    multimodal_models = config_data["image_text_models"]
+config_data = load_test_config("image_text_model_configs")
+multimodal_models = config_data["image_text_models"]
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
 
@@ -273,101 +268,19 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     )
 
 
-@pytest.mark.full_layers
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True, False])
-def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
+def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload):
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
     if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
         pytest.skip("These models require kv_offload=True for testing.")
 
     torch.manual_seed(42)
+
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name,
         kv_offload=kv_offload,
-        compare_results=True,
-        manual_cleanup=manual_cleanup,
-        num_devices=4,
-    )
-
-
-@pytest.mark.few_layers
-@pytest.mark.on_qaic
-@pytest.mark.multimodal
-@pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True, False])
-def test_few_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
-    if model_name in ModelConfig.SKIPPED_MODELS:
-        pytest.skip("Test skipped for this model due to some issues.")
-    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
-        pytest.skip("These models require kv_offload=True for testing.")
-
-    torch.manual_seed(42)
-    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name,
-        num_hidden_layers=model_config_dict[model_name]["num_layers"],
-        kv_offload=kv_offload,
-        manual_cleanup=manual_cleanup,
-    )
-
-
-@pytest.mark.dummy_layers
-@pytest.mark.on_qaic
-@pytest.mark.multimodal
-@pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True, False])
-def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
-    if model_name in ModelConfig.SKIPPED_MODELS:
-        pytest.skip("Test skipped for this model due to some issues.")
-    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
-        pytest.skip("These models require kv_offload=True for testing.")
-
-    torch.manual_seed(42)
-    hf_config = None
-    if model_name in ModelConfig.STANDARD_VLM_MODELS:
-        model_type = model_config_dict[model_name].get("model_type", None)
-        custom_config = model_config_dict[model_name].get("additional_params", {})
-        hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
-        hf_config.name_or_path = model_name
-        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-            model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
-        )
-    else:
-        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-            model_name,
-            num_hidden_layers=model_config_dict[model_name]["num_layers"],
-            kv_offload=kv_offload,
-            manual_cleanup=manual_cleanup,
-        )
-
-
-################################ QNN Tests ################################
-
-
-@pytest.mark.on_qaic
-@pytest.mark.qnn
-@pytest.mark.multimodal
-@pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True, False])
-def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_offload, manual_cleanup):
-    """
-    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-    """
-    if model_name == "meta-llama/Llama-4-Scout-17B-16E-Instruct" or model_name == "google/gemma-3-4b-it":
-        pytest.skip("QNN is not supported for these models yet.")
-
-    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
-
-    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name,
-        kv_offload=kv_offload,
-        enable_qnn=True,
-        qnn_config=qnn_config_json_path,
-        manual_cleanup=manual_cleanup,
     )

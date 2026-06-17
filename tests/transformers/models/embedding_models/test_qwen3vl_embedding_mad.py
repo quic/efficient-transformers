@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import json
 from typing import Any, Dict, List
 
 import pytest
@@ -23,12 +22,10 @@ from QEfficient.transformers.models.qwen3_vl._embedding_utils import (
     resolve_model_source,
 )
 from QEfficient.utils.test_utils import load_vlm_model
+from tests.utils.profile_test_config import load_test_config
 
-CONFIG_PATH = "tests/configs/image_text_model_configs.json"
-
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    embedding_models = config_data["image_text_embedding_models"]
+config_data = load_test_config("image_text_model_configs")
+embedding_models = config_data["image_text_embedding_models"]
 
 test_embedding_models = [model_config["model_name"] for model_config in embedding_models]
 embedding_model_config_dict = {model["model_name"]: model for model in embedding_models}
@@ -59,9 +56,8 @@ def _compute_cpu_embeddings(model_hf, embedder, model_inputs: List[Dict[str, Any
     return F.normalize(embeddings, p=2, dim=-1)
 
 
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.multimodal
-@pytest.mark.nightly
 @pytest.mark.parametrize("model_name", test_embedding_models)
 def test_qwen3_vl_embedding_cpu_vs_ai100_mad_parity(model_name):
     torch.manual_seed(42)

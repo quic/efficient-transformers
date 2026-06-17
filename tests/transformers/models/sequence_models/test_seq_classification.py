@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 from typing import List, Optional, Union
 
@@ -15,13 +14,12 @@ import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForSequenceClassification
+from tests.utils.profile_test_config import load_test_config
 
 from ..check_model_results import dump_and_compare_results
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/sequence_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    test_models = config_data["seq_classification_models"]
+config_data = load_test_config("sequence_model_configs")
+test_models = config_data["seq_classification_models"]
 
 
 def check_seq_classification_pytorch_vs_ai100(
@@ -120,48 +118,10 @@ def check_seq_classification_pytorch_vs_ai100(
     )
 
 
-@pytest.mark.full_layers
 @pytest.mark.llm_model
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.parametrize("model_name", test_models)
-def test_full_seq_classification_pytorch_vs_ai100(model_name, manual_cleanup):
-    """
-    Test function to validate the sequence classification model with multiple sequence lengths.
-
-    This test ensures that:
-    1. Dynamic shape handling works correctly
-    2. Model can handle variable input sizes
-    3. Compilation with multiple specializations succeeds
-    4. Outputs remain consistent across different sequence lengths
-    """
-    check_seq_classification_pytorch_vs_ai100(
-        model_name=model_name, seq_len=32, compare_results=True, manual_cleanup=manual_cleanup
-    )
-
-
-@pytest.mark.full_layers
-@pytest.mark.llm_model
-@pytest.mark.on_qaic
-@pytest.mark.parametrize("model_name", test_models)
-def test_full_seq_classification_multiple_seq_len(model_name, manual_cleanup):
-    """
-    Test function to validate the sequence classification model with multiple sequence lengths.
-
-    This test ensures that:
-    1. Dynamic shape handling works correctly
-    2. Model can handle variable input sizes
-    3. Compilation with multiple specializations succeeds
-    4. Outputs remain consistent across different sequence lengths
-    """
-    check_seq_classification_pytorch_vs_ai100(
-        model_name=model_name, seq_len=[32, 64, 128], compare_results=True, manual_cleanup=manual_cleanup
-    )
-
-
-@pytest.mark.llm_model
-@pytest.mark.on_qaic
-@pytest.mark.parametrize("model_name", test_models)
-def test_seq_classification_pytorch_vs_ai100(model_name, manual_cleanup):
+def test_seq_classification_pytorch_vs_ai100(model_name):
     """
     Test function to validate the PyTorch model and Cloud AI 100 model
     for sequence classification with a single sequence length.
@@ -171,14 +131,15 @@ def test_seq_classification_pytorch_vs_ai100(model_name, manual_cleanup):
     2. PyTorch and AI100 outputs are numerically consistent within defined tolerances
     """
     check_seq_classification_pytorch_vs_ai100(
-        model_name=model_name, seq_len=32, n_layer=1, manual_cleanup=manual_cleanup
+        model_name=model_name,
+        seq_len=32,
     )
 
 
 @pytest.mark.llm_model
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.parametrize("model_name", test_models)
-def test_seq_classification_multiple_seq_len(model_name, manual_cleanup):
+def test_seq_classification_multiple_seq_len(model_name):
     """
     Test function to validate the sequence classification model with multiple sequence lengths.
 
@@ -189,5 +150,6 @@ def test_seq_classification_multiple_seq_len(model_name, manual_cleanup):
     4. Outputs remain consistent across different sequence lengths
     """
     check_seq_classification_pytorch_vs_ai100(
-        model_name=model_name, seq_len=[32, 64, 128], n_layer=1, manual_cleanup=manual_cleanup
+        model_name=model_name,
+        seq_len=[32, 64, 128],
     )

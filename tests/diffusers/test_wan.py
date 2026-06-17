@@ -504,7 +504,7 @@ def wan_pipeline_non_unified_first_block_cache():
 
 
 @pytest.mark.diffusion_models
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.wan
 def test_wan_pipeline(wan_pipeline):
     _run_wan_pipeline_test_case(
@@ -516,7 +516,7 @@ def test_wan_pipeline(wan_pipeline):
 
 
 @pytest.mark.diffusion_models
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.wan
 def test_wan_pipeline_non_unified(wan_pipeline_non_unified):
     _run_wan_pipeline_test_case(
@@ -528,7 +528,7 @@ def test_wan_pipeline_non_unified(wan_pipeline_non_unified):
 
 
 @pytest.mark.diffusion_models
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.wan
 def test_wan_pipeline_non_unified_first_block_cache(wan_pipeline_non_unified_first_block_cache):
     _run_wan_pipeline_test_case(

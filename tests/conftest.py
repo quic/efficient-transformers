@@ -64,6 +64,17 @@ _QUICKCHECK_META = {
     ),
 }
 
+_NO_CI_STAGE_TAG_PATH_PREFIXES = (
+    "tests/unit_test/",
+    "tests/nightly_pipeline/",
+    "tests/finetune/",
+    "tests/vllm/",
+)
+
+
+def _is_ci_stage_tag_scope(nodeid: str) -> bool:
+    return not any(nodeid.startswith(prefix) for prefix in _NO_CI_STAGE_TAG_PATH_PREFIXES)
+
 
 def _is_nightly_pipeline_session(session):
     """Check if this is a nightly_pipeline test session"""
@@ -198,19 +209,35 @@ def pytest_sessionstart(session):
 
 def pytest_configure(config):
     """Register custom markers for test categorization."""
+    config.addinivalue_line("markers", "qaic: mark test as requiring QAIC hardware")
+    config.addinivalue_line("markers", "non_qaic: mark test as not requiring QAIC hardware")
     config.addinivalue_line("markers", "llm_model: mark test as a pure LLM model inference test")
     config.addinivalue_line(
         "markers", "feature: mark test as a feature-specific test (SPD, sampler, prefix caching, LoRA, etc.)"
     )
+    config.addinivalue_line("markers", "reranker: mark test as QAIC reranker stage coverage")
     _install_tiny_model_remap_if_active()
 
 
 def pytest_collection_modifyitems(config, items):
-    """Under the per-PR tiny lane, auto-skip parametrize cases whose model_id
-    appears in skip_no_tiny (no usable tiny on HF, no dummy-config path yet).
-    Matches against the parametrize id token in the nodeid."""
+    """Apply CI-stage markers and tiny-lane skips.
+
+    For tests outside unit_test/nightly_pipeline/finetune/vllm:
+    - add `non_qaic` when `qaic` is absent
+
+    Under tiny profile, auto-skip parametrize cases whose model_id appears in
+    skip_no_tiny (no usable tiny on HF, no dummy-config path yet). Matches
+    against the parametrize id token in the nodeid.
+    """
+    for item in items:
+        if not _is_ci_stage_tag_scope(item.nodeid):
+            continue
+        marker_names = {mark.name for mark in item.iter_markers()}
+        if "qaic" not in marker_names:
+            item.add_marker(pytest.mark.non_qaic)
+
     try:
-        from tests.utils.tiny_overrides import _load_skip_set, _tiny_lane_active
+        from tests.utils.profile_test_config import _load_skip_set, _tiny_lane_active
     except Exception:
         return
     if not _tiny_lane_active():
@@ -218,7 +245,7 @@ def pytest_collection_modifyitems(config, items):
     skip_set = _load_skip_set()
     if not skip_set:
         return
-    skip_marker = pytest.mark.skip(reason="No tiny variant available on HF; skipped under per-PR profile.")
+    skip_marker = pytest.mark.skip(reason="No tiny variant available on HF; skipped under tiny_model profile.")
     for item in items:
         nodeid = item.nodeid
         for skip_id in skip_set:
@@ -229,17 +256,16 @@ def pytest_collection_modifyitems(config, items):
 
 
 def _install_tiny_model_remap_if_active() -> None:
-    """When QEFF_TEST_PROFILE is dummy_layers_model or few_layers_model, wrap
+    """When QEFF_TEST_PROFILE is tiny_model, wrap
     `from_pretrained` on every QEFFAuto* class and on the AutoModelFor* classes
     that tests use directly, so the first positional/`pretrained_model_name_or_path`
-    arg is rewritten via tests/utils/tiny_overrides.resolve_model_id.
+    arg is rewritten via tests/utils/profile_test_config.resolve_model_id.
 
-    full_layers_model (nightly) and unset profile leave class methods untouched.
-    Idempotent: tagged with __qeff_tiny_remap__ so a re-call on the same class
-    is a no-op.
+    Any non-tiny profile and unset profile leave class methods untouched.
+    Idempotent: tagged with __qeff_tiny_remap__ so a re-call on the same class is a no-op.
     """
     try:
-        from tests.utils.tiny_overrides import resolve_model_id, _tiny_lane_active  # noqa
+        from tests.utils.profile_test_config import resolve_model_id, _tiny_lane_active  # noqa
     except Exception:
         return
     if not _tiny_lane_active():

@@ -5,8 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
-import os
 import time
 
 import numpy as np
@@ -18,11 +16,10 @@ from transformers.cache_utils import DynamicCache
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.quantizers import replace_transformers_quantizers, undo_transformers_quantizers
+from tests.utils.profile_test_config import load_test_config
 
 # Dummy model configs — loaded from the shared config file.
-_CONFIG_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "configs", "causal_model_configs.json")
-with open(_CONFIG_FILE) as _f:
-    _raw = json.load(_f)
+_raw = load_test_config("causal_model_configs")
 
 _DISAGG_DUMMY_CONFIGS = {
     entry["model_name"]: {
@@ -73,7 +70,7 @@ def _make_dummy_model(model_id: str) -> AutoModelForCausalLM:
     return model
 
 
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_id", model_id_blocking)
 @pytest.mark.parametrize("prompt", prompts)
@@ -151,7 +148,7 @@ def test_disagg_mode_prefill(model_id, prompt):
     assert (torch.from_numpy(qpc_out["logits"]) - qeff_out.logits).abs().max() < 5e-2
 
 
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_id", model_id_chunking)
 @pytest.mark.parametrize("prompt", prompts)
@@ -242,7 +239,7 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
     assert (torch.from_numpy(qpc_out["logits"]) - qeff_out.logits).abs().max() < 5e-2
 
 
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_id", model_id_blocking)
 @pytest.mark.parametrize("prompt", [prompt1])
@@ -418,7 +415,7 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
     print("Completion:", repr(tokenizer.decode(qpc_outputs)))
 
 
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_id", model_id_blocking)
 @pytest.mark.parametrize("prompt", [prompt1])

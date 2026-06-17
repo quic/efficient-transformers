@@ -6,8 +6,6 @@
 # ----------------------------------------------------------------------------
 
 
-import json
-import os
 from typing import Optional
 
 import onnx
@@ -16,12 +14,11 @@ import torch
 from transformers import AutoConfig
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
-from QEfficient.utils.test_utils import ModelConfig, get_custom_n_layers, load_hf_causal_lm_model
+from QEfficient.utils.test_utils import ModelConfig, load_hf_causal_lm_model
+from tests.utils.profile_test_config import load_test_config
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/causal_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    blockedKV_models = config_data["blockedKV_causal_lm_models"]
+config_data = load_test_config("causal_model_configs")
+blockedKV_models = config_data["blockedKV_causal_lm_models"]
 test_models_blockedKV = [model["model_name"] for model in blockedKV_models]
 model_config_dict = {model["model_name"]: model for model in blockedKV_models}
 torch.manual_seed(42)
@@ -60,47 +57,10 @@ def check_blockedKV_onnx_function_count_with_subfunction(
     manual_cleanup(qeff_kv_block.onnx_path)
 
 
-@pytest.mark.full_layers
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
-def test_full_blockedKV_onnx_function_count_with_subfunction(model_name, manual_cleanup):
-    # Keep model small for test runtime, and avoid CB path (not needed for function count).
+def test_blockedKV_onnx_function_count_with_subfunction(model_name):
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to issues in HF.")
 
-    check_blockedKV_onnx_function_count_with_subfunction(model_name, manual_cleanup=manual_cleanup)
-
-
-@pytest.mark.few_layers
-@pytest.mark.feature
-@pytest.mark.parametrize("model_name", test_models_blockedKV)
-def test_few_blockedKV_onnx_function_count_with_subfunction(model_name, manual_cleanup):
-    if model_name in ModelConfig.SKIPPED_MODELS:
-        pytest.skip("Test skipped for this model due to issues in HF.")
-
-    # Keep model small for test runtime, and avoid CB path (not needed for function count).
-    n_layer = get_custom_n_layers(model_name)
-
-    check_blockedKV_onnx_function_count_with_subfunction(model_name, n_layer=n_layer, manual_cleanup=manual_cleanup)
-
-
-@pytest.mark.dummy_layers
-@pytest.mark.feature
-@pytest.mark.parametrize("model_name", test_models_blockedKV)
-def test_dummy_blockedKV_onnx_function_count_with_subfunction(model_name, manual_cleanup):
-    if model_name in ModelConfig.SKIPPED_MODELS:
-        pytest.skip("Test skipped for this model due to issues in HF.")
-
-    # Keep model small for test runtime, and avoid CB path (not needed for function count).
-    hf_config = AutoConfig.from_pretrained(
-        model_name,
-        trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
-        **model_config_dict[model_name].get("additional_params", {}),
-    )
-    n_layer = get_custom_n_layers(model_name)
-    if model_name in ModelConfig.QUANTIZED_MODELS:
-        n_layer = get_custom_n_layers(model_name)
-        hf_config = None
-    check_blockedKV_onnx_function_count_with_subfunction(
-        model_name, n_layer=n_layer, config=hf_config, manual_cleanup=manual_cleanup
-    )
+    check_blockedKV_onnx_function_count_with_subfunction(model_name)

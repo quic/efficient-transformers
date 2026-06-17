@@ -88,7 +88,11 @@ addopts = "-W ignore -s -v"
 junit_logging = "all"
 doctest_optionflags = "NUMBER NORMALIZE_WHITESPACE ELLIPSIS"
 markers = [
-    "on_qaic: marks tests as requiring QAIC hardware",
+    "qaic: marks tests as requiring QAIC hardware",
+    "non_qaic: marks tests as not requiring QAIC hardware",
+    "feature: marks QAIC feature stage tests",
+    "llm_model: marks QAIC e2e non-VLM model stage tests",
+    "reranker: marks QAIC reranker stage tests",
     "diffusion_models: marks tests for diffusion models",
     "wan: marks tests for WAN model",
     "flux: marks tests for Flux model",

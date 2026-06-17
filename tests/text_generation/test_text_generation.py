@@ -46,7 +46,7 @@ def load_causal_lm_model(model_config):
 
 
 # Use @pytest.mark.parametrize to apply the configurations
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name, n_layer, full_batch_size, max_gen_len", configs)
 def test_generate_text_stream(

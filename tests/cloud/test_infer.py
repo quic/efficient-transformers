@@ -11,7 +11,7 @@ import pytest
 
 import QEfficient
 from QEfficient.cloud.infer import main as infer
-from tests.utils.tiny_overrides import is_skipped_model
+from tests.utils.profile_test_config import is_skipped_model
 
 
 def check_infer(
@@ -56,7 +56,7 @@ def check_infer(
         load_hf_tokenizer_spy.assert_called_once()
 
 
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.cli
 def test_infer(mocker):
     """
@@ -74,14 +74,14 @@ def test_infer(mocker):
     check_infer(mocker, model_name="lu-vae/llama-68m-fft")
 
 
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.cli
 def test_infer_fbs(mocker):
     # testing infer with full_batch_size
     check_infer(mocker, model_name="lu-vae/llama-68m-fft", full_batch_size=3)
 
 
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.cli
 @pytest.mark.qnn
 def test_infer_qnn(mocker):
@@ -89,7 +89,7 @@ def test_infer_qnn(mocker):
     check_infer(mocker, model_name="lu-vae/llama-68m-fft", enable_qnn=True)
 
 
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.cli
 @pytest.mark.qnn
 def test_infer_qnn_fbs(mocker):
@@ -97,7 +97,7 @@ def test_infer_qnn_fbs(mocker):
     check_infer(mocker, model_name="lu-vae/llama-68m-fft", full_batch_size=3, enable_qnn=True)
 
 
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.cli
 def test_infer_vlm(mocker):
     model_name = "llava-hf/llava-1.5-7b-hf"

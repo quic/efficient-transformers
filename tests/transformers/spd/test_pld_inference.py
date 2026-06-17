@@ -5,8 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
-import os
 from dataclasses import dataclass
 from time import perf_counter
 from typing import List, Optional, Union
@@ -19,11 +17,10 @@ from transformers import AutoConfig, AutoTokenizer
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.test_utils import load_qeff_causal_lm_model
+from tests.utils.profile_test_config import load_test_config
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/feature_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    spd_models = config_data["spd_config"]
+config_data = load_test_config("feature_configs")
+spd_models = config_data["spd_config"]
 
 test_models_id = [model["id"] for model in spd_models[:1]]
 model_config_dict = {model["id"]: model for model in spd_models}
@@ -440,43 +437,15 @@ def check_pld_spec_decode_inference(
     manual_cleanup(target_model.onnx_path)
 
 
-@pytest.mark.full_layers
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_id", test_models_id)
-def test_full_pld_inference(model_id, manual_cleanup):
-    """
-    Test the full layers model PLD inference pipeline.
-    """
-    torch.manual_seed(42)
-    check_pld_spec_decode_inference(model_id, manual_cleanup=manual_cleanup)
-
-
-@pytest.mark.few_layers
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.parametrize("model_id", test_models_id)
-def test_few_pld_inference(model_id, manual_cleanup):
-    """
-    Test few layers model for PLD inference pipeline.
-    """
-    torch.manual_seed(42)
-    check_pld_spec_decode_inference(model_id, num_hidden_layers=2, manual_cleanup=manual_cleanup)
-
-
-@pytest.mark.dummy_layers
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.parametrize("model_id", test_models_id)
-def test_dummy_pld_inference(model_id, manual_cleanup):
+def test_pld_inference(model_id):
     """
     Test dummy layers model for PLD inference pipeline.
     """
     torch.manual_seed(42)
-    hf_config = AutoConfig.from_pretrained(
-        model_config_dict[model_id]["target_model_name"], **model_config_dict[model_id]["additional_params"]
-    )
-    check_pld_spec_decode_inference(model_id, config=hf_config, manual_cleanup=manual_cleanup)
+    check_pld_spec_decode_inference(model_id)
 
 
 @pytest.mark.parametrize("model_id", test_models_id)

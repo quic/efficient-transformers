@@ -6,8 +6,6 @@
 # ----------------------------------------------------------------------------
 
 import copy
-import json
-import os
 from io import BytesIO
 from typing import Optional
 
@@ -31,11 +29,10 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
+from tests.utils.profile_test_config import load_test_config
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    multimodal_models = config_data["image_text_models"]
+config_data = load_test_config("image_text_model_configs")
+multimodal_models = config_data["image_text_models"]
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
 
@@ -266,72 +263,19 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     manual_cleanup(qeff_model.onnx_path)  # Clean up the model files after the tests are done.
 
 
-@pytest.mark.skip("Token Mismatch for full models")
-@pytest.mark.full_layers
-@pytest.mark.on_qaic
+@pytest.mark.qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])  # TODO: Add support for kv_offload=False
-def test_full_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name, kv_offload, manual_cleanup):
+def test_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name, kv_offload):
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
     if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
         pytest.skip("These models require kv_offload=True for testing.")
 
     torch.manual_seed(42)
+
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
-        model_name=model_name,
+        model_name,
         kv_offload=kv_offload,
-        manual_cleanup=manual_cleanup,
-        num_devices=4,
     )
-
-
-@pytest.mark.few_layers
-@pytest.mark.on_qaic
-@pytest.mark.multimodal
-@pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True])  # TODO: Add support for kv_offload=False
-def test_few_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name, kv_offload, manual_cleanup):
-    if model_name in ModelConfig.SKIPPED_MODELS:
-        pytest.skip("Test skipped for this model due to some issues.")
-    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
-        pytest.skip("These models require kv_offload=True for testing.")
-
-    torch.manual_seed(42)
-    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
-        model_name=model_name,
-        num_hidden_layers=model_config_dict[model_name]["num_layers"],
-        kv_offload=kv_offload,
-        manual_cleanup=manual_cleanup,
-    )
-
-
-@pytest.mark.dummy_layers
-@pytest.mark.on_qaic
-@pytest.mark.multimodal
-@pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True])  # TODO: Add support for kv_offload=False
-def test_dummy_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_name, kv_offload, manual_cleanup):
-    if model_name in ModelConfig.SKIPPED_MODELS:
-        pytest.skip("Test skipped for this model due to some issues.")
-    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
-        pytest.skip("These models require kv_offload=True for testing.")
-
-    torch.manual_seed(42)
-    hf_config = None
-    if model_name in ModelConfig.STANDARD_VLM_MODELS:
-        model_type = model_config_dict[model_name].get("model_type", None)
-        custom_config = model_config_dict[model_name].get("additional_params", {})
-        hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
-        hf_config.name_or_path = model_name
-        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
-            model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
-        )
-    else:
-        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
-            model_name,
-            num_hidden_layers=model_config_dict[model_name]["num_layers"],
-            kv_offload=kv_offload,
-            manual_cleanup=manual_cleanup,
-        )

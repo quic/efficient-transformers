@@ -5,8 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import json
-import os
 from typing import Optional
 
 import onnx
@@ -20,15 +18,13 @@ from transformers import (
 )
 
 from QEfficient.utils.test_utils import load_qeff_vlm_model
+from tests.utils.profile_test_config import load_test_config
 
 NEW_GENERATION_TOKENS = 10
 
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/image_text_model_configs.json")
-
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    multimodal_models = config_data["image_text_subfunction_models"]
+config_data = load_test_config("image_text_model_configs")
+multimodal_models = config_data["image_text_subfunction_models"]
 
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
@@ -111,38 +107,10 @@ def check_image_text_to_text_subfunction_core(
     manual_cleanup(qeff_model.onnx_path)
 
 
-@pytest.mark.full_layers
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])
-def test_full_image_text_to_text_subfunction(model_name, kv_offload, manual_cleanup):
+def test_image_text_to_text_subfunction(model_name, kv_offload):
     torch.manual_seed(42)
-    check_image_text_to_text_subfunction_core(model_name, kv_offload=kv_offload, manual_cleanup=manual_cleanup)
 
-
-@pytest.mark.few_layers
-@pytest.mark.feature
-@pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True])
-def test_few_image_text_to_text_subfunction(model_name, kv_offload, manual_cleanup):
-    torch.manual_seed(42)
-    check_image_text_to_text_subfunction_core(
-        model_name,
-        kv_offload=kv_offload,
-        num_hidden_layers=model_config_dict[model_name].get("n_layers", 2),
-        manual_cleanup=manual_cleanup,
-    )
-
-
-@pytest.mark.dummy_layers
-@pytest.mark.feature
-@pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True])
-def test_dummy_image_text_to_text_subfunction(model_name, kv_offload, manual_cleanup):
-    torch.manual_seed(42)
-    hf_config = AutoConfig.from_pretrained(
-        model_name, trust_remote_code=True, **model_config_dict[model_name].get("additional_params", {})
-    )
-    check_image_text_to_text_subfunction_core(
-        model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
-    )
+    check_image_text_to_text_subfunction_core(model_name, kv_offload=kv_offload)
