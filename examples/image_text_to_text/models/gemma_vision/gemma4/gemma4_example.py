@@ -24,6 +24,7 @@ IMAGE_PROMPT = "Can you Describe this image in detail?"
 IMAGE_URL = "https://wallup.net/wp-content/uploads/2017/03/28/351036-San_Francisco-USA-bridge-sunset-Golden_Gate_Bridge-lights.jpg"
 SKIP_VISION = False
 BS = 1
+FULL_BATCH_SIZE = 2
 PREFILL_SEQ_LEN = 128
 CTX_LEN = 2048
 GENERATION_LEN = 1920
@@ -42,7 +43,7 @@ NODE_PRECISION_INFO = True
 
 compiler_kwargs = {
     "NUM_CORES": 16,
-    "NUM_DEVICES": 4,
+    "NUM_DEVICES": 2,
     "MXFP6_MATMUL": True,
     "MXINT8_KV_CACHE": True,
     "AIC_ENABLE_DEPTH_FIRST": True,
@@ -77,11 +78,11 @@ def main():
     config = AutoConfig.from_pretrained(MODEL_ID)
 
     # For Testing Purpose Only
-    # config = _apply_reduced_layer_config(
-    #     config,
-    #     num_lang_layers=NUM_LANG_HIDDEN_LAYER,
-    #     num_vision_layers=NUM_VISION_HIDDEN_LAYER,
-    # )
+    config = _apply_reduced_layer_config(
+        config,
+        num_lang_layers=NUM_LANG_HIDDEN_LAYER,
+        num_vision_layers=NUM_VISION_HIDDEN_LAYER,
+    )
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         MODEL_ID,
@@ -90,6 +91,7 @@ def main():
         dtype="float32",
         kv_offload=True,
         ignore_mismatched_sizes=True,
+        continuous_batching=True
     )
     remove_fp16clip_transform_if_disabled(qeff_model, True)
 
@@ -119,6 +121,8 @@ def main():
             skip_vision=SKIP_VISION,
             **compiler_kwargs,
         )
+        if getattr(qeff_model, "continuous_batching", False):
+            compile_kwargs["full_batch_size"] = FULL_BATCH_SIZE
         qeff_model.compile(**compile_kwargs)
 
         output = qeff_model.generate(inputs=text_inputs, generation_len=GENERATION_LEN)
@@ -156,7 +160,8 @@ def main():
         skip_model_io=True,
         **compiler_kwargs,
     )
-
+    if getattr(qeff_model, "continuous_batching", False):
+        compile_kwargs["full_batch_size"] = FULL_BATCH_SIZE
     qeff_model.compile(**compile_kwargs)
 
     output = qeff_model.generate(
