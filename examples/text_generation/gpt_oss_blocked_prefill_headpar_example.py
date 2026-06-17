@@ -107,9 +107,7 @@ def prepare_chunked_inputs(tokenizer, prompt, prefill_seq_len, prompt_len=None):
     inputs = tokenizer(prompt, return_tensors="np", padding=True)
     actual_len = int(inputs["attention_mask"].sum(1).max())
     if prompt_len is not None and prompt_len < actual_len:
-        raise ValueError(
-            f"--prompt-len {prompt_len} is shorter than the tokenized prompt ({actual_len} tokens)"
-        )
+        raise ValueError(f"--prompt-len {prompt_len} is shorter than the tokenized prompt ({actual_len} tokens)")
     effective_len = prompt_len if prompt_len is not None else actual_len
     num_chunks = -(effective_len // -prefill_seq_len)  # ceil divide
     padded_len = num_chunks * prefill_seq_len
@@ -162,7 +160,7 @@ def build_decode_inputs(qpc_out, inputs, num_hidden_layers, prefill_seq_len):
     """
     padded_len = inputs["input_ids"].shape[1]
     # position_ids for the last chunk: [..., last_valid_pos, -1, -1, ...]
-    last_chunk_pos = inputs["position_ids"][:, padded_len - prefill_seq_len:]
+    last_chunk_pos = inputs["position_ids"][:, padded_len - prefill_seq_len :]
     # argmax returns index of highest position value = last valid token in chunk
     # All batch items share the same effective_len (replicated prompt), so [0] suffices
     last_valid_idx = int(np.argmax(last_chunk_pos[0]))
@@ -211,7 +209,7 @@ def main():
         "num_kv_blocks": args.num_kv_blocks,
         "kv_blocking_headpar_split": headpar_split,
         "prefill_block_chunks": 2,
-        "prefill_blocking_mode": "q", # supported modes are q and kv, kv is with head parallel softmax
+        "prefill_blocking_mode": "q",  # supported modes are q and kv, kv is with head parallel softmax
     }
 
     compile_kwargs = dict(
@@ -221,7 +219,7 @@ def main():
         mxint8_kv_cache=True,
         use_onnx_subfunctions=args.subf,
         retain_full_kv=True,
-        batch_size=args.full_batch_size, 
+        batch_size=args.full_batch_size,
     )
 
     # ── Compile decode model ──────────────────────────────────────────────────
@@ -296,18 +294,13 @@ def main():
     print(f"\n--- Blocked head-par decode ({generation_len} tokens) ---")
     tokens, t_decode = run_decode_loop(decode_session, decode_inputs, generation_len, num_hidden_layers)
     # tokens: [B, gen_len]; prepend first token from prefill to get full generated sequence
-    blocked_texts = [
-        tokenizer.decode(list(first_token_ids[b]) + list(tokens[b]))
-        for b in range(args.full_batch_size)
-    ]
+    blocked_texts = [tokenizer.decode(list(first_token_ids[b]) + list(tokens[b])) for b in range(args.full_batch_size)]
 
     # ── Optionally run baseline ───────────────────────────────────────────────
     t_baseline_prefill = t_baseline_decode = None
     baseline_texts = None
     if args.compare_non_blocked:
-        inputs_bl, _, _ = prepare_chunked_inputs(
-            tokenizer, prompts, args.prefill_seq_len, prompt_len=args.prompt_len
-        )
+        inputs_bl, _, _ = prepare_chunked_inputs(tokenizer, prompts, args.prefill_seq_len, prompt_len=args.prompt_len)
         baseline_decode_session = QAICInferenceSession(baseline_decode_qpc)
         baseline_prefill_session = QAICInferenceSession(baseline_prefill_qpc)
 
@@ -325,8 +318,7 @@ def main():
             baseline_decode_session, decode_inputs_bl, generation_len, num_hidden_layers
         )
         baseline_texts = [
-            tokenizer.decode(list(first_token_ids_bl[b]) + list(tokens_bl[b]))
-            for b in range(args.full_batch_size)
+            tokenizer.decode(list(first_token_ids_bl[b]) + list(tokens_bl[b])) for b in range(args.full_batch_size)
         ]
 
     # ── Summary ───────────────────────────────────────────────────────────────
@@ -336,7 +328,9 @@ def main():
     for b, text in enumerate(blocked_texts):
         print(f"Output[{b}]: {text}")
     if args.compare_non_blocked:
-        print(f"\n[Baseline]          prefill {t_baseline_prefill:.3f}s | decode {generation_len / t_baseline_decode:.1f} tok/s")
+        print(
+            f"\n[Baseline]          prefill {t_baseline_prefill:.3f}s | decode {generation_len / t_baseline_decode:.1f} tok/s"
+        )
         for b, text in enumerate(baseline_texts):
             print(f"Output[{b}]: {text}")
         print(f"\nPrefill speedup: {t_baseline_prefill / t_prefill:.2f}x")

@@ -63,6 +63,7 @@ class AttentionBlockingConfig:
     prefill_block_chunks: Optional[int] = None
     prefill_blocking_mode: Optional[str] = None  # "q" (default) or "kv"
 
+
 def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
     return past_key_value is not None and hasattr(past_key_value, "read_only_blockedKV")
 

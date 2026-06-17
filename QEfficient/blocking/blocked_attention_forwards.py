@@ -318,7 +318,6 @@ def blocked_kv_attention_forward_headpar_offline(
             split_causal_masks.append(mask_s)
         causal_mask = torch.stack(split_causal_masks, dim=2)  # [B, 1, split, G*Q, split_block_len]
 
-        # import ipdb; ipdb.set_trace()
         # causal_mask = key_abs[None, :, None, :] > query_pos[:, None, :, None]
         attn_weights_block = attn_weights_block.masked_fill(causal_mask, -3.0e4)
 
@@ -482,7 +481,7 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
 
             attn_c = attn_c.masked_fill(causal_mask, -3.0e4)
 
-            m_c = attn_c.max(dim=-1).values               # [B, Hkv, split, chunk, QL]
+            m_c = attn_c.max(dim=-1).values  # [B, Hkv, split, chunk, QL]
             exp_c = torch.exp(attn_c - m_c.unsqueeze(-1))
 
             if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
@@ -510,16 +509,16 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
         out_buf.append(out_blk)
 
     # ── Stage 1: merge across KV blocks ──────────────────────────────────────
-    max_stk = torch.stack(max_buf)   # [nkvb, B, Hkv, split, n_rep, QL]
+    max_stk = torch.stack(max_buf)  # [nkvb, B, Hkv, split, n_rep, QL]
     sum_stk = torch.stack(sum_buf)
-    out_stk = torch.stack(out_buf)   # [nkvb, B, Hkv, split, n_rep, QL, kv_lora_rank]
+    out_stk = torch.stack(out_buf)  # [nkvb, B, Hkv, split, n_rep, QL, kv_lora_rank]
     m1 = max_stk.max(dim=0).values
     w1 = torch.exp(max_stk - m1.unsqueeze(0))
     s1 = torch.einsum("nbhsrq->bhsrq", w1 * sum_stk)
     o1 = torch.einsum("nbhsrqv->bhsrqv", w1.unsqueeze(-1) * out_stk)
 
     # ── Stage 2: merge across splits ─────────────────────────────────────────
-    m2 = m1.max(dim=2).values                              # [B, Hkv, n_rep, QL]
+    m2 = m1.max(dim=2).values  # [B, Hkv, n_rep, QL]
     w2 = torch.exp(m1 - m2.unsqueeze(2))
     s2 = torch.einsum("bhsrq->bhrq", w2 * s1)
     o2 = torch.einsum("bhsrqv->bhrqv", w2.unsqueeze(-1) * o1)
@@ -580,11 +579,7 @@ def blocked_q_attention_forward_prefill(
 
     for q_block_idx in range(num_q_blocks):
         q_start = q_block_starts[q_block_idx]
-        q_len_block = (
-            q_len - q_start
-            if q_block_idx == num_q_blocks - 1
-            else q_block_starts[q_block_idx + 1] - q_start
-        )
+        q_len_block = q_len - q_start if q_block_idx == num_q_blocks - 1 else q_block_starts[q_block_idx + 1] - q_start
 
         q_block = query[:, :, q_start : q_start + q_len_block, :]
         position_ids_block = position_ids[:, q_start : q_start + q_len_block]
