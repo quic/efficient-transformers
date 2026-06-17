@@ -18,8 +18,8 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-# model_id = "tiny-random/qwen3-vl-moe"
+# model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+model_id = "tiny-random/qwen3-vl-moe"
 config = AutoConfig.from_pretrained(model_id)
 config.dtype = "float16"
 

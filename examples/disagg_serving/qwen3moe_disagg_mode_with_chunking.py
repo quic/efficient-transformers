@@ -37,6 +37,7 @@ decode_qpc_path = qeff_model.compile(
     mos=1,
     aic_enable_depth_first=True,
     num_speculative_tokens=None,
+    use_onnx_subfunctions=True,
     offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation in the next step
     retain_full_kv=True,
 )
@@ -59,7 +60,6 @@ prefill_qpc_path = qeff_model.compile(
     aic_enable_depth_first=False,
     num_speculative_tokens=None,
     prefill_only=True,
-    enable_chunking=True,
     use_onnx_subfunctions=True,
 )
 
