@@ -298,12 +298,22 @@ class QEffMiniMaxM3VLTextModel(MiniMaxM3VLTextModel):
             position_ids = cache_position.unsqueeze(0)
 
         # Invariant V11: explicit causal mask (NOT SDPA-shaped attention_mask).
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
+        # target_length is the full kv-extent the mask must cover. Prefer the caller's
+        # SDPA mask shape if provided; otherwise fall back to "past + current" (eager
+        # forward) so a no-cache parity run sees a non-zero-width mask. Bare
+        # past_seen_tokens (0 on the first forward) breaks arange(0,0).
+        if isinstance(attention_mask, torch.Tensor):
+            target_length = attention_mask.shape[-1]
+        else:
+            target_length = past_seen_tokens + inputs_embeds.shape[1]
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length)
 
         # Partial-RoPE: only the first rotary_dim head dims are rotated; the model-level
-        # cos/sin tables are already sized to rotary_dim.
-        cos = self.cos_cached[position_ids].unsqueeze(1)
-        sin = self.sin_cached[position_ids].unsqueeze(1)
+        # cos/sin tables are already sized to rotary_dim. Shape stays [B, S, head_dim] so
+        # the upstream apply_rotary_pos_emb (which unsqueezes once at unsqueeze_dim=1) can
+        # broadcast against q/k of shape [B, heads, S, head_dim].
+        cos = self.cos_cached[position_ids]
+        sin = self.sin_cached[position_ids]
 
         hidden_states = inputs_embeds
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
