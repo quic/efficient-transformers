@@ -93,7 +93,7 @@ def main():
     )
     remove_fp16clip_transform_if_disabled(qeff_model, True)
 
-    if not SKIP_VISION:
+    if SKIP_VISION:
         messages = build_messages(SYSTEM_PROMPT, TEXT_PROMPT, use_image=False)
         text_inputs = processor.apply_chat_template(
             messages,
