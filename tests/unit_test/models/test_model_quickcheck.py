@@ -2079,22 +2079,60 @@ def test_layerwise_safe_export_pass_patch_toggles_only_when_enabled():
     from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
     original_cse = _C._jit_pass_cse
+    original_constant_prop = _C._jit_pass_constant_propagation
     original_constant_fold = _C._jit_pass_onnx_constant_fold
     original_canonicalize = _C._jit_pass_canonicalize
 
-    with layerwise_safe_onnx_export_patches(enabled=True):
-        assert _C._jit_pass_cse is not original_cse
-        assert _C._jit_pass_onnx_constant_fold is not original_constant_fold
-        assert _C._jit_pass_canonicalize is not original_canonicalize
-        assert _C._jit_pass_cse(None) is False
-        params = {"weight": object()}
-        assert _C._jit_pass_onnx_constant_fold(None, params, 17) is params
-        sentinel_graph = object()
-        assert _C._jit_pass_canonicalize(sentinel_graph) is sentinel_graph
+    with _layerwise._layerwise_export_env():
+        with layerwise_safe_onnx_export_patches(enabled=True):
+            assert _C._jit_pass_cse is original_cse
+            assert _C._jit_pass_constant_propagation is original_constant_prop
+            assert _C._jit_pass_onnx_constant_fold is original_constant_fold
+            assert _C._jit_pass_canonicalize is not original_canonicalize
+            sentinel_graph = object()
+            assert _C._jit_pass_canonicalize(sentinel_graph) is sentinel_graph
+
+        assert _C._jit_pass_cse is original_cse
+        assert _C._jit_pass_constant_propagation is original_constant_prop
+        assert _C._jit_pass_onnx_constant_fold is original_constant_fold
+        assert _C._jit_pass_canonicalize is original_canonicalize
 
     assert _C._jit_pass_cse is original_cse
+    assert _C._jit_pass_constant_propagation is original_constant_prop
     assert _C._jit_pass_onnx_constant_fold is original_constant_fold
     assert _C._jit_pass_canonicalize is original_canonicalize
+
+
+@pytest.mark.llm_model
+def test_layerwise_post_merge_dedup_removes_duplicate_onnx_nodes():
+    from onnx import TensorProto, helper
+
+    from QEfficient.utils.layerwise_pipeline import _deduplicate_redundant_onnx_nodes
+
+    one_value = helper.make_tensor(name="one", data_type=TensorProto.FLOAT, dims=[1], vals=[1.0])
+    const_a = helper.make_node("Constant", inputs=[], outputs=["c0"], value=one_value)
+    # Same value but different TensorProto.name; dedup should still match it.
+    one_value_2 = helper.make_tensor(name="one_2", data_type=TensorProto.FLOAT, dims=[1], vals=[1.0])
+    const_b = helper.make_node("Constant", inputs=[], outputs=["c1"], value=one_value_2)
+    add_a = helper.make_node("Add", inputs=["c0", "c0"], outputs=["sum0"])
+    add_b = helper.make_node("Add", inputs=["c1", "c1"], outputs=["sum1"])
+
+    graph = helper.make_graph(
+        [const_a, const_b, add_a, add_b],
+        "dedup_test",
+        [],
+        [helper.make_tensor_value_info("sum0", TensorProto.FLOAT, [1])],
+    )
+    model = helper.make_model(graph)
+
+    removed = _deduplicate_redundant_onnx_nodes(model)
+
+    # The pass performs CSE (not full dead-code elimination), so Add is
+    # deduplicated on non-graph-output nodes while preserving graph outputs.
+    assert removed == 1
+    assert len(model.graph.node) == 3
+    assert [node.op_type for node in model.graph.node] == ["Constant", "Add", "Add"]
+    assert list(model.graph.node[2].input) == ["c0", "c0"]
 
 
 @pytest.mark.llm_model
