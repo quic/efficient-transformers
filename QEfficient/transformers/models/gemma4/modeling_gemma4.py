@@ -7,6 +7,7 @@
 
 import os
 from collections import defaultdict
+from functools import partial
 from pathlib import Path
 from typing import List, Optional, Type, Union
 
@@ -33,6 +34,13 @@ from QEfficient.base.onnx_transforms import FP16ClipTransform
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.moe import (
+    MoEProfile,
+    MoEWeights,
+    build_canonical_expert_weights,
+    moe_simple_loop,
+    silu_glu_mlp,
+)
 from QEfficient.utils import constants
 
 _FP16_CLAMP_MIN = -65504.0
@@ -187,6 +195,21 @@ class QEffGemma4TextExperts(Gemma4TextExperts):
 
 
 class QEffPrefillChunckedGemma4TextExperts(Gemma4TextExperts):
+    def _qeff_moe_weights(self) -> MoEWeights:
+        # gemma4 fuses gate_up as [E, 2I, H] (concatenated halves). Canonicalize to
+        # gate/up [E,H,I] and down [E,I,H] for the shared simple-loop flavour.
+        if getattr(self, "moe_weights", None) is None:
+            self.moe_weights = build_canonical_expert_weights(
+                gate_up=self.gate_up_proj,
+                down=self.down_proj,
+                fused=True,
+                fused_split_dim=1,
+                transpose_gate_up=True,
+                transpose_down=True,
+                clone=False,
+            )
+        return self.moe_weights
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -205,7 +228,7 @@ class QEffPrefillChunckedGemma4TextExperts(Gemma4TextExperts):
 
         T = x.shape[0]
 
-        # Build dense routing weights [T, E] from top-k indices/weights
+        # Build dense routing weights [T, E] from top-k indices/weights.
         expert_weights = torch.zeros(
             T,
             self.num_experts,
@@ -214,17 +237,9 @@ class QEffPrefillChunckedGemma4TextExperts(Gemma4TextExperts):
         )
         expert_weights.scatter_add_(1, top_k_index, top_k_weights)
         expert_weights = expert_weights.to(x.dtype)
-        out = x.new_zeros((T, H))
-        for e in range(self.num_experts):
-            w = expert_weights[:, e].unsqueeze(-1)  # [T, 1]
 
-            # gate_up_proj[e]: [2I, H], down_proj[e]: [H, I] (matching your original matmuls)
-            gate_up = x @ self.gate_up_proj[e].transpose(0, 1)  # [T, 2I]
-            gate, up = gate_up.chunk(2, dim=-1)  # [T, I], [T, I]
-            activated = self.act_fn(gate) * up  # [T, I]
-            down = activated @ self.down_proj[e].transpose(0, 1)  # [T, H]
-
-            out += down * w
+        profile = MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.act_fn))
+        out = moe_simple_loop(x, expert_weights, self._qeff_moe_weights(), profile)
 
         if reshape_back:
             return out.view(B, S, H)

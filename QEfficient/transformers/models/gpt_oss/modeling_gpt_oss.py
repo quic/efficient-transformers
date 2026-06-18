@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 import math
 import os
+from functools import partial
 from typing import Callable, Optional, Type, Union
 
 import torch
@@ -36,235 +37,89 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
     past_key_value_update,
 )
-from QEfficient.customop.ctx_scatter_gather import (
-    CtxGatherFunc3DGeneralized,
-    CtxScatterFunc3DGeneralized,
-    CtxScatterFunc3DInt,
-)
 from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    MoEProfile,
+    MoEWeights,
+    QEffMoEBlockMixin,
+    build_canonical_expert_weights,
+    gptoss_clamped_glu_mlp,
+)
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
 
 
 class QEffGptOssExperts(GptOssExperts):
     def __qeff_init__(self):
-        # transformers>=5 uses fused gate_up projections. Keep backward-compatible
-        # aliases expected by existing QEff paths.
+        # transformers>=5 uses fused gate_up projections with interleaved gate/up
+        # halves (gate_up[..., ::2] / [..., 1::2]) and per-expert biases. Canonicalize
+        # into [E,H,I] gate/up and [E,I,H] down for the shared MoE paths.
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-1] // 2)
-        self.gate_proj = nn.Parameter(self.gate_up_proj[:, :, : self.expert_dim].detach().clone())
-        self.up_proj = nn.Parameter(self.gate_up_proj[:, :, self.expert_dim :].detach().clone())
-        self.gate_proj_bias = nn.Parameter(self.gate_up_proj_bias[:, : self.expert_dim].detach().clone())
-        self.up_proj_bias = nn.Parameter(self.gate_up_proj_bias[:, self.expert_dim :].detach().clone())
-
-
-def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
-    """Build packed->original token index"""
-    batch_size, seq_len = T2Ei.shape
-    int32_max = torch.iinfo(torch.int32).max
-    int32_max_scalar = torch.tensor(int32_max, dtype=torch.int32, device=T2Ei.device)
-    token_idx = torch.arange(seq_len, dtype=torch.int32, device=T2Ei.device).unsqueeze(0).expand(batch_size, -1)
-    valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
-    valid_dest = valid_prefix - 1
-    scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
-    matched_idx = torch.full_like(token_idx, int32_max)
-    matched_idx = CtxScatterFunc3DInt.apply(
-        matched_idx.unsqueeze(-1),
-        scatter_pos,
-        token_idx.unsqueeze(-1),
-    ).squeeze(-1)
-    return matched_idx
-
-
-def _cumsum_scatter_gather_update_gptoss_expert_blocked(
-    x: torch.Tensor,
-    T2Ei: torch.Tensor,
-    W_g: torch.Tensor,
-    W_u: torch.Tensor,
-    W_d: torch.Tensor,
-    b_g: torch.Tensor,
-    b_u: torch.Tensor,
-    b_d: torch.Tensor,
-    routing_weight: torch.Tensor,
-    expert_out: torch.Tensor,
-    limit: float,
-    alpha: float,
-    packed_chunk_size: int,
-    num_packed_chunks: int = 1,
-) -> torch.Tensor:
-    """Cumsum-scatter-gather-update expert helper for GPT-OSS NSP-blocked dispatch.
-
-    Same algorithm as the Qwen3-MOE version but with GPT-OSS biases and GLU
-    activation (clamped gate/up, ``(up + 1) * gate * sigmoid(gate * alpha)``).
-    ``num_packed_chunks`` controls the number of ONNX-traced chunk iterations,
-    allowing long prefill specializations to export with a small sequence length.
-
-    Shapes:
-        x               : [T, H]
-        T2Ei            : [num_nsp, T]            (bool)
-        W_g, W_u        : [num_nsp, H, I]
-        W_d             : [num_nsp, I, H]
-        b_g, b_u        : [num_nsp, I]
-        b_d             : [num_nsp, H]
-        routing_weight  : [num_nsp, T, 1]
-        expert_out      : [num_nsp, T, H]         (accumulator, in-out)
-        num_packed_chunks: static packed chunk iterations to trace
-    """
-    batch_size, seq_len = T2Ei.shape
-    num_packed_chunks = max(1, int(num_packed_chunks))
-
-    matched_idx = _build_matched_idx_from_cumsum(T2Ei)
-    valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
-    x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
-    chunk_starts = [-(-chunk_idx * seq_len) // num_packed_chunks for chunk_idx in range(num_packed_chunks)]
-    for chunk_idx, packed_start in enumerate(chunk_starts):
-        packed_stop = seq_len if chunk_idx == num_packed_chunks - 1 else chunk_starts[chunk_idx + 1]
-        chunk_rows = packed_stop - packed_start
-        row_range = torch.arange(chunk_rows, dtype=torch.int32, device=x.device).unsqueeze(0)
-        chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
-
-        x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
-
-        gate = (x_chunk @ W_g) + b_g.unsqueeze(1)
-        up = (x_chunk @ W_u) + b_u.unsqueeze(1)
-        gate = gate.clamp(min=torch.finfo(torch.float16).min, max=limit)
-        up = up.clamp(min=-limit, max=limit)
-        glu = gate * torch.sigmoid(gate * alpha)
-        intermediate = (up + 1) * glu
-        down_chunk = (intermediate @ W_d) + b_d.unsqueeze(1)
-
-        rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
-        down_chunk = down_chunk * rw_chunk
-
-        expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
-        updated_chunk = expert_out_chunk + down_chunk
-
-        chunk_valid_rows = torch.clamp(
-            valid_rows - packed_start,
-            min=torch.zeros_like(valid_rows),
-            max=torch.full_like(valid_rows, chunk_rows),
+        self.moe_weights = build_canonical_expert_weights(
+            gate_up=self.gate_up_proj,
+            down=self.down_proj,
+            gate_up_bias=self.gate_up_proj_bias,
+            down_bias=self.down_proj_bias,
+            fused=True,
+            fused_split_dim=2,
+            interleaved=True,
+            transpose_gate_up=False,
+            transpose_down=False,
         )
-        updated_chunk = torch.where(
-            (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
+        # Backward-compatible parameter aliases expected by existing QEff paths.
+        self.gate_proj = nn.Parameter(self.moe_weights.gate)
+        self.up_proj = nn.Parameter(self.moe_weights.up)
+        self.gate_proj_bias = nn.Parameter(self.moe_weights.gate_bias)
+        self.up_proj_bias = nn.Parameter(self.moe_weights.up_bias)
+
+
+class QEffGptOssMoEMixin(QEffMoEBlockMixin):
+    """Shared MoE orchestration for GPT-OSS prefill blocks (clamped-GLU + biases)."""
+
+    _moe_return_router_logits = True
+
+    def build_moe_weights(self) -> MoEWeights:
+        if getattr(self.experts, "moe_weights", None) is None:
+            self.experts.__qeff_init__()
+        self.moe_weights = self.experts.moe_weights
+        return self.moe_weights
+
+    def get_moe_weights(self) -> MoEWeights:
+        if getattr(self, "moe_weights", None) is None:
+            self.build_moe_weights()
+        return self.moe_weights
+
+    @property
+    def moe_profile(self) -> MoEProfile:
+        return MoEProfile(
+            expert_mlp=partial(gptoss_clamped_glu_mlp, limit=self.experts.limit, alpha=self.experts.alpha),
+            has_bias=True,
         )
-        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
 
-    return expert_out
+    def route(self, x: torch.Tensor):
+        router_logits = F.linear(x, self.router.weight, self.router.bias)
+        top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)
+        top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
+        return (top_i, top_w), router_logits
 
 
-class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
+class QEffPrefillOnlyChunkedGptOssMLP(QEffGptOssMoEMixin, GptOssMLP):
     supports_moe_prefill_blocking = True
     # Trace a fixed packed-chunk loop count so long prefill exports keep small SL.
     supports_static_moe_prefill_chunks = True
-
-    def forward(self, hidden: torch.Tensor):
-        B, S, H = hidden.shape
-        T = B * S
-        hidden = hidden.view(T, H)
-
-        router_logits = F.linear(hidden, self.router.weight, self.router.bias)
-        top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)
-        top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
-
-        routing_weights = torch.zeros_like(router_logits)
-        routing_weights.scatter_(1, top_i, top_w)
-
-        num_experts = self.experts.num_experts
-        num_nsp = getattr(self, "expert_blocking_num_nsp", num_experts)
-        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
-        if num_experts % num_nsp != 0:
-            raise ValueError(f"num_experts ({num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})")
-
-        local_experts = num_experts // num_nsp
-        expert_dim = self.experts.expert_dim
-        routing_weights_by_expert = (
-            routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        )
-        W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, expert_dim).transpose(0, 1).contiguous()
-        W_u = self.experts.up_proj.view(local_experts, num_nsp, H, expert_dim).transpose(0, 1).contiguous()
-        W_d = self.experts.down_proj.view(local_experts, num_nsp, expert_dim, H).transpose(0, 1).contiguous()
-        b_g = self.experts.gate_proj_bias.view(local_experts, num_nsp, expert_dim).transpose(0, 1).contiguous()
-        b_u = self.experts.up_proj_bias.view(local_experts, num_nsp, expert_dim).transpose(0, 1).contiguous()
-        b_d = self.experts.down_proj_bias.view(local_experts, num_nsp, H).transpose(0, 1).contiguous()
-
-        expert_out = hidden.new_zeros((num_nsp, T, H))
-        routing_weights_unsqueezed = routing_weights_by_expert.unsqueeze(-1)
-        for local_slot in range(local_experts):
-            T2Ei = routing_weights_by_expert[:, local_slot, :] > 0
-            expert_out = _cumsum_scatter_gather_update_gptoss_expert_blocked(
-                x=hidden,
-                T2Ei=T2Ei,
-                W_g=W_g[:, local_slot],
-                W_u=W_u[:, local_slot],
-                W_d=W_d[:, local_slot],
-                b_g=b_g[:, local_slot],
-                b_u=b_u[:, local_slot],
-                b_d=b_d[:, local_slot],
-                routing_weight=routing_weights_unsqueezed[:, local_slot],
-                expert_out=expert_out,
-                limit=self.experts.limit,
-                alpha=self.experts.alpha,
-                packed_chunk_size=packed_chunk_size,
-                num_packed_chunks=getattr(self, "expert_blocking_num_packed_chunks", 1),
-            )
-
-        expert_out_sum = torch.einsum("nth->th", expert_out)
-        return expert_out_sum.view(B, S, H), router_logits
+    # Class implies expert-blocking; OptimizedMoETransform may override per qaic_config.
+    _moe_flavour = MoEFlavour.EXPERT_BLOCKED
 
 
-class QEffPrefillOnlyGptOssMLP(GptOssMLP):
+class QEffPrefillOnlyGptOssMLP(QEffGptOssMoEMixin, GptOssMLP):
+    _moe_flavour = MoEFlavour.SIMPLE_LOOP
+
     def forward(self, hidden: torch.Tensor):
         if os.environ.get("NUM_FFN_BLOCKS", None) is not None:
             return self.blocked_ffn_forward(hidden)
-        B, S, H = hidden.shape
-        T = B * S
-        hidden = hidden.view(T, H)
-
-        # Router computation
-        router_logits = F.linear(hidden, self.router.weight, self.router.bias)
-
-        # Top-k selection
-        top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)  # both [T, K]
-        top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
-
-        masked_logits = torch.zeros_like(router_logits)
-        masked_logits.scatter_(1, top_i, top_w)
-
-        # Routing weights for each expert [T, E]
-        routing_weights = masked_logits
-
-        # ────────────────── allocate the output tensor ─────
-        expert_out = hidden.new_zeros((T, H))  # accumulation buffer
-
-        # ───────────────────────── Expert computation loop ─────────────────────────────
-        for e in range(self.experts.num_experts):
-            routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
-
-            W_g, W_u = self.experts.gate_proj[e], self.experts.up_proj[e]  # [H, I], [H, I]
-            b_g, b_u = self.experts.gate_proj_bias[e], self.experts.up_proj_bias[e]  # [I], [I]
-            W_d = self.experts.down_proj[e]  # [I, H]
-            b_d = self.experts.down_proj_bias[e]  # [H]
-
-            # Gate and Up projections
-            gate = (hidden @ W_g) + b_g  # [T, I]
-            up = (hidden @ W_u) + b_u  # [T, I]
-
-            # Apply GptOss activation with clamping
-            gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
-            up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
-
-            # GLU activation
-            glu = gate * torch.sigmoid(gate * self.experts.alpha)
-            intermediate = (up + 1) * glu  # [T, I]
-
-            # Down projection
-            down_out = (intermediate @ W_d) + b_d  # [T, H]
-
-            # Apply routing weights and accumulate
-            expert_out += down_out * routing_weight
-
-        # original shape [B, S, H]
-        return expert_out.view(B, S, H), router_logits
+        return super().forward(hidden)
 
     def blocked_ffn_forward(self, hidden: torch.Tensor):
         B, S, H = hidden.shape

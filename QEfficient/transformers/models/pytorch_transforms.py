@@ -301,7 +301,7 @@ from transformers.models.whisper.modeling_whisper import (
 )
 from transformers.models.xlm_roberta.modeling_xlm_roberta import XLMRobertaModel
 
-from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform, ModuleMappingTransform
+from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform, ModuleMappingTransform, PytorchTransform
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
 from QEfficient.transformers.models.bert.modeling_bert import (
@@ -637,6 +637,11 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
 from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
+from QEfficient.utils.constants import (
+    DEFAULT_AIC_NUM_CORES,
+    MOE_PREFILL_PACKED_CHUNK_SIZE,
+    ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+)
 from QEfficient.utils.logging_utils import logger
 
 SPD_TARGET = "target"
@@ -1362,4 +1367,86 @@ class BlockingAttentionTransform:
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
+        return model, transformed
+
+
+class OptimizedMoETransform(PytorchTransform):
+    """Single export-time transform for all MoE models.
+
+    Applied just before ONNX export, it does both jobs the per-model code used to
+    split across ``__qeff_init__`` and the legacy split/blocking transforms:
+
+    1. Canonicalize each MoE block's expert weights into ``module.moe_weights``
+       (the fused gate_up split / transpose / bias-split "jugglery"). Idempotent.
+    2. Resolve and assign the forward "flavour" (``expert_blocked`` / ``simple_loop``
+       for prefill, ``decode_bmm`` otherwise) onto ``module._moe_flavour``, plus the
+       ``expert_blocking_*`` knobs when blocked, and record the choice in
+       ``hash_params`` for cache-keying.
+
+    Operates on every :class:`QEffMoEBlockMixin` instance reachable via
+    ``model.modules()`` so a single transform serves the text CausalLM path and both
+    VLM language-decoder paths uniformly. It is a no-op for models that have not yet
+    been migrated to the shared MoE infra.
+    """
+
+    @classmethod
+    def apply(
+        cls,
+        model: nn.Module,
+        *,
+        prefill_only: bool = False,
+        enable_chunking: bool = False,
+        num_cores: int = DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: int = MOE_PREFILL_PACKED_CHUNK_SIZE,
+        qaic_config: Optional[dict] = None,
+        prefill_seq_len: Optional[int] = None,
+        hash_params: Optional[dict] = None,
+    ) -> Tuple[nn.Module, bool]:
+        from QEfficient.transformers.moe import MoEFlavour, QEffMoEBlockMixin, select_moe_flavour
+
+        moe_config = (qaic_config or {}).get("moe_config", {}) or {}
+        model_type = getattr(getattr(model, "config", None), "model_type", "") or ""
+
+        num_nsp = int(moe_config.get("num_nsp", num_cores))
+        packed_chunk_size = int(moe_config.get("packed_chunk_size", moe_prefill_packed_chunk_size))
+        if num_nsp <= 0:
+            raise ValueError("moe num_nsp must be greater than zero")
+        if packed_chunk_size <= 0:
+            raise ValueError("moe packed_chunk_size must be greater than zero")
+        compile_seq_len = prefill_seq_len or ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        num_packed_chunks = max(1, -(-compile_seq_len // packed_chunk_size))
+
+        transformed = False
+        flavour = None
+        for module in model.modules():
+            if not isinstance(module, QEffMoEBlockMixin):
+                continue
+
+            # 1) Weight canonicalization (idempotent).
+            if getattr(module, "moe_weights", None) is None and hasattr(module, "build_moe_weights"):
+                module.build_moe_weights()
+
+            # 2) Flavour + blocking knobs.
+            supports_blocking = getattr(module, "supports_moe_prefill_blocking", False)
+            flavour = select_moe_flavour(
+                moe_config,
+                model_type,
+                is_prefill=prefill_only,
+                supports_blocking=supports_blocking,
+                enable_chunking=enable_chunking,
+            )
+            module._moe_flavour = flavour
+            if flavour is MoEFlavour.EXPERT_BLOCKED:
+                module.expert_blocking_num_nsp = num_nsp
+                module.expert_blocking_packed_chunk_size = packed_chunk_size
+                module.expert_blocking_num_packed_chunks = num_packed_chunks
+            transformed = True
+
+        if transformed and hash_params is not None:
+            hash_params["moe_prefill_flavour"] = (flavour or MoEFlavour.DECODE_BMM).value
+            if flavour is MoEFlavour.EXPERT_BLOCKED:
+                hash_params["moe_prefill_num_nsp"] = num_nsp
+                hash_params["moe_prefill_packed_chunk_size"] = packed_chunk_size
+                hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
+
         return model, transformed

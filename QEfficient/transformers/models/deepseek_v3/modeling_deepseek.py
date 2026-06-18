@@ -7,6 +7,7 @@
 
 import math
 import os
+from functools import partial
 from typing import Dict, List, Optional, Tuple, Type, Union
 
 import torch
@@ -23,6 +24,13 @@ from QEfficient.blocking.attention_blocking import (
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.moe import (
+    MoEProfile,
+    MoEWeights,
+    moe_decode_bmm,
+    silu_glu_mlp,
+    stack_expert_linears,
+)
 from QEfficient.utils.constants import MAX_POSITION_EMBEDDINGS, MIN_MASKED_ATTENTION_VALUE
 
 
@@ -768,23 +776,16 @@ class QEffDeepseekV3MoE(nn.Module):
     def __qeff_init__(
         self,
     ):
-        self.all_gate_proj = torch.nn.Parameter(
-            torch.cat(
-                [exp.gate_proj.compressor.decompress_module(exp.gate_proj).T.unsqueeze(0) for exp in self.experts],
-                dim=0,
-            )
+        # Decompress per-expert weights and stack into canonical MoEWeights
+        # (gate/up [E,H,I], down [E,I,H]). Expose all_* aliases for legacy paths.
+        self.moe_weights = MoEWeights(
+            gate=stack_expert_linears(self.experts, lambda e: e.gate_proj.compressor.decompress_module(e.gate_proj)),
+            up=stack_expert_linears(self.experts, lambda e: e.up_proj.compressor.decompress_module(e.up_proj)),
+            down=stack_expert_linears(self.experts, lambda e: e.down_proj.compressor.decompress_module(e.down_proj)),
         )
-        self.all_up_proj = torch.nn.Parameter(
-            torch.cat(
-                [exp.up_proj.compressor.decompress_module(exp.up_proj).T.unsqueeze(0) for exp in self.experts], dim=0
-            )
-        )
-        self.all_down_proj = torch.nn.Parameter(
-            torch.cat(
-                [exp.down_proj.compressor.decompress_module(exp.down_proj).T.unsqueeze(0) for exp in self.experts],
-                dim=0,
-            )
-        )
+        self.all_gate_proj = torch.nn.Parameter(self.moe_weights.gate)
+        self.all_up_proj = torch.nn.Parameter(self.moe_weights.up)
+        self.all_down_proj = torch.nn.Parameter(self.moe_weights.down)
         self.act_fn = self.experts[0].act_fn
 
     def moe(
@@ -793,25 +794,16 @@ class QEffDeepseekV3MoE(nn.Module):
         topk_indices: torch.Tensor,
         topk_weights: torch.Tensor,
     ):
-        seq_len, _ = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
-
-        gate_proj = self.all_gate_proj[topk_indices.flatten()]
-        up_proj = self.all_up_proj[topk_indices.flatten()]
-        down_proj = self.all_down_proj[topk_indices.flatten()]
-        expert_in = (
-            hidden_states.unsqueeze(1).expand(-1, self.gate.top_k, -1).contiguous().view(-1, 1, self.config.hidden_size)
+        profile = MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.act_fn))
+        final_hidden_states = moe_decode_bmm(
+            hidden_states,
+            topk_indices,
+            topk_weights,
+            self.moe_weights,
+            profile,
+            top_k=self.gate.top_k,
         )
-        gate_out = torch.bmm(expert_in, gate_proj)
-        up_out = torch.bmm(expert_in, up_proj)
-        hidden = self.act_fn(gate_out) * up_out
-        expert_output = torch.bmm(hidden, down_proj)
-        experts_out = expert_output.view(seq_len, self.gate.top_k, self.config.hidden_size)
-        experts_out = experts_out * topk_weights.unsqueeze(-1)
-
-        final_hidden_states = torch.einsum("abc->ac", experts_out)
-
         return final_hidden_states.type(hidden_states.dtype)
 
     def forward(self, hidden_states):

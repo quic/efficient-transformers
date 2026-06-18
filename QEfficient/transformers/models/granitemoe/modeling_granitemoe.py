@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+from functools import partial
 from typing import List, Optional, Tuple, Type, Union
 
 import torch
@@ -34,6 +35,13 @@ from QEfficient.blocking.attention_blocking import (
 )
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.moe import (
+    MoEProfile,
+    MoEWeights,
+    build_canonical_expert_weights,
+    moe_simple_loop,
+    silu_glu_mlp,
+)
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
@@ -507,6 +515,23 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
 
 
 class QEffGraniteMoeMoE(GraniteMoeMoE):
+    def build_moe_weights(self) -> MoEWeights:
+        """Canonicalize fused input_linear/output_linear weights into MoEWeights.
+
+        input_linear.weight is [E, 2I, H] (gate/up concatenated); output_linear.weight
+        is [E, H, I]. Canonical target: gate/up [E,H,I], down [E,I,H].
+        """
+        if getattr(self, "moe_weights", None) is None:
+            self.moe_weights = build_canonical_expert_weights(
+                gate_up=self.input_linear.weight,
+                down=self.output_linear.weight,
+                fused=True,
+                fused_split_dim=1,
+                transpose_gate_up=True,
+                transpose_down=True,
+            )
+        return self.moe_weights
+
     def forward(self, layer_input):
         """
         Forward pass of the mixture of experts layer.
@@ -522,18 +547,16 @@ class QEffGraniteMoeMoE(GraniteMoeMoE):
                 Router logits.
         """
         bsz, length, emb_size = layer_input.size()
-        layer_input = layer_input.reshape(-1, emb_size)
-        topk_gates, expert_mask, router_logits, num_experts = self.router(layer_input)
-        final_hidden_states = torch.zeros_like(layer_input)
-        for expert_idx in range(num_experts):
-            mask = expert_mask[expert_idx].transpose(0, 1).to(layer_input.dtype)
-            mask_weight = torch.einsum("be,be->b", topk_gates, mask.to(topk_gates.dtype))[:, None]
-            hidden_states = self.input_linear(layer_input, expert_idx)
-            chunked_hidden_states = hidden_states.chunk(2, dim=-1)
-            hidden_states = self.activation(chunked_hidden_states[0]) * chunked_hidden_states[1]
-            expert_outputs = self.output_linear(hidden_states, expert_idx)
-            current_hidden_states = torch.where(mask_weight > 0, expert_outputs * mask_weight, 0.0)
-            final_hidden_states += current_hidden_states
+        x = layer_input.reshape(-1, emb_size)
+        topk_gates, expert_mask, router_logits, num_experts = self.router(x)
+
+        # Build dense routing weights [T, E] from the top-k gates and expert mask.
+        # mask_weight[:, e] == einsum(topk_gates, expert_mask[e].T) for each expert.
+        routing_weights = torch.einsum("bke,bk->be", expert_mask.permute(2, 1, 0).to(topk_gates.dtype), topk_gates)
+
+        weights = self.build_moe_weights()
+        profile = MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.activation))
+        final_hidden_states = moe_simple_loop(x, routing_weights.to(x.dtype), weights, profile)
         final_hidden_states = final_hidden_states.view(bsz, length, self.input_size)
         return final_hidden_states, router_logits
 

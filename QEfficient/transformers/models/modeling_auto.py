@@ -31,7 +31,6 @@ from transformers import (
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
-from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfoNew,
@@ -50,6 +49,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
+    OptimizedMoETransform,
     PoolingTransform,
     PrefillOnlyChunkedTransform,
     PrefillOnlyExternalModuleMapperTransform,
@@ -1209,7 +1209,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         CustomOpsTransform,
         KVCacheTransform,
         VlmKVOffloadTransform,
-        SplitGateUpWeightsTransform,
     ]
     _onnx_transforms = []
 
@@ -1299,6 +1298,19 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         else:
             self.hash_params["prefill_only"] = False
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+
+        # Single MoE transform: canonicalize expert weights and assign the forward
+        # flavour just before export (covers the VLM language decoder uniformly).
+        OptimizedMoETransform.apply(
+            self.model,
+            prefill_only=bool(prefill_only),
+            enable_chunking=enable_chunking,
+            num_cores=num_cores,
+            moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+            qaic_config=getattr(self.model, "qaic_config", None),
+            prefill_seq_len=prefill_seq_len,
+            hash_params=self.hash_params,
+        )
 
         if QEfficient.base.modeling_qeff.QEFFBaseModel._layerwise_active:
             return self._export_layerwise(
@@ -2534,7 +2546,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         KVCacheTransform,
         KVCacheExternalModuleMapperTransform,
         VlmNoKVOffloadTransform,
-        SplitGateUpWeightsTransform,
     ]
     _onnx_transforms = []
 
@@ -2705,6 +2716,15 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         output_names = self.model.get_output_names()
         # Prefix only the LLM KV-cache retained buffers (vision/multimodal buffers untouched).
         output_names = apply_kv_cache_prefix(output_names, validate_kv_cache_prefix(kv_cache_prefix))
+        # Single MoE transform: canonicalize expert weights and assign the forward flavour.
+        OptimizedMoETransform.apply(
+            self.model,
+            prefill_only=bool(prefill_only),
+            enable_chunking=enable_chunking,
+            qaic_config=getattr(self.model, "qaic_config", None),
+            prefill_seq_len=prefill_seq_len,
+            hash_params=self.hash_params,
+        )
         return self._export(
             inputs,
             output_names=output_names,
@@ -3356,7 +3376,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Mxfp4GptOssExpertDequantizeTransform,
         CustomOpsTransform,
         KVCacheTransform,
-        SplitGateUpWeightsTransform,
         KVCacheExternalModuleMapperTransform,
     ]
 
@@ -4012,6 +4031,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if kv_cache_prefix:
             output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
             self.hash_params["kv_cache_prefix"] = kv_cache_prefix
+
+        # Single MoE transform: canonicalize expert weights and assign the forward
+        # flavour (expert_blocked / simple_loop / decode_bmm) just before export.
+        OptimizedMoETransform.apply(
+            self.model,
+            prefill_only=bool(prefill_only),
+            enable_chunking=enable_chunking,
+            num_cores=num_cores,
+            moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+            qaic_config=getattr(self.model, "qaic_config", None),
+            prefill_seq_len=prefill_seq_len,
+            hash_params=self.hash_params,
+        )
 
         if QEFFBaseModel._layerwise_active:
             return self._export_layerwise(

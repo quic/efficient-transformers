@@ -43,6 +43,15 @@ def test_glm4_moe_blocked_prefill_forward_parity():
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     block = next(module for module in model.modules() if module.__class__.__name__ == "Glm4MoeMoE")
 
+    x = torch.randn(1, 8, config.hidden_size)
+
+    # HF reference forward (before any QEff class swap).
+    hf_block = copy.deepcopy(block)
+    with torch.no_grad():
+        hf_out = hf_block(x)
+    if isinstance(hf_out, tuple):
+        hf_out = hf_out[0]
+
     qeff_block = copy.deepcopy(block)
     qeff_block.__class__ = QEffGlm4MoeMoE
     qeff_block.__qeff_init__()
@@ -53,12 +62,14 @@ def test_glm4_moe_blocked_prefill_forward_parity():
     chunked_block.expert_blocking_num_nsp = 2
     chunked_block.expert_blocking_packed_chunk_size = 256
 
-    x = torch.randn(1, 8, config.hidden_size)
     with torch.no_grad():
         orig = qeff_block(x)
         blocked = chunked_block(x)
 
-    assert orig.shape == blocked.shape
+    assert orig.shape == blocked.shape == hf_out.shape
+    # HF (module-list experts) vs QEff decode-bmm and vs QEff expert-blocked.
+    assert torch.allclose(hf_out, orig, atol=1e-3, rtol=1e-3), "GLM4 HF vs decode-bmm parity failed"
+    assert torch.allclose(hf_out, blocked, atol=1e-3, rtol=1e-3), "GLM4 HF vs expert-blocked parity failed"
     assert torch.allclose(orig, blocked, atol=1e-4, rtol=1e-4)
 
 
@@ -278,20 +289,31 @@ def test_qwen3moe_blocked_forward_parity():
     assert blocks
 
     block = blocks[0]
+    x = torch.randn(1, 8, config.hidden_size)
+
+    # HF reference forward (before any QEff class swap).
+    hf_block = copy.deepcopy(block)
+    with torch.no_grad():
+        hf_out = hf_block(x)
+    if isinstance(hf_out, tuple):
+        hf_out = hf_out[0]
+
     chunked = QEffPrefillChunkedQwen3MoeSparseMoeBlock.__new__(QEffPrefillChunkedQwen3MoeSparseMoeBlock)
-    chunked.__dict__.update(block.__dict__)
+    chunked.__dict__.update(copy.deepcopy(block).__dict__)
     chunked.__class__ = QEffPrefillChunkedQwen3MoeSparseMoeBlock
     chunked.experts.__class__ = QEffQwen3MoeExperts
     chunked.experts.__qeff_init__()
     chunked.__qeff_init__()
-    x = torch.randn(1, 8, config.hidden_size)
     with torch.no_grad():
         orig, _ = chunked.orig_forward(x)
         chunked.expert_blocking_num_nsp = 2
         chunked.expert_blocking_packed_chunk_size = 256
         blocked, _ = chunked.forward(x)
 
-    assert orig.shape == blocked.shape
+    assert orig.shape == hf_out.shape == blocked.shape
+    # HF (fused gate_up) vs QEff simple-loop and vs QEff expert-blocked.
+    assert (hf_out - orig.view_as(hf_out)).abs().max().item() < 1e-3, "Qwen3MOE HF vs simple-loop parity failed"
+    assert (hf_out - blocked.view_as(hf_out)).abs().max().item() < 0.1, "Qwen3MOE HF vs expert-blocked parity failed"
     assert (orig - blocked).abs().max().item() < 0.1, "Qwen3MOE parity failed"
 
 
@@ -416,8 +438,9 @@ def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
 def test_gptoss_blocked_forward_parity():
     from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import (
         QEffPrefillOnlyChunkedGptOssMLP,
+        QEffPrefillOnlyGptOssMLP,
     )
-    from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyChunkedTransform
+    from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyChunkedTransform, PrefillOnlyTransform
 
     config = AutoConfig.for_model("gpt_oss", **GPTOSS_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
@@ -430,18 +453,31 @@ def test_gptoss_blocked_forward_parity():
         orig, _ = blocks_orig[0].forward(x)
 
     qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
-    PrefillOnlyChunkedTransform.apply(qeff.model)
 
-    blocks_chunked = [m for _, m in qeff.model.named_modules() if isinstance(m, QEffPrefillOnlyChunkedGptOssMLP)]
+    # Expert-blocked prefill flavour.
+    chunked_model = copy.deepcopy(qeff.model)
+    PrefillOnlyChunkedTransform.apply(chunked_model)
+    blocks_chunked = [m for _, m in chunked_model.named_modules() if isinstance(m, QEffPrefillOnlyChunkedGptOssMLP)]
     assert blocks_chunked
+    blocks_chunked[0].build_moe_weights()
     blocks_chunked[0].expert_blocking_num_nsp = 2
     blocks_chunked[0].expert_blocking_packed_chunk_size = 256
-
     with torch.no_grad():
         blocked, _ = blocks_chunked[0].forward(x)
 
-    assert orig.shape == blocked.shape
-    assert (orig - blocked).abs().max().item() < 0.1, "GPT-OSS parity failed"
+    # Simple-loop prefill flavour.
+    loop_model = copy.deepcopy(qeff.model)
+    PrefillOnlyTransform.apply(loop_model)
+    blocks_loop = [m for _, m in loop_model.named_modules() if isinstance(m, QEffPrefillOnlyGptOssMLP)]
+    assert blocks_loop
+    blocks_loop[0].build_moe_weights()
+    with torch.no_grad():
+        looped, _ = blocks_loop[0].forward(x)
+
+    assert orig.shape == blocked.shape == looped.shape
+    # HF (interleaved fused gate_up) vs QEff expert-blocked and vs QEff simple-loop.
+    assert (orig - blocked).abs().max().item() < 0.1, "GPT-OSS HF vs expert-blocked parity failed"
+    assert (orig - looped).abs().max().item() < 1e-3, "GPT-OSS HF vs simple-loop parity failed"
 
 
 def test_gptoss_decode_export(tmp_path):
@@ -501,3 +537,218 @@ def test_gptoss_prefill_chunked_export_traces_packed_chunks(tmp_path):
     assert qeff.hash_params["moe_prefill_num_nsp"] == 2
     assert [256] not in slice_starts
     assert op_types.count("CtxGather3D") >= 2 * op_types.count("CtxScatter3DInt")
+
+
+# ── Qwen3.5-MOE ───────────────────────────────────────────────────────────────
+
+
+def _randomize_expert_weights(block):
+    """HF lazy-experts init expert weights to zeros; fill with random values so the
+    HF reference forward is non-degenerate and parity is meaningful."""
+
+
+def _randomize_expert_weights(block):
+    """HF lazy-experts init expert weights to zeros; fill with random values so the
+    HF reference forward is non-degenerate and parity is meaningful. Also replace any
+    uninitialized (NaN) parameters so results are independent of test ordering."""
+    with torch.no_grad():
+        for name in ("gate_up_proj", "down_proj"):
+            if hasattr(block.experts, name):
+                getattr(block.experts, name).normal_(mean=0.0, std=0.1)
+        for param in block.parameters():
+            if torch.isnan(param).any():
+                param.normal_(mean=0.0, std=0.1)
+    return block
+
+
+def _build_qwen3_5_moe_sparse_block():
+    from transformers import Qwen3_5MoeTextConfig
+    from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeSparseMoeBlock
+
+    cfg = Qwen3_5MoeTextConfig(
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        vocab_size=127,
+        max_position_embeddings=128,
+        head_dim=32,
+        moe_intermediate_size=64,
+        shared_expert_intermediate_size=64,
+        num_experts=4,
+        num_experts_per_tok=2,
+        layer_types=["full_attention"],
+    )
+    block = _randomize_expert_weights(Qwen3_5MoeSparseMoeBlock(cfg).eval())
+    return cfg, block
+
+
+def test_qwen3_5_moe_blocked_forward_parity():
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+        QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
+        QEffQwen3_5MoeExperts,
+        QEffQwen3_5MoeSparseMoeBlock,
+        QEffQwen3_5MoeTopKRouter,
+    )
+
+    cfg, block = _build_qwen3_5_moe_sparse_block()
+    x = torch.randn(1, 8, cfg.hidden_size)
+    with torch.no_grad():
+        hf_out = block(x)
+    if isinstance(hf_out, tuple):
+        hf_out = hf_out[0]
+
+    def _to_qeff(cls):
+        b = copy.deepcopy(block)
+        b.gate.__class__ = QEffQwen3_5MoeTopKRouter
+        b.experts.__class__ = QEffQwen3_5MoeExperts
+        b.experts.__qeff_init__()
+        b.__class__ = cls
+        b.__qeff_init__()
+        b.build_moe_weights()
+        return b
+
+    decode = _to_qeff(QEffQwen3_5MoeSparseMoeBlock)
+    chunked = _to_qeff(QEffPrefillChunkedQwen3_5MoeSparseMoeBlock)
+    chunked.expert_blocking_num_nsp = 2
+    chunked.expert_blocking_packed_chunk_size = 256
+    with torch.no_grad():
+        dec = decode(x)
+        blk = chunked(x)
+
+    assert dec.shape == blk.shape == hf_out.shape
+    assert (hf_out - dec).abs().max().item() < 1e-2, "Qwen3.5-MOE HF vs decode-bmm parity failed"
+    assert (hf_out - blk).abs().max().item() < 1e-2, "Qwen3.5-MOE HF vs expert-blocked parity failed"
+
+
+# ── Qwen3-VL-MOE ──────────────────────────────────────────────────────────────
+
+
+def _build_qwen3_vl_moe_sparse_block():
+    from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoeTextConfig
+    from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextSparseMoeBlock
+
+    cfg = Qwen3VLMoeTextConfig(
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        vocab_size=127,
+        max_position_embeddings=128,
+        head_dim=32,
+        moe_intermediate_size=64,
+        num_experts=4,
+        num_experts_per_tok=2,
+    )
+    block = _randomize_expert_weights(Qwen3VLMoeTextSparseMoeBlock(cfg).eval())
+    return cfg, block
+
+
+def test_qwen3_vl_moe_blocked_forward_parity():
+    from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+        QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
+        QEffQwen3VLMoeTextExperts,
+        QEffQwen3VLMoeTextSparseMoeBlock,
+    )
+
+    cfg, block = _build_qwen3_vl_moe_sparse_block()
+    x = torch.randn(1, 8, cfg.hidden_size)
+    with torch.no_grad():
+        hf_out = block(x)
+    if isinstance(hf_out, tuple):
+        hf_out = hf_out[0]
+
+    def _to_qeff(cls):
+        b = copy.deepcopy(block)
+        b.experts.__class__ = QEffQwen3VLMoeTextExperts
+        b.experts.__qeff_init__()
+        b.__class__ = cls
+        if hasattr(b, "__qeff_init__"):
+            b.__qeff_init__()
+        b.build_moe_weights()
+        return b
+
+    decode = _to_qeff(QEffQwen3VLMoeTextSparseMoeBlock)
+    chunked = _to_qeff(QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock)
+    chunked.expert_blocking_num_nsp = 2
+    chunked.expert_blocking_packed_chunk_size = 256
+    with torch.no_grad():
+        dec, _ = decode(x)
+        blk, _ = chunked(x)
+
+    assert dec.shape == blk.shape == hf_out.shape
+    # Decode path mirrors HF (topk-then-softmax) exactly; expert-blocked uses the
+    # optimized softmax-then-topk gate, so only compare decode against HF here.
+    assert (hf_out - dec).abs().max().item() < 1e-2, "Qwen3-VL-MOE HF vs decode-bmm parity failed"
+
+
+# ── Mixtral / GraniteMoE (decode-only, net-new canonical stacking) ─────────────
+
+
+def test_mixtral_decode_forward_parity():
+    from transformers import MixtralConfig
+    from transformers.models.mixtral.modeling_mixtral import MixtralSparseMoeBlock
+
+    from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import QEffMixtralSparseMoeBlock
+
+    cfg = MixtralConfig(
+        num_local_experts=4, hidden_size=32, intermediate_size=64, num_experts_per_tok=2, hidden_act="silu"
+    )
+    block = MixtralSparseMoeBlock(cfg).eval()
+    with torch.no_grad():
+        # Standalone construction may leave the lazy gate/expert params uninitialized
+        # (NaN); fill them so the parity comparison is well-defined and order-independent.
+        block.gate.weight.normal_(0, 0.1)
+        for name in ("gate_up_proj", "down_proj"):
+            if hasattr(block.experts, name):
+                getattr(block.experts, name).normal_(0, 0.1)
+
+    x = torch.randn(1, 8, cfg.hidden_size)
+    with torch.no_grad():
+        hf_out = block(x)
+    hf_out = hf_out[0] if isinstance(hf_out, tuple) else hf_out
+
+    qeff = copy.deepcopy(block)
+    qeff.__class__ = QEffMixtralSparseMoeBlock
+    with torch.no_grad():
+        out = qeff(x)
+    out = out[0] if isinstance(out, tuple) else out
+
+    assert hf_out.shape == out.shape
+    assert (hf_out - out).abs().max().item() < 1e-3, "Mixtral HF vs QEff decode parity failed"
+
+
+def test_granitemoe_decode_forward_parity():
+    from transformers import GraniteMoeConfig
+    from transformers.models.granitemoe.modeling_granitemoe import GraniteMoeMoE
+
+    from QEfficient.transformers.models.granitemoe.modeling_granitemoe import (
+        QEffGraniteMoeMoE,
+        QEffGraniteMoeTopKGating,
+    )
+
+    cfg = GraniteMoeConfig(
+        num_local_experts=4, hidden_size=32, intermediate_size=64, num_experts_per_tok=2, num_hidden_layers=1
+    )
+    moe = GraniteMoeMoE(cfg).eval()
+    with torch.no_grad():
+        moe.input_linear.weight.normal_(0, 0.1)
+        moe.output_linear.weight.normal_(0, 0.1)
+        for param in moe.parameters():
+            if torch.isnan(param).any():
+                param.normal_(0, 0.1)
+
+    x = torch.randn(1, 8, cfg.hidden_size)
+    with torch.no_grad():
+        hf_out = moe(x)
+    hf_out = hf_out[0] if isinstance(hf_out, tuple) else hf_out
+
+    qeff = copy.deepcopy(moe)
+    qeff.__class__ = QEffGraniteMoeMoE
+    qeff.router.__class__ = QEffGraniteMoeTopKGating
+    with torch.no_grad():
+        out = qeff(x)
+    out = out[0] if isinstance(out, tuple) else out
+
+    assert hf_out.shape == out.shape
+    assert (hf_out - out).abs().max().item() < 1e-3, "GraniteMoE HF vs QEff decode parity failed"
