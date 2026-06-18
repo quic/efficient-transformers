@@ -1446,15 +1446,40 @@ class QEffGemma4DynamicCache(QEffDynamicCache):
         while len(self.layers) <= layer_idx:
             self.layers.append(QEffGemma4DynamicLayer(is_sliding=self._is_sliding_layer(len(self.layers))))
 
+    def _is_kv_shared_layer(self, layer_idx: int) -> bool:
+        config = self.config
+        num_kv_shared = getattr(config, "num_kv_shared_layers", 0)
+        if not num_kv_shared:
+            return False
+        first_shared = config.num_hidden_layers - num_kv_shared
+        return layer_idx >= first_shared > 0
+
+    def to_legacy_cache(self) -> Tuple[Tuple[torch.Tensor, torch.Tensor], ...]:
+        """Return only non-shared KV layers so the tuple length matches the
+        declared ONNX inputs/outputs (shared layers have no cache buffers)."""
+        legacy_cache = ()
+        for layer_idx, layer in enumerate(self.layers):
+            if self._is_kv_shared_layer(layer_idx):
+                continue
+            legacy_cache += ((layer.keys, layer.values),)
+        return legacy_cache
+
     @classmethod
     def from_legacy_cache(
         cls,
         config,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
     ) -> "QEffGemma4DynamicCache":
+        """Reconstruct cache from a reduced tuple that contains only non-shared
+        layers.  The tuple entries map sequentially to real layer indices
+        0 .. (num_hidden_layers - num_kv_shared_layers - 1)."""
         cache = cls(config=config)
         if past_key_values is not None:
-            for layer_idx, (key_states, value_states) in enumerate(past_key_values):
+            num_kv_shared = getattr(config, "num_kv_shared_layers", 0)
+            first_shared = config.num_hidden_layers - num_kv_shared if num_kv_shared else config.num_hidden_layers
+            non_shared_indices = [i for i in range(config.num_hidden_layers) if i < first_shared]
+            for tuple_pos, (key_states, value_states) in enumerate(past_key_values):
+                layer_idx = non_shared_indices[tuple_pos] if tuple_pos < len(non_shared_indices) else tuple_pos
                 cache.append_new_layers(layer_idx)
                 cache.layers[layer_idx] = QEffGemma4DynamicLayer.from_tensors(
                     key_states,

@@ -47,7 +47,7 @@ compiler_kwargs = {
     "MXINT8_KV_CACHE": True,
     "AIC_ENABLE_DEPTH_FIRST": True,
     "MOS": 1,
-    "USE_ONNX_SUBFUNCTIONS": False,
+    "USE_ONNX_SUBFUNCTIONS": True,
     "split_model_io": True,
     "BATCH_SIZE": BS,
     "node_precision_info": NODE_PRECISION_INFO,
@@ -117,7 +117,6 @@ def main():
             effective_prefill_seq_len=effective_prefill_seq_len,
             effective_ctx_len=effective_ctx_len,
             skip_vision=SKIP_VISION,
-            use_onnx_subfunctions=True,
             **compiler_kwargs,
         )
         qeff_model.compile(**compile_kwargs)

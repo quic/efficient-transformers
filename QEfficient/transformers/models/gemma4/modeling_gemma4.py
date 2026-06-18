@@ -864,6 +864,14 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
             for layer_type in self.config.layer_types
         ]
 
+    @staticmethod
+    def _is_kv_shared_layer(config, layer_idx: int) -> bool:
+        num_kv_shared = getattr(config, "num_kv_shared_layers", 0)
+        if not num_kv_shared:
+            return False
+        first_shared = config.num_hidden_layers - num_kv_shared
+        return layer_idx >= first_shared > 0
+
     def get_onnx_dynamic_axes(
         self,
         comp_ctx_lengths: Optional[List[int]] = None,
@@ -877,6 +885,8 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
             dynamic_axes["batch_index"] = {0: "batch_size"}
 
         for i, ctx_axis in enumerate(self.get_pkv_dynamic_axes(continuous_batching=continuous_batching)):
+            if self._is_kv_shared_layer(self.config, i):
+                continue
             for kv in ("key", "value"):
                 dynamic_axes[f"past_{kv}.{i}"] = ctx_axis
 
@@ -889,7 +899,9 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
 
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
         past_key_values = []
-        for layer_type in config.layer_types:
+        for i, layer_type in enumerate(config.layer_types):
+            if self._is_kv_shared_layer(config, i):
+                continue
             if layer_type == "sliding_attention":
                 n_heads = config.num_key_value_heads
                 d_head = config.head_dim
@@ -1225,6 +1237,8 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
             lang_dynamic_axes["batch_index"] = {0: "batch_size"}
 
         for i in range(self.model.language_model.config.num_hidden_layers):
+            if QEffGemma4ForCausalLM._is_kv_shared_layer(self.model.language_model.config, i):
+                continue
             layer_type = self.model.language_model.config.layer_types[i]
             if layer_type == "sliding_attention":
                 ctx_axis = {0: "full_batch_size" if continuous_batching else "batch_size", 2: "sliding_window"}
@@ -1243,6 +1257,8 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         vision_output_names = ["vision_embeds"]
         lang_output_names = ["logits", "vision_embeds_RetainedState", "image_idx_output"]
         for i in range(self.model.language_model.config.num_hidden_layers):
+            if QEffGemma4ForCausalLM._is_kv_shared_layer(self.model.language_model.config, i):
+                continue
             for kv in ("key", "value"):
                 lang_output_names.append(f"past_{kv}.{i}_RetainedState")
         if kv_offload:
@@ -1252,6 +1268,8 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
     def get_dummy_pkv_cache(self, config, batch_size, seq_len):
         past_key_values = []
         for i, layer_type in enumerate(config.layer_types):
+            if QEffGemma4ForCausalLM._is_kv_shared_layer(config, i):
+                continue
             if layer_type == "sliding_attention":
                 n_heads = config.num_key_value_heads
                 d_head = config.head_dim
