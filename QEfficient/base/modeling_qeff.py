@@ -48,6 +48,7 @@ from QEfficient.utils import (
     to_named_specializations,
 )
 from QEfficient.utils.export_utils import export_wrapper
+from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
 logger = logging.getLogger(__name__)
 
@@ -381,17 +382,18 @@ class QEFFBaseModel(ABC):
                     input_names.append(param)
 
         try:
-            torch.onnx.export(
-                self.model,
-                (),
-                str(onnx_path),
-                kwargs=example_inputs,
-                input_names=input_names,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
-                **export_kwargs,
-            )
+            with layerwise_safe_onnx_export_patches():
+                torch.onnx.export(
+                    self.model,
+                    (),
+                    str(onnx_path),
+                    kwargs=example_inputs,
+                    input_names=input_names,
+                    output_names=output_names,
+                    dynamic_axes=dynamic_axes,
+                    opset_version=constants.ONNX_EXPORT_OPSET,
+                    **export_kwargs,
+                )
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
             model = onnx.load(onnx_path, load_external_data=False)
@@ -666,43 +668,42 @@ class QEFFBaseModel(ABC):
         # example_inputs["layer_indices_to_run"] = [i]
         current_layer_dir = layerwise_dir / f"layer_{idx}_{end_idx}"
         current_layer_dir.mkdir(parents=True, exist_ok=True)
+        raw_export_dir = current_layer_dir / "_raw_export"
+        raw_export_dir.mkdir(parents=True, exist_ok=True)
 
         layer_onnx_path = str(current_layer_dir / f"{self.model_name}_layer_{idx}_{end_idx}.onnx")
         layer_onnx_path_tmp = str(current_layer_dir / f"{self.model_name}_layer_tmp_{idx}_{end_idx}.onnx")
+        raw_onnx_path = str(raw_export_dir / f"{self.model_name}_layer_raw_{idx}_{end_idx}.onnx")
         output_names = output_name
         if not os.path.isfile(layer_onnx_path):
-            torch.onnx.export(
-                self.model,
-                (),
-                layer_onnx_path_tmp,
-                kwargs=example_inputs,
-                input_names=input_names,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
-                **export_kwargs,
-            )
+            with layerwise_safe_onnx_export_patches(enabled=bool(prefill_only)):
+                torch.onnx.export(
+                    self.model,
+                    (),
+                    raw_onnx_path,
+                    kwargs=example_inputs,
+                    input_names=input_names,
+                    output_names=output_names,
+                    dynamic_axes=dynamic_axes,
+                    opset_version=constants.ONNX_EXPORT_OPSET,
+                    **export_kwargs,
+                )
             total_end = time.time()
             print(f"\nTotal export time: {total_end - start_time:.2f} seconds")
 
-        model = onnx.load(layer_onnx_path_tmp, load_external_data=False)
+        model = onnx.load(raw_onnx_path, load_external_data=False)
         transform_kwargs = {
-            "onnx_base_dir": str(current_layer_dir),
+            "onnx_base_dir": str(raw_export_dir),
             "model_name": self.model_name,
             "layer_idx": idx,
         }
         _onnx_transforms = [SplitTensorsTransform, CustomOpTransform, RenameFunctionOutputsTransform]
         onnx_transforms = OnnxTransformPipeline(transforms=_onnx_transforms)
         model, transformed = onnx_transforms.apply(model, **transform_kwargs)
-        # torch.onnx.export may already have emitted large external data files in this
-        # window directory (e.g. `<model>.onnx.data`). After SplitTensorsTransform we
-        # write a new external-data layout. Remove stale shards first to avoid transient
-        # 2x disk usage (old + new) while saving this window.
-        for stale_shard in current_layer_dir.glob("*.onnx.data"):
-            try:
-                stale_shard.unlink()
-            except OSError:
-                logger.warning("Could not remove stale ONNX external data shard: %s", stale_shard)
+        # Remove the raw torch-export payload completely before writing transformed
+        # ONNX + external data into `current_layer_dir`, so old/new shards never
+        # coexist and window disk usage does not spike to ~2x.
+        shutil.rmtree(raw_export_dir, ignore_errors=True)
         onnx.save(model, layer_onnx_path_tmp)
         self.onnx_path = layer_onnx_path_tmp
         return layer_onnx_path_tmp
