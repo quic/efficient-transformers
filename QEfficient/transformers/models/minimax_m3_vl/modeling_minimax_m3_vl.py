@@ -9,20 +9,21 @@ QEfficient modeling for MiniMaxAI/MiniMax-M3 (model_type=minimax_m3_vl).
 
 Native multimodal sparse-MoE VLM:
   - Text decoder (60 layers; first 3 dense, rest MoE 128 + 1 shared expert).
-  - MiniMax Sparse Attention (MSA) on layers 3-59; CPU-parity path falls back to
-    dense full-attention via the indexer's `build_block_mask` (matches HF "eager"
-    behaviour exactly), so QEff lands the standard SDPA path.
+  - MiniMax Sparse Attention (MSA): sparse layers (`layer_types[i] == "minimax_m3_sparse"`)
+    run the Lightning Indexer (`QEffMiniMaxM3VLIndexer`) — top-k key-block selection folded
+    into the boolean causal mask. This is the model's defining long-context operator and is
+    exercised on the parity path, not dense-masked. Full-attention layers take the dense path.
   - Gemma-style RMSNorm (`(x * w).to(dtype)` with `(weight + 1)`).
   - Partial RoPE (rotary_dim = head_dim * partial_rotary_factor).
   - swigluoai gated MLP (alpha, limit clamps).
   - Vision tower: CLIP-style ViT, Conv3d patch embed, 3D-RoPE, GELU+bias projector
     with patch-merge, image-token replacement.
+  - Layerwise export hooks (`_start`/`_end` on the text model) for windowed export of the
+    full 60-layer decoder.
 
-Huge-tier handoff: this file targets CPU PyTorch parity + ONNX export. Compile/
-hardware bring-up is the user's job from the handoff guide. The MSA selection
-branch is left at HF semantics (it materializes a dense additive mask) so the
-exported graph is the standard dense-attention shape; `Indexer` selection is a
-no-op on the parity path.
+Huge-tier handoff: this file targets CPU PyTorch parity + ONNX export. Compile/hardware
+bring-up is the user's job from the handoff guide. The indexer's block selection runs in the
+exported graph for sparse layers (the keep-grid restricts the boolean attention mask).
 """
 
 from typing import List, Optional, Tuple, Type, Union
@@ -36,6 +37,7 @@ from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
     MiniMaxM3SparseForConditionalGeneration,
     MiniMaxM3VLAttention,
     MiniMaxM3VLDecoderLayer,
+    MiniMaxM3VLIndexer,
     MiniMaxM3VLModel,
     MiniMaxM3VLModelOutputWithPast,
     MiniMaxM3VLRMSNorm,
@@ -51,6 +53,7 @@ from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
 )
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
+from QEfficient.transformers.models._layerwise import is_last_layer_window, resolve_layer_window
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
@@ -107,14 +110,107 @@ def qeff_eager_attention_forward(
     return attn_output, attn_weights
 
 
+class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
+    """MiniMax Lightning Indexer — top-k block selection for sparse-attention layers.
+
+    Scores Q·Kᵀ on already-rotated states (no dedicated indexer-K cache layer needed),
+    picks the top-k key blocks per query, and emits a boolean keep/mask grid that combines
+    with the causal mask fed to `qeff_eager_attention_forward`. This IS the model's defining
+    long-context operator; on sparse layers it must run, not be replaced by a dense mask.
+
+    Adapted from the upstream onboarding branch: `build_block_mask` returns a BOOLEAN
+    mask-out tensor (True = masked) to match our `torch.where` eager path, instead of an
+    additive `finfo.min` bias — the additive form folds to fp16 -inf and `0 * -inf = NaN`
+    under `-convert-to-fp16` (the documented D8 trap).
+    """
+
+    def _select_index_heads(
+        self, query_states: torch.Tensor, key_states: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        num_query_heads = query_states.shape[1]
+        if key_states.shape[1] != num_query_heads:
+            key_states = repeat_kv(key_states, max(1, num_query_heads // key_states.shape[1]))
+        num_index_heads = min(self.num_heads, num_query_heads)
+        step = max(1, num_query_heads // num_index_heads)
+        query_states = query_states[:, ::step, :, : self.head_dim][:, :num_index_heads]
+        key_states = key_states[:, ::step, :, : self.head_dim][:, :num_index_heads]
+        return query_states, key_states
+
+    def select_blocks(
+        self,
+        query_states: torch.Tensor,
+        key_states: torch.Tensor,
+        position_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        batch, _, q_len, _ = query_states.shape
+        _, _, k_len, _ = key_states.shape
+
+        query_states, key_states = self._select_index_heads(query_states, key_states)
+        num_key_blocks = -(-k_len // self.block_size)
+        pad = num_key_blocks * self.block_size - k_len
+
+        scores = torch.matmul(query_states.float(), key_states.float().transpose(-1, -2))
+        k_positions = torch.arange(k_len, device=scores.device)
+        token_future = k_positions[None, None, None, :] > position_ids[:, None, :, None]
+        scores = scores.masked_fill(token_future, float("-inf"))
+
+        if pad:
+            scores = F.pad(scores, (0, pad), value=float("-inf"))
+        scores = scores.view(batch, query_states.shape[1], q_len, num_key_blocks, self.block_size)
+        block_scores = scores.amax(dim=-1).amax(dim=1)
+
+        if self.local_blocks > 0:
+            q_block = position_ids // self.block_size
+            local = torch.arange(self.local_blocks, device=scores.device)
+            local_idx = (q_block[..., None] - local.view(1, 1, -1)).clamp(min=0)
+            block_scores.scatter_(-1, local_idx, float("inf"))
+
+        topk = min(self.topk_blocks, num_key_blocks)
+        topk_scores, topk_indices = block_scores.topk(topk, dim=-1, sorted=True)
+        return topk_indices.masked_fill(topk_scores == float("-inf"), -1)
+
+    def build_block_maskout(
+        self,
+        block_indices: torch.Tensor,
+        attention_mask: Optional[torch.Tensor],
+        key_length: int,
+        device: torch.device,
+        position_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return a BOOLEAN mask-out grid (True = masked) of shape [B, 1, q_len, key_length],
+        consumable directly by `qeff_eager_attention_forward`'s `torch.where`."""
+        batch, q_len, _ = block_indices.shape
+        num_key_blocks = -(-key_length // self.block_size)
+
+        safe = block_indices.masked_fill(block_indices < 0, num_key_blocks)
+        block_keep_pad = torch.zeros((batch, q_len, num_key_blocks + 1), dtype=torch.bool, device=device)
+        block_keep_pad.scatter_(-1, safe, True)
+        block_keep = block_keep_pad[..., :num_key_blocks]
+        block_keep = block_keep.repeat_interleave(self.block_size, dim=-1)[..., :key_length].unsqueeze(1)
+
+        k_positions = torch.arange(key_length, device=device)
+        token_future = k_positions[None, None, None, :] > position_ids[:, None, :, None]
+        keep = block_keep & ~token_future
+
+        if attention_mask is not None:
+            am = attention_mask
+            if am.shape[-1] != key_length:
+                am = am[..., :key_length]
+            if am.shape[-2] != q_len:
+                am = am[..., -q_len:, :]
+            # Our causal mask is boolean True=masked-out; combine by removing masked keys.
+            keep = keep & ~am.to(torch.bool)
+        return ~keep
+
+
 class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
     """M3 attention: per-head Gemma QK-norm + partial RoPE.
 
-    On the CPU-parity / ONNX-export path the optional sparse `indexer` is bypassed:
-    when present, HF's own `build_block_mask` would expand it into a dense additive
-    mask, which is what we already provide via `_create_causal_mask` upstream. Block
-    selection is a hardware-side optimisation that the huge-tier handoff guide will
-    enable on the user's compile.
+    Sparse layers (`config.layer_types[layer_idx] == "minimax_m3_sparse"`) carry a Lightning
+    Indexer (`self.indexer`, built by the HF base `__init__`). On those layers we run the
+    indexer's top-k block selection and fold its keep-grid into the causal mask — this is the
+    long-context enabler and must not be bypassed. Full-attention layers (`self.indexer is
+    None`) take the plain dense causal path.
     """
 
     def forward(
@@ -147,6 +243,20 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
         if past_key_values is not None:
             key_states, value_states = past_key_values.update(
                 key_states, value_states, self.layer_idx, {"position_ids": position_ids, "batch_index": batch_index}
+            )
+
+        # Lightning Indexer (sparse layers only): select top-k key blocks and restrict the
+        # boolean causal mask to the kept blocks. Defining long-context operator — exercised,
+        # not dense-masked.
+        if getattr(self, "indexer", None) is not None:
+            idx_position_ids = position_ids
+            if idx_position_ids is None:
+                idx_position_ids = torch.arange(
+                    key_states.shape[2] - query_states.shape[2], key_states.shape[2], device=query_states.device
+                ).unsqueeze(0)
+            block_indices = self.indexer.select_blocks(query_states, key_states, idx_position_ids)
+            attention_mask = self.indexer.build_block_maskout(
+                block_indices, attention_mask, key_states.shape[2], query_states.device, idx_position_ids
             )
 
         attn_output, attn_weights = qeff_eager_attention_forward(
@@ -261,6 +371,10 @@ class QEffMiniMaxM3VLDecoderLayer(MiniMaxM3VLDecoderLayer):
 class QEffMiniMaxM3VLTextModel(MiniMaxM3VLTextModel):
     """Text decoder with QEffDynamicCache and precomputed cos/sin at the model level."""
 
+    _start = 0
+    _end = 0
+    _total_layers = None
+
     def __qeff_init__(self):
         self.rotary_emb = QEffMiniMaxM3VLRotaryEmbedding(config=self.config)
         self.sin_cached = nn.Parameter(self.rotary_emb.sin_cached, requires_grad=False)
@@ -316,7 +430,10 @@ class QEffMiniMaxM3VLTextModel(MiniMaxM3VLTextModel):
         sin = self.sin_cached[position_ids]
 
         hidden_states = inputs_embeds
-        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+        start, end = resolve_layer_window(QEffMiniMaxM3VLTextModel, len(self.layers))
+        for layer_idx, decoder_layer in enumerate(self.layers):
+            if layer_idx < start or layer_idx >= end:
+                continue
             hidden_states = decoder_layer(
                 hidden_states,
                 attention_mask=causal_mask,
@@ -329,7 +446,8 @@ class QEffMiniMaxM3VLTextModel(MiniMaxM3VLTextModel):
                 **kwargs,
             )
 
-        hidden_states = self.norm(hidden_states)
+        if is_last_layer_window(QEffMiniMaxM3VLTextModel, len(self.layers)):
+            hidden_states = self.norm(hidden_states)
 
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
@@ -440,26 +558,34 @@ class QEffMiniMaxM3VLDecoderWrapper(nn.Module):
 
     def forward(
         self,
-        input_ids: torch.LongTensor,
-        vision_embeds: torch.Tensor,
-        position_ids: torch.LongTensor,
-        image_idx: torch.Tensor,
-        past_key_values,
+        input_ids: Optional[torch.LongTensor] = None,
+        vision_embeds: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        image_idx: Optional[torch.Tensor] = None,
+        past_key_values=None,
         batch_index: Optional[torch.LongTensor] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
     ):
-        inputs_embeds = self.language_model.embed_tokens(input_ids)
-        vision_embeds = vision_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+        if inputs_embeds is not None:
+            # Layerwise window > 0: embeddings already computed by window 0.
+            pass
+        else:
+            inputs_embeds = self.language_model.embed_tokens(input_ids)
+            vision_embeds = vision_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
 
-        mask = input_ids == self.config.image_token_id
-        indices1 = mask.to(torch.int64).cumsum(1) - 1
-        # V7: clamp negative indices before gather (pre-image text positions sit at -1).
-        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-        indices0 = torch.arange(mask.shape[0]).view(-1, 1)
-        vision_embeds_expanded = vision_embeds[indices0, indices1.clamp(min=0)]
-        # V4: torch.where image-text merge (replaces masked_scatter).
-        merged = torch.where(mask.unsqueeze(-1), vision_embeds_expanded, inputs_embeds)
-        # V10: decode-time merge no-op.
-        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, merged)
+            mask = input_ids == self.config.image_token_id
+            indices1 = mask.to(torch.int64).cumsum(1) - 1
+            indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
+            indices0 = torch.arange(mask.shape[0]).view(-1, 1)
+            vision_embeds_expanded = vision_embeds[indices0, indices1.clamp(min=0)]
+            merged = torch.where(mask.unsqueeze(-1), vision_embeds_expanded, inputs_embeds)
+            inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, merged)
+
+            image_idx = torch.where(
+                image_idx < (indices1.max() + 1).unsqueeze(0).unsqueeze(0),
+                (indices1.max() + 1).unsqueeze(0).unsqueeze(0),
+                image_idx,
+            )
 
         outputs = self.language_model(
             inputs_embeds=inputs_embeds,
@@ -469,13 +595,13 @@ class QEffMiniMaxM3VLDecoderWrapper(nn.Module):
             use_cache=True,
         )
 
-        next_image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        image_idx = torch.where(image_idx < next_image_idx, next_image_idx, image_idx)
+        if is_last_layer_window(QEffMiniMaxM3VLTextModel, len(self.language_model.layers)):
+            logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+            hidden_states = outputs.last_hidden_state[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+            logits = self.lm_head(hidden_states).float()
+        else:
+            logits = outputs.last_hidden_state
 
-        # U2: int32 last-token logit gather.
-        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs.last_hidden_state[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
-        logits = self.lm_head(hidden_states).float()
         return logits, vision_embeds, image_idx, outputs.past_key_values
 
 
