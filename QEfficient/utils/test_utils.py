@@ -146,12 +146,14 @@ def load_hf_vlm_model(
                 config,
                 attn_implementation="eager",
                 trust_remote_code=True,
+                ignore_mismatched_sizes=True,
             )
         except ValueError:
             model_hf = AutoModelForCausalLM.from_config(
                 config,
                 attn_implementation="eager",
                 trust_remote_code=True,
+                ignore_mismatched_sizes=True,
             )
         torch_dtype = getattr(model_hf.config, "torch_dtype", None)
         if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
