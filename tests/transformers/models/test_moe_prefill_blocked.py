@@ -170,7 +170,8 @@ GPTOSS_CFG = dict(
 
 def test_qwen3moe_blocked_forward_parity():
     from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
-        QEffPrefillChunkedQwen3MoeSparseMoeBlock, QEffQwen3MoeExperts
+        QEffPrefillChunkedQwen3MoeSparseMoeBlock,
+        QEffQwen3MoeExperts,
     )
 
     config = AutoConfig.for_model("qwen3_moe", **QWEN3_MOE_CFG)

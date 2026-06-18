@@ -22,8 +22,7 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 
 # MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
-MODEL_ID = "tiny-random/qwen3.6-moe"
-# MODEL_ID = "Qwen/Qwen3.6-35B-A3B"
+MODEL_ID = "Qwen/Qwen3.6-35B-A3B"
 LAYERWISE = True
 TORCH_DTYPE = torch.float16
 RANDOM_SEED = 42
@@ -58,12 +57,12 @@ def main():
         num_devices=4,
         height=354,
         width=536,
-        mxfp6_matmul=True,
-        mxint8_kv_cache=True,
+        mxfp6_matmul=False,
+        mxint8_kv_cache=False,
         aic_enable_depth_first=True,
         skip_vision=True,
         split_retained_state_io=True,
-        use_onnx_subfunctions=False,
+        use_onnx_subfunctions=True,
         mos=1,
         layerwise=LAYERWISE,
         layerwise_window_size=1,

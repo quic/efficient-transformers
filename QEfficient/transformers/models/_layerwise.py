@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import functools
 import random
+import shutil
 import time
 import warnings
 from contextlib import contextmanager
@@ -26,6 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+import onnx
 import torch
 import transformers
 
@@ -458,20 +460,86 @@ def _resolve_export_root(onnx_path: Path) -> Path:
 
 
 def _is_cached_merged(onnx_path: Path) -> bool:
-    return "final_data" in onnx_path.parts and onnx_path.name.startswith("merged_")
+    """Return True for layerwise-stitched ONNX files produced by the merge pipeline."""
+    return onnx_path.name.startswith("merged_")
 
 
 def _cached_merged_onnx(export_root: Path, total_layers: Optional[int] = None) -> Optional[Path]:
     """Return the complete cached merged ONNX, if it exists."""
+    search_dirs = [export_root]
     cached_dir = export_root / "final_data"
-    if not cached_dir.is_dir():
-        return None
+    if cached_dir.is_dir():
+        search_dirs.append(cached_dir)
+
     if total_layers is not None:
-        expected = cached_dir / f"merged_0-{total_layers}.onnx"
-        if expected.is_file():
-            return expected
-    cached_merged = sorted(cached_dir.glob("merged_0-*.onnx"))
+        for search_dir in search_dirs:
+            expected = search_dir / f"merged_0-{total_layers}.onnx"
+            if expected.is_file():
+                return expected
+
+    cached_merged = [path for search_dir in search_dirs for path in search_dir.glob("merged_0-*.onnx")]
+    cached_merged = sorted(cached_merged)
     return cached_merged[-1] if cached_merged else None
+
+
+def _cached_root_onnx(export_root: Path, model_name: Optional[str]) -> Optional[Path]:
+    """Return a canonical non-merged ONNX in the hash root, if present."""
+    if model_name is None:
+        return None
+    candidate = export_root / f"{model_name}.onnx"
+    return candidate if candidate.is_file() else None
+
+
+def _resolve_layerwise_model_name(qeff_model) -> Optional[str]:
+    """Resolve the decoder model name used for canonical ONNX cache lookup."""
+    lang_model = getattr(qeff_model, "lang_model", None)
+    if lang_model is not None and hasattr(lang_model, "model_name"):
+        return lang_model.model_name
+    return getattr(qeff_model, "model_name", None)
+
+
+def _relocate_merged_onnx_to_root(export_root: Path, merged_onnx: Path) -> Path:
+    """Move a merged ONNX and its external tensor blobs into the hash root.
+
+    The move keeps the layerwise cache layout aligned with regular export and
+    avoids copying large external data files, which can temporarily double disk
+    usage for large models.
+    """
+    if merged_onnx.parent == export_root:
+        return merged_onnx
+
+    model = onnx.load(str(merged_onnx), load_external_data=False)
+    external_files = set()
+    for tensor in model.graph.initializer:
+        if tensor.HasField("data_location") and tensor.data_location == onnx.TensorProto.EXTERNAL:
+            for entry in tensor.external_data:
+                if entry.key == "location":
+                    external_files.add(entry.value)
+
+    src_dir = merged_onnx.parent
+    for rel_name in external_files:
+        src = src_dir / rel_name
+        dst = export_root / rel_name
+        if src.exists() and src != dst and not dst.exists():
+            shutil.move(str(src), str(dst))
+
+    dst_onnx = export_root / merged_onnx.name
+    if merged_onnx != dst_onnx:
+        shutil.move(str(merged_onnx), str(dst_onnx))
+    return dst_onnx
+
+
+def _cleanup_layerwise_intermediates(export_root: Path, *, keep_onnx: Optional[Path] = None) -> None:
+    """Remove transient layerwise export directories after final ONNX relocation."""
+    for dirname in ("final_data", "onnx_layerwise_tmp"):
+        path = export_root / dirname
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+    for pattern in ("pref_*.onnx",):
+        for path in export_root.glob(pattern):
+            if keep_onnx is not None and path == keep_onnx:
+                continue
+            path.unlink(missing_ok=True)
 
 
 def _stitch_layerwise_if_available(export_root: Path, total_layers: Optional[int] = None) -> str:
@@ -481,7 +549,7 @@ def _stitch_layerwise_if_available(export_root: Path, total_layers: Optional[int
         return str(cached_merged)
     pipeline_fn = getattr(QEfficient.utils, "layerwise_pipeline", None)
     if callable(pipeline_fn):
-        return pipeline_fn(str(export_root))
+        return pipeline_fn(str(export_root), final_data_dir=".")
     return str(export_root / "onnx_layerwise_tmp")
 
 
@@ -738,13 +806,30 @@ def run_layerwise(
         raise RuntimeError("Layer-wise export produced no ONNX shards.")
 
     export_root = _resolve_export_root(first_onnx_path)
-    final_artifact = _stitch_layerwise_if_available(export_root, text_total_layers)
-    logger.info("Layerwise merged ONNX: %s", final_artifact)
+    model_name = _resolve_layerwise_model_name(last_qeff_model)
+    root_cached_onnx = _cached_root_onnx(export_root, model_name)
+    if root_cached_onnx is not None:
+        canonical_onnx = root_cached_onnx
+    elif cached_onnx_path is not None:
+        cached_path = Path(cached_onnx_path)
+        canonical_onnx = (
+            _relocate_merged_onnx_to_root(export_root, cached_path) if _is_cached_merged(cached_path) else cached_path
+        )
+    else:
+        final_artifact = _stitch_layerwise_if_available(export_root, text_total_layers)
+        logger.info("Layerwise merged ONNX: %s", final_artifact)
+        canonical_onnx = Path(final_artifact)
+    if canonical_onnx.parent == export_root:
+        _cleanup_layerwise_intermediates(export_root, keep_onnx=canonical_onnx)
+    logger.info("Layerwise canonical ONNX: %s", canonical_onnx)
 
     if not final_compile:
-        return final_artifact
+        return str(canonical_onnx)
 
     final_kwargs = dict(compile_kwargs)
-    final_kwargs["lang_onnx_path"] = final_artifact
+    if hasattr(last_qeff_model, "lang_model"):
+        final_kwargs["lang_onnx_path"] = str(canonical_onnx)
+    else:
+        final_kwargs["onnx_path"] = str(canonical_onnx)
     final_kwargs.setdefault("skip_lang", False)
     return last_qeff_model.compile(**final_kwargs)

@@ -11,6 +11,7 @@ from typing import List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn.functional as F
+from qwen_vl_utils import smart_resize
 from torch import nn
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
@@ -475,10 +476,11 @@ class QEffQwen3_5MoeAttention(Qwen3_5MoeAttention):
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
-        query_states, gate = torch.chunk(
-            self.q_proj(hidden_states).view(*input_shape, -1, self.head_dim * 2), 2, dim=-1
-        )
-        gate = gate.reshape(*input_shape, -1)
+        query_and_gate = self.q_proj(hidden_states).view(*input_shape, -1, self.head_dim * 2)
+        # Static slicing avoids ONNX SplitToSequence from torch.chunk when
+        # layerwise prefill disables canonicalization passes.
+        query_states = query_and_gate[..., : self.head_dim]
+        gate = query_and_gate[..., self.head_dim :].reshape(*input_shape, -1)
 
         query_states = self.q_norm(query_states.view(hidden_shape)).transpose(1, 2)
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
@@ -651,7 +653,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             x.reshape(x.shape[0], x.shape[1], -1, chunk_size, x.shape[-1]) for x in (query, key, value, k_beta, v_beta)
         ]
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
-        mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=0)
+        mask = mask_causal.to(device=query.device)
 
         #
         # chunk decay
@@ -677,7 +679,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             sub = attn[..., :i, :i].clone()
             # attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
             attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
-        attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
+        attn = attn + eye.to(dtype=attn.dtype, device=attn.device)
 
         ## Approximation code ##
         # A = attn
@@ -726,7 +728,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             else initial_state.to(value)
         )
         core_attn_out = torch.zeros_like(value)
-        mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=1)
+        mask = mask_strict.to(device=query.device)
 
         # for each chunk
         for i in range(0, total_sequence_length // chunk_size):
@@ -1622,7 +1624,8 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
 
         if QEffQwen3_5MoeTextModel._start == 0:
             B, S, _ = inputs_embeds.shape
-            input_ids = torch.zeros((B, S), dtype=torch.int64, device=inputs_embeds.device)
+            if input_ids is None:
+                input_ids = torch.zeros((B, S), dtype=torch.int64, device=inputs_embeds.device)
             _, _, channel_size = inputs_embeds.shape
             selected = input_ids == self.model.config.image_token_id
             indices1 = selected.to(torch.int64).cumsum(1) - 1
@@ -1781,11 +1784,11 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         batch_size: int,
         prefill_seq_len: int,
         ctx_len: int,
-        img_size: None,
-        height: int = None,
-        width: int = None,
+        height: int | List[int] = None,
+        width: int | List[int] = None,
+        img_size=None,
         time: int = 1,
-        num_frames: int = 1,
+        num_frames: int | List[int] = 1,
         kv_offload: bool = False,
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
@@ -1801,6 +1804,10 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             logger.warning(
                 f"Setting height and width to be {height} and {width} respectively, as it was neither passed nor found in vision_config"
             )
+
+        height = [height] if isinstance(height, int) else height
+        width = [width] if isinstance(width, int) else width
+        num_frames = [num_frames] * len(height) if isinstance(num_frames, int) else num_frames
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 128
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
@@ -1818,61 +1825,53 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         if mm_processor_kwargs:
             min_pixels = mm_processor_kwargs.get("min_pixels", min_pixels)
             max_pixels = mm_processor_kwargs.get("max_pixels", max_pixels)
-        # IMAGE_FACTOR = 32
-        # MIN_PIXELS = 64 * 32 * 32
-        # MAX_PIXELS = 16384 * 32 * 32
-        MAX_RATIO = 200
 
-        def round_by_factor(number: int, factor: int) -> int:
-            return round(number / factor) * factor
+        vision = []
+        max_vision_size = 0
+        user_vision_size = compiler_options.pop("vision_size", None)
+        if user_vision_size:
+            assert user_vision_size < ctx_len, "vision_size must be less than ctx_len"
+            max_vision_size = user_vision_size
 
-        def ceil_by_factor(number: int, factor: int) -> int:
-            return math.ceil(number / factor) * factor
+        for h, w, f in zip(height, width, num_frames):
+            resized_height, resized_width = smart_resize(
+                height=h, width=w, factor=image_factor, min_pixels=min_pixels, max_pixels=max_pixels
+            )
+            grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+            grid_height = grid_h * grid_w
+            grid_width = patch_size * patch_size * temporal_patch_size * channel
+            vision_size = (grid_height // 4) * time
+            grid_height = grid_height * time * batch_size
 
-        def floor_by_factor(number: int, factor: int) -> int:
-            return math.floor(number / factor) * factor
-
-        def smart_resize(
-            height: int,
-            width: int,
-            factor: int = image_factor,
-            min_pixels: int = min_pixels,
-            max_pixels: int = max_pixels,
-        ) -> tuple[int, int]:
-            if max(height, width) / min(height, width) > MAX_RATIO:
-                raise ValueError(
-                    f"absolute aspect ratio must be smaller than {MAX_RATIO}, got {max(height, width) / min(height, width)}"
+            if not user_vision_size:
+                max_vision_size = max(max_vision_size, vision_size * f)
+                assert max_vision_size < ctx_len, (
+                    f"Computed vision_size of {vision_size * f} tokens "
+                    f"(vision_size={vision_size}, num_frames={f}) for image resolution "
+                    f"(width={w}, height={h}) must be less than ctx_len. Please adjust the image "
+                    "resolution."
                 )
-            h_bar = max(factor, round_by_factor(height, factor))
-            w_bar = max(factor, round_by_factor(width, factor))
-            if h_bar * w_bar > max_pixels:
-                beta = math.sqrt((height * width) / max_pixels)
-                h_bar = floor_by_factor(height / beta, factor)
-                w_bar = floor_by_factor(width / beta, factor)
-            elif h_bar * w_bar < min_pixels:
-                beta = math.sqrt(min_pixels / (height * width))
-                h_bar = ceil_by_factor(height * beta, factor)
-                w_bar = ceil_by_factor(width * beta, factor)
-            return h_bar, w_bar
+            else:
+                if vision_size * f > user_vision_size:
+                    logger.warning_once(
+                        f"Computed vision_size of {vision_size * f} tokens "
+                        f"(vision_size={vision_size}, num_frames={f}) for image resolution "
+                        f"(width={w}, height={h}) exceeds the provided "
+                        f"vision_size={user_vision_size}. "
+                        f"Vision embedding needs to be chunked during prefill."
+                    )
 
-        resized_height, resized_width = smart_resize(height=height, width=width)
-        grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
-        grid_height = grid_h * grid_w
-        grid_width = patch_size * patch_size * temporal_patch_size * channel
-        vision_size = (grid_height // 4) * num_frames * time
-        grid_height = grid_height * time * batch_size
-
-        vision = [
-            {
-                "batch_size": batch_size,
-                "vision_size": vision_size,
-                "grid_height": grid_height,
-                "grid_width": grid_width,
-                "time": time,
-                "grid_h": grid_h,
-                "grid_w": grid_w,
-            }
-        ]
+            vision.append(
+                {
+                    "batch_size": batch_size,
+                    "vision_size": vision_size,
+                    "grid_height": grid_height,
+                    "grid_width": grid_width,
+                    "time": time,
+                    "grid_h": grid_h,
+                    "grid_w": grid_w,
+                }
+            )
 
         def _build_lang_spec(seq_len_val, comp_ctx_len=None):
             spec = {
@@ -1883,7 +1882,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
                 "ctx_len": ctx_len,
             }
             if kv_offload:
-                spec["vision_size"] = vision_size
+                spec["vision_size"] = max_vision_size
                 spec["vision_batch_size"] = batch_size
             if comp_ctx_len is not None:
                 spec["comp_ctx_lengths"] = comp_ctx_len
@@ -2257,8 +2256,6 @@ class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
         T = B * S
         x = hidden_states.view(T, H)
         router_logits, top_w, top_i = self.gate(x)
-        if self.norm_topk_prob:
-            top_w /= top_w.sum(-1, keepdim=True)
         top_w = top_w.to(hidden_states.dtype)
         routing_weights = torch.zeros_like(router_logits)
         routing_weights.scatter_(1, top_i, top_w)

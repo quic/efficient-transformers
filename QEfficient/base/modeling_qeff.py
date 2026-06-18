@@ -49,8 +49,48 @@ from QEfficient.utils import (
     to_named_specializations,
 )
 from QEfficient.utils.export_utils import export_wrapper
+from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
 logger = logging.getLogger(__name__)
+
+
+def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
+    """Rename a graph value everywhere it can be referenced in an ONNX graph."""
+    if old_name == new_name:
+        return
+    for node in graph.node:
+        node.input[:] = [new_name if value == old_name else value for value in node.input]
+        node.output[:] = [new_name if value == old_name else value for value in node.output]
+    for initializer in graph.initializer:
+        if initializer.name == old_name:
+            initializer.name = new_name
+    for value_info in list(graph.input) + list(graph.output) + list(graph.value_info):
+        if value_info.name == old_name:
+            value_info.name = new_name
+
+
+def _restore_retained_state_output_names(model: onnx.ModelProto, output_names: List[str]) -> None:
+    """Restore retained-state output names when ONNX subfunction transforms rewrite them."""
+    for output_idx, expected_name in enumerate(output_names):
+        if output_idx >= len(model.graph.output):
+            break
+        expected_name = expected_name.replace("_InternalRetainedState", "_RetainedState")
+        current_name = model.graph.output[output_idx].name
+        if "_RetainedState" not in expected_name:
+            continue
+        if current_name == expected_name:
+            continue
+        if current_name.isdigit() or "_InternalRetainedState" in current_name or "_RetainedState" in current_name:
+            _rename_graph_value(model.graph, current_name, expected_name)
+
+
+def _restore_output_names_exact(model: onnx.ModelProto, output_names: List[str]) -> None:
+    """Force graph output names to match ``output_names`` by positional index."""
+    for output_idx, expected_name in enumerate(output_names):
+        if output_idx >= len(model.graph.output):
+            break
+        current_name = model.graph.output[output_idx].name
+        _rename_graph_value(model.graph, current_name, expected_name)
 
 
 class QEFFBaseModel(ABC):
@@ -390,17 +430,18 @@ class QEFFBaseModel(ABC):
             input_names = aligned_input_names
 
         try:
-            torch.onnx.export(
-                self.model,
-                (),
-                str(onnx_path),
-                kwargs=example_inputs,
-                input_names=input_names,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
-                **export_kwargs,
-            )
+            with layerwise_safe_onnx_export_patches():
+                torch.onnx.export(
+                    self.model,
+                    (),
+                    str(onnx_path),
+                    kwargs=example_inputs,
+                    input_names=input_names,
+                    output_names=output_names,
+                    dynamic_axes=dynamic_axes,
+                    opset_version=constants.ONNX_EXPORT_OPSET,
+                    **export_kwargs,
+                )
             logger.info("PyTorch export successful")
             _ = self._offload_model_weights(offload_pt_weights)
             model = onnx.load(onnx_path, load_external_data=False)
@@ -417,6 +458,11 @@ class QEFFBaseModel(ABC):
 
             onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
             model, transformed = onnx_transforms.apply(model, **transform_kwargs)
+
+            # Keep this strictly layerwise-scoped so regular non-layerwise export
+            # remains backward compatible.
+            if QEFFBaseModel._layerwise_active:
+                _restore_retained_state_output_names(model, output_names)
 
             # Add metadata to the model
             model.metadata_props.append(
@@ -525,14 +571,20 @@ class QEFFBaseModel(ABC):
             return onnx_path
 
         # Layer-wise reuse: if the merged final ONNX from a prior run exists
-        # under final_data/, skip per-window export entirely. The driver's
-        # stitch step picks up the same merged file, so re-running the same
-        # example without changes goes straight to the QPC compile.
+        # under the export root (new layout) or final_data/ (legacy layout),
+        # skip per-window export entirely. This preserves hash-stable reruns
+        # without re-exporting layer shards.
+        total_layers = int(getattr(QEFFBaseModel, "_total_layers", 0) or 0)
+        cached_merged_paths = []
+        if total_layers > 0:
+            cached_merged_paths.append(export_dir / f"merged_0-{total_layers}.onnx")
+            cached_merged_paths.append(export_dir / "final_data" / f"merged_0-{total_layers}.onnx")
+        cached_merged_paths.extend(sorted(export_dir.glob("merged_0-*.onnx"), reverse=True))
         final_data_dir = export_dir / "final_data"
         if final_data_dir.is_dir():
-            total_layers = int(getattr(QEFFBaseModel, "_total_layers", 0) or 0)
-            cached_merged = final_data_dir / f"merged_0-{total_layers}.onnx"
-            if total_layers > 0 and cached_merged.is_file():
+            cached_merged_paths.extend(sorted(final_data_dir.glob("merged_0-*.onnx"), reverse=True))
+        for cached_merged in cached_merged_paths:
+            if cached_merged.is_file():
                 self.onnx_path = cached_merged
                 return self.onnx_path
         if cache_probe:
@@ -693,17 +745,18 @@ class QEFFBaseModel(ABC):
             dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
             input_names = aligned_input_names
         if not os.path.isfile(layer_onnx_path):
-            torch.onnx.export(
-                self.model,
-                (),
-                layer_onnx_path_tmp,
-                kwargs=example_inputs,
-                input_names=input_names,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
-                **export_kwargs,
-            )
+            with layerwise_safe_onnx_export_patches(enabled=bool(prefill_only)):
+                torch.onnx.export(
+                    self.model,
+                    (),
+                    layer_onnx_path_tmp,
+                    kwargs=example_inputs,
+                    input_names=input_names,
+                    output_names=output_names,
+                    dynamic_axes=dynamic_axes,
+                    opset_version=constants.ONNX_EXPORT_OPSET,
+                    **export_kwargs,
+                )
             total_end = time.time()
             print(f"\nTotal export time: {total_end - start_time:.2f} seconds")
 
@@ -717,24 +770,9 @@ class QEFFBaseModel(ABC):
         onnx_transforms = OnnxTransformPipeline(transforms=_onnx_transforms)
         model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
-        def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
-            if old_name == new_name:
-                return
-            for node in graph.node:
-                node.input[:] = [new_name if value == old_name else value for value in node.input]
-                node.output[:] = [new_name if value == old_name else value for value in node.output]
-            for initializer in graph.initializer:
-                if initializer.name == old_name:
-                    initializer.name = new_name
-            for value_info in list(graph.input) + list(graph.output) + list(graph.value_info):
-                if value_info.name == old_name:
-                    value_info.name = new_name
-
-        for output_idx, expected_name in enumerate(output_names):
-            if output_idx >= len(model.graph.output):
-                break
-            current_name = model.graph.output[output_idx].name
-            _rename_graph_value(model.graph, current_name, expected_name)
+        # Layer windows are stitched by name, so preserve the requested output
+        # names after transforms normalize function/custom-op outputs.
+        _restore_output_names_exact(model, output_names)
 
         onnx.save(model, layer_onnx_path_tmp)
         self.onnx_path = layer_onnx_path_tmp
