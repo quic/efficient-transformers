@@ -32,6 +32,19 @@ import torch
 import transformers
 
 import QEfficient
+from QEfficient.utils.custom_loader import CustomLoader
+from QEfficient.utils.layerwise_utils import (
+    LayerwiseContext,
+    attach_layerwise_context,
+    build_layer_windows,
+    get_layerwise_context,
+    is_last_layer_window as _is_last_layer_window,
+    is_layerwise_active as _is_layerwise_active,
+    is_layerwise_export_active,
+    layerwise_export_scope,
+    resolve_layer_window as _resolve_layer_window,
+    resolve_text_total_layers,
+)
 from QEfficient.utils.logging_utils import logger
 
 # Architectures whose modeling files declare _start/_end class attributes the
@@ -53,22 +66,6 @@ _LAYERWISE_SUPPORTED_MODEL_TYPES = frozenset(
 # stays well under 32K for the supported MoE families today, so dropping
 # the unreachable rows past 32K is lossless.
 _LAYERWISE_ROPE_MAX_POSITIONS = 76800
-
-# Process-local layer-wise window state. We deliberately avoid setting class
-# attributes on transformers.modeling_utils.PreTrainedModel - those would leak
-# to every HF model in the process and survive past the layer-wise run. The
-# patched HF hooks (shard filter, model-init nuller) close over this dict so
-# they can be installed once and behave as no-ops whenever ``active`` is False.
-_LAYERWISE_STATE: Dict[str, int] = {
-    "active": 0,
-    "start": 0,
-    "end": 0,
-    "total_layers": 0,
-    "text_start": 0,
-    "text_end": 0,
-    "text_total_layers": 0,
-    "force_full_init": 0,
-}
 
 _DEPRECATION_WARNED = False
 
@@ -108,7 +105,7 @@ def assert_layerwise_supported(config) -> str:
     )
 
 
-def is_layerwise_active() -> bool:
+def is_layerwise_active(module=None) -> bool:
     """True only while the layer-wise export driver is running.
 
     The driver flips this on inside :func:`_layerwise_export_env`. Outside that
@@ -116,7 +113,10 @@ def is_layerwise_active() -> bool:
     modeling forwards short-circuit every window branch and behave exactly as
     they did before layer-wise support was added.
     """
-    return bool(_LAYERWISE_STATE["active"])
+    if module is None:
+        return is_layerwise_export_active()
+    return _is_layerwise_active(module)
+
 
 
 def resolve_layer_window(model_cls, total_layers: int) -> Tuple[int, int]:
@@ -127,12 +127,7 @@ def resolve_layer_window(model_cls, total_layers: int) -> Tuple[int, int]:
     is independent of (possibly stale) window state left on the modeling class.
     When the driver is active it honors the window it poked onto ``model_cls``.
     """
-    if not is_layerwise_active():
-        return 0, total_layers
-    start = int(getattr(model_cls, "_start", 0) or 0)
-    end = getattr(model_cls, "_end", 0) or 0
-    end = int(end) if end else total_layers
-    return start, end
+    return _resolve_layer_window(model_cls, total_layers)
 
 
 def is_last_layer_window(model_cls, total_layers: int) -> bool:
@@ -141,10 +136,7 @@ def is_last_layer_window(model_cls, total_layers: int) -> bool:
     Always True on the default path; on the layer-wise path it is True only for
     the window whose ``_end`` reaches the total layer count.
     """
-    if not is_layerwise_active():
-        return True
-    _, end = resolve_layer_window(model_cls, total_layers)
-    return end >= total_layers
+    return _is_last_layer_window(model_cls, total_layers)
 
 
 # ---------------------------------------------------------------------------
@@ -155,38 +147,15 @@ def is_last_layer_window(model_cls, total_layers: int) -> bool:
 def _ensure_pretrained_window_attrs() -> None:
     """No-op kept for compatibility with prior call sites.
 
-    Layer-wise window state lives in the module-local ``_LAYERWISE_STATE``
-    dict (see top of file); we no longer pollute ``PreTrainedModel`` with
-    class attributes.
+    Layer-wise window state now lives on model instances via
+    ``_qeff_layerwise_context``; we no longer pollute ``PreTrainedModel`` or
+    QEff model classes with class attributes.
     """
     return
 
 
 def _build_layer_windows(total_layers: int, window_size: int) -> List[Tuple[int, int]]:
-    if total_layers <= 0:
-        raise ValueError(f"Invalid total_layers={total_layers}; expected > 0.")
-    if window_size is None:
-        raise ValueError(
-            "layerwise=True requires `layerwise_window_size` to be a positive integer. "
-            "Got None. Pass an explicit value (for example, layerwise_window_size=1)."
-        )
-    if isinstance(window_size, bool) or not isinstance(window_size, Integral):
-        raise TypeError(
-            "layerwise=True requires `layerwise_window_size` to be a positive integer. "
-            f"Got {type(window_size).__name__}: {window_size!r}."
-        )
-    window_size = int(window_size)
-    if window_size <= 0:
-        raise ValueError(
-            f"layerwise=True requires `layerwise_window_size` to be a positive integer. Got {window_size}."
-        )
-    windows: List[Tuple[int, int]] = []
-    start = 0
-    while start < total_layers:
-        end = min(total_layers, start + window_size)
-        windows.append((start, end))
-        start = end
-    return windows
+    return build_layer_windows(total_layers, window_size)
 
 
 @functools.lru_cache(maxsize=32)
@@ -219,11 +188,14 @@ def _get_text_layers_container(model):
     return None
 
 
-def _null_outside_window_layers(model, *, apply_text: bool = True) -> None:
+def _null_outside_window_layers(model, *, apply_text: bool = True, context: Optional[LayerwiseContext] = None) -> None:
     if not apply_text:
         return
-    text_start = int(_LAYERWISE_STATE["text_start"] or _LAYERWISE_STATE["start"])
-    text_end = int(_LAYERWISE_STATE["text_end"] or _LAYERWISE_STATE["end"])
+    context = context or get_layerwise_context(model)
+    if context is None:
+        return
+    text_start = int(context.start)
+    text_end = int(context.end)
     text_layers = _get_text_layers_container(model)
     if text_layers is not None and text_end > text_start:
         for idx, _ in enumerate(text_layers):
@@ -265,9 +237,12 @@ def _slim_for_window_export(qeff_model, *, ctx_len: Optional[int]) -> None:
     if lm is None:
         return
 
-    text_start = int(_LAYERWISE_STATE["text_start"] or _LAYERWISE_STATE["start"])
-    text_end = int(_LAYERWISE_STATE["text_end"] or _LAYERWISE_STATE["end"])
-    text_total = int(_LAYERWISE_STATE["text_total_layers"] or _LAYERWISE_STATE["total_layers"] or 0)
+    context = get_layerwise_context(lm) or get_layerwise_context(inner) or get_layerwise_context(qeff_model)
+    if context is None:
+        return
+    text_start = int(context.start)
+    text_end = int(context.end)
+    text_total = int(context.total_layers or 0)
 
     # 1) Truncate sin_cached / cos_cached to a fixed cap (32K rows) instead
     #    of ctx_len. A constant cap keeps the export hash invariant when the
@@ -331,123 +306,21 @@ def _slim_for_window_export(qeff_model, *, ctx_len: Optional[int]) -> None:
 
 
 def _install_window_patch(model_cls) -> None:
-    if getattr(model_cls, "_window_patch_installed", False):
-        return
-    original_init = model_cls.__init__
-
-    @functools.wraps(original_init)
-    def patched_init(self, *args, **kwargs):
-        original_init(self, *args, **kwargs)
-        # Only nullify decoder layers when the layer-wise driver is actively
-        # exporting; idle calls to from_pretrained must behave normally.
-        if _LAYERWISE_STATE["active"] and not _LAYERWISE_STATE["force_full_init"]:
-            _null_outside_window_layers(self, apply_text=True)
-
-    model_cls.__init__ = patched_init
-    model_cls._window_patch_installed = True
+    del model_cls
+    return
 
 
 def _install_shard_window_patch() -> None:
-    if getattr(transformers.modeling_utils, "_window_shard_patch_installed", False):
-        return
-
-    original_get_checkpoint_shard_files = transformers.modeling_utils.get_checkpoint_shard_files
-
-    @functools.wraps(original_get_checkpoint_shard_files)
-    def patched_get_checkpoint_shard_files(*args, **kwargs):
-        shard_files, metadata = original_get_checkpoint_shard_files(*args, **kwargs)
-        # Honor the module-local state instead of polluting PreTrainedModel.
-        # When layerwise is not active this reduces to a no-op for any HF
-        # caller that happens to load checkpoint shards in this process.
-        if not _LAYERWISE_STATE["active"]:
-            return shard_files, metadata
-        weight_map = metadata.get("weight_map")
-        if not weight_map:
-            return shard_files, metadata
-
-        start = int(_LAYERWISE_STATE["start"])
-        end = int(_LAYERWISE_STATE["end"])
-        text_start = int(_LAYERWISE_STATE["text_start"] or start)
-        text_end = int(_LAYERWISE_STATE["text_end"] or end)
-        if text_end <= text_start:
-            return shard_files, metadata
-
-        selected_text_prefixes = tuple(
-            [f"model.layers.{i}." for i in range(text_start, text_end)]
-            + [f"model.language_model.layers.{i}." for i in range(text_start, text_end)]
-        )
-        filtered_weight_map: Dict[str, str] = {}
-        for checkpoint_key, shard_name in weight_map.items():
-            if checkpoint_key.startswith("model.layers.") or checkpoint_key.startswith("model.language_model.layers."):
-                if checkpoint_key.startswith(selected_text_prefixes):
-                    filtered_weight_map[checkpoint_key] = shard_name
-                continue
-            filtered_weight_map[checkpoint_key] = shard_name
-
-        if not filtered_weight_map:
-            return shard_files, metadata
-
-        shard_name_to_path = {path.split("/")[-1]: path for path in shard_files}
-        filtered_shard_names = sorted(set(filtered_weight_map.values()))
-        filtered_shard_files = [shard_name_to_path[name] for name in filtered_shard_names if name in shard_name_to_path]
-        if not filtered_shard_files:
-            return shard_files, metadata
-
-        metadata["weight_map"] = filtered_weight_map
-        metadata["all_checkpoint_keys"] = list(filtered_weight_map.keys())
-        return filtered_shard_files, metadata
-
-    transformers.modeling_utils.get_checkpoint_shard_files = patched_get_checkpoint_shard_files
-    transformers.modeling_utils._window_shard_patch_installed = True
+    return
 
 
 def _set_layer_windows(text_start: int, text_end: int, text_total_layers: int) -> None:
-    # Update the module-local state used by patched HF hooks. We deliberately
-    # do NOT set class attributes on transformers.modeling_utils.PreTrainedModel
-    # here - that would leak to every HF model in the process.
-    _LAYERWISE_STATE["start"] = text_start
-    _LAYERWISE_STATE["end"] = text_end
-    _LAYERWISE_STATE["total_layers"] = text_total_layers
-    _LAYERWISE_STATE["text_start"] = text_start
-    _LAYERWISE_STATE["text_end"] = text_end
-    _LAYERWISE_STATE["text_total_layers"] = text_total_layers
-    _LAYERWISE_STATE["force_full_init"] = 0
-
-    # The QEff modeling classes themselves expose _start/_end/_total_layers as
-    # part of their windowing contract (they are read inside their forward
-    # implementations). Those are ours to set.
-    qeff_vl_mod = getattr(QEfficient.transformers.models, "qwen3_vl_moe", None)
-    if qeff_vl_mod is not None:
-        cls = getattr(qeff_vl_mod.modeling_qwen3_vl_moe, "QEffQwen3VLMoeTextModel", None)
-        if cls is not None:
-            cls._start = text_start
-            cls._end = text_end
-            cls._total_layers = text_total_layers
-
-    qeff_35_mod = getattr(QEfficient.transformers.models, "qwen3_5_moe", None)
-    if qeff_35_mod is not None:
-        for class_name in ("QEffQwen3_5MoeTextModel", "QEffQwen3_5MoeModel"):
-            cls = getattr(qeff_35_mod.modeling_qwen3_5_moe, class_name, None)
-            if cls is not None:
-                cls._start = text_start
-                cls._end = text_end
-                cls._total_layers = text_total_layers
-
-    qeff_3_mod = getattr(QEfficient.transformers.models, "qwen3_moe", None)
-    if qeff_3_mod is not None:
-        cls = getattr(qeff_3_mod.modeling_qwen3_moe, "QEffQwen3MoeModel", None)
-        if cls is not None:
-            cls._start = text_start
-            cls._end = text_end
-            cls._total_layers = text_total_layers
-
-    QEfficient.base.modeling_qeff.QEFFBaseModel._start = text_start
-    QEfficient.base.modeling_qeff.QEFFBaseModel._end = text_end
-    QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers = text_total_layers
+    del text_start, text_end, text_total_layers
+    return
 
 
 def _reset_layer_windows() -> None:
-    _set_layer_windows(0, 0, 0)
+    return
 
 
 def _resolve_export_root(onnx_path: Path) -> Path:
@@ -579,57 +452,25 @@ def _install_window_patches_for(model_type: str) -> None:
     patch nulls the unused decoder layers right after the model is built so
     the full layer list is never instantiated in memory.
     """
-    _install_shard_window_patch()
-    candidates = []
-    qwen3_vl_moe_mod = getattr(getattr(transformers.models, "qwen3_vl_moe", None), "modeling_qwen3_vl_moe", None)
-    if qwen3_vl_moe_mod is not None and "qwen3_vl_moe" in model_type:
-        candidates.extend(
-            cls
-            for name in ("Qwen3VLMoeForConditionalGeneration", "Qwen3VLMoeForCausalLM")
-            if (cls := getattr(qwen3_vl_moe_mod, name, None)) is not None
-        )
-    qwen3_5_moe_mod = getattr(getattr(transformers.models, "qwen3_5_moe", None), "modeling_qwen3_5_moe", None)
-    if qwen3_5_moe_mod is not None and model_type in {"qwen3_5_moe", "qwen3_5_moe_text"}:
-        candidates.extend(
-            cls
-            for name in ("Qwen3_5MoeForConditionalGeneration", "Qwen3_5MoeForCausalLM")
-            if (cls := getattr(qwen3_5_moe_mod, name, None)) is not None
-        )
-    qwen3_moe_mod = getattr(getattr(transformers.models, "qwen3_moe", None), "modeling_qwen3_moe", None)
-    if qwen3_moe_mod is not None and model_type in {"qwen3_moe"}:
-        candidates.extend(
-            cls for name in ("Qwen3MoeForCausalLM",) if (cls := getattr(qwen3_moe_mod, name, None)) is not None
-        )
-    for cls in candidates:
-        _install_window_patch(cls)
+    del model_type
+    return
+
+
+def _layer_prefixes_for_model_type(model_type: str) -> Tuple[str, ...]:
+    if "qwen3_vl_moe" in model_type:
+        return ("model.language_model.layers.", "language_model.layers.")
+    return ("model.layers.",)
 
 
 @contextmanager
 def _layerwise_export_env():
-    """Toggle the layerwise-active flag on QEFFBaseModel for the inner block.
-
-    No environment variables are touched - the flag is a pure in-process class
-    attribute, which keeps the API self-contained and lets concurrent Python
-    interpreters (e.g. test workers) operate independently.
-    """
-    base = QEfficient.base.modeling_qeff.QEFFBaseModel
-    prev_active = getattr(base, "_layerwise_active", False)
-    prev_state_active = _LAYERWISE_STATE["active"]
-    base._layerwise_active = True
-    _LAYERWISE_STATE["active"] = 1
-    try:
+    """Mark the current call stack as performing layerwise export."""
+    with layerwise_export_scope():
         yield
-    finally:
-        base._layerwise_active = prev_active
-        _LAYERWISE_STATE["active"] = prev_state_active
 
 
 def _resolve_text_total_layers(config) -> int:
-    text_config = getattr(config, "text_config", config)
-    total = getattr(text_config, "num_hidden_layers", None)
-    if total is None:
-        raise ValueError("Could not resolve `num_hidden_layers` from config.text_config / config.")
-    return int(total)
+    return resolve_text_total_layers(config)
 
 
 # ---------------------------------------------------------------------------
@@ -687,10 +528,8 @@ def run_layerwise(
     text_cfg = getattr(config, "text_config", config)
     text_cfg.num_hidden_layers = text_total_layers
 
-    _ensure_pretrained_window_attrs()
-    _install_window_patches_for(model_type)
-
     windows = _build_layer_windows(text_total_layers, window_size)
+    custom_loader = CustomLoader(qeff_factory, _layer_prefixes_for_model_type(model_type))
     logger.info(
         "Layerwise export start: model_type=%s total_layers=%d window_size=%d windows=%d "
         "torch_threads=%d torch_interop_threads=%d",
@@ -719,7 +558,7 @@ def run_layerwise(
             "torch": torch.random.get_rng_state(),
         }
 
-        def _build_window_model():
+        def _build_window_model(text_start, text_end):
             # Tiny/test checkpoints can miss some tensors and rely on random
             # initialization. Reusing one RNG snapshot per window preserves
             # layerwise-vs-default parity for those models.
@@ -730,7 +569,7 @@ def run_layerwise(
                 random.setstate(init_rng_snapshot["python"])
                 np.random.set_state(init_rng_snapshot["numpy"])
                 torch.random.set_rng_state(init_rng_snapshot["torch"])
-                return qeff_factory(model_id, config)
+                return custom_loader.load_window(model_id, config, text_start, text_end, text_total_layers)
             finally:
                 random.setstate(prev_python_state)
                 np.random.set_state(prev_numpy_state)
@@ -738,15 +577,17 @@ def run_layerwise(
 
     else:
 
-        def _build_window_model():
-            return qeff_factory(model_id, config)
+        def _build_window_model(text_start, text_end):
+            return custom_loader.load_window(model_id, config, text_start, text_end, text_total_layers)
 
     try:
         with _layerwise_export_env():
-            _set_layer_windows(0, min(window_size, text_total_layers), text_total_layers)
-            if needs_deterministic_init:
-                _LAYERWISE_STATE["force_full_init"] = 1
-            cached_probe = probe_qeff_model or _build_window_model()
+            probe_context = LayerwiseContext(0, min(window_size, text_total_layers), text_total_layers)
+            if probe_qeff_model is not None:
+                attach_layerwise_context(probe_qeff_model, probe_context)
+                if hasattr(probe_qeff_model, "model"):
+                    attach_layerwise_context(probe_qeff_model.model, probe_context)
+            cached_probe = probe_qeff_model or _build_window_model(0, min(window_size, text_total_layers))
             cached_onnx_path = _cached_layerwise_onnx_path(cached_probe, compile_kwargs)
             if cached_onnx_path is not None:
                 logger.info("Layerwise cache hit: reusing merged ONNX at %s", cached_onnx_path)
@@ -758,11 +599,7 @@ def run_layerwise(
                     break
                 window_t0 = time.perf_counter()
                 logger.info("Layerwise window export start: [%d, %d)", text_start, text_end)
-                _set_layer_windows(text_start, text_end, text_total_layers)
-                if needs_deterministic_init:
-                    _LAYERWISE_STATE["force_full_init"] = 1
-
-                qeff_model = _build_window_model()
+                qeff_model = _build_window_model(text_start, text_end)
                 last_qeff_model = qeff_model
                 if hasattr(qeff_model, "model"):
                     _null_outside_window_layers(qeff_model.model, apply_text=True)

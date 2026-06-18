@@ -146,10 +146,10 @@ def _get_module_attributes(module):
 
 def _layerwise_safe_export_passes_enabled():
     try:
-        from QEfficient.base.modeling_qeff import QEFFBaseModel
+        from QEfficient.utils.layerwise_utils import is_layerwise_export_active
     except Exception:
         return False
-    return bool(getattr(QEFFBaseModel, "_layerwise_active", False))
+    return is_layerwise_export_active()
 
 
 def _enable_safe_export_pass_patches(keep_passes=None):

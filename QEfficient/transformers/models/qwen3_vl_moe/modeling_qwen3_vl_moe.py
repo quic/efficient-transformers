@@ -398,8 +398,10 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
-        if is_layerwise_active():
-            self.layer_idx = self.layer_idx - getattr(QEffQwen3VLMoeTextModel, "_start", 0)
+        layer_idx = self.layer_idx
+        if is_layerwise_active(self):
+            start, _ = resolve_layer_window(self, self.layer_idx + 1)
+            layer_idx = self.layer_idx - start
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
@@ -411,7 +413,7 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
                 value=value_states,
                 attention_mask=attention_mask,
                 scaling=self.scaling,
-                layer_idx=self.layer_idx,
+                layer_idx=layer_idx,
                 past_key_value=past_key_values,
                 blocking_config=blocking_config,
                 comp_ctx_length=comp_ctx_lengths,
@@ -527,10 +529,6 @@ class QEffQwen3VLMoeTextDecoderLayer(Qwen3VLMoeTextDecoderLayer):
 
 
 class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
-    _start = 0
-    _end = 0
-    _total_layers = None
-
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3VLMoeTextRotaryEmbedding(config=self.config)
         # Export-only cap to avoid serializing oversized RoPE tables that are
@@ -601,7 +599,7 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         all_self_attns = () if output_attentions else None
 
         layer_idx = 0
-        start, end = resolve_layer_window(QEffQwen3VLMoeTextModel, len(self.layers))
+        start, end = resolve_layer_window(self, len(self.layers))
         layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
 
         for layer_idx, decoder_layer in enumerate(self.layers):
@@ -641,7 +639,7 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
                 )
             layer_idx += 1
 
-        if is_last_layer_window(QEffQwen3VLMoeTextModel, len(self.layers)):
+        if is_last_layer_window(self, len(self.layers)):
             hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
@@ -837,7 +835,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         else:
             inputs_embeds = inputs_embeds
 
-        if not is_layerwise_active():
+        if not is_layerwise_active(self):
             # Default (non-layerwise) path: image merge + full decoder + lm_head in
             # a single forward, identical to the pre-layerwise behavior/output contract.
             B, N, C = inputs_embeds.shape
@@ -876,7 +874,8 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
 
-        if QEffQwen3VLMoeTextModel._start == 0:
+        start, end = resolve_layer_window(self.language_model, len(self.language_model.layers))
+        if start == 0:
             B, N, C = inputs_embeds.shape
             selected = input_ids == self.model.config.image_token_id
             indices1 = selected.to(torch.int64).cumsum(1) - 1
@@ -919,7 +918,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
 
-        elif QEffQwen3VLMoeTextModel._end == QEffQwen3VLMoeTextModel._total_layers:
+        elif end == len(self.language_model.layers):
             outputs = self.language_model(
                 inputs_embeds=inputs_embeds,
                 position_ids=position_ids,

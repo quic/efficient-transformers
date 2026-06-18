@@ -1670,11 +1670,11 @@ def test_layerwise_matches_default_path_for_qwen3_moe():
         "layerwise windowed forward diverged from the default single-shot forward"
     )
 
-    # The default path must leave the mutable window state untouched.
+    # The default path must not create class-level mutable window state.
     from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import QEffQwen3MoeModel
 
-    assert QEffQwen3MoeModel._start == 0
-    assert QEffQwen3MoeModel._end == 0
+    assert not hasattr(QEffQwen3MoeModel, "_start")
+    assert not hasattr(QEffQwen3MoeModel, "_end")
 
 
 @pytest.mark.llm_model
@@ -1852,11 +1852,10 @@ def test_layerwise_supported_guard_accepts_all_supported(arch, model_id):
 def test_layerwise_off_does_not_set_env_var(tmp_path):
     """Backward compat: layerwise must be controlled purely via the API,
     never via environment variables, and must be off by default."""
-    from QEfficient.base.modeling_qeff import QEFFBaseModel
-    from QEfficient.transformers.models import _layerwise  # noqa: F401
+    from QEfficient.utils.layerwise_utils import is_layerwise_export_active
 
     assert os.environ.get("LAYERWISE_EXPORT") is None
-    assert QEFFBaseModel._layerwise_active is False
+    assert is_layerwise_export_active() is False
 
 
 @pytest.mark.llm_model
@@ -1890,24 +1889,23 @@ def test_layerwise_vision_wrapper_keeps_only_first_text_window():
 
 
 @pytest.mark.llm_model
-def test_layerwise_context_manager_toggles_class_flag():
-    """The driver's context manager must flip the class flag and restore it,
-    even on exception, with no env-var side-effects."""
-    from QEfficient.base.modeling_qeff import QEFFBaseModel
+def test_layerwise_context_manager_toggles_export_scope():
+    """The driver context manager must toggle scoped export state and restore it."""
     from QEfficient.transformers.models import _layerwise
+    from QEfficient.utils.layerwise_utils import is_layerwise_export_active
 
-    assert QEFFBaseModel._layerwise_active is False
+    assert is_layerwise_export_active() is False
     with _layerwise._layerwise_export_env():
-        assert QEFFBaseModel._layerwise_active is True
+        assert is_layerwise_export_active() is True
         assert "LAYERWISE_EXPORT" not in os.environ
-    assert QEFFBaseModel._layerwise_active is False
+    assert is_layerwise_export_active() is False
 
     try:
         with _layerwise._layerwise_export_env():
             raise RuntimeError("boom")
     except RuntimeError:
         pass
-    assert QEFFBaseModel._layerwise_active is False
+    assert is_layerwise_export_active() is False
 
 
 @pytest.mark.llm_model
@@ -2020,8 +2018,11 @@ def test_layerwise_cache_miss_exports_all_windows(monkeypatch, tmp_path):
             self.model_name = "Qwen3MoeModel"
 
         def compile(self, **kwargs):
-            start = _layerwise._LAYERWISE_STATE["text_start"]
-            end = _layerwise._LAYERWISE_STATE["text_end"]
+            from QEfficient.utils.layerwise_utils import get_layerwise_context
+
+            context = get_layerwise_context(self.model)
+            start = context.start
+            end = context.end
             exported_windows.append((start, end))
             shard = tmp_path / "onnx_layerwise_tmp" / f"layer_{start}_{end}" / f"model_layer_tmp_{start}_{end}.onnx"
             shard.parent.mkdir(parents=True, exist_ok=True)
@@ -2696,8 +2697,8 @@ def _capture_layerwise_export_names(qeff_model, *, window, total_layers, export_
     care about the buffer names the export was invoked with. Window state is always
     restored in ``finally`` so the class-level flags never leak into other tests.
     """
-    from QEfficient.base.modeling_qeff import QEFFBaseModel
     from QEfficient.transformers.models import _layerwise
+    from QEfficient.utils.layerwise_utils import LayerwiseContext, attach_layerwise_context, clear_layerwise_context
 
     captured = {}
 
@@ -2713,10 +2714,9 @@ def _capture_layerwise_export_names(qeff_model, *, window, total_layers, export_
     torch.onnx.export = _spy
     try:
         with _layerwise._layerwise_export_env():
-            _layerwise._set_layer_windows(window, window + 1, total_layers)
-            QEFFBaseModel._start = window
-            QEFFBaseModel._end = window + 1
-            QEFFBaseModel._total_layers = total_layers
+            context = LayerwiseContext(window, window + 1, total_layers)
+            attach_layerwise_context(qeff_model, context)
+            attach_layerwise_context(qeff_model.model, context)
             try:
                 qeff_model.export(export_dir=str(export_dir), kv_cache_prefix=kv_cache_prefix)
             except _StopExport:
@@ -2724,9 +2724,8 @@ def _capture_layerwise_export_names(qeff_model, *, window, total_layers, export_
     finally:
         torch.onnx.export = orig_export
         _layerwise._reset_layer_windows()
-        QEFFBaseModel._start = 0
-        QEFFBaseModel._end = 0
-        QEFFBaseModel._total_layers = None
+        clear_layerwise_context(qeff_model)
+        clear_layerwise_context(qeff_model.model)
     assert "output_names" in captured, "torch.onnx.export was never reached"
     return captured
 
@@ -2804,17 +2803,16 @@ def test_layerwise_export_with_kv_cache_prefix_subfunctions(tmp_path):
     passed. This asserts the *final transformed* per-window shard on disk carries the infix on both the
     retained-state outputs and the paired input buffers — i.e. the prefix is not lost by the transforms.
     """
-    from QEfficient.base.modeling_qeff import QEFFBaseModel
     from QEfficient.transformers.models import _layerwise
+    from QEfficient.utils.layerwise_utils import LayerwiseContext, attach_layerwise_context, clear_layerwise_context
 
     qeff_model, total_layers = _tiny_qwen3_moe_causal()
     export_dir = tmp_path / "subfn_prefixed"
     try:
         with _layerwise._layerwise_export_env():
-            _layerwise._set_layer_windows(0, 1, total_layers)
-            QEFFBaseModel._start = 0
-            QEFFBaseModel._end = 1
-            QEFFBaseModel._total_layers = total_layers
+            context = LayerwiseContext(0, 1, total_layers)
+            attach_layerwise_context(qeff_model, context)
+            attach_layerwise_context(qeff_model.model, context)
             qeff_model.export(
                 export_dir=str(export_dir),
                 kv_cache_prefix="vllmKvCache",
@@ -2822,9 +2820,8 @@ def test_layerwise_export_with_kv_cache_prefix_subfunctions(tmp_path):
             )
     finally:
         _layerwise._reset_layer_windows()
-        QEFFBaseModel._start = 0
-        QEFFBaseModel._end = 0
-        QEFFBaseModel._total_layers = None
+        clear_layerwise_context(qeff_model)
+        clear_layerwise_context(qeff_model.model)
 
     # export_dir gets a hash suffix appended by export_wrapper; find the per-window shard under it.
     shards = list(tmp_path.glob("subfn_prefixed*/onnx_layerwise_tmp/layer_0_1/*_layer_tmp_0_1.onnx"))

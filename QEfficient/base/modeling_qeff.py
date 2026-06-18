@@ -49,6 +49,7 @@ from QEfficient.utils import (
     to_named_specializations,
 )
 from QEfficient.utils.export_utils import export_wrapper
+from QEfficient.utils.layerwise_utils import get_layerwise_context, is_layerwise_export_active
 from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
 logger = logging.getLogger(__name__)
@@ -103,10 +104,6 @@ class QEFFBaseModel(ABC):
     :_onnx_transforms: ONNX transformations to be applied after ONNX export.
     """
 
-    _start = 0
-    _end = 0
-    _total_layers = None
-    _layerwise_active = False
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
 
@@ -461,7 +458,7 @@ class QEFFBaseModel(ABC):
 
             # Keep this strictly layerwise-scoped so regular non-layerwise export
             # remains backward compatible.
-            if QEFFBaseModel._layerwise_active:
+            if is_layerwise_export_active():
                 _restore_retained_state_output_names(model, output_names)
 
             # Add metadata to the model
@@ -556,8 +553,11 @@ class QEFFBaseModel(ABC):
         **export_kwargs,
     ) -> str:
         cache_probe = export_kwargs.pop("_layerwise_cache_probe", False)
-        idx = int(QEFFBaseModel._start)
-        end_idx = int(getattr(QEFFBaseModel, "_end", idx + 1))
+        context = get_layerwise_context(self.model) or get_layerwise_context(self)
+        if context is None or not context.active:
+            raise RuntimeError("Layerwise export requires an active instance layerwise context.")
+        idx = int(context.start)
+        end_idx = int(context.end)
         if end_idx <= idx:
             raise ValueError(f"Invalid export window: start={idx}, end={end_idx}")
 
@@ -574,7 +574,7 @@ class QEFFBaseModel(ABC):
         # under the export root (new layout) or final_data/ (legacy layout),
         # skip per-window export entirely. This preserves hash-stable reruns
         # without re-exporting layer shards.
-        total_layers = int(getattr(QEFFBaseModel, "_total_layers", 0) or 0)
+        total_layers = int(context.total_layers or 0)
         cached_merged_paths = []
         if total_layers > 0:
             cached_merged_paths.append(export_dir / f"merged_0-{total_layers}.onnx")
@@ -758,7 +758,7 @@ class QEFFBaseModel(ABC):
                     **export_kwargs,
                 )
             total_end = time.time()
-            print(f"\nTotal export time: {total_end - start_time:.2f} seconds")
+            logger.info("Layerwise window export time: %.2f seconds", total_end - start_time)
 
         model = onnx.load(layer_onnx_path_tmp, load_external_data=False)
         transform_kwargs = {
@@ -893,7 +893,7 @@ class QEFFBaseModel(ABC):
                     kv_cache_prefix=kv_cache_prefix,
                     **compiler_options,
                 )
-        if QEFFBaseModel._layerwise_active:
+        if is_layerwise_export_active():
             if onnx_path is None:
                 return None
             onnx_path = Path(onnx_path)

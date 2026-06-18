@@ -82,8 +82,6 @@ if not skip_vision:
         split_model_io=True,
         skip_lang=True,
         use_onnx_subfunctions=True,
-        layerwise=LAYERWISE,
-        layerwise_window_size=LAYERWISE_WINDOW_SIZE,
     )
 
 prefill_qpc_path = qeff_model.compile(
@@ -105,8 +103,6 @@ prefill_qpc_path = qeff_model.compile(
     enable_chunking=True,
     skip_vision=True,
     use_onnx_subfunctions=True,
-    layerwise=LAYERWISE,
-    layerwise_window_size=LAYERWISE_WINDOW_SIZE,
     # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 
@@ -128,8 +124,6 @@ decode_qpc_path = qeff_model.compile(
     prefill_only=False,
     skip_vision=True,
     use_onnx_subfunctions=True,
-    layerwise=LAYERWISE,
-    layerwise_window_size=LAYERWISE_WINDOW_SIZE,
     # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 

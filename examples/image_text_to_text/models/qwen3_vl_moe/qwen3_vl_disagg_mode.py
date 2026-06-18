@@ -55,7 +55,6 @@ if not skip_vision:
         split_model_io=True,
         skip_lang=True,
         use_onnx_subfunctions=True,
-        layerwise=True,
     )
 
 prefill_qpc_path = qeff_model.compile(
@@ -76,8 +75,6 @@ prefill_qpc_path = qeff_model.compile(
     enable_chunking=True,
     skip_vision=True,
     use_onnx_subfunctions=True,
-    layerwise=True,
-    layerwise_window_size=1,
 )
 
 
@@ -97,8 +94,6 @@ decode_qpc_path = qeff_model.compile(
     prefill_only=False,
     skip_vision=True,
     use_onnx_subfunctions=True,
-    layerwise=True,
-    layerwise_window_size=1,
 )
 
 print(f"Prefill qpc path {prefill_qpc_path}")

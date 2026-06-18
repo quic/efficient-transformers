@@ -8,10 +8,9 @@
 """Layerwise prefill compile example for Qwen3.5-MoE.
 
 The orchestration loop that previously lived in this script has been moved
-behind the ``layerwise=True`` flag on ``.compile()`` / ``.export()``.
+behind the ``layerwise=True`` flag on ``from_pretrained()``.
 
-Note: ``layerwise=True`` is a provisional API and is scheduled for deprecation
-once first-class multi-window export lands. Supported model types:
+Note: pass ``layerwise=True`` to ``from_pretrained()``. Supported model types:
 ``qwen3_vl_moe``, ``qwen3_5_moe``, ``qwen3_moe``.
 """
 
@@ -51,8 +50,6 @@ def main():
         use_onnx_subfunctions=True,
         prefill_only=True,
         mos=1,
-        layerwise=True,
-        layerwise_window_size=1,
     )
     print(f"Final QPC path: {qpc_path}")
 
