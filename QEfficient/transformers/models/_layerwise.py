@@ -709,9 +709,11 @@ def run_layerwise(
         )
     first_onnx_path: Optional[Path] = None
     last_qeff_model = None
-    needs_deterministic_init = model_type in {"qwen3_5_moe", "qwen3_5_moe_text"} and not _checkpoint_has_shard_index(
-        model_id
-    )
+    # Qwen3.5-MoE tiny/random checkpoints can still leave some tensors
+    # uninitialized-from-checkpoint even when an index file exists. Keep
+    # layerwise window rebuilds deterministic for this family regardless of
+    # shard-index presence so windowed exports match non-layerwise behavior.
+    needs_deterministic_init = model_type in {"qwen3_5_moe", "qwen3_5_moe_text"}
     if needs_deterministic_init:
         init_rng_snapshot = {
             "python": random.getstate(),

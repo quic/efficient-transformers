@@ -47,6 +47,7 @@ from QEfficient.utils import (
     load_json,
     require_value,
     to_named_specializations,
+    validate_kv_cache_prefix,
 )
 from QEfficient.utils.export_utils import export_wrapper
 from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
@@ -109,6 +110,55 @@ class QEFFBaseModel(ABC):
     _layerwise_active = False
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
+
+    @staticmethod
+    def _is_layerwise_export_active() -> bool:
+        """Return True only while the layerwise driver is exporting windowed ONNX."""
+        return QEFFBaseModel._layerwise_active
+
+    def _apply_kv_cache_prefix_to_outputs(self, output_names, kv_cache_prefix: Optional[str]):
+        """Apply and record the optional KV-cache prefix for export-visible outputs."""
+        kv_cache_prefix = validate_kv_cache_prefix(kv_cache_prefix)
+        if kv_cache_prefix:
+            output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
+            self.hash_params["kv_cache_prefix"] = kv_cache_prefix
+        return output_names, kv_cache_prefix
+
+    @classmethod
+    def _active_layerwise_window(cls) -> tuple[int, int]:
+        """Return the active layerwise ``[start, end)`` window, if any."""
+        start = int(cls._start or 0)
+        end = int(cls._end or (start + 1))
+        return start, end
+
+    @classmethod
+    def _active_layerwise_total_layers(cls) -> int:
+        """Return the active layerwise total-layer count, or zero when unset."""
+        return int(cls._total_layers or 0)
+
+    def _should_restore_layerwise_retained_names(self) -> bool:
+        """Return True only for layerwise ONNX exports that need retained-name restoration."""
+        return self._is_layerwise_export_active()
+
+    def _resolve_layerwise_cached_merged_onnx(self, export_dir: Path) -> Optional[Path]:
+        """Return a previously merged layerwise ONNX, if one exists for this export root."""
+        total_layers = self._active_layerwise_total_layers()
+        cached_merged_paths = []
+        if total_layers > 0:
+            cached_merged_paths.append(export_dir / f"merged_0-{total_layers}.onnx")
+            cached_merged_paths.append(export_dir / "final_data" / f"merged_0-{total_layers}.onnx")
+        cached_merged_paths.extend(sorted(export_dir.glob("merged_0-*.onnx"), reverse=True))
+        final_data_dir = export_dir / "final_data"
+        if final_data_dir.is_dir():
+            cached_merged_paths.extend(sorted(final_data_dir.glob("merged_0-*.onnx"), reverse=True))
+        return next((path for path in cached_merged_paths if path.is_file()), None)
+
+    @staticmethod
+    def _normalize_layerwise_probe_result(onnx_path: Optional[Union[str, Path]]) -> Optional[Path]:
+        """Normalize the layerwise compile probe result to a ``Path`` or ``None``."""
+        if onnx_path is None:
+            return None
+        return Path(onnx_path)
 
     def _transform_names(self) -> List[str]:
         return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
@@ -461,7 +511,7 @@ class QEFFBaseModel(ABC):
 
             # Keep this strictly layerwise-scoped so regular non-layerwise export
             # remains backward compatible.
-            if QEFFBaseModel._layerwise_active:
+            if self._should_restore_layerwise_retained_names():
                 _restore_retained_state_output_names(model, output_names)
 
             # Add metadata to the model
@@ -556,8 +606,7 @@ class QEFFBaseModel(ABC):
         **export_kwargs,
     ) -> str:
         cache_probe = export_kwargs.pop("_layerwise_cache_probe", False)
-        idx = int(QEFFBaseModel._start)
-        end_idx = int(getattr(QEFFBaseModel, "_end", idx + 1))
+        idx, end_idx = self._active_layerwise_window()
         if end_idx <= idx:
             raise ValueError(f"Invalid export window: start={idx}, end={end_idx}")
 
@@ -574,19 +623,10 @@ class QEFFBaseModel(ABC):
         # under the export root (new layout) or final_data/ (legacy layout),
         # skip per-window export entirely. This preserves hash-stable reruns
         # without re-exporting layer shards.
-        total_layers = int(getattr(QEFFBaseModel, "_total_layers", 0) or 0)
-        cached_merged_paths = []
-        if total_layers > 0:
-            cached_merged_paths.append(export_dir / f"merged_0-{total_layers}.onnx")
-            cached_merged_paths.append(export_dir / "final_data" / f"merged_0-{total_layers}.onnx")
-        cached_merged_paths.extend(sorted(export_dir.glob("merged_0-*.onnx"), reverse=True))
-        final_data_dir = export_dir / "final_data"
-        if final_data_dir.is_dir():
-            cached_merged_paths.extend(sorted(final_data_dir.glob("merged_0-*.onnx"), reverse=True))
-        for cached_merged in cached_merged_paths:
-            if cached_merged.is_file():
-                self.onnx_path = cached_merged
-                return self.onnx_path
+        cached_merged = self._resolve_layerwise_cached_merged_onnx(export_dir)
+        if cached_merged is not None:
+            self.onnx_path = cached_merged
+            return self.onnx_path
         if cache_probe:
             return None
 
@@ -893,11 +933,8 @@ class QEFFBaseModel(ABC):
                     kv_cache_prefix=kv_cache_prefix,
                     **compiler_options,
                 )
-        if QEFFBaseModel._layerwise_active:
-            if onnx_path is None:
-                return None
-            onnx_path = Path(onnx_path)
-            return onnx_path
+        if self._is_layerwise_export_active():
+            return self._normalize_layerwise_probe_result(onnx_path)
         onnx_path = Path(onnx_path)
 
         compile_dir = Path(compile_dir or onnx_path.parent)

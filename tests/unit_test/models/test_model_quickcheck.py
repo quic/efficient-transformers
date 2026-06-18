@@ -579,6 +579,42 @@ def test_causal_subfunction_export_smoke(tmp_path):
 
 
 @pytest.mark.llm_model
+def test_gemma3_vlm_export_parity_with_and_without_subfunctions(tmp_path):
+    """Gemma3 VLM export keeps retained-state/output signatures stable across subfunction toggles.
+
+    This guards the Gemma3 cache-bridging export patch on the supported VLM path:
+    the historical working non-subfunction export remains the reference, and
+    enabling subfunctions must preserve the exported graph interface.
+    """
+    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+        VLM_TEXT_RUNTIME_MODEL_ID,
+        trust_remote_code=True,
+        kv_offload=True,
+    )
+
+    with_subfunctions_path = _exported_onnx_path(
+        qeff_model.export(
+            tmp_path / "gemma3-vlm-with-subfunctions",
+            use_onnx_subfunctions=True,
+            offload_pt_weights=False,
+        )
+    )
+    without_subfunctions_path = _exported_onnx_path(
+        qeff_model.export(
+            tmp_path / "gemma3-vlm-without-subfunctions",
+            use_onnx_subfunctions=False,
+            offload_pt_weights=False,
+        )
+    )
+
+    with_model = onnx.load(with_subfunctions_path, load_external_data=False)
+    without_model = onnx.load(without_subfunctions_path, load_external_data=False)
+
+    assert [value.name for value in with_model.graph.input] == [value.name for value in without_model.graph.input]
+    assert [value.name for value in with_model.graph.output] == [value.name for value in without_model.graph.output]
+
+
+@pytest.mark.llm_model
 @pytest.mark.parametrize(
     ("model_type", "config_kwargs"),
     sorted(TINY_MOE_PREFILL_SUBFUNCTION_CONFIGS.items()),

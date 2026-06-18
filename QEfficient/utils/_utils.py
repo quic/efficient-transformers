@@ -141,6 +141,73 @@ def align_kv_input_names_to_retained_outputs(input_names, output_names):
     return aligned
 
 
+def compile_io_name(name: str, *, use_onnx_subfunctions: bool) -> str:
+    """Return the compiler-visible retained-state name for an ONNX graph I/O.
+
+    Regular export emits public retained-state buffers such as
+    ``past_key.0_RetainedState``. ONNX subfunction export may instead expose the
+    same buffer as ``past_key.0_InternalRetainedState`` inside the exported graph.
+    This helper maps from the public retained-state name expected by higher-level
+    QEff code to the ONNX/compiler-visible name when subfunctions are enabled.
+
+    Non-retained outputs and non-subfunction exports are returned unchanged.
+    """
+    if not use_onnx_subfunctions or not name.endswith(_RETAINED_STATE_SUFFIX):
+        return name
+    retained_state_stems = ("key", "value", "conv_state", "recurrent_state", "compressed_kv", "k_pe")
+    if any(token in name for token in retained_state_stems):
+        return name[: -len(_RETAINED_STATE_SUFFIX)] + _INTERNAL_RETAINED_STATE_SUFFIX
+    return name
+
+
+def state_input_name(output_name: str) -> str:
+    """Return the matching state-input name for a retained-state output name.
+
+    The compiler pairs retained-state outputs with identically named inputs after
+    stripping either ``_RetainedState`` or ``_InternalRetainedState``.
+    """
+    for suffix in (_INTERNAL_RETAINED_STATE_SUFFIX, _RETAINED_STATE_SUFFIX):
+        if output_name.endswith(suffix):
+            return output_name[: -len(suffix)]
+    return output_name
+
+
+def filter_custom_io_for_onnx(custom_io: dict, onnx_path) -> dict:
+    """Keep only custom-IO entries that exist in the exported ONNX graph.
+
+    This is primarily used for retained-state buffers, where the graph may expose
+    either public ``*_RetainedState`` names or internal
+    ``*_InternalRetainedState`` names, and stitched/layerwise graphs may prefix
+    bindings (for example ``layer_0/``). Matching by exact name first, then by
+    basename, preserves backward compatibility across these graph variants while
+    keeping unrelated custom-IO entries untouched.
+    """
+    if onnx_path is None:
+        return custom_io
+    try:
+        import onnx
+
+        model = onnx.load(onnx_path, load_external_data=False)
+    except Exception:
+        return custom_io
+
+    io_names = {value.name for value in list(model.graph.input) + list(model.graph.output)}
+    basename_map = {name.rsplit("/", 1)[-1]: name for name in io_names}
+    filtered = {}
+    for io_name, dtype in custom_io.items():
+        matched_name = io_name if io_name in io_names else basename_map.get(io_name)
+        if matched_name is None and io_name.endswith(_INTERNAL_RETAINED_STATE_SUFFIX):
+            public_name = io_name[: -len(_INTERNAL_RETAINED_STATE_SUFFIX)] + _RETAINED_STATE_SUFFIX
+            matched_name = public_name if public_name in io_names else basename_map.get(public_name)
+        elif matched_name is None and io_name.endswith(_RETAINED_STATE_SUFFIX):
+            internal_name = io_name[: -len(_RETAINED_STATE_SUFFIX)] + _INTERNAL_RETAINED_STATE_SUFFIX
+            matched_name = internal_name if internal_name in io_names else basename_map.get(internal_name)
+
+        if matched_name is not None:
+            filtered[matched_name] = dtype
+    return filtered
+
+
 class LRUCache:
     """Simple LRU cache with size limit for vision outputs"""
 

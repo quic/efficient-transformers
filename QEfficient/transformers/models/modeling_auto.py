@@ -12,7 +12,6 @@ from time import perf_counter
 from typing import List, Optional, Union
 
 import numpy as np
-import onnx
 import torch
 import torch.nn as nn
 from transformers import (
@@ -74,8 +73,11 @@ from QEfficient.transformers.quantizers.quant_transforms import (
 )
 from QEfficient.utils import (
     apply_kv_cache_prefix,
+    compile_io_name,
     constants,
+    filter_custom_io_for_onnx,
     get_padding_shape_from_config,
+    state_input_name,
     validate_kv_cache_prefix,
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
@@ -194,26 +196,6 @@ def _build_meta_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
     return model
 
 
-def _compile_io_name(name: str, *, use_onnx_subfunctions: bool) -> str:
-    """Return the compiler-visible name for retained-state ONNX outputs."""
-    if not use_onnx_subfunctions or not name.endswith("_RetainedState"):
-        return name
-    if any(token in name for token in ("key", "value", "conv_state", "recurrent_state", "compressed_kv", "k_pe")):
-        return name[: -len("_RetainedState")] + "_InternalRetainedState"
-    return name
-
-
-def _state_input_name(output_name: str) -> str:
-    """Map a retained-state output name to its matching state input name."""
-    for suffix in ("_InternalRetainedState", "_RetainedState"):
-        if output_name.endswith(suffix):
-            state_name = output_name[: -len(suffix)]
-            break
-    else:
-        state_name = output_name
-    return state_name
-
-
 def _add_retained_state_custom_io(
     custom_io: dict,
     output_name: str,
@@ -222,48 +204,28 @@ def _add_retained_state_custom_io(
     use_onnx_subfunctions: bool,
 ) -> None:
     """Add the paired state-input and retained-state output custom-IO entries."""
-    compiler_output_name = _compile_io_name(output_name, use_onnx_subfunctions=use_onnx_subfunctions)
-    custom_io[_state_input_name(compiler_output_name)] = dtype
+    compiler_output_name = compile_io_name(output_name, use_onnx_subfunctions=use_onnx_subfunctions)
+    custom_io[state_input_name(compiler_output_name)] = dtype
     custom_io[compiler_output_name] = dtype
 
 
-def _filter_custom_io_for_onnx(custom_io: dict, onnx_path: Optional[Union[str, Path]]) -> dict:
-    """Keep custom-IO entries that exist in the ONNX graph.
+def _compile_io_name(name: str, *, use_onnx_subfunctions: bool) -> str:
+    """Backward-compatible alias for retained-state compile I/O naming.
 
-    Layerwise stitched graphs may prefix I/O names (for example ``layer_0/``)
-    and may expose public retained-state names even when subfunction export used
-    internal names during per-window export. Matching by basename keeps compiler
-    custom-IO compatible with both graph shapes.
+    Kept for existing tests and downstream imports while the shared helper lives
+    in `QEfficient.utils`.
     """
-    if onnx_path is None:
-        return custom_io
-    try:
-        model = onnx.load(onnx_path, load_external_data=False)
-    except Exception:
-        return custom_io
+    return compile_io_name(name, use_onnx_subfunctions=use_onnx_subfunctions)
 
-    io_names = {value.name for value in list(model.graph.input) + list(model.graph.output)}
-    basename_to_name = {name.rsplit("/", 1)[-1]: name for name in io_names}
 
-    def resolve_name(name: str) -> Optional[str]:
-        candidates = [name]
-        if name.endswith("_InternalRetainedState"):
-            candidates.append(name[: -len("_InternalRetainedState")] + "_RetainedState")
-        elif name.endswith("_RetainedState"):
-            candidates.append(name[: -len("_RetainedState")] + "_InternalRetainedState")
-        for candidate in candidates:
-            if candidate in io_names:
-                return candidate
-            if candidate in basename_to_name:
-                return basename_to_name[candidate]
-        return None
+def _state_input_name(output_name: str) -> str:
+    """Backward-compatible alias for retained-state input-name derivation."""
+    return state_input_name(output_name)
 
-    filtered = {}
-    for name, dtype in custom_io.items():
-        resolved_name = resolve_name(name)
-        if resolved_name is not None:
-            filtered[resolved_name] = dtype
-    return filtered
+
+def _filter_custom_io_for_onnx(custom_io: dict, onnx_path: Optional[Union[str, Path]]) -> dict:
+    """Backward-compatible alias for ONNX custom-IO filtering."""
+    return filter_custom_io_for_onnx(custom_io, onnx_path)
 
 
 class QEFFTransformersBase(QEFFBaseModel):
@@ -291,6 +253,21 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
+
+    @staticmethod
+    def _should_export_final_layerwise_vision() -> bool:
+        """Return True when the active layerwise window owns the terminal vision export.
+
+        Regular non-layerwise export always returns True. During layerwise runs we
+        export the vision graph only once, from the terminal window that reaches
+        the total layer count.
+        """
+        if not QEFFBaseModel._layerwise_active:
+            return True
+        return (
+            QEfficient.base.modeling_qeff.QEFFBaseModel._end
+            == QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers
+        )
 
     @classmethod
     @with_replaced_quantizers
@@ -1300,7 +1277,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             self.hash_params["prefill_only"] = False
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
-        if QEfficient.base.modeling_qeff.QEFFBaseModel._layerwise_active:
+        if self._is_layerwise_export_active():
             return self._export_layerwise(
                 inputs,
                 output_names=output_names,
@@ -1400,6 +1377,33 @@ class _QEffAutoModelForImageTextToTextDualQPC:
     """
 
     _hf_auto_class = AutoModelForImageTextToText
+
+    @staticmethod
+    def _is_layerwise_export_active() -> bool:
+        """Mirror the shared layerwise export-state check used by other wrappers."""
+        return QEFFBaseModel._is_layerwise_export_active()
+
+    def _apply_kv_cache_prefix_to_outputs(self, output_names, kv_cache_prefix: Optional[str]):
+        """Apply optional KV-cache prefix for dual-QPC VLM exports.
+
+        Unlike ``QEFFBaseModel`` wrappers, this orchestrator class does not own a
+        top-level ``hash_params`` dict. Keep behavior minimal and avoid writing
+        hash metadata here while preserving output-name rewriting.
+        """
+        kv_cache_prefix = validate_kv_cache_prefix(kv_cache_prefix)
+        if kv_cache_prefix:
+            output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
+        return output_names, kv_cache_prefix
+
+    @staticmethod
+    def _should_export_final_layerwise_vision() -> bool:
+        """Mirror the layerwise final-window vision export decision."""
+        if not QEFFBaseModel._layerwise_active:
+            return True
+        return (
+            QEfficient.base.modeling_qeff.QEFFBaseModel._end
+            == QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers
+        )
 
     def __init__(
         self,
@@ -1571,7 +1575,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
         output_names = self.model.get_output_names(kv_offload=True)
         # Prefix only the language-side KV-cache retained buffers (vision buffers are untouched).
-        output_names = apply_kv_cache_prefix(output_names, validate_kv_cache_prefix(kv_cache_prefix))
+        output_names, kv_cache_prefix = self._apply_kv_cache_prefix_to_outputs(output_names, kv_cache_prefix)
         if self.lang_model.model.qaic_config is not None and self.lang_model.model.qaic_config.get(
             "include_sampler", False
         ):
@@ -1586,16 +1590,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 qaic_config=self.lang_model.model.qaic_config,
             )
 
-        layerwise_export = QEFFBaseModel._layerwise_active
-
-        should_export = not skip_vision and (
-            not layerwise_export
-            or (
-                layerwise_export
-                and QEfficient.base.modeling_qeff.QEFFBaseModel._end
-                == QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers
-            )
-        )
+        should_export = not skip_vision and self._should_export_final_layerwise_vision()
         if should_export and not layerwise_cache_probe:
             self.vision_model.export(
                 inputs["vision"],
@@ -2074,7 +2069,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                         use_onnx_subfunctions=use_onnx_subfunctions,
                     )
 
-            custom_io_lang = _filter_custom_io_for_onnx(custom_io_lang, self.lang_model.onnx_path)
+            custom_io_lang = filter_custom_io_for_onnx(custom_io_lang, self.lang_model.onnx_path)
 
             if prefill_only:
                 specializations = specializations["lang"][:1]
@@ -4001,12 +3996,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # Optionally inject a user-provided infix token into the LLM KV-cache retained-state names
         # (e.g. past_key.0_RetainedState -> past_key.0_<prefix>_RetainedState) so downstream consumers
         # (vLLM disaggregated serving) can regex-select only the LLM KV buffers for transfer.
-        kv_cache_prefix = validate_kv_cache_prefix(kv_cache_prefix)
-        if kv_cache_prefix:
-            output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
-            self.hash_params["kv_cache_prefix"] = kv_cache_prefix
+        output_names, kv_cache_prefix = self._apply_kv_cache_prefix_to_outputs(output_names, kv_cache_prefix)
 
-        if QEFFBaseModel._layerwise_active:
+        if self._is_layerwise_export_active():
             return self._export_layerwise(
                 example_inputs,
                 output_names=output_names,
@@ -4496,7 +4488,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
-                    output_name = _compile_io_name(
+                    output_name = compile_io_name(
                         f"past_{kv}.{i}{kv_infix}_RetainedState",
                         use_onnx_subfunctions=use_onnx_subfunctions,
                     )
@@ -4510,7 +4502,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
             for i in range(self.num_layers):
                 for prefix in ("compressed_kv", "k_pe"):
-                    output_name = _compile_io_name(
+                    output_name = compile_io_name(
                         f"{prefix}.{i}{kv_infix}_RetainedState",
                         use_onnx_subfunctions=use_onnx_subfunctions,
                     )
@@ -4521,7 +4513,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         use_onnx_subfunctions=False,
                     )
 
-        custom_io = _filter_custom_io_for_onnx(custom_io, onnx_path)
+        custom_io = filter_custom_io_for_onnx(custom_io, onnx_path)
 
         qpc_path = self._compile(
             onnx_path=onnx_path,
