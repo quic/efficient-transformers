@@ -341,7 +341,7 @@
       }
     },
     {
-      "model_name": "MiniMaxAI/MiniMax-M3",
+      "model_name": "shagunsd/tiny-random-MiniMaxM3SparseForConditionalGeneration",
       "model_type": "minimax_m3_vl",
       "batch_size": 1,
       "prompt_len": 128,
