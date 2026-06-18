@@ -19,9 +19,8 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-# model_id = "Qwen/Qwen3.6-35B-A3B"
-model_id = "tiny-random/qwen3.6-moe"
-LAYERWISE = False
+model_id = "Qwen/Qwen3.6-35B-A3B"
+LAYERWISE = True
 LAYERWISE_WINDOW_SIZE = 1
 DECODE_NUM_DEVICES = int(os.environ.get("QEFF_DECODE_NUM_DEVICES", "1"))
 config = AutoConfig.from_pretrained(model_id)

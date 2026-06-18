@@ -746,6 +746,40 @@ def test_causal_subfunction_and_proxy_export_smoke_gpt2(tmp_path):
     assert any("QEffGPT2Block" in func.name for func in onnx_model.functions)
 
 
+def test_subfunction_export_restores_onnx_transforms_on_failure():
+    from QEfficient.base.onnx_transforms import CustomOpTransform, RenameFunctionOutputsTransform
+    from QEfficient.transformers.cache_utils import InvalidIndexProvider
+    from QEfficient.utils.export_utils import export_wrapper
+
+    class DummyInner:
+        config = None
+
+        def get_submodules_for_export(self):
+            return set()
+
+    class DummyQEff:
+        model = DummyInner()
+        model_architecture = None
+        model_name = "DummyQEff"
+        hash_params = {}
+        export_hash = None
+        _onnx_transforms = []
+
+        @export_wrapper
+        def export(self, export_dir=None, **kwargs):
+            raise RuntimeError("forced export failure")
+
+    qeff_model = DummyQEff()
+
+    with pytest.raises(RuntimeError, match="forced export failure"):
+        qeff_model.export(use_onnx_subfunctions=True)
+
+    assert qeff_model._onnx_transforms == []
+    assert RenameFunctionOutputsTransform not in DummyQEff._onnx_transforms
+    assert CustomOpTransform not in DummyQEff._onnx_transforms
+    assert InvalidIndexProvider.SUBFUNC_ENABLED is False
+
+
 @pytest.mark.llm_model
 def test_prefix_caching_continuous_batching_export_and_ort_smoke(tmp_path):
     qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
@@ -1467,6 +1501,104 @@ def test_qwen3_5_moe_gated_norm_preserves_float16():
     assert out.dtype == torch.float16
 
 
+def test_qwen3_5_moe_get_submodules_for_export_keeps_decoder_layer_for_mixed_layer_types():
+    """Mixed full/linear attention configs must still expose decoder layer subfunctions."""
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+        QEffQwen3_5MoeDecoderLayer,
+        QEffQwen3_5MoeDecoderWrapper,
+        QEffQwen3_5MoeForCausalLM,
+    )
+
+    causal_lm = QEffQwen3_5MoeForCausalLM.__new__(QEffQwen3_5MoeForCausalLM)
+    causal_lm.config = SimpleNamespace(layer_types=["full_attention", "linear_attention"])
+    assert causal_lm.get_submodules_for_export() == {QEffQwen3_5MoeDecoderLayer}
+
+    wrapper = QEffQwen3_5MoeDecoderWrapper.__new__(QEffQwen3_5MoeDecoderWrapper)
+    wrapper.config = SimpleNamespace(text_config=SimpleNamespace(layer_types=["full_attention", "linear_attention"]))
+    assert wrapper.get_submodules_for_export() == {QEffQwen3_5MoeDecoderLayer}
+
+
+def test_qwen3_5_moe_get_specializations_supports_multi_resolution():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeForConditionalGeneration
+
+    model = QEffQwen3_5MoeForConditionalGeneration.__new__(QEffQwen3_5MoeForConditionalGeneration)
+    model.config = SimpleNamespace(vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1))
+
+    specs, _ = model.get_specializations(
+        batch_size=1,
+        prefill_seq_len=64,
+        ctx_len=4096,
+        height=[448, 896],
+        width=[448, 896],
+        num_frames=[1, 2],
+        kv_offload=True,
+    )
+
+    vision_specs = specs["vision"]
+    lang_specs = specs["lang"]
+
+    assert len(vision_specs) == 2
+    expected_vision_size = max(spec["vision_size"] * frames for spec, frames in zip(vision_specs, [1, 2]))
+    assert all(spec["vision_size"] == expected_vision_size for spec in lang_specs)
+    assert all(spec["vision_batch_size"] == 1 for spec in lang_specs)
+
+
+def test_qwen3_5_moe_get_specializations_strips_vision_symbols_for_comp_ctx_variants():
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeForConditionalGeneration
+
+    model = QEffQwen3_5MoeForConditionalGeneration.__new__(QEffQwen3_5MoeForConditionalGeneration)
+    model.config = SimpleNamespace(vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1))
+
+    lang_specs, _ = model.get_specializations(
+        batch_size=1,
+        prefill_seq_len=64,
+        ctx_len=4096,
+        height=[448, 672],
+        width=[448, 672],
+        num_frames=[1, 1],
+        comp_ctx_lengths_prefill=[32, 48],
+        comp_ctx_lengths_decode=[96, 128],
+        kv_offload=False,
+    )
+
+    assert [spec["seq_len"] for spec in lang_specs] == [64, 64, 1, 1]
+    assert all("vision_size" not in spec for spec in lang_specs)
+    assert all("vision_batch_size" not in spec for spec in lang_specs)
+
+
+def test_moe_prefill_transform_does_not_require_enable_chunking():
+    from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeMoE, QEffPrefillChunkedGlm4MoeMoE
+    from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyTransform
+    from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+        QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
+        QEffQwen3_5MoeSparseMoeBlock,
+    )
+    from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
+        QEffPrefillChunkedQwen3MoeSparseMoeBlock,
+        QEffQwen3MoeSparseMoeBlock,
+    )
+    from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+        QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
+        QEffQwen3VLMoeTextSparseMoeBlock,
+    )
+
+    assert PrefillOnlyTransform._module_mapping[QEffGlm4MoeMoE] is QEffPrefillChunkedGlm4MoeMoE
+    assert PrefillOnlyTransform._module_mapping[QEffQwen3MoeSparseMoeBlock] is QEffPrefillChunkedQwen3MoeSparseMoeBlock
+    assert (
+        PrefillOnlyTransform._module_mapping[QEffQwen3VLMoeTextSparseMoeBlock]
+        is QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock
+    )
+    assert (
+        PrefillOnlyTransform._module_mapping[QEffQwen3_5MoeSparseMoeBlock] is QEffPrefillChunkedQwen3_5MoeSparseMoeBlock
+    )
+
+
 def test_layerwise_matches_default_path_for_qwen3_moe():
     """Without-layerwise and with-layerwise forwards must produce identical output.
     This is the core backward-compatibility contract: running every decoder layer
@@ -1564,6 +1696,8 @@ def test_layerwise_matches_default_path_for_qwen3_5_moe():
     )
     wrapper = qeff_model.model.get_qeff_language_decoder().eval()
     lang_inputs = qeff_model.model.get_dummy_inputs(kv_offload=True)["lang"]
+    lang_inputs["input_ids"][0, 0] = qeff_model.model.config.image_token_id
+    lang_inputs["vision_embeds"].normal_()
 
     with torch.no_grad():
         default_out = wrapper(**lang_inputs)
@@ -1777,6 +1911,54 @@ def test_layerwise_context_manager_toggles_class_flag():
 
 
 @pytest.mark.llm_model
+def test_layerwise_safe_export_pass_patch_is_noop_when_inactive():
+    from torch import _C
+
+    from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
+
+    original_constant_prop = _C._jit_pass_constant_propagation
+    original_constant_fold = _C._jit_pass_onnx_constant_fold
+
+    with layerwise_safe_onnx_export_patches():
+        assert _C._jit_pass_constant_propagation is original_constant_prop
+        assert _C._jit_pass_onnx_constant_fold is original_constant_fold
+
+    assert _C._jit_pass_constant_propagation is original_constant_prop
+    assert _C._jit_pass_onnx_constant_fold is original_constant_fold
+
+
+@pytest.mark.llm_model
+def test_layerwise_safe_export_pass_patch_toggles_only_inside_layerwise_context():
+    from torch import _C
+
+    from QEfficient.transformers.models import _layerwise
+    from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
+
+    original_cse = _C._jit_pass_cse
+    original_constant_fold = _C._jit_pass_onnx_constant_fold
+    original_canonicalize = _C._jit_pass_canonicalize
+
+    with _layerwise._layerwise_export_env():
+        with layerwise_safe_onnx_export_patches():
+            assert _C._jit_pass_cse is not original_cse
+            assert _C._jit_pass_onnx_constant_fold is not original_constant_fold
+            assert _C._jit_pass_canonicalize is not original_canonicalize
+            assert _C._jit_pass_cse(None) is False
+            params = {"weight": object()}
+            assert _C._jit_pass_onnx_constant_fold(None, params, 17) is params
+            sentinel_graph = object()
+            assert _C._jit_pass_canonicalize(sentinel_graph) is sentinel_graph
+
+        assert _C._jit_pass_cse is original_cse
+        assert _C._jit_pass_onnx_constant_fold is original_constant_fold
+        assert _C._jit_pass_canonicalize is original_canonicalize
+
+    assert _C._jit_pass_cse is original_cse
+    assert _C._jit_pass_onnx_constant_fold is original_constant_fold
+    assert _C._jit_pass_canonicalize is original_canonicalize
+
+
+@pytest.mark.llm_model
 def test_layerwise_uses_probe_model_for_cached_export(monkeypatch, tmp_path):
     """A cached merged ONNX must avoid rebuilding per-window models."""
     from QEfficient.transformers.models import _layerwise
@@ -1793,7 +1975,7 @@ def test_layerwise_uses_probe_model_for_cached_export(monkeypatch, tmp_path):
             assert kwargs.pop("_layerwise_cache_probe") is True
             return self.cached_path
 
-    cached_path = tmp_path / "Model-hash" / "final_data" / "merged_0-2.onnx"
+    cached_path = tmp_path / "Model-hash" / "Qwen3MoeModel.onnx"
     cached_path.parent.mkdir(parents=True)
     cached_path.touch()
     factory_called = False
@@ -1835,6 +2017,7 @@ def test_layerwise_cache_miss_exports_all_windows(monkeypatch, tmp_path):
     class WindowModel:
         def __init__(self):
             self.model = object()
+            self.model_name = "Qwen3MoeModel"
 
         def compile(self, **kwargs):
             start = _layerwise._LAYERWISE_STATE["text_start"]
@@ -1853,6 +2036,10 @@ def test_layerwise_cache_miss_exports_all_windows(monkeypatch, tmp_path):
         "_stitch_layerwise_if_available",
         lambda export_root, total_layers=None: str(export_root / "merged.onnx"),
     )
+    cleaned = []
+    monkeypatch.setattr(
+        _layerwise, "_cleanup_layerwise_intermediates", lambda export_root, **kwargs: cleaned.append(export_root)
+    )
 
     result = _layerwise.run_layerwise(
         model_id="dummy",
@@ -1866,20 +2053,192 @@ def test_layerwise_cache_miss_exports_all_windows(monkeypatch, tmp_path):
 
     assert exported_windows == [(0, 1), (1, 2), (2, 3)]
     assert result.endswith("merged.onnx")
+    assert cleaned == [tmp_path]
 
 
 @pytest.mark.llm_model
-def test_layerwise_cached_merged_prefers_complete_graph(tmp_path):
+def test_layerwise_cleanup_removes_intermediate_dirs(tmp_path):
     from QEfficient.transformers.models import _layerwise
 
     final_data = tmp_path / "final_data"
+    onnx_tmp = tmp_path / "onnx_layerwise_tmp"
     final_data.mkdir()
-    partial = final_data / "merged_9-48.onnx"
-    complete = final_data / "merged_0-48.onnx"
-    partial.touch()
-    complete.touch()
+    onnx_tmp.mkdir()
+    (final_data / "merged_0-48.onnx").touch()
+    (onnx_tmp / "layer_0_1").mkdir()
 
-    assert _layerwise._cached_merged_onnx(tmp_path, total_layers=48) == complete
+    _layerwise._cleanup_layerwise_intermediates(tmp_path)
+
+    assert not final_data.exists()
+    assert not onnx_tmp.exists()
+
+
+@pytest.mark.llm_model
+def test_layerwise_cached_merged_prefers_root_layout(tmp_path):
+    from QEfficient.transformers.models import _layerwise
+
+    root_merged = tmp_path / "merged_0-48.onnx"
+    legacy_merged = tmp_path / "final_data" / "merged_0-48.onnx"
+    legacy_merged.parent.mkdir()
+    root_merged.touch()
+    legacy_merged.touch()
+
+    assert _layerwise._cached_merged_onnx(tmp_path, total_layers=48) == root_merged
+
+
+def test_layerwise_merge_renames_decoder_function_variants_without_collisions():
+    from onnx import TensorProto, helper
+
+    from QEfficient.utils.layerwise_pipeline import merge_models
+
+    domain = "QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe"
+
+    def make_func(name, inputs):
+        return helper.make_function(
+            domain,
+            name,
+            inputs,
+            ["out"],
+            [helper.make_node("Identity", [inputs[0]], ["out"])],
+            opset_imports=[helper.make_opsetid("", 17)],
+        )
+
+    m1_graph = helper.make_graph(
+        [helper.make_node("QEffQwen3_5MoeDecoderLayer", ["x", "a", "b", "c"], ["m1_out"], domain=domain)],
+        "m1",
+        [helper.make_tensor_value_info(name, TensorProto.FLOAT, [1]) for name in ["x", "a", "b", "c"]],
+        [helper.make_tensor_value_info("m1_out", TensorProto.FLOAT, [1])],
+    )
+    m1 = helper.make_model(m1_graph, opset_imports=[helper.make_opsetid("", 17), helper.make_opsetid(domain, 1)])
+    m1.functions.extend([make_func("QEffQwen3_5MoeDecoderLayer", ["x", "a", "b", "c"])])
+
+    m2_graph = helper.make_graph(
+        [
+            helper.make_node("QEffQwen3_5MoeDecoderLayer", ["y", "d", "e"], ["mid"], domain=domain),
+            helper.make_node("QEffQwen3_5MoeDecoderLayer__v2", ["mid", "f", "g", "h", "i"], ["m2_out"], domain=domain),
+        ],
+        "m2",
+        [helper.make_tensor_value_info(name, TensorProto.FLOAT, [1]) for name in ["y", "d", "e", "f", "g", "h", "i"]],
+        [helper.make_tensor_value_info("m2_out", TensorProto.FLOAT, [1])],
+    )
+    m2 = helper.make_model(m2_graph, opset_imports=[helper.make_opsetid("", 17), helper.make_opsetid(domain, 1)])
+    m2.functions.extend(
+        [
+            make_func("QEffQwen3_5MoeDecoderLayer", ["y", "d", "e"]),
+            make_func("QEffQwen3_5MoeDecoderLayer__v2", ["mid", "f", "g", "h", "i"]),
+        ]
+    )
+
+    merged = merge_models(m1, m2, [("m1_out", "y")])
+    function_inputs = {(func.domain, func.name): len(func.input) for func in merged.functions}
+
+    assert function_inputs[(domain, "QEffQwen3_5MoeDecoderLayer")] == 4
+    assert function_inputs[(domain, "QEffQwen3_5MoeDecoderLayer__v2")] == 5
+    assert function_inputs[(domain, "QEffQwen3_5MoeDecoderLayer__v3")] == 3
+    assert all(
+        len(node.input) == function_inputs[(node.domain, node.op_type)]
+        for node in merged.graph.node
+        if (node.domain, node.op_type) in function_inputs
+    )
+
+
+@pytest.mark.llm_model
+def test_layerwise_materializes_root_onnx_for_final_compile(monkeypatch, tmp_path):
+    from QEfficient.transformers.models import _layerwise
+
+    class DummyConfig:
+        model_type = "qwen3_vl_moe"
+        num_hidden_layers = 2
+
+    class DummyLangModel:
+        model_name = "Qwen3VLDecoderWrapper"
+
+    class ProbeModel:
+        lang_model = DummyLangModel()
+
+        def __init__(self, cached_path):
+            self.cached_path = cached_path
+            self.final_kwargs = None
+
+        def compile(self, **kwargs):
+            if kwargs.pop("_layerwise_cache_probe", False):
+                return self.cached_path
+            self.final_kwargs = kwargs
+            return {"lang_decode_qpc_path": "dummy-qpc"}
+
+    cached_path = tmp_path / "Model-hash" / "Qwen3VLDecoderWrapper.onnx"
+    cached_path.parent.mkdir(parents=True)
+    cached_path.touch()
+    probe = ProbeModel(cached_path)
+
+    monkeypatch.setattr(_layerwise, "_install_window_patches_for", lambda model_type: None)
+
+    result = _layerwise.run_layerwise(
+        model_id="dummy",
+        config=DummyConfig(),
+        qeff_factory=lambda *args, **kwargs: probe,
+        compile_kwargs={},
+        probe_qeff_model=probe,
+        final_compile=True,
+    )
+
+    assert result == {"lang_decode_qpc_path": "dummy-qpc"}
+    assert probe.final_kwargs["lang_onnx_path"] == str(cached_path)
+    assert probe.final_kwargs["skip_lang"] is False
+
+
+@pytest.mark.llm_model
+def test_layerwise_cache_hit_under_final_data_is_canonicalized(monkeypatch, tmp_path):
+    from QEfficient.transformers.models import _layerwise
+
+    class DummyConfig:
+        model_type = "qwen3_vl_moe"
+        num_hidden_layers = 2
+
+    class DummyLangModel:
+        model_name = "Qwen3VLDecoderWrapper"
+
+    class ProbeModel:
+        lang_model = DummyLangModel()
+
+        def __init__(self, cached_path):
+            self.cached_path = cached_path
+            self.final_kwargs = None
+
+        def compile(self, **kwargs):
+            if kwargs.pop("_layerwise_cache_probe", False):
+                return self.cached_path
+            self.final_kwargs = kwargs
+            return {"lang_decode_qpc_path": "dummy-qpc"}
+
+    cached_path = tmp_path / "Model-hash" / "final_data" / "merged_0-2.onnx"
+    cached_path.parent.mkdir(parents=True)
+    cached_path.touch()
+    probe = ProbeModel(cached_path)
+
+    monkeypatch.setattr(_layerwise, "_install_window_patches_for", lambda model_type: None)
+    cleaned = []
+    monkeypatch.setattr(
+        _layerwise,
+        "_relocate_merged_onnx_to_root",
+        lambda export_root, merged_onnx: export_root / merged_onnx.name,
+    )
+    monkeypatch.setattr(
+        _layerwise, "_cleanup_layerwise_intermediates", lambda export_root, **kwargs: cleaned.append(export_root)
+    )
+
+    result = _layerwise.run_layerwise(
+        model_id="dummy",
+        config=DummyConfig(),
+        qeff_factory=lambda *args, **kwargs: probe,
+        compile_kwargs={},
+        probe_qeff_model=probe,
+        final_compile=True,
+    )
+
+    assert result == {"lang_decode_qpc_path": "dummy-qpc"}
+    assert probe.final_kwargs["lang_onnx_path"] == str(tmp_path / "Model-hash" / "merged_0-2.onnx")
+    assert cleaned == [tmp_path / "Model-hash"]
 
 
 @pytest.mark.llm_model
@@ -2103,6 +2462,17 @@ class TestApplyKvCachePrefixHelper:
 
         input_names = ["input_ids", "past_key.0", "past_value.0"]
         output_names = ["logits", "past_key.0_VLLM_RetainedState", "past_value.0_VLLM_RetainedState"]
+        assert align_kv_input_names_to_retained_outputs(input_names, output_names) == [
+            "input_ids",
+            "past_key.0_VLLM",
+            "past_value.0_VLLM",
+        ]
+
+    def test_align_inputs_to_internal_retained_outputs(self):
+        from QEfficient.utils import align_kv_input_names_to_retained_outputs
+
+        input_names = ["input_ids", "past_key.0", "past_value.0"]
+        output_names = ["logits", "past_key.0_VLLM_InternalRetainedState", "past_value.0_VLLM_InternalRetainedState"]
         assert align_kv_input_names_to_retained_outputs(input_names, output_names) == [
             "input_ids",
             "past_key.0_VLLM",
@@ -2392,7 +2762,7 @@ def test_layerwise_export_with_kv_cache_prefix(tmp_path):
     """Regression for the layerwise + kv_cache_prefix path (previously a silent no-op).
 
     The non-layerwise paths already prefix KV buffers; ``_export_layerwise`` rebuilds output
-    names from per-window templates, so the prefix has to be threaded into it and applied there.
+    names from per-window templates, so the prefix has to be threaded into retained outputs.
     This drives the real ``_export_layerwise`` for every window and asserts:
       * each retained-state output carries the ``_<prefix>_RetainedState`` infix (Bug 2), and
       * the matching KV *input* buffer is renamed to ``past_*.{i}_<prefix>`` so the compiler can
