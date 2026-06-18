@@ -1551,9 +1551,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 kv_cache_prefix=kv_cache_prefix,
                 **kwargs,
             )
-        dummy_inputs_kwargs = {}
-        if prefill_seq_len is not None:
-            dummy_inputs_kwargs["prefill_seq_len"] = int(prefill_seq_len)
 
         # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
         try:
@@ -1561,7 +1558,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 kv_offload=True,
                 continuous_batching=self.continuous_batching,
                 comp_ctx_lengths=self.comp_ctx_lengths_decode,
-                **dummy_inputs_kwargs,
             )
             dynamic_axes = self.model.get_onnx_dynamic_axes(
                 kv_offload=True,

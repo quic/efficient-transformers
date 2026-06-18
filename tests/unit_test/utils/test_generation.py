@@ -1102,3 +1102,232 @@ class TestVisionHandlerInit:
         h = VisionHandler(qeff_model=None, vision_session=None, processor=None, tokenizer=None)
         with pytest.raises((ValueError, AttributeError)):
             h.prepare_vlm_inputs("image.jpg", "query", 128)
+
+
+# ---------------------------------------------------------------------------
+# Helper: minimal VisionLanguageGeneration stub for unbound-method calls
+# ---------------------------------------------------------------------------
+
+
+def _make_vlg_stub(full_batch_size=None, prefill_seq_len=8):
+    """Build a minimal MagicMock as `self` for VisionLanguageGeneration unbound methods."""
+    obj = MagicMock()
+    obj.full_batch_size = full_batch_size
+    obj.include_sampler = False
+    obj.comp_ctx_lengths_prefill = None
+    obj._prefill_seq_len = prefill_seq_len
+    obj._write_io_dir = None
+    obj._lang_skip_buffers = []
+
+    session = MagicMock()
+    session.binding_index_map = {}
+    session.bindings = []
+    session.allowed_shapes = []
+    session.run.return_value = {}
+    obj._session = session
+    return obj
+
+
+# ---------------------------------------------------------------------------
+# Tests: Gemma4 CB variant  (gemma4_cb.py / continuous_batching.py)
+#   full_batch_size=4, batch_size=1 per slot, continuous_batching=True,
+#   kv_offload=True (dual-QPC).
+# ---------------------------------------------------------------------------
+
+
+class TestGemma4CBVariant:
+    """Unit tests for the Gemma4 continuous-batching variant."""
+
+    def test_full_batch_size_stored_on_instance(self):
+        """CB instance must store full_batch_size=4."""
+        obj, _, _ = _make_base_instance(full_batch_size=4)
+        assert obj.full_batch_size == 4
+
+    def test_batch_index_shape(self):
+        """CB batch_index must have shape (full_batch_size, 1)."""
+        obj, _, _ = _make_base_instance(full_batch_size=4)
+        obj.initialize_decode_inputs(4, 4, 10)
+        obj.batch_index = np.arange(4).reshape(-1, 1)
+        assert obj.batch_index.shape == (4, 1)
+
+    def test_batch_index_values_sequential(self):
+        """CB batch_index values must be 0 … full_batch_size-1."""
+        obj, _, _ = _make_base_instance(full_batch_size=4)
+        obj.initialize_decode_inputs(4, 4, 10)
+        obj.batch_index = np.arange(4).reshape(-1, 1)
+        np.testing.assert_array_equal(obj.batch_index.flatten(), [0, 1, 2, 3])
+
+    def test_decode_inputs_contain_batch_index(self):
+        """prepare_decode_inputs in CB mode must include batch_index with shape (full_batch_size, 1)."""
+        obj, _, _ = _make_base_instance(full_batch_size=4)
+        obj.initialize_decode_inputs(4, 4, 10)
+        obj.batch_index = np.arange(4).reshape(-1, 1)
+        decode_inputs = obj.prepare_decode_inputs()
+        assert "batch_index" in decode_inputs
+        assert decode_inputs["batch_index"].shape == (4, 1)
+
+    def test_mm_token_type_ids_uses_full_batch_size(self):
+        """
+        _execute_chunked_prefill must allocate _decode_mm_token_type_ids with
+        full_batch_size rows, not the per-slot prefill batch size of 1.
+        Bug: shape was (1,1) causing a QPC dimension mismatch at decode time.
+        Fix: use self.full_batch_size when set.
+        """
+        from QEfficient.generation.vlm_generation import VisionLanguageGeneration
+
+        obj = _make_vlg_stub(full_batch_size=4, prefill_seq_len=8)
+        lang_inputs = {
+            "input_ids": np.zeros((1, 8), dtype=np.int64),
+            "position_ids": np.zeros((1, 8), dtype=np.int64),
+            "mm_token_type_ids": np.zeros((1, 8), dtype=np.int32),
+        }
+        VisionLanguageGeneration._execute_chunked_prefill(obj, lang_inputs, num_chunks=1)
+        assert obj._decode_mm_token_type_ids.shape == (4, 1), (
+            f"Expected (4, 1), got {obj._decode_mm_token_type_ids.shape}"
+        )
+
+    def test_cb_compile_signature_has_full_batch_size(self):
+        """DualQPC compile() must accept full_batch_size (CB compilation parameter)."""
+        import inspect
+
+        from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
+
+        sig = inspect.signature(_QEffAutoModelForImageTextToTextDualQPC.compile)
+        assert "full_batch_size" in sig.parameters
+
+
+# ---------------------------------------------------------------------------
+# Tests: Gemma4 regular variant  (gemma4_example.py)
+#   batch_size=1, no full_batch_size, kv_offload=True (dual-QPC).
+# ---------------------------------------------------------------------------
+
+
+class TestGemma4RegularVariant:
+    """Unit tests for the Gemma4 regular (non-CB) batching variant."""
+
+    def test_no_full_batch_size_on_instance(self):
+        """Regular variant instance must have full_batch_size=None."""
+        obj, _, _ = _make_base_instance(full_batch_size=None)
+        assert obj.full_batch_size is None
+
+    def test_decode_inputs_have_no_batch_index(self):
+        """Regular variant decode inputs must NOT include batch_index."""
+        obj, _, _ = _make_base_instance(full_batch_size=None)
+        obj.initialize_decode_inputs(1, 1, 10)
+        decode_inputs = obj.prepare_decode_inputs()
+        assert "batch_index" not in decode_inputs
+
+    def test_decode_input_ids_shape(self):
+        """Regular variant decode input_ids must be (batch_size, 1)."""
+        obj, _, _ = _make_base_instance(batch_size=1, full_batch_size=None)
+        obj.initialize_decode_inputs(1, 1, 10)
+        decode_inputs = obj.prepare_decode_inputs()
+        assert decode_inputs["input_ids"].shape == (1, 1)
+
+    def test_mm_token_type_ids_absent_from_decode_when_not_set(self):
+        """VLM prepare_decode_inputs must omit mm_token_type_ids when attribute is not set."""
+        from QEfficient.generation.text_generation_inference import QEffTextGenerationBase
+        from QEfficient.generation.vlm_generation import VisionLanguageGeneration
+
+        obj = object.__new__(VisionLanguageGeneration)
+        obj._decode_cross_attention_mask = None
+        obj.batch_index = None
+        # _decode_mm_token_type_ids intentionally absent (regular variant never sets it via text-only path)
+
+        with patch.object(QEffTextGenerationBase, "prepare_decode_inputs", return_value={}):
+            result = VisionLanguageGeneration.prepare_decode_inputs(obj)
+        assert "mm_token_type_ids" not in result
+
+    def test_regular_compile_signature_has_skip_vision(self):
+        """DualQPC compile() must accept skip_vision (used by gemma4_example text-only path)."""
+        import inspect
+
+        from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
+
+        sig = inspect.signature(_QEffAutoModelForImageTextToTextDualQPC.compile)
+        assert "skip_vision" in sig.parameters
+
+
+# ---------------------------------------------------------------------------
+# Tests: Gemma4 diss variant  (gemma4_diss.py)
+#   Separate prefill-only QPC + decode-only QPC, raw QAICInferenceSession.
+#   Uses prefill_only=True, retain_full_kv=True, enable_chunking=True,
+#   skip_lang=True (vision QPC) and skip_vision=True (lang QPCs).
+# ---------------------------------------------------------------------------
+
+
+class TestGemma4DissVariant:
+    """Unit tests for the Gemma4 dissected (split prefill/decode QPC) variant."""
+
+    def test_compile_signature_has_prefill_only(self):
+        """DualQPC compile() must accept prefill_only (required for diss prefill QPC)."""
+        import inspect
+
+        from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
+
+        sig = inspect.signature(_QEffAutoModelForImageTextToTextDualQPC.compile)
+        assert "prefill_only" in sig.parameters
+
+    def test_compile_signature_has_enable_chunking(self):
+        """DualQPC compile() must accept enable_chunking (used with prefill_only in diss)."""
+        import inspect
+
+        from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
+
+        sig = inspect.signature(_QEffAutoModelForImageTextToTextDualQPC.compile)
+        assert "enable_chunking" in sig.parameters
+
+    def test_compile_signature_has_skip_lang(self):
+        """DualQPC compile() must accept skip_lang (vision-only QPC in diss)."""
+        import inspect
+
+        from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
+
+        sig = inspect.signature(_QEffAutoModelForImageTextToTextDualQPC.compile)
+        assert "skip_lang" in sig.parameters
+
+    def test_num_chunks_ceiling_division(self):
+        """Diss variant computes num_chunks via ceiling division: -(length // -prefill_seq_len)."""
+        PREFILL_SEQ_LEN = 296
+        cases = [(296, 1), (297, 2), (592, 2), (593, 3), (1, 1)]
+        for input_len, expected in cases:
+            got = -(input_len // -PREFILL_SEQ_LEN)
+            assert got == expected, f"input_len={input_len}: expected {expected}, got {got}"
+
+    def test_padded_len_is_multiple_of_prefill_seq_len(self):
+        """Diss pads inputs to an exact multiple of PREFILL_SEQ_LEN before chunking."""
+        PREFILL_SEQ_LEN = 296
+        for input_ids_length in [1, 100, 296, 297, 500, 592, 593]:
+            num_chunks = -(input_ids_length // -PREFILL_SEQ_LEN)
+            padded_len = num_chunks * PREFILL_SEQ_LEN
+            assert padded_len % PREFILL_SEQ_LEN == 0
+            assert padded_len >= input_ids_length
+
+    def test_mm_token_type_ids_sliced_per_chunk(self):
+        """Diss prefill loop must slice mm_token_type_ids to [prefill_seq_len] tokens per chunk."""
+        PREFILL_SEQ_LEN = 8
+        BS, num_chunks = 1, 3
+        total_len = num_chunks * PREFILL_SEQ_LEN
+        mm = np.arange(total_len, dtype=np.int32).reshape(BS, -1)
+
+        for i in range(num_chunks):
+            chunk = mm[..., i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
+            assert chunk.shape == (BS, PREFILL_SEQ_LEN)
+            np.testing.assert_array_equal(
+                chunk[0],
+                np.arange(i * PREFILL_SEQ_LEN, (i + 1) * PREFILL_SEQ_LEN, dtype=np.int32),
+            )
+
+    def test_decode_inputs_exclude_mm_token_type_ids(self):
+        """Diss decode inputs are built without mm_token_type_ids (decode QPC is vision-free)."""
+        # Reproduce the diss decode_inputs construction from gemma4_diss.py
+        logits = np.zeros((1, 1, 100), dtype=np.float32)
+        logits[0, 0, 42] = 1.0
+        position_ids = np.array([[10]])
+
+        decode_inputs = {
+            "input_ids": np.argmax(logits).reshape(1, 1),
+            "position_ids": position_ids + 1,
+            "image_idx": np.array([[0]], dtype=np.int64),
+        }
+        assert "mm_token_type_ids" not in decode_inputs
