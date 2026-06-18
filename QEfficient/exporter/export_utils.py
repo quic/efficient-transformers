@@ -19,6 +19,7 @@ from onnx import external_data_helper
 
 from QEfficient.base.onnx_transforms import FP16ClipTransform, OnnxTransformPipeline
 from QEfficient.utils import constants
+from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
 
 def export_onnx(
@@ -91,16 +92,17 @@ def export_onnx(
     os.makedirs(f"{gen_models_path}_tmp", exist_ok=True)
     try:
         info("Exporting to ONNX...")
-        torch.onnx.export(
-            pt_model,
-            tuple(pt_inputs),
-            f"{gen_models_path}_tmp/{model_base_name}.onnx",
-            input_names=input_names,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
-            opset_version=constants.ONNX_EXPORT_OPSET,
-            custom_opsets={"com.qti.aisw.onnx": 1},
-        )
+        with layerwise_safe_onnx_export_patches():
+            torch.onnx.export(
+                pt_model,
+                tuple(pt_inputs),
+                f"{gen_models_path}_tmp/{model_base_name}.onnx",
+                input_names=input_names,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                opset_version=constants.ONNX_EXPORT_OPSET,
+                custom_opsets={"com.qti.aisw.onnx": 1},
+            )
     except Exception as e:
         raise RuntimeError("Exporting to ONNX failed. {}".format(e))
 

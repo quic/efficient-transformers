@@ -394,6 +394,42 @@ class TestRenameFunctionOutputsTransform:
             f"Output count changed: {output_count_before} → {output_count_after}"
         )
 
+    def test_rename_transform_preserves_kv_prefix_infix(self):
+        """Subfunction rename keeps optional KV prefix infix on retained-state outputs."""
+        import onnx
+        from onnx import helper
+
+        from QEfficient.base.onnx_transforms import RenameFunctionOutputsTransform
+
+        fn_name = "DecoderLayerFn"
+        fn_domain = "qeff.test"
+        fn_out = "past_key.0_vllmKvCache_InternalRetainedState"
+        function = helper.make_function(
+            fn_domain,
+            fn_name,
+            ["x"],
+            [fn_out],
+            [helper.make_node("Identity", ["x"], [fn_out], "id")],
+            [helper.make_opsetid("", 17)],
+        )
+
+        graph = helper.make_graph(
+            [helper.make_node(fn_name, ["input"], ["tmp_out"], name="DecoderLayer_0", domain=fn_domain)],
+            "g",
+            [helper.make_tensor_value_info("input", onnx.TensorProto.FLOAT, [1])],
+            [helper.make_tensor_value_info("tmp_out", onnx.TensorProto.FLOAT, [1])],
+        )
+        model = helper.make_model(
+            graph,
+            opset_imports=[helper.make_opsetid("", 17), helper.make_opsetid(fn_domain, 1)],
+            functions=[function],
+        )
+
+        RenameFunctionOutputsTransform.apply(model, layer_idx=1)
+
+        assert model.graph.output[0].name == "past_key.1_vllmKvCache_RetainedState"
+        assert "_InternalRetainedState" not in model.graph.output[0].name
+
 
 # ---------------------------------------------------------------------------
 # Tests: SplitTensorsTransform functional (GAP E)
