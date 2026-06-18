@@ -117,6 +117,7 @@ def main():
             effective_prefill_seq_len=effective_prefill_seq_len,
             effective_ctx_len=effective_ctx_len,
             skip_vision=SKIP_VISION,
+            use_onnx_subfunctions=True,
             **compiler_kwargs,
         )
         qeff_model.compile(**compile_kwargs)

@@ -49,6 +49,7 @@ from transformers.models.gemma3.modeling_gemma3 import (
     Gemma3TextModel,
 )
 from transformers.models.gemma4.modeling_gemma4 import (
+    Gemma4ClippableLinear,
     Gemma4ForCausalLM,
     Gemma4ForConditionalGeneration,
     Gemma4RMSNorm,
@@ -57,6 +58,7 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4TextExperts,
     Gemma4TextModel,
     Gemma4TextRouter,
+    Gemma4VisionAttention,
 )
 from transformers.models.glm4_moe.modeling_glm4_moe import (
     Glm4MoeAttention,
@@ -355,6 +357,7 @@ from QEfficient.transformers.models.gemma3.modeling_gemma3 import (
     QEffGemma3TextModel,
 )
 from QEfficient.transformers.models.gemma4.modeling_gemma4 import (
+    QEffGemma4ClippableLinear,
     QEffGemma4CustomRMSNormAIC,
     QEffGemma4ForCausalLM,
     QEffGemma4ForConditionalGeneration,
@@ -363,6 +366,7 @@ from QEfficient.transformers.models.gemma4.modeling_gemma4 import (
     QEffGemma4TextExperts,
     QEffGemma4TextModel,
     QEffGemma4TextRouter,
+    QEffGemma4VisionAttention,
     QEffPrefillChunckedGemma4TextExperts,
 )
 from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
@@ -785,6 +789,8 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma4ForConditionalGeneration: QEffGemma4ForConditionalGeneration,
         Gemma4TextExperts: QEffGemma4TextExperts,
         Gemma4TextRouter: QEffGemma4TextRouter,
+        Gemma4VisionAttention: QEffGemma4VisionAttention,
+        Gemma4ClippableLinear: QEffGemma4ClippableLinear,
         # GPT_OSS
         GptOssAttention: QEffGptOssAttention,
         GptOssDecoderLayer: QEffGptOssDecoderLayer,
