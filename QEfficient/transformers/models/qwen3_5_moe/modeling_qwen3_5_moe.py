@@ -63,7 +63,9 @@ from QEfficient.utils.layerwise_utils import (
     get_layerwise_context,
     is_last_layer_window,
     is_layerwise_active,
+    is_layerwise_context_active,
     resolve_layer_window,
+    resolve_layer_window_from_context,
 )
 from QEfficient.utils.logging_utils import logger
 
@@ -117,12 +119,10 @@ class QEffQwen3_5MoeDynamicCache(Cache):
         layerwise_context=None,
     ) -> "QEffQwen3_5MoeDynamicCache":
         cache = cls(config)
-        if layerwise_context is not None:
-            cache._qeff_layerwise_context = layerwise_context
         if past_key_values is None:
             return cache
 
-        if not is_layerwise_active(cache):
+        if not is_layerwise_context_active(layerwise_context):
             # Default path: restore every layer, matching pre-layerwise behavior.
             for layer_idx, layer_state in enumerate(past_key_values):
                 if cache.layer_types[layer_idx] == "full_attention":
@@ -137,7 +137,7 @@ class QEffQwen3_5MoeDynamicCache(Cache):
                     cache.recurrent_states[layer_idx] = recurrent_state
             return cache
 
-        layer_idx, _ = resolve_layer_window(cache, len(cache.layer_types))
+        layer_idx, _ = resolve_layer_window_from_context(layerwise_context, len(cache.layer_types))
         layer_state = past_key_values
         if len(past_key_values) == len(cache.layer_types) and isinstance(past_key_values[layer_idx], (tuple, list)):
             layer_state = past_key_values[layer_idx]
@@ -1061,9 +1061,6 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
             )
         elif use_cache and past_key_values is None:
             past_key_values = QEffQwen3_5MoeDynamicCache(self.config)
-            context = get_layerwise_context(self)
-            if context is not None:
-                past_key_values._qeff_layerwise_context = context
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)

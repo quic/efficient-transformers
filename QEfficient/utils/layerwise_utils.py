@@ -42,15 +42,110 @@ class LayerwiseContext:
     force_full_init: bool = False
 
 
+@dataclass(frozen=True)
+class LayerwiseState:
+    """Wrapper-level layerwise configuration."""
+
+    enabled: bool = False
+    window_size: int = 1
+    outer_meta: bool = False
+
+
+class LayerwiseStateMixin:
+    """Instance methods for wrappers that own layerwise configuration."""
+
+    def _configure_layerwise_state(self, *, enabled: bool, window_size: int) -> None:
+        setattr(
+            self,
+            "_qeff_layerwise_state",
+            LayerwiseState(enabled=bool(enabled), window_size=int(window_size), outer_meta=bool(enabled)),
+        )
+
+    def _get_layerwise_state(self) -> LayerwiseState:
+        state = getattr(self, "_qeff_layerwise_state", None)
+        return state if isinstance(state, LayerwiseState) else LayerwiseState()
+
+    def _is_layerwise_enabled(self) -> bool:
+        return self._get_layerwise_state().enabled
+
+    def _get_layerwise_window_size(self) -> int:
+        return self._get_layerwise_state().window_size
+
+    def _should_run_layerwise_driver(self, *, cache_probe: bool = False) -> bool:
+        return self._is_layerwise_enabled() and not cache_probe
+
+    def _is_layerwise_outer_meta(self) -> bool:
+        return self._get_layerwise_state().outer_meta
+
+    def _consume_deprecated_layerwise_kwargs(self, kwargs: dict) -> None:
+        if "layerwise" in kwargs:
+            requested = kwargs.pop("layerwise")
+            if bool(requested) != self._is_layerwise_enabled():
+                raise ValueError("Pass layerwise=True to from_pretrained(...), not export()/compile().")
+            warnings.warn(
+                "Passing `layerwise` to export()/compile() is deprecated; set it in from_pretrained(...).",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        if "layerwise_window_size" in kwargs:
+            requested = kwargs.pop("layerwise_window_size")
+            if requested != self._get_layerwise_window_size():
+                raise ValueError("Pass layerwise_window_size to from_pretrained(...), not export()/compile().")
+            warnings.warn(
+                "Passing `layerwise_window_size` to export()/compile() is deprecated; set it in from_pretrained(...).",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+
+
+def configure_layerwise_state(instance, *, enabled: bool, window_size: int) -> None:
+    if instance is None:
+        return
+    if hasattr(instance, "_configure_layerwise_state"):
+        instance._configure_layerwise_state(enabled=enabled, window_size=window_size)
+        return
+    setattr(
+        instance,
+        "_qeff_layerwise_state",
+        LayerwiseState(enabled=bool(enabled), window_size=int(window_size), outer_meta=bool(enabled)),
+    )
+
+
+def get_layerwise_state(instance) -> LayerwiseState:
+    if hasattr(instance, "_get_layerwise_state"):
+        return instance._get_layerwise_state()
+    state = getattr(instance, "_qeff_layerwise_state", None)
+    return state if isinstance(state, LayerwiseState) else LayerwiseState()
+
+
+def is_layerwise_enabled(instance) -> bool:
+    return get_layerwise_state(instance).enabled
+
+
+def get_layerwise_window_size(instance) -> int:
+    return get_layerwise_state(instance).window_size
+
+
+def should_run_layerwise_driver(instance, *, cache_probe: bool = False) -> bool:
+    return is_layerwise_enabled(instance) and not cache_probe
+
+
+def is_layerwise_outer_meta(instance) -> bool:
+    return get_layerwise_state(instance).outer_meta
+
+
 def get_layerwise_context(module) -> Optional[LayerwiseContext]:
     return getattr(module, "_qeff_layerwise_context", None)
+
+
+def is_layerwise_context_active(context: Optional[LayerwiseContext]) -> bool:
+    return bool(context and context.active)
 
 
 def is_layerwise_active(module=None) -> bool:
     if module is None:
         return False
-    context = get_layerwise_context(module)
-    return bool(context and context.active)
+    return is_layerwise_context_active(get_layerwise_context(module))
 
 
 def is_layerwise_export_active() -> bool:
@@ -67,8 +162,13 @@ def layerwise_export_scope():
 
 
 def resolve_layer_window(module, total_layers: int) -> Tuple[int, int]:
-    context = get_layerwise_context(module)
-    if not context or not context.active:
+    return resolve_layer_window_from_context(get_layerwise_context(module), total_layers)
+
+
+def resolve_layer_window_from_context(
+    context: Optional[LayerwiseContext], total_layers: int
+) -> Tuple[int, int]:
+    if not is_layerwise_context_active(context):
         return 0, total_layers
     end = context.end if context.end else total_layers
     return int(context.start), int(end)
@@ -699,7 +799,7 @@ def run_layerwise(
     if not final_compile:
         return str(canonical_onnx)
 
-    if getattr(last_qeff_model, "layerwise", False):
+    if is_layerwise_enabled(last_qeff_model):
         last_qeff_model = _build_window_model(0, min(window_size, text_total_layers))
 
     final_kwargs = dict(compile_kwargs)

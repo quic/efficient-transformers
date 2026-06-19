@@ -1865,7 +1865,7 @@ def test_layerwise_vision_wrapper_keeps_only_first_text_window():
 
     layers = vision_wrapper.model.model.language_model.layers
 
-    assert getattr(qeff_model, "_layerwise_outer_meta", False) is True
+    assert qeff_model._is_layerwise_outer_meta() is True
     assert layers[0] is not None
     assert sum(layer is not None for layer in layers) == 1
     assert next(vision_wrapper.model.model.visual.parameters()).device.type != "meta"
@@ -2146,7 +2146,6 @@ def test_layerwise_materializes_root_onnx_for_final_compile(monkeypatch, tmp_pat
 
     class ProbeModel:
         lang_model = DummyLangModel()
-        layerwise = True
 
         def __init__(self, cached_path):
             self.cached_path = cached_path
@@ -2160,7 +2159,6 @@ def test_layerwise_materializes_root_onnx_for_final_compile(monkeypatch, tmp_pat
 
     class FinalModel:
         lang_model = DummyLangModel()
-        layerwise = False
 
         def __init__(self):
             self.final_kwargs = None
@@ -2173,6 +2171,7 @@ def test_layerwise_materializes_root_onnx_for_final_compile(monkeypatch, tmp_pat
     cached_path.parent.mkdir(parents=True)
     cached_path.touch()
     probe = ProbeModel(cached_path)
+    _layerwise.configure_layerwise_state(probe, enabled=True, window_size=1)
     final_model = FinalModel()
 
     result = _layerwise.run_layerwise(

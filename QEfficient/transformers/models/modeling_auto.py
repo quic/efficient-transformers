@@ -81,6 +81,7 @@ from QEfficient.utils import (
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.layerwise_utils import (
+    LayerwiseStateMixin,
     _layer_prefixes_for_model_type,
     _null_outside_window_layers,
     assert_layerwise_supported,
@@ -190,34 +191,6 @@ def _build_meta_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
     rebuilds a real per-window model when ``compile()``/``export()`` runs.
     """
     return _build_layerwise_meta_model(hf_auto_class, pretrained_model_name_or_path, kwargs)
-
-
-def _configure_layerwise_instance(instance, *, enabled: bool, window_size: int) -> None:
-    instance.layerwise = bool(enabled)
-    instance.layerwise_window_size = window_size
-    if enabled:
-        instance._layerwise_outer_meta = True
-
-
-def _consume_deprecated_layerwise_kwargs(kwargs: dict, instance) -> None:
-    if "layerwise" in kwargs:
-        requested = kwargs.pop("layerwise")
-        if bool(requested) != bool(getattr(instance, "layerwise", False)):
-            raise ValueError("Pass layerwise=True to from_pretrained(...), not export()/compile().")
-        warnings.warn(
-            "Passing `layerwise` to export()/compile() is deprecated; set it in from_pretrained(...).",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-    if "layerwise_window_size" in kwargs:
-        requested = kwargs.pop("layerwise_window_size")
-        if requested != getattr(instance, "layerwise_window_size", 1):
-            raise ValueError("Pass layerwise_window_size to from_pretrained(...), not export()/compile().")
-        warnings.warn(
-            "Passing `layerwise_window_size` to export()/compile() is deprecated; set it in from_pretrained(...).",
-            DeprecationWarning,
-            stacklevel=3,
-        )
 
 
 def _compile_io_name(name: str, *, use_onnx_subfunctions: bool) -> str:
@@ -1416,7 +1389,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         return self.model.config.__dict__
 
 
-class _QEffAutoModelForImageTextToTextDualQPC:
+class _QEffAutoModelForImageTextToTextDualQPC(LayerwiseStateMixin):
     """
     Internal class handling multimodal image-text-to-text models using a dual QPC approach.
 
@@ -1562,8 +1535,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             A list containing the paths to the generated ONNX graph files for both components.
         """
         layerwise_cache_probe = kwargs.pop("_layerwise_cache_probe", False)
-        _consume_deprecated_layerwise_kwargs(kwargs, self)
-        if getattr(self, "layerwise", False) and not layerwise_cache_probe:
+        self._consume_deprecated_layerwise_kwargs(kwargs)
+        if self._should_run_layerwise_driver(cache_probe=layerwise_cache_probe):
             return self._run_layerwise_export(
                 export_dir=export_dir,
                 use_onnx_subfunctions=use_onnx_subfunctions,
@@ -1572,7 +1545,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_seq_len=prefill_seq_len,
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
-                layerwise_window_size=self.layerwise_window_size,
+                layerwise_window_size=self._get_layerwise_window_size(),
                 kv_cache_prefix=kv_cache_prefix,
                 **kwargs,
             )
@@ -1886,8 +1859,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
 
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
-        _consume_deprecated_layerwise_kwargs(compiler_options, self)
-        if getattr(self, "layerwise", False) and not layerwise_cache_probe:
+        self._consume_deprecated_layerwise_kwargs(compiler_options)
+        if self._should_run_layerwise_driver(cache_probe=layerwise_cache_probe):
             if skip_lang and not skip_vision:
                 vision_wrapper = self._build_layerwise_vision_wrapper()
                 qpc_paths = vision_wrapper.compile(
@@ -1941,7 +1914,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 qaic_config=qaic_config,
-                layerwise_window_size=self.layerwise_window_size,
+                layerwise_window_size=self._get_layerwise_window_size(),
                 kv_cache_prefix=kv_cache_prefix,
                 **compiler_options,
             )
@@ -3333,7 +3306,7 @@ class QEFFAutoModelForImageTextToText:
             qaic_config=qaic_config,
             **kwargs,
         )
-        _configure_layerwise_instance(instance, enabled=layerwise, window_size=layerwise_window_size)
+        instance._configure_layerwise_state(enabled=layerwise, window_size=layerwise_window_size)
         return instance
 
 
@@ -3343,7 +3316,7 @@ MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {
 }
 
 
-class QEFFAutoModelForCausalLM(QEFFBaseModel):
+class QEFFAutoModelForCausalLM(LayerwiseStateMixin, QEFFBaseModel):
     """
     QEfficient class for Causal Language Models from the HuggingFace hub (e.g., GPT-2, Llama).
 
@@ -3615,7 +3588,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             max_seq_len_cached=max_seq_len_cached,
             **kwargs,
         )
-        _configure_layerwise_instance(instance, enabled=layerwise, window_size=layerwise_window_size)
+        instance._configure_layerwise_state(enabled=layerwise, window_size=layerwise_window_size)
         return instance
 
     @property
@@ -3754,17 +3727,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             Path to the generated ONNX graph file.
         """
         layerwise_cache_probe = kwargs.pop("_layerwise_cache_probe", False)
-        _consume_deprecated_layerwise_kwargs(kwargs, self)
+        self._consume_deprecated_layerwise_kwargs(kwargs)
         if kwargs.pop("decode_only", False):
             raise NotImplementedError(
                 "decode_only=True is not supported by QEFFAutoModelForCausalLM.export(). "
                 "Use the default non-prefill export path for standard CausalLM decode graphs."
             )
 
-        if getattr(self, "layerwise", False) and not layerwise_cache_probe:
+        if self._should_run_layerwise_driver(cache_probe=layerwise_cache_probe):
             return self._run_layerwise(
                 final_compile=False,
-                layerwise_window_size=self.layerwise_window_size,
+                layerwise_window_size=self._get_layerwise_window_size(),
                 export_dir=export_dir,
                 prefill_only=prefill_only,
                 prefill_seq_len=prefill_seq_len,
@@ -4283,11 +4256,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         """
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
-        _consume_deprecated_layerwise_kwargs(compiler_options, self)
-        if getattr(self, "layerwise", False) and not layerwise_cache_probe:
+        self._consume_deprecated_layerwise_kwargs(compiler_options)
+        if self._should_run_layerwise_driver(cache_probe=layerwise_cache_probe):
             return self._run_layerwise(
                 final_compile=True,
-                layerwise_window_size=self.layerwise_window_size,
+                layerwise_window_size=self._get_layerwise_window_size(),
                 onnx_path=onnx_path,
                 compile_dir=compile_dir,
                 prefill_seq_len=prefill_seq_len,
