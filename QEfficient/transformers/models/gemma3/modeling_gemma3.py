@@ -299,21 +299,10 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
     ) -> tuple[torch.FloatTensor, Optional[tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
-        # past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
-        # Only create QEff-specific attention mask when using a QEff cache (has sliding_window_len).
-        # For standard DynamicCache (e.g. during model.generate()), use the passed-in attention_mask.
-        if past_key_value is not None and hasattr(past_key_value, "sliding_window_len"):
-            if self.self_attn.is_sliding:
-                attention_mask = _create_causal_mask(
-                    position_ids=position_ids,
-                    target_length=past_key_value.sliding_window_len,
-                    sliding_window=past_key_value.sliding_window_len,
-                )
-            else:
-                attention_mask = _create_causal_mask(
-                    position_ids=position_ids,
-                    target_length=past_key_value.key_cache[self.config._sliding_window_pattern - 1].shape[-2],
-                )
+        # `attention_mask` is built once at the model level (see ``QEffGemma3TextModel.forward``)
+        # and passed in per layer-type. Building it here would emit a ``torch.arange`` inside the
+        # decoder-layer subfunction during ONNX subfunction export, which the AIC compiler rejects
+        # because the ``Range`` ``limit`` input becomes a function parameter rather than a constant.
 
         hidden_states, self_attn_weights = self.self_attn(
             hidden_states=hidden_states,
