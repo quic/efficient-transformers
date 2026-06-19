@@ -16,8 +16,8 @@ from transformers import AutoConfig
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils._utils import load_hf_tokenizer
-from QEfficient.utils.config_utils import get_first_config_value
-from QEfficient.utils.constants import ATTENTION_HEAD_CONFIG_KEYS, KV_HEAD_CONFIG_KEYS, Constants
+from QEfficient.utils.constants import Constants
+from QEfficient.utils.repeat_kv_utils import ATTENTION_HEAD_CONFIG_KEYS, KV_HEAD_CONFIG_KEYS, get_first_config_value
 from QEfficient.utils.run_utils import ApiRunner
 from QEfficient.utils.test_utils import ModelConfig, load_hf_causal_lm_model
 

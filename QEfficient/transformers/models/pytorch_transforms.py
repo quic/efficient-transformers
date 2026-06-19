@@ -640,15 +640,11 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
 from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
-from QEfficient.utils.config_utils import (
-    resolve_attention_heads,
-    resolve_hidden_size,
-    resolve_kv_heads,
-    set_kv_head_aliases,
-)
-from QEfficient.utils.constants import ATTENTION_HEAD_CONFIG_KEYS, HIDDEN_SIZE_CONFIG_KEYS, KV_HEAD_CONFIG_KEYS
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.repeat_kv_utils import (
+    ATTENTION_HEAD_CONFIG_KEYS,
+    HIDDEN_SIZE_CONFIG_KEYS,
+    KV_HEAD_CONFIG_KEYS,
     duplicate_kv_projection_weights,
     get_attention_module,
     get_projection_layer,
@@ -656,6 +652,10 @@ from QEfficient.utils.repeat_kv_utils import (
     is_mla_model,
     is_replication_applied,
     replication_targets,
+    resolve_attention_heads,
+    resolve_hidden_size,
+    resolve_kv_heads,
+    set_kv_head_aliases,
 )
 
 SPD_TARGET = "target"
@@ -1000,94 +1000,33 @@ class RevertPrefillOnlyTransform(ModuleMappingTransform):
 
 class ReplicateKVHeadTransform(ModuleMutatorTransform):
     """
-    Replicates KV heads in attention modules to match the number of KV heads in the target model.
-    This transform is used when the source model has fewer KV heads than required in target model.
+    Replicates KV heads in structurally compatible decoder text models.
     """
 
-    _module_mapping = {
-        QEffCodeGenForCausalLM,
-        QEffFalconForCausalLM,
-        QEffGPT2LMHeadModel,
-        QEffGPTJForCausalLM,
-        QEffLlamaForCausalLM,
-        QEffLlama4ForConditionalGeneration,
-        QEffLlavaForConditionalGeneration,
-        QEffLlavaNextForConditionalGeneration,
-        QEffGemmaForCausalLM,
-        QEffGemma2ForCausalLM,
-        QEffGemma3ForConditionalGeneration,
-        QEffGlm4MoeForCausalLM,
-        QEffGraniteForCausalLM,
-        QEffGraniteMoeForCausalLM,
-        QEffMllamaForConditionalGeneration,
-        QEffMistralForCausalLM,
-        QEffMistral3ForConditionalGeneration,
-        QEffMixtralForCausalLM,
-        QEffMptForCausalLM,
-        QEffPhiForCausalLM,
-        QEffPhi3ForCausalLM,
-        QEffQwen2ForCausalLM,
-        QEffQwen3ForCausalLM,
-        QEffQwen3_5ForConditionalGeneration,
-        QEffQwen3_5MoeForConditionalGeneration,
-        QEffQwen_2_5_vl_ForConditionalGeneration,
-        QEffQwen3MoeForCausalLM,
-        QEffQwen3VLForConditionalGeneration,
-        QEffQwen3VLMoeForConditionalGeneration,
-        QEffStarcoder2ForCausalLM,
-        QEffGPTBigCodeForCausalLM,
-        QEffOlmo2ForCausalLM,
-    }
-    _module_string_mapping = {
-        "DeepseekV3ForCausalLM",
-        "InternVLChatModel",
-        "MolmoForCausalLM,",
-        "QEffGemma3DecoderWrapper",
-        "QEffGemma3EncoderWrapper",
-        "QEffInternDecoderWrapper",
-        "QEffInternEncoderWrapper",
-        "QEffLlama4DecoderWrapper",
-        "QEffLlama4EncoderWrapper",
-        "QEFFLlavaDecoderWrapper",
-        "QEFFLlavaEncoderWrapper",
-        "QEffLlavaNextDecoderWrapper",
-        "QEffLlavaNextEncoderWrapper",
-        "QEFFMistral3DecoderWrapper",
-        "QEFFMistral3EncoderWrapper",
-        "QEffMolmoDecoderWrapper",
-        "QEffMolmoEncoderWrapper",
-        "QEffQwen_2_5_vl_DecoderWrapper",
-        "QEffQwen_2_5_vl_EncoderWrapper",
-        "QEffQwen3VLDecoderWrapper",
-        "QEffQwen3VLEncoderWrapper",
-        "QEffQwen3_5EncoderWrapper",
-        "QEffQwen3_5DecoderWrapper",
-        "QEffQwen3_5MoeEncoderWrapper",
-        "QEffQwen3_5MoeDecoderWrapper",
-    }
+    _match_class = nn.Module
 
     @classmethod
-    def mutate(cls, original_module: nn.Module, parent_module: nn.Module, n_repeat: int) -> nn.Module:
-        """
-        Mutates the matched top-level model module in-place by replicating its KV heads.
+    def _match_module(cls, module: nn.Module, parent_module: nn.Module = None) -> bool:
+        try:
+            text_model = get_text_model(module)
+        except AttributeError:
+            return False
+        return text_model is module or parent_module is None
 
-        Args:
-            original_module: The matched top-level model module to mutate.
-            parent_module: The parent module (unused, present for interface compatibility).
-            n_repeat: The number of times to repeat the KV heads.
+    @classmethod
+    def mutate(cls, original_module: nn.Module, parent_module: nn.Module, n_repeat: int = 1) -> Tuple[nn.Module, bool]:
+        if n_repeat is None or n_repeat <= 1:
+            return original_module, False
 
-        Returns:
-            The mutated module (same object, modified in-place).
-        """
         text_model = get_text_model(original_module)
         if is_replication_applied(original_module, text_model):
             logger.warning("KV head replication already applied for this model instance; skipping.")
-            return original_module
+            return original_module, False
 
         cfg = text_model.config
         if is_mla_model(text_model):
             logger.warning("Skipping RepeatKVTransform: MLA models don't apply replicate KV changes.")
-            return original_module
+            return original_module, False
 
         orig_kv_heads = resolve_kv_heads(cfg)
         num_attention_heads = resolve_attention_heads(cfg)
@@ -1104,6 +1043,7 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
                 f"Invalid head values for RepeatKV transform: "
                 f"num_attention_heads={num_attention_heads}, num_key_value_heads={orig_kv_heads}"
             )
+
         new_kv_heads = n_repeat * orig_kv_heads
         if new_kv_heads > num_attention_heads or (num_attention_heads % new_kv_heads) != 0:
             raise ValueError(
@@ -1129,11 +1069,10 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
                 attn.num_key_value_groups = n_kv_groups
             if hasattr(attn, "n_kv_groups"):
                 attn.n_kv_groups = n_kv_groups
+
             head_dim = getattr(attn, "head_dim", hidden_size // num_attention_heads)
-            k_proj = get_projection_layer(attn, ("k_proj", "key_proj"))
-            v_proj = get_projection_layer(attn, ("v_proj", "value_proj"))
             duplicate_kv_projection_weights(
-                k_proj,
+                get_projection_layer(attn, ("k_proj", "key_proj")),
                 orig_kv_heads,
                 n_repeat,
                 head_dim,
@@ -1141,7 +1080,7 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
                 layer_name=f"{attn.__class__.__name__}.k_proj",
             )
             duplicate_kv_projection_weights(
-                v_proj,
+                get_projection_layer(attn, ("v_proj", "value_proj")),
                 orig_kv_heads,
                 n_repeat,
                 head_dim,
@@ -1151,36 +1090,7 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
 
         for target in replication_targets(original_module, text_model):
             setattr(target, "_qeff_kv_replication_applied", True)
-        return original_module
-
-    @classmethod
-    def apply(cls, model: nn.Module, num_replicate_kv_heads: Optional[int] = None, **kwargs) -> Tuple[nn.Module, bool]:
-        """
-        Replicates KV heads in attention modules based on provided multiplier.
-
-        Args:
-            model: The model to apply the transform to.
-            kwargs: Additional arguments for the transformation. Includes:
-                - num_replicate_kv_heads: The number of times to repeat the KV heads.
-        """
-        if num_replicate_kv_heads is None:
-            n_repeat = kwargs.pop("num_replicate_kv_heads", 1)
-        else:
-            kwargs.pop("num_replicate_kv_heads", None)
-            n_repeat = num_replicate_kv_heads
-        transformed = False
-        if n_repeat is not None and n_repeat > 1:
-            if (model.__class__ in cls._module_mapping) or (model.__class__.__name__ in cls._module_string_mapping):
-                text_model = get_text_model(model)
-                was_applied = is_replication_applied(model, text_model)
-                cls.mutate(model, None, n_repeat)
-                is_applied = is_replication_applied(model, text_model)
-                transformed = (not was_applied) and is_applied
-            else:
-                raise NotImplementedError(
-                    f"Model class {model.__class__.__name__} is not supported for KV head replication."
-                )
-        return model, transformed
+        return original_module, True
 
 
 class SpDTransform:

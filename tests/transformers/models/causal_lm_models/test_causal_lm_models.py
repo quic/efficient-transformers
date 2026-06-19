@@ -14,6 +14,7 @@ from transformers import AutoConfig
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import QnnConstants
 from QEfficient.utils.test_utils import ModelConfig
+from ..repeat_kv_test_utils import REPEAT_KV_TEST_MODELS
 
 from .check_causal_models import (
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100,
@@ -92,7 +93,7 @@ def test_check_kv_repeat_custom_causal_lm_pytorch_vs_ai100(model_name, manual_cl
         trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
         **custom_config.get("additional_params", {}),
     )
-    if model_name in ModelConfig.REPEAT_KV_TEST_MODELS:
+    if model_name in REPEAT_KV_TEST_MODELS:
         if model_name in ModelConfig.QUANTIZED_MODELS:
             n_layer = get_custom_n_layers(model_name)
             check_kv_repeat_causal_lm_pytorch_vs_ai100(model_name, manual_cleanup=manual_cleanup, n_layer=n_layer)

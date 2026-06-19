@@ -30,13 +30,13 @@ from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRun
 from QEfficient.utils.test_utils import (
     InternProcessor,
     ModelConfig,
-    get_text_config,
     load_vlm_model,
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
 
 from ..check_model_results import dump_and_compare_results
+from ..repeat_kv_test_utils import REPEAT_KV_TEST_MODELS, get_text_config
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
 with open(CONFIG_PATH, "r") as f:
@@ -58,7 +58,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
     qaic_config: Optional[dict] = None,
-    num_replicate_kv_heads: Optional[int] = 1,
     test_kv_replicate: Optional[bool] = None,
     torch_dtype: Optional[torch.dtype] = torch.float32,
     compare_results: Optional[bool] = False,
@@ -82,9 +81,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         config = set_num_layers_vlm(config, n_layer=n_layer)
         if test_kv_replicate:
             text_config = get_text_config(config)
-            num_replicate_kv_heads = text_config.num_attention_heads // text_config.num_key_value_heads
             qaic_config = qaic_config or {}
-            qaic_config["num_replicate_kv_heads"] = num_replicate_kv_heads
+            qaic_config["num_replicate_kv_heads"] = text_config.num_attention_heads // text_config.num_key_value_heads
         if hasattr(config, "model_type") and config.model_type in ["gemma3"]:
             config.text_config._sliding_window_pattern = 2
             config.text_config.layer_types = ["sliding_attention", "full_attention"]
@@ -104,7 +102,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
                 config=config,
                 qaic_config=qaic_config,
                 torch_dtype=torch_dtype,
-                num_replicate_kv_heads=num_replicate_kv_heads,
             )
         else:
             model_hf = load_vlm_model(config)
@@ -114,14 +111,12 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
                 config=config,
                 qaic_config=qaic_config,
                 torch_dtype=torch_dtype,
-                num_replicate_kv_heads=num_replicate_kv_heads,
             )
     else:
         if test_kv_replicate:
             text_config = get_text_config(config)
-            num_replicate_kv_heads = text_config.num_attention_heads // text_config.num_key_value_heads
             qaic_config = qaic_config or {}
-            qaic_config["num_replicate_kv_heads"] = num_replicate_kv_heads
+            qaic_config["num_replicate_kv_heads"] = text_config.num_attention_heads // text_config.num_key_value_heads
         model_hf = load_vlm_model_from_config(config)
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
@@ -129,7 +124,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             config=model_hf.config,
             qaic_config=qaic_config,
             torch_dtype=torch_dtype,
-            num_replicate_kv_heads=num_replicate_kv_heads,
         )
     compile_kwargs = {
         "num_devices": num_devices,
@@ -261,7 +255,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     #     "Tokens don't match for pytorch HF output and pytorch KV output"
     # )
 
-    # _ = qeff_model.export()
+    _ = qeff_model.export()
     # ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
     # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
 
@@ -370,7 +364,7 @@ def test_custom_replicate_kv_pytorch_vs_ai100(
     manual_cleanup,
 ):
     """
-    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
+    Test function to validate the PyTorch, ONNX, and Cloud AI 100 VLM flows with KV cache.
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
@@ -380,7 +374,7 @@ def test_custom_replicate_kv_pytorch_vs_ai100(
     if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
         pytest.skip("These models require kv_offload=True for testing.")
 
-    if model_name in ModelConfig.REPEAT_KV_TEST_MODELS:
+    if model_name in REPEAT_KV_TEST_MODELS:
         hf_config = None
         if model_name in ModelConfig.STANDARD_VLM_MODELS:
             model_type = model_config_dict[model_name].get("model_type")
@@ -420,7 +414,7 @@ def test_custom_replicate_kv_pytorch_vs_ai100(
 @pytest.mark.parametrize("kv_offload", [True, False])
 def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_offload, manual_cleanup):
     """
-    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
+    Test function to validate the PyTorch, ONNX, and Cloud AI 100 VLM flows with KV cache.
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """

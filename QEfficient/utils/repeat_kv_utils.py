@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import Optional, Sequence
+from typing import Iterable, Optional, Sequence
 
 import torch
 import torch.nn as nn
@@ -14,7 +14,10 @@ from QEfficient.customop.matmulnbits import QuantLinearORT, dequantize_blockwise
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.gptq import QuantLinearGPTQ
 from QEfficient.transformers.quantizers.quantizer_compressed_tensors import FP8DeQuantLinear
-from QEfficient.utils.config_utils import resolve_attention_heads, resolve_hidden_size, resolve_kv_heads
+
+ATTENTION_HEAD_CONFIG_KEYS = ("num_attention_heads", "n_head", "n_heads", "num_heads")
+KV_HEAD_CONFIG_KEYS = ("num_key_value_heads", "n_kv_heads", "num_kv_heads", "effective_n_kv_heads")
+HIDDEN_SIZE_CONFIG_KEYS = ("hidden_size", "n_embd", "d_model")
 
 TEXT_MODEL_CANDIDATE_PATHS = (
     ("language_model",),
@@ -33,6 +36,169 @@ TEXT_MODEL_CANDIDATE_PATHS = (
 )
 
 
+def get_first_config_value(config, names: Iterable[str], default=None, cast_int: bool = False):
+    for name in names:
+        value = getattr(config, name, None)
+        if value is not None:
+            return int(value) if cast_int else value
+    return default
+
+
+def resolve_attention_heads(config) -> Optional[int]:
+    return get_first_config_value(config, ATTENTION_HEAD_CONFIG_KEYS, cast_int=True)
+
+
+def resolve_kv_heads(config) -> Optional[int]:
+    value = get_first_config_value(config, KV_HEAD_CONFIG_KEYS, cast_int=True)
+    if value is None:
+        value = resolve_attention_heads(config)
+    return value
+
+
+def resolve_hidden_size(config) -> Optional[int]:
+    return get_first_config_value(config, HIDDEN_SIZE_CONFIG_KEYS, cast_int=True)
+
+
+def set_kv_head_aliases(config, value: int) -> None:
+    setattr(config, "num_key_value_heads", value)
+    for key in KV_HEAD_CONFIG_KEYS:
+        if hasattr(config, key):
+            setattr(config, key, value)
+
+
+def calculate_num_replicate_kv_heads(num_devices: int, text_model_config) -> int:
+    num_attention_heads = resolve_attention_heads(text_model_config)
+    num_kv_heads = resolve_kv_heads(text_model_config)
+
+    if num_attention_heads is None or num_kv_heads is None or num_attention_heads < 1 or num_kv_heads < 1:
+        return 1
+
+    num_devices = max(1, int(num_devices))
+    max_repeat = max(1, num_attention_heads // num_kv_heads)
+
+    for repeat in range(max_repeat, 0, -1):
+        repeated_kv_heads = num_kv_heads * repeat
+        if (repeated_kv_heads % num_devices == 0) and (num_attention_heads % repeated_kv_heads == 0):
+            return repeat
+
+    return 1
+
+
+def _repeat_head_dim0(tensor: torch.Tensor, orig_kv_heads: int, repeat: int, *shape_tail: int) -> torch.Tensor:
+    return torch.repeat_interleave(tensor.view(orig_kv_heads, *shape_tail), repeat, dim=0)
+
+
+def _validate_packed_projection(layer: nn.Module, orig_kv_heads: int, layer_prefix: str) -> None:
+    if layer.qweight.shape[1] % orig_kv_heads != 0:
+        raise ValueError(
+            f"{layer_prefix}Invalid packed qweight shape for RepeatKV: "
+            f"qweight.shape={tuple(layer.qweight.shape)}, orig_kv_heads={orig_kv_heads}"
+        )
+    if layer.qzeros.shape[1] % orig_kv_heads != 0 or layer.scales.shape[1] % orig_kv_heads != 0:
+        raise ValueError(
+            f"{layer_prefix}Invalid packed qzeros/scales shape for RepeatKV: "
+            f"qzeros.shape={tuple(layer.qzeros.shape)}, scales.shape={tuple(layer.scales.shape)}, "
+            f"orig_kv_heads={orig_kv_heads}"
+        )
+
+
+def _duplicate_packed_projection(layer: nn.Module, orig_kv_heads: int, repeat: int, layer_prefix: str) -> None:
+    _validate_packed_projection(layer, orig_kv_heads, layer_prefix)
+    for attr_name in ("qweight", "qzeros", "scales"):
+        tensor = getattr(layer, attr_name)
+        repeated = torch.repeat_interleave(tensor.data.view(tensor.shape[0], orig_kv_heads, -1), repeat, dim=1)
+        tensor.data = repeated.view(tensor.shape[0], -1)
+    layer.out_features *= repeat
+
+
+def _duplicate_quant_linear_ort(layer: QuantLinearORT, orig_kv_heads: int, repeat: int, layer_prefix: str) -> None:
+    float_weight, zeros_per_group, scales_per_group = dequantize_blockwise_bits(
+        layer.qweight,
+        layer.scales,
+        layer.qzeros,
+        layer.bits,
+        layer.group_size,
+        layer.g_idx,
+        layer.in_features,
+        layer.out_features,
+    )
+    if float_weight.shape[0] % orig_kv_heads != 0:
+        raise ValueError(
+            f"{layer_prefix}Invalid QuantLinearORT weight shape for RepeatKV: "
+            f"weight.shape={tuple(float_weight.shape)}, orig_kv_heads={orig_kv_heads}"
+        )
+
+    new_kv_heads = repeat * orig_kv_heads
+    duplicated_weight = _repeat_head_dim0(
+        float_weight,
+        orig_kv_heads,
+        repeat,
+        float_weight.shape[0] // orig_kv_heads,
+        float_weight.shape[1],
+    ).view(new_kv_heads * (float_weight.shape[0] // orig_kv_heads), float_weight.shape[1])
+    duplicated_zeros = _repeat_head_dim0(
+        zeros_per_group,
+        orig_kv_heads,
+        repeat,
+        zeros_per_group.shape[0] // orig_kv_heads,
+        zeros_per_group.shape[1],
+    ).view(new_kv_heads * (zeros_per_group.shape[0] // orig_kv_heads), zeros_per_group.shape[1])
+    duplicated_scales = _repeat_head_dim0(
+        scales_per_group,
+        orig_kv_heads,
+        repeat,
+        scales_per_group.shape[0] // orig_kv_heads,
+        scales_per_group.shape[1],
+    ).view(new_kv_heads * (scales_per_group.shape[0] // orig_kv_heads), scales_per_group.shape[1])
+
+    layer.out_features *= repeat
+    q_rows = layer.in_features // layer.group_size
+    layer.qweight = torch.zeros(
+        (layer.out_features, q_rows, layer.group_size // (8 // layer.bits)),
+        dtype=layer.qweight.dtype,
+        device=layer.qweight.device,
+    )
+    layer.qzeros = torch.zeros(
+        (q_rows + (q_rows & 1)) * (layer.out_features // 8 * layer.bits),
+        dtype=layer.qzeros.dtype,
+        device=layer.qzeros.device,
+    )
+    layer.scales = torch.zeros(q_rows * layer.out_features, dtype=layer.scales.dtype, device=layer.scales.device)
+
+    linear = nn.Linear(layer.in_features, layer.out_features, bias=False, dtype=duplicated_weight.dtype)
+    linear.weight.data = duplicated_weight.to(linear.weight.dtype)
+    layer.pack(
+        linear,
+        duplicated_scales.contiguous().to(layer.scales.dtype),
+        duplicated_zeros.contiguous().to(torch.int32),
+        layer.g_idx,
+    )
+
+
+def _duplicate_fp8_projection(
+    layer: FP8DeQuantLinear, orig_kv_heads: int, repeat: int, head_dim: int, hidden_size: int
+) -> None:
+    new_kv_heads = repeat * orig_kv_heads
+    layer.out_features *= repeat
+    layer.weight.data = _repeat_head_dim0(layer.weight.data, orig_kv_heads, repeat, head_dim, hidden_size).view(
+        new_kv_heads * head_dim, hidden_size
+    )
+    layer.weight_scale.data = _repeat_head_dim0(layer.weight_scale.data, orig_kv_heads, repeat, head_dim).view(
+        new_kv_heads * head_dim, -1
+    )
+
+
+def _duplicate_dense_projection(
+    layer: nn.Module, orig_kv_heads: int, repeat: int, head_dim: int, hidden_size: int
+) -> None:
+    new_kv_heads = repeat * orig_kv_heads
+    if hasattr(layer, "out_features"):
+        layer.out_features *= repeat
+    layer.weight.data = _repeat_head_dim0(layer.weight.data, orig_kv_heads, repeat, head_dim, hidden_size).view(
+        new_kv_heads * head_dim, hidden_size
+    )
+
+
 def duplicate_kv_projection_weights(
     layer: nn.Module,
     orig_kv_heads: int,
@@ -41,143 +207,23 @@ def duplicate_kv_projection_weights(
     hidden_size: int,
     layer_name: Optional[str] = None,
 ) -> None:
-    """
-    Duplicate KV projection weights for one projection layer to implement repeat-kv transform.
-    """
     layer_prefix = f"{layer_name}: " if layer_name else ""
-    new_kv_heads = repeat * orig_kv_heads
 
-    if isinstance(layer, WQLinear_GEMM):
-        if layer.qweight.shape[1] % orig_kv_heads != 0:
-            raise ValueError(
-                f"{layer_prefix}Invalid AWQ qweight shape for RepeatKV: qweight.shape={tuple(layer.qweight.shape)}, "
-                f"orig_kv_heads={orig_kv_heads}"
-            )
-        if layer.qzeros.shape[1] % orig_kv_heads != 0 or layer.scales.shape[1] % orig_kv_heads != 0:
-            raise ValueError(
-                f"{layer_prefix}Invalid AWQ qzeros/scales shape for RepeatKV: qzeros.shape={tuple(layer.qzeros.shape)}, "
-                f"scales.shape={tuple(layer.scales.shape)}, orig_kv_heads={orig_kv_heads}"
-            )
-
-        layer.qweight.data = torch.repeat_interleave(
-            layer.qweight.data.view(layer.qweight.shape[0], orig_kv_heads, -1), repeat, dim=1
-        ).view(layer.qweight.shape[0], -1)
-        layer.qzeros.data = torch.repeat_interleave(
-            layer.qzeros.data.view(layer.qzeros.shape[0], orig_kv_heads, -1), repeat, dim=1
-        ).view(layer.qzeros.shape[0], -1)
-        layer.scales.data = torch.repeat_interleave(
-            layer.scales.data.view(layer.scales.shape[0], orig_kv_heads, -1), repeat, dim=1
-        ).view(layer.scales.shape[0], -1)
-        layer.out_features = layer.out_features * repeat
-
-    elif isinstance(layer, QuantLinearGPTQ):
-        if layer.qweight.shape[1] % orig_kv_heads != 0:
-            raise ValueError(
-                f"{layer_prefix}Invalid GPTQ qweight shape for RepeatKV: qweight.shape={tuple(layer.qweight.shape)}, "
-                f"orig_kv_heads={orig_kv_heads}"
-            )
-        if layer.qzeros.shape[1] % orig_kv_heads != 0 or layer.scales.shape[1] % orig_kv_heads != 0:
-            raise ValueError(
-                f"{layer_prefix}Invalid GPTQ qzeros/scales shape for RepeatKV: qzeros.shape={tuple(layer.qzeros.shape)}, "
-                f"scales.shape={tuple(layer.scales.shape)}, orig_kv_heads={orig_kv_heads}"
-            )
-
-        layer.qweight.data = torch.repeat_interleave(
-            layer.qweight.data.view(layer.qweight.shape[0], orig_kv_heads, -1), repeat, dim=1
-        ).view(layer.qweight.shape[0], -1)
-        layer.qzeros.data = torch.repeat_interleave(
-            layer.qzeros.data.view(layer.qzeros.shape[0], orig_kv_heads, -1), repeat, dim=1
-        ).view(layer.qzeros.shape[0], -1)
-        layer.scales.data = torch.repeat_interleave(
-            layer.scales.data.view(layer.scales.shape[0], orig_kv_heads, -1), repeat, dim=1
-        ).view(layer.scales.shape[0], -1)
-        layer.out_features = layer.out_features * repeat
-
+    if isinstance(layer, (WQLinear_GEMM, QuantLinearGPTQ)):
+        _duplicate_packed_projection(layer, orig_kv_heads, repeat, layer_prefix)
     elif isinstance(layer, QuantLinearORT):
-        float_weight, zeros_per_group, scales_per_group = dequantize_blockwise_bits(
-            layer.qweight,
-            layer.scales,
-            layer.qzeros,
-            layer.bits,
-            layer.group_size,
-            layer.g_idx,
-            layer.in_features,
-            layer.out_features,
-        )
-        if float_weight.shape[0] % orig_kv_heads != 0:
-            raise ValueError(
-                f"{layer_prefix}Invalid QuantLinearORT weight shape for RepeatKV: "
-                f"weight.shape={tuple(float_weight.shape)}, orig_kv_heads={orig_kv_heads}"
-            )
-
-        duplicated_weight = torch.repeat_interleave(
-            float_weight.view(orig_kv_heads, -1, float_weight.shape[1]),
-            repeat,
-            dim=0,
-        ).view(new_kv_heads * (float_weight.shape[0] // orig_kv_heads), float_weight.shape[1])
-
-        duplicated_zeros = torch.repeat_interleave(
-            zeros_per_group.view(orig_kv_heads, -1, zeros_per_group.shape[1]),
-            repeat,
-            dim=0,
-        ).view(new_kv_heads * (zeros_per_group.shape[0] // orig_kv_heads), zeros_per_group.shape[1])
-        duplicated_scales = torch.repeat_interleave(
-            scales_per_group.view(orig_kv_heads, -1, scales_per_group.shape[1]),
-            repeat,
-            dim=0,
-        ).view(new_kv_heads * (scales_per_group.shape[0] // orig_kv_heads), scales_per_group.shape[1])
-
-        original_out_features = layer.out_features
-        layer.out_features = original_out_features * repeat
-        q_rows = layer.in_features // layer.group_size
-        layer.qweight = torch.zeros(
-            (layer.out_features, q_rows, layer.group_size // (8 // layer.bits)),
-            dtype=layer.qweight.dtype,
-            device=layer.qweight.device,
-        )
-        layer.qzeros = torch.zeros(
-            (q_rows + (q_rows & 1)) * (layer.out_features // 8 * layer.bits),
-            dtype=layer.qzeros.dtype,
-            device=layer.qzeros.device,
-        )
-        layer.scales = torch.zeros(
-            (q_rows * layer.out_features),
-            dtype=layer.scales.dtype,
-            device=layer.scales.device,
-        )
-
-        linear = nn.Linear(layer.in_features, layer.out_features, bias=False, dtype=duplicated_weight.dtype)
-        linear.weight.data = duplicated_weight.to(linear.weight.dtype)
-        layer.pack(
-            linear,
-            duplicated_scales.contiguous().to(layer.scales.dtype),
-            duplicated_zeros.contiguous().to(torch.int32),
-            layer.g_idx,
-        )
-
+        _duplicate_quant_linear_ort(layer, orig_kv_heads, repeat, layer_prefix)
     elif isinstance(layer, FP8DeQuantLinear):
-        layer.weight.data = torch.repeat_interleave(
-            layer.weight.data.view(orig_kv_heads, head_dim, hidden_size),
-            repeat,
-            dim=0,
-        ).view(new_kv_heads * head_dim, hidden_size)
-        layer.weight_scale.data = torch.repeat_interleave(
-            layer.weight_scale.data.view(orig_kv_heads, head_dim), repeat, dim=0
-        ).view(new_kv_heads * head_dim, -1)
-
+        _duplicate_fp8_projection(layer, orig_kv_heads, repeat, head_dim, hidden_size)
+    elif hasattr(layer, "weight"):
+        _duplicate_dense_projection(layer, orig_kv_heads, repeat, head_dim, hidden_size)
     else:
-        layer.weight.data = torch.repeat_interleave(
-            layer.weight.data.view(orig_kv_heads, head_dim, hidden_size),
-            repeat,
-            dim=0,
-        ).view(new_kv_heads * head_dim, hidden_size)
+        raise TypeError(f"{layer_prefix}Unsupported projection layer for RepeatKV: {layer.__class__.__name__}")
 
-    if layer.bias is not None:
-        layer.bias.data = torch.repeat_interleave(
-            layer.bias.data.view(orig_kv_heads, head_dim),
-            repeat,
-            dim=0,
-        ).view(new_kv_heads * head_dim)
+    bias = getattr(layer, "bias", None)
+    if bias is not None:
+        new_kv_heads = repeat * orig_kv_heads
+        bias.data = _repeat_head_dim0(bias.data, orig_kv_heads, repeat, head_dim).view(new_kv_heads * head_dim)
 
 
 def get_attention_module(block: nn.Module) -> nn.Module:
@@ -229,6 +275,9 @@ def is_valid_text_model(candidate: nn.Module) -> bool:
 
 
 def get_text_model(model: nn.Module) -> nn.Module:
+    if is_valid_text_model(model):
+        return model
+
     for path in TEXT_MODEL_CANDIDATE_PATHS:
         candidate = model
         valid_path = True

@@ -99,23 +99,34 @@ class ModuleMutatorTransform(PytorchTransform):
     _match_class: nn.Module
 
     @classmethod
-    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+    def _match_module(cls, module: nn.Module, parent_module: nn.Module = None) -> bool:
+        return isinstance(module, cls._match_class)
+
+    @classmethod
+    def _mutation_result(cls, result):
+        if isinstance(result, tuple):
+            return result
+        return result, True
+
+    @classmethod
+    def apply(cls, model: nn.Module, *args, **kwargs) -> Tuple[nn.Module, bool]:
+        if cls._match_module(model, None):
+            return cls._mutation_result(cls.mutate(model, None, *args, **kwargs))
+
         transformed = False
         for name, module in model.named_children():
-            if isinstance(module, cls._match_class):
-                setattr(model, name, cls.mutate(module, model))
-                transformed = True
+            if cls._match_module(module, model):
+                mutated_module, child_transformed = cls._mutation_result(cls.mutate(module, model, *args, **kwargs))
+                setattr(model, name, mutated_module)
+                transformed = transformed or child_transformed
             else:
-                cls.apply(module)
-
-        if isinstance(model, cls._match_class):
-            model = cls.mutate(model, None)
-            transformed = True
+                _, child_transformed = cls.apply(module, *args, **kwargs)
+                transformed = transformed or child_transformed
 
         return model, transformed
 
     @classmethod
-    def mutate(cls, original_module: nn.Module, parent_module: nn.Module):
+    def mutate(cls, original_module: nn.Module, parent_module: nn.Module, *args, **kwargs):
         raise NotImplementedError("Please implement your own method by inheriting this class")
 
 

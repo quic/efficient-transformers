@@ -64,3 +64,19 @@ def test_module_mutator_transform():
     assert not ([id(model.a), id(model.b)] == prev_ids)
     y2 = model(x)
     assert torch.all(y2 == x)
+
+
+def test_module_mutator_transform_passes_kwargs_and_tracks_children():
+    class TestTransform(ModuleMutatorTransform):
+        _match_class = nn.Linear
+
+        @classmethod
+        def mutate(cls, original_module: nn.Module, parent_module: nn.Module, replacement_factory=None):
+            return replacement_factory(), True
+
+    model = TestModel()
+    model, transformed = TestTransform.apply(model, replacement_factory=nn.Identity)
+
+    assert transformed
+    assert isinstance(model.a, nn.Identity)
+    assert isinstance(model.b, nn.Identity)

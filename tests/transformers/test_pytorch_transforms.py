@@ -9,6 +9,7 @@ import platform
 
 import pytest
 import torch
+from torch import nn
 from transformers import AutoConfig, AutoModelForCausalLM
 
 # HybridCache was removed in transformers v5. DynamicCache is the v5
@@ -441,3 +442,65 @@ def test_gptq_to_matmulnbits_transform(in_features, out_features):
     assert compare_original_vs_kv_model_pt_outputs(old_out, new_out, tolerance=1e-4), (
         "Test failed because MAE is greater than tolerance"
     )
+
+
+class TinyRepeatKVConfig:
+    num_attention_heads = 4
+    num_key_value_heads = 2
+    hidden_size = 8
+
+
+class TinyRepeatKVAttention(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.head_dim = 2
+        self.num_key_value_heads = 2
+        self.num_key_value_groups = 2
+        self.k_proj = nn.Linear(8, 4, bias=True)
+        self.v_proj = nn.Linear(8, 4, bias=True)
+
+
+class TinyRepeatKVBlock(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.self_attn = TinyRepeatKVAttention()
+
+
+class TinyRepeatKVTextModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.config = TinyRepeatKVConfig()
+        self.layers = nn.ModuleList([TinyRepeatKVBlock()])
+
+
+class TinyRepeatKVWrapper(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.model = TinyRepeatKVTextModel()
+        self.config = self.model.config
+
+
+def test_replicate_kv_transform_structural_dense_model():
+    from QEfficient.transformers.models.pytorch_transforms import ReplicateKVHeadTransform
+
+    model = TinyRepeatKVWrapper()
+    attn = model.model.layers[0].self_attn
+    original_k_weight = attn.k_proj.weight.detach().clone()
+    original_v_bias = attn.v_proj.bias.detach().clone()
+
+    model, transformed = ReplicateKVHeadTransform.apply(model, 2)
+
+    assert transformed
+    assert model.config.orig_kv_heads == 2
+    assert model.config.num_key_value_heads == 4
+    assert attn.num_key_value_heads == 4
+    assert attn.num_key_value_groups == 1
+    assert attn.k_proj.out_features == 8
+    assert attn.k_proj.weight.shape == (8, 8)
+    assert torch.equal(attn.k_proj.weight[:2], original_k_weight[:2])
+    assert torch.equal(attn.k_proj.weight[2:4], original_k_weight[:2])
+    assert torch.equal(attn.v_proj.bias[:2], original_v_bias[:2])
+    assert torch.equal(attn.v_proj.bias[2:4], original_v_bias[:2])
+
+    _, transformed_again = ReplicateKVHeadTransform.apply(model, 2)
+    assert not transformed_again
