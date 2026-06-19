@@ -42,14 +42,10 @@ from QEfficient.blocking.attention_blocking import (
 )
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.transformers.models._layerwise import (
-    is_last_layer_window,
-    is_layerwise_active,
-    resolve_layer_window,
-)
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.layerwise_utils import is_last_layer_window, is_layerwise_active, resolve_layer_window
 from QEfficient.utils.logging_utils import logger
 
 QWEN3_VL_ROPE_CACHE_EXPORT_CAP = 76800

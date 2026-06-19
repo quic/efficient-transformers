@@ -1438,14 +1438,14 @@ LAYERWISE_TINY_MODEL_IDS = {
 @pytest.mark.llm_model
 def test_layerwise_window_helpers():
     """Pure-Python coverage of the windowing helpers - no model load required."""
-    from QEfficient.transformers.models import _layerwise
+    from QEfficient.utils.layerwise_utils import build_layer_windows
 
-    assert _layerwise._build_layer_windows(4, 1) == [(0, 1), (1, 2), (2, 3), (3, 4)]
-    assert _layerwise._build_layer_windows(5, 2) == [(0, 2), (2, 4), (4, 5)]
+    assert build_layer_windows(4, 1) == [(0, 1), (1, 2), (2, 3), (3, 4)]
+    assert build_layer_windows(5, 2) == [(0, 2), (2, 4), (4, 5)]
     with pytest.raises(ValueError):
-        _layerwise._build_layer_windows(0, 1)
+        build_layer_windows(0, 1)
     with pytest.raises(ValueError):
-        _layerwise._build_layer_windows(4, 0)
+        build_layer_windows(4, 0)
 
 
 @pytest.mark.llm_model
@@ -1608,7 +1608,7 @@ def test_layerwise_matches_default_path_for_qwen3_moe():
     from transformers.models.qwen3_moe.modeling_qwen3_moe import Qwen3MoeConfig, Qwen3MoeForCausalLM
 
     import QEfficient
-    from QEfficient.transformers.models import _layerwise
+    from QEfficient.utils.layerwise_utils import layerwise_context, layerwise_export_scope
 
     cfg = Qwen3MoeConfig(
         hidden_size=64,
@@ -1651,10 +1651,9 @@ def test_layerwise_matches_default_path_for_qwen3_moe():
 
     # Layerwise path: window size 1, chaining hidden states across windows.
     hidden_states = inner.embed_tokens(ids)
-    try:
-        with _layerwise._layerwise_export_env():
-            for window in range(num_layers):
-                _layerwise._set_layer_windows(window, window + 1, num_layers)
+    with layerwise_export_scope():
+        for window in range(num_layers):
+            with layerwise_context(inner, window, window + 1, num_layers):
                 with torch.no_grad():
                     out = inner(
                         inputs_embeds=hidden_states,
@@ -1663,8 +1662,6 @@ def test_layerwise_matches_default_path_for_qwen3_moe():
                         cache_position=torch.arange(S),
                     )
                 hidden_states = out.last_hidden_state
-    finally:
-        _layerwise._reset_layer_windows()
 
     assert torch.equal(default_out.last_hidden_state, hidden_states), (
         "layerwise windowed forward diverged from the default single-shot forward"
@@ -1681,7 +1678,7 @@ def test_layerwise_matches_default_path_for_qwen3_moe():
 def test_layerwise_matches_default_path_for_qwen3_5_moe():
     """Qwen3.5-MoE decoder wrapper must preserve logits with layerwise windows."""
     import QEfficient
-    from QEfficient.transformers.models import _layerwise
+    from QEfficient.utils.layerwise_utils import layerwise_context, layerwise_export_scope
 
     config = AutoConfig.from_pretrained(LAYERWISE_TINY_MODEL_IDS["qwen3_5_moe"])
     config.torch_dtype = "float32"
@@ -1704,10 +1701,9 @@ def test_layerwise_matches_default_path_for_qwen3_5_moe():
 
     hidden_states = None
     total_layers = qeff_model.model.config.text_config.num_hidden_layers
-    try:
-        with _layerwise._layerwise_export_env():
-            for window in range(total_layers):
-                _layerwise._set_layer_windows(window, window + 1, total_layers)
+    with layerwise_export_scope():
+        for window in range(total_layers):
+            with layerwise_context(wrapper, window, window + 1, total_layers):
                 call_kwargs = {
                     "position_ids": lang_inputs["position_ids"],
                     "past_key_values": lang_inputs["past_key_values"],
@@ -1724,8 +1720,6 @@ def test_layerwise_matches_default_path_for_qwen3_5_moe():
                 with torch.no_grad():
                     window_out = wrapper(**call_kwargs)
                 hidden_states = window_out[0]
-    finally:
-        _layerwise._reset_layer_windows()
 
     assert torch.equal(default_out[0], hidden_states), "Qwen3.5-MoE layerwise logits diverged from default logits"
 
@@ -1734,7 +1728,7 @@ def test_layerwise_matches_default_path_for_qwen3_5_moe():
 def test_layerwise_matches_default_path_for_qwen3_vl_moe():
     """Qwen3-VL-MoE decoder wrapper must preserve logits with layerwise windows."""
     import QEfficient
-    from QEfficient.transformers.models import _layerwise
+    from QEfficient.utils.layerwise_utils import layerwise_context, layerwise_export_scope
 
     model_id = LAYERWISE_TINY_MODEL_IDS["qwen3_vl_moe"]
     try:
@@ -1759,10 +1753,9 @@ def test_layerwise_matches_default_path_for_qwen3_vl_moe():
 
     hidden_states = None
     total_layers = qeff_model.model.config.text_config.num_hidden_layers
-    try:
-        with _layerwise._layerwise_export_env():
-            for window in range(total_layers):
-                _layerwise._set_layer_windows(window, window + 1, total_layers)
+    with layerwise_export_scope():
+        for window in range(total_layers):
+            with layerwise_context(wrapper, window, window + 1, total_layers):
                 call_kwargs = {k: v for k, v in lang_inputs.items() if k not in ("input_ids", "inputs_embeds")}
                 if window == 0:
                     call_kwargs["input_ids"] = lang_inputs["input_ids"]
@@ -1772,8 +1765,6 @@ def test_layerwise_matches_default_path_for_qwen3_vl_moe():
                 with torch.no_grad():
                     window_out = wrapper(**call_kwargs)
                 hidden_states = window_out[0]
-    finally:
-        _layerwise._reset_layer_windows()
 
     assert torch.equal(default_out[0], hidden_states), "Qwen3-VL-MoE layerwise logits diverged from default logits"
 
@@ -1891,17 +1882,16 @@ def test_layerwise_vision_wrapper_keeps_only_first_text_window():
 @pytest.mark.llm_model
 def test_layerwise_context_manager_toggles_export_scope():
     """The driver context manager must toggle scoped export state and restore it."""
-    from QEfficient.transformers.models import _layerwise
-    from QEfficient.utils.layerwise_utils import is_layerwise_export_active
+    from QEfficient.utils.layerwise_utils import is_layerwise_export_active, layerwise_export_scope
 
     assert is_layerwise_export_active() is False
-    with _layerwise._layerwise_export_env():
+    with layerwise_export_scope():
         assert is_layerwise_export_active() is True
         assert "LAYERWISE_EXPORT" not in os.environ
     assert is_layerwise_export_active() is False
 
     try:
-        with _layerwise._layerwise_export_env():
+        with layerwise_export_scope():
             raise RuntimeError("boom")
     except RuntimeError:
         pass
@@ -1929,14 +1919,14 @@ def test_layerwise_safe_export_pass_patch_is_noop_when_inactive():
 def test_layerwise_safe_export_pass_patch_toggles_only_inside_layerwise_context():
     from torch import _C
 
-    from QEfficient.transformers.models import _layerwise
+    from QEfficient.utils.layerwise_utils import layerwise_export_scope
     from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
     original_cse = _C._jit_pass_cse
     original_constant_fold = _C._jit_pass_onnx_constant_fold
     original_canonicalize = _C._jit_pass_canonicalize
 
-    with _layerwise._layerwise_export_env():
+    with layerwise_export_scope():
         with layerwise_safe_onnx_export_patches():
             assert _C._jit_pass_cse is not original_cse
             assert _C._jit_pass_onnx_constant_fold is not original_constant_fold
@@ -1983,7 +1973,6 @@ def test_layerwise_uses_probe_model_for_cached_export(monkeypatch, tmp_path):
         factory_called = True
         raise AssertionError("factory must not run when merged ONNX is cached")
 
-    monkeypatch.setattr(_layerwise, "_install_window_patches_for", lambda model_type: None)
     result = _layerwise.run_layerwise(
         model_id="dummy",
         config=DummyConfig(),
@@ -2014,7 +2003,9 @@ def test_layerwise_cache_miss_exports_all_windows(monkeypatch, tmp_path):
 
     class WindowModel:
         def __init__(self):
-            self.model = object()
+            from types import SimpleNamespace
+
+            self.model = SimpleNamespace()
             self.model_name = "Qwen3MoeModel"
 
         def compile(self, **kwargs):
@@ -2029,7 +2020,6 @@ def test_layerwise_cache_miss_exports_all_windows(monkeypatch, tmp_path):
             shard.touch()
             return str(shard)
 
-    monkeypatch.setattr(_layerwise, "_install_window_patches_for", lambda model_type: None)
     monkeypatch.setattr(_layerwise, "_null_outside_window_layers", lambda *args, **kwargs: None)
     monkeypatch.setattr(_layerwise, "_slim_for_window_export", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -2172,8 +2162,6 @@ def test_layerwise_materializes_root_onnx_for_final_compile(monkeypatch, tmp_pat
     cached_path.touch()
     probe = ProbeModel(cached_path)
 
-    monkeypatch.setattr(_layerwise, "_install_window_patches_for", lambda model_type: None)
-
     result = _layerwise.run_layerwise(
         model_id="dummy",
         config=DummyConfig(),
@@ -2217,7 +2205,6 @@ def test_layerwise_cache_hit_under_final_data_is_canonicalized(monkeypatch, tmp_
     cached_path.touch()
     probe = ProbeModel(cached_path)
 
-    monkeypatch.setattr(_layerwise, "_install_window_patches_for", lambda model_type: None)
     cleaned = []
     monkeypatch.setattr(
         _layerwise,
@@ -2697,8 +2684,12 @@ def _capture_layerwise_export_names(qeff_model, *, window, total_layers, export_
     care about the buffer names the export was invoked with. Window state is always
     restored in ``finally`` so the class-level flags never leak into other tests.
     """
-    from QEfficient.transformers.models import _layerwise
-    from QEfficient.utils.layerwise_utils import LayerwiseContext, attach_layerwise_context, clear_layerwise_context
+    from QEfficient.utils.layerwise_utils import (
+        LayerwiseContext,
+        attach_layerwise_context,
+        clear_layerwise_context,
+        layerwise_export_scope,
+    )
 
     captured = {}
 
@@ -2713,7 +2704,7 @@ def _capture_layerwise_export_names(qeff_model, *, window, total_layers, export_
     orig_export = torch.onnx.export
     torch.onnx.export = _spy
     try:
-        with _layerwise._layerwise_export_env():
+        with layerwise_export_scope():
             context = LayerwiseContext(window, window + 1, total_layers)
             attach_layerwise_context(qeff_model, context)
             attach_layerwise_context(qeff_model.model, context)
@@ -2723,7 +2714,6 @@ def _capture_layerwise_export_names(qeff_model, *, window, total_layers, export_
                 pass
     finally:
         torch.onnx.export = orig_export
-        _layerwise._reset_layer_windows()
         clear_layerwise_context(qeff_model)
         clear_layerwise_context(qeff_model.model)
     assert "output_names" in captured, "torch.onnx.export was never reached"
@@ -2803,13 +2793,17 @@ def test_layerwise_export_with_kv_cache_prefix_subfunctions(tmp_path):
     passed. This asserts the *final transformed* per-window shard on disk carries the infix on both the
     retained-state outputs and the paired input buffers — i.e. the prefix is not lost by the transforms.
     """
-    from QEfficient.transformers.models import _layerwise
-    from QEfficient.utils.layerwise_utils import LayerwiseContext, attach_layerwise_context, clear_layerwise_context
+    from QEfficient.utils.layerwise_utils import (
+        LayerwiseContext,
+        attach_layerwise_context,
+        clear_layerwise_context,
+        layerwise_export_scope,
+    )
 
     qeff_model, total_layers = _tiny_qwen3_moe_causal()
     export_dir = tmp_path / "subfn_prefixed"
     try:
-        with _layerwise._layerwise_export_env():
+        with layerwise_export_scope():
             context = LayerwiseContext(0, 1, total_layers)
             attach_layerwise_context(qeff_model, context)
             attach_layerwise_context(qeff_model.model, context)
@@ -2819,7 +2813,6 @@ def test_layerwise_export_with_kv_cache_prefix_subfunctions(tmp_path):
                 use_onnx_subfunctions=True,
             )
     finally:
-        _layerwise._reset_layer_windows()
         clear_layerwise_context(qeff_model)
         clear_layerwise_context(qeff_model.model)
 

@@ -34,6 +34,7 @@ def main():
 
     config = AutoConfig.from_pretrained(MODEL_ID)
     config.torch_dtype = TORCH_DTYPE
+    config.text_config.num_hidden_layers = 2
     # config.vision_config.depth = 4
     # config.text_config.num_hidden_layers = 4
     tokenizer = transformers.AutoTokenizer.from_pretrained(MODEL_ID)

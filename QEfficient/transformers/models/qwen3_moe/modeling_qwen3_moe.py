@@ -41,8 +41,8 @@ from QEfficient.customop.ctx_scatter_gather import (
 )
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.transformers.models._layerwise import is_last_layer_window, is_layerwise_active, resolve_layer_window
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.layerwise_utils import is_last_layer_window, is_layerwise_active, resolve_layer_window
 
 
 class QEffQwen3MoeRotaryEmbedding(Qwen3MoeRotaryEmbedding):

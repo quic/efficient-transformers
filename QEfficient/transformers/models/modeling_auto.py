@@ -46,8 +46,6 @@ from QEfficient.transformers.modeling_utils import (
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
     _configure_proxy_for_model,
 )
-from QEfficient.utils.layerwise_utils import build_meta_model as _build_layerwise_meta_model
-from QEfficient.utils.layerwise_utils import get_layerwise_context, is_layerwise_export_active
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheExternalModuleMapperTransform,
@@ -81,6 +79,8 @@ from QEfficient.utils import (
     validate_kv_cache_prefix,
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
+from QEfficient.utils.layerwise_utils import build_meta_model as _build_layerwise_meta_model
+from QEfficient.utils.layerwise_utils import get_layerwise_context, is_layerwise_export_active
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
@@ -149,6 +149,7 @@ def _build_layerwise_vision_export_model(hf_auto_class, pretrained_model_name_or
     """
     from QEfficient.transformers.models import _layerwise
     from QEfficient.utils.custom_loader import CustomLoader
+    from QEfficient.utils.layerwise_utils import layerwise_export_scope, resolve_text_total_layers
 
     config = kwargs.get("config", None)
     if config is None:
@@ -162,10 +163,10 @@ def _build_layerwise_vision_export_model(hf_auto_class, pretrained_model_name_or
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, **config_kwargs)
         kwargs["config"] = config
     model_type = _layerwise.assert_layerwise_supported(config)
-    total_layers = _layerwise._resolve_text_total_layers(config)
+    total_layers = resolve_text_total_layers(config)
     layer_prefixes = _layerwise._layer_prefixes_for_model_type(model_type)
     loader = CustomLoader(lambda model_id, _config: hf_auto_class.from_pretrained(model_id, **kwargs), layer_prefixes)
-    with _layerwise._layerwise_export_env():
+    with layerwise_export_scope():
         model = loader.load_window(pretrained_model_name_or_path, config, 0, min(1, total_layers), total_layers)
         _layerwise._null_outside_window_layers(model, apply_text=True)
         return model
@@ -1554,7 +1555,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         """
         layerwise_cache_probe = kwargs.pop("_layerwise_cache_probe", False)
         _consume_deprecated_layerwise_kwargs(kwargs, self)
-        if getattr(self, "layerwise", False):
+        if getattr(self, "layerwise", False) and not layerwise_cache_probe:
             return self._run_layerwise_export(
                 export_dir=export_dir,
                 use_onnx_subfunctions=use_onnx_subfunctions,
@@ -1610,11 +1611,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise_export = layerwise_context is not None and layerwise_context.active
 
         should_export = not skip_vision and (
-            not layerwise_export
-            or (
-                layerwise_export
-                and layerwise_context.end == layerwise_context.total_layers
-            )
+            not layerwise_export or (layerwise_export and layerwise_context.end == layerwise_context.total_layers)
         )
         if should_export and not layerwise_cache_probe:
             self.vision_model.export(
@@ -1884,8 +1881,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if skip_lang and skip_vision:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
 
+        layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
         _consume_deprecated_layerwise_kwargs(compiler_options, self)
-        if getattr(self, "layerwise", False):
+        if getattr(self, "layerwise", False) and not layerwise_cache_probe:
             if skip_lang and not skip_vision:
                 vision_wrapper = self._build_layerwise_vision_wrapper()
                 qpc_paths = vision_wrapper.compile(
@@ -1952,8 +1950,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 "KV caching requires continuous batching. Please set `full_batch_size` and "
                 "enable `continuous_batching=True` in `from_pretrained`."
             )
-        layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
-
         # Infer kv_cache_batch_size if not provided
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
 
@@ -3755,6 +3751,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         str
             Path to the generated ONNX graph file.
         """
+        layerwise_cache_probe = kwargs.pop("_layerwise_cache_probe", False)
         _consume_deprecated_layerwise_kwargs(kwargs, self)
         if kwargs.pop("decode_only", False):
             raise NotImplementedError(
@@ -3762,7 +3759,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "Use the default non-prefill export path for standard CausalLM decode graphs."
             )
 
-        if getattr(self, "layerwise", False):
+        if getattr(self, "layerwise", False) and not layerwise_cache_probe:
             return self._run_layerwise(
                 final_compile=False,
                 layerwise_window_size=self.layerwise_window_size,
@@ -4283,8 +4280,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
+        layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
         _consume_deprecated_layerwise_kwargs(compiler_options, self)
-        if getattr(self, "layerwise", False):
+        if getattr(self, "layerwise", False) and not layerwise_cache_probe:
             return self._run_layerwise(
                 final_compile=True,
                 layerwise_window_size=self.layerwise_window_size,

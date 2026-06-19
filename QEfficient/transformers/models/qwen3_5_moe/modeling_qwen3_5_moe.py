@@ -56,15 +56,15 @@ from QEfficient.transformers.cache_utils import (
     QEffDynamicLayer,
 )
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.transformers.models._layerwise import (
+from QEfficient.utils import constants
+from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
+from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.layerwise_utils import (
     get_layerwise_context,
     is_last_layer_window,
     is_layerwise_active,
     resolve_layer_window,
 )
-from QEfficient.utils import constants
-from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
-from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
 
 # EXPERT_BLOCKING_NUM_NSP = 16
@@ -122,7 +122,7 @@ class QEffQwen3_5MoeDynamicCache(Cache):
         if past_key_values is None:
             return cache
 
-        if not is_layerwise_active(self):
+        if not is_layerwise_active(cache):
             # Default path: restore every layer, matching pre-layerwise behavior.
             for layer_idx, layer_state in enumerate(past_key_values):
                 if cache.layer_types[layer_idx] == "full_attention":
@@ -137,7 +137,7 @@ class QEffQwen3_5MoeDynamicCache(Cache):
                     cache.recurrent_states[layer_idx] = recurrent_state
             return cache
 
-        layer_idx, _ = resolve_layer_window(self, len(cache.layer_types))
+        layer_idx, _ = resolve_layer_window(cache, len(cache.layer_types))
         layer_state = past_key_values
         if len(past_key_values) == len(cache.layer_types) and isinstance(past_key_values[layer_idx], (tuple, list)):
             layer_state = past_key_values[layer_idx]
@@ -2002,7 +2002,9 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         # Default path exports all layers; layerwise exports only the active window's layer.
         if is_layerwise_active(self.model):
-            start, end = resolve_layer_window(self.model.language_model, self.model.config.text_config.num_hidden_layers)
+            start, end = resolve_layer_window(
+                self.model.language_model, self.model.config.text_config.num_hidden_layers
+            )
             window_layers = range(start, end)
         else:
             window_layers = range(self.model.config.text_config.num_hidden_layers)
