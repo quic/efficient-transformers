@@ -406,9 +406,10 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             self._decode_cross_attention_mask = None
 
         if "mm_token_type_ids" in lang_inputs:
-            self._decode_mm_token_type_ids = np.zeros(
-                (lang_inputs["mm_token_type_ids"].shape[0], 1), dtype=lang_inputs["mm_token_type_ids"].dtype
+            batch_size = (
+                self.full_batch_size if self.full_batch_size is not None else lang_inputs["mm_token_type_ids"].shape[0]
             )
+            self._decode_mm_token_type_ids = np.zeros((batch_size, 1), dtype=lang_inputs["mm_token_type_ids"].dtype)
         else:
             self._decode_mm_token_type_ids = None
 

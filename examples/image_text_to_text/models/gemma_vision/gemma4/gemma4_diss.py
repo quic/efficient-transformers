@@ -27,8 +27,8 @@ model_id = "google/gemma-4-26B-A4B-it"
 config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
-# config.text_config.num_hidden_layers = 2
-# config.vision_config.num_hidden_layers = 2
+config.text_config.num_hidden_layers = 2
+config.vision_config.num_hidden_layers = 2
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config, dtype="float32", trust_remote_code=True

@@ -171,6 +171,7 @@ GPTOSS_CFG = dict(
 def test_qwen3moe_blocked_forward_parity():
     from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
         QEffPrefillChunkedQwen3MoeSparseMoeBlock,
+        QEffQwen3MoeExperts,
     )
 
     config = AutoConfig.for_model("qwen3_moe", **QWEN3_MOE_CFG)
@@ -187,6 +188,8 @@ def test_qwen3moe_blocked_forward_parity():
     chunked = QEffPrefillChunkedQwen3MoeSparseMoeBlock.__new__(QEffPrefillChunkedQwen3MoeSparseMoeBlock)
     chunked.__dict__.update(block.__dict__)
     chunked.__class__ = QEffPrefillChunkedQwen3MoeSparseMoeBlock
+    chunked.experts.__class__ = QEffQwen3MoeExperts
+    chunked.experts.__qeff_init__()
     chunked.__qeff_init__()
     x = torch.randn(1, 8, config.hidden_size)
     with torch.no_grad():
