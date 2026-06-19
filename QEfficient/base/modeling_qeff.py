@@ -694,12 +694,7 @@ class QEFFBaseModel(ABC):
             "model_name": self.model_name,
             "layer_idx": idx,
         }
-        # For layerwise windows, torch.onnx.export already emits external tensor
-        # data for large models. Re-running SplitTensorsTransform here forces a
-        # full second write of all initializer payloads (.onnx.data), which
-        # doubles per-window I/O time on very large MoE layers. Keep layerwise
-        # post-processing graph-only by default.
-        _onnx_transforms = [CustomOpTransform, RenameFunctionOutputsTransform]
+        _onnx_transforms = [SplitTensorsTransform, CustomOpTransform, RenameFunctionOutputsTransform]
         onnx_transforms = OnnxTransformPipeline(transforms=_onnx_transforms)
         model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
