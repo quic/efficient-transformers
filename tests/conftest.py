@@ -204,7 +204,7 @@ def pytest_sessionstart(session):
     # Suppress transformers warnings about unused weights when loading models with fewer layers
     logging.set_verbosity_error()
 
-    qeff_models_clean_up()
+    # qeff_models_clean_up()
 
 
 def pytest_configure(config):
@@ -447,9 +447,9 @@ def pytest_sessionfinish(session, exitstatus):
     if _is_nightly_pipeline_session(session):
         logger.info("Skipping cleanup for nightly_pipeline tests")
         return
-    if inside_worker is None:
-        qeff_models_clean_up()
-        logger.info("...PYTEST Session Ended.")
+    # if inside_worker is None:
+    #     qeff_models_clean_up()
+    #     logger.info("...PYTEST Session Ended.")
 
 
 def pytest_runtest_logreport(report):

@@ -25,7 +25,7 @@ torch.manual_seed(42)
 
 
 def check_blockedKV_onnx_function_count_with_subfunction(
-    model_name: str, manual_cleanup: callable, n_layer: int = -1, config: Optional[AutoConfig] = None
+    model_name: str, n_layer: int = -1, config: Optional[AutoConfig] = None
 ):
     """
     Export twice with `use_onnx_subfunctions=True`:
@@ -54,7 +54,6 @@ def check_blockedKV_onnx_function_count_with_subfunction(
     num_functions_kv_block = len(onnx_kv_block.functions)
 
     assert num_functions_no_block == num_functions_kv_block
-    manual_cleanup(qeff_kv_block.onnx_path)
 
 
 @pytest.mark.feature

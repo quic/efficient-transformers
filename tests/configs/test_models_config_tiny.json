@@ -16,14 +16,16 @@
       "hf-internal-testing/tiny-random-MptForCausalLM",
       "hf-internal-testing/tiny-random-GPTJForCausalLM",
       "yujiepan/mixtral-tiny-random",
-      "hf-internal-testing/tiny-random-LlamaForCausalLM",
-      "optimum-intel-internal-testing/tiny-random-gemma2",
-      "optimum-intel-internal-testing/tiny-random-gemma2",
+      "tiny-random/llama-3",
+      "trl-internal-testing/tiny-GemmaForCausalLM",
+      "trl-internal-testing/tiny-Gemma2ForCausalLM",
+      "hf-internal-testing/tiny-random-GPTBigCodeForCausalLM",
+      "hf-internal-testing/tiny-random-GraniteForCausalLM",
+
       "optimum-intel-internal-testing/tiny-mixtral-AWQ-4bit",
       "hf-internal-testing/tiny-random-GPTBigCodeForCausalLM",
       "nm-testing/Meta-Llama-3-8B-Instruct-FP8",
       "nm-testing/Qwen2-0.5B-Instruct-FP8",
-      "hf-internal-testing/tiny-random-GraniteForCausalLM",
       "hf-internal-testing/tiny-random-GraniteForCausalLM"
     ]
   },
@@ -160,11 +162,21 @@
   ],
   "image_text_models": {
     "models": [
+      "hf-internal-testing/tiny-random-LlavaForConditionalGeneration",
+      "tiny-random/llama-4",
+      "optimum-intel-internal-testing/tiny-random-llama4",
+      "hf-internal-testing/tiny-random-Gemma3ForConditionalGeneration",
+      "tiny-random/mistral-3",
+      "trl-internal-testing/tiny-Qwen2_5_VLForConditionalGeneration",
       "optimum-intel-internal-testing/tiny-random-qwen2.5-vl",
+      "trl-internal-testing/tiny-Qwen3VLForConditionalGeneration",
+      "hf-internal-testing/tiny-random-Qwen3VLMoeForConditionalGeneration",
       "tiny-random/qwen3-vl-moe",
-      "yujiepan/mistral-small-4-tiny-random",
-      "optimum-intel-internal-testing/tiny-random-internvl2",
-      "optimum-intel-internal-testing/tiny-random-llama4"
+      "trl-internal-testing/tiny-Qwen3_5ForConditionalGeneration",
+      "trl-internal-testing/tiny-Qwen3_5MoeForConditionalGeneration-3.6",
+
+      "optimum-intel-internal-testing/tiny-random-internvl2"
+      
     ],
     "batch_size": 1,
     "prompt_len": 128,
@@ -195,6 +207,8 @@
   },
   "image_text_custom_dtype_models": {
     "models": [
+      "hf-internal-testing/tiny-random-LlavaForConditionalGeneration",
+      "hf-internal-testing/tiny-random-Gemma3ForConditionalGeneration",
       "optimum-intel-internal-testing/tiny-random-internvl2"
     ],
     "batch_size": 1,
@@ -214,9 +228,9 @@
     "meta-llama/Llama-Prompt-Guard-2-22M"
   ],
   "speech_seq2seq_models": [
-    "openai/whisper-tiny"
+    "hf-internal-testing/tiny-random-WhisperForConditionalGeneration"
   ],
   "audio_embedding_models": [
-    "facebook/wav2vec2-base-960h"
+    "hf-internal-testing/tiny-random-Wav2Vec2ForCTC"
   ]
 }

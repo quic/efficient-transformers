@@ -40,7 +40,6 @@ def has_QwenLayer_function(onnx_path):
 
 def check_image_text_to_text_subfunction_core(
     model_name: str,
-    manual_cleanup: callable,
     kv_offload: bool = False,
     num_hidden_layers: int = -1,
     num_devices: int = 1,
@@ -104,7 +103,6 @@ def check_image_text_to_text_subfunction_core(
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
     )
-    manual_cleanup(qeff_model.onnx_path)
 
 
 @pytest.mark.feature

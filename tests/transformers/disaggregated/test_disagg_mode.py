@@ -71,7 +71,7 @@ def _make_dummy_model(model_id: str) -> AutoModelForCausalLM:
 
 
 @pytest.mark.qaic
-@pytest.mark.llm_model
+@pytest.mark.feature
 @pytest.mark.parametrize("model_id", model_id_blocking)
 @pytest.mark.parametrize("prompt", prompts)
 def test_disagg_mode_prefill(model_id, prompt):
@@ -149,7 +149,7 @@ def test_disagg_mode_prefill(model_id, prompt):
 
 
 @pytest.mark.qaic
-@pytest.mark.llm_model
+@pytest.mark.feature
 @pytest.mark.parametrize("model_id", model_id_chunking)
 @pytest.mark.parametrize("prompt", prompts)
 def test_disagg_mode_prefill_chunked(model_id, prompt):
@@ -240,7 +240,7 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
 
 
 @pytest.mark.qaic
-@pytest.mark.llm_model
+@pytest.mark.feature
 @pytest.mark.parametrize("model_id", model_id_blocking)
 @pytest.mark.parametrize("prompt", [prompt1])
 def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
@@ -416,7 +416,7 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
 
 
 @pytest.mark.qaic
-@pytest.mark.llm_model
+@pytest.mark.feature
 @pytest.mark.parametrize("model_id", model_id_blocking)
 @pytest.mark.parametrize("prompt", [prompt1])
 def test_disagg_mode_prefix_caching(model_id, prompt):
