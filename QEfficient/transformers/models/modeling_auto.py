@@ -29,6 +29,7 @@ from transformers import (
 )
 
 import QEfficient
+import QEfficient.utils.layerwise_utils as layerwise_utils
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
@@ -79,8 +80,16 @@ from QEfficient.utils import (
     validate_kv_cache_prefix,
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
-from QEfficient.utils.layerwise_utils import build_meta_model as _build_layerwise_meta_model
-from QEfficient.utils.layerwise_utils import get_layerwise_context, is_layerwise_export_active
+from QEfficient.utils.layerwise_utils import (
+    _layer_prefixes_for_model_type,
+    _null_outside_window_layers,
+    assert_layerwise_supported,
+    get_layerwise_context,
+    is_layerwise_export_active,
+)
+from QEfficient.utils.layerwise_utils import (
+    build_meta_model as _build_layerwise_meta_model,
+)
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
@@ -147,7 +156,6 @@ def _build_layerwise_vision_export_model(hf_auto_class, pretrained_model_name_or
     every decoder layer up front. Language ONNX/QPC export still goes through
     the regular layerwise driver, which reloads each window independently.
     """
-    from QEfficient.transformers.models import _layerwise
     from QEfficient.utils.custom_loader import CustomLoader
     from QEfficient.utils.layerwise_utils import layerwise_export_scope, resolve_text_total_layers
 
@@ -162,13 +170,13 @@ def _build_layerwise_vision_export_model(hf_auto_class, pretrained_model_name_or
         }
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, **config_kwargs)
         kwargs["config"] = config
-    model_type = _layerwise.assert_layerwise_supported(config)
+    model_type = assert_layerwise_supported(config)
     total_layers = resolve_text_total_layers(config)
-    layer_prefixes = _layerwise._layer_prefixes_for_model_type(model_type)
+    layer_prefixes = _layer_prefixes_for_model_type(model_type)
     loader = CustomLoader(lambda model_id, _config: hf_auto_class.from_pretrained(model_id, **kwargs), layer_prefixes)
     with layerwise_export_scope():
         model = loader.load_window(pretrained_model_name_or_path, config, 0, min(1, total_layers), total_layers)
-        _layerwise._null_outside_window_layers(model, apply_text=True)
+        _null_outside_window_layers(model, apply_text=True)
         return model
 
 
@@ -1734,8 +1742,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise_window_size,
         **kwargs,
     ):
-        from QEfficient.transformers.models import _layerwise
-
         model_id = self._pretrained_model_name_or_path
         if model_id is None:
             raise RuntimeError(
@@ -1752,7 +1758,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             enable_chunking=enable_chunking,
             **kwargs,
         )
-        return _layerwise.run_layerwise(
+        return layerwise_utils.run_layerwise(
             model_id=model_id,
             config=self.config,
             qeff_factory=self._build_layerwise_factory(),
@@ -1768,8 +1774,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise_window_size,
         **compile_kwargs,
     ):
-        from QEfficient.transformers.models import _layerwise
-
         model_id = self._pretrained_model_name_or_path
         if model_id is None:
             raise RuntimeError(
@@ -1777,7 +1781,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 "QEFFAutoModelForImageTextToText.from_pretrained(...). "
                 "Direct __init__ does not preserve the model id needed for per-window reload."
             )
-        qpc_paths = _layerwise.run_layerwise(
+        qpc_paths = layerwise_utils.run_layerwise(
             model_id=model_id,
             config=self.config,
             qeff_factory=self._build_layerwise_factory(),
@@ -3691,8 +3695,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     def _run_layerwise(self, *, final_compile: bool, layerwise_window_size: int, **forward_kwargs):
         """Drive the layer-wise export/compile loop for CausalLM models."""
-        from QEfficient.transformers.models import _layerwise
-
         model_id = getattr(self.model, "pretrained_path", None)
         if model_id is None:
             raise RuntimeError(
@@ -3712,7 +3714,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 low_cpu_mem_usage=True,
             )
 
-        return _layerwise.run_layerwise(
+        return layerwise_utils.run_layerwise(
             model_id=model_id,
             config=config,
             qeff_factory=_factory,

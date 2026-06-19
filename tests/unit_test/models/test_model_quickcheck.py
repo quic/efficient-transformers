@@ -1451,7 +1451,7 @@ def test_layerwise_window_helpers():
 @pytest.mark.llm_model
 def test_layerwise_supported_guard_rejects_unrelated_model():
     """layerwise=True must hard-fail on architectures without windowing hooks."""
-    from QEfficient.transformers.models import _layerwise
+    import QEfficient.utils.layerwise_utils as _layerwise
 
     config = AutoConfig.from_pretrained("hf-internal-testing/tiny-random-LlamaForCausalLM")
     with pytest.raises(NotImplementedError, match="layerwise=True is only supported"):
@@ -1811,7 +1811,7 @@ def test_split_layer_graph_keeps_qwen3_5_linear_states(tmp_path):
 
 @pytest.mark.llm_model
 def test_layerwise_supported_guard_accepts_qwen3_vl_moe():
-    from QEfficient.transformers.models import _layerwise
+    import QEfficient.utils.layerwise_utils as _layerwise
 
     try:
         config = AutoConfig.from_pretrained(LAYERWISE_TINY_MODEL_ID)
@@ -1829,7 +1829,7 @@ def test_layerwise_supported_guard_accepts_qwen3_vl_moe():
 )
 def test_layerwise_supported_guard_accepts_all_supported(arch, model_id):
     """Guard must accept each architecture in the layerwise allowlist."""
-    from QEfficient.transformers.models import _layerwise
+    import QEfficient.utils.layerwise_utils as _layerwise
 
     try:
         config = AutoConfig.from_pretrained(model_id)
@@ -1949,7 +1949,7 @@ def test_layerwise_safe_export_pass_patch_toggles_only_inside_layerwise_context(
 @pytest.mark.llm_model
 def test_layerwise_uses_probe_model_for_cached_export(monkeypatch, tmp_path):
     """A cached merged ONNX must avoid rebuilding per-window models."""
-    from QEfficient.transformers.models import _layerwise
+    import QEfficient.utils.layerwise_utils as _layerwise
 
     class DummyConfig:
         model_type = "qwen3_moe"
@@ -1988,7 +1988,7 @@ def test_layerwise_uses_probe_model_for_cached_export(monkeypatch, tmp_path):
 
 @pytest.mark.llm_model
 def test_layerwise_cache_miss_exports_all_windows(monkeypatch, tmp_path):
-    from QEfficient.transformers.models import _layerwise
+    import QEfficient.utils.layerwise_utils as _layerwise
 
     class DummyConfig:
         model_type = "qwen3_moe"
@@ -2049,7 +2049,7 @@ def test_layerwise_cache_miss_exports_all_windows(monkeypatch, tmp_path):
 
 @pytest.mark.llm_model
 def test_layerwise_cleanup_removes_intermediate_dirs(tmp_path):
-    from QEfficient.transformers.models import _layerwise
+    import QEfficient.utils.layerwise_utils as _layerwise
 
     final_data = tmp_path / "final_data"
     onnx_tmp = tmp_path / "onnx_layerwise_tmp"
@@ -2066,7 +2066,7 @@ def test_layerwise_cleanup_removes_intermediate_dirs(tmp_path):
 
 @pytest.mark.llm_model
 def test_layerwise_cached_merged_prefers_root_layout(tmp_path):
-    from QEfficient.transformers.models import _layerwise
+    import QEfficient.utils.layerwise_utils as _layerwise
 
     root_merged = tmp_path / "merged_0-48.onnx"
     legacy_merged = tmp_path / "final_data" / "merged_0-48.onnx"
@@ -2135,7 +2135,7 @@ def test_layerwise_merge_renames_decoder_function_variants_without_collisions():
 
 @pytest.mark.llm_model
 def test_layerwise_materializes_root_onnx_for_final_compile(monkeypatch, tmp_path):
-    from QEfficient.transformers.models import _layerwise
+    import QEfficient.utils.layerwise_utils as _layerwise
 
     class DummyConfig:
         model_type = "qwen3_vl_moe"
@@ -2146,14 +2146,26 @@ def test_layerwise_materializes_root_onnx_for_final_compile(monkeypatch, tmp_pat
 
     class ProbeModel:
         lang_model = DummyLangModel()
+        layerwise = True
 
         def __init__(self, cached_path):
             self.cached_path = cached_path
-            self.final_kwargs = None
+            self.final_called = False
 
         def compile(self, **kwargs):
             if kwargs.pop("_layerwise_cache_probe", False):
                 return self.cached_path
+            self.final_called = True
+            raise AssertionError("final compile must use a fresh non-layerwise window model")
+
+    class FinalModel:
+        lang_model = DummyLangModel()
+        layerwise = False
+
+        def __init__(self):
+            self.final_kwargs = None
+
+        def compile(self, **kwargs):
             self.final_kwargs = kwargs
             return {"lang_decode_qpc_path": "dummy-qpc"}
 
@@ -2161,24 +2173,26 @@ def test_layerwise_materializes_root_onnx_for_final_compile(monkeypatch, tmp_pat
     cached_path.parent.mkdir(parents=True)
     cached_path.touch()
     probe = ProbeModel(cached_path)
+    final_model = FinalModel()
 
     result = _layerwise.run_layerwise(
         model_id="dummy",
         config=DummyConfig(),
-        qeff_factory=lambda *args, **kwargs: probe,
+        qeff_factory=lambda *args, **kwargs: final_model,
         compile_kwargs={},
         probe_qeff_model=probe,
         final_compile=True,
     )
 
     assert result == {"lang_decode_qpc_path": "dummy-qpc"}
-    assert probe.final_kwargs["lang_onnx_path"] == str(cached_path)
-    assert probe.final_kwargs["skip_lang"] is False
+    assert probe.final_called is False
+    assert final_model.final_kwargs["lang_onnx_path"] == str(cached_path)
+    assert final_model.final_kwargs["skip_lang"] is False
 
 
 @pytest.mark.llm_model
 def test_layerwise_cache_hit_under_final_data_is_canonicalized(monkeypatch, tmp_path):
-    from QEfficient.transformers.models import _layerwise
+    import QEfficient.utils.layerwise_utils as _layerwise
 
     class DummyConfig:
         model_type = "qwen3_vl_moe"
@@ -2292,7 +2306,7 @@ def test_runtime_aliases_internal_retained_state_outputs():
 
 @pytest.mark.llm_model
 def test_layerwise_compile_hydrates_outer_qpc_paths(monkeypatch, tmp_path):
-    from QEfficient.transformers.models import _layerwise
+    import QEfficient.utils.layerwise_utils as _layerwise
     from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
 
     qpc_path = tmp_path / "qpc"
@@ -2324,7 +2338,7 @@ def test_layerwise_compile_rejects_unsupported_model():
     # CausalLM does not expose a layerwise= kwarg today; only DualQPC VLM does.
     # So this test guards via the helper directly to make the contract explicit
     # for future surface expansion.
-    from QEfficient.transformers.models import _layerwise
+    import QEfficient.utils.layerwise_utils as _layerwise
 
     with pytest.raises(NotImplementedError):
         _layerwise.assert_layerwise_supported(qeff_model.model.config)
