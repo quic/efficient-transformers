@@ -1370,24 +1370,43 @@ class BlockingAttentionTransform:
         return model, transformed
 
 
-class OptimizedMoETransform(PytorchTransform):
-    """Single export-time transform for all MoE models.
+def _iter_optimized_moe_modules(model: nn.Module):
+    from QEfficient.transformers.moe import QEffMoEBlockMixin
 
-    Applied just before ONNX export, it does both jobs the per-model code used to
-    split across ``__qeff_init__`` and the legacy split/blocking transforms:
+    for module in model.modules():
+        if isinstance(module, QEffMoEBlockMixin):
+            yield module
 
-    1. Canonicalize each MoE block's expert weights into ``module.moe_weights``
-       (the fused gate_up split / transpose / bias-split "jugglery"). Idempotent.
-    2. Resolve and assign the forward "flavour" (``expert_blocked`` / ``simple_loop``
-       for prefill, ``decode_bmm`` otherwise) onto ``module._moe_flavour``, plus the
-       ``expert_blocking_*`` knobs when blocked, and record the choice in
-       ``hash_params`` for cache-keying.
 
-    Operates on every :class:`QEffMoEBlockMixin` instance reachable via
-    ``model.modules()`` so a single transform serves the text CausalLM path and both
-    VLM language-decoder paths uniformly. It is a no-op for models that have not yet
-    been migrated to the shared MoE infra.
+class OptimizedMoEMapperTransform(PytorchTransform):
+    """Identify MoE blocks that participate in the shared MoE transform flow.
+
+    Class replacement is still performed by the existing model mapping transforms
+    (for example ``KVCacheTransform`` and prefill transforms). This transform is
+    intentionally state-preserving so the MoE facade can keep mapping separate
+    from expert-weight mutation and export-time configuration.
     """
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        return model, any(True for _ in _iter_optimized_moe_modules(model))
+
+
+class OptimizedMoEWeightsTransform(PytorchTransform):
+    """Canonicalize MoE expert weights for modules using shared MoE flavours."""
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        transformed = False
+        for module in _iter_optimized_moe_modules(model):
+            if getattr(module, "moe_weights", None) is None and hasattr(module, "build_moe_weights"):
+                module.build_moe_weights()
+                transformed = True
+        return model, transformed
+
+
+class OptimizedMoEExportConfigTransform(PytorchTransform):
+    """Assign MoE export flavour, blocking attributes, and hash parameters."""
 
     @classmethod
     def apply(
@@ -1402,7 +1421,7 @@ class OptimizedMoETransform(PytorchTransform):
         prefill_seq_len: Optional[int] = None,
         hash_params: Optional[dict] = None,
     ) -> Tuple[nn.Module, bool]:
-        from QEfficient.transformers.moe import MoEFlavour, QEffMoEBlockMixin, select_moe_flavour
+        from QEfficient.transformers.moe import MoEFlavour, select_moe_flavour
 
         moe_config = (qaic_config or {}).get("moe_config", {}) or {}
         model_type = getattr(getattr(model, "config", None), "model_type", "") or ""
@@ -1418,15 +1437,7 @@ class OptimizedMoETransform(PytorchTransform):
 
         transformed = False
         flavour = None
-        for module in model.modules():
-            if not isinstance(module, QEffMoEBlockMixin):
-                continue
-
-            # 1) Weight canonicalization (idempotent).
-            if getattr(module, "moe_weights", None) is None and hasattr(module, "build_moe_weights"):
-                module.build_moe_weights()
-
-            # 2) Flavour + blocking knobs.
+        for module in _iter_optimized_moe_modules(model):
             supports_blocking = getattr(module, "supports_moe_prefill_blocking", False)
             flavour = select_moe_flavour(
                 moe_config,
@@ -1450,3 +1461,50 @@ class OptimizedMoETransform(PytorchTransform):
                 hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
 
         return model, transformed
+
+
+class OptimizedMoETransform(PytorchTransform):
+    """Compatibility facade for all MoE export-time transforms.
+
+    Applied just before ONNX export, it does both jobs the per-model code used to
+    split across ``__qeff_init__`` and the legacy split/blocking transforms:
+
+    1. Canonicalize each MoE block's expert weights into ``module.moe_weights``
+       (the fused gate_up split / transpose / bias-split "jugglery"). Idempotent.
+    2. Resolve and assign the forward "flavour" (``expert_blocked`` / ``simple_loop``
+       for prefill, ``decode_bmm`` otherwise) onto ``module._moe_flavour``, plus the
+       ``expert_blocking_*`` knobs when blocked, and record the choice in
+       ``hash_params`` for cache-keying.
+
+    The implementation is intentionally split into mapping discovery, weight
+    canonicalization, and export configuration transforms so state mutation does
+    not hide inside class/method mappers. This facade preserves the historical
+    public entry point used by export paths.
+    """
+
+    @classmethod
+    def apply(
+        cls,
+        model: nn.Module,
+        *,
+        prefill_only: bool = False,
+        enable_chunking: bool = False,
+        num_cores: int = DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: int = MOE_PREFILL_PACKED_CHUNK_SIZE,
+        qaic_config: Optional[dict] = None,
+        prefill_seq_len: Optional[int] = None,
+        hash_params: Optional[dict] = None,
+    ) -> Tuple[nn.Module, bool]:
+        _, mapped = OptimizedMoEMapperTransform.apply(model)
+        _, weights_ready = OptimizedMoEWeightsTransform.apply(model)
+        model, export_configured = OptimizedMoEExportConfigTransform.apply(
+            model,
+            prefill_only=prefill_only,
+            enable_chunking=enable_chunking,
+            num_cores=num_cores,
+            moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+            qaic_config=qaic_config,
+            prefill_seq_len=prefill_seq_len,
+            hash_params=hash_params,
+        )
+        return model, mapped or weights_ready or export_configured
