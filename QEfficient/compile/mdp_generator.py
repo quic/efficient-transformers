@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 """MDP generator for disaggregated prefill serving (PP-enabled, TS-enabled, stages>1)."""
 
+import bisect
 import logging
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set
@@ -105,6 +106,69 @@ def _get_layer_num(node_name: str) -> Optional[int]:
     return None
 
 
+def _layer_partition_bounds(num_layers: int, num_partitions: int) -> List[int]:
+    """Compute exclusive-upper-bound layer bounds for balanced pipeline partitioning.
+
+    Distributes remainder layers so that the last partition (which carries postprocessing
+    such as lm_head and final norm) always receives only the base allocation.  Remainder
+    layers are spread to the middle partitions first (indices 1 .. num_partitions-2),
+    filling left-to-right starting from the centre of the middle zone.  The first
+    partition (which carries embedding preprocessing) absorbs any overflow only when
+    the remainder exceeds the number of available middle stages.
+
+    Worst case (remainder == num_partitions - 1): every stage except the last receives
+    one extra layer.
+
+    Special cases:
+      num_partitions == 1  — single stage; returns an empty list.
+      num_partitions == 2  — no middle zone; any remainder goes to the first stage.
+
+    Returns:
+        A list of length (num_partitions - 1).  bounds[i] is the exclusive upper
+        bound of partition i.  Use ``bisect.bisect_right(bounds, layer_num)`` to
+        map a layer index to its partition index.
+
+    Examples (layer counts [partition-0, partition-1, ...]):
+        12 layers / 4 stages  ->  [3, 3, 3, 3]   (no remainder)
+        9  layers / 4 stages  ->  [2, 3, 2, 2]   (r=1  -> centre-middle gets +1)
+        10 layers / 4 stages  ->  [2, 3, 3, 2]   (r=2  -> both middle get +1)
+        11 layers / 4 stages  ->  [3, 3, 3, 2]   (r=3 = n-1 -> first+middle get +1)
+        8  layers / 3 stages  ->  [3, 3, 2]       (r=2 = n-1 -> first+middle get +1)
+        5  layers / 2 stages  ->  [3, 2]           (r=1 -> first gets +1)
+    """
+    base = num_layers // num_partitions
+    remainder = num_layers % num_partitions
+    sizes: List[int] = [base] * num_partitions
+
+    if remainder > 0 and num_partitions >= 2:
+        if num_partitions == 2:
+            sizes[0] += remainder
+        else:
+            num_middle = num_partitions - 2
+            middle_fill = min(remainder, num_middle)
+            first_fill = remainder - middle_fill
+            mid_center = (1 + num_partitions - 2) // 2
+            left, right, filled = mid_center, mid_center + 1, 0
+            while filled < middle_fill:
+                if left >= 1:
+                    sizes[left] += 1
+                    left -= 1
+                    filled += 1
+                if filled < middle_fill and right <= num_partitions - 2:
+                    sizes[right] += 1
+                    right += 1
+                    filled += 1
+            if first_fill > 0:
+                sizes[0] += 1
+
+    cumsum = 0
+    bounds: List[int] = []
+    for sz in sizes[:-1]:
+        cumsum += sz
+        bounds.append(cumsum)
+    return bounds
+
+
 def _get_inlined_node_map(model) -> tuple:
     """Classify ONNX local functions and build inlined sub-node names.
 
@@ -163,12 +227,16 @@ def generate_disagg_mdp_partition_config(
 ) -> Dict[str, Any]:
     """Generate a pipeline-partitioned MDP config from an exported ONNX graph.
 
-    Assigns nodes to partitions by transformer layer index. Non-layer nodes
-    (embeddings, lm_head) follow the nearest layer in topological order.
-    nodeList is a superset of the compiler dump; the compiler silently ignores
-    optimized-away names. Inlined local function call-sites (CtxScatterCB,
-    CtxGatherCB) are excluded; their /nNN sub-nodes are assigned automatically.
-    Known custom ops (CustomRMSNorm) are included by call-site name.
+    Assigns nodes to partitions by transformer layer index using a balanced
+    remainder distribution: the last partition (postprocessing — lm_head, final
+    norm) always receives only the base layer count; any remainder layers are
+    spread to the middle partitions first, then to the first partition (embedding
+    preprocessing) only when the remainder exceeds the number of middle stages.
+    Non-layer nodes (embeddings, lm_head) follow the nearest layer in topological
+    order.  nodeList is a superset of the compiler dump; the compiler silently
+    ignores optimized-away names.  Inlined local function call-sites
+    (CtxScatterCB, CtxGatherCB) are excluded; their /nNN sub-nodes are assigned
+    automatically.  Known custom ops (CustomRMSNorm) are included by call-site name.
 
     For PP+TS: num_devices // num_partitions devices per partition; the
     compiler applies tensor-slicing within each stage.
@@ -192,7 +260,7 @@ def generate_disagg_mdp_partition_config(
             f"Num of partitions should be <= number of devices. Found {num_partitions} partitions and {num_devices} devices"
         )
 
-    layers_per_partition = num_layers // num_partitions
+    partition_bounds = _layer_partition_bounds(num_layers, num_partitions)
     model = onnx.load(onnx_path, load_external_data=False)
 
     # Verify topological order (ONNX spec §3.3). Fails loudly on malformed exports.
@@ -253,7 +321,7 @@ def generate_disagg_mdp_partition_config(
         if layer_num is not None:
             max_layer_seen = max(max_layer_seen, layer_num)
             seen_first_layer = True
-            partition_idx = min(layer_num // layers_per_partition, num_partitions - 1)
+            partition_idx = bisect.bisect_right(partition_bounds, layer_num)
             current_layer_partition = partition_idx
         else:
             partition_idx = 0 if not seen_first_layer else current_layer_partition
