@@ -20,7 +20,7 @@ def main():
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--ctx-len", type=int, default=1024)
     parser.add_argument("--num-devices", type=int, default=1)
-    parser.add_argument("--num-cores", type=int, default=1)
+    parser.add_argument("--num-cores", type=int, default=16)
     parser.add_argument("--generation-len", type=int, default=32)
     parser.add_argument("--prompt", default="Tell me about yourself.")
     parser.add_argument("--layerwise-window-size", type=int, default=1)
@@ -50,8 +50,9 @@ def main():
         mxint8_kv_cache=True,
         use_onnx_subfunctions=True,
         skip_vision=True,
-        layerwise=False,
+        layerwise=True,
         layerwise_window_size=args.layerwise_window_size,
+        offload_pt_weights=False,
     )
     print(f"QPC paths: {qpc_paths}")
 

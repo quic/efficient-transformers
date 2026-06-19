@@ -1764,6 +1764,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 prefill_seq_len=prefill_seq_len,
+                offload_pt_weights=compiler_options.get("offload_pt_weights", True),
             )
 
         if hasattr(self.model, "generate_npi_file") and "node_precision_info" in compiler_options:
