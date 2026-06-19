@@ -50,7 +50,7 @@ def main():
         mxint8_kv_cache=True,
         use_onnx_subfunctions=True,
         skip_vision=True,
-        layerwise=True,
+        layerwise=False,
         layerwise_window_size=args.layerwise_window_size,
     )
     print(f"QPC paths: {qpc_paths}")
