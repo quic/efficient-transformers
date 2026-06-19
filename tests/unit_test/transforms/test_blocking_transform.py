@@ -9,10 +9,10 @@ Unit tests for BlockingAttentionTransform in QEfficient.transformers.models.pyto
 
 Verifies that:
   1. BlockingAttentionTransform attaches attn_blocking_config to QEff attention modules
-  2. Returns (model, True) when QEff attention modules are present
-  3. Works correctly for all supported model families
-  4. Works with different BlockingMode values
-  5. Re-applying overrides the previous config
+  2. Works correctly for supported model families
+  3. Preserves blocking mode/config values
+  4. Re-applying overrides the previous config
+  5. Handles wrapper config fallback and preserves fast CPU parity
 
 All tests run on CPU only, using tiny in-memory models.
 KVCacheTransform must be applied before BlockingAttentionTransform because the
@@ -20,7 +20,11 @@ blocking transform matches against QEff attention class types (the *values* of
 KVCacheTransform._module_mapping), not the raw HF attention class types (the keys).
 """
 
+from copy import deepcopy
+
 import pytest
+import torch
+import torch.nn as nn
 
 from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
 
@@ -194,25 +198,25 @@ def _blocking_cfg(**kwargs):
     return AttentionBlockingConfig(**kwargs)
 
 
-# ---------------------------------------------------------------------------
-# Tests: Blocking Transform Importability
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.transforms
-class TestBlockingTransformImportability:
-    """All quantization transforms must be importable and have correct structure."""
-
-    def test_blocking_transform_importable(self):
-        from QEfficient.transformers.models.pytorch_transforms import BlockingAttentionTransform
-
-        assert BlockingAttentionTransform is not None
-
-    # kv cache transform must happen before blocking transform
-    def test_kv_cache_transform_importable(self):
-        from QEfficient.transformers.models.pytorch_transforms import KVCacheTransform
-
-        assert KVCacheTransform is not None
+def _make_qeff_inputs(input_ids, config, ctx_len=CTX_LEN):
+    batch, seq = input_ids.shape
+    position_ids = torch.arange(seq).unsqueeze(0).expand(batch, -1)
+    n_layers = config.num_hidden_layers
+    n_attn = config.num_attention_heads
+    n_kv = getattr(config, "num_key_value_heads", n_attn)
+    head_dim = getattr(config, "head_dim", None) or (config.hidden_size // n_attn)
+    past_key_values = tuple(
+        (
+            torch.zeros(batch, n_kv, ctx_len, head_dim, dtype=torch.float32),
+            torch.zeros(batch, n_kv, ctx_len, head_dim, dtype=torch.float32),
+        )
+        for _ in range(n_layers)
+    )
+    return {
+        "input_ids": input_ids,
+        "position_ids": position_ids,
+        "past_key_values": past_key_values,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -223,16 +227,6 @@ class TestBlockingTransformImportability:
 @pytest.mark.transforms
 class TestBlockingTransformApplied:
     """BlockingAttentionTransform must attach attn_blocking_config to all QEff attention modules."""
-
-    @pytest.mark.parametrize("make_model,label", _MODEL_FACTORIES, ids=_MODEL_IDS)
-    def test_returns_transformed_true(self, make_model, label):
-        from QEfficient.transformers.models.pytorch_transforms import BlockingAttentionTransform, KVCacheTransform
-
-        model = make_model()
-        model, _ = KVCacheTransform.apply(model)
-        config = _blocking_cfg(mode=BlockingMode.KV, num_kv_blocks=2)
-        _, transformed = BlockingAttentionTransform.apply(model, config)
-        assert transformed, f"[{label}] BlockingAttentionTransform must return transformed=True"
 
     @pytest.mark.parametrize("make_model,label", _MODEL_FACTORIES, ids=_MODEL_IDS)
     def test_config_attached_to_all_attn_modules(self, make_model, label):
@@ -333,3 +327,70 @@ class TestBlockingTransformIdempotent:
                 "Second BlockingAttentionTransform.apply must override the first config"
             )
             assert m.attn_blocking_config.mode == BlockingMode.Q
+
+
+# ---------------------------------------------------------------------------
+# Tests: wrapper config fallback + CPU parity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.transforms
+class TestBlockingWrapperFallbackAndParity:
+    """Regression guards for wrapper config lookup and CPU parity checks."""
+
+    def test_wrapper_without_config_uses_nested_model_config(self):
+        from QEfficient.transformers.models.pytorch_transforms import BlockingAttentionTransform
+
+        class _DummyAttention(nn.Module):
+            pass
+
+        class _DeepseekContainer(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = type("Cfg", (), {"architectures": ["DeepseekV3ForCausalLM"]})()
+                self.attn = _DummyAttention()
+
+        class _WrapperWithoutConfig(nn.Module):
+            def __init__(self, model):
+                super().__init__()
+                self.model = model
+
+            def forward(self, *args, **kwargs):
+                return self.model(*args, **kwargs)
+
+        cfg = AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2)
+        wrapped = _WrapperWithoutConfig(_DeepseekContainer())
+        wrapped, transformed = BlockingAttentionTransform.apply(wrapped, cfg)
+
+        assert transformed, "BlockingAttentionTransform must use nested wrapper model config"
+        assert wrapped.model.attn.attn_blocking_config is cfg
+
+    @pytest.mark.parametrize(
+        "blocking_cfg",
+        [
+            AttentionBlockingConfig(mode=BlockingMode.NONE),
+            AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2),
+        ],
+        ids=["mode_none", "mode_kv"],
+    )
+    def test_cpu_parity_original_vs_transformed_with_same_input(self, blocking_cfg):
+        from QEfficient.transformers.models.pytorch_transforms import BlockingAttentionTransform, KVCacheTransform
+
+        torch.manual_seed(7)
+        base = make_tiny_llama()
+        original = deepcopy(base).eval()
+        transformed = deepcopy(base).eval()
+        transformed, _ = KVCacheTransform.apply(transformed)
+        transformed, applied = BlockingAttentionTransform.apply(transformed, blocking_cfg)
+        assert applied
+
+        input_ids = torch.randint(0, VOCAB_SIZE, (1, 8))
+        qeff_inputs = _make_qeff_inputs(input_ids, transformed.config)
+
+        with torch.no_grad():
+            original_token = original(input_ids=input_ids).logits[:, -1, :].argmax(-1)
+            transformed_token = transformed(**qeff_inputs).logits[:, -1, :].argmax(-1)
+
+        assert torch.equal(
+            original_token, transformed_token
+        ), "Original and transformed model outputs diverged for same CPU input"
