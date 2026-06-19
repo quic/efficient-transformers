@@ -391,6 +391,6 @@ class TestBlockingWrapperFallbackAndParity:
             original_token = original(input_ids=input_ids).logits[:, -1, :].argmax(-1)
             transformed_token = transformed(**qeff_inputs).logits[:, -1, :].argmax(-1)
 
-        assert torch.equal(
-            original_token, transformed_token
-        ), "Original and transformed model outputs diverged for same CPU input"
+        assert torch.equal(original_token, transformed_token), (
+            "Original and transformed model outputs diverged for same CPU input"
+        )
