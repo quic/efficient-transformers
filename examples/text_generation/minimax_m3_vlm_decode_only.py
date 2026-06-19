@@ -12,7 +12,7 @@ from transformers import AutoProcessor, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-MODEL_ID = "MiniMaxAI/MiniMax-M3"
+MODEL_ID = "shagunsd/tiny-random-MiniMaxM3SparseForConditionalGeneration"
 
 
 def main():
@@ -20,12 +20,18 @@ def main():
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--ctx-len", type=int, default=1024)
     parser.add_argument("--num-devices", type=int, default=1)
-    parser.add_argument("--num-cores", type=int, default=4)
+    parser.add_argument("--num-cores", type=int, default=1)
     parser.add_argument("--generation-len", type=int, default=32)
     parser.add_argument("--prompt", default="Tell me about yourself.")
     parser.add_argument("--layerwise-window-size", type=int, default=1)
     parser.add_argument("--skip-generate", action=argparse.BooleanOptionalAction, default=False)
     args = parser.parse_args()
+
+    if args.model_id == MODEL_ID and args.num_devices > 1:
+        print(
+            "[Warning] Tiny random MiniMax-M3 with multi-device partition can fail compiler split/merge finalize. "
+            "Use --num-devices 1 --num-cores 1 for tiny smoke. Use 16/16 for full MiniMax-M3."
+        )
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         args.model_id,

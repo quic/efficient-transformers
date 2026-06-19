@@ -702,7 +702,29 @@ class QEFFBaseModel(ABC):
         _onnx_transforms = [CustomOpTransform, RenameFunctionOutputsTransform]
         onnx_transforms = OnnxTransformPipeline(transforms=_onnx_transforms)
         model, transformed = onnx_transforms.apply(model, **transform_kwargs)
-        onnx.save(model, layer_onnx_path_tmp)
+
+        layer_onnx_path_tmp_obj = Path(layer_onnx_path_tmp)
+        external_data_name = f"{layer_onnx_path_tmp_obj.stem}.onnx.data"
+        onnx.save_model(
+            model,
+            layer_onnx_path_tmp,
+            save_as_external_data=True,
+            all_tensors_to_one_file=True,
+            location=external_data_name,
+            size_threshold=1024,
+            convert_attribute=False,
+        )
+
+        referenced_files = {layer_onnx_path_tmp_obj.name, external_data_name}
+        for tensor in model.graph.initializer:
+            if tensor.HasField("data_location") and tensor.data_location == onnx.TensorProto.EXTERNAL:
+                for entry in tensor.external_data:
+                    if entry.key == "location":
+                        referenced_files.add(Path(entry.value).name)
+
+        for path in current_layer_dir.iterdir():
+            if path.is_file() and path.name not in referenced_files:
+                path.unlink(missing_ok=True)
         self.onnx_path = layer_onnx_path_tmp
         return layer_onnx_path_tmp
 

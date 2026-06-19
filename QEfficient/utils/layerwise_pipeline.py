@@ -22,6 +22,74 @@ DELETE_SUFFIXES = ("all_down_proj", "all_gate_proj", "all_up_proj")
 _delete_pool = ThreadPoolExecutor(max_workers=DELETE_WORKERS)
 
 
+def _collapse_double_slash(name: str) -> str:
+    if not name:
+        return name
+    while "//" in name:
+        name = name.replace("//", "/")
+    return name
+
+
+def _normalize_double_slash_names(model: onnx.ModelProto) -> None:
+    """Normalize accidental '//' path separators introduced by prefixing."""
+
+    def norm_in_place(values):
+        for idx, value in enumerate(values):
+            values[idx] = _collapse_double_slash(value)
+
+    graph = model.graph
+
+    for node in graph.node:
+        node.name = _collapse_double_slash(node.name)
+        norm_in_place(node.input)
+        norm_in_place(node.output)
+
+    for collection in (graph.input, graph.output, graph.value_info, graph.initializer):
+        for value in collection:
+            value.name = _collapse_double_slash(value.name)
+
+    for func in model.functions:
+        func.name = _collapse_double_slash(func.name)
+        norm_in_place(func.input)
+        norm_in_place(func.output)
+        for node in func.node:
+            node.name = _collapse_double_slash(node.name)
+            norm_in_place(node.input)
+            norm_in_place(node.output)
+
+
+def _dedupe_produced_names(model: onnx.ModelProto) -> None:
+    """Ensure each tensor name is produced by a single node."""
+    output_to_producers = {}
+    for node_idx, node in enumerate(model.graph.node):
+        for out_idx, out_name in enumerate(node.output):
+            output_to_producers.setdefault(out_name, []).append((node_idx, out_idx))
+
+    for out_name, producers in output_to_producers.items():
+        if len(producers) <= 1:
+            continue
+        # Keep the latest producer with the original name, rename older ones.
+        for dup_idx, (node_idx, out_idx) in enumerate(producers[:-1]):
+            model.graph.node[node_idx].output[out_idx] = f"{out_name}__dup{dup_idx}"
+
+
+def _dedupe_graph_outputs(model: onnx.ModelProto) -> None:
+    """Remove duplicated graph outputs while preserving last occurrence."""
+    names = [out.name for out in model.graph.output]
+    seen = set()
+    keep_indices = set()
+    for idx in range(len(names) - 1, -1, -1):
+        name = names[idx]
+        if name in seen:
+            continue
+        seen.add(name)
+        keep_indices.add(idx)
+
+    for idx in range(len(model.graph.output) - 1, -1, -1):
+        if idx not in keep_indices:
+            del model.graph.output[idx]
+
+
 def _discover_layer_windows(exported_path: str, start_layer: int = 0) -> List[Tuple[int, int]]:
     base_path = f"{exported_path}/onnx_layerwise_tmp"
     if not os.path.isdir(base_path):
@@ -82,17 +150,6 @@ def split_layer_graph(
 
     model = onnx.load(onnx_path, load_external_data=False)
 
-    decoder_input = None
-    decoder_output = None
-    for node in model.graph.node:
-        if "DecoderLayer" in node.name:
-            decoder_input = list(node.input)
-            decoder_output = list(node.output)
-            break
-
-    if decoder_input is None or decoder_output is None:
-        raise RuntimeError(f"DecoderLayer not found in layer window {layer_start}_{layer_end}")
-
     model_ir = onnx_ir.load(onnx_path)
 
     graph_inputs = [v.name for v in model.graph.input]
@@ -119,14 +176,17 @@ def split_layer_graph(
     if shard_idx != total_shards - 1 and "position_ids" in graph_inputs and "position_ids" not in output_names:
         output_names.append("position_ids")
 
-    # import pdb; pdb.set_trace()
-    model_ir.graph = onnx_ir.convenience.extract(
-        model_ir.graph,
-        input_names,
-        output_names,
-    )
+    extract_fn = getattr(getattr(onnx_ir, "convenience", None), "extract", None)
+    if not callable(extract_fn):
+        raise RuntimeError(
+            "Missing `onnx_ir.convenience.extract` required for layerwise split. "
+            f"Detected onnx_ir=={getattr(onnx_ir, '__version__', 'unknown')}. "
+            "Please install onnx_ir==0.2.1."
+        )
 
+    model_ir.graph = extract_fn(model_ir.graph, input_names, output_names)
     onnx_ir.save(model_ir, out_path)
+
     onnx.load(out_path, load_external_data=False)
 
     return True
@@ -188,6 +248,7 @@ def saving_prefix_file(
     model = onnx.load(location, load_external_data=False)
 
     model_pref = onnx.compose.add_prefix(model, f"layer_{layer_start}/", rename_functions=False)
+    _normalize_double_slash_names(model_pref)
 
     base_dir = f"{exported_path}/onnx_layerwise_tmp/layer_{layer_start}_{layer_end}"
     external_data_helper.load_external_data_for_model(model_pref, base_dir)
@@ -256,24 +317,20 @@ def compare_onnx_func(func1: onnx.FunctionProto, func2: onnx.FunctionProto):
     ):
         return False
 
+    symbol_map = {name1: name2 for name1, name2 in zip(func1.input, func2.input)}
+    symbol_map.update({name1: name2 for name1, name2 in zip(func1.output, func2.output)})
+
+    def _match_or_bind(name1: str, name2: str) -> bool:
+        if name1 == "" and name2 == "":
+            return True
+        if name1 in symbol_map:
+            return symbol_map[name1] == name2
+        symbol_map[name1] = name2
+        return True
+
     for i in range(len(func1.node)):
         node1 = func1.node[i]
         node2 = func2.node[i]
-
-        if len(node1.input) != len(node2.input):
-            return False
-        for j in range(len(node1.input)):
-            if node1.input[j] in func1.input:
-                idx = list(func1.input).index(node1.input[j])
-                if node2.input[j] not in func2.input or list(func2.input).index(node2.input[j]) != idx:
-                    return False
-            elif node1.input[j] != node2.input[j]:
-                if node1.input[j] in func1.output:
-                    idx = list(func1.output).index(node1.input[j])
-                    if node2.input[j] not in func2.output or list(func2.output).index(node2.input[j]) != idx:
-                        return False
-                else:
-                    return False
 
         if node1.op_type != node2.op_type:
             return False
@@ -283,16 +340,17 @@ def compare_onnx_func(func1: onnx.FunctionProto, func2: onnx.FunctionProto):
             if node1.attribute[j] != node2.attribute[j]:
                 return False
 
+        if len(node1.input) != len(node2.input):
+            return False
+        for in1, in2 in zip(node1.input, node2.input):
+            if not _match_or_bind(in1, in2):
+                return False
+
         if len(node1.output) != len(node2.output):
             return False
-        for j in range(len(node1.output)):
-            if node1.output[j] in func1.output:
-                idx = list(func1.output).index(node1.output[j])
-                if node2.output[j] not in func2.output or list(func2.output).index(node2.output[j]) != idx:
-                    return False
-            else:
-                if node1.output[j] != node2.output[j]:
-                    return False
+        for out1, out2 in zip(node1.output, node2.output):
+            if not _match_or_bind(out1, out2):
+                return False
 
     return True
 
@@ -314,14 +372,51 @@ def merge_models(m1, m2, io_map):
             if node.op_type == old_name:
                 node.op_type = new_name
 
+    io_map = [(_collapse_double_slash(src), _collapse_double_slash(dst)) for src, dst in io_map]
+    consumed_outputs = {src for src, _ in io_map}
+    merged_outputs = []
+    for out in m1.graph.output:
+        out_name = _collapse_double_slash(out.name)
+        # Keep only the latest shard's logits to avoid duplicate PH names
+        # after RemovePrefix strips `layer_x/`.
+        if out_name.endswith("/logits"):
+            continue
+        if out_name in consumed_outputs:
+            continue
+        if out_name not in merged_outputs:
+            merged_outputs.append(out_name)
+    for out in m2.graph.output:
+        out_name = _collapse_double_slash(out.name)
+        if out_name in consumed_outputs:
+            continue
+        if out_name not in merged_outputs:
+            merged_outputs.append(out_name)
+
     try:
-        graph = onnx.compose.merge_graphs(m1.graph, m2.graph, io_map)
+        graph = onnx.compose.merge_graphs(m1.graph, m2.graph, io_map, outputs=merged_outputs)
     except Exception:
         first, second = io_map[0]
-        parts = first.rsplit("//", 1)
-        layer = parts[0] if len(parts) == 2 else parts[1]
-        io_map[0] = (f"{layer}/logits", second)
-        graph = onnx.compose.merge_graphs(m1.graph, m2.graph, io_map)
+        layer_prefix = first.split("/", 1)[0] if "/" in first else ""
+        if not layer_prefix:
+            raise
+        io_map[0] = (f"{layer_prefix}/logits", second)
+        consumed_outputs = {src for src, _ in io_map}
+        merged_outputs = []
+        for out in m1.graph.output:
+            out_name = _collapse_double_slash(out.name)
+            if out_name.endswith("/logits"):
+                continue
+            if out_name in consumed_outputs:
+                continue
+            if out_name not in merged_outputs:
+                merged_outputs.append(out_name)
+        for out in m2.graph.output:
+            out_name = _collapse_double_slash(out.name)
+            if out_name in consumed_outputs:
+                continue
+            if out_name not in merged_outputs:
+                merged_outputs.append(out_name)
+        graph = onnx.compose.merge_graphs(m1.graph, m2.graph, io_map, outputs=merged_outputs)
 
     model = onnx.helper.make_model_gen_version(
         graph,
@@ -393,7 +488,7 @@ def merge_models(m1, m2, io_map):
         else:
             raise ValueError("Function not found")
 
-    graph2 = onnx.compose.merge_graphs(m1.graph, m2.graph, io_map)
+    graph2 = onnx.compose.merge_graphs(m1.graph, m2.graph, io_map, outputs=merged_outputs)
     model.graph.CopyFrom(graph2)
 
     for (domain, name), f in final_funcs.items():
@@ -442,13 +537,17 @@ def run_merge_pipeline(
         m1_pref = onnx.load(m1_path, load_external_data=False)
         m2_pref = onnx.load(m2_path, load_external_data=False)
 
-        decoder_nodes = [n for n in m1_pref.graph.node if "DecoderLayer" in n.name]
-        if not decoder_nodes:
-            raise RuntimeError(f"DecoderLayer node not found in {m1_path}")
-        decoder_output = list(decoder_nodes[-1].output)
-        selected_output = next((x for x in decoder_output if "RetainedState" not in x), None)
+        graph_outputs = [output.name for output in m1_pref.graph.output]
+        selected_output = next(
+            (
+                name
+                for name in graph_outputs
+                if "RetainedState" not in name and not name.endswith("position_ids") and "image_idx" not in name
+            ),
+            None,
+        )
         if selected_output is None:
-            raise RuntimeError(f"No decoder output found without 'RetainedState'. Outputs: {decoder_output}")
+            raise RuntimeError(f"No mergeable decoder output found in {m1_path}. Outputs: {graph_outputs}")
 
         merged_model = merge_models(
             m1_pref,
@@ -468,6 +567,8 @@ def run_merge_pipeline(
     final_path = f"{base_dir}/merged_{first_start}-{last_end}.onnx"
     model = onnx.load(final_path, load_external_data=False)
     RemovePrefix.apply(model)
+    _dedupe_produced_names(model)
+    _dedupe_graph_outputs(model)
     onnx.save(model, final_path)
     if verbose:
         print(f"[DONE] merge pipeline complete in {time.time() - start:.2f}s")
