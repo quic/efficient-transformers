@@ -5,13 +5,25 @@
 #
 # -----------------------------------------------------------------------------
 
-"""QEfficient modeling for ``glm_moe_dsa`` (zai-org/GLM-5.1).
+"""QEfficient modeling for ``glm_moe_dsa`` (zai-org/GLM-5.1 and GLM-5.2 — same arch).
 
 MLA attention (DeepSeek-V3 family) + grouped top-k MoE (256 routed × top-8,
-n_group=1 collapses to global top-k). The DSA indexer is omitted: with
-``index_topk=2048`` and a compiled ``ctx_len <= 2048`` every key is retained,
-so the sparse mask is all-zeros and attention is identical to dense MLA. Any
-``ctx_len > 2048`` requires reintroducing ``GlmMoeDsaIndexer``.
+n_group=1 collapses to global top-k). GLM-5.2 keeps the GLM-5.1 layer math and
+adds a cross-layer **shared-indexer schedule** (``config.indexer_types``: one
+``"full"`` indexer every 4th layer, the next three ``"shared"`` layers reuse its
+top-k; HF sets ``self.indexer = None`` on shared layers) plus ``rope_theta=8e6``
+and a 1M ``max_position_embeddings``.
+
+**The DSA indexer is omitted here (first-pass simplification).** With
+``index_topk=2048`` and a compiled ``ctx_len <= 2048`` every key is retained, so
+the sparse top-k mask is all-zeros and attention is identical to dense causal
+MLA — token-for-token (verified: HF==QEff==ORT parity on the canonical
+``glm_moe_dsa`` harness). Because the dense path never reads ``self.indexer`` it
+is also safe for the GLM-5.2 full/shared schedule unchanged. **This build cannot
+serve the headline 1M / any ctx > 2048 context** — that requires reintroducing
+``GlmMoeDsaIndexer`` (its own key cache + additive sparse mask + the
+shared-across-4 schedule). See ``modeling-summary.md`` for the exact follow-up
+and the prior-art template (upstream ``glm-moe-dsa-decode-onboarding``).
 
 Reference siblings: ``glm4_moe`` (grouped-topk MoE + chunked-prefill kernel),
 ``deepseek_v3`` (MLA).
