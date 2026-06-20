@@ -336,23 +336,82 @@ def status_badge(status: str) -> str:
         color = "#b91c1c"
     elif normalized in {"partial", "unstable"}:
         color = "#a16207"
-    return f'<span style="display:inline-block;padding:3px 9px;border-radius:999px;background:{color};color:#fff;font-weight:700;font-size:12px;">{html_escape(status.upper())}</span>'
+
+    return (
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+        'style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;display:inline-table;">'
+        f'<tr><td bgcolor="{color}" style="background-color:{color};color:#ffffff;font-family:Arial,Helvetica,sans-serif;'
+        'font-size:12px;font-weight:bold;line-height:16px;padding:3px 8px;text-align:center;white-space:nowrap;">'
+        f"{html_escape(status.upper())}</td></tr></table>"
+    )
 
 
 def table(headers: List[str], rows: List[List[Any]], row_classes: Optional[List[str]] = None) -> str:
-    header_html = "".join(f"<th>{html_escape(header)}</th>" for header in headers)
+    table_style = (
+        "border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;"
+        "width:100%;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:18px;"
+    )
+    th_style = (
+        "background-color:#e2e8f0;color:#0f172a;font-family:Arial,Helvetica,sans-serif;"
+        "font-size:13px;font-weight:bold;line-height:18px;text-align:left;padding:8px;"
+        "border:1px solid #cbd5e1;vertical-align:top;"
+    )
+    td_style = (
+        "color:#111827;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:18px;"
+        "padding:8px;border:1px solid #e5e7eb;vertical-align:top;word-wrap:break-word;"
+    )
+
+    header_html = "".join(
+        f'<th bgcolor="#e2e8f0" style="{th_style}" scope="col">{html_escape(header)}</th>' for header in headers
+    )
     body_parts = []
     for index, row in enumerate(rows):
         row_class = row_classes[index] if row_classes and index < len(row_classes) else ""
-        row_style = ""
+        background = "#ffffff"
         if row_class == "failed":
-            row_style = ' style="background:#fef2f2;"'
+            background = "#fef2f2"
         elif row_class == "passed":
-            row_style = ' style="background:#f0fdf4;"'
+            background = "#f0fdf4"
         elif row_class == "warning":
-            row_style = ' style="background:#fffbeb;"'
-        body_parts.append("<tr{}>{}</tr>".format(row_style, "".join(f"<td>{cell}</td>" for cell in row)))
-    return f"<table><thead><tr>{header_html}</tr></thead><tbody>{''.join(body_parts)}</tbody></table>"
+            background = "#fffbeb"
+
+        cells = "".join(
+            f'<td bgcolor="{background}" style="background-color:{background};{td_style}">{cell}</td>' for cell in row
+        )
+        body_parts.append(f"<tr>{cells}</tr>")
+
+    return (
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="{table_style}">'
+        f"<thead><tr>{header_html}</tr></thead><tbody>{''.join(body_parts)}</tbody></table>"
+    )
+
+
+def section(title: str, body: str) -> str:
+    return (
+        '<tr><td style="padding:18px 24px;border-top:1px solid #e5e7eb;">'
+        f'<h2 style="margin:0 0 12px 0;color:#0f172a;font-family:Arial,Helvetica,sans-serif;font-size:19px;'
+        f'line-height:24px;font-weight:bold;">{html_escape(title)}</h2>{body}</td></tr>'
+    )
+
+
+def subsection(title: str, body: str) -> str:
+    return (
+        f'<h3 style="margin:18px 0 8px 0;color:#1e293b;font-family:Arial,Helvetica,sans-serif;font-size:16px;'
+        f'line-height:22px;font-weight:bold;">{html_escape(title)}</h3>{body}'
+    )
+
+
+def metric_card(value: Any, label: str, color: str = "#111827") -> str:
+    return (
+        '<td width="25%" valign="top" style="padding:4px;">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        'style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;">'
+        '<tr><td bgcolor="#f8fafc" style="background-color:#f8fafc;border:1px solid #e5e7eb;padding:12px;'
+        'text-align:center;font-family:Arial,Helvetica,sans-serif;color:#111827;">'
+        f'<div style="font-size:24px;line-height:30px;font-weight:bold;color:{color};">{html_escape(value)}</div>'
+        f'<div style="font-size:13px;line-height:18px;color:#334155;">{html_escape(label)}</div>'
+        "</td></tr></table></td>"
+    )
 
 
 def build_summary(class_rows: Dict[str, List[Dict[str, str]]]) -> Dict[str, Any]:
@@ -489,57 +548,84 @@ def render_html(
             )
             row_classes.append("failed" if status == "failed" else "passed" if status == "passed" else "warning")
         detail_sections.append(
-            f"<h3>{html_escape(label)}</h3>{table(['Model Name', 'Status', 'Failure Reason'], detail_rows, row_classes)}"
+            subsection(label, table(["Model Name", "Status", "Failure Reason"], detail_rows, row_classes))
         )
 
-    css = """
-    body { font-family: Arial, Helvetica, sans-serif; color: #111827; background: #f8fafc; margin: 0; padding: 20px; }
-    .container { max-width: 1180px; margin: 0 auto; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; }
-    .header { padding: 22px 26px; background: linear-gradient(135deg, #111827, #334155); color: #ffffff; }
-    .header h1 { margin: 0 0 8px 0; font-size: 24px; }
-    .header p { margin: 4px 0; color: #e5e7eb; }
-    .section { padding: 20px 26px; border-top: 1px solid #e5e7eb; }
-    .cards { display: table; width: 100%; border-spacing: 10px; margin-top: 12px; }
-    .card { display: table-cell; padding: 14px; border-radius: 10px; background: #f8fafc; border: 1px solid #e5e7eb; text-align: center; }
-    .card strong { display: block; font-size: 24px; margin-bottom: 4px; }
-    table { border-collapse: collapse; width: 100%; margin: 10px 0 18px 0; font-size: 13px; }
-    th { background: #e2e8f0; color: #0f172a; text-align: left; padding: 9px; border: 1px solid #cbd5e1; }
-    td { padding: 8px; border: 1px solid #e5e7eb; vertical-align: top; }
-    h2 { margin: 0 0 12px 0; font-size: 19px; color: #0f172a; }
-    h3 { margin: 20px 0 8px 0; font-size: 16px; color: #1e293b; }
-    .muted { color: #64748b; font-size: 12px; }
-    """
+    pass_rate_text = f"{summary['pass_rate']:.1f}%"
+    metrics_html = (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        'style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;">'
+        f"<tr>{metric_card(summary['total'], 'Total Models')}"
+        f"{metric_card(summary['passed'], 'Passed', '#15803d')}"
+        f"{metric_card(summary['failed'], 'Failed', '#b91c1c')}"
+        f"{metric_card(pass_rate_text, 'Pass Rate')}</tr></table>"
+    )
+    detail_html = (
+        "".join(detail_sections)
+        if detail_sections
+        else (
+            '<p style="margin:0;color:#334155;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:18px;">'
+            "No validation CSV files found.</p>"
+        )
+    )
+    sections_html = "".join(
+        [
+            section("Validation Metrics", metrics_html),
+            section("Build Details", table(["Field", "Value"], overview_rows)),
+            section("SDK and Runtime Details", table(["Field", "Value"], sdk_rows)),
+            section(
+                "Validation Summary",
+                table(
+                    ["Model Class", "Total", "Passed", "Failed", "Current-only", "Pass Rate", "CSV"],
+                    summary_rows,
+                    summary_classes,
+                ),
+            ),
+            section(
+                "Failure Spotlight",
+                table(
+                    ["Model Class", "Model Name", "Failure Reason"], spotlight_rows, ["failed"] * len(spotlight_rows)
+                ),
+            ),
+            section("Performance Regression Watch", table(["Model Class", "Model Name", "Failure Reason"], perf_rows)),
+            section(
+                "Current-only Comparisons", table(["Model Class", "Model Name", "Reason"], current_only_table_rows)
+            ),
+            section("Model Class Details", detail_html),
+        ]
+    )
 
     return f"""<!doctype html>
 <html>
 <head>
-<meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nightly Pipeline Report - {html_escape(title_status)}</title>
-<style>{css}</style>
 </head>
-<body>
-<div class="container">
-  <div class="header">
-    <h1>Nightly Pipeline Report {status_badge(str(metadata.get("status", "unknown")))}</h1>
-    <p>{html_escape(metadata.get("job_name"))} #{html_escape(metadata.get("build_number"))} • {html_escape(metadata.get("branch"))} • {html_escape(metadata.get("total_duration"))}</p>
-    <p class="muted">Generated at {html_escape(generated_at)}</p>
-  </div>
-  <div class="section">
-    <div class="cards">
-      <div class="card"><strong>{summary["total"]}</strong>Total Models</div>
-      <div class="card"><strong style="color:#15803d;">{summary["passed"]}</strong>Passed</div>
-      <div class="card"><strong style="color:#b91c1c;">{summary["failed"]}</strong>Failed</div>
-      <div class="card"><strong>{summary["pass_rate"]:.1f}%</strong>Pass Rate</div>
-    </div>
-  </div>
-  <div class="section"><h2>Build Details</h2>{table(["Field", "Value"], overview_rows)}</div>
-  <div class="section"><h2>SDK and Runtime Details</h2>{table(["Field", "Value"], sdk_rows)}</div>
-  <div class="section"><h2>Validation Summary</h2>{table(["Model Class", "Total", "Passed", "Failed", "Current-only", "Pass Rate", "CSV"], summary_rows, summary_classes)}</div>
-  <div class="section"><h2>Failure Spotlight</h2>{table(["Model Class", "Model Name", "Failure Reason"], spotlight_rows, ["failed"] * len(spotlight_rows))}</div>
-  <div class="section"><h2>Performance Regression Watch</h2>{table(["Model Class", "Model Name", "Failure Reason"], perf_rows)}</div>
-  <div class="section"><h2>Current-only Comparisons</h2>{table(["Model Class", "Model Name", "Reason"], current_only_table_rows)}</div>
-  <div class="section"><h2>Model Class Details</h2>{"".join(detail_sections) if detail_sections else "<p>No validation CSV files found.</p>"}</div>
-</div>
+<body bgcolor="#f8fafc" style="margin:0;padding:0;background-color:#f8fafc;color:#111827;font-family:Arial,Helvetica,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f8fafc" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;background-color:#f8fafc;">
+<tr>
+<td align="center" style="padding:20px 10px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;background-color:#ffffff;border:1px solid #e5e7eb;">
+<tr>
+<td bgcolor="#111827" style="background-color:#111827;padding:22px 24px;font-family:Arial,Helvetica,sans-serif;color:#ffffff;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tr>
+<td valign="top" style="font-family:Arial,Helvetica,sans-serif;color:#ffffff;">
+<h1 style="margin:0 0 8px 0;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:24px;line-height:30px;font-weight:bold;">Nightly Pipeline Report</h1>
+<p style="margin:0;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:20px;">{html_escape(metadata.get("job_name"))} #{html_escape(metadata.get("build_number"))} &bull; {html_escape(metadata.get("branch"))} &bull; {html_escape(metadata.get("total_duration"))}</p>
+<p style="margin:4px 0 0 0;color:#cbd5e1;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:18px;">Generated at {html_escape(generated_at)}</p>
+</td>
+<td align="right" valign="top" style="font-family:Arial,Helvetica,sans-serif;">{status_badge(str(metadata.get("status", "unknown")))}</td>
+</tr>
+</table>
+</td>
+</tr>
+{sections_html}
+</table>
+</td>
+</tr>
+</table>
 </body>
 </html>
 """
