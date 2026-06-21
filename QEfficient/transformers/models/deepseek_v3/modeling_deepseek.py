@@ -1369,10 +1369,10 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             packed_chunk_size = seq_len // num_q_ffn_blocks
         else:
             num_q_ffn_blocks = seq_len // packed_chunk_size
-
+        import ipdb; ipdb.set_trace()
         matched_idx = _build_matched_idx_from_cumsum(T2Ei)
-        # valid_rows = torch.einsum("bi->b", T2Ei.to(torch.int32)).unsqueeze(1)
-        # row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
+        valid_rows = torch.einsum("bi->b", T2Ei.to(torch.int32)).unsqueeze(1)
+        row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
         x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
 
         for chunk_idx in range(num_q_ffn_blocks):
@@ -1413,9 +1413,10 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
 
             rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
             old_expert_out = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
+            chunk_valid_rows = torch.clamp(valid_rows - packed_start, min=0, max=packed_chunk_size)
             current_expert_out = (
                 torch.where(
-                    chunk_matched_idx.unsqueeze(-1) != torch.iinfo(torch.int32).max,
+                    (row_range < chunk_valid_rows).unsqueeze(-1),
                     down_out,
                     torch.zeros_like(down_out),
                 )
