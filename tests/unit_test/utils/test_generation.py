@@ -595,6 +595,17 @@ class TestUpdateDecodeInput:
         logits[0, 0, token_id] = 1.0
         return {"logits": logits}
 
+    def _make_minimal_decode_state(self, batch_size=2, max_gen_length=10):
+        from QEfficient.generation.text_generation_inference import QEffTextGenerationBase
+
+        obj = QEffTextGenerationBase.__new__(QEffTextGenerationBase)
+        obj.decode_input_ids = np.full((batch_size, 1), -1, dtype=np.int64)
+        obj.decode_pos_ids = np.full((batch_size, 1), -1, dtype=np.int64)
+        obj.generated_ids = np.full((batch_size, max_gen_length), -1, dtype=np.int64)
+        obj.generation_len = np.full((batch_size, 1), -1, dtype=np.int64)
+        obj._fetch_next_token_id = lambda outputs: outputs["next_token_id"]
+        return obj
+
     def test_decode_input_ids_updated(self):
         obj, _, _ = _make_base_instance()
         obj.initialize_decode_inputs(1, 1, 10)
@@ -626,6 +637,32 @@ class TestUpdateDecodeInput:
         position_ids = np.array([[PREFILL_LEN]])
         next_token = obj.update_decode_input(outputs, position_ids, generation_len=10)
         assert next_token[0, 0] == 77
+
+    def test_decode_batch_id_updates_single_slot(self):
+        obj = self._make_minimal_decode_state(batch_size=2, max_gen_length=10)
+        outputs = {"next_token_id": np.array([[55]], dtype=np.int64)}
+        position_ids = np.array([[PREFILL_LEN]], dtype=np.int64)
+        obj.update_decode_input(outputs, position_ids, generation_len=np.int64(10), decode_batch_id=1)
+
+        assert obj.decode_input_ids[1, 0] == 55
+        assert obj.decode_pos_ids[1, 0] == PREFILL_LEN
+        assert obj.generated_ids[1, 0] == 55
+        assert obj.generation_len[1, 0] == 10
+
+    def test_decode_batch_id_zero_does_not_update_all_rows(self):
+        obj = self._make_minimal_decode_state(batch_size=2, max_gen_length=10)
+        outputs = {"next_token_id": np.array([[61]], dtype=np.int64)}
+        position_ids = np.array([[PREFILL_LEN]], dtype=np.int64)
+        obj.update_decode_input(outputs, position_ids, generation_len=np.int64(9), decode_batch_id=0)
+
+        assert obj.decode_input_ids[0, 0] == 61
+        assert obj.decode_pos_ids[0, 0] == PREFILL_LEN
+        assert obj.generated_ids[0, 0] == 61
+        assert obj.generation_len[0, 0] == 9
+        assert obj.decode_input_ids[1, 0] == -1
+        assert obj.decode_pos_ids[1, 0] == -1
+        assert obj.generated_ids[1, 0] == -1
+        assert obj.generation_len[1, 0] == -1
 
 
 # ---------------------------------------------------------------------------
