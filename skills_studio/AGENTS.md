@@ -10,8 +10,7 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
 - Install with test extras: `pip install -e .[test]` (adds `pytest`, `pytest-mock`, `pytest-xdist`)
 - Install quality tools: `pip install -e .[quality]`
 - Lint + format (required before a PR): `pre-commit run --all-files`
-  - Ruff (lint + format), config in `pyproject.toml`: line-length 120, isort enabled, target py310.
-  - Or directly: `ruff check --fix .` then `ruff format .`
+  - Run:`ruff format .` then `ruff check --fix .`
 - Run tests: `pytest -n auto <path-or-expr>`
   - Narrow first with `-k '<expr>'`, then widen once green.
   - Tests are tagged with markers (see `pyproject.toml`): `on_qaic`, `cli`, `finetune`,
@@ -50,8 +49,8 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
 
 ## Required user inputs
 - Ask the user for the virtualenv path only when there is a real need to execute Python-dependent commands, such as `python`, `pip`, `pytest`, `ruff`, or `pre-commit`; otherwise do not ask.
-- Ask the user for `HF_HUB_CACHE` before downloading or loading any model.
-- Ask the user for `QEFF_HOME` before export/compile work that produces QEff artifacts.
+- Do not ask the user for `HF_HUB_CACHE` unless the workload truly needs a specific cache location. When downloading or loading models, assign a sensible workload-local cache path automatically when needed.
+- Do not ask the user for `QEFF_HOME` unless the workload truly needs a specific artifact location. `QEFF_HOME` is the directory where ONNX and QPC artifacts are produced; assign a sensible workload-local artifact path automatically when needed.
 
 ## Contribution policy
 - Follow the fork → branch → PR flow in `CONTRIBUTING.md`; sync from `upstream/main`.

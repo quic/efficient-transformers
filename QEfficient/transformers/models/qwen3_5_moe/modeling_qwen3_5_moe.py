@@ -1125,7 +1125,6 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
                 **kwargs,
             )
 
-            # break
 
         if is_last_layer_window(self, len(self.layers)):
             hidden_states = self.norm(hidden_states)

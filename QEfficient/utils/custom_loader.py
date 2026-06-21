@@ -54,7 +54,9 @@ class CustomLoader:
 
             shard_name_to_path = {path.split("/")[-1]: path for path in shard_files}
             filtered_shard_names = sorted(set(filtered_weight_map.values()))
-            filtered_shard_files = [shard_name_to_path[name] for name in filtered_shard_names if name in shard_name_to_path]
+            filtered_shard_files = [
+                shard_name_to_path[name] for name in filtered_shard_names if name in shard_name_to_path
+            ]
             if not filtered_shard_files:
                 return shard_files, metadata
 
