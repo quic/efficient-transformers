@@ -81,12 +81,13 @@ from QEfficient.utils import (
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.layerwise_utils import (
-    LayerwiseStateMixin,
     _layer_prefixes_for_model_type,
     _null_outside_window_layers,
     assert_layerwise_supported,
+    attach_configured_layerwise_context,
+    get_configured_layerwise_context,
     get_layerwise_context,
-    is_layerwise_export_active,
+    is_layerwise_active,
 )
 from QEfficient.utils.layerwise_utils import (
     build_meta_model as _build_layerwise_meta_model,
@@ -173,7 +174,7 @@ def _build_layerwise_vision_export_model(hf_auto_class, pretrained_model_name_or
         kwargs["config"] = config
     model_type = assert_layerwise_supported(config)
     total_layers = resolve_text_total_layers(config)
-    layer_prefixes = _layer_prefixes_for_model_type(model_type)
+    layer_prefixes = _layer_prefixes_for_model_type(model_type, pretrained_model_name_or_path, total_layers)
     loader = CustomLoader(lambda model_id, _config: hf_auto_class.from_pretrained(model_id, **kwargs), layer_prefixes)
     with layerwise_export_scope():
         model = loader.load_window(pretrained_model_name_or_path, config, 0, min(1, total_layers), total_layers)
@@ -191,6 +192,62 @@ def _build_meta_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
     rebuilds a real per-window model when ``compile()``/``export()`` runs.
     """
     return _build_layerwise_meta_model(hf_auto_class, pretrained_model_name_or_path, kwargs)
+
+
+def _prepare_layerwise_config(pretrained_model_name_or_path: str, kwargs: dict, window_size: int):
+    """Resolve and validate layerwise config before model construction."""
+    from transformers import AutoConfig
+
+    config = kwargs.get("config", None)
+    if config is None:
+        config_kwargs = {
+            key: kwargs[key]
+            for key in ("trust_remote_code", "revision", "token", "subfolder", "cache_dir")
+            if key in kwargs
+        }
+        config = AutoConfig.from_pretrained(pretrained_model_name_or_path, **config_kwargs)
+        if "num_hidden_layers" in kwargs:
+            target_config = getattr(config, "text_config", config)
+            target_config.num_hidden_layers = kwargs["num_hidden_layers"]
+        kwargs["config"] = config
+    model_type = assert_layerwise_supported(config)
+    total_layers = layerwise_utils.resolve_text_total_layers(config)
+    layerwise_utils.build_layer_windows(total_layers, window_size)
+    return config, model_type, total_layers
+
+
+class _LayerwiseContextProperties:
+    @property
+    def layerwise(self) -> bool:
+        return get_configured_layerwise_context(getattr(self, "model", None)) is not None
+
+    @property
+    def layerwise_window_size(self) -> int:
+        context = get_configured_layerwise_context(getattr(self, "model", None))
+        return int(getattr(context, "window_size", 1)) if context is not None else 1
+
+    def _should_run_layerwise_driver(self, *, cache_probe: bool = False) -> bool:
+        return self.layerwise and not cache_probe
+
+    def _consume_deprecated_layerwise_kwargs(self, kwargs: dict) -> None:
+        if "layerwise" in kwargs:
+            requested = kwargs.pop("layerwise")
+            if bool(requested) != self.layerwise:
+                raise ValueError("Pass layerwise=True to from_pretrained(...), not export()/compile().")
+            warnings.warn(
+                "Passing `layerwise` to export()/compile() is deprecated; set it in from_pretrained(...).",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        if "layerwise_window_size" in kwargs:
+            requested = kwargs.pop("layerwise_window_size")
+            if int(requested) != self.layerwise_window_size:
+                raise ValueError("Pass layerwise_window_size to from_pretrained(...), not export()/compile().")
+            warnings.warn(
+                "Passing `layerwise_window_size` to export()/compile() is deprecated; set it in from_pretrained(...).",
+                DeprecationWarning,
+                stacklevel=3,
+            )
 
 
 def _compile_io_name(name: str, *, use_onnx_subfunctions: bool) -> str:
@@ -1299,7 +1356,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             self.hash_params["prefill_only"] = False
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
-        if is_layerwise_export_active():
+        if is_layerwise_active(self.model):
             return self._export_layerwise(
                 inputs,
                 output_names=output_names,
@@ -1389,7 +1446,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         return self.model.config.__dict__
 
 
-class _QEffAutoModelForImageTextToTextDualQPC(LayerwiseStateMixin):
+class _QEffAutoModelForImageTextToTextDualQPC(_LayerwiseContextProperties):
     """
     Internal class handling multimodal image-text-to-text models using a dual QPC approach.
 
@@ -1441,6 +1498,19 @@ class _QEffAutoModelForImageTextToTextDualQPC(LayerwiseStateMixin):
         # are done. The role of the sampler is to just add nodes at the output of the
         # previous transform function.
         self.lang_model.model, _ = SamplerTransform.apply(self.lang_model.model, qaic_config, **kwargs)
+
+    @property
+    def layerwise(self) -> bool:
+        holders = (self.model, self.lang_model.model, self.lang_model)
+        return any(get_configured_layerwise_context(holder) is not None for holder in holders)
+
+    @property
+    def layerwise_window_size(self) -> int:
+        for holder in (self.model, self.lang_model.model, self.lang_model):
+            context = get_configured_layerwise_context(holder)
+            if context is not None:
+                return int(getattr(context, "window_size", 1))
+        return 1
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, qaic_config: Optional[dict] = None, **kwargs):
@@ -1545,7 +1615,7 @@ class _QEffAutoModelForImageTextToTextDualQPC(LayerwiseStateMixin):
                 prefill_seq_len=prefill_seq_len,
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
-                layerwise_window_size=self._get_layerwise_window_size(),
+                layerwise_window_size=self.layerwise_window_size,
                 kv_cache_prefix=kv_cache_prefix,
                 **kwargs,
             )
@@ -1914,7 +1984,7 @@ class _QEffAutoModelForImageTextToTextDualQPC(LayerwiseStateMixin):
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 qaic_config=qaic_config,
-                layerwise_window_size=self._get_layerwise_window_size(),
+                layerwise_window_size=self.layerwise_window_size,
                 kv_cache_prefix=kv_cache_prefix,
                 **compiler_options,
             )
@@ -3267,6 +3337,11 @@ class QEFFAutoModelForImageTextToText:
         """
         enable_proxy = kwargs.pop("enable_proxy", False)
 
+        if layerwise:
+            if kv_offload is False:
+                raise NotImplementedError("layerwise=True for image-text models requires kv_offload=True.")
+            kv_offload = True
+
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
         if continuous_batching and not kv_offload:
             NotImplementedError("Continuous batching is not supported for kv_offload = False")
@@ -3287,12 +3362,18 @@ class QEFFAutoModelForImageTextToText:
 
         _resolve_torch_dtype(kwargs)
         if layerwise:
+            _, model_type, total_layers = _prepare_layerwise_config(
+                pretrained_model_name_or_path, kwargs, layerwise_window_size
+            )
             # Layer-wise mode: build the outer model on the meta device so the
             # caller's ``from_pretrained`` does not pull the full checkpoint
             # into RAM. compile()/export() rebuilds a real per-window model
             # internally via the layer-wise driver, so the outer instance is
             # only used as a config holder.
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
+            attach_configured_layerwise_context(
+                model, window_size=layerwise_window_size, model_type=model_type, total_layers=total_layers
+            )
         else:
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
@@ -3306,7 +3387,10 @@ class QEFFAutoModelForImageTextToText:
             qaic_config=qaic_config,
             **kwargs,
         )
-        instance._configure_layerwise_state(enabled=layerwise, window_size=layerwise_window_size)
+        if layerwise:
+            configured_context = get_configured_layerwise_context(model)
+            for holder in (instance.lang_model, instance.lang_model.model):
+                setattr(holder, "layerwise_context", configured_context)
         return instance
 
 
@@ -3316,7 +3400,7 @@ MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP = {
 }
 
 
-class QEFFAutoModelForCausalLM(LayerwiseStateMixin, QEFFBaseModel):
+class QEFFAutoModelForCausalLM(_LayerwiseContextProperties, QEFFBaseModel):
     """
     QEfficient class for Causal Language Models from the HuggingFace hub (e.g., GPT-2, Llama).
 
@@ -3559,11 +3643,17 @@ class QEFFAutoModelForCausalLM(LayerwiseStateMixin, QEFFBaseModel):
 
         _resolve_torch_dtype(kwargs)
         if layerwise:
+            _, model_type, total_layers = _prepare_layerwise_config(
+                pretrained_model_name_or_path, kwargs, layerwise_window_size
+            )
             # Layer-wise mode: build the outer model on the meta device. The
             # caller still gets a typed wrapper, but no checkpoint weights are
             # pulled into RAM. compile()/export() rebuilds a real per-window
             # model internally via the layer-wise driver.
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
+            attach_configured_layerwise_context(
+                model, window_size=layerwise_window_size, model_type=model_type, total_layers=total_layers
+            )
         else:
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
         if qaic_config is not None:
@@ -3588,7 +3678,6 @@ class QEFFAutoModelForCausalLM(LayerwiseStateMixin, QEFFBaseModel):
             max_seq_len_cached=max_seq_len_cached,
             **kwargs,
         )
-        instance._configure_layerwise_state(enabled=layerwise, window_size=layerwise_window_size)
         return instance
 
     @property
@@ -3737,7 +3826,7 @@ class QEFFAutoModelForCausalLM(LayerwiseStateMixin, QEFFBaseModel):
         if self._should_run_layerwise_driver(cache_probe=layerwise_cache_probe):
             return self._run_layerwise(
                 final_compile=False,
-                layerwise_window_size=self._get_layerwise_window_size(),
+                layerwise_window_size=self.layerwise_window_size,
                 export_dir=export_dir,
                 prefill_only=prefill_only,
                 prefill_seq_len=prefill_seq_len,
@@ -3993,7 +4082,7 @@ class QEFFAutoModelForCausalLM(LayerwiseStateMixin, QEFFBaseModel):
             output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
             self.hash_params["kv_cache_prefix"] = kv_cache_prefix
 
-        if is_layerwise_export_active():
+        if is_layerwise_active(self.model):
             return self._export_layerwise(
                 example_inputs,
                 output_names=output_names,
@@ -4260,7 +4349,7 @@ class QEFFAutoModelForCausalLM(LayerwiseStateMixin, QEFFBaseModel):
         if self._should_run_layerwise_driver(cache_probe=layerwise_cache_probe):
             return self._run_layerwise(
                 final_compile=True,
-                layerwise_window_size=self._get_layerwise_window_size(),
+                layerwise_window_size=self.layerwise_window_size,
                 onnx_path=onnx_path,
                 compile_dir=compile_dir,
                 prefill_seq_len=prefill_seq_len,

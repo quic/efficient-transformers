@@ -10,7 +10,9 @@
 from __future__ import annotations
 
 import functools
+import json
 import random
+import re
 import shutil
 import time
 import warnings
@@ -33,109 +35,42 @@ _LAYERWISE_EXPORT_ACTIVE: ContextVar[bool] = ContextVar("qeff_layerwise_export_a
 
 @dataclass(frozen=True)
 class LayerwiseContext:
-    """Active decoder-layer window for a single layerwise export step."""
+    """Layerwise configuration or active decoder-layer window."""
 
-    start: int
-    end: int
-    total_layers: int
+    start: int = 0
+    end: Optional[int] = None
+    total_layers: Optional[int] = None
     active: bool = True
     force_full_init: bool = False
-
-
-@dataclass(frozen=True)
-class LayerwiseState:
-    """Wrapper-level layerwise configuration."""
-
-    enabled: bool = False
     window_size: int = 1
-    outer_meta: bool = False
-
-
-class LayerwiseStateMixin:
-    """Instance methods for wrappers that own layerwise configuration."""
-
-    def _configure_layerwise_state(self, *, enabled: bool, window_size: int) -> None:
-        setattr(
-            self,
-            "_qeff_layerwise_state",
-            LayerwiseState(enabled=bool(enabled), window_size=int(window_size), outer_meta=bool(enabled)),
-        )
-
-    def _get_layerwise_state(self) -> LayerwiseState:
-        state = getattr(self, "_qeff_layerwise_state", None)
-        return state if isinstance(state, LayerwiseState) else LayerwiseState()
-
-    def _is_layerwise_enabled(self) -> bool:
-        return self._get_layerwise_state().enabled
-
-    def _get_layerwise_window_size(self) -> int:
-        return self._get_layerwise_state().window_size
-
-    def _should_run_layerwise_driver(self, *, cache_probe: bool = False) -> bool:
-        return self._is_layerwise_enabled() and not cache_probe
-
-    def _is_layerwise_outer_meta(self) -> bool:
-        return self._get_layerwise_state().outer_meta
-
-    def _consume_deprecated_layerwise_kwargs(self, kwargs: dict) -> None:
-        if "layerwise" in kwargs:
-            requested = kwargs.pop("layerwise")
-            if bool(requested) != self._is_layerwise_enabled():
-                raise ValueError("Pass layerwise=True to from_pretrained(...), not export()/compile().")
-            warnings.warn(
-                "Passing `layerwise` to export()/compile() is deprecated; set it in from_pretrained(...).",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-        if "layerwise_window_size" in kwargs:
-            requested = kwargs.pop("layerwise_window_size")
-            if requested != self._get_layerwise_window_size():
-                raise ValueError("Pass layerwise_window_size to from_pretrained(...), not export()/compile().")
-            warnings.warn(
-                "Passing `layerwise_window_size` to export()/compile() is deprecated; set it in from_pretrained(...).",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-
-
-def configure_layerwise_state(instance, *, enabled: bool, window_size: int) -> None:
-    if instance is None:
-        return
-    if hasattr(instance, "_configure_layerwise_state"):
-        instance._configure_layerwise_state(enabled=enabled, window_size=window_size)
-        return
-    setattr(
-        instance,
-        "_qeff_layerwise_state",
-        LayerwiseState(enabled=bool(enabled), window_size=int(window_size), outer_meta=bool(enabled)),
-    )
-
-
-def get_layerwise_state(instance) -> LayerwiseState:
-    if hasattr(instance, "_get_layerwise_state"):
-        return instance._get_layerwise_state()
-    state = getattr(instance, "_qeff_layerwise_state", None)
-    return state if isinstance(state, LayerwiseState) else LayerwiseState()
-
-
-def is_layerwise_enabled(instance) -> bool:
-    return get_layerwise_state(instance).enabled
-
-
-def get_layerwise_window_size(instance) -> int:
-    return get_layerwise_state(instance).window_size
-
-
-def should_run_layerwise_driver(instance, *, cache_probe: bool = False) -> bool:
-    return is_layerwise_enabled(instance) and not cache_probe
-
-
-def is_layerwise_outer_meta(instance) -> bool:
-    return get_layerwise_state(instance).outer_meta
+    model_type: str = ""
 
 
 def get_layerwise_context(module) -> Optional[LayerwiseContext]:
     return getattr(module, "_qeff_layerwise_context", None)
+
+
+def get_configured_layerwise_context(module) -> Optional[LayerwiseContext]:
+    return getattr(module, "layerwise_context", None)
+
+
+def attach_configured_layerwise_context(
+    module,
+    *,
+    window_size: int,
+    model_type: str = "",
+    total_layers: Optional[int] = None,
+) -> Optional[LayerwiseContext]:
+    if module is None:
+        return None
+    context = LayerwiseContext(
+        active=False,
+        window_size=int(window_size),
+        model_type=model_type,
+        total_layers=total_layers,
+    )
+    setattr(module, "layerwise_context", context)
+    return context
 
 
 def is_layerwise_context_active(context: Optional[LayerwiseContext]) -> bool:
@@ -330,15 +265,29 @@ def assert_layerwise_supported(config) -> str:
 @functools.lru_cache(maxsize=32)
 def _checkpoint_has_shard_index(model_id: str) -> bool:
     """Return True when checkpoint provides an index file for shard filtering."""
+    return _checkpoint_weight_map(model_id) is not None
+
+
+@functools.lru_cache(maxsize=32)
+def _checkpoint_weight_map(model_id: str) -> Optional[Dict[str, str]]:
+    """Return checkpoint weight_map when a shard index is available."""
     hub_kwargs = {"_raise_exceptions_for_missing_entries": False}
     for index_filename in ("model.safetensors.index.json", "pytorch_model.bin.index.json"):
         try:
             index_path = transformers.utils.hub.cached_file(model_id, index_filename, **hub_kwargs)
         except Exception:
             index_path = None
-        if index_path is not None:
-            return True
-    return False
+        if index_path is None:
+            continue
+        try:
+            with open(index_path, encoding="utf-8") as handle:
+                index = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            continue
+        weight_map = index.get("weight_map")
+        if isinstance(weight_map, dict) and weight_map:
+            return weight_map
+    return None
 
 
 def _get_text_layers_container(model):
@@ -606,10 +555,37 @@ def _cached_layerwise_onnx_path(qeff_model, compile_kwargs: Dict[str, Any]) -> O
     return Path(cached) if cached is not None else None
 
 
-def _layer_prefixes_for_model_type(model_type: str) -> Tuple[str, ...]:
+def _fallback_layer_prefixes_for_model_type(model_type: str) -> Tuple[str, ...]:
     if "qwen3_vl_moe" in model_type:
         return ("model.language_model.layers.", "language_model.layers.")
     return ("model.layers.",)
+
+
+def _layer_prefixes_for_model_type(
+    model_type: str,
+    model_id: Optional[str] = None,
+    total_layers: Optional[int] = None,
+) -> Tuple[str, ...]:
+    if model_id is None or total_layers is None:
+        return _fallback_layer_prefixes_for_model_type(model_type)
+
+    weight_map = _checkpoint_weight_map(model_id)
+    if not weight_map:
+        return _fallback_layer_prefixes_for_model_type(model_type)
+
+    layers_by_prefix: Dict[str, set[int]] = {}
+    for checkpoint_key in weight_map:
+        match = re.match(r"^(?P<prefix>.*layers\.)(?P<layer_idx>\d+)\.", checkpoint_key)
+        if match is None:
+            continue
+        prefix = match.group("prefix")
+        if any(blocked in prefix for blocked in ("vision", "visual", "encoder")):
+            continue
+        layers_by_prefix.setdefault(prefix, set()).add(int(match.group("layer_idx")))
+
+    expected_layers = set(range(int(total_layers)))
+    inferred = tuple(sorted(prefix for prefix, layers in layers_by_prefix.items() if expected_layers.issubset(layers)))
+    return inferred or _fallback_layer_prefixes_for_model_type(model_type)
 
 
 # ---------------------------------------------------------------------------
@@ -670,7 +646,7 @@ def run_layerwise(
     windows = build_layer_windows(text_total_layers, window_size)
     from QEfficient.utils.custom_loader import CustomLoader
 
-    custom_loader = CustomLoader(qeff_factory, _layer_prefixes_for_model_type(model_type))
+    custom_loader = CustomLoader(qeff_factory, _layer_prefixes_for_model_type(model_type, model_id, text_total_layers))
     logger.info(
         "Layerwise export start: model_type=%s total_layers=%d window_size=%d windows=%d "
         "torch_threads=%d torch_interop_threads=%d",
@@ -799,7 +775,9 @@ def run_layerwise(
     if not final_compile:
         return str(canonical_onnx)
 
-    if is_layerwise_enabled(last_qeff_model):
+    if bool(getattr(last_qeff_model, "layerwise", False)) or get_configured_layerwise_context(
+        getattr(last_qeff_model, "model", None)
+    ):
         last_qeff_model = _build_window_model(0, min(window_size, text_total_layers))
 
     final_kwargs = dict(compile_kwargs)
