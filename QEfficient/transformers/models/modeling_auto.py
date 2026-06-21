@@ -3032,6 +3032,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # Set use_cache=True to get KV values as output during ONNX export
         model.config.use_cache = True
 
+        if qaic_config and getattr(model.config, "model_type", None) == "glm_moe_dsa":
+            mla_absorption = qaic_config.get("mla_absorption", None)
+            if mla_absorption is not None:
+                mla_absorption.setdefault("absorption", True)
+                mla_absorption.setdefault("online", False)
+
         setattr(model.config, "max_seq_len_cached", max_seq_len_cached)
         super().__init__(model, qaic_config=qaic_config, **kwargs)
         self.num_layers = model.config.num_hidden_layers
@@ -3048,6 +3054,25 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             if mla_absorption := qaic_config.get("mla_absorption", None):
                 self.hash_params["mla_absorption"] = mla_absorption
                 setattr(self.model, "mla_absorption", mla_absorption)
+            if self.model.config.model_type == "glm_moe_dsa":
+                self.hash_params["glm_moe_dsa_export_version"] = 7
+                dsa_impl = qaic_config.get("dsa_impl")
+                if dsa_impl is not None:
+                    self.hash_params["dsa_impl"] = dsa_impl
+                for key in ("num_kv_blocks", "par_num_split", "repeat_kv_heads"):
+                    if key in qaic_config:
+                        self.hash_params[key] = qaic_config[key]
+                for module in self.model.modules():
+                    if module.__class__.__name__ == "QEffGlmMoeDsaAttention":
+                        if dsa_impl is not None:
+                            setattr(module, "dsa_impl", dsa_impl)
+                        for key, attr in (
+                            ("num_kv_blocks", "dsa_num_kv_blocks"),
+                            ("par_num_split", "dsa_par_num_split"),
+                            ("repeat_kv_heads", "repeat_kv_heads"),
+                        ):
+                            if key in qaic_config:
+                                setattr(module, attr, qaic_config[key])
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.hash_params["max_seq_len_cached"] = max_seq_len_cached
 
@@ -3270,6 +3295,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        ctx_len = kwargs.get("ctx_len")
 
         # increase seq_len if using a larger number of blocks
         if self.hash_params.get("blocking_kwargs", None):
@@ -3281,8 +3307,26 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             seq_len = block_size * max_blocks
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
+        glm_dsa_blocked_decode = (
+            self.model.config.model_type == "glm_moe_dsa"
+            and self.model.qaic_config is not None
+            and self.model.qaic_config.get("mla_absorption", {}).get("cache_compressed", False)
+            and self.model.qaic_config.get("dsa_impl") == "dsa_par_blocked"
+        )
+        if (
+            self.model.config.model_type == "glm_moe_dsa"
+            and prefill_seq_len is not None
+            and self.model.qaic_config is not None
+            and self.model.qaic_config.get("mla_absorption", {}).get("cache_compressed", False)
+        ):
+            seq_len = prefill_seq_len
+
+        cache_example_len = seq_len
+        if glm_dsa_blocked_decode and ctx_len is not None:
+            cache_example_len = ctx_len
+
         kv_cache_shape = get_padding_shape_from_config(
-            self.model.config, fbs if self.continuous_batching else bs, seq_len
+            self.model.config, fbs if self.continuous_batching else bs, cache_example_len
         )
         enable_chunking = kwargs.get("enable_chunking", False)
         if (
@@ -3336,6 +3380,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
             "past_key_values": [[] for _ in range(self.num_layers)],
         }
+        if glm_dsa_blocked_decode and seq_len == 1 and ctx_len is not None and ctx_len > 0:
+            start_pos = max(0, ctx_len - 2)
+            example_inputs["position_ids"] = torch.full((bs, 1), start_pos, dtype=torch.int64)
         dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
@@ -3369,7 +3416,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             and hasattr(self.model, "get_dummy_pkv_cache")
         ):
             pkv_cache = self.model.get_dummy_pkv_cache(
-                self.model.config, fbs if self.continuous_batching else bs, seq_len
+                self.model.config, fbs if self.continuous_batching else bs, cache_example_len
             )
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
@@ -3404,14 +3451,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
-        if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []):
+        architectures = getattr(self.model.config, "architectures", None) or []
+        has_mla_cache = any(arch in architectures for arch in ("DeepseekV3ForCausalLM", "GlmMoeDsaForCausalLM"))
+        has_dsa_indexer_cache = "GlmMoeDsaForCausalLM" in architectures
+        if has_mla_cache:
             if self.model.qaic_config is not None and self.model.qaic_config.get("mla_absorption", None) is not None:
                 mla_absorption = self.model.qaic_config["mla_absorption"]
                 cache_compressed = mla_absorption.get("cache_compressed", False)
             else:
                 cache_compressed = False
             pkv_cache = self.model.get_dummy_pkv_cache(
-                self.model.config, fbs if self.continuous_batching else bs, seq_len
+                self.model.config, fbs if self.continuous_batching else bs, cache_example_len
             )
             if cache_compressed:
                 example_inputs = {k: v for k, v in example_inputs.items() if "past" not in k}
@@ -3438,6 +3488,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     example_inputs["past_key_values"][i].append(
                         torch.zeros(pkv_cache[0][1].shape, dtype=self.model.config.torch_dtype)
                     )
+
+            if has_dsa_indexer_cache:
+                example_inputs["indexer_key_cache"] = []
+                for i in range(self.num_layers):
+                    example_inputs["indexer_key_cache"].append(
+                        torch.zeros(
+                            (
+                                fbs if self.continuous_batching else bs,
+                                cache_example_len,
+                                self.model.config.index_head_dim,
+                            ),
+                            dtype=self.model.config.torch_dtype,
+                        )
+                    )
+                    dynamic_axes[f"indexer_key_cache.{i}"] = {0: "batch_size", 1: "ctx_len"}
+                    output_names.append(f"indexer_key_cache.{i}_RetainedState")
 
         if self.continuous_batching:
             example_inputs["batch_index"] = torch.arange(bs).view(bs, 1)

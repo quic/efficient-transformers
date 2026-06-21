@@ -72,9 +72,12 @@ from transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
     GlmMoeDsaAttention,
     GlmMoeDsaDecoderLayer,
     GlmMoeDsaForCausalLM,
+    GlmMoeDsaIndexer,
     GlmMoeDsaModel,
     GlmMoeDsaMoE,
     GlmMoeDsaRMSNorm,
+    GlmMoeDsaRotaryEmbedding,
+    GlmMoeDsaTopkRouter,
 )
 from transformers.models.gpt2.modeling_gpt2 import GPT2Attention, GPT2Block, GPT2LMHeadModel, GPT2Model
 from transformers.models.gpt_bigcode.modeling_gpt_bigcode import (
@@ -384,8 +387,11 @@ from QEfficient.transformers.models.glm_moe_dsa.modeling_glm_moe_dsa import (
     QEffGlmMoeDsaAttention,
     QEffGlmMoeDsaDecoderLayer,
     QEffGlmMoeDsaForCausalLM,
+    QEffGlmMoeDsaIndexer,
     QEffGlmMoeDsaModel,
     QEffGlmMoeDsaMoE,
+    QEffGlmMoeDsaRotaryEmbedding,
+    QEffGlmMoeDsaTopkRouter,
     QEffPrefillChunkedGlmMoeDsaMoE,
 )
 from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
@@ -701,12 +707,15 @@ class KVCacheTransform(ModuleMappingTransform):
         Glm4MoeRotaryEmbedding: QEffGlm4MoeRotaryEmbedding,
         Glm4MoeMoE: QEffGlm4MoeMoE,
         Glm4MoeTopkRouter: QEffGlm4MoeTopkRouter,
-        # GlmMoeDsa (GLM-5.1)
+        # GlmMoeDsa (GLM-5.1 / GLM-5.2)
         GlmMoeDsaModel: QEffGlmMoeDsaModel,
         GlmMoeDsaForCausalLM: QEffGlmMoeDsaForCausalLM,
         GlmMoeDsaAttention: QEffGlmMoeDsaAttention,
         GlmMoeDsaDecoderLayer: QEffGlmMoeDsaDecoderLayer,
+        GlmMoeDsaRotaryEmbedding: QEffGlmMoeDsaRotaryEmbedding,
         GlmMoeDsaMoE: QEffGlmMoeDsaMoE,
+        GlmMoeDsaTopkRouter: QEffGlmMoeDsaTopkRouter,
+        GlmMoeDsaIndexer: QEffGlmMoeDsaIndexer,
         # CodeGen
         CodeGenAttention: QEffCodeGenAttention,
         CodeGenBlock: QEffCodeGenBlock,
@@ -1238,6 +1247,25 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "RMSNorm": {
             "forward": QEFFGrok1CustomRMSNormAIC.forward,
         },
+        "GlmMoeDsaForCausalLM": {
+            "forward": QEffGlmMoeDsaForCausalLM.forward,
+            "get_submodules_for_export": QEffGlmMoeDsaForCausalLM.get_submodules_for_export,
+            "get_dummy_pkv_cache": QEffGlmMoeDsaForCausalLM.get_dummy_pkv_cache,
+        },
+        "GlmMoeDsaModel": {"forward": QEffGlmMoeDsaModel.forward},
+        "GlmMoeDsaDecoderLayer": {"forward": QEffGlmMoeDsaDecoderLayer.forward},
+        "GlmMoeDsaAttention": {
+            "forward": QEffGlmMoeDsaAttention.forward,
+            "forward_compressed_mla_dsa": QEffGlmMoeDsaAttention.forward_compressed_mla_dsa,
+            "__qeff_init__": QEffGlmMoeDsaAttention.__qeff_init__,
+        },
+        "GlmMoeDsaMoE": {
+            "forward": QEffGlmMoeDsaMoE.forward,
+            "moe": QEffGlmMoeDsaMoE.moe,
+            "__qeff_init__": QEffGlmMoeDsaMoE.__qeff_init__,
+        },
+        "GlmMoeDsaTopkRouter": {"forward": QEffGlmMoeDsaTopkRouter.forward},
+        "GlmMoeDsaIndexer": {"forward_with_cache": QEffGlmMoeDsaIndexer.forward_with_cache},
         "DeepseekV3ForCausalLM": {
             "forward": QEffDeepseekV3ForCausalLM.forward,
             "get_submodules_for_export": QEffDeepseekV3ForCausalLM.get_submodules_for_export,

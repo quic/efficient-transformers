@@ -70,9 +70,11 @@ def CtxScatter3D(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates
     # Create indices
     batch_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, batch_size, one), [1, 2]), exp_shape)
 
-    # keep index tensor types aligned for backend that require exact dtype match
-    batch_idx = ops.Cast(batch_idx, to=onnxscript.INT32.dtype)
-    ctx_idx = ops.Expand(ops.Unsqueeze(position_ids, [2]), exp_shape)
+    # ScatterND requires INT64 indices per the ONNX spec; ORT enforces this strictly
+    # (the QAIC backend accepts i32/i64). Cast both index legs to INT64 so the Concat
+    # is type-consistent and the exported graph loads under onnxruntime.
+    batch_idx = ops.Cast(batch_idx, to=onnxscript.INT64.dtype)
+    ctx_idx = ops.Cast(ops.Expand(ops.Unsqueeze(position_ids, [2]), exp_shape), to=onnxscript.INT64.dtype)
     indices = ops.Concat(batch_idx, ctx_idx, axis=2)
 
     return ops.ScatterND(data, indices, updates)

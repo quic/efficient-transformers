@@ -369,6 +369,9 @@ class QEFFBaseModel(ABC):
                                 f"k_pe.{i}",
                             ]
                         )
+                elif param == "indexer_key_cache":
+                    for i in range(len(example_inputs["indexer_key_cache"])):
+                        input_names.append(f"indexer_key_cache.{i}")
                 else:
                     input_names.append(param)
 
@@ -535,8 +538,14 @@ class QEFFBaseModel(ABC):
                     output_name.append("deepstack_features_RetainedState")
                 output_name.append("image_idx_output")
         for layer_idx in range(idx, end_idx):
-            output_name.append(f"past_key.{layer_idx}_InternalRetainedState")
-            output_name.append(f"past_value.{layer_idx}_InternalRetainedState")
+            if "compressed_kvs" in example_inputs:
+                output_name.append(f"compressed_kv.{layer_idx}_InternalRetainedState")
+                output_name.append(f"k_pe.{layer_idx}_InternalRetainedState")
+                if "indexer_key_cache" in example_inputs:
+                    output_name.append(f"indexer_key_cache.{layer_idx}_InternalRetainedState")
+            else:
+                output_name.append(f"past_key.{layer_idx}_InternalRetainedState")
+                output_name.append(f"past_value.{layer_idx}_InternalRetainedState")
 
         # For some decoder wrappers (e.g. VLM language wrappers), forward does not accept
         # `inputs_embeds`; keep `input_ids` in those cases.
@@ -600,6 +609,10 @@ class QEFFBaseModel(ABC):
                     for layer_offset in range(len(example_inputs["compressed_kvs"])):
                         layer_idx = idx + layer_offset
                         input_names.extend([f"compressed_kv.{layer_idx}", f"k_pe.{layer_idx}"])
+                elif param == "indexer_key_cache":
+                    for layer_offset in range(len(example_inputs["indexer_key_cache"])):
+                        layer_idx = idx + layer_offset
+                        input_names.append(f"indexer_key_cache.{layer_idx}")
                 else:
                     input_names.append(param)
         dynamic_axes = {k: v for k, v in dynamic_axes.items() if k in input_names}
@@ -688,6 +701,13 @@ class QEFFBaseModel(ABC):
         if blocking_config is not None:
             self.model, _ = BlockingAttentionTransform.apply(self.model, attn_blocking_config=blocking_config)
             self.hash_params["blocking_kwargs"] = blocking_config
+
+        if ctx_len is not None and getattr(model_config, "model_type", None) == "glm_moe_dsa":
+            for module in self.model.modules():
+                if module.__class__.__name__ == "QEffGlmMoeDsaAttention":
+                    module.dsa_ctx_len = ctx_len
+                    if hasattr(module, "indexer"):
+                        module.indexer.ctx_len_hint = ctx_len
 
     @dump_qconfig
     def _compile(
