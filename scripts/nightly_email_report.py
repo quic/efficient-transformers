@@ -283,6 +283,10 @@ def derive_build_metadata(
     if branch == "N/A" and branch_from_checkout != "N/A":
         branch = branch_from_checkout
 
+    pr_number = env_or_na("PR_NUMBER")
+    if pr_number == "N/A":
+        pr_number = extract_first([r"Checking out PR #?(\d+)", r"Checking out PR (\d+)", r"origin/pr-(\d+)"], log_text)
+
     commit = env_or_na("GIT_COMMIT")
     if commit == "N/A":
         commit = extract_first(
@@ -302,6 +306,7 @@ def derive_build_metadata(
         "build_url": env_or_na("BUILD_URL"),
         "node_name": os.environ.get("NODE_NAME") or extract_first([r"Building remotely on\s+([^\n]+?)\s+\("], log_text),
         "branch": branch,
+        "pr_number": pr_number,
         "commit_id": commit,
         "commit_message": extract_first([r"Commit message:\s*\"([^\"]+)\"", r"^[0-9a-f]{7,40}\s+(.+)$"], log_text),
         "trigger": extract_first([r"^(Started by .+)$"], log_text),
@@ -463,6 +468,7 @@ def render_html(
         ["Node", html_escape(metadata.get("node_name"))],
         ["Trigger", html_escape(metadata.get("trigger"))],
         ["Branch", html_escape(metadata.get("branch"))],
+        ["PR Number", html_escape(metadata.get("pr_number"))],
         ["Commit ID", html_escape(metadata.get("commit_id"))],
         ["Commit Message", html_escape(metadata.get("commit_message"))],
         ["Docker Image", html_escape(metadata.get("docker_image"))],
