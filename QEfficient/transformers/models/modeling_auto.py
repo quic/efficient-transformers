@@ -1300,6 +1300,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             self.hash_params["prefill_only"] = False
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
+   
         if QEfficient.base.modeling_qeff.QEFFBaseModel._layerwise_active:
             return self._export_layerwise(
                 inputs,
@@ -1614,7 +1615,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             offload_pt_weights = False  # to keep weight for decode onnx
         else:
             offload_pt_weights = kwargs.get("offload_pt_weights", True)
-
+        
         if not skip_lang:
             self.lang_model.export(
                 inputs["lang"],
@@ -1659,18 +1660,19 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
 
     def _layerwise_factory_kwargs(self):
-        """Reproduce the from_pretrained kwargs needed to rebuild this wrapper per window."""
-        # Mirror the dual-QPC from_pretrained surface; the layerwise driver passes
-        # config explicitly per call, so we only carry torch_dtype + attn here.
-        # low_cpu_mem_usage=True works with the shard-window patch to allocate
-        # only the active window's weights instead of the full model.
-        torch_dtype = getattr(self.config, "torch_dtype", None)
-        return {
-            "attn_implementation": "eager",
-            "kv_offload": True,
-            "torch_dtype": torch_dtype,
-            "low_cpu_mem_usage": True,
-        }
+        """Reproduce the original from_pretrained kwargs for per-window reload."""
+        # Replay the same from_pretrained args captured on the outer wrapper.
+        # The layerwise driver injects the per-window config at call time, so do
+        # not carry a stale config object from the original call.
+        replay_kwargs = dict(getattr(self, "_from_pretrained_kwargs", {}))
+        replay_kwargs.pop("config", None)
+        replay_kwargs.pop("layerwise", None)
+        replay_kwargs.pop("continuous_batching", None)
+        # Keep prior layerwise behavior that bounds RAM and uses eager attention.
+        replay_kwargs["kv_offload"] = True
+        replay_kwargs["attn_implementation"] = "eager"
+        replay_kwargs["low_cpu_mem_usage"] = True
+        return replay_kwargs
 
     def _build_layerwise_factory(self):
         """Return a callable suitable for layerwise driver's qeff_factory hook."""
@@ -1682,6 +1684,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             return QEFFAutoModelForImageTextToText.from_pretrained(
                 model_id,
                 config=config,
+                continuous_batching=self.continuous_batching,
                 **base_kwargs,
             )
 
@@ -3317,6 +3320,12 @@ class QEFFAutoModelForImageTextToText:
             qaic_config=qaic_config,
             **kwargs,
         )
+        instance._from_pretrained_kwargs = {
+            **kwargs,
+            "kv_offload": kv_offload,
+            "continuous_batching": continuous_batching,
+            "qaic_config": qaic_config,
+        }
         # Mark the wrapper so its compile() can default ``layerwise=True`` if
         # the user forgot to pass it (the meta model cannot be exported any
         # other way) and so the driver knows weights still need to be loaded.

@@ -14,7 +14,8 @@ import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional, Union
-
+import os
+import time
 import onnx
 import torch
 
@@ -30,6 +31,7 @@ from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
     ReplicateKVHeadTransform,
@@ -666,7 +668,7 @@ class QEFFBaseModel(ABC):
         # For some decoder wrappers (e.g. VLM language wrappers), forward does not accept
         # `inputs_embeds`; keep `input_ids` in those cases.
         if idx >= 1:
-            z = example_inputs.pop("input_ids")
+            input_ids = example_inputs.pop("input_ids")
             if is_vision:
                 hidden_size = self.model.language_model.config.hidden_size
                 embed_dtype = getattr(self.model.language_model.config, "torch_dtype", None)
@@ -677,7 +679,7 @@ class QEFFBaseModel(ABC):
             # float32/float16 mismatch when running through fp16 decoder layers.
             if embed_dtype is None:
                 embed_dtype = next(self.model.parameters()).dtype
-            inputs_embeds = torch.rand(z.shape[0], z.shape[1], hidden_size, device=z.device, dtype=embed_dtype)
+            inputs_embeds = torch.rand(input_ids.shape[0], input_ids.shape[1], hidden_size, device=input_ids.device, dtype=embed_dtype)
             example_inputs["inputs_embeds"] = inputs_embeds
             dynamic_axes["inputs_embeds"] = dynamic_axes.pop("input_ids")
 
@@ -724,9 +726,6 @@ class QEFFBaseModel(ABC):
                     input_names.append(param)
         dynamic_axes = {k: v for k, v in dynamic_axes.items() if k in input_names}
 
-        import os
-        import time
-
         layerwise_dir = export_dir / "onnx_layerwise_tmp"
         start_time = time.time()
 
@@ -744,6 +743,7 @@ class QEFFBaseModel(ABC):
             rename_map = {old: new for old, new in zip(input_names, aligned_input_names) if old != new}
             dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
             input_names = aligned_input_names
+        
         if not os.path.isfile(layer_onnx_path):
             with layerwise_safe_onnx_export_patches(enabled=bool(prefill_only)):
                 torch.onnx.export(
