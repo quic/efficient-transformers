@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import copy
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import torch

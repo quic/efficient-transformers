@@ -29,7 +29,6 @@ from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.torch_patches import (
     apply_torch_patches,
     temporarily_disable_nested_compile_regions,
-    temporarily_enable_nested_compile_regions,
     undo_torch_patches,
 )
 

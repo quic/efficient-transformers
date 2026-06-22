@@ -14,6 +14,7 @@ from transformers.modeling_outputs import ModelOutput
 
 from QEfficient.customop import CtxScatterFuncCB3D
 from QEfficient.utils.constants import Constants
+from QEfficient.utils.custom_op_utils import select_interface
 
 
 @dataclass
@@ -47,14 +48,15 @@ def prefill_path(
     mul_value = torch.ones(past_repetition_penalty_buffer.shape[0], 1, dtype=torch.bool)
     zero_tensor = torch.zeros(batch_index.shape, dtype=torch.long)
     positions_mask = (position_ids[:, :1] != zero_tensor).view(-1, 1)
-    mul_value = CtxScatterFuncCB3D.apply(mul_value, batch_index, zero_tensor, positions_mask)
+    mul_value = select_interface(CtxScatterFuncCB3D.apply, 
+    torch.ops.qefficient.ctx_scatter_cb_3d)(mul_value, batch_index, zero_tensor, positions_mask)
     past_repetition_penalty_buffer *= mul_value
 
     # Mask out-of-bounds or invalid position_ids or input_ids
     input_ids = torch.where(position_ids == -1, torch.iinfo(torch.int32).max, input_ids)
 
     # Update retain states for chunked input
-    past_repetition_penalty_buffer = CtxScatterFuncCB3D.apply(
+    past_repetition_penalty_buffer = select_interface(CtxScatterFuncCB3D.apply, torch.ops.qefficient.ctx_scatter_cb_3d)(
         past_repetition_penalty_buffer,
         batch_index,
         input_ids,
@@ -85,13 +87,13 @@ def decode_path(
 
     # Update retained states
     scatter_values = torch.ones(last_accepted_output_tokens.shape, dtype=torch.bool)
-    past_repetition_penalty_buffer = CtxScatterFuncCB3D.apply(
+    past_repetition_penalty_buffer = select_interface(CtxScatterFuncCB3D.apply, torch.ops.qefficient.ctx_scatter_cb_3d)(
         past_repetition_penalty_buffer,
         batch_index,
         last_accepted_output_tokens,
         scatter_values,
     )
-    past_presence_penalty_buffer = CtxScatterFuncCB3D.apply(
+    past_presence_penalty_buffer = select_interface(CtxScatterFuncCB3D.apply, torch.ops.qefficient.ctx_scatter_cb_3d)(
         past_presence_penalty_buffer,
         batch_index,
         last_accepted_output_tokens,
