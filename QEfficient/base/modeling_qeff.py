@@ -30,6 +30,12 @@ from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.transformers.models._layerwise import (
+    get_layerwise_end,
+    get_layerwise_start,
+    get_layerwise_total_layers,
+    is_layerwise_active,
+)
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
     ReplicateKVHeadTransform,
@@ -103,10 +109,6 @@ class QEFFBaseModel(ABC):
     :_onnx_transforms: ONNX transformations to be applied after ONNX export.
     """
 
-    _start = 0
-    _end = 0
-    _total_layers = None
-    _layerwise_active = False
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
 
@@ -430,7 +432,7 @@ class QEFFBaseModel(ABC):
             input_names = aligned_input_names
 
         try:
-            with layerwise_safe_onnx_export_patches():
+            with layerwise_safe_onnx_export_patches(enabled=is_layerwise_active(self.model)):
                 torch.onnx.export(
                     self.model,
                     (),
@@ -461,7 +463,7 @@ class QEFFBaseModel(ABC):
 
             # Keep this strictly layerwise-scoped so regular non-layerwise export
             # remains backward compatible.
-            if QEFFBaseModel._layerwise_active:
+            if is_layerwise_active(self.model):
                 _restore_retained_state_output_names(model, output_names)
 
             # Add metadata to the model
@@ -556,8 +558,8 @@ class QEFFBaseModel(ABC):
         **export_kwargs,
     ) -> str:
         cache_probe = export_kwargs.pop("_layerwise_cache_probe", False)
-        idx = int(QEFFBaseModel._start)
-        end_idx = int(getattr(QEFFBaseModel, "_end", idx + 1))
+        idx = int(get_layerwise_start(self.model))
+        end_idx = int(get_layerwise_end(self.model) or idx + 1)
         if end_idx <= idx:
             raise ValueError(f"Invalid export window: start={idx}, end={end_idx}")
 
@@ -574,7 +576,7 @@ class QEFFBaseModel(ABC):
         # under the export root (new layout) or final_data/ (legacy layout),
         # skip per-window export entirely. This preserves hash-stable reruns
         # without re-exporting layer shards.
-        total_layers = int(getattr(QEFFBaseModel, "_total_layers", 0) or 0)
+        total_layers = int(get_layerwise_total_layers(self.model))
         cached_merged_paths = []
         if total_layers > 0:
             cached_merged_paths.append(export_dir / f"merged_0-{total_layers}.onnx")
@@ -745,7 +747,9 @@ class QEFFBaseModel(ABC):
             dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
             input_names = aligned_input_names
         if not os.path.isfile(layer_onnx_path):
-            with layerwise_safe_onnx_export_patches(enabled=bool(prefill_only)):
+            with layerwise_safe_onnx_export_patches(
+                enabled=bool(prefill_only) and is_layerwise_active(self.model)
+            ):
                 torch.onnx.export(
                     self.model,
                     (),
@@ -893,7 +897,7 @@ class QEFFBaseModel(ABC):
                     kv_cache_prefix=kv_cache_prefix,
                     **compiler_options,
                 )
-        if QEFFBaseModel._layerwise_active:
+        if is_layerwise_active(self.model):
             if onnx_path is None:
                 return None
             onnx_path = Path(onnx_path)
