@@ -333,6 +333,11 @@ def parse_args():
     )
     parser.add_argument("--skip-processor", action="store_true", help="Skip loading processor.")
     parser.add_argument("--skip-tokenizer", action="store_true", help="Skip loading tokenizer.")
+    parser.add_argument(
+        "--skip-lang-compile",
+        action="store_true",
+        help="Compile/export only the vision encoder and skip language decoder compile.",
+    )
     return parser.parse_args()
 
 
@@ -482,6 +487,7 @@ def main():
             mxfp6_matmul=False,
             mxint8_kv_cache=False,
             aic_enable_depth_first=False,
+            skip_lang=args.skip_lang_compile,
             #skip_vision=True,  # Skip vision encoder for text-only inference
             mos=1,
             num_patches=2400,  # num_patches

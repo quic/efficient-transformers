@@ -72,7 +72,7 @@ def get_rope_shape_decorate(func):
 
 
 @get_rope_shape_decorate
-@torch.compile(dynamic=True)  # Remove this
+
 def get_rope_shape(org, interpolation_mode, shape):
     return (F.interpolate(
         org.permute((2, 0, 1)).unsqueeze(0),
@@ -82,9 +82,17 @@ def get_rope_shape(org, interpolation_mode, shape):
 
 
 def apply_rope(xq, xk, freqs_cis):
+    # Support both complex freqs (..., dim//2) and stacked real/imag (2, ..., dim//2)
+    if torch.is_complex(freqs_cis):
+        freqs_cis = freqs_cis.unsqueeze(-2)
+        xq_ = torch.view_as_complex(xq.float().view(*xq.shape[:-1], -1, 2))
+        xk_ = torch.view_as_complex(xk.float().view(*xk.shape[:-1], -1, 2))
+        xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(-2)
+        xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(-2)
+        return xq_out.type_as(xq), xk_out.type_as(xk)
+
     # freqs_cis shape: (2, seq_len, dim//2)
     # xq shape: (seq_len, num_heads, head_dim)
-    # Need freqs to broadcast: (seq_len, 1, dim//2)
     freqs_cos = freqs_cis[0].unsqueeze(-2)  # (seq_len, 1, dim//2)
     freqs_sin = freqs_cis[1].unsqueeze(-2)  # (seq_len, 1, dim//2)
     xq_r = xq.float().view(*xq.shape[:-1], -1, 2)
@@ -260,6 +268,22 @@ class Rope2DPosEmbRepeated(nn.Module):
     def extra_repr(self):
         return f"dim={self.dim}, max_height={self.max_height}, max_width={self.max_width}, theta_base={self.theta_base}"
 
+    def _ensure_precomputed_freqs(self, device: torch.device) -> None:
+        if not hasattr(self, "freqs_cis"):
+            self.register_buffer("freqs_cis", self._precompute_freqs_cis(device), persistent=False)
+        elif self.freqs_cis.device != device:
+            self.freqs_cis = self._precompute_freqs_cis(device)
+
+        if not hasattr(self, "freqs_cos"):
+            self.register_buffer("freqs_cos", self.freqs_cis.real.contiguous(), persistent=False)
+        elif self.freqs_cos.device != device:
+            self.freqs_cos = self.freqs_cis.real.contiguous()
+
+        if not hasattr(self, "freqs_sin"):
+            self.register_buffer("freqs_sin", self.freqs_cis.imag.contiguous(), persistent=False)
+        elif self.freqs_sin.device != device:
+            self.freqs_sin = self.freqs_cis.imag.contiguous()
+
     def _precompute_freqs_cis(self, device: torch.device) -> torch.Tensor:
         """Calculate the cis(freqs) for each position in the 2D grid.
         Return: complex tensor of shape (max_height, max_width, dim//2) and value:
@@ -290,8 +314,7 @@ class Rope2DPosEmbRepeated(nn.Module):
         Returns:
             freqs_cis: tensor of shape (sum(t * height * width), dim//2)
         """
-        if not hasattr(self, "freqs_cis"):
-            self.register_buffer("freqs_cis", self._precompute_freqs_cis(device), persistent=False)
+        self._ensure_precomputed_freqs(device)
 
         shapes = grid_thws.tolist()
         assert all(1 <= h <= self.max_height and 1 <= w <= self.max_width for t, h, w in shapes), (
@@ -418,23 +441,27 @@ class MoonViTEncoderLayer(nn.Module):
 
 class QEffMoonViT3dEncoder(nn.Module):
     def __qeff_init__(self):
+        if not hasattr(self, "blocks") or len(self.blocks) == 0:
+            return
+
+        first_block = self.blocks[0]
         self.block_cfg = {
-            "num_heads": 64,  # config.num_attention_heads,
-            "hidden_dim": 7168,  # config.hidden_size,
-            "mlp_dim": 18432,  # config.intermediate_size,
+            "num_heads": first_block.num_heads,
+            "hidden_dim": first_block.hidden_dim,
+            "mlp_dim": first_block.mlp.fc0.out_features,
             "activation": PytorchGELUTanh(),
-            "attn_bias": True,
-            "attn_implementation": "eager",  # config._attn_implementation,
+            "attn_bias": first_block.wqkv.bias is not None,
+            "attn_implementation": "eager",
         }
-        self.rope_2d = Rope2DPosEmbRepeated(self.block_cfg["hidden_dim"] // self.block_cfg["num_heads"], 512, 512)
-        # if not hasattr(self.rope_2d, 'freqs_cos'):
-        #    self.rope_2d.register_buffer('freqs_cos', self.rope_2d.freqs_cis.real.contiguous(), persistent=False)
-        #    self.rope_2d.register_buffer('freqs_sin', self.rope_2d.freqs_cis.imag.contiguous(), persistent=False)
+
+        head_dim = first_block.hidden_size_per_attention_head
+        max_height = getattr(self.rope_2d, "max_height", 512)
+        max_width = getattr(self.rope_2d, "max_width", 512)
+        theta_base = getattr(self.rope_2d, "theta_base", 10000)
+        self.rope_2d = Rope2DPosEmbRepeated(head_dim, max_height, max_width, theta_base=theta_base)
+
         self.blocks = nn.ModuleList(
-            [
-                MoonViTEncoderLayer(**self.block_cfg, use_deterministic_attn=False)
-                for _ in range(2)  # config.num_hidden_layers)
-            ]
+            [MoonViTEncoderLayer(**self.block_cfg, use_deterministic_attn=False) for _ in range(len(self.blocks))]
         )
 
     def forward(
@@ -764,14 +791,20 @@ class QEffKimiK25EncoderWrapper(nn.Module):
         # RoPE frequencies for single image (stacked real/imag to avoid complex tensors in ONNX)
         # Shape: (2, num_tokens, dim//2) where [0]=cos, [1]=sin
         rope_2d = self.model.vision_tower.encoder.rope_2d
+        rope_2d._ensure_precomputed_freqs(x.device)
         freqs_cos = rope_2d.freqs_cos[:h, :w].reshape(-1, rope_2d.dim // 2)
         freqs_sin = rope_2d.freqs_sin[:h, :w].reshape(-1, rope_2d.dim // 2)
         freqs_cis = torch.stack([freqs_cos, freqs_sin], dim=0)
 
+        encoder_dtype = self.model.vision_tower.encoder.blocks[0].wqkv.weight.dtype
+        x = x.to(encoder_dtype)
+        freqs_cis = freqs_cis.to(encoder_dtype)
+
         for block in self.model.vision_tower.encoder.blocks:
             x = block(x, cu_seqlens, max_seqlen, rope_freqs_cis=freqs_cis)
 
-        x = self.model.vision_tower.encoder.final_layernorm(x)
+        final_ln_dtype = self.model.vision_tower.encoder.final_layernorm.weight.dtype
+        x = self.model.vision_tower.encoder.final_layernorm(x.to(final_ln_dtype))
 
         # --- tpool_patch_merger (single image, t=1) ---
         merge_kernel_size = self.model.vision_tower.merge_kernel_size
@@ -784,6 +817,8 @@ class QEffKimiK25EncoderWrapper(nn.Module):
         merged = reshaped.view(new_height * new_width, kernel_height * kernel_width, -1)
 
         # --- mm_projector (PatchMergerMLP on single tensor) ---
+        pre_norm_dtype = self.model.mm_projector.pre_norm.weight.dtype
+        merged = merged.to(pre_norm_dtype)
         image_embeds = self.model.mm_projector.proj(self.model.mm_projector.pre_norm(merged).view(merged.shape[0], -1))
         return image_embeds
 
@@ -818,6 +853,12 @@ class QEffKimiK25DecoderWrapper(nn.Module):
         batch_index: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
         use_cache: Optional[bool] = None,
+        labels: Optional[torch.LongTensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+        num_logits_to_keep: Optional[int] = None,
         **kwargs,
     ) -> Tuple:
         del labels, output_attentions, output_hidden_states, return_dict, cache_position, num_logits_to_keep
@@ -857,12 +898,18 @@ class QEffKimiK25DecoderWrapper(nn.Module):
 
         hidden_states = outputs[0]
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
-        logits = self.lm_head(hidden_states).float()
+        max_index = hidden_states.shape[1] - 1
+        safe_logit_index = torch.clamp(logit_index, min=0, max=max_index)
+        hidden_states = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), safe_logit_index]
 
-        loss = None
-        output = (logits,) + outputs[1:]
-        return logits, image_embeds, image_idx, outputs.compressed_kvs, outputs.past_key_values
+        if hidden_states.shape[-1] == self.lm_head.in_features:
+            logits = self.lm_head(hidden_states).float()
+        else:
+            logits = hidden_states.float()
+
+        output_compressed_kvs = getattr(outputs, "compressed_kvs", compressed_kvs)
+        output_past_key_values = getattr(outputs, "past_key_values", None)
+        return logits, image_embeds, image_idx, output_compressed_kvs, output_past_key_values
 
 
 # ref https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/llava/modeling_llava.py#L240

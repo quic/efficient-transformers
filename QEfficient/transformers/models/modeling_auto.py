@@ -1983,6 +1983,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         custom_io_vision = {}
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if target_dtype == torch.bfloat16 and constants.DEFAULT_AIC_HW_VERSION != "ai200":
+            target_dtype = torch.float16
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[target_dtype]
         molmo = hasattr(self.model.config, "model_type") and self.model.config.model_type == "molmo"
         if molmo:
