@@ -310,6 +310,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
         use_onnx_subfunctions: bool = False,
+        use_dynamo: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -377,6 +378,7 @@ class QEffAutoPeftModelForCausalLM(QEFFBaseModel):
             aic_num_cores=num_cores,
             mxint8_kv_cache=mxint8_kv_cache,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            use_dynamo=use_dynamo,
             **compiler_options,
         )
 
