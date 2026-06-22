@@ -940,9 +940,12 @@ class QEFFBaseModel(ABC):
             + [f"-m={onnx_path}"]
         )
 
-        # MDP partition config selection (three priorities, highest first):
-        #   1. User explicitly provides a pre-built MDP JSON to load.
-        #   2. Disaggregated (pipeline-parallel) MDP — generate from ONNX topsort.
+        # MDP partition config selection (highest priority first):
+        #   1. User-provided pre-built MDP JSON (mdp_load_partition_config).
+        #   2. Disaggregated (pipeline-parallel) MDP — generated from ONNX topsort.
+        #      Strategy ONNX (default): full superset from ONNX graph (~19 MB).
+        #      Strategy INTERSECTION: intersect with compiler dump; compact (~1-2 MB),
+        #        requires a prior -mdp-dump-partition-config run.
         #   3. Template (tensor-slice) MDP — single partition, nodeList absent.
         mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
         mdp_strategy = MdpStrategy(compiler_options.pop("mdp_strategy", MdpStrategy.ONNX))
@@ -954,16 +957,6 @@ class QEFFBaseModel(ABC):
             mdp_ts_json = load_json(str(mdp_ts_json_path))
         elif mdp_num_partitions > 1:
             # Disaggregated (pipeline-parallel) MDP.
-            # Two strategies are available via mdp_strategy (see MdpStrategy enum):
-            #
-            #   MdpStrategy.ONNX ("onnx", default)
-            #       Enumerates every node from the ONNX graph.
-            #       Most accurate; requires loading external ONNX data; ~19 MB JSON.
-            #   MdpStrategy.INTERSECTION ("intersection")
-            #       Generates the full ONNX MDP (superset) then filters to only the
-            #       exact Glow IR node names present in the compiler dump.
-            #       Compact (~1-2 MB); requires a prior compile run with
-            #       -mdp-dump-partition-config to produce mdp_compiler_dump_path.
 
             num_layers = getattr(self, "num_layers", None)
             if getattr(self, "model", None) and getattr(self.model, "language_model", None) and not num_layers:
@@ -1008,8 +1001,7 @@ class QEFFBaseModel(ABC):
             create_json(str(mdp_ts_json_path), mdp_ts_json)
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
         elif mdp_ts_num_devices > 1 and not compiler_options.get("mdp_dump_partition_config", None):
-            # Template (tensor-slice) MDP: single partition, empty nodeList.
-            # Used when PP is disabled (stages=1). Compiler fills the nodeList.
+            # Template (tensor-slice) MDP: single partition, empty nodeList; compiler fills it.
             mdp_ts_json = generate_mdp_partition_config(
                 mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
             )

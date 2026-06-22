@@ -19,17 +19,10 @@ logger = logging.getLogger(__name__)
 class MdpStrategy(str, Enum):
     """MDP partition-config generation strategy for disaggregated prefill.
 
-    ONNX        : Enumerate every node from the exported ONNX graph and assign
-                  to partitions by transformer layer index.  No prior compile
-                  run needed; produces a ~19 MB JSON that is a superset of the
-                  real Glow IR.  Default.
-
-    INTERSECTION: Requires a prior ``qaic-compile -mdp-dump-partition-config``
-                  run.  Generates the full ONNX-based MDP (superset), then
-                  filters each partition's nodeList to only the exact Glow IR
-                  node names present in the compiler dump.  Result is compact
-                  (~1-2 MB) and contains only exact-match names for the
-                  compiler's ``doManualPartitioning()``.
+    ONNX        : Enumerate every node from the ONNX graph; assigns to partitions
+                  by layer index.  No prior compile run needed (~19 MB JSON superset).
+    INTERSECTION: Requires a prior ``qaic-compile -mdp-dump-partition-config`` run.
+                  Filters the ONNX MDP to only exact Glow IR names; compact (~1-2 MB).
     """
 
     ONNX = "onnx"
@@ -40,20 +33,17 @@ def _get_compiler_folded_nodes(graph) -> Set[str]:
     """Return node names the compiler will fold away during ONNX import.
 
     Mirrors computeIsConstantFoldable() in ONNXModelLoader.cpp: a node is
-    foldable if every one of its inputs is a compile-time constant (initializer,
-    Constant op output, or output of another foldable node). Folded nodes are
-    absent from the compiler IR, so including them in nodeList is harmless but
-    excluding them produces a cleaner MDP closer to the compiler dump.
+    foldable if every input is a compile-time constant (initializer, Constant
+    op output, or output of another foldable node).  Folded nodes are absent
+    from the compiler IR; excluding them produces a cleaner MDP.
 
     Op types that the compiler never folds (ProtobufLoader.cpp:68):
         Loop, Const, Identity, If, DequantizeLinear
     """
-    # const_values: output tensor names whose value is known at compile time.
-    # Seeded with all initializer names (model weights / constants).
+    # Seed with initializer names (weights/constants known at compile time).
     const_values: Set[str] = {init.name for init in graph.initializer}
 
-    # Constant op outputs are trivially compile-time constants; collect them
-    # upfront so the fixed-point loop below only needs one pass for everything else.
+    # Constant op outputs are trivially compile-time constants.
     for node in graph.node:
         if node.op_type == "Constant":
             const_values.update(out for out in node.output if out)
@@ -109,32 +99,14 @@ def _get_layer_num(node_name: str) -> Optional[int]:
 def _layer_partition_bounds(num_layers: int, num_partitions: int) -> List[int]:
     """Compute exclusive-upper-bound layer bounds for balanced pipeline partitioning.
 
-    Distributes remainder layers so that the last partition (which carries postprocessing
-    such as lm_head and final norm) always receives only the base allocation.  Remainder
-    layers are spread to the middle partitions first (indices 1 .. num_partitions-2),
-    filling left-to-right starting from the centre of the middle zone.  The first
-    partition (which carries embedding preprocessing) absorbs any overflow only when
-    the remainder exceeds the number of available middle stages.
+    Remainder layers are spread to middle partitions first (indices 1..n-2),
+    filling outward from the centre.  The first partition absorbs overflow only
+    when remainder exceeds the number of middle stages.  The last partition
+    (postprocessing — lm_head, final norm) always receives only the base count.
 
-    Worst case (remainder == num_partitions - 1): every stage except the last receives
-    one extra layer.
-
-    Special cases:
-      num_partitions == 1  — single stage; returns an empty list.
-      num_partitions == 2  — no middle zone; any remainder goes to the first stage.
-
-    Returns:
-        A list of length (num_partitions - 1).  bounds[i] is the exclusive upper
-        bound of partition i.  Use ``bisect.bisect_right(bounds, layer_num)`` to
-        map a layer index to its partition index.
-
-    Examples (layer counts [partition-0, partition-1, ...]):
-        12 layers / 4 stages  ->  [3, 3, 3, 3]   (no remainder)
-        9  layers / 4 stages  ->  [2, 3, 2, 2]   (r=1  -> centre-middle gets +1)
-        10 layers / 4 stages  ->  [2, 3, 3, 2]   (r=2  -> both middle get +1)
-        11 layers / 4 stages  ->  [3, 3, 3, 2]   (r=3 = n-1 -> first+middle get +1)
-        8  layers / 3 stages  ->  [3, 3, 2]       (r=2 = n-1 -> first+middle get +1)
-        5  layers / 2 stages  ->  [3, 2]           (r=1 -> first gets +1)
+    Returns a list of length (num_partitions - 1); use
+    ``bisect.bisect_right(bounds, layer_num)`` to map a layer to its partition.
+    Returns an empty list when num_partitions == 1.
     """
     base = num_layers // num_partitions
     remainder = num_layers % num_partitions
@@ -174,20 +146,16 @@ def _get_inlined_node_map(model) -> tuple:
 
     The compiler inlines a local function body into the parent graph during
     ONNX import if it has < 100 nodes AND is not a known custom op
-    (ONNXModelLoaderSubFuns.cpp). Inlined call-sites do not appear in the
-    compiler IR; their sub-nodes are named <call_site>/<func_node>.
+    (ONNXModelLoaderSubFuns.cpp).  Inlined call-sites do not appear in the
+    compiler IR; their sub-nodes are named ``<call_site>/<func_node>``.
     Known custom ops (registered via DEFINEKNOWNCUSTOMOP) keep their
     call-site name in the IR and must be included in nodeList as-is.
 
     Returns:
-        inlined_node_map:   dict mapping call-site name -> list of inlined
-                            sub-node names (<call_site>/<func_node>).
-        non_inlined_funcs:  set of function names that are NOT inlined
-                            (known custom ops or >= 100 nodes); their
-                            call-site names are valid nodeList entries.
+        inlined_node_map:  call-site name -> list of inlined sub-node names.
+        non_inlined_funcs: function names NOT inlined (custom ops or >=100 nodes).
     """
     # Op types registered via DEFINEKNOWNCUSTOMOP in ONNXModelLoaderCustomOp.cpp.
-    # The compiler loads these as a single named node (not expanded/inlined).
     _KNOWN_CUSTOM_OPS = frozenset(
         {
             "CustomRMSNorm",
@@ -227,19 +195,16 @@ def generate_disagg_mdp_partition_config(
 ) -> Dict[str, Any]:
     """Generate a pipeline-partitioned MDP config from an exported ONNX graph.
 
-    Assigns nodes to partitions by transformer layer index using a balanced
-    remainder distribution: the last partition (postprocessing — lm_head, final
-    norm) always receives only the base layer count; any remainder layers are
-    spread to the middle partitions first, then to the first partition (embedding
-    preprocessing) only when the remainder exceeds the number of middle stages.
-    Non-layer nodes (embeddings, lm_head) follow the nearest layer in topological
-    order.  nodeList is a superset of the compiler dump; the compiler silently
-    ignores optimized-away names.  Inlined local function call-sites
-    (CtxScatterCB, CtxGatherCB) are excluded; their /nNN sub-nodes are assigned
-    automatically.  Known custom ops (CustomRMSNorm) are included by call-site name.
+    Assigns ONNX nodes to partitions by transformer layer index using a balanced
+    remainder distribution (last partition always gets the base count; remainder
+    spreads to middle stages first, then to the first stage).  Non-layer nodes
+    (embeddings, lm_head) follow the nearest layer in topological order.  nodeList
+    is a superset of the compiler dump; the compiler silently ignores names it has
+    optimised away.  Inlined local function call-sites are excluded; their
+    ``/nNN`` sub-nodes are assigned in topological position.  Known custom ops
+    (e.g. CustomRMSNorm) are included by call-site name.
 
-    For PP+TS: num_devices // num_partitions devices per partition; the
-    compiler applies tensor-slicing within each stage.
+    For PP+TS: ``num_devices // num_partitions`` devices per partition.
 
     Args:
         onnx_path:      Path to the exported ONNX file.
@@ -300,12 +265,9 @@ def generate_disagg_mdp_partition_config(
     inlined_functions = {f.name for f in model.functions} - non_inlined_functions
     local_functions = {f.name: f for f in model.functions}
 
-    # Single pass: assign main graph nodes to partitions by layer index.
-    # Inlined function call-sites are expanded inline (sub-nodes inserted at their
-    # topological position) so the nodeList ordering matches the ONNX topsort.
-    # The compiler's SplitPlanMerge reads nodeList as an ordered sequence; appending
-    # inlined sub-nodes out-of-order (in a second pass) causes unresolvable tensor
-    # splits in the split-plan merge loop.
+    # Single pass: assign main-graph nodes by layer index.  Inlined call-sites
+    # are expanded in topological position so nodeList order matches the ONNX
+    # topsort — required by the compiler's SplitPlanMerge.
     partitions: List[List[str]] = [[] for _ in range(num_partitions)]
     current_layer_partition = 0
     seen_first_layer = False
@@ -338,7 +300,7 @@ def generate_disagg_mdp_partition_config(
         logger.info(f"Partition {i}: {len(partition)} nodes")
     logger.info(f"Total nodes in MDP: {sum(len(p) for p in partitions)}")
 
-    # PP-only: 1 device/partition; PP+TS: num_devices//num_partitions devices/partition.
+    # PP-only: 1 device/partition; PP+TS: num_devices//num_partitions per partition.
     device_ids = list(range(num_devices))
     devices_per_partition = num_devices // num_partitions
     partition_objs = []
