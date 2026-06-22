@@ -134,7 +134,8 @@ def tokenize_conversation(processor, conversation: List[Dict[str, Any]]) -> Dict
     """Tokenize one chat conversation with multimodal processing."""
     if _process_vision_info is None:
         raise ModuleNotFoundError(
-            "qwen_vl_utils is required for multimodal tokenization. Install it via: pip install 'qwen-vl-utils>=0.0.14'"
+            "qwen_vl_utils is required for multimodal tokenization. Install it via: "
+            "pip install 'qwen-vl-utils>=0.0.14' 'numpy==1.26.4'"
         )
 
     conversations = [conversation]

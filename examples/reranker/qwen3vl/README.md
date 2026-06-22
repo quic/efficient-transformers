@@ -16,9 +16,10 @@ Supported models:
 ## Required package
 
 - `qwen-vl-utils>=0.0.14`
+- `numpy==1.26.4`
 
 ```bash
-pip install "qwen-vl-utils>=0.0.14"
+pip install "qwen-vl-utils>=0.0.14" "numpy==1.26.4"
 ```
 
 ## Scripts
