@@ -11,13 +11,10 @@ Patches kept here:
   - TorchScript ONNX exporter (_setup_trace_module_map, _get_module_attributes,
     _jit_pass_onnx_track_scope_attributes): fix attribute-type mismatches in the
     legacy trace-based exporter (use_dynamo=False path).
-<<<<<<< HEAD
   - Layerwise safe export pass patches: disable expensive ONNX exporter passes
     for layerwise prefill export (TorchScript path).
   - temporarily_enable_nested_compile_regions / temporarily_disable_nested_compile_regions:
     context managers for dynamo export path subgraph boundary management.
-=======
->>>>>>> 22d63855 (nit(0504): update and align torch_patches, WIP, move back previous commit (nit(0502), if this fails)
 
 Patches removed (upstreamed to PyTorch):
   - FunctionalTensorMode.__torch_dispatch__ tracker-entry KeyError
@@ -37,10 +34,8 @@ import torch.onnx.utils as onnx_utils
 from torch import _C
 from torch.onnx._internal.torchscript_exporter import utils as ts_utils
 
-<<<<<<< HEAD
-=======
+
 # Store original references before patching
->>>>>>> 22d63855 (nit(0504): update and align torch_patches, WIP, move back previous commit (nit(0502), if this fails)
 _original_setup_trace_module_map = onnx_utils._setup_trace_module_map
 _original_get_module_attributes = getattr(onnx_utils, "_get_module_attributes", None)
 _original_track_scope_attrs = getattr(_C, "_jit_pass_onnx_track_scope_attributes", None)
