@@ -374,9 +374,7 @@ def _build_synthetic_gpt2_onnx(num_layers: int, out_path: Path) -> None:
     for layer_idx in range(num_layers):
         attn_out = f"attn_out_{layer_idx}"
         mlp_out = f"mlp_out_{layer_idx}"
-        nodes.append(
-            helper.make_node("Identity", inputs=[prev_out], outputs=[attn_out], name=f"h.{layer_idx}/attn")
-        )
+        nodes.append(helper.make_node("Identity", inputs=[prev_out], outputs=[attn_out], name=f"h.{layer_idx}/attn"))
         nodes.append(helper.make_node("Identity", inputs=[attn_out], outputs=[mlp_out], name=f"h.{layer_idx}/mlp"))
         prev_out = mlp_out
     nodes.append(helper.make_node("Identity", inputs=[prev_out], outputs=["logits"], name="lm_head"))
@@ -586,9 +584,7 @@ class TestMdpCompileIntegration:
         assert hashed_path is not None, "hashed_compile_params.json not found under compile_dir"
         with open(hashed_path) as fh:
             hashed = json.load(fh)
-        assert hashed.get("mdp_strategy") == "onnx", (
-            f"Expected mdp_strategy='onnx', got {hashed.get('mdp_strategy')}"
-        )
+        assert hashed.get("mdp_strategy") == "onnx", f"Expected mdp_strategy='onnx', got {hashed.get('mdp_strategy')}"
 
     def test_hashed_compile_params_contains_mdp_ts_json(self, compile_workspace):
         """hashed_compile_params.json records mdp_ts_json (the generated MDP dict)."""

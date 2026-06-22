@@ -43,9 +43,7 @@ with open(CONFIG_PATH, "r") as f:
     multimodal_models = config_data["image_text_models"]
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
-test_mm_moe_models = [
-    model["model_name"] for model in multimodal_models if "moe" in model.get("model_type", "")
-]
+test_mm_moe_models = [model["model_name"] for model in multimodal_models if "moe" in model.get("model_type", "")]
 
 NEW_GENERATION_TOKENS = 10
 
@@ -257,7 +255,11 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     # ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
     # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
 
-    if mdp_compile_kwargs and model_name not in ModelConfig.INTERNVL_MODELS and model_name not in ModelConfig.MOLMO_MODELS:
+    if (
+        mdp_compile_kwargs
+        and model_name not in ModelConfig.INTERNVL_MODELS
+        and model_name not in ModelConfig.MOLMO_MODELS
+    ):
         compile_kwargs["skip_vision"] = True
         compile_kwargs.update(mdp_compile_kwargs)
     elif mdp_compile_kwargs:
