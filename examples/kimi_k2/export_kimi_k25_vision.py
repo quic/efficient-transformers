@@ -443,7 +443,7 @@ def main():
             mxfp6_matmul=False,
             mxint8_kv_cache=False,
             aic_enable_depth_first=False,
-            # skip_lang=True,
+            #skip_lang=True,
             mos=1,
             num_patches=2400,  # num_patches
             h=30,  # h
@@ -451,6 +451,7 @@ def main():
             num_image_tokens=600,  # num_image_tokens
         )
 
+        #exit()
         ## STEP 4: Prepare Image and Text Input
         image = Image.open(BytesIO(requests.get(args.image_url).content)).convert("RGB")
 

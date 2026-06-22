@@ -447,7 +447,8 @@ class QEffMoonViT3dEncoder(nn.Module):
         if not hasattr(self, "blocks") or len(self.blocks) == 0:
             return
 
-        first_block = self.blocks[0]
+        old_blocks = list(self.blocks)
+        first_block = old_blocks[0]
         self.block_cfg = {
             "num_heads": first_block.num_heads,
             "hidden_dim": first_block.hidden_dim,
@@ -463,9 +464,12 @@ class QEffMoonViT3dEncoder(nn.Module):
         theta_base = getattr(self.rope_2d, "theta_base", 10000)
         self.rope_2d = Rope2DPosEmbRepeated(head_dim, max_height, max_width, theta_base=theta_base)
 
-        self.blocks = nn.ModuleList(
-            [MoonViTEncoderLayer(**self.block_cfg, use_deterministic_attn=False) for _ in range(len(self.blocks))]
-        )
+        new_blocks = []
+        for old_block in old_blocks:
+            new_block = MoonViTEncoderLayer(**self.block_cfg, use_deterministic_attn=False)
+            new_block.load_state_dict(old_block.state_dict())
+            new_blocks.append(new_block.to(device=old_block.wqkv.weight.device, dtype=old_block.wqkv.weight.dtype))
+        self.blocks = nn.ModuleList(new_blocks)
 
     def forward(
         self,
@@ -908,7 +912,7 @@ class QEffKimiK25DecoderWrapper(nn.Module):
         else:
             logits = hidden_states.float()
 
-        output_compressed_kvs = getattr(outputs, "compressed_kvs", compressed_kvs)
+        output_compressed_kvs = getattr(outputs, "compressed_kvs", None)
         output_past_key_values = getattr(outputs, "past_key_values", None)
         return logits, image_embeds, image_idx, output_compressed_kvs, output_past_key_values
 
