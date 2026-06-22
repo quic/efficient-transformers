@@ -214,3 +214,26 @@ Use this file when:
 
 ## License
 Check the LICENSE file in the repository root.
+
+## Jenkins HTML Email Report
+
+Generate an email-safe HTML summary after validation so Jenkins can send the report body with the Email Extension plugin:
+
+```bash
+python scripts/nightly_email_report.py \
+  --artifacts-dir "$NIGHTLY_PIPELINE_ARTIFACTS_DIR" \
+  --output-html "$NIGHTLY_PIPELINE_ARTIFACTS_DIR/nightly_email_report.html" \
+  --output-json "$NIGHTLY_PIPELINE_ARTIFACTS_DIR/nightly_email_report_summary.json" \
+  --output-environment-json "$NIGHTLY_PIPELINE_ARTIFACTS_DIR/environment_versions.json" \
+  --build-start-epoch "$BUILD_START_EPOCH" \
+  --build-end-epoch "$(date +%s)" \
+  --build-status "$BUILD_RESULT"
+```
+
+The report contains build metadata, QAIC apps/platform/factory SDK versions from `/opt/qti-aic/tools/qaic-version-util` with XML fallback, optional QNN SDK details from `$QNN_SDK_ROOT/sdk.yaml`, aggregate pass/fail counts, and one Outlook-safe inline table per model class.
+
+For Jenkins Email Extension, set content type to HTML and use the generated file as the message body, for example:
+
+```text
+${FILE,path="Nightly_Pipeline/${BUILD_TAG}/nightly_email_report.html"}
+```
