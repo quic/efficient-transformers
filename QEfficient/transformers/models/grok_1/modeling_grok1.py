@@ -111,10 +111,12 @@ class QEffGrok1MultiHeadAttention(nn.Module):
         attn_weights = attn_weights * self.attn_output_multiplier
         attn_weights = self.max_attn_val * F.tanh(attn_weights / self.max_attn_val)
 
+        mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
+
         if attention_mask is not None:
-            attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-            )
+            # Apply the attention mask
+            attn_weights = torch.where(attention_mask, mask_value, attn_weights)
+
 
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_output = torch.matmul(attn_weights, value_states)
