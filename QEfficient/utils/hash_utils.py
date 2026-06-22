@@ -24,6 +24,8 @@ def json_serializable(obj):
         return str(obj)
     if obj.__class__.__name__ == "_DimHint":
         return str(obj)
+    if obj.__class__.__name__ == "_DimHintType":
+        return str(obj)
     if hasattr(obj, "name") and hasattr(obj, "min") and hasattr(obj, "max"):
         return {"name": obj.name, "min": obj.min, "max": obj.max}
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")

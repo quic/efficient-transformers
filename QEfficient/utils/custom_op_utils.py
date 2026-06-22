@@ -77,13 +77,46 @@ def ctx_gather_op(data: torch.Tensor, ctx_indices: torch.Tensor, comp_ctx_len: i
     return data[batch_indices, head_indices, ctx_indices]
 
 
+# @ctx_gather_op.register_fake
+# def _(
+#     data: torch.Tensor,
+#     ctx_indices: torch.Tensor,
+#     comp_ctx_len: int,
+# ) -> torch.Tensor:
+#     # Output shape: (batch, heads, comp_ctx_len, head_dim)
+#     # axis 2 is the gathered context dimension, which becomes comp_ctx_len
+#     # not data.shape[2] (the original full context length).
+#     out_shape = (data.shape[0], data.shape[1], comp_ctx_len, *data.shape[3:])
+#     return torch.empty(out_shape, dtype=data.dtype, device=data.device)
+
+
 @ctx_gather_op.register_fake
 def _(
     data: torch.Tensor,
     ctx_indices: torch.Tensor,
     comp_ctx_len: int,
 ) -> torch.Tensor:
-    return torch.empty_like(data)
+    """
+    Fake kernel for shape inference.
+
+    Use ctx_indices when available (true PyTorch behavior),
+    but fall back to comp_ctx_len if needed (ONNX contract).
+    """
+
+    # Prefer actual indexing size when known
+    gather_dim = ctx_indices.shape[-1] if ctx_indices.shape[-1] is not None else comp_ctx_len
+    out_shape = (
+        data.shape[0],
+        data.shape[1],
+        gather_dim,
+        *data.shape[3:],
+    )
+
+    return torch.empty(
+        out_shape,
+        dtype=data.dtype,
+        device=data.device,
+    )
 
 
 # SCATTER CB (4D with heads, context, etc.)
@@ -159,10 +192,11 @@ def ctx_gather_cb_op(
     data: torch.Tensor,
     batch_index: torch.Tensor,
     ctx_indices: torch.Tensor,
+    comp_ctx_len: int,
 ) -> torch.Tensor:
     """
     Custom 4D context gather op with batch_index (CB version).
-    Semantics: similar to CtxGatherFuncCB.forward.
+    Semantics: same as CtxGatherFuncCB.forward.
     """
     batch_indices = batch_index.view(-1, 1, 1)
     head_indices = torch.arange(data.shape[1], device=data.device).view(1, -1, 1)
@@ -174,6 +208,7 @@ def _(
     data: torch.Tensor,
     batch_index: torch.Tensor,
     ctx_indices: torch.Tensor,
+    comp_ctx_len: int,
 ) -> torch.Tensor:
     """
     Fake implementation for torch.export.
@@ -230,3 +265,96 @@ def _(
 
     out_shape = (batch_size, seq_len, *feature_shape)
     return torch.empty(out_shape, dtype=data.dtype, device=data.device)
+
+
+# GATHER BLOCKED KV (no batch_index)
+@torch.library.custom_op("qefficient::ctx_gather_blocked_kv", mutates_args=())
+def ctx_gather_blocked_kv_op(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
+    """Custom blocked-KV gather op (non-CB). Semantics: same as CtxGatherFuncBlockedKV.forward."""
+    batch_indices = torch.arange(data.shape[0], device=data.device).view(-1, 1, 1)
+    head_indices = torch.arange(data.shape[1], device=data.device).view(1, -1, 1)
+    ctx_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
+    return data[batch_indices, head_indices, ctx_indices]
+
+
+@ctx_gather_blocked_kv_op.register_fake
+def _(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
+    batch_size = data.shape[0]
+    num_heads = data.shape[1]
+    ctx_len = ctx_indices.shape[2]
+    feature_shape = data.shape[3:]
+    out_shape = (batch_size, num_heads, ctx_len, *feature_shape)
+    return torch.empty(out_shape, dtype=data.dtype, device=data.device)
+
+
+# GATHER BLOCKED KV CB (with batch_index)
+@torch.library.custom_op("qefficient::ctx_gather_blocked_kv_cb", mutates_args=())
+def ctx_gather_blocked_kv_cb_op(
+    data: torch.Tensor, batch_index: torch.Tensor, ctx_indices: torch.Tensor
+) -> torch.Tensor:
+    """Custom blocked-KV gather op with batch_index. Semantics: same as CtxGatherFuncBlockedKVCB.forward."""
+    batch_indices = batch_index.view(-1, 1, 1)
+    head_indices = torch.arange(data.shape[1], device=data.device).view(1, -1, 1)
+    ctx_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
+    return data[batch_indices, head_indices, ctx_indices]
+
+
+@ctx_gather_blocked_kv_cb_op.register_fake
+def _(data: torch.Tensor, batch_index: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
+    batch_size = batch_index.shape[0]
+    num_heads = data.shape[1]
+    ctx_len = ctx_indices.shape[2]
+    feature_shape = data.shape[3:]
+    out_shape = (batch_size, num_heads, ctx_len, *feature_shape)
+    return torch.empty(out_shape, dtype=data.dtype, device=data.device)
+
+
+# SCATTER 3D INT (builds packed->original index table; outputs INT32)
+@torch.library.custom_op("qefficient::ctx_scatter_3d_int", mutates_args=())
+def ctx_scatter_3d_int_op(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    """Custom 3D INT32 scatter. Semantics: same as CtxScatterFunc3DInt.forward."""
+    result = data.clone()
+    valid = position_ids != torch.iinfo(torch.int32).max
+    batch_idx = torch.arange(result.shape[0], device=result.device).view(-1, 1).expand_as(position_ids)
+    result[batch_idx[valid], position_ids[valid].long()] = updates[valid]
+    return result
+
+
+@ctx_scatter_3d_int_op.register_fake
+def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    return torch.empty_like(data)
+
+
+# GATHER 3D GENERALIZED (tolerates INT32_MAX indices)
+@torch.library.custom_op("qefficient::ctx_gather_3d_generalized", mutates_args=())
+def ctx_gather_3d_generalized_op(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
+    """Custom 3D gather with INT32_MAX guard. Semantics: same as CtxGatherFunc3DGeneralized.forward."""
+    batch_indices = torch.arange(data.shape[0], device=data.device).view(-1, 1)
+    ctx_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
+    return data[batch_indices, ctx_indices]
+
+
+@ctx_gather_3d_generalized_op.register_fake
+def _(data: torch.Tensor, ctx_indices: torch.Tensor) -> torch.Tensor:
+    batch_size = data.shape[0]
+    seq_len = ctx_indices.shape[1]
+    feature_shape = data.shape[2:]
+    return torch.empty((batch_size, seq_len, *feature_shape), dtype=data.dtype, device=data.device)
+
+
+# SCATTER 3D GENERALIZED (preserves data at INT32_MAX positions)
+@torch.library.custom_op("qefficient::ctx_scatter_3d_generalized", mutates_args=())
+def ctx_scatter_3d_generalized_op(
+    data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor
+) -> torch.Tensor:
+    """Custom 3D scatter that leaves data untouched at invalid positions. Semantics: same as CtxScatterFunc3DGeneralized.forward."""
+    result = data.clone()
+    valid = position_ids != torch.iinfo(torch.int32).max
+    batch_idx = torch.arange(result.shape[0], device=result.device).view(-1, 1).expand_as(position_ids)
+    result[batch_idx[valid], position_ids[valid].long()] = updates[valid]
+    return result
+
+
+@ctx_scatter_3d_generalized_op.register_fake
+def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
+    return torch.empty_like(data)
