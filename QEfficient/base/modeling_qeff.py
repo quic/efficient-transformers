@@ -747,9 +747,7 @@ class QEFFBaseModel(ABC):
             dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
             input_names = aligned_input_names
         if not os.path.isfile(layer_onnx_path):
-            with layerwise_safe_onnx_export_patches(
-                enabled=bool(prefill_only) and is_layerwise_active(self.model)
-            ):
+            with layerwise_safe_onnx_export_patches(enabled=bool(prefill_only) and is_layerwise_active(self.model)):
                 torch.onnx.export(
                     self.model,
                     (),

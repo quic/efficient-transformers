@@ -32,6 +32,7 @@ import onnx
 import onnxruntime as ort
 import pytest
 import torch
+import transformers
 from transformers import (
     AutoConfig,
     AutoModel,
@@ -42,7 +43,10 @@ from transformers import (
     AutoTokenizer,
     Qwen2Config,
 )
+from transformers.models.qwen3_moe.modeling_qwen3_moe import Qwen3MoeConfig, Qwen3MoeForCausalLM
 
+from QEfficient.transformers.models import _layerwise
+from QEfficient.transformers.models.custom_loader import CustomLoader, WeightSelectionPolicy
 from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModel,
     QEFFAutoModelForCausalLM,
@@ -50,6 +54,7 @@ from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModelForImageTextToText,
     QEFFAutoModelForSequenceClassification,
     QEFFAutoModelForSpeechSeq2Seq,
+    _resolve_layerwise_compile_export_request,
 )
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils._utils import _infer_specialization_name, to_named_specializations
@@ -1438,7 +1443,6 @@ LAYERWISE_TINY_MODEL_IDS = {
 @pytest.mark.llm_model
 def test_layerwise_window_helpers():
     """Pure-Python coverage of the windowing helpers - no model load required."""
-    from QEfficient.transformers.models import _layerwise
 
     assert _layerwise._build_layer_windows(4, 1) == [(0, 1), (1, 2), (2, 3), (3, 4)]
     assert _layerwise._build_layer_windows(5, 2) == [(0, 2), (2, 4), (4, 5)]
@@ -1450,7 +1454,6 @@ def test_layerwise_window_helpers():
 
 @pytest.mark.llm_model
 def test_layerwise_context_helpers_are_instance_scoped():
-    from QEfficient.transformers.models import _layerwise
 
     config = type("Config", (), {"model_type": "qwen3_moe", "num_hidden_layers": 4})()
     context_a = _layerwise.create_layerwise_context(model_id="a", config=config, window_size=2)
@@ -1476,7 +1479,6 @@ def test_layerwise_context_helpers_are_instance_scoped():
 
 @pytest.mark.llm_model
 def test_layerwise_compile_requires_from_pretrained_context():
-    from QEfficient.transformers.models.modeling_auto import _resolve_layerwise_compile_export_request
 
     module = torch.nn.Linear(1, 1)
     with pytest.warns(DeprecationWarning):
@@ -1486,8 +1488,6 @@ def test_layerwise_compile_requires_from_pretrained_context():
 
 @pytest.mark.llm_model
 def test_layerwise_window_size_conflict_rejected():
-    from QEfficient.transformers.models import _layerwise
-    from QEfficient.transformers.models.modeling_auto import _resolve_layerwise_compile_export_request
 
     config = type("Config", (), {"model_type": "qwen3_moe", "num_hidden_layers": 4})()
     context = _layerwise.create_layerwise_context(model_id="dummy", config=config, window_size=2)
@@ -1502,7 +1502,6 @@ def test_layerwise_window_size_conflict_rejected():
 @pytest.mark.llm_model
 def test_layerwise_supported_guard_rejects_unrelated_model():
     """layerwise=True must hard-fail on architectures without windowing hooks."""
-    from QEfficient.transformers.models import _layerwise
 
     config = AutoConfig.from_pretrained("hf-internal-testing/tiny-random-LlamaForCausalLM")
     with pytest.raises(NotImplementedError, match="layerwise=True is only supported"):
@@ -1656,10 +1655,8 @@ def test_layerwise_matches_default_path_for_qwen3_moe():
     in a single forward (default path) must match running the same layers one
     window at a time and chaining the hidden states (layerwise path), bit for bit.
     """
-    from transformers.models.qwen3_moe.modeling_qwen3_moe import Qwen3MoeConfig, Qwen3MoeForCausalLM
 
     import QEfficient
-    from QEfficient.transformers.models import _layerwise
 
     cfg = Qwen3MoeConfig(
         hidden_size=64,
@@ -1731,7 +1728,6 @@ def test_layerwise_matches_default_path_for_qwen3_moe():
 def test_layerwise_matches_default_path_for_qwen3_5_moe():
     """Qwen3.5-MoE decoder wrapper must preserve logits with layerwise windows."""
     import QEfficient
-    from QEfficient.transformers.models import _layerwise
 
     config = AutoConfig.from_pretrained(LAYERWISE_TINY_MODEL_IDS["qwen3_5_moe"])
     config.torch_dtype = "float32"
@@ -1786,7 +1782,6 @@ def test_layerwise_matches_default_path_for_qwen3_5_moe():
 def test_layerwise_matches_default_path_for_qwen3_vl_moe():
     """Qwen3-VL-MoE decoder wrapper must preserve logits with layerwise windows."""
     import QEfficient
-    from QEfficient.transformers.models import _layerwise
 
     model_id = LAYERWISE_TINY_MODEL_IDS["qwen3_vl_moe"]
     try:
@@ -1874,7 +1869,6 @@ def test_split_layer_graph_keeps_qwen3_5_linear_states(tmp_path):
 
 @pytest.mark.llm_model
 def test_layerwise_supported_guard_accepts_qwen3_vl_moe():
-    from QEfficient.transformers.models import _layerwise
 
     try:
         config = AutoConfig.from_pretrained(LAYERWISE_TINY_MODEL_ID)
@@ -1892,7 +1886,6 @@ def test_layerwise_supported_guard_accepts_qwen3_vl_moe():
 )
 def test_layerwise_supported_guard_accepts_all_supported(arch, model_id):
     """Guard must accept each architecture in the layerwise allowlist."""
-    from QEfficient.transformers.models import _layerwise
 
     try:
         config = AutoConfig.from_pretrained(model_id)
@@ -1906,7 +1899,6 @@ def test_layerwise_supported_guard_accepts_all_supported(arch, model_id):
 def test_layerwise_off_does_not_set_env_var(tmp_path):
     """Backward compat: layerwise must be controlled purely via the API,
     never via environment variables, and must be off by default."""
-    from QEfficient.transformers.models import _layerwise  # noqa: F401
 
     assert os.environ.get("LAYERWISE_EXPORT") is None
     assert _layerwise.is_layerwise_active() is False
@@ -1947,7 +1939,6 @@ def test_layerwise_vision_wrapper_keeps_only_first_text_window():
 @pytest.mark.llm_model
 def test_layerwise_context_manager_toggles_active_context():
     """The driver's context manager must preserve context state with no env-var side-effects."""
-    from QEfficient.transformers.models import _layerwise
 
     config = type("Config", (), {"model_type": "qwen3_moe", "num_hidden_layers": 1})()
     context = _layerwise.create_layerwise_context(model_id="dummy", config=config, window_size=1)
@@ -1969,7 +1960,6 @@ def test_layerwise_context_manager_toggles_active_context():
 
 @pytest.mark.llm_model
 def test_layerwise_context_manager_restores_window_state():
-    from QEfficient.transformers.models import _layerwise
 
     config = type("Config", (), {"model_type": "qwen3_moe", "num_hidden_layers": 4})()
     context = _layerwise.create_layerwise_context(model_id="dummy", config=config, window_size=1)
@@ -1988,7 +1978,6 @@ def test_layerwise_context_manager_restores_window_state():
 
 @pytest.mark.llm_model
 def test_layerwise_contexts_do_not_share_window_state():
-    from QEfficient.transformers.models import _layerwise
 
     config = type("Config", (), {"model_type": "qwen3_moe", "num_hidden_layers": 4})()
     first = _layerwise.create_layerwise_context(model_id="first", config=config, window_size=1)
@@ -2010,9 +1999,6 @@ def test_layerwise_contexts_do_not_share_window_state():
 
 @pytest.mark.llm_model
 def test_custom_loader_scoped_loading_restores_transformers_hooks():
-    import transformers
-
-    from QEfficient.transformers.models.custom_loader import CustomLoader
 
     loader = CustomLoader("dummy", layer_indices=[0])
     original_shard_fn = transformers.modeling_utils.get_checkpoint_shard_files
@@ -2031,7 +2017,6 @@ def test_custom_loader_scoped_loading_restores_transformers_hooks():
 
 @pytest.mark.llm_model
 def test_custom_loader_weight_policy_filters_layer_keys():
-    from QEfficient.transformers.models.custom_loader import WeightSelectionPolicy
 
     policy = WeightSelectionPolicy.from_layer_indices([1])
 
@@ -2044,9 +2029,6 @@ def test_custom_loader_weight_policy_filters_layer_keys():
 
 @pytest.mark.llm_model
 def test_custom_loader_meta_apis_clear_weights_from_ram():
-    from transformers.models.qwen3_moe.modeling_qwen3_moe import Qwen3MoeConfig, Qwen3MoeForCausalLM
-
-    from QEfficient.transformers.models.custom_loader import CustomLoader
 
     cfg = Qwen3MoeConfig(
         hidden_size=16,
@@ -2118,7 +2100,6 @@ def test_layerwise_safe_export_pass_patch_toggles_only_when_enabled():
 @pytest.mark.llm_model
 def test_layerwise_uses_probe_model_for_cached_export(monkeypatch, tmp_path):
     """A cached merged ONNX must avoid rebuilding per-window models."""
-    from QEfficient.transformers.models import _layerwise
 
     class DummyConfig:
         model_type = "qwen3_moe"
@@ -2157,7 +2138,6 @@ def test_layerwise_uses_probe_model_for_cached_export(monkeypatch, tmp_path):
 
 @pytest.mark.llm_model
 def test_layerwise_cache_miss_exports_all_windows(monkeypatch, tmp_path):
-    from QEfficient.transformers.models import _layerwise
 
     class DummyConfig:
         model_type = "qwen3_moe"
@@ -2179,12 +2159,7 @@ def test_layerwise_cache_miss_exports_all_windows(monkeypatch, tmp_path):
             start = _layerwise.get_layerwise_start(self.model)
             end = _layerwise.get_layerwise_end(self.model)
             exported_windows.append((start, end))
-            shard = (
-                tmp_path
-                / "onnx_layerwise_tmp"
-                / f"layer_{start}_{end}"
-                / f"model_layer_tmp_{start}_{end}.onnx"
-            )
+            shard = tmp_path / "onnx_layerwise_tmp" / f"layer_{start}_{end}" / f"model_layer_tmp_{start}_{end}.onnx"
             shard.parent.mkdir(parents=True, exist_ok=True)
             shard.touch()
             return str(shard)
@@ -2217,7 +2192,6 @@ def test_layerwise_cache_miss_exports_all_windows(monkeypatch, tmp_path):
 
 @pytest.mark.llm_model
 def test_layerwise_cleanup_removes_intermediate_dirs(tmp_path):
-    from QEfficient.transformers.models import _layerwise
 
     final_data = tmp_path / "final_data"
     onnx_tmp = tmp_path / "onnx_layerwise_tmp"
@@ -2234,7 +2208,6 @@ def test_layerwise_cleanup_removes_intermediate_dirs(tmp_path):
 
 @pytest.mark.llm_model
 def test_layerwise_cached_merged_prefers_root_layout(tmp_path):
-    from QEfficient.transformers.models import _layerwise
 
     root_merged = tmp_path / "merged_0-48.onnx"
     legacy_merged = tmp_path / "final_data" / "merged_0-48.onnx"
@@ -2303,7 +2276,6 @@ def test_layerwise_merge_renames_decoder_function_variants_without_collisions():
 
 @pytest.mark.llm_model
 def test_layerwise_materializes_root_onnx_for_final_compile(monkeypatch, tmp_path):
-    from QEfficient.transformers.models import _layerwise
 
     class DummyConfig:
         model_type = "qwen3_vl_moe"
@@ -2346,7 +2318,6 @@ def test_layerwise_materializes_root_onnx_for_final_compile(monkeypatch, tmp_pat
 
 @pytest.mark.llm_model
 def test_layerwise_cache_hit_under_final_data_is_canonicalized(monkeypatch, tmp_path):
-    from QEfficient.transformers.models import _layerwise
 
     class DummyConfig:
         model_type = "qwen3_vl_moe"
@@ -2460,7 +2431,6 @@ def test_runtime_aliases_internal_retained_state_outputs():
 
 @pytest.mark.llm_model
 def test_layerwise_compile_hydrates_outer_qpc_paths(monkeypatch, tmp_path):
-    from QEfficient.transformers.models import _layerwise
     from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
 
     qpc_path = tmp_path / "qpc"
@@ -2482,7 +2452,6 @@ def test_layerwise_compile_hydrates_outer_qpc_paths(monkeypatch, tmp_path):
 
 @pytest.mark.llm_model
 def test_layerwise_final_compile_suspends_context(monkeypatch, tmp_path):
-    from QEfficient.transformers.models import _layerwise
 
     class DummyConfig:
         model_type = "qwen3_moe"
@@ -2550,7 +2519,6 @@ def test_layerwise_compile_rejects_unsupported_model():
     # CausalLM does not expose a layerwise= kwarg today; only DualQPC VLM does.
     # So this test guards via the helper directly to make the contract explicit
     # for future surface expansion.
-    from QEfficient.transformers.models import _layerwise
 
     with pytest.raises(NotImplementedError):
         _layerwise.assert_layerwise_supported(qeff_model.model.config)
@@ -2910,7 +2878,6 @@ def _capture_layerwise_export_names(qeff_model, *, window, total_layers, export_
     care about the buffer names the export was invoked with. Window state is always
     restored in ``finally`` so context state never leaks into other tests.
     """
-    from QEfficient.transformers.models import _layerwise
 
     captured = {}
 
@@ -2950,7 +2917,6 @@ def _capture_layerwise_export_names(qeff_model, *, window, total_layers, export_
 
 
 def _tiny_qwen3_moe_causal():
-    from transformers.models.qwen3_moe.modeling_qwen3_moe import Qwen3MoeConfig, Qwen3MoeForCausalLM
 
     import QEfficient
 
@@ -3022,7 +2988,6 @@ def test_layerwise_export_with_kv_cache_prefix_subfunctions(tmp_path):
     passed. This asserts the *final transformed* per-window shard on disk carries the infix on both the
     retained-state outputs and the paired input buffers — i.e. the prefix is not lost by the transforms.
     """
-    from QEfficient.transformers.models import _layerwise
 
     qeff_model, total_layers = _tiny_qwen3_moe_causal()
     export_dir = tmp_path / "subfn_prefixed"

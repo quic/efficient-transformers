@@ -19,7 +19,6 @@ from typing import Any, Callable, Dict, Iterable, Optional, Pattern, Sequence
 import torch
 import transformers
 
-
 _LAYER_INDEX_PATTERNS = (
     re.compile(r"(?:^|\.)model\.language_model\.layers\.(\d+)\."),
     re.compile(r"(?:^|\.)language_model\.layers\.(\d+)\."),

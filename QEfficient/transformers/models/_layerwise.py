@@ -718,7 +718,9 @@ def run_layerwise(
                 random.setstate(init_rng_snapshot["python"])
                 np.random.set_state(init_rng_snapshot["numpy"])
                 torch.random.set_rng_state(init_rng_snapshot["torch"])
-                loader = CustomLoader(model_id, layer_indices=range(context.start, context.end), load_kwargs=context.load_kwargs)
+                loader = CustomLoader(
+                    model_id, layer_indices=range(context.start, context.end), load_kwargs=context.load_kwargs
+                )
                 qeff_model = loader.load_with(qeff_factory, model_id, config)
                 _attach_context_to_qeff_model(qeff_model, context)
                 return qeff_model
@@ -730,7 +732,9 @@ def run_layerwise(
     else:
 
         def _build_window_model():
-            loader = CustomLoader(model_id, layer_indices=range(context.start, context.end), load_kwargs=context.load_kwargs)
+            loader = CustomLoader(
+                model_id, layer_indices=range(context.start, context.end), load_kwargs=context.load_kwargs
+            )
             qeff_model = loader.load_with(qeff_factory, model_id, config)
             _attach_context_to_qeff_model(qeff_model, context)
             return qeff_model
