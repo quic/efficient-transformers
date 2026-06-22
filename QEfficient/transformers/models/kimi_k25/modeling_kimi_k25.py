@@ -74,16 +74,11 @@ def get_rope_shape_decorate(func):
 @get_rope_shape_decorate
 @torch.compile(dynamic=True)  # Remove this
 def get_rope_shape(org, interpolation_mode, shape):
-    return (
-        F.interpolate(
-            org.permute((2, 0, 1)).unsqueeze(0),
-            size=shape,
-            mode=interpolation_mode,
-        )
-        .squeeze(0)
-        .permute((1, 2, 0))
-        .flatten(end_dim=1)
-    )
+    return (F.interpolate(
+        org.permute((2, 0, 1)).unsqueeze(0),
+        size=shape,
+        mode=interpolation_mode,
+    ).squeeze(0).permute((1, 2, 0)).flatten(end_dim=1))
 
 
 def apply_rope(xq, xk, freqs_cis):
@@ -183,7 +178,6 @@ class QEffLearnable2DInterpPosEmbDivided_fixed(nn.Module):
                     interpolation_mode=self.interpolation_mode,
                     shape=(h, w),
                 )
-
             if t == 1:
                 pos_emb_3d = pos_emb_2d
             else:
@@ -716,7 +710,7 @@ class QEffKimiK25EncoderWrapper(nn.Module):
             image_features = self.mm_projector(image_features)
         return image_features
 
-    def forward_only_image_for_export(
+    def forward(
         self, pixel_values: torch.Tensor, h_shape: torch.Tensor, w_shape: torch.Tensor
     ) -> torch.Tensor:
         """
@@ -745,14 +739,14 @@ class QEffKimiK25EncoderWrapper(nn.Module):
         h = h_shape.shape[0]
         w = w_shape.shape[0]
 
-        target_dtype = self.vision_tower.patch_embed.proj.weight.dtype
+        target_dtype = self.model.vision_tower.patch_embed.proj.weight.dtype
         pixel_values = pixel_values.to(target_dtype)
 
         # --- Patch embedding ---
-        x = self.vision_tower.patch_embed.proj(pixel_values).view(pixel_values.size(0), -1)
+        x = self.model.vision_tower.patch_embed.proj(pixel_values).view(pixel_values.size(0), -1)
 
         # Positional embedding (single image, t=1)
-        pos_emb_module = self.vision_tower.patch_embed.pos_emb
+        pos_emb_module = self.model.vision_tower.patch_embed.pos_emb
         pos_emb_2d = _get_rope_shape(
             pos_emb_module.weight,
             interpolation_mode=pos_emb_module.interpolation_mode,
@@ -769,18 +763,18 @@ class QEffKimiK25EncoderWrapper(nn.Module):
 
         # RoPE frequencies for single image (stacked real/imag to avoid complex tensors in ONNX)
         # Shape: (2, num_tokens, dim//2) where [0]=cos, [1]=sin
-        rope_2d = self.vision_tower.encoder.rope_2d
+        rope_2d = self.model.vision_tower.encoder.rope_2d
         freqs_cos = rope_2d.freqs_cos[:h, :w].reshape(-1, rope_2d.dim // 2)
         freqs_sin = rope_2d.freqs_sin[:h, :w].reshape(-1, rope_2d.dim // 2)
         freqs_cis = torch.stack([freqs_cos, freqs_sin], dim=0)
 
-        for block in self.vision_tower.encoder.blocks:
+        for block in self.model.vision_tower.encoder.blocks:
             x = block(x, cu_seqlens, max_seqlen, rope_freqs_cis=freqs_cis)
 
-        x = self.vision_tower.encoder.final_layernorm(x)
+        x = self.model.vision_tower.encoder.final_layernorm(x)
 
         # --- tpool_patch_merger (single image, t=1) ---
-        merge_kernel_size = self.vision_tower.merge_kernel_size
+        merge_kernel_size = self.model.vision_tower.merge_kernel_size
         kernel_height, kernel_width = merge_kernel_size
         d_model = x.size(-1)
         new_height = h // kernel_height
@@ -790,7 +784,7 @@ class QEffKimiK25EncoderWrapper(nn.Module):
         merged = reshaped.view(new_height * new_width, kernel_height * kernel_width, -1)
 
         # --- mm_projector (PatchMergerMLP on single tensor) ---
-        image_embeds = self.mm_projector.proj(self.mm_projector.pre_norm(merged).view(merged.shape[0], -1))
+        image_embeds = self.model.mm_projector.proj(self.model.mm_projector.pre_norm(merged).view(merged.shape[0], -1))
         return image_embeds
 
 
@@ -799,7 +793,7 @@ class QEffKimiK25DecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.language_model = self.model.language_model
-        # self.language_model = QEffDeepseekV3ForCausalLM#(config.text_config)
+        self.lm_head = self.language_model.lm_head
         self.config = self.model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
@@ -814,41 +808,50 @@ class QEffKimiK25DecoderWrapper(nn.Module):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        image_embeds: Optional[torch.FloatTensor] = None,
+        image_idx: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         compressed_kvs: Optional[List[torch.FloatTensor]] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
         batch_index: Optional[torch.LongTensor] = None,
-        image_embeds: Optional[List[torch.FloatTensor]] = None,
-        # inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
+        comp_ctx_lengths: Optional[List[int]] = None,
         use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-        num_logits_to_keep: int = 0,
         **kwargs,
-    ) -> Union[Tuple, CausalLMOutputWithPast]:
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+    ) -> Tuple:
+        del labels, output_attentions, output_hidden_states, return_dict, cache_position, num_logits_to_keep
+        if inputs_embeds is None:
+            inputs_embeds = self.model.get_input_embeddings()(input_ids)
+
+        if image_idx is None:
+            image_idx = torch.zeros((1, 1), dtype=torch.int64, device=inputs_embeds.device)
+
+        if image_embeds is not None and input_ids is not None and input_ids.shape[1] != 1:
+            if image_embeds.dim() == 2:
+                image_embeds = image_embeds.unsqueeze(0)
+
+            image_embeds = image_embeds.to(device=inputs_embeds.device, dtype=inputs_embeds.dtype)
+            _, _, hidden_size = inputs_embeds.shape
+            selected = input_ids == self.config.media_placeholder_token_id
+            indices1 = selected.to(torch.int64).cumsum(1) - 1
+            indices1 = torch.where(indices1 != -1, indices1 + image_idx.to(indices1.device), indices1)
+            indices0 = torch.arange(selected.shape[0], device=selected.device).view(-1, 1)
+            safe_indices1 = torch.where(indices1 < 0, torch.zeros_like(indices1), indices1)
+            image_features_expanded = image_embeds.reshape(-1, hidden_size).unsqueeze(0)[indices0, safe_indices1]
+            image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
+            inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
+            image_idx = (indices1.max() + 1).reshape(1, 1)
 
         outputs = self.model.language_model(
-            input_ids=input_ids,
+            inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             position_ids=position_ids,
             compressed_kvs=compressed_kvs,
             past_key_values=past_key_values,
             batch_index=batch_index,
-            inputs_embeds=image_embeds,  # inputs_embeds,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            cache_position=cache_position,
+            comp_ctx_lengths=comp_ctx_lengths,
+            use_cache=True if use_cache is None else use_cache,
             **kwargs,
         )
 
@@ -858,25 +861,8 @@ class QEffKimiK25DecoderWrapper(nn.Module):
         logits = self.lm_head(hidden_states).float()
 
         loss = None
-        if labels is not None:
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            loss_fct = nn.CrossEntropyLoss()
-            shift_logits = shift_logits.view(-1, self.config.vocab_size)
-            shift_labels = shift_labels.view(-1).to(shift_logits.device)
-            loss = loss_fct(shift_logits, shift_labels)
-
-        if not return_dict:
-            output = (logits,) + outputs[1:]
-            return (loss,) + output if loss is not None else output
-
-        return CausalLMOutputWithPast(
-            loss=loss,
-            logits=logits,
-            past_key_values=outputs.past_key_values,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
+        output = (logits,) + outputs[1:]
+        return logits, image_embeds, image_idx, outputs.compressed_kvs, outputs.past_key_values
 
 
 # ref https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/llava/modeling_llava.py#L240

@@ -21,6 +21,8 @@ from transformers import AutoConfig, AutoProcessor, AutoTokenizer
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.utils import import_utils as hf_import_utils
 
+from QEfficient import QEFFAutoModelForImageTextToText
+
 
 MODEL_PATH = Path(
     "/home/huggingface_hub/models--moonshotai--Kimi-K2.5/snapshots/4d01dfe0332d63057c186e0b262165819efb6611"
@@ -405,6 +407,133 @@ def main():
             str(args.model_path), trust_remote_code=True, local_files_only=args.local_files_only
         )
         print(f"Processor type: {type(processor).__name__}")
+    
+    mla_absorption = {"cache_compressed": True, "absorption": False, "online": False}
+    qaic_config = {
+        "mla_absorption": mla_absorption
+    }  # , "enable_blocking": True, "blocking_mode": "par", "par_num_split": 4, "num_kv_blocks": 8}
+
+    qeff_model = QEFFAutoModelForImageTextToText(model)  # , qaic_config=qaic_config)
+
+    skip_vision = False
+
+    if skip_vision:
+        ## TEXT-ONLY MODE ##
+
+        ## STEP 3: Compile Model for Text-Only Execution
+        # Set skip_vision=True to bypass image processing
+        qeff_model.compile(
+            qaic_config=qaic_config,
+            prefill_seq_len=32,
+            ctx_len=1024,
+            num_cores=16,
+            num_devices=2,
+            mxfp6_matmul=False,
+            mxint8_kv_cache=False,
+            aic_enable_depth_first=False,
+            skip_vision=True,  # Skip vision encoder for text-only inference
+            mos=1,
+            num_patches=2400,  # num_patches
+            h=30,  # h
+            w=80,  # w
+            num_image_tokens=600,  # num_image_tokens
+        )
+        breakpoint()
+        ## STEP 4: Prepare Text-Only Input
+        # Create a text-only message without any image
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Tell me about yourself."},
+                ],
+            },
+        ]
+
+        ## STEP 5: Process Input with Chat Template
+        inputs = processor.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        )
+
+        ## STEP 6: Run Text-Only Inference
+        streamer = TextStreamer(tokenizer)
+        output = qeff_model.generate(inputs=inputs, device_ids=[0, 1], generation_len=10)
+
+        ## STEP 7: Display Results
+        print(output.generated_ids)
+        print(tokenizer.batch_decode(output.generated_ids))
+        print(output)
+
+    else:
+        ## VISION + TEXT MODE ##
+
+        ## STEP 3: Compile Model for Vision+Text Execution
+        # Do not set skip_vision (defaults to False) to enable image processing
+        qeff_model.compile(
+            qaic_config=qaic_config,
+            prefill_seq_len=1,
+            ctx_len=1024,
+            num_cores=16,
+            num_devices=2,
+            mxfp6_matmul=False,
+            mxint8_kv_cache=False,
+            aic_enable_depth_first=False,
+            #skip_vision=True,  # Skip vision encoder for text-only inference
+            mos=1,
+            num_patches=2400,  # num_patches
+            h=30,  # h
+            w=80,  # w
+            num_image_tokens=600,  # num_image_tokens
+        )
+
+        breakpoint()
+        ## STEP 4: Prepare Image and Text Input
+        # Define the image URL to process
+        image_url = "https://huggingface.co/moonshotai/Kimi-K2.5/resolve/main/figures/kimi-logo.png"
+        image = Image.open(BytesIO(requests.get(args.image_url).content)).convert("RGB")
+
+        # Create a message with both image and text
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "url": image},
+                    {"type": "text", "text": "Can you describe the image in detail."},
+                ],
+            },
+        ]
+
+        ## STEP 5: Process Input with Chat Template
+        """inputs = processor.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        )
+        """
+        inputs = processor(
+            messages=messages,
+            add_generation_prompt=True,
+            tokenize=False,
+            return_tensors="pt",
+        )
+        # Convert pixel values to float32 for processing
+        inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
+
+        ## STEP 6: Run Vision+Text Inference
+        streamer = TextStreamer(tokenizer)
+        output = qeff_model.generate(inputs=inputs, device_ids=[0, 1], generation_len=100)
+
+        ## STEP 7: Display Results
+        print(output.generated_ids)
+        print(tokenizer.batch_decode(output.generated_ids))
+        print(output)
+
 
 
 if __name__ == "__main__":
