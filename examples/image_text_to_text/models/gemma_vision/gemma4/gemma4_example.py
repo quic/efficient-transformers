@@ -47,7 +47,7 @@ compiler_kwargs = {
     "MXINT8_KV_CACHE": True,
     "AIC_ENABLE_DEPTH_FIRST": True,
     "MOS": 1,
-    "USE_ONNX_SUBFUNCTIONS": False,
+    "USE_ONNX_SUBFUNCTIONS": True,
     "split_model_io": True,
     "BATCH_SIZE": BS,
     "node_precision_info": NODE_PRECISION_INFO,
