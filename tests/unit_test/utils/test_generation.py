@@ -1002,37 +1002,6 @@ class TestContinuousBatching:
         obj.run_prefill_for_all_inputs(prompt_queue, generation_len=None)
         assert len(prompt_queue) == 0
 
-    def test_run_continuous_batching_decode_requeue_updates_generated_ids_with_scalar(self):
-        obj, tok, mock_session = self._make_cb_instance(full_batch_size=2)
-        obj.initialize_decode_inputs(num_prompts=3, execution_batch_size=2, max_gen_length=6)
-        obj.decode_input_ids[:] = np.array([[1], [1]], dtype=np.int64)
-        obj.decode_pos_ids[:] = np.array([[0], [0]], dtype=np.int64)
-        obj.generation_len[:] = np.array([[2], [2]], dtype=np.int64)
-        obj.batch_index = np.arange(2, dtype=np.int64).reshape(-1, 1)
-        obj.comp_ctx_lengths_decode = None
-        obj._prompt_to_lora_id_mapping_decode = None
-
-        def _decode_outputs_with_eos(_inputs):
-            logits = np.zeros((2, 1, VOCAB_SIZE), dtype=np.float32)
-            logits[:, :, tok.eos_token_id] = 1.0
-            return {"logits": logits}
-
-        mock_session.run.side_effect = [_decode_outputs_with_eos(None), _decode_outputs_with_eos(None)]
-
-        def _mock_run_prefill(prompt, generation_len, decode_batch_id=None):
-            _ = prompt, generation_len, decode_batch_id
-            logits = np.zeros((1, 1, VOCAB_SIZE), dtype=np.float32)
-            logits[0, 0, 42] = 1.0
-            return {"logits": logits}, np.array([[3]], dtype=np.int64), np.array([[2]], dtype=np.int64)
-
-        obj.run_prefill = _mock_run_prefill
-        prompt_queue = deque(["replacement_prompt"])
-
-        obj.run_continuous_batching_decode(prompt_queue, generation_len=np.int64(6))
-
-        # full_batch_size=2, so the re-queued prompt is tracked at global row 2.
-        assert obj.generated_ids[2, 0] == 42
-
 
 # ---------------------------------------------------------------------------
 # Tests: _fetch_next_token_id

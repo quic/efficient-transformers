@@ -36,9 +36,6 @@ def prefix_caching_inference(model_name, qpc_path):
 
     generator = TextGeneration(tokenizer=tokenizer, qpc_path=qpc_path, full_batch_size=2, ctx_len=256)
 
-    def _extract_token(step_tokens, batch_index):
-        return int(np.asarray(step_tokens[batch_index]).reshape(-1)[-1])
-
     prompts = [pref + suff for pref, suff in zip(prefixes, suffixes1)]
 
     # generation for batch_indices = 0, 1
@@ -74,7 +71,7 @@ def prefix_caching_inference(model_name, qpc_path):
 
     generation_outputs = []
     for i in range(gen_len2):
-        generation_outputs.append(decode_inputs["input_ids"].copy())
+        generation_outputs.append(decode_inputs["input_ids"])
         outputs = generator._qaic_model._session.run(decode_inputs)
         logits = outputs["logits"]
         if len(logits.shape) == 2:
@@ -84,8 +81,8 @@ def prefix_caching_inference(model_name, qpc_path):
         decode_inputs["input_ids"] = next_token_id
         decode_inputs["position_ids"] += 1
 
-    assert np.all(generator._qaic_model.generated_ids[0, :gen_len2] == [_extract_token(val, 0) for val in generation_outputs])
-    assert np.all(generator._qaic_model.generated_ids[1, :gen_len2] == [_extract_token(val, 1) for val in generation_outputs])
+    assert np.all(generator._qaic_model.generated_ids[0, :gen_len2] == [int(val[0]) for val in generation_outputs])
+    assert np.all(generator._qaic_model.generated_ids[1, :gen_len2] == [int(val[1]) for val in generation_outputs])
 
     ##############################
     # Now rerun with cached prefix on 0th index with prompt3 and use -1 for 1st index
@@ -171,7 +168,7 @@ def prefix_caching_inference(model_name, qpc_path):
 
     generation_outputs_prefill_cached = []
     for i in range(max_gen_len):
-        generation_outputs_prefill_cached.append(decode_inputs["input_ids"].copy())
+        generation_outputs_prefill_cached.append(decode_inputs["input_ids"])
         outputs = generator._qaic_model._session.run(decode_inputs)
         logits = outputs["logits"]
         if len(logits.shape) == 2:
@@ -182,8 +179,7 @@ def prefix_caching_inference(model_name, qpc_path):
         decode_inputs["position_ids"][1][0] += 1
 
     assert np.all(
-        prompts_exec_info.generated_ids[1][:247]
-        == [_extract_token(val, 1) for val in generation_outputs_prefill_cached][:247]
+        prompts_exec_info.generated_ids[1][:247] == [int(val[1]) for val in generation_outputs_prefill_cached][:247]
     )
 
 
