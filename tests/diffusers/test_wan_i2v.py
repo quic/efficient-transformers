@@ -10,6 +10,7 @@ Test for WAN Image-to-Video pipeline
          2. See if we reduce height and width
 """
 
+import gc
 import time
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -40,6 +41,20 @@ from tests.diffusers.diffusers_utils import (
 CONFIG_PATH = "tests/diffusers/wan_i2v_test_config.json"
 INITIAL_TEST_CONFIG = load_json(CONFIG_PATH)
 TEST_SEED = 42
+
+
+def _cleanup_pipeline_qpc_sessions(pipeline) -> None:
+    """Best-effort teardown for QAIC sessions held by diffusion test modules."""
+    for module_obj in getattr(pipeline, "modules", {}).values():
+        qpc_session = getattr(module_obj, "qpc_session", None)
+        if qpc_session is None:
+            continue
+        try:
+            qpc_session.deactivate()
+        except Exception:
+            pass
+        module_obj.qpc_session = None
+    gc.collect()
 
 
 def prepare_test_image_with_dynamic_sizing(pipeline, config):
@@ -450,7 +465,7 @@ def wan_i2v_pipeline_call_with_mad_validation(
     )
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def wan_i2v_pipeline():
     """Build the WAN I2V pipeline with random weights/dummy config."""
     torch.manual_seed(TEST_SEED)
@@ -510,7 +525,11 @@ def wan_i2v_pipeline():
     pipeline.vae_encoder.model = copy.deepcopy(shared_vae)
     pipeline.vae_decoder.model = copy.deepcopy(shared_vae)
 
-    return pipeline, pytorch_pipeline
+    pipeline_data = (pipeline, pytorch_pipeline)
+    try:
+        yield pipeline_data
+    finally:
+        _cleanup_pipeline_qpc_sessions(pipeline_data[0])
 
 
 @pytest.mark.diffusion_models

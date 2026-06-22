@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import gc
 import os
 import time
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -34,6 +35,20 @@ from tests.diffusers.diffusers_utils import (
 CONFIG_PATH = "tests/diffusers/flux_test_config.json"
 INITIAL_TEST_CONFIG = load_json(CONFIG_PATH)
 TEST_SEED = 42
+
+
+def _cleanup_pipeline_qpc_sessions(pipeline) -> None:
+    """Best-effort teardown for QAIC sessions held by diffusion test modules."""
+    for module_obj in getattr(pipeline, "modules", {}).values():
+        qpc_session = getattr(module_obj, "qpc_session", None)
+        if qpc_session is None:
+            continue
+        try:
+            qpc_session.deactivate()
+        except Exception:
+            pass
+        module_obj.qpc_session = None
+    gc.collect()
 
 
 def flux_pipeline_call_with_mad_validation(
@@ -388,14 +403,22 @@ def _build_flux_pipeline(enable_first_block_cache: bool = False):
     return pipeline, pytorch_pipeline
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def flux_pipeline():
-    return _build_flux_pipeline(enable_first_block_cache=False)
+    pipeline_data = _build_flux_pipeline(enable_first_block_cache=False)
+    try:
+        yield pipeline_data
+    finally:
+        _cleanup_pipeline_qpc_sessions(pipeline_data[0])
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def flux_pipeline_first_block_cache():
-    return _build_flux_pipeline(enable_first_block_cache=True)
+    pipeline_data = _build_flux_pipeline(enable_first_block_cache=True)
+    try:
+        yield pipeline_data
+    finally:
+        _cleanup_pipeline_qpc_sessions(pipeline_data[0])
 
 
 def _run_flux_pipeline_test_case(
