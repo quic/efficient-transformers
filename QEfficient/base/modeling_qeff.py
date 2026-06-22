@@ -895,7 +895,7 @@ class QEFFBaseModel(ABC):
                     kv_cache_prefix=kv_cache_prefix,
                     **compiler_options,
                 )
-        if is_layerwise_active(self.model):
+        if is_layerwise_active(getattr(self, "model", None)):
             if onnx_path is None:
                 return None
             onnx_path = Path(onnx_path)
