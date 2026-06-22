@@ -1599,7 +1599,8 @@ def test_moe_prefill_transform_does_not_require_enable_chunking():
     )
 
 
-def test_layerwise_matches_default_path_for_qwen3_moe():
+@pytest.mark.parametrize("continuous_batching", [False, True], ids=["no_continuous_batching", "continuous_batching"])
+def test_layerwise_matches_default_path_for_qwen3_moe(continuous_batching):
     """Without-layerwise and with-layerwise forwards must produce identical output.
     This is the core backward-compatibility contract: running every decoder layer
     in a single forward (default path) must match running the same layers one
@@ -1627,7 +1628,8 @@ def test_layerwise_matches_default_path_for_qwen3_moe():
     )
     torch.manual_seed(0)
     hf = Qwen3MoeForCausalLM(cfg).eval()
-    qeff_model = QEfficient.QEFFAutoModelForCausalLM(hf, continuous_batching=False)
+    qeff_model = QEfficient.QEFFAutoModelForCausalLM(hf, continuous_batching=continuous_batching)
+    assert qeff_model.continuous_batching is continuous_batching
     inner = qeff_model.model.model
 
     B, S, ctx, num_layers = 1, 8, 16, cfg.num_hidden_layers
@@ -1678,7 +1680,8 @@ def test_layerwise_matches_default_path_for_qwen3_moe():
 
 
 @pytest.mark.llm_model
-def test_layerwise_matches_default_path_for_qwen3_5_moe():
+@pytest.mark.parametrize("continuous_batching", [False, True], ids=["no_continuous_batching", "continuous_batching"])
+def test_layerwise_matches_default_path_for_qwen3_5_moe(continuous_batching):
     """Qwen3.5-MoE decoder wrapper must preserve logits with layerwise windows."""
     import QEfficient
     from QEfficient.transformers.models import _layerwise
@@ -1690,10 +1693,12 @@ def test_layerwise_matches_default_path_for_qwen3_5_moe():
         LAYERWISE_TINY_MODEL_IDS["qwen3_5_moe"],
         attn_implementation="eager",
         kv_offload=True,
+        continuous_batching=continuous_batching,
         config=config,
         dtype=torch.float32,
         layerwise=False,
     )
+    assert qeff_model.continuous_batching is continuous_batching
     wrapper = qeff_model.model.get_qeff_language_decoder().eval()
     lang_inputs = qeff_model.model.get_dummy_inputs(kv_offload=True)["lang"]
     lang_inputs["input_ids"][0, 0] = qeff_model.model.config.image_token_id
@@ -1731,7 +1736,8 @@ def test_layerwise_matches_default_path_for_qwen3_5_moe():
 
 
 @pytest.mark.llm_model
-def test_layerwise_matches_default_path_for_qwen3_vl_moe():
+@pytest.mark.parametrize("continuous_batching", [False, True], ids=["no_continuous_batching", "continuous_batching"])
+def test_layerwise_matches_default_path_for_qwen3_vl_moe(continuous_batching):
     """Qwen3-VL-MoE decoder wrapper must preserve logits with layerwise windows."""
     import QEfficient
     from QEfficient.transformers.models import _layerwise
@@ -1747,10 +1753,12 @@ def test_layerwise_matches_default_path_for_qwen3_vl_moe():
         model_id,
         attn_implementation="eager",
         kv_offload=True,
+        continuous_batching=continuous_batching,
         config=config,
         dtype=torch.float32,
         layerwise=False,
     )
+    assert qeff_model.continuous_batching is continuous_batching
     wrapper = qeff_model.model.get_qeff_language_decoder().eval()
     lang_inputs = qeff_model.model.get_dummy_inputs(kv_offload=True)["lang"]
 
