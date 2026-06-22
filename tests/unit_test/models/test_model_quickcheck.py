@@ -2529,6 +2529,7 @@ def test_layerwise_supported_guard_accepts_all_supported(arch, model_id):
     assert arch in resolved or resolved.startswith(arch)
 
 
+
 @pytest.mark.llm_model
 def test_layerwise_off_does_not_set_env_var(tmp_path):
     """Backward compat: layerwise must be controlled purely via the API,
