@@ -1300,7 +1300,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             self.hash_params["prefill_only"] = False
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
-   
         if QEfficient.base.modeling_qeff.QEFFBaseModel._layerwise_active:
             return self._export_layerwise(
                 inputs,
@@ -1611,7 +1610,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             offload_pt_weights = False  # to keep weight for decode onnx
         else:
             offload_pt_weights = kwargs.get("offload_pt_weights", True)
-        
+
         if not skip_lang:
             self.lang_model.export(
                 inputs["lang"],
