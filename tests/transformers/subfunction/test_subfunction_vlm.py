@@ -7,6 +7,7 @@
 
 import json
 import os
+from io import BytesIO
 from typing import Optional
 
 import onnx
@@ -32,6 +33,19 @@ with open(CONFIG_PATH, "r") as f:
 
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
+
+
+def _load_image_with_fallback(img_url: str) -> Image.Image:
+    """Load test image from URL; fallback to deterministic synthetic image on transient fetch failures."""
+    try:
+        response = requests.get(img_url, timeout=20)
+        response.raise_for_status()
+        image = Image.open(BytesIO(response.content))
+        image.load()
+        return image.convert("RGB")
+    except Exception as exc:
+        print(f"WARNING: Failed to fetch test image from {img_url}. Using synthetic fallback image. Error: {exc}")
+        return Image.new("RGB", (536, 354), color=(127, 127, 127))
 
 
 def has_QwenLayer_function(onnx_path):
@@ -66,7 +80,7 @@ def check_image_text_to_text_subfunction_core(
         config=config,
     )
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-    image = Image.open(requests.get(img_url, stream=True).raw)
+    image = _load_image_with_fallback(img_url)
     conversation = [
         {
             "role": "user",
