@@ -133,9 +133,9 @@ class QEffWhisperAttention(WhisperAttention):
                 attention_mask = None
             else:
                 # updated to use torch.where, to prevent overflow in fp16 computation
-                attn_weights = torch.where(
-                    attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-                )
+                mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
+
+                attn_weights = torch.where(attention_mask, mask_value, attn_weights)
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
 
