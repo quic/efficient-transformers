@@ -374,7 +374,7 @@ def main():
     else:
         raise ValueError("Pass both --num-vision-layers and --num-text-layers to load a layer subset.")
 
-    qaic_config = {"mla_absorption": {"cache_compressed": True, "absorption": False, "online": False}}
+    # qaic_config = {"mla_absorption": {"cache_compressed": True, "absorption": False, "online": False}}
 
     qeff_model = QEFFAutoModelForImageTextToText(model)
 
@@ -386,7 +386,7 @@ def main():
         ## STEP 3: Compile Model for Text-Only Execution
         # Set skip_vision=True to bypass image processing
         qeff_model.compile(
-            qaic_config=qaic_config,
+            # qaic_config=qaic_config,
             prefill_seq_len=1,
             ctx_len=1024,
             num_cores=16,
@@ -435,7 +435,7 @@ def main():
         ## STEP 3: Compile Model for Vision+Text Execution
         # Do not set skip_vision (defaults to False) to enable image processing
         qeff_model.compile(
-            qaic_config=qaic_config,
+            # qaic_config=qaic_config,
             prefill_seq_len=1,
             ctx_len=1024,
             num_cores=16,
@@ -443,7 +443,7 @@ def main():
             mxfp6_matmul=False,
             mxint8_kv_cache=False,
             aic_enable_depth_first=False,
-            #skip_lang=True,
+            # skip_lang=True,
             mos=1,
             num_patches=2400,  # num_patches
             h=30,  # h
@@ -451,7 +451,7 @@ def main():
             num_image_tokens=600,  # num_image_tokens
         )
 
-        #exit()
+        # exit()
         ## STEP 4: Prepare Image and Text Input
         image = Image.open(BytesIO(requests.get(args.image_url).content)).convert("RGB")
 

@@ -17,11 +17,6 @@ import numpy as np
 import onnxruntime as ort
 import requests
 import torch
-from PIL import Image
-from transformers.dynamic_module_utils import get_class_from_dynamic_module
-
-from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.transformers.models.modeling_auto import QEffVisionEncoderForTextImageToTextModel
 from export_kimi_k25_vision import (
     LOADED_EXPERT_IDS,
     MODEL_PATH,
@@ -34,10 +29,17 @@ from export_kimi_k25_vision import (
     _patch_kimi_tie_weights_compat,
     _prepare_config,
 )
+from PIL import Image
+from transformers.dynamic_module_utils import get_class_from_dynamic_module
+
+from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.transformers.models.modeling_auto import QEffVisionEncoderForTextImageToTextModel
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Verify Kimi K2.5 vision parity: HF PyTorch vs QEff PyTorch vs ONNXRuntime.")
+    parser = argparse.ArgumentParser(
+        description="Verify Kimi K2.5 vision parity: HF PyTorch vs QEff PyTorch vs ONNXRuntime."
+    )
     parser.add_argument("--model-path", type=Path, default=MODEL_PATH)
     parser.add_argument("--num-vision-layers", type=int, default=NUM_VISION_LAYERS)
     parser.add_argument("--num-text-layers", type=int, default=NUM_TEXT_LAYERS)
@@ -56,7 +58,9 @@ def parse_args():
         action="store_true",
         help="Keep exported ONNX under ./aisand/onnx_export_verify instead of temp directory.",
     )
-    parser.add_argument("--run-qpc", action="store_true", help="Compile and execute QPC, then compare QPC output vs HF.")
+    parser.add_argument(
+        "--run-qpc", action="store_true", help="Compile and execute QPC, then compare QPC output vs HF."
+    )
     parser.add_argument(
         "--qaic-compile-bin",
         type=str,
@@ -261,9 +265,6 @@ if __name__ == "__main__":
         all_ok = all_ok and hf_vs_qpc["allclose"] and qeff_vs_qpc["allclose"] and ort_vs_qpc["allclose"]
 
     if not all_ok:
-        raise SystemExit(
-            f"Parity check failed for atol={atol}, rtol={rtol}. "
-            f"See metrics above for details."
-        )
+        raise SystemExit(f"Parity check failed for atol={atol}, rtol={rtol}. See metrics above for details.")
 
-    #print(f"PASS: requested parity checks match within atol={args.atol}, rtol={args.rtol}")
+    print("Parity check passed.")

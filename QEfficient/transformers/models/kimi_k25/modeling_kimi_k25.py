@@ -858,15 +858,8 @@ class QEffKimiK25DecoderWrapper(nn.Module):
         batch_index: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
         use_cache: Optional[bool] = None,
-        labels: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
-        num_logits_to_keep: Optional[int] = None,
         **kwargs,
     ) -> Tuple:
-        del labels, output_attentions, output_hidden_states, return_dict, cache_position, num_logits_to_keep
         if inputs_embeds is None:
             inputs_embeds = self.model.get_input_embeddings()(input_ids)
 
@@ -901,16 +894,8 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             **kwargs,
         )
 
-        hidden_states = outputs[0]
-        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        max_index = hidden_states.shape[1] - 1
-        safe_logit_index = torch.clamp(logit_index, min=0, max=max_index)
-        hidden_states = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), safe_logit_index]
-
-        if hidden_states.shape[-1] == self.lm_head.in_features:
-            logits = self.lm_head(hidden_states).float()
-        else:
-            logits = hidden_states.float()
+        # QEff Deepseek language_model.forward already returns final logits.
+        logits = outputs[0].float()
 
         output_compressed_kvs = getattr(outputs, "compressed_kvs", None)
         output_past_key_values = getattr(outputs, "past_key_values", None)
