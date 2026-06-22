@@ -54,10 +54,11 @@ def eager_attention_forward(
         v = v.reshape(B, num_q_heads, S, D)
 
     attn_weights = torch.matmul(q, k.transpose(2, 3)) * scale_factor
+    mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=k.dtype)
+
     if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=k.dtype), attn_weights
-        )
+        # Apply the attention mask
+        attn_weights = torch.where(attention_mask, mask_value, attn_weights)
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
     attn_output = torch.matmul(attn_weights, v)
