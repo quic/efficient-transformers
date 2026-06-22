@@ -24,7 +24,6 @@ from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-
 MODEL_PATH = Path(
     "/home/huggingface_hub/models--moonshotai--Kimi-K2.5/snapshots/4d01dfe0332d63057c186e0b262165819efb6611"
 )

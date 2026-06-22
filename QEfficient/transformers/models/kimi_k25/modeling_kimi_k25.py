@@ -35,7 +35,6 @@ except ImportError:
 from transformers.activations import PytorchGELUTanh
 from transformers.cache_utils import Cache
 from transformers.configuration_utils import PretrainedConfig
-from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 from transformers.models.llava.modeling_llava import LlavaCausalLMOutputWithPast
 
@@ -72,13 +71,17 @@ def get_rope_shape_decorate(func):
 
 
 @get_rope_shape_decorate
-
 def get_rope_shape(org, interpolation_mode, shape):
-    return (F.interpolate(
-        org.permute((2, 0, 1)).unsqueeze(0),
-        size=shape,
-        mode=interpolation_mode,
-    ).squeeze(0).permute((1, 2, 0)).flatten(end_dim=1))
+    return (
+        F.interpolate(
+            org.permute((2, 0, 1)).unsqueeze(0),
+            size=shape,
+            mode=interpolation_mode,
+        )
+        .squeeze(0)
+        .permute((1, 2, 0))
+        .flatten(end_dim=1)
+    )
 
 
 def apply_rope(xq, xk, freqs_cis):
@@ -737,9 +740,7 @@ class QEffKimiK25EncoderWrapper(nn.Module):
             image_features = self.mm_projector(image_features)
         return image_features
 
-    def forward(
-        self, pixel_values: torch.Tensor, h_shape: torch.Tensor, w_shape: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, pixel_values: torch.Tensor, h_shape: torch.Tensor, w_shape: torch.Tensor) -> torch.Tensor:
         """
         ONNX-exportable forward that runs only the vision tower and mm_projector.
         Uses h_shape and w_shape (int64 ones tensors of length h and w respectively)

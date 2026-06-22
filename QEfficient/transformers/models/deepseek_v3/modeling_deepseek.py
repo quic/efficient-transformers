@@ -785,7 +785,6 @@ class QEffDeepseekV3MoE(nn.Module):
     def __qeff_init__(
         self,
     ):
-        #breakpoint()
         self.all_gate_proj = torch.nn.Parameter(
             torch.cat(
                 [_get_linear_weight(exp.gate_proj).T.unsqueeze(0) for exp in self.experts],
@@ -803,7 +802,7 @@ class QEffDeepseekV3MoE(nn.Module):
                 dim=0,
             )
         )
-        
+
         self.act_fn = self.experts[0].act_fn
 
     def moe(

@@ -12,9 +12,12 @@ import json
 import re
 import sys
 import tempfile
+from io import BytesIO
 from pathlib import Path
 
+import requests
 import torch
+from PIL import Image
 from safetensors import safe_open
 from safetensors.torch import save_file
 from transformers import AutoConfig, AutoProcessor, AutoTokenizer
@@ -22,7 +25,6 @@ from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.utils import import_utils as hf_import_utils
 
 from QEfficient import QEFFAutoModelForImageTextToText
-
 
 MODEL_PATH = Path(
     "/home/huggingface_hub/models--moonshotai--Kimi-K2.5/snapshots/4d01dfe0332d63057c186e0b262165819efb6611"
@@ -193,7 +195,9 @@ def _build_layer_subset_config(config, num_vision_layers, num_text_layers, loade
     return stripped_config, loaded_expert_ids
 
 
-def _materialize_subset_checkpoint(model_path: Path, temp_model_path: Path, weight_map, allowed_prefixes, loaded_expert_ids):
+def _materialize_subset_checkpoint(
+    model_path: Path, temp_model_path: Path, weight_map, allowed_prefixes, loaded_expert_ids
+):
     expert_index_map = {expert_id: remapped_idx for remapped_idx, expert_id in enumerate(loaded_expert_ids)}
     shard_to_entries = {}
     for checkpoint_key, source_shard_name in weight_map.items():
@@ -235,7 +239,6 @@ def _load_layer_subset_model(
     num_text_layers: int,
     loaded_expert_ids,
     num_experts_per_tok: int,
-    local_files_only: bool,
     dtype,
 ):
     checkpoint_index = json.loads((model_path / "model.safetensors.index.json").read_text())
@@ -261,7 +264,9 @@ def _load_layer_subset_model(
         (temp_model_path / "model.safetensors.index.json").write_text(
             json.dumps(
                 {
-                    "metadata": {"total_size": sum((temp_model_path / shard_name).stat().st_size for shard_name in subset_shards)},
+                    "metadata": {
+                        "total_size": sum((temp_model_path / shard_name).stat().st_size for shard_name in subset_shards)
+                    },
                     "weight_map": filtered_weight_map,
                 }
             )
@@ -271,7 +276,6 @@ def _load_layer_subset_model(
             "config": stripped_config,
             "trust_remote_code": True,
             "attn_implementation": "eager",
-            "local_files_only": local_files_only,
             "output_loading_info": True,
         }
         if dtype is not None:
@@ -292,63 +296,37 @@ def _load_layer_subset_model(
             "Failed to load the stripped Kimi K2.5 checkpoint slice cleanly. "
             f"missing={missing_keys}, unexpected={unexpected_keys}, mismatched={mismatched_keys}"
         )
+    model.eval()
+    tokenizer = AutoTokenizer.from_pretrained(str(model_path), trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(str(model_path), trust_remote_code=True)
 
-    return model
+    print(f"Loaded model: {type(model).__name__}")
+    print(f"Tokenizer vocab size: {tokenizer.vocab_size}")
+    print(f"Processor type: {type(processor).__name__}")
+
+    return model, tokenizer, processor
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Load Kimi K2.5 with runtime compatibility for transformers==5.5.4.")
     parser.add_argument("--model-path", type=Path, default=MODEL_PATH)
-    parser.add_argument("--local-files-only", action="store_true", help="Only read from local cache/files.")
     parser.add_argument(
         "--full-model",
         action="store_true",
         help="Load the full model. By default, the script loads a small layer subset for faster startup.",
     )
-    parser.add_argument(
-        "--num-vision-layers",
-        type=int,
-        default=NUM_VISION_LAYERS,
-        help=(
-            "Load only the first N vision layers. "
-            f"Defaults to {NUM_VISION_LAYERS} for faster startup. Ignored when --full-model is set."
-        ),
-    )
-    parser.add_argument(
-        "--num-text-layers",
-        type=int,
-        default=NUM_TEXT_LAYERS,
-        help=(
-            "Load only the first N text layers. "
-            f"Defaults to {NUM_TEXT_LAYERS} for faster startup. Ignored when --full-model is set."
-        ),
-    )
+    parser.add_argument("--num-vision-layers", type=int, default=NUM_VISION_LAYERS)
+    parser.add_argument("--num-text-layers", type=int, default=NUM_TEXT_LAYERS)
     parser.add_argument("--expert-ids", type=_parse_expert_ids, default=LOADED_EXPERT_IDS)
     parser.add_argument("--num-experts-per-token", type=int, default=NUM_EXPERTS_PER_TOKEN)
     parser.add_argument(
-        "--dtype",
-        choices=["auto", "float32", "float16", "bfloat16"],
-        default="auto",
-        help="torch_dtype used by from_pretrained.",
+        "--image-url",
+        type=str,
+        default="https://huggingface.co/moonshotai/Kimi-K2.5/resolve/main/figures/kimi-logo.png",
     )
-    parser.add_argument("--skip-processor", action="store_true", help="Skip loading processor.")
-    parser.add_argument("--skip-tokenizer", action="store_true", help="Skip loading tokenizer.")
-    parser.add_argument(
-        "--skip-lang-compile",
-        action="store_true",
-        help="Compile/export only the vision encoder and skip language decoder compile.",
-    )
+    parser.add_argument("--prompt", type=str, default="Describe this image.")
+    parser.add_argument("--test", action="store_true", help="Validate ONNX output matches PyTorch image-only forward.")
     return parser.parse_args()
-
-
-def _dtype_from_arg(dtype_arg: str):
-    if dtype_arg == "auto":
-        return None
-    if dtype_arg == "float16":
-        return torch.float16
-    if dtype_arg == "bfloat16":
-        return torch.bfloat16
-    return torch.float32
 
 
 def main():
@@ -371,16 +349,13 @@ def main():
         "config": config,
         "trust_remote_code": True,
         "attn_implementation": "eager",
-        "local_files_only": args.local_files_only,
+        "torch_dtype": torch.float32,
     }
-    dtype = _dtype_from_arg(args.dtype)
-    if dtype is not None:
-        model_kwargs["torch_dtype"] = dtype
 
     if args.full_model:
-        model = kimi_cls.from_pretrained(str(args.model_path), **model_kwargs)
+        model, tokenizer, processor = kimi_cls.from_pretrained(str(args.model_path), **model_kwargs)
     elif args.num_vision_layers is not None and args.num_text_layers is not None:
-        model = _load_layer_subset_model(
+        model, tokenizer, processor = _load_layer_subset_model(
             model_path=args.model_path,
             kimi_cls=kimi_cls,
             config=config,
@@ -388,8 +363,7 @@ def main():
             num_text_layers=args.num_text_layers,
             loaded_expert_ids=args.expert_ids,
             num_experts_per_tok=args.num_experts_per_token,
-            local_files_only=args.local_files_only,
-            dtype=dtype,
+            dtype=torch.float32,
         )
         print(
             "Loaded layer subset: "
@@ -399,26 +373,10 @@ def main():
         )
     else:
         raise ValueError("Pass both --num-vision-layers and --num-text-layers to load a layer subset.")
-    print(f"Loaded model: {type(model).__name__}")
 
-    if not args.skip_tokenizer:
-        tokenizer = AutoTokenizer.from_pretrained(
-            str(args.model_path), trust_remote_code=True, local_files_only=args.local_files_only
-        )
-        print(f"Tokenizer vocab size: {tokenizer.vocab_size}")
+    qaic_config = {"mla_absorption": {"cache_compressed": True, "absorption": False, "online": False}}
 
-    if not args.skip_processor:
-        processor = AutoProcessor.from_pretrained(
-            str(args.model_path), trust_remote_code=True, local_files_only=args.local_files_only
-        )
-        print(f"Processor type: {type(processor).__name__}")
-    
-    mla_absorption = {"cache_compressed": True, "absorption": False, "online": False}
-    qaic_config = {
-        "mla_absorption": mla_absorption
-    }  # , "enable_blocking": True, "blocking_mode": "par", "par_num_split": 4, "num_kv_blocks": 8}
-
-    qeff_model = QEFFAutoModelForImageTextToText(model)  # , qaic_config=qaic_config)
+    qeff_model = QEFFAutoModelForImageTextToText(model)
 
     skip_vision = False
 
@@ -429,10 +387,10 @@ def main():
         # Set skip_vision=True to bypass image processing
         qeff_model.compile(
             qaic_config=qaic_config,
-            prefill_seq_len=32,
+            prefill_seq_len=1,
             ctx_len=1024,
             num_cores=16,
-            num_devices=2,
+            num_devices=1,
             mxfp6_matmul=False,
             mxint8_kv_cache=False,
             aic_enable_depth_first=False,
@@ -443,7 +401,6 @@ def main():
             w=80,  # w
             num_image_tokens=600,  # num_image_tokens
         )
-        breakpoint()
         ## STEP 4: Prepare Text-Only Input
         # Create a text-only message without any image
         messages = [
@@ -465,7 +422,6 @@ def main():
         )
 
         ## STEP 6: Run Text-Only Inference
-        streamer = TextStreamer(tokenizer)
         output = qeff_model.generate(inputs=inputs, device_ids=[0, 1], generation_len=10)
 
         ## STEP 7: Display Results
@@ -483,12 +439,11 @@ def main():
             prefill_seq_len=1,
             ctx_len=1024,
             num_cores=16,
-            num_devices=2,
+            num_devices=1,
             mxfp6_matmul=False,
             mxint8_kv_cache=False,
             aic_enable_depth_first=False,
-            skip_lang=args.skip_lang_compile,
-            #skip_vision=True,  # Skip vision encoder for text-only inference
+            # skip_lang=True,
             mos=1,
             num_patches=2400,  # num_patches
             h=30,  # h
@@ -496,10 +451,7 @@ def main():
             num_image_tokens=600,  # num_image_tokens
         )
 
-        breakpoint()
         ## STEP 4: Prepare Image and Text Input
-        # Define the image URL to process
-        image_url = "https://huggingface.co/moonshotai/Kimi-K2.5/resolve/main/figures/kimi-logo.png"
         image = Image.open(BytesIO(requests.get(args.image_url).content)).convert("RGB")
 
         # Create a message with both image and text
@@ -507,21 +459,13 @@ def main():
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "url": image},
-                    {"type": "text", "text": "Can you describe the image in detail."},
+                    {"type": "image_url", "image_url": image},
+                    {"type": "text", "text": args.prompt},
                 ],
             },
         ]
 
-        ## STEP 5: Process Input with Chat Template
-        """inputs = processor.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-        )
-        """
+        ## STEP 5: Process Input
         inputs = processor(
             messages=messages,
             add_generation_prompt=True,
@@ -532,14 +476,12 @@ def main():
         inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
 
         ## STEP 6: Run Vision+Text Inference
-        streamer = TextStreamer(tokenizer)
         output = qeff_model.generate(inputs=inputs, device_ids=[0, 1], generation_len=100)
 
         ## STEP 7: Display Results
         print(output.generated_ids)
         print(tokenizer.batch_decode(output.generated_ids))
         print(output)
-
 
 
 if __name__ == "__main__":
