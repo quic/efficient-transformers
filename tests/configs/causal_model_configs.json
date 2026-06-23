@@ -4,198 +4,268 @@
       "model_name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
       "model_type": "llama",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 32000,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "llama",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "gpt2",
       "model_type": "gpt2",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 50257,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "gpt2",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "allenai/OLMo-2-0425-1B",
       "model_type": "olmo2",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 100352,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "olmo2",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "Salesforce/codegen-350M-mono",
       "model_type": "codegen",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 4,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 51200,
         "num_key_value_heads": 1,
         "rotary_dim": 16
-      }
+      },
+      "coverage_key": "codegen",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "ibm-granite/granite-3.1-1b-a400m-base",
       "model_type": "granitemoe",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 49155,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "granitemoe",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "microsoft/Phi-3-mini-4k-instruct",
       "model_type": "phi3",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 32064,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "phi3",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "tiiuae/falcon-7b",
       "model_type": "falcon",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 65024,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "falcon",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "Qwen/Qwen3-30B-A3B-Instruct-2507",
       "model_type": "qwen3_moe",
       "additional_params": {
-        "hidden_size": 256,
-        "intermediate_size": 256,
-        "max_position_embeddings": 128,
-        "max_window_layers": 48,
-        "moe_intermediate_size": 768,
+        "hidden_size": 64,
+        "intermediate_size": 128,
+        "max_position_embeddings": 64,
+        "max_window_layers": 2,
+        "moe_intermediate_size": 64,
         "num_attention_heads": 2,
-        "num_experts": 4,
+        "num_experts": 2,
         "num_experts_per_tok": 2,
         "num_hidden_layers": 1,
         "num_key_value_heads": 1,
         "vocab_size": 151936
-      }
+      },
+      "coverage_key": "qwen3_moe",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "Qwen/Qwen2-0.5B",
       "model_type": "qwen2",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 151936,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "qwen2",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "bigcode/starcoder2-3b",
       "model_type": "starcoder2",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 49152,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "starcoder2",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "Felladrin/Minueza-32M-Base",
       "model_type": "mistral",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 32002,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "mistral",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "wtang06/mpt-125m-c4",
       "model_type": "mpt",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 50368
-      }
+      },
+      "coverage_key": "mpt",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "hakurei/gpt-j-random-tinier",
       "model_type": "gptj",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 50400,
         "num_key_value_heads": 1,
         "rotary_dim": 16
-      }
+      },
+      "coverage_key": "gptj",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "mistralai/Mixtral-8x7B-Instruct-v0.1",
       "model_type": "mixtral",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 32000,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "mixtral",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "meta-llama/Llama-3.2-1B",
       "model_type": "llama",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 128256,
         "num_key_value_heads": 1,
         "rope_scaling": {
@@ -206,134 +276,182 @@
           "rope_type": "llama3",
           "rope_theta": 500000.0
         }
-      }
+      },
+      "coverage_key": "llama",
+      "tiers": [
+        "exhaustive"
+      ]
     },
     {
       "model_name": "unsloth/gemma-2b",
       "model_type": "gemma",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 256000,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "gemma",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "unsloth/gemma-2-2b",
       "model_type": "gemma2",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 256000,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "gemma2",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",
       "model_type": "llama",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 32003
-      }
+      },
+      "coverage_key": "llama:awq",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "TheBloke/Llama-2-7B-GPTQ",
       "model_type": "llama",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 32000
-      }
+      },
+      "coverage_key": "llama:gptq",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "ibm-granite/granite-20b-code-base",
       "model_type": "gpt_bigcode",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 49152,
         "num_key_value_heads": 1,
         "activation_function": "gelu",
         "architectures": [
           "GPTBigCodeForCausalLM"
         ]
-      }
+      },
+      "coverage_key": "gpt_bigcode",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "neuralmagic/Llama-3.2-3B-Instruct-FP8",
       "model_type": "llama",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 128256
-      }
+      },
+      "coverage_key": "llama:fp8",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "neuralmagic/Qwen2-0.5B-Instruct-FP8",
       "model_type": "qwen2",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 2,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 151936
-      }
+      },
+      "coverage_key": "qwen2:fp8",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "ibm-granite/granite-3.1-2b-instruct",
       "model_type": "granite",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 49155,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "granite",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "ibm-granite/granite-guardian-3.1-2b",
       "model_type": "granite",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 49155,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "granite",
+      "tiers": [
+        "exhaustive"
+      ]
     },
     {
       "model_name": "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
       "model_type": null,
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 2,
         "num_attention_heads": 2,
-        "hidden_size": 256,
-        "intermediate_size": 256,
+        "hidden_size": 64,
+        "intermediate_size": 128,
         "vocab_size": 128256,
         "num_key_value_layers": 1,
         "num_key_value_heads": 1,
@@ -344,7 +462,12 @@
           "original_max_position_embeddings": 8192,
           "rope_type": "llama3"
         }
-      }
+      },
+      "coverage_key": "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     }
   ],
   "causal_lm_fp16_test_models": [
@@ -352,117 +475,157 @@
       "model_name": "gpt2",
       "model_type": "gpt2",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 50257,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "gpt2",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "hf-internal-testing/tiny-random-Gemma2ForCausalLM",
       "model_type": "gemma2",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 256000,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "gemma2",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "hf-internal-testing/tiny-random-GPTBigCodeForCausalLM",
       "model_type": "gpt_bigcode",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 49152,
         "num_key_value_heads": 1,
         "activation_function": "gelu",
         "architectures": [
           "GPTBigCodeForCausalLM"
         ]
-      }
+      },
+      "coverage_key": "gpt_bigcode",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "Qwen/Qwen2-0.5B",
       "model_type": "qwen2",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 151936,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "qwen2",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "hf-internal-testing/tiny-random-MixtralForCausalLM",
       "model_type": "mixtral",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 32000,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "mixtral",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "hf-internal-testing/tiny-random-LlamaForCausalLM",
       "model_type": "llama",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 128256,
         "num_key_value_heads": 1,
         "rope_scaling": {
           "factor": 32.0,
           "high_freq_factor": 4.0,
-         "low_freq_factor": 1.0,
-         "original_max_position_embeddings": 8192,
-         "rope_type": "llama3",
-         "rope_theta": 500000.0
-       }
-     }
-   },
+          "low_freq_factor": 1.0,
+          "original_max_position_embeddings": 8192,
+          "rope_type": "llama3",
+          "rope_theta": 500000.0
+        }
+      },
+      "coverage_key": "llama",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
+    },
     {
       "model_name": "allenai/OLMo-2-0425-1B",
       "model_type": "olmo2",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 100352,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "olmo2",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "hf-internal-testing/tiny-random-GraniteForCausalLM",
       "model_type": "granite",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 49155,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "granite",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     }
   ],
   "spd_causal_lm_models": [
@@ -470,27 +633,37 @@
       "model_name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
       "model_type": "llama",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 32000,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "llama",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "Qwen/Qwen2-0.5B",
       "model_type": "qwen2",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 151936,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "qwen2",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     }
   ],
   "qnn_causal_lm_models": [
@@ -498,24 +671,29 @@
       "model_name": "mistralai/Mixtral-8x7B-Instruct-v0.1",
       "model_type": "mixtral",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 32000,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "mixtral",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "meta-llama/Llama-3.2-1B",
       "model_type": "llama",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 128256,
         "num_key_value_heads": 1,
         "rope_scaling": {
@@ -526,33 +704,48 @@
           "rope_type": "llama3",
           "rope_theta": 500000.0
         }
-      }
+      },
+      "coverage_key": "llama",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "unsloth/gemma-2b",
       "model_type": "gemma",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 256000,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "gemma",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "ibm-granite/granite-guardian-3.1-2b",
       "model_type": "granite",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 49155,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "granite",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     }
   ],
   "prefix_caching_models": [
@@ -560,14 +753,19 @@
       "model_name": "gpt2",
       "model_type": "gpt2",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 50257,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "gpt2",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     }
   ],
   "blockedKV_causal_lm_models": [
@@ -575,50 +773,65 @@
       "model_name": "unsloth/gemma-2b",
       "model_type": "gemma",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 256000,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "gemma",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "unsloth/gemma-2-2b",
       "model_type": "gemma2",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 256000,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "gemma2",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "ibm-granite/granite-3.1-1b-a400m-base",
       "model_type": "granitemoe",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 49155,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "granitemoe",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "meta-llama/Llama-3.2-1B",
       "model_type": "llama",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 128256,
         "num_key_value_heads": 1,
         "rope_scaling": {
@@ -629,32 +842,47 @@
           "rope_type": "llama3",
           "rope_theta": 500000.0
         }
-      }
+      },
+      "coverage_key": "llama",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "wtang06/mpt-125m-c4",
       "model_type": "mpt",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 50368
-      }
+      },
+      "coverage_key": "mpt",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "bigcode/starcoder2-3b",
       "model_type": "starcoder2",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 49152,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "starcoder2",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     }
   ],
   "disaggregated_dummy_models": [
@@ -665,32 +893,42 @@
       "additional_params": {
         "num_hidden_layers": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "num_attention_heads": 2,
         "num_key_value_heads": 1,
-        "num_local_experts": 4,
+        "num_local_experts": 2,
         "head_dim": 32,
-        "max_position_embeddings": 512,
+        "max_position_embeddings": 64,
         "vocab_size": 201088,
-        "sliding_window": 128
-      }
+        "sliding_window": 64
+      },
+      "coverage_key": "gpt_oss",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "Qwen/Qwen3-30B-A3B-Instruct-2507",
       "model_type": "qwen3_moe",
       "additional_params": {
-        "hidden_size": 256,
-        "intermediate_size": 256,
-        "max_position_embeddings": 512,
-        "max_window_layers": 48,
-        "moe_intermediate_size": 768,
+        "hidden_size": 64,
+        "intermediate_size": 128,
+        "max_position_embeddings": 64,
+        "max_window_layers": 2,
+        "moe_intermediate_size": 64,
         "num_attention_heads": 2,
-        "num_experts": 4,
+        "num_experts": 2,
         "num_experts_per_tok": 2,
         "num_hidden_layers": 2,
         "num_key_value_heads": 1,
         "vocab_size": 151936
-      }
+      },
+      "coverage_key": "qwen3_moe",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     }
   ],
   "causal_lm_models_pl1": [
@@ -698,14 +936,19 @@
       "model_name": "gpt2",
       "model_type": "gpt2",
       "additional_params": {
-        "max_position_embeddings": 128,
+        "max_position_embeddings": 64,
         "num_hidden_layers": 1,
         "num_attention_heads": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "vocab_size": 50257,
         "num_key_value_heads": 1
-      }
+      },
+      "coverage_key": "gpt2",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "openai/gpt-oss-20b",
@@ -713,11 +956,17 @@
       "additional_params": {
         "num_hidden_layers": 2,
         "hidden_size": 64,
-        "intermediate_size": 256,
+        "intermediate_size": 128,
         "num_attention_heads": 2,
         "num_key_value_heads": 1,
-        "num_local_experts": 4
-      }
+        "num_local_experts": 2,
+        "head_dim": 32
+      },
+      "coverage_key": "gpt_oss",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     }
   ]
 }

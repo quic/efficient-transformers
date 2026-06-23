@@ -6,7 +6,6 @@
 # ----------------------------------------------------------------------------
 
 import copy
-import json
 import os
 from io import BytesIO
 from typing import Optional
@@ -31,13 +30,12 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
+from tests.test_matrix import entries_by_model_name, model_names, select_test_entries
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    multimodal_models = config_data["image_text_models"]
-test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
-model_config_dict = {model["model_name"]: model for model in multimodal_models}
+multimodal_models = select_test_entries(CONFIG_PATH, "image_text_models")
+test_mm_models = model_names(multimodal_models)
+model_config_dict = entries_by_model_name(multimodal_models)
 
 NEW_GENERATION_TOKENS = 10
 

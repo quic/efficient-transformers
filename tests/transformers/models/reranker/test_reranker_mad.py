@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import json
 import os
 from typing import Dict, List, Tuple
 
@@ -38,6 +37,7 @@ from QEfficient.transformers.models.qwen3_vl._reranker_utils import (
     truncate_tokens_optimized as _shared_truncate_tokens_optimized,
 )
 from QEfficient.utils.test_utils import load_vlm_model, set_num_layers_vlm
+from tests.test_matrix import entries_by_model_name, model_names, select_test_entries
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
 
@@ -48,7 +48,7 @@ RERANKER_DOC_LIMIT = int(os.getenv("QEFF_RERANKER_DOC_LIMIT", "0"))
 IMAGE_BASE_FACTOR = 16
 IMAGE_FACTOR = IMAGE_BASE_FACTOR * 2
 MIN_PIXELS = 4 * IMAGE_FACTOR * IMAGE_FACTOR
-MAX_PIXELS = 1280 * IMAGE_FACTOR * IMAGE_FACTOR
+MAX_PIXELS = 64 * IMAGE_FACTOR * IMAGE_FACTOR
 
 EXAMPLE_INPUTS = {
     "instruction": "Retrieve relevant content.",
@@ -59,12 +59,10 @@ EXAMPLE_INPUTS = {
     ],
 }
 
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    reranker_models = config_data["image_text_reranker_models"]
+reranker_models = select_test_entries(CONFIG_PATH, "image_text_reranker_models")
 
-test_reranker_models = [model_config["model_name"] for model_config in reranker_models]
-reranker_model_config_dict = {model["model_name"]: model for model in reranker_models}
+test_reranker_models = model_names(reranker_models)
+reranker_model_config_dict = entries_by_model_name(reranker_models)
 
 
 def _resolve_model_source(model_name_or_path: str) -> str:

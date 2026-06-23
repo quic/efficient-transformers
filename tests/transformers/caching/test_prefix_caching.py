@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 
 import numpy as np
@@ -17,14 +16,12 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalL
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import QnnConstants
 from QEfficient.utils.test_utils import load_qeff_causal_lm_model
+from tests.test_matrix import entries_by_model_name, model_names, select_test_entries
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/causal_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    prefix_caching_models = config_data["prefix_caching_models"]
-
-test_models = [model["model_name"] for model in prefix_caching_models]
-model_config_dict = {model["model_name"]: model for model in prefix_caching_models}
+prefix_caching_models = select_test_entries(CONFIG_PATH, "prefix_caching_models")
+test_models = model_names(prefix_caching_models)
+model_config_dict = entries_by_model_name(prefix_caching_models)
 
 
 def prefix_caching_inference(model_name, qpc_path):

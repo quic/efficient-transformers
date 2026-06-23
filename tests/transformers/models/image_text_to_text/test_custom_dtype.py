@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import json
 import os
 
 import pytest
@@ -14,17 +13,16 @@ import torch
 from QEfficient.utils.test_utils import (
     ModelConfig,
 )
+from tests.test_matrix import entries_by_model_name, model_names, select_test_entries
 
 from .test_image_text_to_text_models import (
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100,
 )
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    multimodal_models = config_data["image_text_custom_dtype_models"]
-test_custom_dtype_support_models = [model_config["model_name"] for model_config in multimodal_models]
-model_config_dict = {model["model_name"]: model for model in multimodal_models}
+multimodal_models = select_test_entries(CONFIG_PATH, "image_text_custom_dtype_models")
+test_custom_dtype_support_models = model_names(multimodal_models)
+model_config_dict = entries_by_model_name(multimodal_models)
 
 NEW_GENERATION_TOKENS = 10
 

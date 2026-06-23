@@ -1,6 +1,22 @@
 {
-   "embedding_models": [
-        {"model_name": "jinaai/jina-embeddings-v2-base-code", "pooling": "mean"},
-        {"model_name": "sentence-transformers/nli-bert-base-cls-pooling", "pooling": "cls"}
-    ]
+  "embedding_models": [
+    {
+      "model_name": "jinaai/jina-embeddings-v2-base-code",
+      "pooling": "mean",
+      "coverage_key": "embedding:jinaai/jina-embeddings-v2-base-code",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
+    },
+    {
+      "model_name": "sentence-transformers/nli-bert-base-cls-pooling",
+      "pooling": "cls",
+      "coverage_key": "embedding:sentence-transformers/nli-bert-base-cls-pooling",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
+    }
+  ]
 }

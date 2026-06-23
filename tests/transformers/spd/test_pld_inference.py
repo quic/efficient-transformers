@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 from dataclasses import dataclass
 from time import perf_counter
@@ -19,14 +18,13 @@ from transformers import AutoConfig, AutoTokenizer
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.test_utils import load_qeff_causal_lm_model
+from tests.test_matrix import entries_by_id, select_test_entries
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/feature_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    spd_models = config_data["spd_config"]
+spd_models = select_test_entries(CONFIG_PATH, "spd_config")
 
 test_models_id = [model["id"] for model in spd_models[:1]]
-model_config_dict = {model["id"]: model for model in spd_models}
+model_config_dict = entries_by_id(spd_models)
 
 
 @dataclass

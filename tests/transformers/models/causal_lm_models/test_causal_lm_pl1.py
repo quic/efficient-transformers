@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 
 import pytest
@@ -13,17 +12,16 @@ import torch
 from transformers import AutoConfig
 
 from QEfficient.utils.test_utils import ModelConfig
+from tests.test_matrix import entries_by_model_name, model_names, select_test_entries
 
 from .check_causal_models import (
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100,
 )
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/causal_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    causal_pl1_models = config_data["causal_lm_models_pl1"]
-test_models_pl1 = [model["model_name"] for model in causal_pl1_models]
-model_config_dict = {model["model_name"]: model for model in causal_pl1_models}
+causal_pl1_models = select_test_entries(CONFIG_PATH, "causal_lm_models_pl1")
+test_models_pl1 = model_names(causal_pl1_models)
+model_config_dict = entries_by_model_name(causal_pl1_models)
 
 
 @pytest.mark.full_layers

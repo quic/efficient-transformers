@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 from typing import Optional
 
@@ -20,13 +19,12 @@ from QEfficient.utils.test_utils import (
     load_hf_vlm_model,
     load_qeff_model_with_sampler,
 )
+from tests.test_matrix import entries_by_model_name, model_names, select_test_entries
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/feature_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    sampler_models = config_data["sampler_config"]
-test_models = [model["model_name"] for model in sampler_models]
-model_config_dict = {model["model_name"]: model for model in sampler_models}
+sampler_models = select_test_entries(CONFIG_PATH, "sampler_config")
+test_models = model_names(sampler_models)
+model_config_dict = entries_by_model_name(sampler_models)
 
 
 def check_guided_decoding_sampler(

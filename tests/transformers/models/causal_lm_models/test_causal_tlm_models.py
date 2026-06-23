@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 
 import pytest
@@ -13,6 +12,7 @@ from transformers import AutoConfig
 
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.test_utils import ModelConfig
+from tests.test_matrix import entries_by_model_name, model_names, select_test_entries
 
 from .check_causal_models import (
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100,
@@ -20,11 +20,9 @@ from .check_causal_models import (
 )
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/causal_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    spd_models = config_data["spd_causal_lm_models"]
-test_models_spd = [model["model_name"] for model in spd_models]
-model_config_dict = {model["model_name"]: model for model in spd_models}
+spd_models = select_test_entries(CONFIG_PATH, "spd_causal_lm_models")
+test_models_spd = model_names(spd_models)
+model_config_dict = entries_by_model_name(spd_models)
 
 
 @pytest.mark.full_layers

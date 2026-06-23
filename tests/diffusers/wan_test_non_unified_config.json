@@ -1,101 +1,101 @@
 {
-    "model_setup": {
-                        "height": 48,
-                        "width": 64,
-                        "num_frames": 81,
-                        "num_transformer_layers_high": 1,
-                        "num_transformer_layers_low": 1
-                    },
-    "mad_validation": {
-                         "tolerances": {
-                                "transformer": 0.1,
-                                "transformer_high": 0.1,
-                                "transformer_low": 0.1,
-                                "vae_decoder" : 1.3
-                            }
-                        },
-    "pipeline_params": {
-                            "test_prompt": "A cat walking in a garden",
-                            "num_inference_steps": 2,
-                            "guidance_scale": 1.0,
-                            "guidance_scale_2": 1.0,
-                            "max_sequence_length": 512,
-                            "validate_gen_video": true,
-                            "min_video_variance": 1.0,
-                            "use_onnx_subfunctions": true
-                        },
-    "validation_checks": {
-                            "video_generation": true,
-                            "onnx_export": true,
-                            "compilation": true
-                        },
-    "modules": {
-        "transformer_high": {
-          "specializations": {
-                              "batch_size": "1",
-                              "num_channels": "16",
-                              "steps": "1",
-                              "sequence_length": "512"
-                          },
-          "compilation":  {
-                                "onnx_path": null,
-                                "compile_dir": null,
-                                "mdp_ts_num_devices": 1,
-                                "mxfp6_matmul": true,
-                                "convert_to_fp16": true,
-                                "compile_only":true,
-                                "aic_num_cores": 16,
-                                "mos": 1,
-                                "mdts_mos": 1
-                            },
-          "execute":     {
-                                "device_ids": null,
-                                "qpc_path" : null
-                          }
-        },
-        "transformer_low": {
-          "specializations": {
-                              "batch_size": "1",
-                              "num_channels": "16",
-                              "steps": "1",
-                              "sequence_length": "512"
-                          },
-          "compilation":  {
-                                "onnx_path": null,
-                                "compile_dir": null,
-                                "mdp_ts_num_devices": 1,
-                                "mxfp6_matmul": true,
-                                "convert_to_fp16": true,
-                                "compile_only":true,
-                                "aic_num_cores": 16,
-                                "mos": 1,
-                                "mdts_mos": 1
-                            },
-          "execute":     {
-                                "device_ids": null,
-                                "qpc_path" : null
-                          }
-        },
-        "vae_decoder": {
-            "specializations": {
-                "batch_size": "1",
-                "num_channels": "16"
-            },
-            "compilation": {
-                "onnx_path": null,
-                "compile_dir": null,
-                "mdp_ts_num_devices": 1,
-                "mxfp6_matmul": false,
-                "convert_to_fp16": true,
-                "compile_only": true,
-                "aic_num_cores": 16,
-                "mos": 1,
-                "mdts_mos": 1
-            },
-            "execute": {
-                "device_ids": null,
-                "qpc_path": null
-            }
-        }
+  "model_setup": {
+    "height": 48,
+    "width": 64,
+    "num_frames": 5,
+    "num_transformer_layers_high": 1,
+    "num_transformer_layers_low": 1
+  },
+  "mad_validation": {
+    "tolerances": {
+      "transformer": 0.1,
+      "transformer_high": 0.1,
+      "transformer_low": 0.1,
+      "vae_decoder": 1.3
     }
+  },
+  "pipeline_params": {
+    "test_prompt": "A cat walking in a garden",
+    "num_inference_steps": 1,
+    "guidance_scale": 1.0,
+    "guidance_scale_2": 1.0,
+    "max_sequence_length": 128,
+    "validate_gen_video": true,
+    "min_video_variance": 1.0,
+    "use_onnx_subfunctions": true
+  },
+  "validation_checks": {
+    "video_generation": true,
+    "onnx_export": true,
+    "compilation": true
+  },
+  "modules": {
+    "transformer_high": {
+      "specializations": {
+        "batch_size": "1",
+        "num_channels": "16",
+        "steps": "1",
+        "sequence_length": "128"
+      },
+      "compilation": {
+        "onnx_path": null,
+        "compile_dir": null,
+        "mdp_ts_num_devices": 1,
+        "mxfp6_matmul": true,
+        "convert_to_fp16": true,
+        "compile_only": true,
+        "aic_num_cores": 16,
+        "mos": 1,
+        "mdts_mos": 1
+      },
+      "execute": {
+        "device_ids": null,
+        "qpc_path": null
+      }
+    },
+    "transformer_low": {
+      "specializations": {
+        "batch_size": "1",
+        "num_channels": "16",
+        "steps": "1",
+        "sequence_length": "128"
+      },
+      "compilation": {
+        "onnx_path": null,
+        "compile_dir": null,
+        "mdp_ts_num_devices": 1,
+        "mxfp6_matmul": true,
+        "convert_to_fp16": true,
+        "compile_only": true,
+        "aic_num_cores": 16,
+        "mos": 1,
+        "mdts_mos": 1
+      },
+      "execute": {
+        "device_ids": null,
+        "qpc_path": null
+      }
+    },
+    "vae_decoder": {
+      "specializations": {
+        "batch_size": "1",
+        "num_channels": "16"
+      },
+      "compilation": {
+        "onnx_path": null,
+        "compile_dir": null,
+        "mdp_ts_num_devices": 1,
+        "mxfp6_matmul": false,
+        "convert_to_fp16": true,
+        "compile_only": true,
+        "aic_num_cores": 16,
+        "mos": 1,
+        "mdts_mos": 1
+      },
+      "execute": {
+        "device_ids": null,
+        "qpc_path": null
+      }
+    }
+  }
 }

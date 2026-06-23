@@ -6,7 +6,6 @@
 # ----------------------------------------------------------------------------
 
 
-import json
 import os
 from typing import Optional
 
@@ -17,13 +16,12 @@ from transformers import AutoConfig
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils.test_utils import ModelConfig, get_custom_n_layers, load_hf_causal_lm_model
+from tests.test_matrix import entries_by_model_name, model_names, select_test_entries
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/causal_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    blockedKV_models = config_data["blockedKV_causal_lm_models"]
-test_models_blockedKV = [model["model_name"] for model in blockedKV_models]
-model_config_dict = {model["model_name"]: model for model in blockedKV_models}
+blockedKV_models = select_test_entries(CONFIG_PATH, "blockedKV_causal_lm_models")
+test_models_blockedKV = model_names(blockedKV_models)
+model_config_dict = entries_by_model_name(blockedKV_models)
 torch.manual_seed(42)
 
 
