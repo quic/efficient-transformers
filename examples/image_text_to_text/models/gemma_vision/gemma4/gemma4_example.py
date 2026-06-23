@@ -12,6 +12,8 @@ from gemma4_utils import (
     effective_lens,
     normalize_generated_ids,
     remove_fp16clip_transform_if_disabled,
+    resolve_stop_token_ids,
+    truncate_generated_ids_at_stop,
 )
 from transformers import AutoConfig, AutoProcessor
 
@@ -123,6 +125,8 @@ def main():
 
         output = qeff_model.generate(inputs=text_inputs, generation_len=GENERATION_LEN)
         qeff_ids = normalize_generated_ids(output.generated_ids)[:, :GENERATION_LEN]
+        stop_token_ids = resolve_stop_token_ids(qeff_model, config, tokenizer)
+        qeff_ids = truncate_generated_ids_at_stop(qeff_ids, stop_token_ids)
         print(tokenizer.batch_decode(qeff_ids, skip_special_tokens=True))
         print(output)
         return
@@ -164,6 +168,8 @@ def main():
         generation_len=GENERATION_LEN,
     )
     qeff_ids = normalize_generated_ids(output.generated_ids)[:, :GENERATION_LEN]
+    stop_token_ids = resolve_stop_token_ids(qeff_model, config, tokenizer)
+    qeff_ids = truncate_generated_ids_at_stop(qeff_ids, stop_token_ids)
     print(tokenizer.batch_decode(qeff_ids, skip_special_tokens=True))
     print(output)
 

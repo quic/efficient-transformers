@@ -119,6 +119,47 @@ def normalize_generated_ids(generated_ids):
     return array.astype(np.int64, copy=False)
 
 
+def resolve_stop_token_ids(model, config, tokenizer):
+    """
+    Resolve Gemma stop-token IDs from generation config / model config / tokenizer.
+    """
+    stop_ids = []
+
+    generation_config = getattr(getattr(model, "model", None), "generation_config", None)
+    candidates = [
+        getattr(generation_config, "eos_token_id", None),
+        getattr(config, "eos_token_id", None),
+        getattr(getattr(config, "text_config", None), "eos_token_id", None),
+        getattr(tokenizer, "eos_token_id", None),
+    ]
+
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        if isinstance(candidate, (list, tuple, set)):
+            stop_ids.extend(int(token_id) for token_id in candidate if token_id is not None)
+        else:
+            stop_ids.append(int(candidate))
+
+    # Keep order stable while removing duplicates.
+    return list(dict.fromkeys(stop_ids))
+
+
+def truncate_generated_ids_at_stop(generated_ids, stop_token_ids):
+    """
+    Trim each generated sequence at the first stop token (exclusive).
+    """
+    if not stop_token_ids:
+        return [row.tolist() for row in generated_ids]
+
+    stop_set = set(int(x) for x in stop_token_ids)
+    truncated = []
+    for row in generated_ids:
+        stop_index = next((idx for idx, token_id in enumerate(row) if int(token_id) in stop_set), len(row))
+        truncated.append(row[:stop_index].tolist())
+    return truncated
+
+
 def effective_lens(model, prefill_seq_len: int, ctx_len: int, prompt_len: int, generation_len: int, skip_vision: bool):
     effective_ctx_len = max(ctx_len, prompt_len + generation_len)
     if skip_vision:
