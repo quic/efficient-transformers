@@ -1931,8 +1931,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             self.lang_model.model, layerwise, layerwise_window_size
         )
         if layerwise_context is not None and not layerwise_context.active:
-            if prefill_only is not True:
-                raise ValueError("Layerwise compile is supported only with prefill_only=True.")
             if skip_lang and not skip_vision:
                 vision_wrapper = self._build_layerwise_vision_wrapper()
                 qpc_paths = vision_wrapper.compile(
@@ -4371,8 +4369,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         layerwise_context = _resolve_layerwise_compile_export_request(self.model, layerwise, layerwise_window_size)
         if layerwise_context is not None and not layerwise_context.active:
-            if prefill_only is not True:
-                raise ValueError("Layerwise compile is supported only with prefill_only=True.")
             return self._run_layerwise(
                 final_compile=True,
                 layerwise_window_size=layerwise_context.window_size,
