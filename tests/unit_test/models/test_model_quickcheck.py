@@ -54,6 +54,7 @@ from QEfficient.transformers.models.modeling_auto import (
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils._utils import _infer_specialization_name, to_named_specializations
 from QEfficient.utils.run_utils import ApiRunner
+from tests.test_matrix import EXHAUSTIVE_SCOPE, PR_SCOPE, get_coverage_key, load_test_config, select_test_entries
 
 ort.set_default_logger_severity(3)
 logging.getLogger("QEfficient").setLevel(logging.ERROR)
@@ -152,6 +153,26 @@ TINY_MOE_PREFILL_SUBFUNCTION_CONFIGS = {
 
 MODEL_KWARGS = {"attn_implementation": "eager"}
 PREFIX_CACHING_MODEL_ID = "hf-internal-testing/tiny-random-GPT2LMHeadModel"
+MATRIX_CONFIG_SUITES = {
+    "tests/configs/causal_model_configs.json": (
+        "causal_lm_models",
+        "causal_lm_fp16_test_models",
+        "spd_causal_lm_models",
+        "prefix_caching_models",
+        "blockedKV_causal_lm_models",
+        "disaggregated_dummy_models",
+        "causal_lm_models_pl1",
+    ),
+    "tests/configs/image_text_model_configs.json": (
+        "image_text_models",
+        "image_text_subfunction_models",
+        "image_text_custom_dtype_models",
+        "image_text_reranker_models",
+        "image_text_embedding_models",
+    ),
+    "tests/configs/feature_configs.json": ("sampler_config", "spd_config"),
+    "tests/configs/embedding_model_configs.json": ("embedding_models",),
+}
 
 
 def _per_test_thread_budget() -> int:
@@ -169,6 +190,24 @@ def _configure_torch_threads() -> None:
     os.environ.setdefault("MKL_NUM_THREADS", str(threads))
     torch.set_num_threads(threads)
     torch.set_num_interop_threads(max(1, min(4, threads)))
+
+
+def test_model_matrix_pr_scope_preserves_coverage_keys():
+    for config_path, suite_names in MATRIX_CONFIG_SUITES.items():
+        raw_config = load_test_config(config_path)
+        for suite_name in suite_names:
+            exhaustive_entries = raw_config[suite_name]
+            expected_keys = {get_coverage_key(entry) for entry in exhaustive_entries}
+            pr_keys = {get_coverage_key(entry) for entry in select_test_entries(config_path, suite_name, PR_SCOPE)}
+            assert pr_keys == expected_keys, f"{suite_name} PR matrix does not preserve coverage keys"
+
+
+def test_model_matrix_exhaustive_scope_preserves_full_config_lists():
+    for config_path, suite_names in MATRIX_CONFIG_SUITES.items():
+        raw_config = load_test_config(config_path)
+        for suite_name in suite_names:
+            exhaustive_entries = select_test_entries(config_path, suite_name, EXHAUSTIVE_SCOPE)
+            assert exhaustive_entries == raw_config[suite_name]
 
 
 def _ort_session(onnx_path: Path) -> ort.InferenceSession:

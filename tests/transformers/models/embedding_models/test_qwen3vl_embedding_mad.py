@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import json
 from typing import Any, Dict, List
 
 import pytest
@@ -23,15 +22,14 @@ from QEfficient.transformers.models.qwen3_vl._embedding_utils import (
     resolve_model_source,
 )
 from QEfficient.utils.test_utils import load_vlm_model
+from tests.test_matrix import entries_by_model_name, model_names, select_test_entries
 
 CONFIG_PATH = "tests/configs/image_text_model_configs.json"
 
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    embedding_models = config_data["image_text_embedding_models"]
+embedding_models = select_test_entries(CONFIG_PATH, "image_text_embedding_models")
 
-test_embedding_models = [model_config["model_name"] for model_config in embedding_models]
-embedding_model_config_dict = {model["model_name"]: model for model in embedding_models}
+test_embedding_models = model_names(embedding_models)
+embedding_model_config_dict = entries_by_model_name(embedding_models)
 
 
 def _compute_cpu_embeddings(model_hf, embedder, model_inputs: List[Dict[str, Any]]) -> torch.Tensor:

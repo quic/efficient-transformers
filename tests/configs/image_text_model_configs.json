@@ -4,7 +4,7 @@
       "model_name": "llava-hf/llava-1.5-7b-hf",
       "model_type": "llava",
       "batch_size": 1,
-      "prompt_len": 784,
+      "prompt_len": 384,
       "ctx_len": 1024,
       "img_size": 336,
       "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
@@ -23,10 +23,10 @@
         "dtype": "float32",
         "text_config": {
           "dtype": "float32",
-          "head_dim": 128,
-          "hidden_size": 4096,
-          "intermediate_size": 11008,
-          "max_position_embeddings": 4096,
+          "head_dim": 2,
+          "hidden_size": 64,
+          "intermediate_size": 128,
+          "max_position_embeddings": 64,
           "model_type": "llama",
           "num_attention_heads": 32,
           "num_hidden_layers": 1,
@@ -35,27 +35,32 @@
         },
         "vision_config": {
           "dtype": "float32",
-          "hidden_size": 1024,
-          "image_size": 336,
-          "intermediate_size": 4096,
+          "hidden_size": 64,
+          "image_size": 224,
+          "intermediate_size": 128,
           "model_type": "clip_vision_model",
           "num_attention_heads": 4,
           "num_hidden_layers": 1,
           "patch_size": 14,
           "vocab_size": 32000
         }
-      }
+      },
+      "coverage_key": "llava",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
       "model_type": "llama4",
       "batch_size": 1,
       "prompt_len": 32,
-      "ctx_len": 3072,
+      "ctx_len": 1024,
       "img_size": 336,
       "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
       "text_prompt": "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
-      "num_layers": 4,
+      "num_layers": 1,
       "img_url_list": [
         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
@@ -65,15 +70,20 @@
         "What are the objects in the image?"
       ],
       "full_batch_size": 2,
-      "additional_params": {}
+      "additional_params": {},
+      "coverage_key": "llama4",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "google/gemma-3-4b-it",
       "model_type": "gemma3",
       "batch_size": 1,
       "prompt_len": 128,
-      "ctx_len": 3072,
-      "img_size": 896,
+      "ctx_len": 1024,
+      "img_size": 448,
       "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
       "text_prompt": "Can you describe the image in detail.",
       "num_layers": 2,
@@ -90,9 +100,9 @@
         "text_config": {
           "sliding_window_pattern": 2,
           "head_dim": 256,
-          "hidden_size": 2560,
-          "intermediate_size": 10240,
-          "num_hidden_layers": 2,
+          "hidden_size": 64,
+          "intermediate_size": 128,
+          "num_hidden_layers": 1,
           "layer_types": [
             "sliding_attention",
             "full_attention"
@@ -104,23 +114,28 @@
           "sliding_window": 32
         },
         "vision_config": {
-          "hidden_size": 1152,
-          "image_size": 896,
-          "intermediate_size": 4304,
+          "hidden_size": 64,
+          "image_size": 224,
+          "intermediate_size": 128,
           "num_attention_heads": 4,
-          "num_hidden_layers": 2,
+          "num_hidden_layers": 1,
           "patch_size": 14,
           "vision_use_head": false
         }
-      }
+      },
+      "coverage_key": "gemma3",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
       "model_type": "mistral3",
       "batch_size": 1,
       "prompt_len": 128,
-      "ctx_len": 4096,
-      "img_size": 1540,
+      "ctx_len": 1024,
+      "img_size": 448,
       "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
       "text_prompt": "Can you describe the image in detail.",
       "num_layers": 1,
@@ -135,9 +150,9 @@
       "full_batch_size": 2,
       "additional_params": {
         "text_config": {
-          "head_dim": 128,
-          "hidden_size": 256,
-          "intermediate_size": 512,
+          "head_dim": 16,
+          "hidden_size": 64,
+          "intermediate_size": 128,
           "model_type": "mistral",
           "num_attention_heads": 4,
           "num_hidden_layers": 1,
@@ -145,25 +160,30 @@
           "vocab_size": 131072
         },
         "vision_config": {
-          "head_dim": 32,
-          "hidden_size": 128,
-          "image_size": 1540,
-          "intermediate_size": 256,
+          "head_dim": 16,
+          "hidden_size": 64,
+          "image_size": 224,
+          "intermediate_size": 128,
           "model_type": "pixtral",
           "num_attention_heads": 4,
           "num_hidden_layers": 1,
           "patch_size": 14,
           "vocab_size": 32000
         }
-      }
+      },
+      "coverage_key": "mistral3",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "Qwen/Qwen2.5-VL-3B-Instruct",
       "model_type": "qwen2_5_vl",
       "batch_size": 1,
       "prompt_len": 128,
-      "ctx_len": 4096,
-      "img_size": 1540,
+      "ctx_len": 1024,
+      "img_size": 448,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
       "num_layers": 1,
@@ -177,21 +197,21 @@
       ],
       "full_batch_size": 2,
       "additional_params": {
-        "hidden_size": 2048,
+        "hidden_size": 64,
         "text_config": {
-          "max_position_embeddings": 128000,
-          "hidden_size": 2048,
-          "intermediate_size": 11008,
-          "max_window_layers": 70,
-          "num_attention_heads": 16,
+          "max_position_embeddings": 64,
+          "hidden_size": 64,
+          "intermediate_size": 128,
+          "max_window_layers": 2,
+          "num_attention_heads": 2,
           "num_hidden_layers": 1,
-          "num_key_value_heads": 2,
+          "num_key_value_heads": 1,
           "rms_norm_eps": 1e-06,
           "rope_scaling": {
             "mrope_section": [
-              16,
-              24,
-              24
+              2,
+              3,
+              3
             ],
             "rope_type": "default",
             "type": "default"
@@ -207,12 +227,12 @@
         "vision_config": {
           "depth": 1,
           "num_hidden_layers": 1,
-          "hidden_size": 1280,
+          "hidden_size": 64,
           "in_chans": 3,
-          "intermediate_size": 3420,
-          "num_heads": 16,
+          "intermediate_size": 128,
+          "num_heads": 2,
           "spatial_patch_size": 14,
-          "out_hidden_size": 2048,
+          "out_hidden_size": 64,
           "tokens_per_second": 2,
           "torch_dtype": "float32"
         },
@@ -220,15 +240,20 @@
         "vision_start_token_id": 151652,
         "vision_token_id": 151654,
         "vocab_size": 151936
-      }
+      },
+      "coverage_key": "qwen2_5_vl",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "Qwen/Qwen3-VL-2B-Instruct",
       "model_type": "qwen3_vl",
       "batch_size": 1,
       "prompt_len": 128,
-      "ctx_len": 4096,
-      "img_size": 1540,
+      "ctx_len": 1024,
+      "img_size": 448,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
       "num_layers": 1,
@@ -244,9 +269,9 @@
       "additional_params": {
         "text_config": {
           "dtype": "float32",
-          "head_dim": 128,
-          "hidden_size": 256,
-          "intermediate_size": 512,
+          "head_dim": 16,
+          "hidden_size": 64,
+          "intermediate_size": 128,
           "model_type": "qwen3_vl_text",
           "num_attention_heads": 4,
           "num_hidden_layers": 1,
@@ -254,9 +279,9 @@
           "rope_scaling": {
             "mrope_interleaved": true,
             "mrope_section": [
-              24,
-              20,
-              20
+              4,
+              6,
+              6
             ],
             "rope_type": "default"
           },
@@ -268,24 +293,29 @@
             1
           ],
           "depth": 2,
-          "hidden_size": 128,
-          "intermediate_size": 512,
+          "hidden_size": 64,
+          "intermediate_size": 128,
           "model_type": "qwen3_vl",
           "num_heads": 4,
-          "out_hidden_size": 256,
+          "out_hidden_size": 64,
           "patch_size": 16
         },
         "vision_end_token_id": 151653,
         "vision_start_token_id": 151652
-      }
+      },
+      "coverage_key": "qwen3_vl",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "Qwen/Qwen3-VL-30B-A3B-Instruct",
       "model_type": "qwen3_vl_moe",
       "batch_size": 1,
       "prompt_len": 128,
-      "ctx_len": 4096,
-      "img_size": 1540,
+      "ctx_len": 1024,
+      "img_size": 448,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
       "num_layers": 1,
@@ -301,23 +331,23 @@
       "additional_params": {
         "text_config": {
           "dtype": "float32",
-          "head_dim": 128,
-          "hidden_size": 256,
-          "intermediate_size": 512,
+          "head_dim": 16,
+          "hidden_size": 64,
+          "intermediate_size": 128,
           "mlp_only_layers": [],
           "model_type": "qwen3_vl_moe_text",
-          "moe_intermediate_size": 256,
+          "moe_intermediate_size": 64,
           "num_attention_heads": 4,
-          "num_experts": 8,
-          "num_experts_per_tok": 4,
+          "num_experts": 2,
+          "num_experts_per_tok": 2,
           "num_hidden_layers": 1,
           "num_key_value_heads": 2,
           "rope_scaling": {
             "mrope_interleaved": true,
             "mrope_section": [
-              24,
-              20,
-              20
+              4,
+              6,
+              6
             ],
             "rope_type": "default"
           },
@@ -329,27 +359,32 @@
             1
           ],
           "depth": 2,
-          "hidden_size": 128,
+          "hidden_size": 64,
           "in_channels": 3,
-          "intermediate_size": 512,
+          "intermediate_size": 128,
           "model_type": "qwen3_vl_moe",
           "num_heads": 4,
-          "out_hidden_size": 256
+          "out_hidden_size": 64
         },
         "vision_end_token_id": 151653,
         "vision_start_token_id": 151652
-      }
+      },
+      "coverage_key": "qwen3_vl_moe",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "Qwen/Qwen3.5-0.8B",
       "model_type": "qwen3_5",
       "batch_size": 1,
       "prompt_len": 64,
-      "ctx_len": 4096,
-      "img_size": 1540,
+      "ctx_len": 1024,
+      "img_size": 448,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
-      "num_layers": 4,
+      "num_layers": 2,
       "img_url_list": [
         "https://picsum.photos/id/237/536/354",
         "https://picsum.photos/id/238/536/354"
@@ -363,9 +398,9 @@
         "image_token_id": 248056,
         "text_config": {
           "dtype": "float32",
-          "head_dim": 128,
-          "hidden_size": 256,
-          "intermediate_size": 512,
+          "head_dim": 16,
+          "hidden_size": 64,
+          "intermediate_size": 128,
           "layer_types": [
             "linear_attention",
             "linear_attention",
@@ -375,14 +410,14 @@
           "mlp_only_layers": [],
           "model_type": "qwen3_5_text",
           "num_attention_heads": 4,
-          "num_hidden_layers": 4,
+          "num_hidden_layers": 1,
           "num_key_value_heads": 2,
           "rope_parameters": {
             "mrope_interleaved": true,
             "mrope_section": [
-              11,
-              11,
-              10
+              4,
+              6,
+              6
             ],
             "partial_rotary_factor": 0.25,
             "rope_theta": 10000000,
@@ -396,25 +431,30 @@
             1
           ],
           "depth": 2,
-          "hidden_size": 128,
+          "hidden_size": 64,
           "in_channels": 3,
-          "intermediate_size": 512,
+          "intermediate_size": 128,
           "model_type": "qwen3_5",
           "num_heads": 4,
-          "out_hidden_size": 256,
+          "out_hidden_size": 64,
           "patch_size": 16
         },
         "vision_end_token_id": 248054,
         "vision_start_token_id": 248053
-      }
+      },
+      "coverage_key": "qwen3_5",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "Qwen/Qwen3.6-35B-A3B",
       "model_type": "qwen3_5_moe",
       "batch_size": 1,
       "prompt_len": 64,
-      "ctx_len": 4096,
-      "img_size": 1540,
+      "ctx_len": 1024,
+      "img_size": 448,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
       "num_layers": 1,
@@ -431,26 +471,26 @@
         "image_token_id": 248056,
         "text_config": {
           "dtype": "float32",
-          "head_dim": 128,
-          "hidden_size": 256,
+          "head_dim": 16,
+          "hidden_size": 64,
           "layer_types": [
             "linear_attention"
           ],
           "mlp_only_layers": [],
           "model_type": "qwen3_5_moe_text",
-          "moe_intermediate_size": 256,
+          "moe_intermediate_size": 64,
           "shared_expert_intermediate_size": 256,
           "num_attention_heads": 4,
-          "num_experts": 8,
-          "num_experts_per_tok": 4,
+          "num_experts": 2,
+          "num_experts_per_tok": 2,
           "num_hidden_layers": 1,
           "num_key_value_heads": 2,
           "rope_parameters": {
             "mrope_interleaved": true,
             "mrope_section": [
-              11,
-              11,
-              10
+              4,
+              6,
+              6
             ],
             "partial_rotary_factor": 0.25,
             "rope_theta": 10000000,
@@ -464,28 +504,33 @@
             1
           ],
           "depth": 2,
-          "hidden_size": 128,
+          "hidden_size": 64,
           "in_channels": 3,
-          "intermediate_size": 512,
+          "intermediate_size": 128,
           "model_type": "qwen3_5_moe",
           "num_heads": 4,
-          "out_hidden_size": 256,
+          "out_hidden_size": 64,
           "patch_size": 16
         },
         "vision_end_token_id": 248054,
         "vision_start_token_id": 248053
-      }
+      },
+      "coverage_key": "qwen3_5_moe",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "allenai/Molmo-7B-D-0924",
       "model_type": "molmo",
       "batch_size": 1,
       "prompt_len": 128,
-      "ctx_len": 4096,
+      "ctx_len": 1024,
       "img_size": null,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
-      "num_layers": 2,
+      "num_layers": 1,
       "img_url_list": [
         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
@@ -495,7 +540,12 @@
         "What are the objects in the image?"
       ],
       "full_batch_size": 2,
-      "additional_params": {}
+      "additional_params": {},
+      "coverage_key": "molmo",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "OpenGVLab/InternVL2_5-1B",
@@ -506,7 +556,7 @@
       "img_size": null,
       "img_url": "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
       "text_prompt": "Please describe the image in detail.",
-      "num_layers": 2,
+      "num_layers": 1,
       "img_url_list": [
         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
@@ -517,18 +567,18 @@
       ],
       "full_batch_size": 2,
       "additional_params": {
-        "force_image_size": 448,
+        "force_image_size": 224,
         "llm_config": {
           "_name_or_path": "Qwen/Qwen2.5-0.5B-Instruct",
           "architectures": [
             "Qwen2ForCausalLM"
           ],
-          "hidden_size": 896,
-          "intermediate_size": 4864,
-          "max_position_embeddings": 32768,
-          "max_window_layers": 21,
-          "num_attention_heads": 14,
-          "num_hidden_layers": 2,
+          "hidden_size": 64,
+          "intermediate_size": 128,
+          "max_position_embeddings": 64,
+          "max_window_layers": 2,
+          "num_attention_heads": 2,
+          "num_hidden_layers": 1,
           "num_key_value_heads": 2,
           "torch_dtype": "bfloat16",
           "use_bfloat16": true,
@@ -538,12 +588,12 @@
           "architectures": [
             "InternVisionModel"
           ],
-          "hidden_size": 1024,
-          "image_size": 448,
-          "intermediate_size": 4096,
+          "hidden_size": 64,
+          "image_size": 224,
+          "intermediate_size": 128,
           "num_attention_heads": 16,
           "num_channels": 3,
-          "num_hidden_layers": 2,
+          "num_hidden_layers": 1,
           "norm_type": "layer_norm",
           "qk_normalization": false,
           "qkv_bias": true,
@@ -551,7 +601,12 @@
           "use_bfloat16": true,
           "patch_size": 14
         }
-      }
+      },
+      "coverage_key": "internvl_chat",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "OpenGVLab/InternVL3_5-1B",
@@ -562,7 +617,7 @@
       "img_size": null,
       "img_url": "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
       "text_prompt": "Please describe the image in detail.",
-      "num_layers": 2,
+      "num_layers": 1,
       "img_url_list": [
         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
         "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
@@ -573,18 +628,18 @@
       ],
       "full_batch_size": 2,
       "additional_params": {
-        "force_image_size": 448,
+        "force_image_size": 224,
         "llm_config": {
           "_name_or_path": "/root/codespace/checkpoints/Qwen3-0.6B",
           "architectures": [
             "Qwen3ForCausalLM"
           ],
-          "hidden_size": 1024,
-          "intermediate_size": 3072,
-          "max_position_embeddings": 40960,
-          "max_window_layers": 28,
+          "hidden_size": 64,
+          "intermediate_size": 128,
+          "max_position_embeddings": 64,
+          "max_window_layers": 2,
           "num_attention_heads": 16,
-          "num_hidden_layers": 2,
+          "num_hidden_layers": 1,
           "num_key_value_heads": 8,
           "torch_dtype": "bfloat16",
           "vocab_size": 151936
@@ -593,12 +648,12 @@
           "architectures": [
             "InternVisionModel"
           ],
-          "hidden_size": 1024,
-          "image_size": 448,
-          "intermediate_size": 4096,
+          "hidden_size": 64,
+          "image_size": 224,
+          "intermediate_size": 128,
           "num_attention_heads": 16,
           "num_channels": 3,
-          "num_hidden_layers": 2,
+          "num_hidden_layers": 1,
           "norm_type": "layer_norm",
           "qk_normalization": false,
           "qkv_bias": true,
@@ -607,7 +662,11 @@
           "use_flash_attn": true,
           "patch_size": 14
         }
-      }
+      },
+      "coverage_key": "internvl_chat",
+      "tiers": [
+        "exhaustive"
+      ]
     }
   ],
   "image_text_subfunction_models": [
@@ -616,17 +675,17 @@
       "model_type": "qwen2_5_vl",
       "batch_size": 1,
       "prompt_len": 128,
-      "ctx_len": 4096,
-      "img_size": 1540,
+      "ctx_len": 1024,
+      "img_size": 448,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
       "num_layers": 1,
       "additional_params": {
         "dtype": "float32",
-        "hidden_size": 2048,
-        "intermediate_size": 11008,
-        "max_position_embeddings": 128000,
-        "max_window_layers": 70,
+        "hidden_size": 64,
+        "intermediate_size": 128,
+        "max_position_embeddings": 64,
+        "max_window_layers": 2,
         "num_attention_heads": 16,
         "num_hidden_layers": 1,
         "num_key_value_heads": 2,
@@ -638,20 +697,20 @@
             "full_attention"
           ],
           "dtype": "float32",
-          "hidden_size": 2048,
-          "intermediate_size": 11008,
-          "max_position_embeddings": 128000,
-          "max_window_layers": 70,
+          "hidden_size": 64,
+          "intermediate_size": 128,
+          "max_position_embeddings": 64,
+          "max_window_layers": 2,
           "model_type": "qwen2_5_vl_text",
-          "num_attention_heads": 16,
+          "num_attention_heads": 2,
           "num_hidden_layers": 1,
-          "num_key_value_heads": 2,
+          "num_key_value_heads": 1,
           "rms_norm_eps": 1e-06,
           "rope_scaling": {
             "mrope_section": [
-              16,
-              24,
-              24
+              2,
+              3,
+              3
             ],
             "rope_type": "default",
             "type": "default"
@@ -662,27 +721,29 @@
           "depth": 1,
           "num_hidden_layers": 1,
           "hidden_act": "silu",
-          "hidden_size": 1280,
-          "intermediate_size": 3420,
-          "num_heads": 16,
+          "hidden_size": 64,
+          "intermediate_size": 128,
+          "num_heads": 2,
           "in_chans": 3,
-          "out_hidden_size": 2048,
+          "out_hidden_size": 64,
           "patch_size": 14,
           "spatial_merge_size": 2,
           "spatial_patch_size": 14,
           "window_size": 112,
           "fullatt_block_indexes": [
-            7,
-            15,
-            23,
-            31
+            0
           ],
           "tokens_per_second": 2,
           "temporal_patch_size": 2
         },
         "vision_start_token_id": 151652,
         "vocab_size": 151936
-      }
+      },
+      "coverage_key": "qwen2_5_vl",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     }
   ],
   "image_text_custom_dtype_models": [
@@ -696,32 +757,46 @@
       "img_url": "https://image.slidesharecdn.com/azureintroduction-191206101932/75/Introduction-to-Microsoft-Azure-Cloud-1-2048.jpg",
       "text_prompt": "Please describe the image in detail.",
       "num_layers": 1,
-      "additional_params": {}
+      "additional_params": {},
+      "coverage_key": "internvl_chat",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "google/gemma-3-4b-it",
       "model_type": "gemma3",
       "batch_size": 1,
       "prompt_len": 128,
-      "ctx_len": 3072,
-      "img_size": 896,
+      "ctx_len": 1024,
+      "img_size": 448,
       "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
       "text_prompt": "Can you describe the image in detail.",
       "num_layers": 2,
-      "additional_params": {}
+      "additional_params": {},
+      "coverage_key": "gemma3",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "llava-hf/llava-1.5-7b-hf",
       "model_type": "llava",
       "batch_size": 1,
-      "prompt_len": 784,
+      "prompt_len": 384,
       "ctx_len": 1024,
       "img_size": 336,
       "img_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
       "text_prompt": "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
       "num_layers": 1,
-      "additional_params": {
-      }
+      "additional_params": {},
+      "coverage_key": "llava",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     }
   ],
   "image_text_reranker_models": [
@@ -730,28 +805,37 @@
       "model_type": "qwen3_vl",
       "batch_size": 1,
       "prompt_len": 128,
-      "ctx_len": 1024,
-      "img_size": 1540,
+      "ctx_len": 512,
+      "img_size": 448,
       "img_url": "https://picsum.photos/id/237/536/354",
       "instruction": "Retrieve candidates relevant to the query.",
       "query_text": "A woman playing with her dog on a beach at sunset.",
       "document_text": "A woman and her dog spend time together on a beach during sunset.",
       "num_layers": 1,
-      "additional_params": {}
+      "additional_params": {},
+      "coverage_key": "qwen3_vl:reranker",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     },
     {
       "model_name": "Qwen/Qwen3-VL-Reranker-8B",
       "model_type": "qwen3_vl",
       "batch_size": 1,
       "prompt_len": 128,
-      "ctx_len": 1024,
-      "img_size": 1540,
+      "ctx_len": 512,
+      "img_size": 448,
       "img_url": "https://picsum.photos/id/237/536/354",
       "instruction": "Retrieve candidates relevant to the query.",
       "query_text": "A woman playing with her dog on a beach at sunset.",
       "document_text": "A woman and her dog spend time together on a beach during sunset.",
       "num_layers": 1,
-      "additional_params": {}
+      "additional_params": {},
+      "coverage_key": "qwen3_vl:reranker",
+      "tiers": [
+        "exhaustive"
+      ]
     }
   ],
   "image_text_embedding_models": [
@@ -759,12 +843,17 @@
       "model_name": "Qwen/Qwen3-VL-Embedding-8B",
       "model_type": "qwen3_vl",
       "batch_size": 1,
-      "ctx_len": 2048,
+      "ctx_len": 512,
       "num_layers": 1,
       "vision_depth": 9,
       "deepstack_index": 8,
       "compile_prefill_seq_len": null,
-      "mad_max_threshold": 0.002
+      "mad_max_threshold": 0.002,
+      "coverage_key": "qwen3_vl:embedding",
+      "tiers": [
+        "pr",
+        "exhaustive"
+      ]
     }
   ]
 }

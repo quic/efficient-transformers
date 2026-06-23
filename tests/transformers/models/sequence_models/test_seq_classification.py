@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 from typing import List, Optional, Union
 
@@ -15,13 +14,12 @@ import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForSequenceClassification
+from tests.test_matrix import select_test_entries
 
 from ..check_model_results import dump_and_compare_results
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/sequence_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    test_models = config_data["seq_classification_models"]
+test_models = select_test_entries(CONFIG_PATH, "seq_classification_models")
 
 
 def check_seq_classification_pytorch_vs_ai100(

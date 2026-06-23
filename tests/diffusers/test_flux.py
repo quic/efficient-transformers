@@ -24,6 +24,7 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils._utils import load_json
 from tests.diffusers.diffusers_utils import DiffusersTestUtils, MADValidator
+from tests.test_matrix import EXHAUSTIVE_SCOPE, get_test_scope
 
 # Test Configuration for 256x256 resolution with 2 layers # update mad tolerance
 CONFIG_PATH = "tests/diffusers/flux_test_config.json"
@@ -517,6 +518,8 @@ def test_flux_pipeline(flux_pipeline):
 @pytest.mark.diffusion_models
 @pytest.mark.on_qaic
 def test_flux_pipeline_first_block_cache(flux_pipeline_first_block_cache):
+    if get_test_scope() != EXHAUSTIVE_SCOPE:
+        pytest.skip("First-block-cache diffusion path runs in exhaustive scope.")
     _run_flux_pipeline_test_case(
         flux_pipeline_first_block_cache,
         INITIAL_TEST_CONFIG,

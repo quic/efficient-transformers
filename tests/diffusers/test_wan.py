@@ -30,6 +30,7 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
 from QEfficient.utils._utils import load_json
 from tests.diffusers.diffusers_utils import DiffusersTestUtils, MADValidator
+from tests.test_matrix import EXHAUSTIVE_SCOPE, get_test_scope
 
 # Test Configuration for 48 x 64 resolution with 1 layer
 CONFIG_PATH = "tests/diffusers/wan_test_config.json"
@@ -519,6 +520,8 @@ def test_wan_pipeline(wan_pipeline):
 @pytest.mark.on_qaic
 @pytest.mark.wan
 def test_wan_pipeline_non_unified(wan_pipeline_non_unified):
+    if get_test_scope() != EXHAUSTIVE_SCOPE:
+        pytest.skip("WAN non-unified path runs in exhaustive scope.")
     _run_wan_pipeline_test_case(
         wan_pipeline_non_unified,
         NON_UNIFIED_TEST_CONFIG,
@@ -531,6 +534,8 @@ def test_wan_pipeline_non_unified(wan_pipeline_non_unified):
 @pytest.mark.on_qaic
 @pytest.mark.wan
 def test_wan_pipeline_non_unified_first_block_cache(wan_pipeline_non_unified_first_block_cache):
+    if get_test_scope() != EXHAUSTIVE_SCOPE:
+        pytest.skip("WAN non-unified first-block-cache path runs in exhaustive scope.")
     _run_wan_pipeline_test_case(
         wan_pipeline_non_unified_first_block_cache,
         NON_UNIFIED_TEST_CONFIG,

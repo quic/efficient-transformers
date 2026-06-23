@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 from typing import List, Optional
 
@@ -22,13 +21,12 @@ from QEfficient.transformers.quantizers.auto import replace_transformers_quantiz
 from QEfficient.utils import get_padding_shape_from_config, hf_download
 from QEfficient.utils._utils import create_json, load_hf_processor
 from QEfficient.utils.constants import Constants, QnnConstants
+from tests.test_matrix import select_test_entries
 
 from ..check_model_results import dump_and_compare_results
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/audio_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    test_models = config_data["speech_seq2seq_models"]
+test_models = select_test_entries(CONFIG_PATH, "speech_seq2seq_models")
 
 
 def load_seq2seq_model(model_config):

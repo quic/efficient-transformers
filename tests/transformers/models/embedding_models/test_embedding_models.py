@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-import json
 import os
 from typing import Optional
 
@@ -19,13 +18,12 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModel
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import Constants, QnnConstants
 from QEfficient.utils.test_utils import ModelConfig
+from tests.test_matrix import select_test_entries
 
 from ..check_model_results import dump_and_compare_results
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/embedding_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    embed_test_models = config_data["embedding_models"]
+embed_test_models = select_test_entries(CONFIG_PATH, "embedding_models")
 
 
 def load_embedding_model(model_name: str, n_layer: int = -1):

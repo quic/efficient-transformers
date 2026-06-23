@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import json
 import os
 from typing import Optional
 
@@ -20,18 +19,17 @@ from transformers import (
 )
 
 from QEfficient.utils.test_utils import load_qeff_vlm_model
+from tests.test_matrix import entries_by_model_name, model_names, select_test_entries
 
 NEW_GENERATION_TOKENS = 10
 
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/image_text_model_configs.json")
 
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    multimodal_models = config_data["image_text_subfunction_models"]
+multimodal_models = select_test_entries(CONFIG_PATH, "image_text_subfunction_models")
 
-test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
-model_config_dict = {model["model_name"]: model for model in multimodal_models}
+test_mm_models = model_names(multimodal_models)
+model_config_dict = entries_by_model_name(multimodal_models)
 
 
 def has_QwenLayer_function(onnx_path):
