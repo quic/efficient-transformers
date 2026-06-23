@@ -374,9 +374,9 @@ def main():
     else:
         raise ValueError("Pass both --num-vision-layers and --num-text-layers to load a layer subset.")
 
-    # qaic_config = {"mla_absorption": {"cache_compressed": True, "absorption": False, "online": False}}
+    qaic_config = {"mla_absorption": {"cache_compressed": True, "absorption": False, "online": False}}
 
-    qeff_model = QEFFAutoModelForImageTextToText(model)
+    qeff_model = QEFFAutoModelForImageTextToText(model, qaic_config=qaic_config)
 
     skip_vision = False
 
@@ -386,9 +386,9 @@ def main():
         ## STEP 3: Compile Model for Text-Only Execution
         # Set skip_vision=True to bypass image processing
         qeff_model.compile(
-            # qaic_config=qaic_config,
+            qaic_config=qaic_config,
             prefill_seq_len=1,
-            ctx_len=1024,
+            ctx_len=4096,
             num_cores=16,
             num_devices=1,
             mxfp6_matmul=False,
@@ -407,7 +407,7 @@ def main():
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Tell me about yourself."},
+                    {"type": "text", "text": args.prompt},
                 ],
             },
         ]
@@ -435,23 +435,23 @@ def main():
         ## STEP 3: Compile Model for Vision+Text Execution
         # Do not set skip_vision (defaults to False) to enable image processing
         qeff_model.compile(
-            # qaic_config=qaic_config,
+            qaic_config=qaic_config,
             prefill_seq_len=1,
-            ctx_len=1024,
+            ctx_len=4096,
             num_cores=16,
             num_devices=1,
             mxfp6_matmul=False,
             mxint8_kv_cache=False,
             aic_enable_depth_first=False,
-            # skip_lang=True,
             mos=1,
-            num_patches=2400,  # num_patches
-            h=30,  # h
-            w=80,  # w
-            num_image_tokens=600,  # num_image_tokens
+            num_patches=2400,
+            h=30,
+            w=80,
+            # Keep language-side image embedding specialization tightly bounded to
+            # actual single-image token count to avoid oversized dynamic VA mapping.
+            num_image_tokens=600,
         )
 
-        # exit()
         ## STEP 4: Prepare Image and Text Input
         image = Image.open(BytesIO(requests.get(args.image_url).content)).convert("RGB")
 
@@ -476,8 +476,9 @@ def main():
         # Convert pixel values to float32 for processing
         inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
 
+        breakpoint()
         ## STEP 6: Run Vision+Text Inference
-        output = qeff_model.generate(inputs=inputs, device_ids=[0, 1], generation_len=100)
+        output = qeff_model.generate(inputs=inputs, device_ids=[0], generation_len=10)
 
         ## STEP 7: Display Results
         print(output.generated_ids)

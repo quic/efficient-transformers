@@ -147,6 +147,7 @@ def _run_qpc(onnx_path: Path, pixel_values, h_shape, w_shape, args):
         qpc_dir.parent.mkdir(parents=True, exist_ok=True)
     else:
         qpc_dir = Path(tempfile.mkdtemp(prefix="kimi_k25_verify_qpc_"))
+        shutil.rmtree(qpc_dir)
 
     compile_cmd = [
         args.qaic_compile_bin,

@@ -221,7 +221,7 @@ class MoonVision3dPatchEmbed(nn.Module):
         self.proj = nn.Conv2d(in_dim, out_dim, kernel_size=patch_size, stride=patch_size)
 
         if pos_emb_type == "divided_fixed":
-            self.pos_emb = Learnable2DInterpPosEmbDivided_fixed(
+            self.pos_emb = QEffLearnable2DInterpPosEmbDivided_fixed(
                 height=pos_emb_height, width=pos_emb_width, num_frames=pos_emb_time, dim=out_dim
             )
         else:
@@ -544,7 +544,7 @@ class MoonViT3dPretrainedModel(PreTrainedModel):
             pos_emb_type=config.pos_emb_type,
         )
 
-        self.encoder = MoonViT3dEncoder(
+        self.encoder = QEffMoonViT3dEncoder(
             hidden_dim=config.hidden_size,
             num_layers=config.num_hidden_layers,
             block_cfg={
@@ -707,16 +707,6 @@ class QEffKimiK25EncoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.config = self.model.config
-        # _orig_apply_rope = _kimi_module.apply_rope
-        # _kimi_module.apply_rope = _apply_rope_real
-        # _kimi_module = _sys.modules[type(model).__module__]
-
-        # Restore original apply_rope and attention functions
-        # _kimi_module.apply_rope = _orig_apply_rope
-        # _kimi_module.VL_VISION_ATTENTION_FUNCTIONS.update(_orig_attn_functions)
-
-        # _orig_attn_functions = _kimi_module.VL_VISION_ATTENTION_FUNCTIONS.copy()
-        # _kimi_module.VL_VISION_ATTENTION_FUNCTIONS["eager"] = _full_attention_forward
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
@@ -864,23 +854,39 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             inputs_embeds = self.model.get_input_embeddings()(input_ids)
 
         if image_idx is None:
-            image_idx = torch.zeros((1, 1), dtype=torch.int64, device=inputs_embeds.device)
+            image_idx = torch.zeros((inputs_embeds.shape[0], 1), dtype=torch.int64, device=inputs_embeds.device)
 
-        if image_embeds is not None and input_ids is not None and input_ids.shape[1] != 1:
-            if image_embeds.dim() == 2:
-                image_embeds = image_embeds.unsqueeze(0)
+        image_embeds_for_state = None
+        if image_embeds is not None:
+            if image_embeds.dim() == 3:
+                if image_embeds.shape[0] != 1:
+                    raise ValueError(f"Expected image_embeds batch dim to be 1, got shape {tuple(image_embeds.shape)}")
+                image_embeds_for_state = image_embeds[0].to(device=inputs_embeds.device, dtype=inputs_embeds.dtype)
+            elif image_embeds.dim() == 2:
+                image_embeds_for_state = image_embeds.to(device=inputs_embeds.device, dtype=inputs_embeds.dtype)
+            else:
+                raise ValueError(f"Expected image_embeds rank 2 or 3, got {image_embeds.dim()}.")
 
-            image_embeds = image_embeds.to(device=inputs_embeds.device, dtype=inputs_embeds.dtype)
-            _, _, hidden_size = inputs_embeds.shape
+        if image_embeds_for_state is not None and input_ids is not None and input_ids.shape[1] != 1:
             selected = input_ids == self.config.media_placeholder_token_id
-            indices1 = selected.to(torch.int64).cumsum(1) - 1
-            indices1 = torch.where(indices1 != -1, indices1 + image_idx.to(indices1.device), indices1)
-            indices0 = torch.arange(selected.shape[0], device=selected.device).view(-1, 1)
-            safe_indices1 = torch.where(indices1 < 0, torch.zeros_like(indices1), indices1)
-            image_features_expanded = image_embeds.reshape(-1, hidden_size).unsqueeze(0)[indices0, safe_indices1]
-            image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-            inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
-            image_idx = (indices1.max() + 1).reshape(1, 1)
+            if selected.any():
+                if attention_mask is None:
+                    attention_mask = torch.ones_like(input_ids, dtype=torch.long, device=input_ids.device)
+
+                image_features = [image_embeds_for_state]
+                inputs_embeds = inputs_embeds.to(image_embeds_for_state.dtype)
+                inputs_embeds, attention_mask, _, position_ids = self.model._merge_input_ids_with_image_features(
+                    image_features=image_features,
+                    inputs_embeds=inputs_embeds,
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    labels=None,
+                )
+                image_idx = image_idx + torch.tensor(
+                    [[sum(feature.shape[0] for feature in image_features)]],
+                    dtype=torch.int64,
+                    device=image_idx.device,
+                )
 
         outputs = self.model.language_model(
             inputs_embeds=inputs_embeds,
@@ -897,9 +903,17 @@ class QEffKimiK25DecoderWrapper(nn.Module):
         # QEff Deepseek language_model.forward already returns final logits.
         logits = outputs[0].float()
 
-        output_compressed_kvs = getattr(outputs, "compressed_kvs", None)
-        output_past_key_values = getattr(outputs, "past_key_values", None)
-        return logits, image_embeds, image_idx, output_compressed_kvs, output_past_key_values
+        mla_absorption = getattr(self.model, "mla_absorption", None)
+        if mla_absorption is not None:
+            cache_compressed = mla_absorption.get("cache_compressed", False)
+        else:
+            cache_compressed = False
+
+        if cache_compressed:
+            output_kvs = getattr(outputs, "compressed_kvs", None)
+        else:
+            output_kvs = getattr(outputs, "past_key_values", None)
+        return logits, image_embeds_for_state, image_idx, output_kvs
 
 
 # ref https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/llava/modeling_llava.py#L240
@@ -1308,9 +1322,13 @@ class QEffKimiK25ForConditionalGeneration(KimiK25PreTrainedModel):
 
         output_names = {}
         if kv_offload:
+            lang_output_names.insert(1, "image_embeds_RetainedState")
+            lang_output_names.insert(2, "image_idx_output")
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
         else:
+            lang_output_names.insert(1, "pixel_values_RetainedState")
+            lang_output_names.insert(2, "image_idx_output")
             return lang_output_names
         return output_names
 
@@ -1401,6 +1419,18 @@ class QEffKimiK25ForConditionalGeneration(KimiK25PreTrainedModel):
                     torch.zeros(pkv_cache[0][1].shape, dtype=self.language_model.config.torch_dtype)
                 )
 
+        inputs_shapes = {}
+        # Decoder expects image embeddings indexed by token position. Keep this as
+        # [num_image_tokens, hidden_size] so `num_image_tokens` maps to axis 0.
+        inputs_shapes["image_embeds"] = (600, 7168)
+        inputs_shapes["pixel_values"] = (2400, 3, 14, 14)
+        inputs_shapes["image_idx"] = (1, 1)
+        lang_inputs["image_embeds"] = torch.zeros(
+            inputs_shapes["image_embeds"],
+            dtype=self.language_model.config.torch_dtype,
+        )
+        lang_inputs["image_idx"] = torch.zeros(inputs_shapes["image_idx"], dtype=torch.int64)
+
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
@@ -1482,12 +1512,17 @@ class QEffKimiK25ForConditionalGeneration(KimiK25PreTrainedModel):
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32  # constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         ctx_len = ctx_len if ctx_len else 32  # constants.ONNX_EXPORT_EXAMPLE_CTX_LEN
 
+        num_patches = num_patches if num_patches is not None else 2400
+        h = h if h is not None else 30
+        w = w if w is not None else 80
+        num_image_tokens = num_image_tokens if num_image_tokens is not None else 600
+
         vision = [
             {
-                "num_patches": 2400,  # num_patches
-                "h": 30,  # h
-                "w": 80,  # w
-                "num_image_tokens": 600,  # num_image_tokens
+                "num_patches": num_patches,
+                "h": h,
+                "w": w,
+                "num_image_tokens": num_image_tokens,
             }
         ]
 
@@ -1499,7 +1534,7 @@ class QEffKimiK25ForConditionalGeneration(KimiK25PreTrainedModel):
                     "batch_size": 1 if continuous_batching else batch_size,
                     "seq_len": prefill_seq_len,
                     "ctx_len": ctx_len,
-                    "num_image_tokens": 600,  # num_image_tokens
+                    "num_image_tokens": num_image_tokens,
                 }
                 if continuous_batching:
                     lang_prefill["full_batch_size"] = kv_cache_batch_size
@@ -1515,7 +1550,7 @@ class QEffKimiK25ForConditionalGeneration(KimiK25PreTrainedModel):
                     "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
-                    "num_image_tokens": 600,  # num_image_tokens
+                    "num_image_tokens": num_image_tokens,
                 }
 
                 if continuous_batching:
@@ -1530,7 +1565,7 @@ class QEffKimiK25ForConditionalGeneration(KimiK25PreTrainedModel):
                 "batch_size": 1 if continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
-                "num_image_tokens": 600,  # num_image_tokens
+                "num_image_tokens": num_image_tokens,
             }
             if continuous_batching:
                 lang_prefill["full_batch_size"] = kv_cache_batch_size
@@ -1543,7 +1578,7 @@ class QEffKimiK25ForConditionalGeneration(KimiK25PreTrainedModel):
                 "batch_size": full_batch_size if continuous_batching else batch_size,
                 "seq_len": 1,
                 "ctx_len": ctx_len,
-                "num_image_tokens": 600,  # num_image_tokens
+                "num_image_tokens": num_image_tokens,
             }
 
             if continuous_batching:
