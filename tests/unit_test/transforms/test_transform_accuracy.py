@@ -21,10 +21,15 @@ Tests verify that transforms:
 All tests run on CPU only, using tiny in-memory models.
 """
 
+import copy
+
 import pytest
 import torch
 import torch.nn.functional as F
 from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    AutoModelForImageTextToText,
     FalconConfig,
     FalconForCausalLM,
     Gemma2Config,
@@ -43,13 +48,16 @@ from transformers import (
     Qwen2ForCausalLM,
 )
 
+from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheTransform,
     PoolingTransform,
+    ReplicateKVHeadTransform,
     SamplerTransform,
     SpDTransform,
 )
+from QEfficient.utils.repeat_kv_utils import get_attention_module, get_projection_layer, get_text_model
 
 VOCAB_SIZE = 500
 SEQ_LEN = 8
@@ -198,6 +206,114 @@ def _make_qeff_inputs(input_ids, config, ctx_len=CTX_LEN):
         "position_ids": position_ids,
         "past_key_values": past_key_values,
     }
+
+
+# ---------------------------------------------------------------------------
+# Tests: RepeatKV transform fast unit checks
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.transforms
+class TestRepeatKVTransformFast:
+    """RepeatKV must update KV head config and projection shapes on tiny local configs."""
+
+    def test_repeat_kv_dummy_causal_config(self):
+        cfg = AutoConfig.for_model(
+            "llama",
+            vocab_size=128,
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=1,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            max_position_embeddings=64,
+        )
+        model_hf = AutoModelForCausalLM.from_config(cfg)
+        qeff_model = QEFFAutoModelForCausalLM(copy.deepcopy(model_hf), qaic_config={})
+
+        text_model_before = get_text_model(qeff_model.model)
+        attn_before = get_attention_module(text_model_before.layers[0])
+        k_before = get_projection_layer(attn_before, ("k_proj", "key_proj")).weight.shape
+        v_before = get_projection_layer(attn_before, ("v_proj", "value_proj")).weight.shape
+
+        qeff_model.transform(
+            ctx_len=64,
+            seq_len=8,
+            batch_size=1,
+            qaic_config={"num_replicate_kv_heads": 2},
+        )
+
+        text_model_after = get_text_model(qeff_model.model)
+        attn_after = get_attention_module(text_model_after.layers[0])
+        k_after = get_projection_layer(attn_after, ("k_proj", "key_proj")).weight.shape
+        v_after = get_projection_layer(attn_after, ("v_proj", "value_proj")).weight.shape
+
+        assert qeff_model.model.config.orig_kv_heads == 2
+        assert qeff_model.model.config.num_key_value_heads == 4
+        assert k_after[0] == k_before[0] * 2
+        assert v_after[0] == v_before[0] * 2
+
+    def test_repeat_kv_dummy_vlm_config(self):
+        cfg = AutoConfig.for_model(
+            "llava",
+            text_config={
+                "model_type": "llama",
+                "vocab_size": 128,
+                "hidden_size": 32,
+                "intermediate_size": 64,
+                "num_hidden_layers": 1,
+                "num_attention_heads": 4,
+                "num_key_value_heads": 2,
+                "max_position_embeddings": 64,
+            },
+            vision_config={
+                "model_type": "clip_vision_model",
+                "hidden_size": 32,
+                "intermediate_size": 64,
+                "num_hidden_layers": 1,
+                "num_attention_heads": 4,
+                "image_size": 32,
+                "patch_size": 16,
+                "projection_dim": 32,
+            },
+            image_token_index=0,
+            projector_hidden_act="gelu",
+            vision_feature_select_strategy="default",
+            vision_feature_layer=-1,
+        )
+        model_hf = AutoModelForImageTextToText.from_config(cfg)
+        qeff_model = QEFFAutoModelForImageTextToText(copy.deepcopy(model_hf), kv_offload=False, qaic_config={})
+
+        text_model_before = get_text_model(qeff_model.model)
+        attn_before = get_attention_module(text_model_before.layers[0])
+        k_before = get_projection_layer(attn_before, ("k_proj", "key_proj")).weight.shape
+        v_before = get_projection_layer(attn_before, ("v_proj", "value_proj")).weight.shape
+
+        qeff_model.transform(
+            ctx_len=64,
+            seq_len=8,
+            batch_size=1,
+            qaic_config={"num_replicate_kv_heads": 2},
+        )
+
+        text_model_after = get_text_model(qeff_model.model)
+        attn_after = get_attention_module(text_model_after.layers[0])
+        k_after = get_projection_layer(attn_after, ("k_proj", "key_proj")).weight.shape
+        v_after = get_projection_layer(attn_after, ("v_proj", "value_proj")).weight.shape
+
+        assert qeff_model.model.config.text_config.orig_kv_heads == 2
+        assert qeff_model.model.config.text_config.num_key_value_heads == 4
+        assert k_after[0] == k_before[0] * 2
+        assert v_after[0] == v_before[0] * 2
+
+    def test_repeat_kv_skips_encoder_wrapper_classes(self):
+        class DummyEncoderWrapper(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+
+        model, transformed = ReplicateKVHeadTransform.apply(DummyEncoderWrapper(), num_replicate_kv_heads=2)
+        assert isinstance(model, DummyEncoderWrapper)
+        assert transformed is False
 
 
 # ---------------------------------------------------------------------------
