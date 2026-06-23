@@ -111,7 +111,8 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
     packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
 
     matched_idx = _build_matched_idx_from_cumsum(T2Ei)
-    valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
+    # valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
+    valid_rows = torch.einsum("nt->n", T2Ei.to(torch.int32)).unsqueeze(1)
     row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
 
