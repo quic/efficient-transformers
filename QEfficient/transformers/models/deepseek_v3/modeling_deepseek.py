@@ -1428,7 +1428,11 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         return expert_out
 
     def _forward_expert_blocked(
-        self, x: torch.Tensor, routing_weights: torch.Tensor, num_q_ffn_blocks: Optional[int] = None
+        self,
+        x: torch.Tensor,
+        local_T2E: torch.Tensor,
+        routing_weights: torch.Tensor,
+        num_q_ffn_blocks: Optional[int] = None,
     ) -> torch.Tensor:
         T, H = x.shape
         num_nsp = EXPERT_BLOCKING_NUM_NSP
@@ -1437,8 +1441,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
                 f"num_experts ({len(self.experts)}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})"
             )
         local_experts = len(self.experts) // num_nsp
-        rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        routing_weights_unsqueezed = rw.unsqueeze(-1)
+        routing_weights_unsqueezed = routing_weights.unsqueeze(-1)
         expert_out = x.new_zeros((num_nsp, T, H))
 
         local_gate_qweight = (
@@ -1502,7 +1505,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         )
         for slot in range(local_experts):
             print(f"executing slot {slot}")
-            T2Ei = rw[:, slot, :] > 0
+            T2Ei = local_T2E[:, slot, :]
             expert_out = self._cumsum_scatter_gather_update_expert_blocked(
                 x=x,
                 T2Ei=T2Ei,
@@ -1530,14 +1533,29 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         T = B * S
         x = hidden_states.view(T, H)
 
-        routing_weights = torch.zeros(T, self.config.n_routed_experts, dtype=topk_weight.dtype)
-        routing_weights.scatter_(1, topk_idx, topk_weight)
-
         if len(self.experts) % EXPERT_BLOCKING_NUM_NSP == 0:
+            expert_ids = (
+                torch.arange(
+                    len(self.experts) // EXPERT_BLOCKING_NUM_NSP,
+                    device=x.device,
+                    dtype=topk_idx.dtype,
+                ).unsqueeze(0)
+                * EXPERT_BLOCKING_NUM_NSP
+                + torch.arange(EXPERT_BLOCKING_NUM_NSP, device=x.device, dtype=topk_idx.dtype).unsqueeze(1)
+            )  # [N, L]
+            eq = topk_idx.unsqueeze(0).unsqueeze(0) == expert_ids.unsqueeze(-1).unsqueeze(-1)
+            local_T2E = eq.to(topk_idx.dtype).sum(dim=-1) > 0  # [N, L, T]
+            routing_weights = (eq.to(topk_weight.dtype) * topk_weight.unsqueeze(0).unsqueeze(0)).sum(dim=-1)
+
+
             expert_out = self._forward_expert_blocked(
-                x=x, routing_weights=routing_weights, num_q_ffn_blocks=num_q_ffn_blocks
+                x=x, local_T2E=local_T2E, routing_weights=routing_weights, num_q_ffn_blocks=num_q_ffn_blocks
             ) + self.shared_experts(hidden_states)
             return expert_out.view(B, S, H)
+
+
+        routing_weights = torch.zeros(T, self.config.n_routed_experts, device=x.device, dtype=topk_weight.dtype)
+        routing_weights.scatter_(1, topk_idx, topk_weight)
 
         final_hidden_states = x.new_zeros((T, H))
         for expert_idx in range(self.config.n_routed_experts):
