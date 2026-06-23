@@ -16,7 +16,8 @@ from transformers import AutoConfig
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils._utils import load_hf_tokenizer
-from QEfficient.utils.constants import Constants
+from QEfficient.utils.config_utils import get_first_config_value
+from QEfficient.utils.constants import ATTENTION_HEAD_CONFIG_KEYS, KV_HEAD_CONFIG_KEYS, Constants
 from QEfficient.utils.run_utils import ApiRunner
 from QEfficient.utils.test_utils import ModelConfig, load_hf_causal_lm_model
 
@@ -37,6 +38,52 @@ def get_custom_n_layers(model_name):
     elif model_name in ModelConfig.SWIFTKV_MODELS:
         return -1
     return 1
+
+
+def check_kv_repeat_causal_lm_pytorch_vs_ai100(
+    model_name: str,
+    manual_cleanup: callable,
+    prompt_len: int = Constants.PROMPT_LEN,
+    ctx_len: int = Constants.CTX_LEN,
+    n_layer: int = -1,
+    config: Optional[AutoConfig] = None,
+):
+    """
+    Validate causal LM flow with repeated KV heads configuration.
+    """
+    if config is None:
+        model_config = AutoConfig.from_pretrained(
+            model_name,
+            trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
+        )
+    else:
+        model_config = config
+
+    num_attention_heads = get_first_config_value(model_config, ATTENTION_HEAD_CONFIG_KEYS, default=1, cast_int=True)
+    num_key_value_heads = get_first_config_value(model_config, KV_HEAD_CONFIG_KEYS, default=None, cast_int=True)
+    if num_key_value_heads is None:
+        num_key_value_heads = num_attention_heads
+    if num_attention_heads < 1 or num_key_value_heads < 1:
+        raise ValueError(
+            f"Invalid heads in config for RepeatKV: "
+            f"num_attention_heads={num_attention_heads}, num_key_value_heads={num_key_value_heads}"
+        )
+    if num_attention_heads % num_key_value_heads != 0:
+        raise ValueError(
+            f"Invalid heads in config for RepeatKV: num_attention_heads ({num_attention_heads}) "
+            f"is not divisible by num_key_value_heads ({num_key_value_heads})."
+        )
+    num_replicate_kv_heads = num_attention_heads // num_key_value_heads
+
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        manual_cleanup=manual_cleanup,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        n_layer=n_layer,
+        config=config,
+        qaic_config={"num_replicate_kv_heads": num_replicate_kv_heads},
+    )
 
 
 def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
@@ -75,15 +122,6 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     pytorch_kv_tokens = None
     ort_tokens = None
 
-    api_runner = ApiRunner(
-        batch_size,
-        tokenizer,
-        config,
-        prompts,
-        Constants.PROMPT_LEN,
-        Constants.CTX_LEN,
-        full_batch_size if continuous_batching else None,
-    )
     qeff_model = QEFFAutoModelForCausalLM(
         copy.deepcopy(model_hf),
         is_tlm=is_tlm,
@@ -97,6 +135,15 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         batch_size=full_batch_size if continuous_batching else batch_size,
         num_devices=num_devices,
         qaic_config=qaic_config,
+    )
+    api_runner = ApiRunner(
+        batch_size,
+        tokenizer,
+        qeff_model.config,
+        prompts,
+        Constants.PROMPT_LEN,
+        Constants.CTX_LEN,
+        full_batch_size if continuous_batching else None,
     )
     if continuous_batching is False:
         pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
