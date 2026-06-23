@@ -149,6 +149,7 @@ from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
     MiniMaxM3VLForCausalLM,
     MiniMaxM3VLIndexer,
     MiniMaxM3VLRMSNorm,
+    MiniMaxM3VLRotaryEmbedding,
     MiniMaxM3VLSparseMoeBlock,
     MiniMaxM3VLTextModel,
     MiniMaxM3VLTopKRouter,
@@ -499,6 +500,7 @@ from QEfficient.transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import 
     QEffMiniMaxM3VLDenseMLP,
     QEffMiniMaxM3VLForCausalLM,
     QEffMiniMaxM3VLIndexer,
+    QEffMiniMaxM3VLRotaryEmbedding,
     QEffMiniMaxM3VLSparseMoeBlock,
     QEffMiniMaxM3VLTextModel,
     QEffMiniMaxM3VLTopKRouter,
@@ -746,6 +748,7 @@ class KVCacheTransform(ModuleMappingTransform):
         MiniMaxM3VLDenseMLP: QEffMiniMaxM3VLDenseMLP,
         MiniMaxM3VLAttention: QEffMiniMaxM3VLAttention,
         MiniMaxM3VLIndexer: QEffMiniMaxM3VLIndexer,
+        MiniMaxM3VLRotaryEmbedding: QEffMiniMaxM3VLRotaryEmbedding,
         MiniMaxM3VLSparseMoeBlock: QEffMiniMaxM3VLSparseMoeBlock,
         MiniMaxM3VLTopKRouter: QEffMiniMaxM3VLTopKRouter,
         # CodeGen
@@ -1303,6 +1306,7 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "MiniMaxM3VLDecoderLayer": {"forward": QEffMiniMaxM3VLDecoderLayer.forward},
         "MiniMaxM3VLDenseMLP": {"forward": QEffMiniMaxM3VLDenseMLP.forward},
         "MiniMaxM3VLAttention": {"forward": QEffMiniMaxM3VLAttention.forward},
+        "MiniMaxM3VLRotaryEmbedding": {"forward": QEffMiniMaxM3VLRotaryEmbedding.forward},
         "MiniMaxM3VLTopKRouter": {"forward": QEffMiniMaxM3VLTopKRouter.forward},
         "MiniMaxM3VLSparseMoeBlock": {"forward": QEffMiniMaxM3VLSparseMoeBlock.forward},
         "DeepseekV3ForCausalLM": {

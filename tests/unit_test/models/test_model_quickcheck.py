@@ -471,6 +471,8 @@ def test_minimax_m3_text_layerwise_export_smoke(tmp_path):
     output_names = {output.name for output in onnx_model.graph.output}
     assert any(name.startswith("past_key.0") and name.endswith("_RetainedState") for name in output_names)
     assert any(name.startswith("past_value.0") and name.endswith("_RetainedState") for name in output_names)
+    assert not any(node.op_type == "Expand" and "rotary_emb" in node.name for node in onnx_model.graph.node)
+    assert not any(node.op_type == "ScatterElements" for function in onnx_model.functions for node in function.node)
 
 
 @pytest.mark.llm_model

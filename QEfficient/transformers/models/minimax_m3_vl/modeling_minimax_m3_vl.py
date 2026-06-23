@@ -19,9 +19,12 @@ from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
     MiniMaxM3VLDenseMLP,
     MiniMaxM3VLForCausalLM,
     MiniMaxM3VLIndexer,
+    MiniMaxM3VLRotaryEmbedding,
     MiniMaxM3VLSparseMoeBlock,
     MiniMaxM3VLTextModel,
     MiniMaxM3VLTopKRouter,
+    dynamic_rope_update,
+    maybe_autocast,
     repeat_kv,
 )
 
@@ -78,6 +81,23 @@ def _qeff_apply_rotary_pos_emb(
     query_embed = (query_rot * cos) + (_qeff_rotate_half(query_rot, rotary_dim) * sin)
     key_embed = (key_rot * cos) + (_qeff_rotate_half(key_rot, rotary_dim) * sin)
     return torch.cat((query_embed, query_pass), dim=-1), torch.cat((key_embed, key_pass), dim=-1)
+
+
+class QEffMiniMaxM3VLRotaryEmbedding(MiniMaxM3VLRotaryEmbedding):
+    @torch.no_grad()
+    @dynamic_rope_update
+    def forward(self, x: torch.Tensor, position_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        inv_freq = self.inv_freq.to(device=x.device, dtype=torch.float32)
+        position_ids_expanded = position_ids[..., None].float()
+
+        device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
+        with maybe_autocast(device_type=device_type, enabled=False):
+            freqs = position_ids_expanded.float() * inv_freq.view(1, 1, -1)
+            emb = torch.cat((freqs, freqs), dim=-1)
+            cos = emb.cos() * self.attention_scaling
+            sin = emb.sin() * self.attention_scaling
+
+        return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
 
 
 def qeff_eager_attention_forward(
@@ -160,7 +180,10 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
             q_block = position_ids // self.block_size
             local = torch.arange(self.local_blocks, device=scores.device)
             local_idx = (q_block[..., None] - local.view(1, 1, -1)).clamp(min=0)
-            block_scores.scatter_(-1, local_idx, float("inf"))
+            block_range = torch.arange(num_key_blocks, device=scores.device)
+            local_keep = block_range.view(1, 1, -1, 1) == local_idx.unsqueeze(-2)
+            local_keep = local_keep.any(dim=-1)
+            block_scores = torch.where(local_keep, torch.tensor(float("inf"), device=scores.device), block_scores)
 
         topk = min(self.topk_blocks, num_key_blocks)
         topk_scores, topk_indices = block_scores.topk(topk, dim=-1, sorted=True)
@@ -178,11 +201,8 @@ class QEffMiniMaxM3VLIndexer(MiniMaxM3VLIndexer):
         batch, q_len, _ = block_indices.shape
         num_key_blocks = -(-key_length // self.block_size)
 
-        safe = block_indices.masked_fill(block_indices < 0, num_key_blocks)
-        block_bias = block_indices.new_full((batch, q_len, num_key_blocks + 1), float("-inf"), dtype=dtype)
-        block_bias.scatter_(-1, safe, 0.0)
-        block_bias = block_bias[..., :num_key_blocks]
-        block_keep = (block_bias == 0.0).repeat_interleave(self.block_size, dim=-1)[..., :key_length].unsqueeze(1)
+        key_blocks = torch.arange(key_length, device=device) // self.block_size
+        block_keep = (block_indices.unsqueeze(-1) == key_blocks.view(1, 1, 1, -1)).any(dim=2).unsqueeze(1)
 
         k_positions = torch.arange(key_length, device=device)
         token_future = k_positions[None, None, None, :] > position_ids[:, None, :, None]
@@ -213,11 +233,12 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
         **kwargs,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         input_shape = hidden_states.shape[:-1]
-        hidden_shape = (*input_shape, -1, self.head_dim)
+        query_shape = (*input_shape, self.config.num_attention_heads, self.head_dim)
+        key_value_shape = (*input_shape, self.config.num_key_value_heads, self.head_dim)
 
-        query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-        key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-        value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        query_states = self.q_norm(self.q_proj(hidden_states).view(query_shape)).transpose(1, 2)
+        key_states = self.k_norm(self.k_proj(hidden_states).view(key_value_shape)).transpose(1, 2)
+        value_states = self.v_proj(hidden_states).view(key_value_shape).transpose(1, 2)
 
         cos, sin = position_embeddings
         rotary_dim = int(self.head_dim * self.config.rope_parameters.get("partial_rotary_factor", 1.0))
@@ -261,7 +282,7 @@ class QEffMiniMaxM3VLAttention(MiniMaxM3VLAttention):
             dropout=0.0 if not self.training else self.attention_dropout,
             scaling=self.scaling,
         )
-        attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+        attn_output = attn_output.reshape(*input_shape, self.config.num_attention_heads * self.head_dim).contiguous()
         return self.o_proj(attn_output), attn_weights
 
 
@@ -308,16 +329,17 @@ class QEffMiniMaxM3VLSparseMoeBlock(MiniMaxM3VLSparseMoeBlock):
         _, top_k_weights, top_k_index = self.gate(hidden_states)
         top_k = self.gate.top_k
 
-        gate_up_proj = self.experts.gate_up_proj[top_k_index.flatten()]
-        down_proj = self.experts.down_proj[top_k_index.flatten()]
+        expert_indices = top_k_index.flatten()
+        gate_up_proj = self.experts.gate_up_proj.transpose(1, 2).index_select(0, expert_indices)
+        down_proj = self.experts.down_proj.transpose(1, 2).index_select(0, expert_indices)
 
         expert_in = hidden_states.unsqueeze(1).expand(-1, top_k, -1).contiguous().view(-1, 1, hidden_dim)
-        gate_up = torch.bmm(expert_in, gate_up_proj.transpose(1, 2))
+        gate_up = torch.bmm(expert_in, gate_up_proj)
         gate, up = gate_up.chunk(2, dim=-1)
         gate = _qeff_minimax_clamp(gate, max_value=self.experts.swiglu_limit)
         up = _qeff_minimax_clamp(up, min_value=-self.experts.swiglu_limit, max_value=self.experts.swiglu_limit)
         intermediate = (up + 1.0) * (gate * torch.sigmoid(gate * self.experts.swiglu_alpha))
-        experts_out = torch.bmm(intermediate, down_proj.transpose(1, 2))
+        experts_out = torch.bmm(intermediate, down_proj)
         experts_out = experts_out.view(tokens, top_k, hidden_dim)
         experts_out = experts_out * top_k_weights.unsqueeze(-1).to(experts_out.dtype)
         experts_out = torch.einsum("tkh->th", experts_out)
