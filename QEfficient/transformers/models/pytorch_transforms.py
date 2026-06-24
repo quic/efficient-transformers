@@ -49,6 +49,7 @@ from transformers.models.gemma3.modeling_gemma3 import (
     Gemma3TextModel,
 )
 from transformers.models.gemma4.modeling_gemma4 import (
+    Gemma4ClippableLinear,
     Gemma4ForCausalLM,
     Gemma4ForConditionalGeneration,
     Gemma4RMSNorm,
@@ -57,6 +58,7 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4TextExperts,
     Gemma4TextModel,
     Gemma4TextRouter,
+    Gemma4VisionAttention,
 )
 from transformers.models.glm4_moe.modeling_glm4_moe import (
     Glm4MoeAttention,
@@ -355,6 +357,7 @@ from QEfficient.transformers.models.gemma3.modeling_gemma3 import (
     QEffGemma3TextModel,
 )
 from QEfficient.transformers.models.gemma4.modeling_gemma4 import (
+    QEffGemma4ClippableLinear,
     QEffGemma4CustomRMSNormAIC,
     QEffGemma4ForCausalLM,
     QEffGemma4ForConditionalGeneration,
@@ -363,6 +366,7 @@ from QEfficient.transformers.models.gemma4.modeling_gemma4 import (
     QEffGemma4TextExperts,
     QEffGemma4TextModel,
     QEffGemma4TextRouter,
+    QEffGemma4VisionAttention,
     QEffPrefillChunckedGemma4TextExperts,
 )
 from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
@@ -785,6 +789,8 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma4ForConditionalGeneration: QEffGemma4ForConditionalGeneration,
         Gemma4TextExperts: QEffGemma4TextExperts,
         Gemma4TextRouter: QEffGemma4TextRouter,
+        Gemma4VisionAttention: QEffGemma4VisionAttention,
+        Gemma4ClippableLinear: QEffGemma4ClippableLinear,
         # GPT_OSS
         GptOssAttention: QEffGptOssAttention,
         GptOssDecoderLayer: QEffGptOssDecoderLayer,
@@ -1346,6 +1352,8 @@ class BlockingAttentionTransform:
     @classmethod
     def apply(cls, model: nn.Module, attn_blocking_config) -> Tuple[nn.Module, bool]:
         transformed = False
+        model_config = getattr(model, "config", None) or getattr(getattr(model, "model", None), "config", None)
+        model_architectures = getattr(model_config, "architectures", None) or []
         supported_attention_classes = {
             qeff_class
             for qeff_class in KVCacheTransform._module_mapping.values()
@@ -1355,9 +1363,7 @@ class BlockingAttentionTransform:
             if type(module) in cls._skip_classes:
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
                 continue
-            if type(module) in supported_attention_classes or "DeepseekV3ForCausalLM" in (
-                getattr(model.config, "architectures", None) or []
-            ):
+            if type(module) in supported_attention_classes or "DeepseekV3ForCausalLM" in model_architectures:
                 module.attn_blocking_config = attn_blocking_config
                 transformed = True
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
