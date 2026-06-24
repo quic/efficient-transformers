@@ -193,10 +193,19 @@ class QEffQwen3MoeTopKRouter(Qwen3MoeTopKRouter):
 
 class QEffQwen3MoeExperts(Qwen3MoeExperts):
     def __qeff_init__(self):
+        # Build the transposed aliases as views (no .clone()) so they share storage
+        # with the fused gate_up_proj/down_proj instead of allocating a second full
+        # copy of the expert weights, which doubled resident RAM for MoE models.
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
-        self.gate_proj = nn.Parameter(self.gate_up_proj[:, : self.expert_dim, :].detach().clone().transpose(1, 2))
-        self.up_proj = nn.Parameter(self.gate_up_proj[:, self.expert_dim :, :].detach().clone().transpose(1, 2))
-        self.down_proj_t = nn.Parameter(self.down_proj.detach().clone().transpose(1, 2))
+        gate_up_proj = self.gate_up_proj.detach()
+        down_proj = self.down_proj.detach()
+        self.gate_proj = nn.Parameter(
+            gate_up_proj[:, : self.expert_dim, :].transpose(1, 2), requires_grad=self.gate_up_proj.requires_grad
+        )
+        self.up_proj = nn.Parameter(
+            gate_up_proj[:, self.expert_dim :, :].transpose(1, 2), requires_grad=self.gate_up_proj.requires_grad
+        )
+        self.down_proj_t = nn.Parameter(down_proj.transpose(1, 2), requires_grad=self.down_proj.requires_grad)
 
 
 class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
