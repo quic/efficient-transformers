@@ -1,0 +1,7 @@
+# DFlash example run artifacts (not source)
+results-*/
+*.npy
+noise_embedding/
+*.csv
+dbg.log
+*.patch
