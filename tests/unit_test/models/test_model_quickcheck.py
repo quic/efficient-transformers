@@ -2083,19 +2083,13 @@ def test_layerwise_safe_export_pass_patch_toggles_only_when_enabled():
     original_constant_fold = _C._jit_pass_onnx_constant_fold
     original_canonicalize = _C._jit_pass_canonicalize
 
-    with _layerwise._layerwise_export_env():
-        with layerwise_safe_onnx_export_patches(enabled=True):
-            assert _C._jit_pass_cse is original_cse
-            assert _C._jit_pass_constant_propagation is original_constant_prop
-            assert _C._jit_pass_onnx_constant_fold is original_constant_fold
-            assert _C._jit_pass_canonicalize is not original_canonicalize
-            sentinel_graph = object()
-            assert _C._jit_pass_canonicalize(sentinel_graph) is sentinel_graph
-
+    with layerwise_safe_onnx_export_patches(enabled=True):
         assert _C._jit_pass_cse is original_cse
         assert _C._jit_pass_constant_propagation is original_constant_prop
         assert _C._jit_pass_onnx_constant_fold is original_constant_fold
-        assert _C._jit_pass_canonicalize is original_canonicalize
+        assert _C._jit_pass_canonicalize is not original_canonicalize
+        sentinel_graph = object()
+        assert _C._jit_pass_canonicalize(sentinel_graph) is sentinel_graph
 
     assert _C._jit_pass_cse is original_cse
     assert _C._jit_pass_constant_propagation is original_constant_prop
