@@ -794,6 +794,7 @@ class QEffDeepseekV3MoE(nn.Module):
         self.all_up_proj = torch.nn.Parameter(
             torch.cat(
                 [_get_linear_weight(exp.up_proj).T.unsqueeze(0) for exp in self.experts],
+                dim=0,
             )
         )
         self.all_down_proj = torch.nn.Parameter(

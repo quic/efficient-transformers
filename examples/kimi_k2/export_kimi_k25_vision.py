@@ -36,6 +36,16 @@ NUM_EXPERTS_PER_TOKEN = 2
 
 EXPERT_KEY_PATTERN = re.compile(r"^(language_model\.model\.layers\.\d+\.mlp\.experts\.)(\d+)(\..+)$")
 
+def _set_deterministic(seed: int):
+    import random
+    import numpy as np
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.use_deterministic_algorithms(True)
 
 def _ensure_torch_fx_import_compatibility():
     """Backfill `is_torch_fx_available` for remote model code expecting older Transformers APIs."""
@@ -331,8 +341,9 @@ def parse_args():
 
 def main():
     args = parse_args()
-    _ensure_torch_fx_import_compatibility()
 
+    _set_deterministic(1234)
+    _ensure_torch_fx_import_compatibility()
     config = _prepare_config(args.model_path)
     kimi_cls = get_class_from_dynamic_module(
         "modeling_kimi_k25.KimiK25ForConditionalGeneration",
@@ -476,7 +487,6 @@ def main():
         # Convert pixel values to float32 for processing
         inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
 
-        breakpoint()
         ## STEP 6: Run Vision+Text Inference
         output = qeff_model.generate(inputs=inputs, device_ids=[0], generation_len=10)
 

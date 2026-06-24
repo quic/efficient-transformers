@@ -1440,7 +1440,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.ccl_enabled = False
         if qaic_config:
             self.ccl_enabled = qaic_config.get("ccl_enabled", False)
-        
+
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.input_shapes, self.output_names = None, None
         # ---Sampling---
