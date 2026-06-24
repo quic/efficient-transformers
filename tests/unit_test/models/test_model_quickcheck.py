@@ -59,7 +59,11 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfi
 from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoeTextConfig, Qwen3VLMoeVisionConfig
 
 from QEfficient.transformers.models import _layerwise
-from QEfficient.transformers.models.custom_loader import CustomLoader, WeightSelectionPolicy
+from QEfficient.transformers.models.custom_loader import (
+    CustomLoader,
+    WeightSelectionPolicy,
+    _filter_loading_info_for_policy,
+)
 from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModel,
     QEFFAutoModelForCausalLM,
@@ -2655,6 +2659,33 @@ def test_custom_loader_weight_policy_filters_layer_keys():
     assert not policy.include_key("model.layers.0.self_attn.q_proj.weight")
     assert not policy.include_key("model.language_model.layers.2.mlp.gate.weight")
     assert policy.include_key("model.embed_tokens.weight")
+
+
+@pytest.mark.llm_model
+def test_custom_loader_loading_info_ignores_unselected_missing_layer_keys():
+
+    class LoadingInfo:
+        def __init__(self):
+            self.missing_keys = {
+                "model.layers.0.self_attn.q_proj.weight",
+                "model.layers.1.self_attn.q_proj.weight",
+                "model.embed_tokens.weight",
+            }
+            self.mismatched_keys = {
+                ("model.layers.0.mlp.gate_proj.weight", (1,), (2,)),
+                ("model.layers.1.mlp.gate_proj.weight", (1,), (2,)),
+            }
+
+    loading_info = LoadingInfo()
+    policy = WeightSelectionPolicy.from_layer_indices([0])
+
+    _filter_loading_info_for_policy(loading_info, policy)
+
+    assert loading_info.missing_keys == {
+        "model.layers.0.self_attn.q_proj.weight",
+        "model.embed_tokens.weight",
+    }
+    assert loading_info.mismatched_keys == {("model.layers.0.mlp.gate_proj.weight", (1,), (2,))}
 
 
 @pytest.mark.llm_model
