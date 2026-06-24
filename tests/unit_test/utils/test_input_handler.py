@@ -144,6 +144,16 @@ class TestPreparePytorchInputs:
         inputs = _make_handler(tok, cfg).prepare_pytorch_inputs()
         assert len(inputs["past_key_values"]) == cfg.n_layer
 
+    def test_past_key_values_use_per_layer_pruned_kv_heads(self):
+        tok = _get_tokenizer()
+        cfg = _make_tiny_gpt2_config(tok)
+        cfg._pruned_num_kv_heads_per_layer = {0: 1, 1: 2}
+        inputs = _make_handler(tok, cfg).prepare_pytorch_inputs()
+        assert inputs["past_key_values"][0][0].shape[1] == 1
+        assert inputs["past_key_values"][0][1].shape[1] == 1
+        assert inputs["past_key_values"][1][0].shape[1] == 2
+        assert inputs["past_key_values"][1][1].shape[1] == 2
+
     def test_past_key_values_are_zero_initialized(self):
         tok = _get_tokenizer()
         cfg = _make_tiny_gpt2_config(tok)
@@ -309,6 +319,16 @@ class TestPrepareOrtInputs:
         past_values = [k for k in ort_inputs if "past_value" in k]
         assert len(past_keys) == cfg.n_layer
         assert len(past_values) == cfg.n_layer
+
+    def test_ort_inputs_use_per_layer_pruned_kv_heads(self):
+        tok = _get_tokenizer()
+        cfg = _make_tiny_gpt2_config(tok)
+        cfg._pruned_num_kv_heads_per_layer = {0: 1, 1: 2}
+        ort_inputs = dict(_make_handler(tok, cfg).prepare_ort_inputs())
+        assert ort_inputs["past_key.0"].shape[1] == 1
+        assert ort_inputs["past_value.0"].shape[1] == 1
+        assert ort_inputs["past_key.1"].shape[1] == 2
+        assert ort_inputs["past_value.1"].shape[1] == 2
 
     def test_pytorch_and_ort_inputs_have_same_keys(self):
         tok = _get_tokenizer()

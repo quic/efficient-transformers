@@ -3582,6 +3582,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         max_seq_len_cached: Optional[int] = None,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
+        remove_layers: Optional[List[int]] = None,
+        prune_heads: Optional[dict] = None,
         *args,
         **kwargs,
     ):
@@ -3613,6 +3615,23 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
               The values provided in ``top_ks`` tensor must be less than this maximum limit.
             - **include_guided_decoding** (bool): If True, enables guided token-level filtering
               during decoding. Only works when include_sampler=True.
+
+        remove_layers : list of int, optional
+            If provided, physically remove these layer indices (0-indexed) from the model
+            before returning. This saves memory on QAIC compared to skip_layers (bypass mode)
+            because the removed layers' weights are not exported to ONNX and KV cache is
+            allocated only for the remaining layers.
+            Example: remove_layers=[3, 14, 17] removes layers 3, 14, and 17.
+            For GPT-OSS-20B, prefer removing full_attention layers (even i+1, e.g. [11, 13])
+            as they carry ctx_len-sized KV caches and save the most memory.
+            Default is None (no layers removed).
+        prune_heads : dict of {int: list of int}, optional
+            If provided, structurally prune the specified attention heads from the
+            model BEFORE QEfficient transforms run.  Keys are 0-indexed layer
+            numbers; values are lists of 0-indexed Q-head indices to remove.
+            Example: prune_heads={0: [2, 5], 3: [1, 7, 15]}
+            Supports MHA models (num_key_value_heads == num_attention_heads).
+            Default is None (no heads pruned).
 
         *args :
             Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.
@@ -3681,6 +3700,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 continuous_batching=continuous_batching,
                 **kwargs,
             )
+        # Apply layer removal on the raw HF model BEFORE QEfficient transforms run.
+        # KVCacheTransform (and other _pytorch_transforms) capture layer_idx as a
+        # constant during cls(model, ...) / super().__init__().  If we remove layers
+        # after that point, the re-indexed layer_idx values only change Python
+        # attributes — the constants already baked into the graph still point to the
+        # original (pre-removal) KV cache slots, causing KV reads/writes to wrong
+        # positions and output divergence after the first few decode steps.
+        if remove_layers:
+            apply_layer_removal(model, remove_layers)
+
+        # apply_head_pruning must run on the raw HF model BEFORE cls(model, ...)
+        # triggers KVCacheTransform and other _pytorch_transforms.  Those transforms
+        # capture num_heads as a constant; pruning after that point would only
+        # change Python attributes and leave the baked-in constants stale.
+        if prune_heads:
+            apply_head_pruning(model, prune_heads)
         instance = cls(
             model,
             continuous_batching=continuous_batching,
@@ -3873,6 +3908,24 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
+        pruned_kv_heads_per_layer = getattr(self.model.config, "_pruned_num_kv_heads_per_layer", None)
+
+        def _kv_cache_shape_for_layer(layer_idx: int):
+            """Return per-layer KV cache shape when structural head pruning is active."""
+            if not isinstance(pruned_kv_heads_per_layer, dict) or len(kv_cache_shape) != 4:
+                return kv_cache_shape
+            layer_shape = list(kv_cache_shape)
+            raw_heads = pruned_kv_heads_per_layer.get(layer_idx, pruned_kv_heads_per_layer.get(str(layer_idx)))
+            if raw_heads is None:
+                return layer_shape
+            try:
+                heads = int(raw_heads)
+            except (TypeError, ValueError):
+                return layer_shape
+            if heads > 0:
+                layer_shape[1] = heads
+            return layer_shape
+
         enable_chunking = kwargs.get("enable_chunking", False)
         if (
             kwargs.get("retain_full_kv", False)
@@ -3962,8 +4015,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
+                    kv_idx = 0 if kv == "key" else 1
                     example_inputs["past_key_values"][i].append(
-                        torch.zeros(pkv_cache[0][0].shape, dtype=self.model.config.torch_dtype)
+                        torch.zeros(pkv_cache[i][kv_idx].shape, dtype=self.model.config.torch_dtype)
                     )
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes
                     output_names.append(f"past_{kv}.{i}_RetainedState")
@@ -3988,7 +4042,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
                     example_inputs["past_key_values"][i].append(
-                        torch.zeros(kv_cache_shape, dtype=self.model.config.torch_dtype)
+                        torch.zeros(_kv_cache_shape_for_layer(i), dtype=self.model.config.torch_dtype)
                     )
                     dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
                     output_names.append(f"past_{kv}.{i}_RetainedState")
@@ -4009,10 +4063,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 example_inputs["compressed_kvs"] = [[] for _ in range(self.num_layers)]
                 for i in range(self.num_layers):
                     example_inputs["compressed_kvs"][i].append(
-                        torch.zeros(pkv_cache[0][0].shape, dtype=self.model.config.torch_dtype)
+                        torch.zeros(pkv_cache[i][0].shape, dtype=self.model.config.torch_dtype)
                     )
                     example_inputs["compressed_kvs"][i].append(
-                        torch.zeros(pkv_cache[0][1].shape, dtype=self.model.config.torch_dtype)
+                        torch.zeros(pkv_cache[i][1].shape, dtype=self.model.config.torch_dtype)
                     )
                     dynamic_axes[f"compressed_kv.{i}"] = {0: "batch_size", 2: "ctx_len"}
                     dynamic_axes[f"k_pe.{i}"] = {0: "batch_size", 2: "ctx_len"}
@@ -4022,10 +4076,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 example_inputs["past_key_values"] = [[] for _ in range(self.num_layers)]
                 for i in range(self.num_layers):
                     example_inputs["past_key_values"][i].append(
-                        torch.zeros(pkv_cache[0][0].shape, dtype=self.model.config.torch_dtype)
+                        torch.zeros(pkv_cache[i][0].shape, dtype=self.model.config.torch_dtype)
                     )
                     example_inputs["past_key_values"][i].append(
-                        torch.zeros(pkv_cache[0][1].shape, dtype=self.model.config.torch_dtype)
+                        torch.zeros(pkv_cache[i][1].shape, dtype=self.model.config.torch_dtype)
                     )
 
         if self.continuous_batching:

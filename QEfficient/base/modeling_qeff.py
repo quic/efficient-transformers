@@ -60,6 +60,274 @@ from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 logger = logging.getLogger(__name__)
 
 
+def apply_layer_removal(hf_model, layers_to_remove):
+    """
+    Physically remove transformer layers from a raw HuggingFace model in-place.
+
+    This must be called BEFORE any QEfficient pytorch transforms (e.g. KVCacheTransform)
+    so that the correct, re-indexed layer_idx values are captured by those transforms.
+    Calling it after transforms have run means the old layer_idx constants are already
+    baked into the graph and re-indexing the Python attributes has no effect on the
+    exported ONNX — causing KV cache writes to wrong slots and output divergence.
+
+    Args:
+        hf_model: A raw HuggingFace model (e.g. Qwen2ForCausalLM).
+        layers_to_remove: List of 0-indexed layer indices to remove.
+
+    Returns:
+        hf_model (mutated in-place)
+
+    Raises:
+        AttributeError: If the model does not follow the standard model.model.layers structure.
+        ValueError: If any layer index is out of range.
+    """
+    import torch.nn as nn
+
+    if not layers_to_remove:
+        return hf_model
+
+    layers_to_remove_set = set(layers_to_remove)
+
+    try:
+        transformer = hf_model.model
+        layers = transformer.layers
+    except AttributeError as exc:
+        raise AttributeError(
+            f"Cannot navigate to transformer layers. "
+            f"Expected hf_model.model.layers but got: {exc}. "
+            f"This model architecture may not support layer removal."
+        ) from exc
+
+    original_n = len(layers)
+    invalid = [i for i in layers_to_remove_set if i < 0 or i >= original_n]
+    if invalid:
+        raise ValueError(
+            f"Layer indices {invalid} are out of range [0, {original_n - 1}]."
+        )
+
+    kept_layers = [layer for i, layer in enumerate(layers) if i not in layers_to_remove_set]
+
+    # Replace the layers ModuleList in-place
+    transformer.layers = nn.ModuleList(kept_layers)
+
+    # Re-index layer_idx on every remaining layer so KV cache indices are
+    # contiguous (0 … len(kept_layers)-1).  This MUST happen before KVCacheTransform
+    # runs, otherwise the old layer_idx values get baked into the ONNX graph and
+    # KV cache reads/writes target wrong slots → output diverges after a few steps.
+    for new_idx, layer in enumerate(kept_layers):
+        for attr in ("self_attn", "attention"):
+            attn = getattr(layer, attr, None)
+            if attn is not None and hasattr(attn, "layer_idx"):
+                attn.layer_idx = new_idx
+        if hasattr(layer, "layer_idx"):
+            layer.layer_idx = new_idx
+
+    # Update config so KV cache is allocated for the correct number of layers
+    hf_model.config.num_hidden_layers = len(kept_layers)
+
+    # Update config.layer_types for models with mixed attention (e.g. GPT-OSS-20B
+    # which alternates sliding_attention / full_attention per layer).
+    # get_pkv_dynamic_axes() iterates config.layer_types to assign the correct
+    # dynamic axis name ("sliding_window" vs "ctx_len") to each KV cache tensor.
+    # Without this update the list still has the original length, so every layer
+    # after the first removed index gets the wrong dim name — causing the QAIC
+    # compiler to apply wrong tiling, wrong SRAM/DDR placement, and wrong
+    # ring-buffer scatter/gather fusion for those layers.
+    if hasattr(hf_model.config, "layer_types") and hf_model.config.layer_types:
+        hf_model.config.layer_types = [
+            lt for i, lt in enumerate(hf_model.config.layer_types)
+            if i not in layers_to_remove_set
+        ]
+
+    # Clear legacy skip_layers bypass — no longer needed after physical removal
+    if hasattr(hf_model.config, "skip_layers"):
+        hf_model.config.skip_layers = []
+
+    logger.info(
+        f"[apply_layer_removal] Removed {original_n - len(kept_layers)} layers: "
+        f"{sorted(layers_to_remove_set)} → {len(kept_layers)}/{original_n} remain"
+    )
+    return hf_model
+
+
+def _slice_linear_output_rows(linear, keep_rows):
+    """Return a new Linear whose output rows are restricted to keep_rows.
+
+    Used for q_proj, k_proj, v_proj to keep only the rows corresponding
+    to surviving attention heads.
+    """
+    new_linear = torch.nn.Linear(
+        linear.in_features,
+        len(keep_rows),
+        bias=linear.bias is not None,
+        device=linear.weight.device,
+        dtype=linear.weight.dtype,
+    )
+    with torch.no_grad():
+        new_linear.weight.copy_(linear.weight[keep_rows, :])
+        if linear.bias is not None:
+            new_linear.bias.copy_(linear.bias[keep_rows])
+    return new_linear
+
+
+def _slice_linear_input_cols(linear, keep_cols):
+    """Return a new Linear whose input columns are restricted to keep_cols.
+
+    Used for o_proj to drop the columns belonging to pruned Q heads.
+    """
+    new_linear = torch.nn.Linear(
+        len(keep_cols),
+        linear.out_features,
+        bias=linear.bias is not None,
+        device=linear.weight.device,
+        dtype=linear.weight.dtype,
+    )
+    with torch.no_grad():
+        new_linear.weight.copy_(linear.weight[:, keep_cols])
+        if linear.bias is not None:
+            new_linear.bias.copy_(linear.bias)
+    return new_linear
+
+
+def apply_head_pruning(hf_model, heads_to_prune):
+    """Structurally prune attention heads from a HuggingFace CausalLM (MHA only).
+
+    Must be called BEFORE any QEfficient pytorch transforms (e.g. KVCacheTransform)
+    so the correct updated num_heads values are captured by those transforms.
+
+    Supports MHA models only (num_key_value_heads == num_attention_heads).
+
+    For each layer in heads_to_prune, slices q_proj, k_proj, v_proj (output rows)
+    and o_proj (input cols) to keep only the surviving heads.  Updates per-layer
+    attn.num_heads / attn.num_key_value_heads and sets the following on config so
+    QEff's ONNX export allocates the correct per-layer KV cache shape:
+
+        config._pruned_num_kv_heads_per_layer  — dict {layer_idx: kept_kv_heads}
+        config._pruned_num_heads_per_layer     — dict {layer_idx: kept_q_heads}
+        config._pruned_min_kept_q              — minimum kept Q heads across layers
+        config.num_key_value_heads             — max kept KV heads (for cache sizing)
+        config.head_dim                        — preserved original value for RoPE
+
+    Args:
+        hf_model: A raw HuggingFace CausalLM (e.g. Qwen2ForCausalLM, LlamaForCausalLM).
+        heads_to_prune: dict mapping layer index (int) -> list of head indices to prune.
+            Example: {0: [2, 5], 3: [1, 7]}
+
+    Returns:
+        hf_model (mutated in-place)
+
+    Raises:
+        AttributeError: If the model does not expose hf_model.model.layers.
+        ValueError: If any layer index is out of range, the model is GQA, or
+                    pruning would remove all heads from a layer.
+    """
+    if not heads_to_prune:
+        return hf_model
+
+    try:
+        layers = hf_model.model.layers
+    except AttributeError as exc:
+        raise AttributeError(
+            f"Cannot navigate to transformer layers. "
+            f"Expected hf_model.model.layers but got: {exc}."
+        ) from exc
+
+    num_layers  = len(layers)
+    num_q_heads = hf_model.config.num_attention_heads
+    num_kv_heads = getattr(hf_model.config, "num_key_value_heads", num_q_heads)
+
+    if num_kv_heads != num_q_heads:
+        raise ValueError(
+            f"apply_head_pruning supports MHA only "
+            f"(num_key_value_heads == num_attention_heads). "
+            f"Got num_attention_heads={num_q_heads}, num_key_value_heads={num_kv_heads}."
+        )
+
+    # Preserve original head_dim on config before any num_attention_heads update
+    # so RoPE (_compute_default_rope_parameters) always derives the correct value.
+    head_dim = getattr(hf_model.config, "head_dim", None) or (
+        hf_model.config.hidden_size // num_q_heads
+    )
+    if not getattr(hf_model.config, "head_dim", None):
+        hf_model.config.head_dim = head_dim
+
+    invalid_layers = [idx for idx in heads_to_prune if idx < 0 or idx >= num_layers]
+    if invalid_layers:
+        raise ValueError(
+            f"Layer indices {invalid_layers} are out of range [0, {num_layers - 1}]."
+        )
+
+    total_pruned = 0
+
+    with torch.no_grad():
+        for layer_idx, heads in heads_to_prune.items():
+            if not heads:
+                continue
+
+            attn = layers[layer_idx].self_attn
+            prune_set = {h for h in heads if 0 <= h < num_q_heads}
+            keep_heads = [h for h in range(num_q_heads) if h not in prune_set]
+
+            if not keep_heads:
+                raise ValueError(
+                    f"Layer {layer_idx}: pruning removed all Q heads; "
+                    "at least one head must remain."
+                )
+
+            keep_rows = []
+            for h in keep_heads:
+                start = h * head_dim
+                keep_rows.extend(range(start, start + head_dim))
+
+            attn.q_proj = _slice_linear_output_rows(attn.q_proj, keep_rows)
+            attn.k_proj = _slice_linear_output_rows(attn.k_proj, keep_rows)
+            attn.v_proj = _slice_linear_output_rows(attn.v_proj, keep_rows)
+            attn.o_proj = _slice_linear_input_cols(attn.o_proj, keep_rows)
+
+            attn.num_heads           = len(keep_heads)
+            attn.num_key_value_heads = len(keep_heads)
+            attn.num_key_value_groups = 1
+            attn.head_dim             = head_dim
+
+            total_pruned += len(prune_set)
+            logger.info(
+                f"[apply_head_pruning] Layer {layer_idx:>3d} — "
+                f"pruned: {sorted(prune_set)}, kept: {keep_heads}"
+            )
+
+    # Build per-layer kept-head maps for QEff ONNX export (per-layer KV cache shape)
+    pruned_num_heads_per_layer    = {}
+    pruned_num_kv_heads_per_layer = {}
+    for layer_idx in range(num_layers):
+        if layer_idx in heads_to_prune and heads_to_prune[layer_idx]:
+            prune_set = {h for h in heads_to_prune[layer_idx] if 0 <= h < num_q_heads}
+            kept = num_q_heads - len(prune_set)
+        else:
+            kept = num_q_heads
+        pruned_num_heads_per_layer[layer_idx]    = kept
+        pruned_num_kv_heads_per_layer[layer_idx] = kept
+
+    hf_model.config._pruned_num_heads_per_layer    = pruned_num_heads_per_layer
+    hf_model.config._pruned_num_kv_heads_per_layer = pruned_num_kv_heads_per_layer
+
+    min_kept_q  = min(pruned_num_heads_per_layer.values())
+    max_kept_kv = max(pruned_num_kv_heads_per_layer.values())
+
+    # num_attention_heads is intentionally left unchanged so the ONNX tracer sees
+    # a consistent global shape for unpruned layers.  num_key_value_heads is set
+    # to the maximum kept across all layers so get_padding_shape_from_config
+    # allocates a cache slot large enough for every layer.
+    hf_model.config.num_key_value_heads = max_kept_kv
+    hf_model.config._pruned_min_kept_q  = min_kept_q
+
+    total_in_model = num_layers * num_q_heads
+    logger.info(
+        f"[apply_head_pruning] Total pruned: {total_pruned}/{total_in_model} "
+        f"({total_pruned / total_in_model * 100:.1f}%) | "
+        f"num_key_value_heads={max_kept_kv} (max kept, for KV cache sizing)"
+    )
+    return hf_model
+
 def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
     """Rename a graph value everywhere it can be referenced in an ONNX graph."""
     if old_name == new_name:
@@ -218,6 +486,69 @@ class QEFFBaseModel(ABC):
                 logger.warning(f"Weight clearing failed, continuing: {e}")
                 return False
         return False
+    def remove_layers(self, layers_to_remove: List[int]) -> "QEFFBaseModel":
+        """
+        Physically remove transformer layers from the model before ONNX export.
+
+        This reduces memory on QAIC by:
+          1. Removing weight tensors for the specified layers from the ONNX graph
+          2. Reducing KV cache allocation (num_hidden_layers is updated in config)
+
+        Unlike skip_layers (bypass mode), this produces a genuinely smaller model
+        with a different ONNX hash — no cache collision with the full model.
+
+        IMPORTANT: Call this method AFTER from_pretrained() and BEFORE compile().
+        Once layers are removed, the model cannot be restored without re-loading.
+
+        Args:
+            layers_to_remove: List of layer indices to remove (0-indexed).
+                              Example: [3, 14, 17] removes layers 3, 14, and 17.
+
+        Returns:
+            self (for method chaining)
+
+        Raises:
+            RuntimeError: If weights have already been offloaded.
+            AttributeError: If the model structure is not supported.
+            ValueError: If any layer index is out of range.
+
+        Example:
+            model = QEFFAutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
+            model.remove_layers([3, 14, 17])   # physically removes 3 layers
+            model.compile(batch_size=384, ctx_len=4096, ...)  # now fits!
+        """
+        # Guard: cannot remove layers after weights are offloaded
+        self._model_offloaded_check()
+
+        if not layers_to_remove:
+            return self
+
+        original_n = len(self.model.model.layers)
+
+        # Delegate the actual surgery to the module-level helper.
+        # IMPORTANT: When called via from_pretrained(), apply_layer_removal() is invoked
+        # on the raw HF model BEFORE QEfficient transforms run (see from_pretrained).
+        # This path (post-init remove_layers) is kept for backward compatibility but
+        # note that transforms have already run, so layer_idx re-indexing here only
+        # affects Python attributes — not any constants already captured in the graph.
+        apply_layer_removal(self.model, layers_to_remove)
+
+        kept_n = len(self.model.model.layers)
+
+        # Store removal metadata on the QEff wrapper for logging/debugging
+        self._removed_layers = sorted(set(layers_to_remove))
+        self._original_num_layers = original_n
+
+        # Update cached num_layers so export() and compile() build the right number
+        # of KV cache inputs/outputs (for i in range(self.num_layers)).
+        if hasattr(self, "num_layers"):
+            self.num_layers = kept_n
+
+        logger.info(
+            f"[remove_layers] Updated num_hidden_layers: {original_n} → {kept_n}"
+        )
+
+        return self
 
     def _model_offloaded_check(self) -> None:
         """

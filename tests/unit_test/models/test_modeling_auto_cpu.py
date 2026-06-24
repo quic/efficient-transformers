@@ -273,6 +273,26 @@ class TestQEFFAutoModelForCausalLMLogic:
         qeff = QEFFAutoModelForCausalLM(model)
         assert qeff.num_layers == 2
 
+    def test_export_uses_per_layer_pruned_kv_heads_for_example_inputs(self, tmp_path):
+        """export builds per-layer KV cache shapes when pruning metadata is present."""
+        model, cfg = make_tiny_llama()
+        cfg._pruned_num_kv_heads_per_layer = {0: 1, 1: 2}
+        qeff = QEFFAutoModelForCausalLM(model)
+        captured = {}
+
+        def _fake_export(example_inputs, output_names, dynamic_axes, export_dir=None, **kwargs):
+            captured["example_inputs"] = example_inputs
+            return tmp_path / "fake.onnx"
+
+        qeff._export = _fake_export
+        qeff.export(export_dir=str(tmp_path))
+
+        past_key_values = captured["example_inputs"]["past_key_values"]
+        assert past_key_values[0][0].shape[1] == 1
+        assert past_key_values[0][1].shape[1] == 1
+        assert past_key_values[1][0].shape[1] == 2
+        assert past_key_values[1][1].shape[1] == 2
+
     def test_init_raises_type_error_for_non_causal_lm(self):
         """__init__ raises TypeError when model is not a CausalLM or LMHeadModel."""
         model, cfg = make_tiny_bert()

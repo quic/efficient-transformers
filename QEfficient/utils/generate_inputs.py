@@ -54,12 +54,30 @@ class InputHandler:
         )
 
     def _get_layer_cache_shape(self, layer_idx):
+        pruned_kv_heads_per_layer = getattr(self.config, "_pruned_num_kv_heads_per_layer", None)
+        pruned_heads = None
+        if isinstance(pruned_kv_heads_per_layer, dict):
+            raw_pruned_heads = pruned_kv_heads_per_layer.get(layer_idx, pruned_kv_heads_per_layer.get(str(layer_idx)))
+            if raw_pruned_heads is not None:
+                try:
+                    parsed_heads = int(raw_pruned_heads)
+                except (TypeError, ValueError):
+                    parsed_heads = None
+                if parsed_heads is not None and parsed_heads > 0:
+                    pruned_heads = parsed_heads
+
         if not hasattr(self.config, "layer_types") or self.config.layer_types is None:
             if hasattr(self.config, "sliding_window") and hasattr(self.config, "sliding_window_pattern"):
                 is_sliding = bool((layer_idx + 1) % self.config.sliding_window_pattern)
                 if is_sliding:
-                    return self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
-            return self.padding_shape
+                    layer_shape = self.padding_shape[:2] + [self.config.sliding_window] + [self.padding_shape[-1]]
+                    if pruned_heads is not None:
+                        layer_shape[1] = pruned_heads
+                    return layer_shape
+            layer_shape = list(self.padding_shape)
+            if pruned_heads is not None:
+                layer_shape[1] = pruned_heads
+            return layer_shape
 
         head_dim = (
             getattr(self.config, "head_dim", None)
@@ -86,6 +104,9 @@ class InputHandler:
             )
             d_head = self.config.global_head_dim if getattr(self.config, "global_head_dim", None) else head_dim
             ctx_len = self.ctx_len
+
+        if pruned_heads is not None:
+            n_heads = pruned_heads
 
         batch = self.full_batch_size if self.full_batch_size else self.padding_shape[0]
         return [batch, n_heads, ctx_len, d_head]
