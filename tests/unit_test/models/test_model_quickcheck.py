@@ -615,6 +615,15 @@ def test_gemma3_vlm_export_parity_with_and_without_subfunctions(tmp_path):
     with_model = onnx.load(with_subfunctions_path, load_external_data=False)
     without_model = onnx.load(without_subfunctions_path, load_external_data=False)
 
+    # Ensure the subfunction export path really emits decoder-block subfunctions
+    # for the Gemma3 language decoder, not just a graph with matching IO names.
+    with_subfunction_names = _decoder_block_subfunction_names(with_model, qeff_model.lang_model)
+    without_subfunction_names = _decoder_block_subfunction_names(without_model, qeff_model.lang_model)
+    assert with_subfunction_names, "Expected Gemma3 decoder-layer subfunctions with use_onnx_subfunctions=True"
+    assert not without_subfunction_names, (
+        "Did not expect Gemma3 decoder-layer subfunctions with use_onnx_subfunctions=False"
+    )
+
     assert [value.name for value in with_model.graph.input] == [value.name for value in without_model.graph.input]
     assert [value.name for value in with_model.graph.output] == [value.name for value in without_model.graph.output]
 
