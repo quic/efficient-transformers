@@ -10,7 +10,6 @@ Test for wan pipeline
 """
 
 import copy
-import gc
 import time
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -43,20 +42,6 @@ NON_UNIFIED_CONFIG_PATH = "tests/diffusers/wan_test_non_unified_config.json"
 INITIAL_TEST_CONFIG = load_json(CONFIG_PATH)
 NON_UNIFIED_TEST_CONFIG = load_json(NON_UNIFIED_CONFIG_PATH)
 TEST_SEED = 42
-
-
-def _cleanup_pipeline_qpc_sessions(pipeline) -> None:
-    """Best-effort teardown for QAIC sessions held by diffusion test modules."""
-    for module_obj in getattr(pipeline, "modules", {}).values():
-        qpc_session = getattr(module_obj, "qpc_session", None)
-        if qpc_session is None:
-            continue
-        try:
-            qpc_session.deactivate()
-        except Exception:
-            pass
-        module_obj.qpc_session = None
-    gc.collect()
 
 
 def wan_pipeline_call_with_mad_validation(
@@ -508,31 +493,19 @@ def _build_wan_pipeline(use_unified: bool = True, enable_first_block_cache: bool
     return pipeline, pytorch_pipeline
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def wan_pipeline():
-    pipeline_data = _build_wan_pipeline(use_unified=True)
-    try:
-        yield pipeline_data
-    finally:
-        _cleanup_pipeline_qpc_sessions(pipeline_data[0])
+    return _build_wan_pipeline(use_unified=True)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def wan_pipeline_non_unified():
-    pipeline_data = _build_wan_pipeline(use_unified=False)
-    try:
-        yield pipeline_data
-    finally:
-        _cleanup_pipeline_qpc_sessions(pipeline_data[0])
+    return _build_wan_pipeline(use_unified=False)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def wan_pipeline_non_unified_first_block_cache():
-    pipeline_data = _build_wan_pipeline(use_unified=False, enable_first_block_cache=True)
-    try:
-        yield pipeline_data
-    finally:
-        _cleanup_pipeline_qpc_sessions(pipeline_data[0])
+    return _build_wan_pipeline(use_unified=False, enable_first_block_cache=True)
 
 
 @pytest.mark.diffusion_models
