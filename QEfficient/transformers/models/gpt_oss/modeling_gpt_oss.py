@@ -171,9 +171,20 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
 
         local_experts = num_experts // num_nsp
         expert_dim = self.experts.expert_dim
-        routing_weights_by_expert = (
-            routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        )
+        # routing_weights_by_expert = (
+        #     routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
+        # )
+
+        expert_ids = (
+            torch.arange(local_experts, device=hidden.device, dtype=routing_weights.dtype).unsqueeze(0) * num_nsp
+            + torch.arange(num_nsp, device=hidden.device, dtype=routing_weights.dtype).unsqueeze(1)
+        )  # [N, L]
+
+        # Cast→ReduceSum→Greater rather than .any() because the AOT compiler
+        # currently rejects ReduceMax over the rank-4 bool tensor here.
+        eq = routing_weights.unsqueeze(0).unsqueeze(0) == expert_ids.unsqueeze(-1).unsqueeze(-1)
+        routing_weights_by_expert = eq.to(routing_weights.dtype).sum(dim=-1) > 0  # [N, L, T]
+        
         W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, expert_dim).transpose(0, 1).contiguous()
         W_u = self.experts.up_proj.view(local_experts, num_nsp, H, expert_dim).transpose(0, 1).contiguous()
         W_d = self.experts.down_proj.view(local_experts, num_nsp, expert_dim, H).transpose(0, 1).contiguous()
@@ -184,10 +195,10 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         expert_out = hidden.new_zeros((num_nsp, T, H))
         routing_weights_unsqueezed = routing_weights_by_expert.unsqueeze(-1)
         for local_slot in range(local_experts):
-            T2Ei = routing_weights_by_expert[:, local_slot, :] > 0
+            # T2Ei = routing_weights_by_expert[:, local_slot, :] > 0
             expert_out = _cumsum_scatter_gather_update_gptoss_expert_blocked(
                 x=hidden,
-                T2Ei=T2Ei,
+                T2Ei=routing_weights_by_expert[:, local_slot],
                 W_g=W_g[:, local_slot],
                 W_u=W_u[:, local_slot],
                 W_d=W_d[:, local_slot],
