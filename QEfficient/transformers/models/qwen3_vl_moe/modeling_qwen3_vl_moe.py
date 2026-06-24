@@ -796,10 +796,6 @@ class QEffQwen3VLMoeTextExperts(Qwen3VLMoeTextExperts):
     def __qeff_init__(self):
         # HF 5.x keeps fused gate_up projections. Keep backward-compatible
         # aliases expected by QEff MoE execution paths.
-        # NOTE: build the transposed aliases as views (no .clone()) so they share
-        # storage with the fused gate_up_proj/down_proj instead of allocating a second
-        # full copy of the expert weights. Cloning here doubled resident RAM (~2x the
-        # expert footprint, the bulk of an MoE model).
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
         gate_up_proj = self.gate_up_proj.detach()
         down_proj = self.down_proj.detach()
