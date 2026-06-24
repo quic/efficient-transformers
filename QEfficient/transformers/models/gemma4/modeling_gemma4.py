@@ -458,7 +458,7 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
                     key_states,
                     value_states,
                     self.layer_idx,
-                    {"position_ids": position_ids, "batch_index": batch_index},
+                    cache_kwargs,
                 )
             if self.store_full_length_kv:
                 if not hasattr(past_key_values, "shared_layers"):
