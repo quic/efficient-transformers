@@ -936,6 +936,11 @@ class QEFFBaseModel(ABC):
 
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
         moe_prefill_packed_chunk_size = compiler_options.pop("moe_prefill_packed_chunk_size", None)
+
+        mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
+        mdp_strategy = MdpStrategy(compiler_options.pop("mdp_strategy", MdpStrategy.ONNX))
+        mdp_compiler_dump_path = compiler_options.pop("mdp_compiler_dump_path", None)
+
         if onnx_path is None:
             # If weights were offloaded after export, compiling must use the existing
             # ONNX because re-exporting is no longer possible. Otherwise export for
@@ -1005,9 +1010,6 @@ class QEFFBaseModel(ABC):
         #      Strategy INTERSECTION: intersect with compiler dump; compact (~1-2 MB),
         #        requires a prior -mdp-dump-partition-config run.
         #   3. Template (tensor-slice) MDP — single partition, nodeList absent.
-        mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
-        mdp_strategy = MdpStrategy(compiler_options.pop("mdp_strategy", MdpStrategy.ONNX))
-        mdp_compiler_dump_path = compiler_options.pop("mdp_compiler_dump_path", None)
         mdp_ts_json = None
 
         if mdp_ts_json_path:
