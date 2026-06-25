@@ -48,8 +48,9 @@ def prefill_path(
     mul_value = torch.ones(past_repetition_penalty_buffer.shape[0], 1, dtype=torch.bool)
     zero_tensor = torch.zeros(batch_index.shape, dtype=torch.long)
     positions_mask = (position_ids[:, :1] != zero_tensor).view(-1, 1)
-    mul_value = select_interface(CtxScatterFuncCB3D.apply, 
-    torch.ops.qefficient.ctx_scatter_cb_3d)(mul_value, batch_index, zero_tensor, positions_mask)
+    mul_value = select_interface(CtxScatterFuncCB3D.apply, torch.ops.qefficient.ctx_scatter_cb_3d)(
+        mul_value, batch_index, zero_tensor, positions_mask
+    )
     past_repetition_penalty_buffer *= mul_value
 
     # Mask out-of-bounds or invalid position_ids or input_ids

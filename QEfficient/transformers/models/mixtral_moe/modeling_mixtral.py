@@ -231,7 +231,7 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
                 experts_dtype = param.dtype
                 break
             hidden_states_for_experts = hidden_states.to(experts_dtype) if experts_dtype else hidden_states
-            if torch.onnx.is_in_onnx_export():
+            if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
                 # Avoid grouped-mm ONNX incompatibility (`aten::histc`) while keeping
                 # upstream experts math/parameter layout.
                 final_hidden_states = batched_mm_experts_forward(
