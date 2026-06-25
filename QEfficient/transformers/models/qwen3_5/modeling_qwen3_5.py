@@ -749,8 +749,9 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 conv_ctx_indices = torch.arange(
                     conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
                 )[None, :]
-                conv_state = select_interface(CtxGatherFuncCB3D.apply, 
-                torch.ops.qefficient.ctx_gather_cb_3d)(conv_state_all, conv_batch_index, conv_ctx_indices)
+                conv_state = select_interface(CtxGatherFuncCB3D.apply, torch.ops.qefficient.ctx_gather_cb_3d)(
+                    conv_state_all, conv_batch_index, conv_ctx_indices
+                )
 
                 recurrent_batch_index = (batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)).to(
                     recurrent_state_all.device
@@ -778,10 +779,9 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 conv_position_ids = torch.arange(
                     conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
                 )[None, :]
-                cache_params.conv_states[self.layer_idx] = select_interface(CtxScatterFuncCB3D.apply, 
-                torch.ops.qefficient.ctx_scatter_cb_3d)(
-                    conv_state_all, conv_batch_index, conv_position_ids, new_conv_state
-                )
+                cache_params.conv_states[self.layer_idx] = select_interface(
+                    CtxScatterFuncCB3D.apply, torch.ops.qefficient.ctx_scatter_cb_3d
+                )(conv_state_all, conv_batch_index, conv_position_ids, new_conv_state)
             else:
                 cache_params.conv_states[self.layer_idx] = new_conv_state
         else:
@@ -838,8 +838,9 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 recurrent_position_ids = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, :].expand(recurrent_batch_index.shape[0], -1)
-                cache_params.recurrent_states[self.layer_idx] = select_interface(CtxScatterFuncCB.apply, 
-                torch.ops.qefficient.ctx_scatter_cb)(
+                cache_params.recurrent_states[self.layer_idx] = select_interface(
+                    CtxScatterFuncCB.apply, torch.ops.qefficient.ctx_scatter_cb
+                )(
                     recurrent_state_all,
                     recurrent_batch_index,
                     recurrent_position_ids,

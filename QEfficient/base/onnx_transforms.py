@@ -264,7 +264,6 @@ class RenameFunctionOutputsTransform(BaseOnnxTransform):
         return renamed
 
 
-
 class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
     """Expose nested decoder cache side effects as explicit ONNX values."""
 

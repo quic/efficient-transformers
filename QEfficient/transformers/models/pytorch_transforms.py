@@ -943,7 +943,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Llama4VisionEncoderLayer: QEffLlama4VisionEncoderLayer,
         MllamaVisionEncoderLayer: QEffMllamaVisionEncoderLayer,
         PixtralAttentionLayer: QEffPixtralAttentionLayer,
-        Qwen2_5_VLVisionBlock: QEffQwen2_5_VLVisionBlock,
+        # Qwen2_5_VLVisionBlock: QEffQwen2_5_VLVisionBlock,
         Qwen3VLVisionBlock: QEffQwen3VLVisionBlock,
         Qwen3VLMoeVisionBlock: QEffQwen3VLMoeVisionBlock,
         SiglipEncoderLayer: QEffSiglipEncoderLayer,
