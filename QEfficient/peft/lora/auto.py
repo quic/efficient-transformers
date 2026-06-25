@@ -24,26 +24,25 @@ from QEfficient.utils.logging_utils import logger
 
 class QEffAutoLoraModelForCausalLM(QEFFAutoModelForCausalLM):
     """
-    QEfficient class for loading models with multiple LoRA adapters for causal language modeling.
+        QEfficient class for loading models with multiple LoRA adapters for causal language modeling.
 
-    This class enables mixed batch inference with different adapters on Cloud AI 100 hardware.
-    Currently, only Mistral and Llama models are supported. Once exported and compiled, the QPC can perform
-    mixed batch inference using the `prompt_to_adapter_mapping` argument.
+        This class enables mixed batch inference with different adapters on Cloud AI 100 hardware.
+        Currently, only Mistral and Llama models are supported. Once exported and compiled, the QPC can perform
+        mixed batch inference using the `prompt_to_adapter_mapping` argument.
 
-    Example:
-        .. code-block:: python
-
+        Example:
+            ```python
             from QEfficient.peft.lora import QEffAutoLoraModelForCausalLM
             from transformers import AutoTokenizer
+    ```
+                m = QEffAutoLoraModelForCausalLM.from_pretrained("mistralai/Mistral-7B-v0.1", num_hidden_layers=1)
+                tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1")
+                m.load_adapter("predibase/gsm8k", "gsm8k")
+                m.load_adapter("predibase/magicoder", "magicoder")
+                m.compile()
 
-            m = QEffAutoLoraModelForCausalLM.from_pretrained("mistralai/Mistral-7B-v0.1", num_hidden_layers=1)
-            tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1")
-            m.load_adapter("predibase/gsm8k", "gsm8k")
-            m.load_adapter("predibase/magicoder", "magicoder")
-            m.compile()
-
-            prompts = ["code prompt", "math prompt", "generic"]
-            m.generate(prompts=prompts, tokenizer=tokenizer,prompt_to_adapter_mapping=["magicoder", "gsm8k", "base"])
+                prompts = ["code prompt", "math prompt", "generic"]
+                m.generate(prompts=prompts, tokenizer=tokenizer,prompt_to_adapter_mapping=["magicoder", "gsm8k", "base"])
     """
 
     def __init__(self, model: nn.Module, continuous_batching: bool = False, **kwargs) -> None:

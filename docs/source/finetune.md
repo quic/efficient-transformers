@@ -29,6 +29,7 @@ Export the ENV variables to get the device and HW traces and debugging logs
 export QAIC_DEVICE_LOG_LEVEL=0 # For Device level logs
 export QAIC_DEBUG=1 # To understand the CPU fallback ops
 ```
+
 ---
 
 ## Dataset Details
@@ -58,6 +59,7 @@ For more details on the usage of the training parameters, use the below command:
 ```python
 python -m QEfficient.cloud.finetune -h
 ```
+
 ---
 
 ### Distributed training(DDP) on QAIC
@@ -169,6 +171,7 @@ to visualise the data,
 ```python
 tensorboard --logdir runs/<file> --bind_all
 ```
+
 ---
 
 ## Some features/functionalities of fine-tuning stack:
@@ -176,7 +179,7 @@ tensorboard --logdir runs/<file> --bind_all
     2) Gradient Checkpointing: By default, gradient checkpointing is disabled. To enable it, command line argument gradient_accumulation_steps has to be passed.
 
 
-### 🔧 Steps to Fine-Tune with a Custom Dataset
+### Steps to Fine-Tune with a Custom Dataset
 
 1.  **Launching Fine-Tuning with a Custom Dataset**
     -   Use the following command-line arguments to begin fine-tuning using a custom dataset:

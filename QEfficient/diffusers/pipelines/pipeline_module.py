@@ -69,10 +69,9 @@ class QEffTextEncoder(QEFFBaseModel):
         tailored to the specific text encoder type (CLIP vs T5).
 
         Returns:
-            Tuple containing:
-                - example_inputs (Dict): Sample inputs for ONNX export
-                - dynamic_axes (Dict): Specification of dynamic dimensions
-                - output_names (List[str]): Names of model outputs
+            Tuple[Dict, Dict, List[str]]: (example_inputs, dynamic_axes, output_names)
+                where example_inputs are sample inputs for ONNX export, dynamic_axes specify
+                variable dimensions, and output_names are the model output names.
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
 
@@ -260,10 +259,9 @@ class QEffVAE(QEFFBaseModel):
             latent_width (int): Width of latent representation (default: 32)
 
         Returns:
-            Tuple containing:
-                - example_inputs (Dict): Sample inputs for ONNX export
-                - dynamic_axes (Dict): Specification of dynamic dimensions
-                - output_names (List[str]): Names of model outputs
+            Tuple[Dict, Dict, List[str]]: (example_inputs, dynamic_axes, output_names)
+                where example_inputs are sample inputs for ONNX export, dynamic_axes specify
+                variable dimensions, and output_names are the model output names.
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
 
@@ -287,10 +285,9 @@ class QEffVAE(QEFFBaseModel):
         Generate ONNX export configuration for the VAE Encoder.
 
         Returns:
-            Tuple containing:
-                - example_inputs (Dict): Sample inputs for ONNX export
-                - dynamic_axes (Dict): Specification of dynamic dimensions
-                - output_names (List[str]): Names of model outputs
+            Tuple[Dict, Dict, List[str]]: (example_inputs, dynamic_axes, output_names)
+                where example_inputs are sample inputs for ONNX export, dynamic_axes specify
+                variable dimensions, and output_names are the model output names.
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         num_frames = constants.WAN_ONNX_EXPORT_FRAMES
@@ -321,17 +318,11 @@ class QEffVAE(QEFFBaseModel):
 
     def get_video_onnx_params(self) -> Tuple[Dict, Dict, List[str]]:
         """
-        Generate ONNX export configuration for the VAE decoder.
-
-        Args:
-            latent_height (int): Height of latent representation (default: 32)
-            latent_width (int): Width of latent representation (default: 32)
+        Generate ONNX export configuration for the VAE video decoder.
 
         Returns:
-            Tuple containing:
-                - example_inputs (Dict): Sample inputs for ONNX export
-                - dynamic_axes (Dict): Specification of dynamic dimensions
-                - output_names (List[str]): Names of model outputs
+            Tuple[Dict, Dict, List[str]]: A tuple of (example_inputs, dynamic_axes, output_names)
+                ready for ONNX export of the video decoder.
         """
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         latent_frames = constants.WAN_ONNX_EXPORT_LATENT_FRAMES
@@ -452,10 +443,9 @@ class QEffFluxTransformerModel(QEFFBaseModel):
             cl (int): Compressed latent dimension (default: FLUX_ONNX_EXPORT_COMPRESSED_LATENT_DIM)
 
         Returns:
-            Tuple containing:
-                - example_inputs (Dict): Sample inputs for ONNX export
-                - dynamic_axes (Dict): Specification of dynamic dimensions
-                - output_names (List[str]): Names of model outputs
+            Tuple[Dict, Dict, List[str]]: (example_inputs, dynamic_axes, output_names)
+                where example_inputs are sample inputs for ONNX export, dynamic_axes specify
+                variable dimensions, and output_names are the model output names.
         """
         example_inputs = {
             # Latent representation of the image
@@ -680,10 +670,9 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
         Creates example inputs for all Wan-specific inputs including hidden states,
         text embeddings, timestep conditioning,
         Returns:
-            Tuple containing:
-                - example_inputs (Dict): Sample inputs for ONNX export
-                - dynamic_axes (Dict): Specification of dynamic dimensions
-                - output_names (List[str]): Names of model outputs
+            Tuple[Dict, Dict, List[str]]: (example_inputs, dynamic_axes, output_names)
+                where example_inputs are sample inputs for ONNX export, dynamic_axes specify
+                variable dimensions, and output_names are the model output names.
         """
         batch_size = constants.WAN_ONNX_EXPORT_BATCH_SIZE
         example_inputs = {
