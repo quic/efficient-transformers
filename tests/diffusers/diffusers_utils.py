@@ -11,12 +11,34 @@ Provides essential functions for MAD validation, image validation
 hash verification, and other testing utilities.
 """
 
+import gc
 import os
 from typing import Any, Dict, Tuple, Union
 
 import numpy as np
 import torch
 from PIL import Image
+
+
+def release_qpc_session(module_obj) -> None:
+    """Deactivate and drop a module's QAIC session so device resources are released between tests."""
+    qpc_session = getattr(module_obj, "qpc_session", None)
+    if qpc_session is None:
+        return
+    try:
+        qpc_session.deactivate()
+    finally:
+        module_obj.qpc_session = None
+        del qpc_session
+        gc.collect()
+
+
+def release_pipeline_qpc_sessions(pipeline, module_names) -> None:
+    """Release QAIC sessions for the named modules if they exist on the pipeline."""
+    for module_name in module_names:
+        module_obj = getattr(pipeline, module_name, None)
+        if module_obj is not None:
+            release_qpc_session(module_obj)
 
 
 class DiffusersTestUtils:

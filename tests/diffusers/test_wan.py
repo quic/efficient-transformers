@@ -29,7 +29,12 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
 from QEfficient.utils._utils import load_json
-from tests.diffusers.diffusers_utils import DiffusersTestUtils, MADValidator
+from tests.diffusers.diffusers_utils import (
+    DiffusersTestUtils,
+    MADValidator,
+    release_pipeline_qpc_sessions,
+    release_qpc_session,
+)
 
 # Test Configuration for 48 x 64 resolution with 1 layer
 CONFIG_PATH = "tests/diffusers/wan_test_config.json"
@@ -365,10 +370,10 @@ def wan_pipeline_call_with_mad_validation(
     )
 
     if pipeline.use_unified:
-        pipeline.transformer.qpc_session.deactivate()  # deactivate transformer qpc session
+        release_qpc_session(pipeline.transformer)
     else:
-        pipeline.transformer_high.qpc_session.deactivate()
-        pipeline.transformer_low.qpc_session.deactivate()
+        release_qpc_session(pipeline.transformer_high)
+        release_qpc_session(pipeline.transformer_low)
     # Step 9: Decode latents to video QAIC VAE decoder
     latents = latents.to(pipeline.vae_decoder.model.dtype)
     latents_mean = (
@@ -399,7 +404,7 @@ def wan_pipeline_call_with_mad_validation(
     video = pipeline.vae_decoder.qpc_session.run(inputs)
     end_decode_time = time.perf_counter()
     vae_decoder_perf = end_decode_time - start_decode_time
-    pipeline.vae_decoder.qpc_session.deactivate()  # deactivate vae decoder qpc session
+    release_qpc_session(pipeline.vae_decoder)
 
     # VAE decoder MAD validation
     print(" Performing MAD validation for VAE decoder...")
@@ -667,6 +672,8 @@ def _run_wan_pipeline_test_case(
     except Exception as e:
         print(f"\nTEST FAILED: {e}")
         raise
+    finally:
+        release_pipeline_qpc_sessions(pipeline, ["transformer", "transformer_high", "transformer_low", "vae_decoder"])
 
 
 if __name__ == "__main__":
