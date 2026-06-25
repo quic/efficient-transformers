@@ -23,12 +23,7 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils._utils import load_json
-from tests.diffusers.diffusers_utils import (
-    DiffusersTestUtils,
-    MADValidator,
-    release_pipeline_qpc_sessions,
-    release_qpc_session,
-)
+from tests.diffusers.diffusers_utils import DiffusersTestUtils, MADValidator
 
 # Test Configuration for 256x256 resolution with 2 layers # update mad tolerance
 CONFIG_PATH = "tests/diffusers/flux_test_config.json"
@@ -130,8 +125,8 @@ def flux_pipeline_call_with_mad_validation(
         max_sequence_length=max_sequence_length,
     )
     # Deactivate text encoder qpc sessions
-    release_qpc_session(pipeline.text_encoder)
-    release_qpc_session(pipeline.text_encoder_2)
+    pipeline.text_encoder.qpc_session.deactivate()
+    pipeline.text_encoder_2.qpc_session.deactivate()
 
     # MAD Validation for Text Encoders
     print(" Performing MAD validation for text encoders...")
@@ -278,7 +273,7 @@ def flux_pipeline_call_with_mad_validation(
             if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % pipeline.scheduler.order == 0):
                 progress_bar.update()
 
-    release_qpc_session(pipeline.transformer)
+    pipeline.transformer.qpc_session.deactivate()  # deactivate transformer qpc session
     # Step 8: Decode latents to images
     if output_type == "latent":
         image = latents
@@ -309,7 +304,7 @@ def flux_pipeline_call_with_mad_validation(
         image = pipeline.vae_decode.qpc_session.run(inputs)
         end_decode_time = time.time()
         vae_decode_perf = end_decode_time - start_decode_time
-        release_qpc_session(pipeline.vae_decode)
+        pipeline.vae_decode.qpc_session.deactivate()  # deactivate vae decoder qpc session
 
         # VAE MAD validation
         mad_validator.validate_module_mad(image_torch.detach().cpu().numpy(), image["sample"], "vae_decoder")
@@ -501,8 +496,6 @@ def _run_flux_pipeline_test_case(
     except Exception as e:
         print(f"\nTEST FAILED: {e}")
         raise
-    finally:
-        release_pipeline_qpc_sessions(pipeline, ["text_encoder", "text_encoder_2", "transformer", "vae_decode"])
 
 
 @pytest.mark.flux

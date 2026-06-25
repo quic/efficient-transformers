@@ -14,10 +14,6 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
   - Or directly: `ruff check --fix .` then `ruff format .`
 - Run tests: `pytest -n auto <path-or-expr>`
   - Narrow first with `-k '<expr>'`, then widen once green.
-  - Always run the appropriate tests after refactoring code, adding features,
-    onboarding models, or making comparable behavioral changes.
-  - If no suitable tests exist for newly added code, add focused tests in the
-    appropriate existing test location before validating the change.
   - Tests are tagged with markers (see `pyproject.toml`): `on_qaic`, `cli`, `finetune`,
     `multimodal`, `qnn`, `diffusion_models`, `regular`, `nightly`, `vllm`, `wan`, `flux`.
   - `on_qaic` / `qnn` tests require QAIC hardware and will not run on plain CPU hosts.
@@ -48,22 +44,19 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
   from SOLID for compatibility, performance, export constraints, or minimal-risk
   integration, call that out to the user with the reason.
 - Always use signed-off commits with `git commit -s`.
-- Keep code standards high: follow PEP 8 for Python, including naming variables,
-  classes, functions, and modules appropriately and maintaining clean import order.
-  Avoid commented-out code, and never leave breakpoints, ad-hoc debug prints, or
-  temporary debugging hooks.
+- Keep code standards high: follow PEP 8 for Python, avoid commented-out code,
+  and never leave breakpoints, ad-hoc debug prints, or temporary debugging hooks.
 - Do not add new test files when an existing test (or the quickcheck gate) can carry the regression.
 
 ## Required user inputs
 - Ask the user for the virtualenv path only when there is a real need to execute Python-dependent commands, such as `python`, `pip`, `pytest`, `ruff`, or `pre-commit`; otherwise do not ask.
 - Ask the user for `HF_HUB_CACHE` before downloading or loading any model.
-- Set `HF_HUB_ENABLE_HF_TRANSFER=1` whenever downloading models from Hugging Face.
-- Ask the user for `QEFF_HOME` before export/compile work that produces QEff artifacts only when the correct location is ambiguous; otherwise choose an appropriate local path and proceed.
+- Ask the user for `QEFF_HOME` before export/compile work that produces QEff artifacts.
 
 ## Contribution policy
 - Follow the fork → branch → PR flow in `CONTRIBUTING.md`; sync from `upstream/main`.
-- Always run the relevant linter and formatter at the end of code changes, and
-  address the findings instead of leaving avoidable style issues.
+- Before committing, run the relevant linter/formatter for the files changed and
+  address the findings instead of committing avoidable style issues.
 - A human submitter must understand and be able to defend every AI-assisted change
   end-to-end, and must review every changed line and run the relevant tests.
 - Disclose AI assistance and the exact test commands run in the PR description.

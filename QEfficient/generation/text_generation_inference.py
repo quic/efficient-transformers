@@ -719,11 +719,10 @@ class QEffTextGenerationBase:
         next_token_id = self._fetch_next_token_id(outputs)
 
         # Store the generated values.
-        decode_batch = decode_batch_id if decode_batch_id is not None else slice(None)
-        self.decode_input_ids[decode_batch] = next_token_id
-        self.decode_pos_ids[decode_batch] = position_ids
-        self.generated_ids[decode_batch, 0] = next_token_id.squeeze()
-        self.generation_len[decode_batch] = generation_len
+        self.decode_input_ids[decode_batch_id or slice(None)] = next_token_id
+        self.decode_pos_ids[decode_batch_id or slice(None)] = position_ids
+        self.generated_ids[decode_batch_id or slice(None), 0] = next_token_id.squeeze(1)
+        self.generation_len[decode_batch_id or slice(None)] = generation_len
         return next_token_id
 
     def run_prefill_for_all_inputs(self, prompt_queue, generation_len):
@@ -928,7 +927,7 @@ class QEffTextGenerationBase:
                         new_token_id = self.update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
 
                         batch_id_map[decode_batch_id] = max(batch_id_map.values()) + 1
-                        self.generated_ids[batch_id_map[decode_batch_id], 0] = new_token_id.squeeze()
+                        self.generated_ids[batch_id_map[decode_batch_id], 0] = new_token_id.squeeze(1)
                         generated_id_current_index[decode_batch_id] = 1
 
                         self._set_output_buffers(

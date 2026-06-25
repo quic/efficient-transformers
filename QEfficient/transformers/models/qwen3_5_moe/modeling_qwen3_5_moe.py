@@ -57,10 +57,6 @@ from QEfficient.transformers.cache_utils import (
 )
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.models._layerwise import (
-    get_layerwise_context,
-    get_layerwise_end,
-    get_layerwise_start,
-    get_layerwise_total_layers,
     is_last_layer_window,
     is_layerwise_active,
     resolve_layer_window,
@@ -97,10 +93,9 @@ class QEffQwen3_5MoeDynamicCache(Cache):
     convolution and recurrent states.
     """
 
-    def __init__(self, config, layerwise_context=None):
+    def __init__(self, config):
         super().__init__(layers=[])
         self.config = config
-        self.layerwise_context = layerwise_context
         self.layer_types = list(config.layer_types)
         self.transformer_layers = [i for i, layer_type in enumerate(self.layer_types) if layer_type == "full_attention"]
         self.last_linear_layer = next(
@@ -118,13 +113,12 @@ class QEffQwen3_5MoeDynamicCache(Cache):
         cls,
         config,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor, ...], ...]] = None,
-        layerwise_context=None,
     ) -> "QEffQwen3_5MoeDynamicCache":
-        cache = cls(config, layerwise_context=layerwise_context)
+        cache = cls(config)
         if past_key_values is None:
             return cache
 
-        if layerwise_context is None or not layerwise_context.active:
+        if not is_layerwise_active():
             # Default path: restore every layer, matching pre-layerwise behavior.
             for layer_idx, layer_state in enumerate(past_key_values):
                 if cache.layer_types[layer_idx] == "full_attention":
@@ -139,7 +133,7 @@ class QEffQwen3_5MoeDynamicCache(Cache):
                     cache.recurrent_states[layer_idx] = recurrent_state
             return cache
 
-        layer_idx = int(layerwise_context.start)
+        layer_idx = QEffQwen3_5MoeTextModel._start
         layer_state = past_key_values
         if len(past_key_values) == len(cache.layer_types) and isinstance(past_key_values[layer_idx], (tuple, list)):
             layer_state = past_key_values[layer_idx]
@@ -228,8 +222,8 @@ class QEffQwen3_5MoeDynamicCache(Cache):
             return self.conv_states[layer_idx] is not None
 
         # Layerwise path only materializes the active layer state.
-        if self.layerwise_context is not None and self.layerwise_context.active:
-            active_idx = int(self.layerwise_context.start)
+        if is_layerwise_active():
+            active_idx = QEffQwen3_5MoeTextModel._start
             if 0 <= active_idx < len(self.layer_types) and self.layer_types[active_idx] == "linear_attention":
                 return self.conv_states[active_idx] is not None
 
@@ -1022,6 +1016,10 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
 
 
 class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
+    _start = 0
+    _end = 0
+    _total_layers = None
+
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3_5MoeTextRotaryEmbedding(config=self.config)
         rope_rows = min(int(self.rotary_emb.sin_cached.shape[0]), QWEN3_5_MOE_ROPE_CACHE_EXPORT_CAP)
@@ -1056,23 +1054,20 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
         return_legacy_cache = False
 
-        layerwise_context = get_layerwise_context(self)
         if past_key_values is not None and not isinstance(past_key_values, QEffQwen3_5MoeDynamicCache):
             return_legacy_cache = True
-            past_key_values = QEffQwen3_5MoeDynamicCache.from_legacy_cache(
-                self.config, past_key_values, layerwise_context=layerwise_context
-            )
+            past_key_values = QEffQwen3_5MoeDynamicCache.from_legacy_cache(self.config, past_key_values)
         elif use_cache and past_key_values is None:
-            past_key_values = QEffQwen3_5MoeDynamicCache(self.config, layerwise_context=layerwise_context)
+            past_key_values = QEffQwen3_5MoeDynamicCache(self.config)
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        start, end = resolve_layer_window(self, len(self.layers))
+        start, end = resolve_layer_window(QEffQwen3_5MoeTextModel, len(self.layers))
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length(layer_idx=start) if past_key_values is not None else 0
             active_layer_type = self.config.layer_types[start] if start < len(self.config.layer_types) else None
-            if is_layerwise_active(self) and position_ids is not None and active_layer_type == "linear_attention":
+            if is_layerwise_active() and position_ids is not None and active_layer_type == "linear_attention":
                 text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
                 cache_position = text_position_ids[0].clamp_min(0)
             else:
@@ -1130,7 +1125,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
             # break
 
-        if is_last_layer_window(self, len(self.layers)):
+        if is_last_layer_window(QEffQwen3_5MoeTextModel, len(self.layers)):
             hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
@@ -1138,8 +1133,8 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
 
-        if is_layerwise_active(self):
-            past_key_values = past_key_values[get_layerwise_start(self)]
+        if is_layerwise_active():
+            past_key_values = past_key_values[QEffQwen3_5MoeTextModel._start]
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
@@ -1264,6 +1259,10 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
 
 
 class QEffQwen3_5MoeModel(Qwen3_5MoeModel):
+    _start = 0
+    _end = 0
+    _total_layers = None
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -1579,7 +1578,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
         else:
             inputs_embeds = inputs_embeds
 
-        if not is_layerwise_active(self):
+        if not is_layerwise_active():
             # Default (non-layerwise) path: image merge + full decoder + lm_head in
             # a single forward, identical to the pre-layerwise behavior/output contract.
             _, _, channel_size = inputs_embeds.shape
@@ -1605,7 +1604,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, image_idx, outputs.past_key_values[: len(past_key_values)]
 
-        if get_layerwise_start(self) == 0:
+        if QEffQwen3_5MoeTextModel._start == 0:
             B, S, _ = inputs_embeds.shape
             if input_ids is None:
                 input_ids = torch.zeros((B, S), dtype=torch.int64, device=inputs_embeds.device)
@@ -1634,7 +1633,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, image_idx, outputs.past_key_values
 
-        elif get_layerwise_end(self) == get_layerwise_total_layers(self):
+        elif QEffQwen3_5MoeTextModel._end == QEffQwen3_5MoeTextModel._total_layers:
             outputs = self.language_model(
                 inputs_embeds=inputs_embeds,
                 position_ids=position_ids,
@@ -2000,8 +1999,8 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         # Default path exports all layers; layerwise exports only the active window's layer.
-        if is_layerwise_active(self.model):
-            window_layers = [get_layerwise_start(self.model)]
+        if is_layerwise_active():
+            window_layers = [QEffQwen3_5MoeTextModel._start]
         else:
             window_layers = range(self.model.config.text_config.num_hidden_layers)
         # KV/state dummy dtype follows the model dtype so the export trace works
