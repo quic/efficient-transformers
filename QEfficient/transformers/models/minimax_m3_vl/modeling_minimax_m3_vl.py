@@ -87,7 +87,7 @@ class QEffMiniMaxM3VLRotaryEmbedding(MiniMaxM3VLRotaryEmbedding):
     @torch.no_grad()
     @dynamic_rope_update
     def forward(self, x: torch.Tensor, position_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        inv_freq = self.inv_freq.to(device=x.device, dtype=torch.float32)
+        inv_freq = self.inv_freq.to(device=x.device, dtype=self.config.torch_dtype)
         position_ids_expanded = position_ids[..., None].float()
 
         device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
@@ -117,13 +117,13 @@ def qeff_eager_attention_forward(
         if attention_mask.dtype == torch.bool:
             attn_weights = torch.where(
                 attention_mask,
-                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32, device=attn_weights.device),
+                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype, device=attn_weights.device),
                 attn_weights,
             )
         else:
             attn_weights = attn_weights + attention_mask
 
-    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=module.config.torch_dtype).to(query.dtype)
     attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
