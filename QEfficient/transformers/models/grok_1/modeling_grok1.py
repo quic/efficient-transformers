@@ -117,7 +117,6 @@ class QEffGrok1MultiHeadAttention(nn.Module):
             # Apply the attention mask
             attn_weights = torch.where(attention_mask, mask_value, attn_weights)
 
-
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_output = torch.matmul(attn_weights, value_states)
 

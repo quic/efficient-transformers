@@ -119,8 +119,9 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
         packed_stop = packed_start + packed_chunk_size
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
-        x_chunk = select_interface(CtxGatherFunc3DGeneralized.apply, 
-        torch.ops.qefficient.ctx_gather_3d_generalized)(x_expanded, chunk_matched_idx)
+        x_chunk = select_interface(CtxGatherFunc3DGeneralized.apply, torch.ops.qefficient.ctx_gather_3d_generalized)(
+            x_expanded, chunk_matched_idx
+        )
 
         gate = (x_chunk @ W_g) + b_g.unsqueeze(1)
         up = (x_chunk @ W_u) + b_u.unsqueeze(1)
@@ -130,12 +131,14 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
         intermediate = (up + 1) * glu
         down_chunk = (intermediate @ W_d) + b_d.unsqueeze(1)
 
-        rw_chunk = select_interface(CtxGatherFunc3DGeneralized.apply, 
-        torch.ops.qefficient.ctx_gather_3d_generalized)(routing_weight, chunk_matched_idx)
+        rw_chunk = select_interface(CtxGatherFunc3DGeneralized.apply, torch.ops.qefficient.ctx_gather_3d_generalized)(
+            routing_weight, chunk_matched_idx
+        )
         down_chunk = down_chunk * rw_chunk
 
-        expert_out_chunk = select_interface(CtxGatherFunc3DGeneralized.apply, 
-        torch.ops.qefficient.ctx_gather_3d_generalized)(expert_out, chunk_matched_idx)
+        expert_out_chunk = select_interface(
+            CtxGatherFunc3DGeneralized.apply, torch.ops.qefficient.ctx_gather_3d_generalized
+        )(expert_out, chunk_matched_idx)
         updated_chunk = expert_out_chunk + down_chunk
 
         chunk_valid_rows = torch.clamp(
@@ -146,8 +149,9 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
         updated_chunk = torch.where(
             (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
         )
-        expert_out = select_interface(CtxScatterFunc3DGeneralized.apply, 
-        torch.ops.qefficient.ctx_scatter_3d_generalized)(expert_out, chunk_matched_idx, updated_chunk)
+        expert_out = select_interface(
+            CtxScatterFunc3DGeneralized.apply, torch.ops.qefficient.ctx_scatter_3d_generalized
+        )(expert_out, chunk_matched_idx, updated_chunk)
 
     return expert_out
 
@@ -693,7 +697,6 @@ def eager_attention_forward(
     if attention_mask is not None:
         # Apply the attention mask
         attn_weights = torch.where(attention_mask, mask_value, attn_weights)
-
 
     sinks = module.sinks.reshape(1, -1, 1, 1).expand(query.shape[0], -1, query.shape[-2], -1)
     combined_logits = torch.cat([attn_weights, sinks], dim=-1)
