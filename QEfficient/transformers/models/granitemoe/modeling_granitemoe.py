@@ -179,7 +179,6 @@ def eager_attention_forward(
         # Apply the attention mask
         attn_weights = torch.where(attention_mask, mask_value, attn_weights)
 
-
     # upcast attention to fp32
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -448,7 +447,7 @@ class QEffGraniteMoeModel(GraniteMoeModel):
             causal_mask *= torch.arange(target_length, device=device) > cache_position.reshape(-1, 1)
             causal_mask = causal_mask[None, None, :, :].expand(input_tensor.shape[0], 1, -1, -1)
             if attention_mask is not None:
-                causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
+                causal_mask = causal_mask.detach().clone()  # copy to contiguous memory for in-place edit
                 mask_length = attention_mask.shape[-1]
                 padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :]
                 padding_mask = padding_mask == 0
@@ -504,7 +503,7 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
         E = int(self.num_experts)
         flat = top_k_indices.reshape(-1)
         mask = torch.zeros((B * K, E), dtype=torch.int64, device=top_k_indices.device)
-        mask[torch.arange(B * K, device=flat.device), flat] = 1
+        mask[torch.arange(B * K, device=flat.device), flat] = torch.ones(1, dtype=torch.int64, device=flat.device)
         expert_mask = mask.view(B, K, E).permute(2, 1, 0)
         return top_k_gates, expert_mask, logits, self.num_experts
 
