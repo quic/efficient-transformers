@@ -41,7 +41,12 @@ from QEfficient.customop.ctx_scatter_gather import (
 )
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.transformers.models._layerwise import is_last_layer_window, is_layerwise_active, resolve_layer_window
+from QEfficient.transformers.models._layerwise import (
+    get_layerwise_start,
+    is_last_layer_window,
+    is_layerwise_active,
+    resolve_layer_window,
+)
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
@@ -320,8 +325,8 @@ class QEffQwen3MoeAttention(Qwen3MoeAttention):
 
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
-        if is_layerwise_active():
-            self.layer_idx = self.layer_idx - getattr(QEffQwen3MoeModel, "_start", 0)
+        if is_layerwise_active(self):
+            self.layer_idx = self.layer_idx - get_layerwise_start(self)
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
         if use_blocking:
             attn_output, attn_weights = generic_blocked_attention_interface(
@@ -428,10 +433,6 @@ class QEffQwen3MoeDecoderLayer(Qwen3MoeDecoderLayer):
 
 
 class QEffQwen3MoeModel(Qwen3MoeModel):
-    _start = 0
-    _end = 0
-    _total_layers = None
-
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3MoeRotaryEmbedding(config=self.config)
         self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
@@ -463,7 +464,7 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
             inputs_embeds = self.embed_tokens(input_ids)
 
         total_layers = len(self.layers)
-        start, end = resolve_layer_window(QEffQwen3MoeModel, total_layers)
+        start, end = resolve_layer_window(self, total_layers)
 
         past_key_values_length = 0
         if past_key_values is not None:
@@ -504,7 +505,7 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
                 cos_cached=cos,
             )
 
-        if is_last_layer_window(QEffQwen3MoeModel, len(self.layers)):
+        if is_last_layer_window(self, len(self.layers)):
             hidden_states = self.norm(hidden_states)
 
         # add hidden states from the last decoder layer
@@ -565,7 +566,7 @@ class QEffQwen3MoeForCausalLM(Qwen3MoeForCausalLM):
         )
 
         hidden_states = outputs.last_hidden_state
-        if not is_last_layer_window(QEffQwen3MoeModel, len(self.model.layers)):
+        if not is_last_layer_window(self.model, len(self.model.layers)):
             logits = hidden_states
         else:
             logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)
