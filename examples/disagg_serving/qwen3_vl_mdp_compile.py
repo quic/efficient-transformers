@@ -153,7 +153,7 @@ def main() -> None:
         mos=args.mos,
         mdp_ts_num_devices=args.mdp_ts_num_devices,  # total devices spread across all pipeline stages
         mdp_num_partitions=args.mdp_num_partitions,  # number of pipeline-parallel stages (partitions)
-        mdp_strategy=args.mdp_strategy,              # "onnx" (default) or "intersection" (needs compiler dump)
+        mdp_strategy=args.mdp_strategy,  # "onnx" (default) or "intersection" (needs compiler dump)
         mdp_compiler_dump_path=args.mdp_compiler_dump_path,  # required only for intersection strategy
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
