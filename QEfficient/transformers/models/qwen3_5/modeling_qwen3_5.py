@@ -553,7 +553,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         zeros = torch.zeros(g.shape, dtype=g.dtype, device=g.device)
 
         g = torch.where(mask, g, zeros)
-        # beta = torch.where(mask, beta, zeros)
+        beta = torch.where(mask, beta, zeros)
 
         qkv_zeros = torch.zeros(key.shape, dtype=key.dtype, device=key.device)
         key = torch.where(mask.unsqueeze(-1), key, qkv_zeros)
@@ -576,7 +576,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         beta = F.pad(beta, (0, pad_size), mode="constant", value=0.0)
 
         # ck = g.clone()
-        g = F.pad(g, (0, pad_size), mode="constant", value=0.0)
+        g = F.pad(g, (0, pad_size))
         total_sequence_length = sequence_length + pad_size
         scale = 1 / (query.shape[-1] ** 0.5)
         query = query * scale
@@ -588,7 +588,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             x.reshape(x.shape[0], x.shape[1], -1, chunk_size, x.shape[-1]) for x in (query, key, value, k_beta, v_beta)
         ]
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
-        mask = mask_causal.to(device=query.device)
+        mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=0)
 
         #
         # chunk decay
@@ -663,7 +663,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             else initial_state.to(value)
         )
         core_attn_out = torch.zeros_like(value)
-        mask = mask_strict.to(device=query.device)
+        mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=1)
 
         # for each chunk
         for i in range(0, total_sequence_length // chunk_size):
