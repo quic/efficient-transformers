@@ -32,6 +32,7 @@ from QEfficient.compile.mdp_generator import (
     MdpStrategy,
     generate_disagg_mdp_intersection_config,
     generate_disagg_mdp_partition_config,
+    generate_mdp_partition_config,
 )
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -46,7 +47,6 @@ from QEfficient.utils import (
     create_json,
     create_model_params,
     dump_qconfig,
-    generate_mdp_partition_config,
     get_attr_or_key,
     hash_dict_params,
     load_json,
@@ -779,6 +779,64 @@ class QEFFBaseModel(ABC):
         self.onnx_path = layer_onnx_path_tmp
         return layer_onnx_path_tmp
 
+    def _generate_disagg_mdp_config(
+        self,
+        onnx_path: Path,
+        compile_dir: Path,
+        mdp_ts_num_devices: int,
+        mdp_num_partitions: int,
+        mdp_strategy: "MdpStrategy",
+        mdp_compiler_dump_path: Optional[str],
+        num_cores: int,
+    ):
+        """Generate the disaggregated (pipeline-parallel) MDP partition config JSON.
+
+        Resolves num_layers from self.num_layers or the language_model config, dispatches
+        to the appropriate generator based on mdp_strategy, persists the result to
+        compile_dir, and returns (json_path, json_object) for use by _compile.
+        """
+        num_layers = getattr(self, "num_layers", None)
+        if getattr(self, "model", None) and getattr(self.model, "language_model", None) and not num_layers:
+            num_layers = getattr(self.model.language_model.config, "num_hidden_layers", None)
+        if num_layers is None:
+            raise AttributeError(
+                "Model or Language Model does not expose 'num_layers' or 'num_hidden_layers' respectively. Cannot generate disagg MDP partition config."
+            )
+
+        logger.info(
+            f"Generating disagg MDP (strategy={mdp_strategy.value!r}): "
+            f"num_devices={mdp_ts_num_devices}, num_partitions={mdp_num_partitions}, "
+            f"num_layers={num_layers}, num_cores={num_cores}"
+        )
+
+        if mdp_strategy is MdpStrategy.ONNX:
+            mdp_ts_json = generate_disagg_mdp_partition_config(
+                onnx_path=str(onnx_path),
+                num_devices=mdp_ts_num_devices,
+                num_partitions=mdp_num_partitions,
+                num_layers=num_layers,
+                num_cores=num_cores,
+            )
+        else:  # MdpStrategy.INTERSECTION
+            if not mdp_compiler_dump_path:
+                raise ValueError(
+                    "mdp_strategy='intersection' requires mdp_compiler_dump_path to be set. "
+                    "Run qaic-compile with -mdp-dump-partition-config=<path> first, "
+                    "then pass that path as mdp_compiler_dump_path."
+                )
+            mdp_ts_json = generate_disagg_mdp_intersection_config(
+                onnx_path=str(onnx_path),
+                compiler_dump_path=mdp_compiler_dump_path,
+                num_devices=mdp_ts_num_devices,
+                num_partitions=mdp_num_partitions,
+                num_layers=num_layers,
+                num_cores=num_cores,
+            )
+
+        mdp_ts_json_path = compile_dir / f"mdp_disagg_{mdp_ts_num_devices}d_{mdp_num_partitions}p.json"
+        create_json(str(mdp_ts_json_path), mdp_ts_json)
+        return mdp_ts_json_path, mdp_ts_json
+
     def transform(
         self,
         ctx_len: Optional[int] = None,
@@ -956,49 +1014,17 @@ class QEFFBaseModel(ABC):
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
             mdp_ts_json = load_json(str(mdp_ts_json_path))
         elif mdp_num_partitions > 1:
-            # Disaggregated (pipeline-parallel) MDP.
-
-            num_layers = getattr(self, "num_layers", None)
-            if getattr(self, "model", None) and getattr(self.model, "language_model", None) and not num_layers:
-                num_layers = getattr(self.model.language_model.config, "num_hidden_layers", None)
-            if num_layers is None:
-                raise AttributeError(
-                    "Model or Language Model does not expose 'num_layers' or 'num_hidden_layers' respectively. Cannot generate disagg MDP partition config."
-                )
+            # Disaggregated (pipeline-parallel) MDP — delegate to focused helper.
             num_cores = compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
-
-            logger.info(
-                f"Generating disagg MDP (strategy={mdp_strategy.value!r}): "
-                f"num_devices={mdp_ts_num_devices}, num_partitions={mdp_num_partitions}, "
-                f"num_layers={num_layers}, num_cores={num_cores}"
+            mdp_ts_json_path, mdp_ts_json = self._generate_disagg_mdp_config(
+                onnx_path=onnx_path,
+                compile_dir=compile_dir,
+                mdp_ts_num_devices=mdp_ts_num_devices,
+                mdp_num_partitions=mdp_num_partitions,
+                mdp_strategy=mdp_strategy,
+                mdp_compiler_dump_path=mdp_compiler_dump_path,
+                num_cores=num_cores,
             )
-
-            if mdp_strategy is MdpStrategy.ONNX:
-                mdp_ts_json = generate_disagg_mdp_partition_config(
-                    onnx_path=str(onnx_path),
-                    num_devices=mdp_ts_num_devices,
-                    num_partitions=mdp_num_partitions,
-                    num_layers=num_layers,
-                    num_cores=num_cores,
-                )
-            else:  # MdpStrategy.INTERSECTION
-                if not mdp_compiler_dump_path:
-                    raise ValueError(
-                        "mdp_strategy='intersection' requires mdp_compiler_dump_path to be set. "
-                        "Run qaic-compile with -mdp-dump-partition-config=<path> first, "
-                        "then pass that path as mdp_compiler_dump_path."
-                    )
-                mdp_ts_json = generate_disagg_mdp_intersection_config(
-                    onnx_path=str(onnx_path),
-                    compiler_dump_path=mdp_compiler_dump_path,
-                    num_devices=mdp_ts_num_devices,
-                    num_partitions=mdp_num_partitions,
-                    num_layers=num_layers,
-                    num_cores=num_cores,
-                )
-
-            mdp_ts_json_path = compile_dir / f"mdp_disagg_{mdp_ts_num_devices}d_{mdp_num_partitions}p.json"
-            create_json(str(mdp_ts_json_path), mdp_ts_json)
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
         elif mdp_ts_num_devices > 1 and not compiler_options.get("mdp_dump_partition_config", None):
             # Template (tensor-slice) MDP: single partition, empty nodeList; compiler fills it.

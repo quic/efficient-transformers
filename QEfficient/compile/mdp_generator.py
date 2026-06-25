@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-"""MDP generator for disaggregated prefill serving (PP-enabled, TS-enabled, stages>1)."""
+"""MDP generator: template tensor-slice configs and disaggregated prefill configs (PP-enabled, TS-enabled, stages>1)."""
 
 import bisect
 import logging
@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional, Set
 import onnx
 
 logger = logging.getLogger(__name__)
+
+_MAX_INLINABLE_NODES = 100
 
 
 class MdpStrategy(str, Enum):
@@ -145,15 +147,17 @@ def _get_inlined_node_map(model) -> tuple:
     """Classify ONNX local functions and build inlined sub-node names.
 
     The compiler inlines a local function body into the parent graph during
-    ONNX import if it has < 100 nodes AND is not a known custom op
-    (ONNXModelLoaderSubFuns.cpp).  Inlined call-sites do not appear in the
-    compiler IR; their sub-nodes are named ``<call_site>/<func_node>``.
-    Known custom ops (registered via DEFINEKNOWNCUSTOMOP) keep their
-    call-site name in the IR and must be included in nodeList as-is.
+    ONNX import if it has fewer than _MAX_INLINABLE_NODES nodes AND is not a
+    known custom op (ONNXModelLoaderSubFuns.cpp).  Inlined call-sites do not
+    appear in the compiler IR; their sub-nodes are named
+    ``<call_site>/<func_node>``.  Known custom ops (registered via
+    DEFINEKNOWNCUSTOMOP) keep their call-site name in the IR and must be
+    included in nodeList as-is.
 
     Returns:
         inlined_node_map:  call-site name -> list of inlined sub-node names.
-        non_inlined_funcs: function names NOT inlined (custom ops or >=100 nodes).
+        non_inlined_funcs: function names NOT inlined (custom ops or
+            >= _MAX_INLINABLE_NODES nodes).
     """
     # Op types registered via DEFINEKNOWNCUSTOMOP in ONNXModelLoaderCustomOp.cpp.
     _KNOWN_CUSTOM_OPS = frozenset(
@@ -169,7 +173,7 @@ def _get_inlined_node_map(model) -> tuple:
     inlined_funcs: Set[str] = set()
     non_inlined_funcs: Set[str] = set()
     for func_name, func in local_functions.items():
-        if func_name in _KNOWN_CUSTOM_OPS or len(func.node) >= 100:
+        if func_name in _KNOWN_CUSTOM_OPS or len(func.node) >= _MAX_INLINABLE_NODES:
             non_inlined_funcs.add(func_name)
             logger.info(f"  {func_name}: not inlined")
         else:
@@ -184,6 +188,34 @@ def _get_inlined_node_map(model) -> tuple:
 
     logger.info(f"Inlined sub-nodes mapped for {len(inlined_node_map)} call-sites")
     return inlined_node_map, non_inlined_funcs
+
+
+def generate_mdp_partition_config(num_devices: int, num_cores: int) -> Dict[str, Any]:
+    """Generate a template tensor-slice MDP partition config (single partition, all devices).
+
+    All ``num_devices`` devices are placed in a single ``Partition0`` so the
+    compiler distributes tensor-slice work evenly across them.  The
+    ``connections`` block lists every device ID as a p2p group.
+
+    Args:
+        num_devices (int): Total number of devices.
+        num_cores (int): NSP cores per device.
+
+    Returns:
+        dict: MDP config with ``connections`` and ``partitions`` keys.
+              ``connections`` contains one entry with all device IDs and type
+              ``"p2p"``.  ``partitions`` contains a single ``Partition0`` entry
+              with a ``devices`` list of ``{"deviceId": …, "numCores": …}`` dicts.
+    """
+    return {
+        "connections": [{"devices": list(range(num_devices)), "type": "p2p"}],
+        "partitions": [
+            {
+                "name": "Partition0",
+                "devices": [{"deviceId": d, "numCores": num_cores} for d in range(num_devices)],
+            }
+        ],
+    }
 
 
 def generate_disagg_mdp_partition_config(
@@ -271,7 +303,6 @@ def generate_disagg_mdp_partition_config(
     partitions: List[List[str]] = [[] for _ in range(num_partitions)]
     current_layer_partition = 0
     seen_first_layer = False
-    max_layer_seen = -1
 
     for node in model.graph.node:
         if not node.name:
@@ -281,7 +312,6 @@ def generate_disagg_mdp_partition_config(
 
         layer_num = _get_layer_num(node.name)
         if layer_num is not None:
-            max_layer_seen = max(max_layer_seen, layer_num)
             seen_first_layer = True
             partition_idx = bisect.bisect_right(partition_bounds, layer_num)
             current_layer_partition = partition_idx
@@ -302,6 +332,11 @@ def generate_disagg_mdp_partition_config(
 
     # PP-only: 1 device/partition; PP+TS: num_devices//num_partitions per partition.
     device_ids = list(range(num_devices))
+    if num_devices % num_partitions != 0:
+        logger.warning(
+            f"num_devices ({num_devices}) is not evenly divisible by num_partitions ({num_partitions}). "
+            "Floor-division allocation is used, so extra devices will not be assigned to any partition."
+        )
     devices_per_partition = num_devices // num_partitions
     partition_objs = []
     for i, node_list in enumerate(partitions):
