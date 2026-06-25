@@ -579,6 +579,18 @@ from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     QEffQwen3_5MoeVisionAttention,
     QEffQwen3_5MoeVisionModel,
 )
+from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
+    QEffQwen3Attention as QEffQwen3DFlashAttention,
+)
+from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
+    QEffQwen3DecoderLayer as QEffQwen3DFlashDecoderLayer,
+)
+from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
+    QEffQwen3ForCausalLM as QEffQwen3DFlashForCausalLM,
+)
+from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
+    QEffQwen3Model as QEffQwen3DFlashModel,
+)
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffPrefillChunkedQwen3MoeSparseMoeBlock,
     QEffQwen3MoeAttention,
@@ -1157,6 +1169,122 @@ class SamplerTransform:
         else:
             raise NotImplementedError(f"Model class {model_class} does not support on device sampling.")
         return model, transformed
+
+
+_DFLASH_TARGET_ABSMAX = 128.0
+
+
+class DFlashTransform(ModuleMappingTransform):
+    """Replace QEff Qwen3 modules with DFlash variants when dflash_dlm is set."""
+
+    _module_mapping = {
+        QEffQwen3Attention: QEffQwen3DFlashAttention,
+        QEffQwen3DecoderLayer: QEffQwen3DFlashDecoderLayer,
+        QEffQwen3Model: QEffQwen3DFlashModel,
+        QEffQwen3ForCausalLM: QEffQwen3DFlashForCausalLM,
+    }
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
+        if not (qaic_config and qaic_config.get("dflash_dlm", False)):
+            return model, False
+        return super().apply(model)
+
+
+def _load_weights(checkpoint_path: str, keys: set) -> dict:
+    """Read the given weight tensors from a checkpoint (local dir or HF repo id)."""
+    from pathlib import Path
+
+    path = Path(checkpoint_path)
+    if not path.is_dir():
+        from huggingface_hub import snapshot_download
+
+        path = Path(snapshot_download(checkpoint_path, allow_patterns=["*.safetensors", "pytorch_model*.bin"]))
+
+    found: dict = {}
+    for sf in sorted(path.glob("*.safetensors")):
+        from safetensors import safe_open
+
+        with safe_open(str(sf), framework="pt", device="cpu") as f:
+            found.update({k: f.get_tensor(k) for k in f.keys() if k in keys})
+    if not found:
+        for bf in sorted(path.glob("pytorch_model*.bin")):
+            sd = torch.load(str(bf), map_location="cpu", weights_only=True)
+            found.update({k: sd[k] for k in keys if k in sd})
+    return found
+
+
+class DFlashDLMTransform:
+    """Inject lm_head/embed_tokens from the TLM checkpoint (dflash_tlm_repo) and drop fc/hidden_norm."""
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
+        if not (qaic_config and qaic_config.get("dflash_dlm", False)):
+            return model, False
+
+        inner = model.model
+        for attr in ("fc", "hidden_norm"):
+            if hasattr(inner, attr):
+                delattr(inner, attr)
+
+        tlm_repo = qaic_config.get("dflash_tlm_repo")
+        if not tlm_repo:
+            return model, True
+
+        w = _load_weights(tlm_repo, {"lm_head.weight", "lm_head.bias", "model.embed_tokens.weight"})
+        embed_w = w.get("model.embed_tokens.weight")
+        lm_head_w = w.get("lm_head.weight", embed_w)  # tie_word_embeddings: lm_head is a view of embed_tokens
+        if lm_head_w is None or embed_w is None:
+            return model, True
+
+        with torch.no_grad():
+            model.lm_head.weight.data.copy_(lm_head_w.float())
+            inner.embed_tokens.weight.data.copy_(embed_w.float())
+            if w.get("lm_head.bias") is not None:
+                model.lm_head.bias = nn.Parameter(w["lm_head.bias"].float())
+        return model, True
+
+
+class DFlashTLMTransform:
+    """Attach fc/hidden_norm (weights from dflash_dlm_repo, fc scaled for fp16 range) and set target_layer_ids."""
+
+    @classmethod
+    def apply(cls, model: nn.Module, qaic_config: Optional[dict] = None, **kwargs) -> Tuple[nn.Module, bool]:
+        target_layer_ids = qaic_config.get("target_layer_ids") if qaic_config else None
+        if not target_layer_ids:
+            return model, False
+
+        inner = model.model
+        hidden_size = model.config.hidden_size
+        n = len(target_layer_ids)
+
+        # Skip if a caller pre-injected fc/hidden_norm before constructing the model.
+        if not (hasattr(inner, "fc") and hasattr(inner, "hidden_norm")):
+            model_type = getattr(model.config, "model_type", "")
+            eps = getattr(model.config, "rms_norm_eps", 1e-6)
+            if "qwen3" in model_type:
+                from transformers.models.qwen3.modeling_qwen3 import Qwen3RMSNorm as RMSNorm
+            elif "llama" in model_type:
+                from transformers.models.llama.modeling_llama import LlamaRMSNorm as RMSNorm
+            else:
+                RMSNorm = nn.RMSNorm
+            inner.fc = nn.Linear(n * hidden_size, hidden_size, bias=False)
+            inner.hidden_norm = RMSNorm(hidden_size, eps=eps)
+
+            dlm_repo = qaic_config.get("dflash_dlm_repo")
+            w = _load_weights(dlm_repo, {"fc.weight", "hidden_norm.weight"}) if dlm_repo else {}
+            if "fc.weight" in w and "hidden_norm.weight" in w:
+                inner.fc.weight.data.copy_(w["fc.weight"].float())
+                inner.hidden_norm.weight.data.copy_(w["hidden_norm.weight"].float())
+                # RMSNorm(x/s) == RMSNorm(x): scale fc down to keep activations in fp16 range.
+                with torch.no_grad():
+                    bound = (inner.fc.in_features**0.5) * inner.fc.weight.data.norm(dim=1).max().item()
+                    inner.fc.weight.data.div_(max(bound / _DFLASH_TARGET_ABSMAX, 1.0))
+            else:
+                warnings.warn(f"DFlashTLMTransform: fc/hidden_norm not found in {dlm_repo!r}; left random.")
+
+        inner.target_layer_ids = target_layer_ids
+        return model, True
 
 
 class VlmKVOffloadTransform(ModuleMappingTransform):

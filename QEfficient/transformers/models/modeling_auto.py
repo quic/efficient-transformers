@@ -51,6 +51,9 @@ from QEfficient.transformers.models import _layerwise
 from QEfficient.transformers.models.custom_loader import CustomLoader
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
+    DFlashDLMTransform,
+    DFlashTLMTransform,
+    DFlashTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
     PoolingTransform,
@@ -3565,6 +3568,21 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if self.is_tlm:
             self.model.qaic_config["return_pdfs"] = True
 
+        self.dflash_dlm = False
+        self.hidden_size = self.model.config.hidden_size
+        self.vocab_size = self.model.config.vocab_size
+        if qaic_config is not None:
+            self.dflash_dlm = qaic_config.get("dflash_dlm", False)
+        if self.dflash_dlm:
+            self.model, _ = DFlashTransform.apply(self.model, qaic_config)
+            self.model, _ = DFlashDLMTransform.apply(self.model, qaic_config)
+
+        self.dflash_tlm = False
+        if qaic_config is not None:
+            self.dflash_tlm = bool(qaic_config.get("target_layer_ids", None))
+        if self.dflash_tlm:
+            self.model, _ = DFlashTLMTransform.apply(self.model, qaic_config)
+
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
 
@@ -3871,7 +3889,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         kv_cache_shape = get_padding_shape_from_config(
-            self.model.config, fbs if self.continuous_batching else bs, seq_len
+            self.model.config, fbs if self.continuous_batching else bs, seq_len * 2
         )
         enable_chunking = kwargs.get("enable_chunking", False)
         if (
@@ -3929,6 +3947,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
+
+        if self.dflash_dlm:
+            example_inputs = {
+                "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
+                "target_hidden": torch.ones((bs, seq_len, self.hidden_size), dtype=torch.float),
+                "position_ids": torch.arange(seq_len, 2 * seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
+                "position_ids_target": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
+                "past_key_values": [[] for _ in range(self.num_layers)],
+            }
+            dynamic_axes = {
+                "input_ids": {0: "batch_size", 1: "seq_len"},
+                "target_hidden": {0: "batch_size", 1: "seq_len"},
+                "position_ids": {0: "batch_size", 1: "seq_len"},
+                "position_ids_target": {0: "batch_size", 1: "seq_len"},
+            }
+
         if self.ccl_enabled:
             example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (512,), dtype=torch.int64)
             dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
@@ -4103,6 +4137,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
             self.hash_params["kv_cache_prefix"] = kv_cache_prefix
 
+        if self.dflash_tlm:
+            output_names.append("hidden_states")
+
         if _layerwise.is_layerwise_active(self.model):
             return self._export_layerwise(
                 example_inputs,
@@ -4158,6 +4195,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         if not self.continuous_batching:
             exec_batch_size = batch_size
+        elif self.dflash_dlm:
+            # The DFlash DLM runs a batched block-forward (seq_len == block_size,
+            # not 1): `decode_bsz` activation rows, each routed to its own KV
+            # slot via batch_index. The activation batch dim must therefore equal
+            # the decode batch (full_batch_size), not the continuous-batching
+            # prefill default of 1.
+            exec_batch_size = full_batch_size or batch_size
         elif prefill_seq_len == 1:
             exec_batch_size = full_batch_size
         else:
@@ -4199,6 +4243,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_batch_size: Optional[int] = None,
         full_batch_size: Optional[int] = None,
         num_speculative_tokens: Optional[int] = None,
+        dflash_block_size: Optional[int] = None,
         **kwargs,
     ):
         """
@@ -4245,6 +4290,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         spec["num_logits_to_keep"] = (num_speculative_tokens + 1) if self.is_tlm else None
 
+        if self.dflash_tlm or self.dflash_dlm:
+            spec["seq_len"] = dflash_block_size
+
         if self.continuous_batching:
             spec["full_batch_size"] = kv_cache_batch_size
         else:
@@ -4265,6 +4313,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         batch_size: int = 1,
         full_batch_size: Optional[int] = None,
         kv_cache_batch_size: Optional[int] = None,
+        dflash_block_size: Optional[int] = None,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
@@ -4548,6 +4597,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         batch_size=batch_size,
                         kv_cache_batch_size=kv_cache_batch_size,
                         full_batch_size=full_batch_size,
+                        dflash_block_size=dflash_block_size,
                     )
                     if spec is not None:
                         specializations.append(spec)
@@ -4563,6 +4613,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         kv_cache_batch_size=kv_cache_batch_size,
                         full_batch_size=full_batch_size,
                         num_speculative_tokens=None,
+                        dflash_block_size=dflash_block_size,
                     )
                     if decode_spec:
                         specializations.append(decode_spec)
@@ -4574,7 +4625,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     batch_size=batch_size,
                     kv_cache_batch_size=kv_cache_batch_size,
                     full_batch_size=full_batch_size,
-                    num_speculative_tokens=None,
+                    num_speculative_tokens=num_speculative_tokens,
+                    dflash_block_size=dflash_block_size,
                     prefill_only=prefill_only,
                 )
                 if decode_spec:
