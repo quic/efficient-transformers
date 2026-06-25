@@ -61,6 +61,7 @@ ipython_config.py
 env/
 venv/
 ENV/
+qeff/
 env.bak/
 venv.bak/
 
