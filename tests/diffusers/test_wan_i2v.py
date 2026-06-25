@@ -510,7 +510,6 @@ def wan_i2v_pipeline():
 
 @pytest.mark.diffusion_models
 @pytest.mark.qaic
-@pytest.mark.wan_i2v
 def test_wan_i2v_pipeline(wan_i2v_pipeline):
     """
     Comprehensive WAN I2V pipeline test that focuses on all module validation:

@@ -6,43 +6,54 @@
 # ----------------------------------------------------------------------------
 
 
+import os
+
 import pytest
 import torch
 
 from QEfficient.utils.test_utils import (
     ModelConfig,
 )
-from tests.utils.profile_test_config import load_test_config
 
-from .test_image_text_to_text_models import (
-    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100,
-)
+from .check_image_text_to_text_models import check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100
 
-config_data = load_test_config("image_text_model_configs")
-multimodal_models = config_data["image_text_custom_dtype_models"]
-test_custom_dtype_support_models = [model_config["model_name"] for model_config in multimodal_models]
-model_config_dict = {model["model_name"]: model for model in multimodal_models}
+image_text_custom_dtype_models_dict = {
+    "OpenGVLab/InternVL2_5-1B": "optimum-intel-internal-testing/tiny-random-internvl2",
+    "google/gemma-3-4b-it": "hf-internal-testing/tiny-random-Gemma3ForConditionalGeneration",
+    "llava-hf/llava-1.5-7b-hf": "hf-internal-testing/tiny-random-LlavaForConditionalGeneration",
+}
 
-NEW_GENERATION_TOKENS = 10
+if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
+    test_custom_dtype_support_models = image_text_custom_dtype_models_dict.values()
+else:
+    test_custom_dtype_support_models = image_text_custom_dtype_models_dict.keys()
+
+
+@pytest.mark.multimodal
+@pytest.mark.parametrize("model_name", test_custom_dtype_support_models)
+def test_export_compile_custom_dtype(model_name):
+
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to some issues.")
+
+    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name,
+        kv_offload=True,
+        torch_dtype=torch.float16,
+        export_compile_only=True,
+    )
 
 
 @pytest.mark.qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_custom_dtype_support_models)
-@pytest.mark.parametrize("kv_offload", [True])
-@pytest.mark.parametrize("torch_dtype", [torch.float16])
-@pytest.mark.skip(
-    reason="These tests are currently failing due to token mismatch. They need to be fixed and re-enabled."
-)
-def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_custom_dtype(model_name, kv_offload, torch_dtype):
+def test_generate_custom_dtype(model_name):
+
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
-    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
-        pytest.skip("These models require kv_offload=True for testing.")
 
-    torch.manual_seed(42)
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name,
-        kv_offload=kv_offload,
-        torch_dtype=torch_dtype,
+        kv_offload=True,
+        torch_dtype=torch.float16,
     )

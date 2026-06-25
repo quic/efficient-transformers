@@ -157,7 +157,7 @@ def check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
     data = ds[0]["audio"]["array"]
     data = torch.tensor(data).unsqueeze(0).numpy()
     sample_rate = ds[0]["audio"]["sampling_rate"]
-    
+
     pytorch_tokens = run_ctc_pytorch_hf(model_hf, processor, data, sample_rate)
     predicted_ids = torch.argmax(pytorch_tokens, dim=-1)
     pytorch_output = processor.batch_decode(predicted_ids)
@@ -165,7 +165,7 @@ def check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
     ort_tokens = run_ctc_ort(qeff_model.onnx_path, qeff_model.model.config, processor, data, sample_rate)
     predicted_ids = torch.argmax(ort_tokens, dim=-1)
     ort_output = processor.batch_decode(predicted_ids)
-    
+
     assert pytorch_output == ort_output, "Tokens don't match for pytorch output and ORT output."
 
     cloud_ai_100_output = qeff_model.generate(processor, data)

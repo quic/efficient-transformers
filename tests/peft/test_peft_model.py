@@ -17,32 +17,36 @@ from transformers import AutoConfig, AutoModelForCausalLM
 
 from QEfficient import QEffAutoPeftModelForCausalLM
 
-configs = [
+original_configs = [
     pytest.param(
-        AutoConfig.for_model(
-            "llama",
-            num_hidden_layers=2,
-            num_attention_heads=4,
-            num_key_value_heads=2,
-            hidden_size=128,
-            architectures=["LlamaForCausalLM"],
-        ),
+        AutoConfig.from_pretrained("meta-llama/Meta-Llama-3-8B"),
         LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=8),
-        id="llama-2l-4h-2kvh-128d-qv",
+        id="llama-model",
     ),
     pytest.param(
-        AutoConfig.for_model(
-            "mistral",
-            num_hidden_layers=2,
-            num_attention_heads=4,
-            num_key_value_heads=2,
-            hidden_size=128,
-            architectures=["MistralForCausalLM"],
-        ),
+        AutoConfig.from_pretrained("mistralai/Mistral-7B-v0.1"),
         LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=6),
-        id="mistral-2l-4h-128d-qv",
+        id="mistral-model",
     ),
 ]
+
+tiny_configs = [
+    pytest.param(
+        AutoConfig.from_pretrained("hf-internal-testing/tiny-random-LlamaForCausalLM"),
+        LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=8),
+        id="tiny-llama-model",
+    ),
+    pytest.param(
+        AutoConfig.from_pretrained("hf-internal-testing/tiny-random-MistralForCausalLM"),
+        LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=6),
+        id="tiny-mistral-model",
+    ),
+]
+
+if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
+    configs = tiny_configs
+else:
+    configs = original_configs
 
 
 def create_peft_model(base_config, adapter_config, adapter_name="default"):

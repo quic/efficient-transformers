@@ -5,23 +5,29 @@
 #
 # ----------------------------------------------------------------------------
 
-
+import os
 from typing import Optional
 
 import onnx
 import pytest
-import torch
 from transformers import AutoConfig
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils.test_utils import ModelConfig, load_hf_causal_lm_model
-from tests.utils.profile_test_config import load_test_config
 
-config_data = load_test_config("causal_model_configs")
-blockedKV_models = config_data["blockedKV_causal_lm_models"]
-test_models_blockedKV = [model["model_name"] for model in blockedKV_models]
-model_config_dict = {model["model_name"]: model for model in blockedKV_models}
-torch.manual_seed(42)
+test_models_blockedKV_dict = {
+    "unsloth/gemma-2b": "optimum-intel-internal-testing/tiny-random-gemma2",
+    "unsloth/gemma-2-2b": "optimum-intel-internal-testing/tiny-random-gemma2",
+    "ibm-granite/granite-3.1-1b-a400m-base": "optimum-intel-internal-testing/tiny-random-GraniteMoeForCausalLM",
+    "meta-llama/Llama-3.2-1B": "optimum-intel-internal-testing/tiny-random-LlamaForCausalLM",
+    "wtang06/mpt-125m-c4": "optimum-intel-internal-testing/tiny-random-MptForCausalLM",
+    "bigcode/starcoder2-3b": "optimum-intel-internal-testing/tiny-random-Starcoder2ForCausalLM",
+}
+
+if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
+    test_models_blockedKV = list(test_models_blockedKV_dict.values())
+else:
+    test_models_blockedKV = list(test_models_blockedKV_dict.keys())
 
 
 def check_blockedKV_onnx_function_count_with_subfunction(
@@ -40,7 +46,6 @@ def check_blockedKV_onnx_function_count_with_subfunction(
     qeff_no_block.export(use_onnx_subfunctions=True, offload_pt_weights=False)
     onnx_no_block = onnx.load(qeff_no_block.onnx_path, load_external_data=False)
     num_functions_no_block = len(onnx_no_block.functions)
-    manual_cleanup(qeff_no_block.onnx_path)
     # Export with subfunctions, WITH KV blocking
     NUM_KV_BLOCKS = 2
     qaic_config = dict(enable_blocking=True, num_kv_blocks=NUM_KV_BLOCKS)

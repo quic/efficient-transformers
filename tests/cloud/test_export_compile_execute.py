@@ -15,8 +15,14 @@ import QEfficient
 from QEfficient.cloud.execute import main as execute
 from QEfficient.cloud.export import main as export
 
+test_models_dict = {"gpt2": "hf-internal-testing/tiny-random-GPT2LMHeadModel"}
 
-def check_export_compile_execute(mocker, model_name, full_batch_size=None, enable_qnn=False):
+test_models = list(test_models_dict.keys())
+if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
+    test_models = list(test_models_dict.values())
+
+
+def check_export_compile_execute(mocker, model_name, full_batch_size=None, enable_qnn=False, export_compile_only=False):
     check_and_assign_cache_dir_spy = mocker.spy(QEfficient.cloud.export, "check_and_assign_cache_dir")
     get_onnx_path_and_setup_customIO_spy = mocker.spy(QEfficient.cloud.export, "get_onnx_path_and_setup_customIO")
     load_hf_tokenizer_spy = mocker.spy(QEfficient.cloud.execute, "load_hf_tokenizer")
@@ -41,11 +47,15 @@ def check_export_compile_execute(mocker, model_name, full_batch_size=None, enabl
 
     data = []
 
-    for i in range(12):
+    layers = 12
+    if model_name == "hf-internal-testing/tiny-random-GPT2LMHeadModel":
+        layers = 5
+
+    for i in range(layers):
         data.append({"IOName": f"{base_key}{i}", "Precision": precision})
         data.append({"IOName": f"{base_value}{i}", "Precision": precision})
 
-    for i in range(12):
+    for i in range(layers):
         data.append({"IOName": f"{base_key}{i}_RetainedState", "Precision": precision})
         data.append({"IOName": f"{base_value}{i}_RetainedState", "Precision": precision})
 
@@ -71,6 +81,9 @@ def check_export_compile_execute(mocker, model_name, full_batch_size=None, enabl
 
     assert os.path.isdir(qpc_path)
 
+    if export_compile_only:
+        return
+
     # Execute model
     execute(
         model_name=model_name,
@@ -85,31 +98,31 @@ def check_export_compile_execute(mocker, model_name, full_batch_size=None, enabl
     cloud_ai_100_exec_kv_spy.assert_called_once()
 
 
-@pytest.mark.qaic
 @pytest.mark.cli
-def test_export_compile_execute(mocker):
+@pytest.mark.parametrize("model_name", test_models)
+def test_export_compile(mocker, model_name):
     # testing export -> compile -> infer without full_batch_size
-    check_export_compile_execute(mocker, model_name="gpt2")
+    check_export_compile_execute(mocker, model_name, export_compile_only=True)
 
 
 @pytest.mark.qaic
 @pytest.mark.cli
-def test_export_compile_execute_fbs(mocker):
+@pytest.mark.parametrize("model_name", test_models)
+def test_execute(mocker, model_name):
+    # testing export -> compile -> infer without full_batch_size
+    check_export_compile_execute(mocker, model_name)
+
+
+@pytest.mark.cli
+@pytest.mark.parametrize("model_name", test_models)
+def test_export_compile_fbs(mocker, model_name):
     # testing export -> compile -> infer with full_batch_size
-    check_export_compile_execute(mocker, model_name="gpt2", full_batch_size=3)
+    check_export_compile_execute(mocker, model_name, full_batch_size=3, export_compile_only=True)
 
 
 @pytest.mark.qaic
-@pytest.mark.qnn
 @pytest.mark.cli
-def test_export_compile_execute_qnn(mocker):
-    # testing export -> compile -> infer without full_batch_size in QNN environment
-    check_export_compile_execute(mocker, model_name="gpt2", enable_qnn=True)
-
-
-@pytest.mark.qaic
-@pytest.mark.qnn
-@pytest.mark.cli
-def test_export_compile_execute_qnn_fbs(mocker):
-    # testing export -> compile -> infer with full_batch_size in QNN environment
-    check_export_compile_execute(mocker, model_name="gpt2", full_batch_size=3, enable_qnn=True)
+@pytest.mark.parametrize("model_name", test_models)
+def test_execute_fbs(mocker, model_name):
+    # testing export -> compile -> infer with full_batch_size
+    check_export_compile_execute(mocker, model_name, full_batch_size=3)

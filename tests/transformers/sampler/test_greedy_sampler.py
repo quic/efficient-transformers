@@ -9,7 +9,6 @@ from typing import Optional
 
 import numpy as np
 import pytest
-import torch
 from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient.utils import load_hf_tokenizer
@@ -18,17 +17,38 @@ from QEfficient.utils.test_utils import (
     load_hf_vlm_model,
     load_qeff_model_with_sampler,
 )
-from tests.utils.profile_test_config import load_test_config
 
-config_data = load_test_config("feature_configs")
-sampler_models = config_data["sampler_config"]
+sampler_models = [
+    {
+        "model_name": "hf-internal-testing/tiny-random-LlamaForCausalLM",
+        "is_vlm": False,
+        "prompts": ["My name is", "My name is"],
+        "image_urls": [],
+        "prefill_seq_len": 32,
+        "ctx_len": 64,
+        "generation_len": 20,
+        "full_batch_size": 2,
+        "spec_length": 1,
+    },
+    {
+        "model_name": "optimum-intel-internal-testing/tiny-random-internvl2",
+        "is_vlm": True,
+        "prompts": ["Can you describe the image in detail.", "Can you describe the image in detail."],
+        "image_urls": ["https://picsum.photos/id/237/536/354", "https://picsum.photos/id/237/536/354"],
+        "prefill_seq_len": 128,
+        "ctx_len": 4096,
+        "generation_len": 20,
+        "full_batch_size": 2,
+        "spec_length": None,
+    },
+]
+
 test_models = [model["model_name"] for model in sampler_models]
 model_config_dict = {model["model_name"]: model for model in sampler_models}
 
 
 def check_greedy_sampler(
     model_name: str,
-    manual_cleanup: callable,
     num_hidden_layers: Optional[int] = -1,
     config: Optional[AutoConfig] = None,
 ):
@@ -142,9 +162,6 @@ def check_greedy_sampler(
         "Generated ids do not match"
     )
 
-    manual_cleanup(model_w_sampler.onnx_path)
-    manual_cleanup(model_wo_sampler.onnx_path)
-
 
 @pytest.mark.qaic
 @pytest.mark.feature
@@ -153,7 +170,6 @@ def test_greedy_sampler(model_name):
     """
     Test the greedy sampling with dummy models.
     """
-    torch.manual_seed(42)
     check_greedy_sampler(
         model_name,
     )

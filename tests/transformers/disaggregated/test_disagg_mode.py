@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 import time
 
 import numpy as np
@@ -16,25 +17,18 @@ from transformers.cache_utils import DynamicCache
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.quantizers import replace_transformers_quantizers, undo_transformers_quantizers
-from tests.utils.profile_test_config import load_test_config
 
-# Dummy model configs — loaded from the shared config file.
-_raw = load_test_config("causal_model_configs")
+test_models_blocking_dict = {"openai/gpt-oss-20b": "tiny-random/gpt-oss-bf16"}
+test_models_chunking_dict = {"Qwen/Qwen3-30B-A3B-Instruct-2507": "hf-internal-testing/tiny-random-Qwen3MoeForCausalLM"}
 
-_DISAGG_DUMMY_CONFIGS = {
-    entry["model_name"]: {
-        "model_type": entry["model_type"],
-        "tokenizer_id": entry.get("tokenizer_id", entry["model_name"]),
-        **entry["additional_params"],
-    }
-    for entry in _raw["disaggregated_dummy_models"]
-}
 
-# Test parameters: model IDs to test (loaded from config)
-# - model_id_blocking: models that use blocking/sliding window attention
-# - model_id_chunking: models that use chunking
-model_id_blocking = [name for name, cfg in _DISAGG_DUMMY_CONFIGS.items() if cfg["model_type"] == "gpt_oss"]
-model_id_chunking = [name for name, cfg in _DISAGG_DUMMY_CONFIGS.items() if cfg["model_type"] == "qwen3_moe"]
+if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
+    model_id_blocking = list(test_models_blocking_dict.values())
+    model_id_chunking = list(test_models_chunking_dict.values())
+else:
+    model_id_blocking = list(test_models_blocking_dict.keys())
+    model_id_chunking = list(test_models_chunking_dict.keys())
+
 
 prompt2 = """
 Once upon a time, in a small town, there lived a young boy named Alex. Alex was a curious and adventurous child, always eager to explore the world around him. One day, while playing in the park, Alex stumbled upon a mysterious old book hidden beneath a pile of leaves. The book was filled with stories of distant lands, magical creatures, and extraordinary adventures.
@@ -47,7 +41,7 @@ prompt1 = "Once upon a time"
 prompts = [prompt1, prompt2]
 
 
-def _make_dummy_model(model_id: str) -> AutoModelForCausalLM:
+def _make_model(model_id: str) -> AutoModelForCausalLM:
     """Create a tiny model from a dummy config — no weight download required.
 
     A fixed seed ensures the weights are reproducible across test runs so that
@@ -58,12 +52,8 @@ def _make_dummy_model(model_id: str) -> AutoModelForCausalLM:
     intermediate activations stay small and float16 rounding errors on QAIC
     remain within the 5e-2 tolerance used for logit accuracy checks.
     """
-    cfg = _DISAGG_DUMMY_CONFIGS[model_id]
-    model_type = cfg["model_type"]
-    params = {k: v for k, v in cfg.items() if k not in ("model_type", "tokenizer_id")}
-    config = AutoConfig.for_model(model_type, **params)
     torch.manual_seed(42)
-    model = AutoModelForCausalLM.from_config(config, attn_implementation="eager")
+    model = AutoModelForCausalLM.from_pretrained(model_id, attn_implementation="eager")
     with torch.no_grad():
         for param in model.parameters():
             param.mul_(0.02)
@@ -73,10 +63,10 @@ def _make_dummy_model(model_id: str) -> AutoModelForCausalLM:
 @pytest.mark.qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_id", model_id_blocking)
+@pytest.mark.parametrize("tokenizer_id", ["gpt2"])
 @pytest.mark.parametrize("prompt", prompts)
-def test_disagg_mode_prefill(model_id, prompt):
+def test_disagg_mode_prefill(model_id, tokenizer_id, prompt):
     # Run prefill
-    tokenizer_id = _DISAGG_DUMMY_CONFIGS[model_id].get("tokenizer_id", model_id)
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -90,7 +80,7 @@ def test_disagg_mode_prefill(model_id, prompt):
     padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 
     replace_transformers_quantizers()
-    model = _make_dummy_model(model_id)
+    model = _make_model(model_id)
     config = model.config
 
     raw_inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
@@ -165,7 +155,7 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
     padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 
     replace_transformers_quantizers()
-    model = _make_dummy_model(model_id)
+    model = _make_model(model_id)
     config = model.config
 
     raw_inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
@@ -242,10 +232,10 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
 @pytest.mark.qaic
 @pytest.mark.feature
 @pytest.mark.parametrize("model_id", model_id_blocking)
+@pytest.mark.parametrize("tokenizer_id", ["gpt2"])
 @pytest.mark.parametrize("prompt", [prompt1])
-def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
+def test_disagg_mode_prefill_only_and_decode_only(model_id, tokenizer_id, prompt):
     # Run prefill for original pytorch model
-    tokenizer_id = _DISAGG_DUMMY_CONFIGS[model_id].get("tokenizer_id", model_id)
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -258,7 +248,7 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
     padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 
     replace_transformers_quantizers()
-    model = _make_dummy_model(model_id)
+    model = _make_model(model_id)
     config = model.config
 
     raw_inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
@@ -422,10 +412,8 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
 def test_disagg_mode_prefix_caching(model_id, prompt):
     PREFILL_SEQ_LEN = 128
     CTX_LEN = 128 * 3
-    config = AutoConfig.from_pretrained(model_id, num_hidden_layers=2)
-    prefill_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-        model_id, num_hidden_layers=2, continuous_batching=True
-    )
+    config = AutoConfig.from_pretrained(model_id)
+    prefill_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, continuous_batching=True)
     prefill_qeff_model.prefill(enable=True, enable_chunking=True)
     prefill_qpc_path = prefill_qeff_model.compile(
         prefill_seq_len=PREFILL_SEQ_LEN,
@@ -443,9 +431,7 @@ def test_disagg_mode_prefix_caching(model_id, prompt):
         kv_cache_batch_size=2,
     )
 
-    decode_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-        model_id, num_hidden_layers=2, continuous_batching=True
-    )
+    decode_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, continuous_batching=True)
     decode_qeff_model.prefill(enable=False)
     decode_qpc_path = decode_qeff_model.compile(
         prefill_seq_len=1,
@@ -484,7 +470,7 @@ def test_disagg_mode_prefix_caching(model_id, prompt):
 def prefix_caching_inference(model_id, prefill_qpc_path, decode_qpc_path, prompt, decode_batch_id):
     PREFILL_SEQ_LEN = 128
     tokenizer = AutoTokenizer.from_pretrained(model_id)
-    config = AutoConfig.from_pretrained(model_id, num_hidden_layers=2)
+    config = AutoConfig.from_pretrained(model_id)
     inputs = tokenizer(prompt, return_tensors="np", padding=True)
     padded_len = inputs["input_ids"].shape[1]
     num_chunks = -(padded_len // -PREFILL_SEQ_LEN)  # ceil divide without float

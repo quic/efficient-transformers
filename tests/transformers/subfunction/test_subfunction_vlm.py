@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import os
 from typing import Optional
 
 import onnx
@@ -18,16 +19,13 @@ from transformers import (
 )
 
 from QEfficient.utils.test_utils import load_qeff_vlm_model
-from tests.utils.profile_test_config import load_test_config
 
-NEW_GENERATION_TOKENS = 10
+vlm_subfunction_models_dict = {"Qwen2.5-VL-3B-Instruct": "optimum-intel-internal-testing/tiny-random-qwen2.5-vl"}
 
-
-config_data = load_test_config("image_text_model_configs")
-multimodal_models = config_data["image_text_subfunction_models"]
-
-test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
-model_config_dict = {model["model_name"]: model for model in multimodal_models}
+if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
+    test_mm_models = list(vlm_subfunction_models_dict.values())
+else:
+    test_mm_models = list(vlm_subfunction_models_dict.keys())
 
 
 def has_QwenLayer_function(onnx_path):
@@ -45,12 +43,12 @@ def check_image_text_to_text_subfunction_core(
     num_devices: int = 1,
     config: Optional[AutoConfig] = None,
 ):
-    img_size = model_config_dict[model_name]["img_size"]
-    img_url = model_config_dict[model_name]["img_url"]
-    query = model_config_dict[model_name]["text_prompt"]
-    prompt_len = model_config_dict[model_name]["prompt_len"]
-    ctx_len = model_config_dict[model_name]["ctx_len"]
-    batch_size = model_config_dict[model_name]["batch_size"]
+    batch_size = 1
+    prompt_len = 128
+    ctx_len = 4096
+    img_size = 1540
+    img_url = "https://picsum.photos/id/237/536/354"
+    query = "Can you describe the image in detail."
     enable_qnn = False
     qnn_config = None
 

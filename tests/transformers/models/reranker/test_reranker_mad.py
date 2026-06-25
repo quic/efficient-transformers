@@ -37,7 +37,17 @@ from QEfficient.transformers.models.qwen3_vl._reranker_utils import (
     truncate_tokens_optimized as _shared_truncate_tokens_optimized,
 )
 from QEfficient.utils.test_utils import load_vlm_model, set_num_layers_vlm
-from tests.utils.profile_test_config import load_test_config
+
+reranker_models = {
+    "Qwen/Qwen3-VL-Reranker-2B": "tiny-random/qwen3-vl",
+    "Qwen/Qwen3-VL-Reranker-8B": "tiny-random/qwen3-vl",
+}
+
+if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
+    test_reranker_models = reranker_models.values()
+else:
+    test_reranker_models = reranker_models.keys()
+
 
 PT_AI100_MAD_MAX = 5e-3
 MAX_LENGTH = 8192
@@ -56,12 +66,6 @@ EXAMPLE_INPUTS = {
         {"text": "A dog running on the beach."},
     ],
 }
-
-config_data = load_test_config("image_text_model_configs")
-reranker_models = config_data["image_text_reranker_models"]
-
-test_reranker_models = [model_config["model_name"] for model_config in reranker_models]
-reranker_model_config_dict = {model["model_name"]: model for model in reranker_models}
 
 
 def _resolve_model_source(model_name_or_path: str) -> str:
@@ -221,11 +225,12 @@ def _run_ai100_prefill(qpc_paths, prepared_inputs, vision_template):
 @pytest.mark.parametrize("model_name", test_reranker_models)
 def test_qwen3_vl_reranker_mad_parity(model_name):
     torch.manual_seed(42)
-    model_cfg = reranker_model_config_dict[model_name]
+    n_layer = -1
+    ctx_len = 1024
     model_source = _resolve_model_source(model_name)
 
     config = AutoConfig.from_pretrained(model_source, trust_remote_code=True, padding=True)
-    config = set_num_layers_vlm(config, n_layer=model_cfg["num_layers"])
+    config = set_num_layers_vlm(config, n_layer=n_layer)
     if hasattr(config, "use_cache"):
         config.use_cache = True
     if hasattr(config, "text_config") and hasattr(config.text_config, "use_cache"):
@@ -239,6 +244,7 @@ def test_qwen3_vl_reranker_mad_parity(model_name):
         kv_offload=True,
         config=config,
     )
+
     processor = AutoProcessor.from_pretrained(model_source, trust_remote_code=True, padding=True)
 
     yes_token_id, no_token_id = _get_yes_no_token_ids(processor.tokenizer)
@@ -294,7 +300,7 @@ def test_qwen3_vl_reranker_mad_parity(model_name):
         height=compile_height,
         width=compile_width,
         prefill_seq_len=max_prompt_len,
-        ctx_len=model_cfg["ctx_len"],
+        ctx_len=ctx_len,
         num_devices=1,
         num_cores=16,
         mxfp6_matmul=False,

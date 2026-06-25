@@ -5,25 +5,42 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 from dataclasses import dataclass
 from time import perf_counter
 from typing import List, Optional, Union
 
 import numpy as np
 import pytest
-import torch
 from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.test_utils import load_qeff_causal_lm_model
-from tests.utils.profile_test_config import load_test_config
 
-config_data = load_test_config("feature_configs")
-spd_models = config_data["spd_config"]
+original_spd_config = [
+    pytest.param(
+        "JackFram/llama-160m",
+        "JackFram/llama-160m",
+        id="CB llama",
+    ),
+    pytest.param("Qwen/Qwen2-0.5B", "Qwen/Qwen2-0.5B", id="CB qwen"),
+]
 
-test_models_id = [model["id"] for model in spd_models[:1]]
-model_config_dict = {model["id"]: model for model in spd_models}
+
+tiny_spd_config = [
+    pytest.param(
+        "hf-internal-testing/tiny-random-LlamaForCausalLM",
+        "hf-internal-testing/tiny-random-LlamaForCausalLM",
+        id="CB llama",
+    ),
+    pytest.param("peft-internal-testing/tiny-dummy-qwen2", "peft-internal-testing/tiny-dummy-qwen2", id="CB qwen"),
+]
+
+if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
+    spd_config = tiny_spd_config
+else:
+    spd_config = original_spd_config
 
 
 @dataclass
@@ -196,19 +213,20 @@ def find_candidate_pred_tokens(
 
 
 def check_pld_spec_decode_inference(
-    model_id: str, manual_cleanup: callable, num_hidden_layers: Optional[int] = -1, config: Optional[AutoConfig] = None
+    draft_model_name: str,
+    target_model_name: str,
+    num_hidden_layers: Optional[int] = -1,
+    config: Optional[AutoConfig] = None,
 ):
     """check pld"""
-    draft_model_name = model_config_dict[model_id]["draft_model_name"]
-    target_model_name = model_config_dict[model_id]["target_model_name"]
-    prompts = model_config_dict[model_id]["prompts"]
-    num_speculative_tokens = model_config_dict[model_id]["num_speculative_tokens"]
-    prefill_seq_len = model_config_dict[model_id]["prefill_seq_len"]
-    ctx_len = model_config_dict[model_id]["ctx_len"]
-    prefill_bsz = model_config_dict[model_id]["prefill_bsz"]
-    full_batch_size = model_config_dict[model_id]["full_batch_size"]
-    max_ngram_size = model_config_dict[model_id]["max_ngram_size"]
 
+    prompts = ["My name is"]
+    num_speculative_tokens = 4
+    prefill_seq_len = 32
+    ctx_len = 128
+    prefill_bsz = 1
+    full_batch_size = 1
+    max_ngram_size = 3
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
     # get vocab size
     tokenizer = AutoTokenizer.from_pretrained(target_model_name, padding_side="right")
@@ -221,7 +239,6 @@ def check_pld_spec_decode_inference(
     qaic_config = dict(speculative_model_type="target")
     target_model = load_qeff_causal_lm_model(
         target_model_name,
-        num_hidden_layers=num_hidden_layers,
         continuous_batching=continuous_batching,
         qaic_config=qaic_config,
         config=config,
@@ -434,36 +451,33 @@ def check_pld_spec_decode_inference(
     ]  # Because we always run for single input and single batch size
     all_matching = np.array_equal(cloud_ai_100_tokens, generated_ids)
     assert all_matching, "Tokens don't match for SpD output and vanilla DLM output."
-    manual_cleanup(target_model.onnx_path)
 
 
 @pytest.mark.qaic
 @pytest.mark.feature
-@pytest.mark.parametrize("model_id", test_models_id)
-def test_pld_inference(model_id):
+@pytest.mark.parametrize("draft_model_name, target_model_name", spd_config)
+def test_pld_inference(draft_model_name, target_model_name):
     """
     Test dummy layers model for PLD inference pipeline.
     """
-    torch.manual_seed(42)
-    check_pld_spec_decode_inference(model_id)
+    check_pld_spec_decode_inference(draft_model_name, target_model_name)
 
 
-@pytest.mark.parametrize("model_id", test_models_id)
+@pytest.mark.parametrize("draft_model_name, target_model_name", spd_config)
 @pytest.mark.parametrize("decode_ks", [[3], [0, 3], [1, 2, 3], [0, 1, 2, 3]])
-def test_multi_spec_structure(model_id, decode_ks):
+def test_multi_spec_structure(draft_model_name, target_model_name, decode_ks):
     """
     Verify that build_decode_specialization produces correct specializations for each K value.
     No hardware required.
     """
-    target_model_name = model_config_dict[model_id]["target_model_name"]
-    prefill_seq_len = model_config_dict[model_id]["prefill_seq_len"]
-    ctx_len = model_config_dict[model_id]["ctx_len"]
-    full_batch_size = model_config_dict[model_id]["full_batch_size"]
+
+    prefill_seq_len = 32
+    ctx_len = 128
+    full_batch_size = 1
     continuous_batching = full_batch_size is not None
 
     target_model = load_qeff_causal_lm_model(
         target_model_name,
-        num_hidden_layers=2,
         continuous_batching=continuous_batching,
         qaic_config={"speculative_model_type": "target"},
     )

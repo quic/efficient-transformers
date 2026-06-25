@@ -18,34 +18,44 @@ from QEfficient import QEffAutoPeftModelForCausalLM
 from QEfficient.peft.lora import QEffAutoLoraModelForCausalLM
 from QEfficient.utils import load_hf_tokenizer
 
-configs = [
+original_configs = [
     pytest.param(
-        AutoConfig.for_model(
-            "llama",
-            num_hidden_layers=2,
-            num_attention_heads=4,
-            num_key_value_heads=2,
-            hidden_size=128,
-            architectures=["LlamaForCausalLM"],
-        ),
+        AutoConfig.from_pretrained("meta-llama/Meta-Llama-3-8B"),
         LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=8),
-        id="llama-2l-4h-2kvh-128d-qv",
+        id="llama-model",
     ),
     pytest.param(
-        AutoConfig.for_model(
-            "mistral",
-            num_hidden_layers=2,
-            num_attention_heads=4,
-            num_key_value_heads=2,
-            hidden_size=128,
-            architectures=["MistralForCausalLM"],
-        ),
+        AutoConfig.from_pretrained("mistralai/Mistral-7B-v0.1"),
         LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=6),
-        id="mistral-2l-4h-128d-qv",
+        id="mistral-model",
     ),
 ]
 
-model_samples = [
+tiny_configs = [
+    pytest.param(
+        AutoConfig.from_pretrained("hf-internal-testing/tiny-random-LlamaForCausalLM"),
+        LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=8),
+        id="tiny-llama-model",
+    ),
+    pytest.param(
+        AutoConfig.from_pretrained("hf-internal-testing/tiny-random-MistralForCausalLM"),
+        LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=6),
+        id="tiny-mistral-model",
+    ),
+]
+
+test_models_dict = {"distilbert/distilgpt2": "hf-internal-testing/tiny-random-GPT2LMHeadModel"}
+
+tiny_model_samples = [
+    pytest.param("hf-internal-testing/tiny-random-MistralForCausalLM", "predibase/gsm8k", "predibase/dbpedia"),
+    pytest.param(
+        "hf-internal-testing/tiny-random-LlamaForCausalLM",
+        "llamafactory/tiny-random-Llama-3-lora",
+        "llamafactory/tiny-random-Llama-3-lora",
+    ),
+]
+
+original_model_samples = [
     pytest.param("mistralai/Mistral-7B-v0.1", "predibase/gsm8k", "predibase/dbpedia"),
     pytest.param(
         "meta-llama/Meta-Llama-3-8B",
@@ -53,6 +63,15 @@ model_samples = [
         "hallisky/lora-grade-elementary-llama-3-8b",
     ),
 ]
+
+if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
+    configs = tiny_configs
+    model_samples = tiny_model_samples
+    test_models = list(test_models_dict.values())
+else:
+    configs = original_configs
+    model_samples = original_model_samples
+    test_models = list(test_models_dict.keys())
 
 
 def create_lora_base_model(base_config):
@@ -112,7 +131,7 @@ def test_auto_peft_model_for_causal_lm_from_pretrained(base_model_name, adapter_
 
 
 # test the init assertion for models that are not supported
-@pytest.mark.parametrize("base_model_name", ["distilbert/distilgpt2"])
+@pytest.mark.parametrize("base_model_name", test_models)
 def test_auto_lora_model_for_causal_lm_init_from_unsupported_model(base_model_name):
     model_hf = AutoModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
     with pytest.raises(NotImplementedError):
