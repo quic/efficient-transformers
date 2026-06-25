@@ -93,6 +93,15 @@ def _compile_patterns(patterns: Optional[Sequence[str | Pattern[str]]]) -> tuple
     return tuple(re.compile(pattern) if isinstance(pattern, str) else pattern for pattern in patterns)
 
 
+def _filter_loading_info_for_policy(loading_info, policy: WeightSelectionPolicy) -> None:
+    if policy.layer_indices is None:
+        return
+    missing_unselected_keys = {key for key in loading_info.missing_keys if not policy.include_key(key)}
+    mismatched_unselected_keys = {item for item in loading_info.mismatched_keys if not policy.include_key(item[0])}
+    loading_info.missing_keys.difference_update(missing_unselected_keys)
+    loading_info.mismatched_keys.difference_update(mismatched_unselected_keys)
+
+
 class _FilteredSafeOpen:
     """Proxy around safetensors.safe_open that hides unselected keys."""
 
@@ -155,6 +164,8 @@ class CustomLoader:
         original_get_checkpoint_shard_files = modeling_utils.get_checkpoint_shard_files
         original_load_state_dict = modeling_utils.load_state_dict
         original_safe_open = modeling_utils.safe_open
+        original_finalize_model_loading = modeling_utils.PreTrainedModel._finalize_model_loading
+        original_finalize_model_loading_descriptor = modeling_utils.PreTrainedModel.__dict__["_finalize_model_loading"]
 
         def patched_get_checkpoint_shard_files(*args, **kwargs):
             shard_files, metadata = original_get_checkpoint_shard_files(*args, **kwargs)
@@ -186,15 +197,21 @@ class CustomLoader:
             state_dict = original_load_state_dict(*args, **kwargs)
             return self.policy.filter_state_dict(state_dict)
 
+        def patched_finalize_model_loading(model, load_config, loading_info):
+            _filter_loading_info_for_policy(loading_info, self.policy)
+            return original_finalize_model_loading(model, load_config, loading_info)
+
         modeling_utils.get_checkpoint_shard_files = patched_get_checkpoint_shard_files
         modeling_utils.safe_open = patched_safe_open
         modeling_utils.load_state_dict = patched_load_state_dict
+        modeling_utils.PreTrainedModel._finalize_model_loading = staticmethod(patched_finalize_model_loading)
         try:
             yield self
         finally:
             modeling_utils.get_checkpoint_shard_files = original_get_checkpoint_shard_files
             modeling_utils.safe_open = original_safe_open
             modeling_utils.load_state_dict = original_load_state_dict
+            modeling_utils.PreTrainedModel._finalize_model_loading = original_finalize_model_loading_descriptor
 
     def load_model(self, hf_auto_class, **from_pretrained_kwargs):
         kwargs = dict(self.load_kwargs)

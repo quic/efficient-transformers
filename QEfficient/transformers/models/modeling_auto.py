@@ -1597,8 +1597,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             self.lang_model.model, layerwise, layerwise_window_size
         )
         if layerwise_context is not None and not layerwise_context.active:
-            if prefill_only is not True:
-                raise ValueError("Layerwise export is supported only with prefill_only=True.")
             return self._run_layerwise_export(
                 export_dir=export_dir,
                 use_onnx_subfunctions=use_onnx_subfunctions,
@@ -3842,8 +3840,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         layerwise_context = _resolve_layerwise_compile_export_request(self.model, layerwise, layerwise_window_size)
         if layerwise_context is not None and not layerwise_context.active:
-            if prefill_only is not True:
-                raise ValueError("Layerwise export is supported only with prefill_only=True.")
             return self._run_layerwise(
                 final_compile=False,
                 layerwise_window_size=layerwise_context.window_size,
@@ -4113,6 +4109,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
                 prefill_only=prefill_only,
                 kv_cache_prefix=kv_cache_prefix,
+                _layerwise_cache_probe=kwargs.get("_layerwise_cache_probe", False),
             )
         else:
             return self._export(

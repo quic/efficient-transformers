@@ -21,6 +21,11 @@ _safe_export_original_passes = {}
 _SAFE_EXPORT_REQUIRED_PASSES = {
     "_jit_pass_dce",
     "_jit_pass_dce_allow_deleting_nodes_with_side_effects",
+    "_jit_pass_constant_propagation",
+    "_jit_pass_cse",
+    # Keep ONNX constant fold enabled to reduce topology drift between
+    # layerwise prefill exports and regular (non-layerwise) prefill exports.
+    "_jit_pass_onnx_constant_fold",
 }
 
 
