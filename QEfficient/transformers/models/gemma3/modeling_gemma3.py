@@ -299,21 +299,11 @@ class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
     ) -> tuple[torch.FloatTensor, Optional[tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
-        # past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
-        # Only create QEff-specific attention mask when using a QEff cache (has sliding_window_len).
-        # For standard DynamicCache (e.g. during model.generate()), use the passed-in attention_mask.
-        if past_key_value is not None and hasattr(past_key_value, "sliding_window_len"):
-            if self.self_attn.is_sliding:
-                attention_mask = _create_causal_mask(
-                    position_ids=position_ids,
-                    target_length=past_key_value.sliding_window_len,
-                    sliding_window=past_key_value.sliding_window_len,
-                )
-            else:
-                attention_mask = _create_causal_mask(
-                    position_ids=position_ids,
-                    target_length=past_key_value.key_cache[self.config._sliding_window_pattern - 1].shape[-2],
-                )
+        # `attention_mask` is built once at the model level in ``QEffGemma3TextModel.forward``
+        # and passed in keyed by layer_type (sliding_attention / full_attention).
+        # Building it here would emit a ``torch.arange`` inside the decoder-layer subfunction
+        # during ONNX subfunction export, which the AIC compiler rejects because the ``Range``
+        # ``limit`` input becomes a function parameter rather than a constant.
 
         hidden_states, self_attn_weights = self.self_attn(
             hidden_states=hidden_states,
@@ -429,7 +419,8 @@ class QEffGemma3TextModel(Gemma3TextModel):
 
         # Build per-layer-type causal masks using _create_causal_mask for the model.generate() path
         # (DynamicCache from model.generate(), or None on first prefill).
-        # For QEffSlidingWindowCache the masks are created per-layer inside QEffGemma3DecoderLayer.
+        # For QEffSlidingWindowCache the masks are built here at the model level (keyed by layer_type)
+        # so that no torch.arange is emitted inside a decoder-layer subfunction during ONNX export.
         if not isinstance(past_key_values, QEffSlidingWindowCache):
             sliding_window = self.config.sliding_window
             past_seen = past_key_values.get_seq_length() if past_key_values is not None else 0
@@ -446,7 +437,23 @@ class QEffGemma3TextModel(Gemma3TextModel):
                 ),
             }
         else:
-            _causal_mask_mapping = None
+            # QEffSlidingWindowCache path (ONNX export / on-device runtime).
+            # Replicate the per-layer-type mask logic that previously lived inside
+            # QEffGemma3DecoderLayer.forward, but build it once here so that the
+            # torch.arange inside _create_causal_mask stays outside any subfunction.
+            sliding_window_len = past_key_values.sliding_window_len
+            full_ctx_len = past_key_values.key_cache[self.config._sliding_window_pattern - 1].shape[-2]
+            _causal_mask_mapping = {
+                "sliding_attention": _create_causal_mask(
+                    position_ids=position_ids,
+                    target_length=sliding_window_len,
+                    sliding_window=sliding_window_len,
+                ),
+                "full_attention": _create_causal_mask(
+                    position_ids=position_ids,
+                    target_length=full_ctx_len,
+                ),
+            }
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None

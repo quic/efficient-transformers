@@ -89,6 +89,7 @@ else:
         aic_enable_depth_first=True,
         mos=1,
         node_precision_info=npi_file_full_path,
+        split_model_io=True,
     )
 
     ### IMAGE + TEXT ###
