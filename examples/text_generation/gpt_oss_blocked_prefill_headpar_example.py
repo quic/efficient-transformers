@@ -209,7 +209,7 @@ def main():
         "num_kv_blocks": args.num_kv_blocks,
         "kv_blocking_headpar_split": headpar_split,
         "prefill_block_chunks": 2,
-        "prefill_blocking_mode": "q",  # supported modes are q and kv, kv is with head parallel softmax
+        "prefill_blocking_mode": "kv",  # supported modes are q and kv, kv is with head parallel softmax
     }
 
     compile_kwargs = dict(
@@ -243,7 +243,7 @@ def main():
         qaic_config=prefill_qaic_config,
         prefill_only=True,
         enable_chunking=True,
-        aic_enable_depth_first=True,
+        user_tiled=True,
         moe_prefill_packed_chunk_size=args.moe_prefill_packed_chunk_size,
         **compile_kwargs,
     )

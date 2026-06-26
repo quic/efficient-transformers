@@ -509,19 +509,46 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
         out_buf.append(out_blk)
 
     # ── Stage 1: merge across KV blocks ──────────────────────────────────────
-    max_stk = torch.stack(max_buf)  # [nkvb, B, Hkv, split, n_rep, QL]
-    sum_stk = torch.stack(sum_buf)
-    out_stk = torch.stack(out_buf)  # [nkvb, B, Hkv, split, n_rep, QL, kv_lora_rank]
-    m1 = max_stk.max(dim=0).values
-    w1 = torch.exp(max_stk - m1.unsqueeze(0))
-    s1 = torch.einsum("nbhsrq->bhsrq", w1 * sum_stk)
-    o1 = torch.einsum("nbhsrqv->bhsrqv", w1.unsqueeze(-1) * out_stk)
+    # max_stk = torch.stack(max_buf)  # [nkvb, B, Hkv, split, n_rep, QL]
+    # sum_stk = torch.stack(sum_buf)
+    # out_stk = torch.stack(out_buf)  # [nkvb, B, Hkv, split, n_rep, QL, kv_lora_rank]
+    # m1 = max_stk.max(dim=0).values
+    # w1 = torch.exp(max_stk - m1.unsqueeze(0))
+    # s1 = torch.einsum("nbhsrq->bhsrq", w1 * sum_stk)
+    # o1 = torch.einsum("nbhsrqv->bhsrqv", w1.unsqueeze(-1) * out_stk)
+    m_run = max_buf[0]
+    s_run = sum_buf[0]
+    o_run = out_buf[0]
+
+    for i in range(1, len(max_buf)):
+        m_new = torch.maximum(m_run, max_buf[i])
+        e_old = torch.exp(m_run      - m_new)   # [B, Hkv, split, n_rep, QL]
+        e_new = torch.exp(max_buf[i] - m_new)
+        s_run = e_old * s_run + e_new * sum_buf[i]
+        o_run = e_old.unsqueeze(-1) * o_run + e_new.unsqueeze(-1) * out_buf[i]
+        m_run = m_new
+    m1 = m_run
+    s1 = s_run
+    o1 = o_run
 
     # ── Stage 2: merge across splits ─────────────────────────────────────────
-    m2 = m1.max(dim=2).values  # [B, Hkv, n_rep, QL]
-    w2 = torch.exp(m1 - m2.unsqueeze(2))
-    s2 = torch.einsum("bhsrq->bhrq", w2 * s1)
-    o2 = torch.einsum("bhsrqv->bhrqv", w2.unsqueeze(-1) * o1)
+    # m2 = m1.max(dim=2).values  # [B, Hkv, n_rep, QL]
+    # w2 = torch.exp(m1 - m2.unsqueeze(2))
+    # s2 = torch.einsum("bhsrq->bhrq", w2 * s1)
+    # o2 = torch.einsum("bhsrqv->bhrqv", w2.unsqueeze(-1) * o1)
+    m_run_2 = m1[:, :, 0, :, :]   # [B, Hkv, n_rep, QL]
+    s_run_2 = s1[:, :, 0, :, :]
+    o_run_2 = o1[:, :, 0, :, :, :]
+
+    for i in range(1, m1.shape[2]):
+        m_new = torch.maximum(m_run_2, m1[:, :, i, :, :])
+        e_old = torch.exp(m_run_2 - m_new)
+        e_new = torch.exp(m1[:, :, i, :, :] - m_new)
+        s_run_2 = e_old * s_run_2 + e_new * s1[:, :, i, :, :]
+        o_run_2 = e_old.unsqueeze(-1) * o_run_2 + e_new.unsqueeze(-1) * o1[:, :, i, :, :, :]
+        m_run = m_new
+    s2 = s_run_2
+    o2 = o_run_2
 
     if sinks is not None:
         # sinks: [NQH] → per-head logit, same for all query positions

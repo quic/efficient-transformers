@@ -160,8 +160,8 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)
         top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
 
-        routing_weights = torch.zeros_like(router_logits)
-        routing_weights.scatter_(1, top_i, top_w)
+        # routing_weights = torch.zeros_like(router_logits)
+        # routing_weights.scatter_(1, top_i, top_w)
 
         num_experts = self.experts.num_experts
         num_nsp = getattr(self, "expert_blocking_num_nsp", num_experts)
@@ -176,14 +176,15 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         # )
 
         expert_ids = (
-            torch.arange(local_experts, device=hidden.device, dtype=routing_weights.dtype).unsqueeze(0) * num_nsp
-            + torch.arange(num_nsp, device=hidden.device, dtype=routing_weights.dtype).unsqueeze(1)
+            torch.arange(local_experts, device=hidden.device, dtype=top_i.dtype).unsqueeze(0) * num_nsp
+            + torch.arange(num_nsp, device=hidden.device, dtype=top_i.dtype).unsqueeze(1)
         )  # [N, L]
 
         # Cast→ReduceSum→Greater rather than .any() because the AOT compiler
         # currently rejects ReduceMax over the rank-4 bool tensor here.
-        eq = routing_weights.unsqueeze(0).unsqueeze(0) == expert_ids.unsqueeze(-1).unsqueeze(-1)
-        routing_weights_by_expert = eq.to(routing_weights.dtype).sum(dim=-1) > 0  # [N, L, T]
+        eq = top_i.unsqueeze(0).unsqueeze(0) == expert_ids.unsqueeze(-1).unsqueeze(-1)
+        local_T2E = eq.to(top_i.dtype).sum(dim=-1) > 0  # [N, L, T]
+        local_rw = (eq.to(top_w.dtype) * top_w.unsqueeze(0).unsqueeze(0)).sum(dim=-1)
         
         W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, expert_dim).transpose(0, 1).contiguous()
         W_u = self.experts.up_proj.view(local_experts, num_nsp, H, expert_dim).transpose(0, 1).contiguous()
@@ -193,12 +194,12 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         b_d = self.experts.down_proj_bias.view(local_experts, num_nsp, H).transpose(0, 1).contiguous()
 
         expert_out = hidden.new_zeros((num_nsp, T, H))
-        routing_weights_unsqueezed = routing_weights_by_expert.unsqueeze(-1)
+        routing_weights_unsqueezed = local_rw.unsqueeze(-1)
         for local_slot in range(local_experts):
             # T2Ei = routing_weights_by_expert[:, local_slot, :] > 0
             expert_out = _cumsum_scatter_gather_update_gptoss_expert_blocked(
                 x=hidden,
-                T2Ei=routing_weights_by_expert[:, local_slot],
+                T2Ei=local_T2E[:, local_slot],
                 W_g=W_g[:, local_slot],
                 W_u=W_u[:, local_slot],
                 W_d=W_d[:, local_slot],
