@@ -53,9 +53,11 @@ if skip_vision:
         height=354,
         width=536,
         mxfp6_matmul=True,
+        mxint8_kv_cache=True,
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
+        use_onnx_subfunctions=True,
         # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
     )
 
