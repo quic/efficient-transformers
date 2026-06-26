@@ -30,6 +30,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "input_handler: InputHandler utility test")
     config.addinivalue_line("markers", "diffusers: QEfficient diffusers module test")
     config.addinivalue_line("markers", "llm_model: mark test as a pure LLM model inference test")
+    config.addinivalue_line("markers", "mdp: Multi-Device Partitioning test")
 
 
 def pytest_collection_modifyitems(items):
