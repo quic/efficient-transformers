@@ -7,7 +7,6 @@
 
 import logging
 import os
-import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple, Type
 
@@ -22,11 +21,15 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxGatherBlockedKV,
     CtxGatherFunc,
     CtxGatherFunc3D,
+    CtxGatherFunc3DGeneralized,
     CtxGatherFuncBlockedKV,
     CtxScatter,
     CtxScatter3D,
+    CtxScatter3DInt,
     CtxScatterFunc,
     CtxScatterFunc3D,
+    CtxScatterFunc3DGeneralized,
+    CtxScatterFunc3DInt,
 )
 from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxGatherBlockedKVCB,
@@ -40,6 +43,8 @@ from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxScatterFuncCB,
     CtxScatterFuncCB3D,
 )
+
+# from QEfficient.customop.quantization_ops import CastToUInt4, CastToUInt4Func
 from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
 from QEfficient.utils.constants import FILE_CHUNK_SIZE_DEFAULT, ONNX_EXPORT_OPSET, SIZE_THRESHOLD_DEFAULT
 
@@ -93,43 +98,126 @@ class CustomOpTransform(BaseOnnxTransform):
         "CustomRMSNormFunc": (CustomRMSNormFunc, CustomRMSNorm),
         "CtxScatterFunc": (CtxScatterFunc, CtxScatter),
         "CtxScatterFunc3D": (CtxScatterFunc3D, CtxScatter3D),
+        "CtxScatterFunc3DInt": (CtxScatterFunc3DInt, CtxScatter3DInt),
+        "CtxScatterFunc3DGeneralized": (CtxScatterFunc3DGeneralized, CtxScatter3D),
         "CtxGatherFunc": (CtxGatherFunc, CtxGather),
         "CtxGatherFunc3D": (CtxGatherFunc3D, CtxGather3D),
+        "CtxGatherFunc3DGeneralized": (CtxGatherFunc3DGeneralized, CtxGather3D),
         "CtxScatterFuncCB3D": (CtxScatterFuncCB3D, CtxScatterCB3D),
         "CtxGatherFuncCB3D": (CtxGatherFuncCB3D, CtxGatherCB3D),
         "CtxGatherFuncBlockedKV": (CtxGatherFuncBlockedKV, CtxGatherBlockedKV),
         "CtxGatherFuncBlockedKVCB": (CtxGatherFuncBlockedKVCB, CtxGatherBlockedKVCB),
         "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
         "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
+        # "CastToUInt4": (CastToUInt4Func, CastToUInt4),
     }
 
     @classmethod
     def apply(cls, model: ModelProto) -> bool:
         op_applied = False
+
+        # Register with PyTorch ONNX exporter (for export time)
         for op_name, (func_class, _) in cls._custom_ops.items():
             if hasattr(func_class, "symbolic"):
                 torch.onnx.register_custom_op_symbolic(f"::{op_name}", func_class.symbolic, ONNX_EXPORT_OPSET)
 
+        used_op_types = {node.op_type for node in model.graph.node}
+        for function_proto in model.functions:
+            used_op_types.update(node.op_type for node in function_proto.node)
+
+        # Add function prototypes to model
         existing = {f.name for f in model.functions}
-        for _, onnxscript_func in cls._custom_ops.values():
+
+        for func_name, onnxscript_func in cls._custom_ops.values():
             proto = onnxscript_func.to_function_proto()
+            if proto.name not in used_op_types:
+                continue
             if proto.name not in existing:
                 model.functions.append(proto)
                 op_applied = True
+
         return op_applied
 
 
-class RenameFunctionOutputsTransform(BaseOnnxTransform):
-    """Rename outputs of decoder-related functions for better clarity."""
-
+class RemovePrefix(BaseOnnxTransform):
     @classmethod
     def apply(cls, model: ModelProto) -> bool:
+        graph = model.graph
+        renamed = False
+
+        def strip_prefix(name: str) -> str:
+            parts = name.rsplit("/", 1)
+            return parts[1] if len(parts) == 2 else parts[0]
+
+        input_names = []
+        for i, inputs in enumerate(graph.input):
+            original = inputs.name
+            new = strip_prefix(original)
+            if new != original:
+                renamed = True
+            inputs.name = new
+            graph.input[i].name = new
+            input_names.append(new)
+
+        input_name_set = set(input_names)
+        output_rename_map = {}
+
+        # Rename model graph outputs and keep mapping so producer/consumer edges can be fixed.
+        for out in graph.output:
+            original = out.name
+            new = strip_prefix(original)
+            if new != original:
+                out.name = new
+                output_rename_map[original] = new
+                renamed = True
+
+        for node in graph.node:
+            for i, out in enumerate(node.output):
+                if out in output_rename_map and output_rename_map[out] != out:
+                    node.output[i] = output_rename_map[out]
+                    renamed = True
+
+            new_inputs = []
+            for s in node.input:
+                # Keep node inputs in sync for renamed model outputs.
+                if s in output_rename_map:
+                    new_inputs.append(output_rename_map[s])
+                    continue
+
+                if s in input_name_set:
+                    new_inputs.append(s)
+                    continue
+
+                replaced = s
+                if "/" in s:
+                    tail = s.rsplit("/", 1)[1]
+                    if tail in input_name_set:
+                        replaced = tail
+                new_inputs.append(replaced)
+
+            for idx in range(len(node.input)):
+                if node.input[idx] != new_inputs[idx]:
+                    node.input[idx] = new_inputs[idx]
+                    renamed = True
+
+        return renamed
+
+
+class RenameFunctionOutputsTransform(BaseOnnxTransform):
+    """Rename decoder function retained-state outputs to public graph names.
+
+    When subfunction export emits ``*_InternalRetainedState``, this transform rewrites
+    them to ``*_RetainedState`` while preserving any optional KV prefix infix
+    (for example ``past_key.0_vllmKvCache``).
+    """
+
+    @classmethod
+    def apply(cls, model: ModelProto, layer_idx=0) -> bool:
         graph = model.graph
         op_type_to_func = {f.name: f for f in model.functions}
         decoder_patterns = ["DecoderLayer", "Block", "Layer"]
         renamed = False
         model_out_map = {v.name: i for i, v in enumerate(graph.output)}
-        layer_idx = 0
 
         for node in graph.node:
             if any(p in node.name or p in node.op_type for p in decoder_patterns):
@@ -140,13 +228,26 @@ class RenameFunctionOutputsTransform(BaseOnnxTransform):
                     if "_InternalRetainedState" in out_name:
                         renamed = True
                         orig = node.output[i]
-                        new = (
-                            f"past_key.{layer_idx}_RetainedState"
-                            if "key" in out_name
-                            else f"past_value.{layer_idx}_RetainedState"
-                            if "value" in out_name
-                            else orig
-                        )
+                        if orig.endswith("_InternalRetainedState"):
+                            new = orig[: -len("_InternalRetainedState")] + "_RetainedState"
+                        else:
+                            base = out_name[: -len("_InternalRetainedState")]
+                            new = orig
+                            for token in (
+                                "past_key.",
+                                "past_value.",
+                                "compressed_kv.",
+                                "k_pe.",
+                                "recurrent_state.",
+                                "conv_state.",
+                            ):
+                                if not base.startswith(token):
+                                    continue
+                                tail = base[len(token) :]
+                                _, _, infix = tail.partition("_")
+                                infix = f"_{infix}" if infix else ""
+                                new = f"{token}{layer_idx}{infix}_RetainedState"
+                                break
                         node.output[i] = new
                         if orig in model_out_map:
                             graph.output[model_out_map[orig]].name = new
@@ -202,8 +303,6 @@ class OnnxTransformPipeline(BaseOnnxTransform):
     """Pipeline to apply multiple ONNX transformations in sequence."""
 
     def __init__(self, transforms: List[Type[BaseOnnxTransform]]):
-        if not transforms:
-            warnings.warn("Transform list is empty. No transformations will be applied.")
         self.transforms = transforms
 
     def apply(
@@ -228,7 +327,8 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         do_split = SplitTensorsTransform in requested
         fp16_min, fp16_max = np.finfo(np.float16).min, np.finfo(np.float16).max
         file_num_tracker = {"num": 0, "size": 0}
-        external_data_helper.load_external_data_for_model(model, onnx_base_dir)
+        if onnx_base_dir is not None:
+            external_data_helper.load_external_data_for_model(model, onnx_base_dir)
 
         if do_fp16 or do_split:
             for tensor in external_data_helper._get_all_tensors(model):
@@ -266,7 +366,9 @@ class OnnxTransformPipeline(BaseOnnxTransform):
             applied[CustomOpTransform] = CustomOpTransform.apply(model)
 
         if RenameFunctionOutputsTransform in requested:
-            applied[RenameFunctionOutputsTransform] = RenameFunctionOutputsTransform.apply(model)
+            applied[RenameFunctionOutputsTransform] = RenameFunctionOutputsTransform.apply(
+                model, layer_idx=kwargs.get("layer_idx", 0)
+            )
 
         if AdapterWeightsToInputsTransform in requested:
             applied[AdapterWeightsToInputsTransform] = AdapterWeightsToInputsTransform.apply(model, **kwargs)
