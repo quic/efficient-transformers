@@ -499,7 +499,7 @@ class QEFFBaseModel(ABC):
             if use_dynamo:
                 dynamic_axes = None
                 export_kwargs = dict(export_kwargs)
-                export_kwargs.setdefault("report", False)
+                export_kwargs.setdefault("report", True)
                 export_kwargs.setdefault("optimize", False)
                 export_kwargs["dynamo"] = True
                 export_kwargs["custom_translation_table"] = {
@@ -1115,7 +1115,6 @@ class QEFFBaseModel(ABC):
                     command.append(option)
                 continue
             command.append(f"{option}={value}")
-
 
         # Final custom-IO normalization against ONNX I/O names.
         # This only rewrites retained-state aliases:

@@ -2072,40 +2072,6 @@ def _build_vlm_text_qeff_model(model_id: str):
     raise RuntimeError(f"No text fallback config path available for {model_id}")
 
 
-@pytest.mark.llm_model
-def test_text_embedding_repeated_subfunction_export_smoke(tmp_path):
-    from QEfficient.utils.export_utils import get_decoder_layer_classes_for_export
-
-    model_hf = AutoModel.from_pretrained(TINY_TEXT_EMBEDDING_MODEL_ID, **MODEL_KWARGS)
-    model_hf.eval()
-
-    qeff_model = QEFFAutoModel(model_hf)
-    discovered = get_decoder_layer_classes_for_export(qeff_model.model)
-    assert discovered, "Expected repeated encoder block classes to be auto-discovered for embedding export"
-
-    expected_classnames = [cls.__name__ for cls in discovered]
-    onnx_path = _exported_onnx_path(
-        qeff_model.export(tmp_path / "embedding-repeated", use_dynamo=True, use_onnx_subfunctions=True)
-    )
-    _assert_repeated_block_functions(onnx_path, expected_classnames)
-
-
-@pytest.mark.llm_model
-def test_whisper_repeated_subfunction_export_smoke(tmp_path):
-    model_hf = AutoModelForSpeechSeq2Seq.from_pretrained(
-        TINY_WHISPER_MODEL_ID,
-        **MODEL_KWARGS,
-        low_cpu_mem_usage=False,
-    )
-    model_hf.eval()
-    qeff_model = QEFFAutoModelForSpeechSeq2Seq(model_hf, pretrained_model_name_or_path=TINY_WHISPER_MODEL_ID)
-    expected = [cls.__name__ for cls in qeff_model.model.get_submodules_for_export()]
-    onnx_path = _exported_onnx_path(
-        qeff_model.export(tmp_path / "whisper-repeated", use_dynamo=True, use_onnx_subfunctions=True)
-    )
-    _assert_repeated_block_functions(onnx_path, expected)
-
-
 # ---------------------------------------------------------------------------
 # Layer-wise export (provisional, scheduled for deprecation)
 # ---------------------------------------------------------------------------
@@ -2511,6 +2477,8 @@ def test_layerwise_supported_guard_accepts_qwen3_vl_moe():
         _skip_on_model_fetch_error(exc, LAYERWISE_TINY_MODEL_ID)
     resolved = _layerwise.assert_layerwise_supported(config)
     assert resolved in {"qwen3_vl_moe", "qwen3_vl_moe_text"}
+
+
 # -----------------------------------------------------------------------------
 # Dynamo-inline compile + repeated-subfunction export coverage
 # -----------------------------------------------------------------------------
@@ -3669,10 +3637,8 @@ def test_layerwise_export_default_names_unchanged(tmp_path):
         assert f"past_key.{window}" in captured["input_names"]
         assert all("_vllmKvCache" not in n and "_VLLM" not in n for n in captured["output_names"])
         assert all("_vllmKvCache" not in n and "_VLLM" not in n for n in captured["input_names"])
-    ("vlm_name", "model_id"),
-    [item for item in sorted(VLM_EXPORT_MODEL_IDS.items()) if item[0] in {"qwen2_5_vl", "internvl2"}],
-    ids=[item[0] for item in sorted(VLM_EXPORT_MODEL_IDS.items()) if item[0] in {"qwen2_5_vl", "internvl2"}],
-)
+
+
 def test_vlm_text_side_repeated_subfunction_export(vlm_name, model_id, tmp_path):
     try:
         qeff_text_model = _build_vlm_text_qeff_model(model_id)

@@ -497,7 +497,7 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
         """
         logits = self.layer(hidden_states).float()
         top_k_logits, top_k_indices = torch.topk(logits, self.top_k, dim=1)  # [num_tokens, top_k]
-        top_k_gates = torch.softmax(top_k_logits, dim=1).type_as(hidden_states)  # [num_tokens, top_k]
+        top_k_gates = torch.softmax(top_k_logits, dim=1).to(torch.float32)  # [num_tokens, top_k]
 
         B, K = top_k_indices.shape
         E = int(self.num_experts)
@@ -526,16 +526,16 @@ class QEffGraniteMoeMoE(GraniteMoeMoE):
         bsz, length, emb_size = layer_input.size()
         layer_input = layer_input.reshape(-1, emb_size)
         topk_gates, expert_mask, router_logits, num_experts = self.router(layer_input)
-        final_hidden_states = torch.zeros_like(layer_input)
+        final_hidden_states = layer_input * 0.0
         for expert_idx in range(num_experts):
-            mask = expert_mask[expert_idx].transpose(0, 1).to(layer_input.dtype)
-            mask_weight = torch.einsum("be,be->b", topk_gates, mask.to(topk_gates.dtype))[:, None]
+            mask = expert_mask[expert_idx].transpose(0, 1).to(torch.float32)
+            mask_weight = torch.einsum("be,be->b", topk_gates, mask)[:, None]
             hidden_states = self.input_linear(layer_input, expert_idx)
             chunked_hidden_states = hidden_states.chunk(2, dim=-1)
             hidden_states = self.activation(chunked_hidden_states[0]) * chunked_hidden_states[1]
             expert_outputs = self.output_linear(hidden_states, expert_idx)
-            current_hidden_states = torch.where(mask_weight > 0, expert_outputs * mask_weight, 0.0)
-            final_hidden_states += current_hidden_states
+            current_hidden_states = expert_outputs * mask_weight * (mask_weight > 0).to(torch.float32)
+            final_hidden_states = final_hidden_states + current_hidden_states
         final_hidden_states = final_hidden_states.view(bsz, length, self.input_size)
         return final_hidden_states, router_logits
 

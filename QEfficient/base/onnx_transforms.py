@@ -476,6 +476,159 @@ class RewriteUnsupportedOpsTransform(BaseOnnxTransform):
         for fn in model.functions:
             changed |= cls._rewrite_container(fn, type_map, {**const_map, **func_const_map.get(fn.name, {})})
 
+        # Second pass: rewrite aten_split / aten_getitem function-call patterns.
+        # The dynamo exporter wraps SplitToSequence inside an "aten_split" function
+        # and each SequenceAt inside an "aten_getitem" function.  The existing
+        # _try_rewrite_split only handles co-located nodes; this handles the
+        # indirected call-node pattern.
+        changed |= cls._rewrite_split_getitem_calls(model)
+
+        return changed
+
+    @classmethod
+    def _rewrite_split_getitem_calls(cls, model: ModelProto) -> bool:
+        """
+        Rewrite patterns where:
+          - A call to "aten_split"    (wraps SplitToSequence internally)
+          - N calls to "aten_getitem" (each wraps SequenceAt internally)
+        appear together in any container (graph or function body).
+
+        Each aten_getitem call takes the aten_split output as its first input and
+        a Constant integer as its second input.  We replace the whole group with a
+        single Split node and wire the outputs directly, then delete the
+        (now-unused) aten_split and aten_getitem function definitions if no other
+        call sites remain.
+        """
+        changed = False
+
+        def _rewrite_in(container) -> bool:
+            nodes = list(container.node)
+            if not nodes:
+                return False
+
+            output_to_node = {out: n for n in nodes for out in n.output}
+            skip_nodes: Set[int] = set()
+            replace_map: Dict[str, str] = {}
+            new_nodes: List[onnx.NodeProto] = []
+            local_changed = False
+
+            for node in nodes:
+                if id(node) in skip_nodes:
+                    continue
+
+                if node.op_type not in ("aten_split", "aten_split_with_sizes"):
+                    new_nodes.append(node)
+                    continue
+
+                split_seq_out = node.output[0]
+
+                # Collect all aten_getitem consumers of this split output
+                getitem_consumers = [
+                    n for n in nodes if n.op_type == "aten_getitem" and n.input and n.input[0] == split_seq_out
+                ]
+                other_consumers = [
+                    n for n in nodes if n.input and split_seq_out in n.input and n.op_type != "aten_getitem"
+                ]
+
+                # Only rewrite if all consumers are aten_getitem
+                if not getitem_consumers or other_consumers:
+                    new_nodes.append(node)
+                    continue
+
+                # Resolve constant index for each getitem
+                idx_map: Dict[int, int] = {}  # id(getitem_node) → index value
+                for gi in getitem_consumers:
+                    if len(gi.input) < 2:
+                        break
+                    idx_name = gi.input[1]
+                    idx_val = cls._get_const_int(idx_name, output_to_node, {})
+                    if idx_val is None:
+                        break
+                    idx_map[id(gi)] = idx_val
+                else:
+                    # All indices resolved — proceed with rewrite
+                    indices = list(idx_map.values())
+                    if set(indices) != set(range(max(indices) + 1)):
+                        new_nodes.append(node)
+                        continue
+
+                    num_outputs = max(indices) + 1
+                    split_input = node.input[0]  # the tensor being split
+                    split_size_input = node.input[1] if len(node.input) > 1 else None
+                    split_out_names = [f"{split_seq_out}_part_{i}" for i in range(num_outputs)]
+
+                    # Build the Split node
+                    split_node_inputs = [split_input]
+                    split_node_name = f"{node.name}_split" if node.name else f"{split_seq_out}_split"
+
+                    if split_size_input:
+                        split_size_val = cls._get_const_int(split_size_input, output_to_node, {})
+                        if split_size_val is not None:
+                            const_name = f"{split_node_name}_sizes"
+                            size_list = [split_size_val] * num_outputs
+                            new_nodes.append(
+                                onnx.helper.make_node(
+                                    "Constant",
+                                    [],
+                                    [const_name],
+                                    name=f"{const_name}_const",
+                                    value=onnx.helper.make_tensor(
+                                        const_name, TensorProto.INT64, [len(size_list)], size_list
+                                    ),
+                                )
+                            )
+                            split_node_inputs.append(const_name)
+                        else:
+                            split_node_inputs.append(split_size_input)
+
+                    new_nodes.append(
+                        onnx.helper.make_node(
+                            "Split",
+                            split_node_inputs,
+                            split_out_names,
+                            name=split_node_name,
+                            axis=-1,
+                        )
+                    )
+
+                    # Map each getitem output → the correct Split output slice
+                    for gi in getitem_consumers:
+                        replace_map[gi.output[0]] = split_out_names[idx_map[id(gi)]]
+                        skip_nodes.add(id(gi))
+
+                    skip_nodes.add(id(node))
+                    local_changed = True
+                    continue
+
+                # Fallthrough: couldn't resolve all indices
+                new_nodes.append(node)
+
+            if local_changed:
+                cls._apply_replacements(container, new_nodes, replace_map, skip_nodes)
+                del container.node[:]
+                container.node.extend([n for n in new_nodes if id(n) not in skip_nodes])
+
+            return local_changed
+
+        # Apply in graph and all function bodies
+        changed |= _rewrite_in(model.graph)
+        for fn in model.functions:
+            changed |= _rewrite_in(fn)
+
+        # Remove aten_split / aten_getitem function definitions if no call sites remain
+        if changed:
+            all_op_types: Set[str] = set()
+            for node in model.graph.node:
+                all_op_types.add(node.op_type)
+            for fn in model.functions:
+                for node in fn.node:
+                    all_op_types.add(node.op_type)
+
+            fns_to_keep = [fn for fn in model.functions if fn.name in all_op_types]
+            if len(fns_to_keep) < len(model.functions):
+                del model.functions[:]
+                model.functions.extend(fns_to_keep)
+
         return changed
 
     @classmethod
@@ -491,6 +644,8 @@ class RewriteUnsupportedOpsTransform(BaseOnnxTransform):
         for init in graph.initializer:
             type_map[init.name] = init.data_type
             if init.data_type in cls._INT_TYPES:
+                if init.data_location == TensorProto.EXTERNAL:
+                    continue
                 cls._extract_const_value(numpy_helper.to_array(init), const_map, init.name)
 
         # Collect from Constant nodes
@@ -513,6 +668,8 @@ class RewriteUnsupportedOpsTransform(BaseOnnxTransform):
         """Extract constant from Constant node."""
         value_attr = next((a for a in node.attribute if a.name == "value"), None)
         if value_attr and value_attr.t.data_type in cls._INT_TYPES:
+            if value_attr.t.data_location == TensorProto.EXTERNAL:
+                return
             cls._extract_const_value(numpy_helper.to_array(value_attr.t), const_map, node.output[0])
 
     @classmethod
@@ -861,6 +1018,9 @@ class OnnxTransformPipeline(BaseOnnxTransform):
 
         if AdapterWeightsToInputsTransform in requested:
             applied[AdapterWeightsToInputsTransform] = AdapterWeightsToInputsTransform.apply(model, **kwargs)
+
+        if RewriteUnsupportedOpsTransform in requested:
+            applied[RewriteUnsupportedOpsTransform] = RewriteUnsupportedOpsTransform.apply(model)
 
         for t, done in applied.items():
             logger.info(f"Transform '{t.__name__}' applied={done}")
