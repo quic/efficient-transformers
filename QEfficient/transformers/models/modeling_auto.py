@@ -1233,6 +1233,11 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.model.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
         self.continuous_batching = False
+        if qaic_config:
+            self.ccl_enabled = qaic_config.get("ccl_enabled", False)
+            if mla_absorption := qaic_config.get("mla_absorption", None):
+                self.hash_params["mla_absorption"] = mla_absorption
+                setattr(self.model.language_model, "mla_absorption", mla_absorption)
 
     def __update_prefill_transform(
         self,
@@ -1435,6 +1440,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.ccl_enabled = False
         if qaic_config:
             self.ccl_enabled = qaic_config.get("ccl_enabled", False)
+
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.input_shapes, self.output_names = None, None
         # ---Sampling---
@@ -1983,6 +1989,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         custom_io_vision = {}
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
+        if target_dtype == torch.bfloat16 and constants.DEFAULT_AIC_HW_VERSION != "ai200":
+            target_dtype = torch.float16
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[target_dtype]
         molmo = hasattr(self.model.config, "model_type") and self.model.config.model_type == "molmo"
         if molmo:

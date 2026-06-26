@@ -439,6 +439,11 @@ from QEfficient.transformers.models.internvl.modeling_internvl import (
     QEffInternVisionEmbeddings,
     QEffInternVLModel,
 )
+from QEfficient.transformers.models.kimi_k25.modeling_kimi_k25 import (
+    QEffKimiK25ForConditionalGeneration,
+    QEffLearnable2DInterpPosEmbDivided_fixed,
+    QEffMoonViT3dEncoder,
+)
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
     QEffLlamaDecoderLayer,
@@ -1231,6 +1236,20 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         },
         "RMSNorm": {
             "forward": QEFFGrok1CustomRMSNormAIC.forward,
+        },
+        "KimiK25ForConditionalGeneration": {
+            "get_qeff_vision_encoder": QEffKimiK25ForConditionalGeneration.get_qeff_vision_encoder,
+            "get_qeff_language_decoder": QEffKimiK25ForConditionalGeneration.get_qeff_language_decoder,
+            "get_specializations": QEffKimiK25ForConditionalGeneration.get_specializations,
+            "get_onnx_dynamic_axes": QEffKimiK25ForConditionalGeneration.get_onnx_dynamic_axes,
+            "get_output_names": QEffKimiK25ForConditionalGeneration.get_output_names,
+            "get_dummy_inputs": QEffKimiK25ForConditionalGeneration.get_dummy_inputs,
+        },
+        "MoonViT3dEncoder": {
+            "__qeff_init__": QEffMoonViT3dEncoder.__qeff_init__,
+        },
+        "Learnable2DInterpPosEmbDivided_fixed": {
+            "__qeff_init__": QEffLearnable2DInterpPosEmbDivided_fixed.__qeff_init__,
         },
         "DeepseekV3ForCausalLM": {
             "forward": QEffDeepseekV3ForCausalLM.forward,

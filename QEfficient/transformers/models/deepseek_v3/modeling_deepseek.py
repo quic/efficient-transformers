@@ -26,6 +26,23 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MAX_POSITION_EMBEDDINGS, MIN_MASKED_ATTENTION_VALUE
 
 
+def _get_linear_weight(linear_module: nn.Module) -> torch.Tensor:
+    """Return a linear layer weight, decompressing compressed-tensors modules if needed."""
+    weight = getattr(linear_module, "weight", None)
+    if weight is not None:
+        return weight
+
+    if hasattr(linear_module, "weight_packed") and hasattr(linear_module, "weight_scale"):
+        from compressed_tensors.compressors.base import decompress_module as ct_decompress_module
+
+        ct_decompress_module(linear_module)
+        weight = getattr(linear_module, "weight", None)
+        if weight is not None:
+            return weight
+
+    raise AttributeError(f"{linear_module.__class__.__name__!s} object has no attribute 'weight'")
+
+
 def rotate_half(x):
     """Rotates half the hidden dims of the input."""
     x1 = x[..., : x.shape[-1] // 2]
@@ -770,21 +787,23 @@ class QEffDeepseekV3MoE(nn.Module):
     ):
         self.all_gate_proj = torch.nn.Parameter(
             torch.cat(
-                [exp.gate_proj.compressor.decompress_module(exp.gate_proj).T.unsqueeze(0) for exp in self.experts],
+                [_get_linear_weight(exp.gate_proj).T.unsqueeze(0) for exp in self.experts],
                 dim=0,
             )
         )
         self.all_up_proj = torch.nn.Parameter(
             torch.cat(
-                [exp.up_proj.compressor.decompress_module(exp.up_proj).T.unsqueeze(0) for exp in self.experts], dim=0
+                [_get_linear_weight(exp.up_proj).T.unsqueeze(0) for exp in self.experts],
+                dim=0,
             )
         )
         self.all_down_proj = torch.nn.Parameter(
             torch.cat(
-                [exp.down_proj.compressor.decompress_module(exp.down_proj).T.unsqueeze(0) for exp in self.experts],
+                [_get_linear_weight(exp.down_proj).T.unsqueeze(0) for exp in self.experts],
                 dim=0,
             )
         )
+
         self.act_fn = self.experts[0].act_fn
 
     def moe(
@@ -833,9 +852,9 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             up_proj = torch.nn.Linear(self.config.hidden_size, self.config.moe_intermediate_size, bias=False)
             down_proj = torch.nn.Linear(self.config.moe_intermediate_size, self.config.hidden_size, bias=False)
 
-            gate_proj.weight = torch.nn.Parameter(exp.gate_proj.compressor.decompress_module(exp.gate_proj))
-            up_proj.weight = torch.nn.Parameter(exp.up_proj.compressor.decompress_module(exp.up_proj))
-            down_proj.weight = torch.nn.Parameter(exp.down_proj.compressor.decompress_module(exp.down_proj))
+            gate_proj.weight = torch.nn.Parameter(_get_linear_weight(exp.gate_proj).detach().clone())
+            up_proj.weight = torch.nn.Parameter(_get_linear_weight(exp.up_proj).detach().clone())
+            down_proj.weight = torch.nn.Parameter(_get_linear_weight(exp.down_proj).detach().clone())
 
             setattr(exp, "gate_proj", gate_proj)
             setattr(exp, "up_proj", up_proj)
