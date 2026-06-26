@@ -9,9 +9,12 @@
 import bisect
 import logging
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import onnx
+
+from QEfficient.utils import create_json
 
 logger = logging.getLogger(__name__)
 
@@ -475,3 +478,72 @@ def generate_disagg_mdp_intersection_config(
         "connections": qeff_mdp["connections"],
         "partitions": partition_objs,
     }
+
+
+def generate_disagg_mdp_config(
+    onnx_path: Path,
+    compile_dir: Path,
+    mdp_ts_num_devices: int,
+    mdp_num_partitions: int,
+    mdp_strategy: MdpStrategy,
+    mdp_compiler_dump_path: Optional[str],
+    num_cores: int,
+    num_layers: int,
+) -> Tuple[Path, Dict[str, Any]]:
+    """Dispatch to the appropriate disaggregated MDP generator and persist the result.
+
+    Selects between the ONNX-based and intersection-based strategies, writes the
+    partition config JSON to *compile_dir*, and returns ``(json_path, json_object)``
+    for use by the compile flow.
+
+    Args:
+        onnx_path: Path to the exported ONNX model file.
+        compile_dir: Directory where the JSON config will be written.
+        mdp_ts_num_devices: Total number of devices across all partitions.
+        mdp_num_partitions: Number of pipeline-parallel partitions (stages).
+        mdp_strategy: :class:`MdpStrategy` enum value selecting ONNX or INTERSECTION.
+        mdp_compiler_dump_path: Path to a prior ``qaic-compile -mdp-dump-partition-config``
+            dump; required when *mdp_strategy* is ``INTERSECTION``.
+        num_cores: NSP cores per device.
+        num_layers: Number of transformer layers in the model.
+
+    Returns:
+        Tuple of ``(json_path, json_object)`` where *json_path* is the :class:`~pathlib.Path`
+        of the written file and *json_object* is the in-memory partition config dict.
+
+    Raises:
+        ValueError: When *mdp_strategy* is INTERSECTION but *mdp_compiler_dump_path* is not set.
+    """
+    logger.info(
+        f"Generating disagg MDP (strategy={mdp_strategy.value!r}): "
+        f"num_devices={mdp_ts_num_devices}, num_partitions={mdp_num_partitions}, "
+        f"num_layers={num_layers}, num_cores={num_cores}"
+    )
+
+    if mdp_strategy is MdpStrategy.ONNX:
+        mdp_ts_json = generate_disagg_mdp_partition_config(
+            onnx_path=str(onnx_path),
+            num_devices=mdp_ts_num_devices,
+            num_partitions=mdp_num_partitions,
+            num_layers=num_layers,
+            num_cores=num_cores,
+        )
+    else:
+        if not mdp_compiler_dump_path:
+            raise ValueError(
+                "mdp_strategy='intersection' requires mdp_compiler_dump_path to be set. "
+                "Run qaic-compile with -mdp-dump-partition-config=<path> first, "
+                "then pass that path as mdp_compiler_dump_path."
+            )
+        mdp_ts_json = generate_disagg_mdp_intersection_config(
+            onnx_path=str(onnx_path),
+            compiler_dump_path=mdp_compiler_dump_path,
+            num_devices=mdp_ts_num_devices,
+            num_partitions=mdp_num_partitions,
+            num_layers=num_layers,
+            num_cores=num_cores,
+        )
+
+    mdp_ts_json_path = compile_dir / f"mdp_disagg_{mdp_ts_num_devices}d_{mdp_num_partitions}p.json"
+    create_json(str(mdp_ts_json_path), mdp_ts_json)
+    return mdp_ts_json_path, mdp_ts_json
