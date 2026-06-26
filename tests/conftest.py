@@ -6,6 +6,9 @@
 # -----------------------------------------------------------------------------
 
 
+import os
+from pathlib import Path
+
 import pytest
 from transformers import logging
 
@@ -113,6 +116,78 @@ def qeff_models_clean_up(qeff_dir=QEFF_HOME):
 def manual_cleanup():
     """Fixture to manually trigger cleanup"""
     return qeff_models_clean_up
+
+
+# ---------------------------------------------------------------------------
+# pytest-xdist card-pinning and per-worker QEFF_HOME isolation
+# ---------------------------------------------------------------------------
+
+# Default number of QAIC cards on the CI host. Override with QEFF_NUM_QAIC_CARDS.
+_QAIC_CARDS_DEFAULT = 4
+
+
+def _xdist_worker_index():
+    """Return the integer index of the current xdist worker (gw0 → 0), or None
+    for serial / controller processes."""
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if not worker or not worker.startswith("gw"):
+        return None
+    try:
+        return int(worker[2:])
+    except ValueError:
+        return None
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _qaic_device_for_xdist_worker():
+    """Pin each pytest-xdist worker to one QAIC card via QAIC_VISIBLE_DEVICES.
+
+    Serial runs (no xdist) and runs that already export QAIC_VISIBLE_DEVICES
+    are left untouched.  Under ``pytest -n 4`` on a 4-card host, workers
+    gw0..gw3 each own one card so compile/generate calls across workers run
+    in parallel while same-worker calls remain sequential on that card.
+
+    QEFF_QAIC_CARD_OFFSET lets two Jenkins stages share a host without card
+    collisions.  E.g. stage A: QEFF_NUM_QAIC_CARDS=2, QEFF_QAIC_CARD_OFFSET=0
+    → cards 0,1;  stage B: QEFF_NUM_QAIC_CARDS=2, QEFF_QAIC_CARD_OFFSET=2
+    → cards 2,3.
+    """
+    if "QAIC_VISIBLE_DEVICES" in os.environ:
+        return
+    idx = _xdist_worker_index()
+    if idx is None:
+        return
+    cards = max(1, int(os.environ.get("QEFF_NUM_QAIC_CARDS", _QAIC_CARDS_DEFAULT)))
+    offset = int(os.environ.get("QEFF_QAIC_CARD_OFFSET", 0))
+    os.environ["QAIC_VISIBLE_DEVICES"] = str(offset + (idx % cards))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _qeff_home_per_xdist_worker():
+    """Give each xdist worker its own QEFF_HOME subdirectory so concurrent
+    export/compile cache writes do not race each other.  Serial runs are
+    untouched.
+
+    Setting os.environ alone is insufficient because QEfficient.utils.cache
+    and QEfficient.utils.export_utils bind QEFF_HOME to a module-level
+    constant at import time.  Both module attributes are patched directly so
+    every call to _prepare_export_directory() resolves to the per-worker path.
+    """
+    idx = _xdist_worker_index()
+    if idx is None:
+        return
+    base = os.environ.get("QEFF_HOME")
+    if not base:
+        return
+
+    import QEfficient.utils.cache as _cache_mod
+    import QEfficient.utils.export_utils as _export_mod
+
+    worker_home = Path(base) / f"worker_{idx}"
+    worker_home.mkdir(parents=True, exist_ok=True)
+    os.environ["QEFF_HOME"] = str(worker_home)
+    _cache_mod.QEFF_HOME = worker_home
+    _export_mod.QEFF_HOME = worker_home
 
 
 def pytest_sessionstart(session):

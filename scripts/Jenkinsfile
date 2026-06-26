@@ -1,270 +1,343 @@
-// Per-PR pipeline: all Jenkins stages run sequentially for now.
+// 2-Phase CI Pipeline
 //
-// Individual pytest commands may still use pytest-xdist to shard work within a
-// stage, but Jenkins does not run multiple stages concurrently. Stage-level
-// parallelism can be reintroduced later once the sequential pipeline is stable.
+// Phase 1 (parallel): 4 non-QAIC stages run concurrently
+//   - Non-QAIC: LLM
+//   - Non-QAIC: VLM
+//   - Non-QAIC: Diffusion
+//   - Non-QAIC: Other
+//
+// Phase 2 (sequential): 3 QAIC stages run one after another
+//   - QAIC: LLM   (cards 0-3)
+//   - QAIC: VLM   (cards 0-3)
+//   - QAIC: Diffusion (cards 2-3)
+//
+// QEFF_HOME is shared between Phase 1 and Phase 2 per model family so that
+// ONNX exports produced in Phase 1 are reused by the QAIC compile/generate
+// steps in Phase 2 without re-exporting.
+//
+// One stage failure never blocks other stages (catchError isolation).
+// TEST_PROFILE parameter controls which model set is used (tiny_model / full_model).
 
-def qaicTimeoutMinutes(int perPr) {
-    return perPr
-}
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-def qaicTimeoutUnit() {
-    return 'MINUTES'
-}
+def qaicTimeoutMinutes(int minutes) { return minutes }
+def qaicTimeoutUnit()               { return 'MINUTES' }
+
+// Common ignore flags shared by every pytest invocation.
+def PYTEST_IGNORE = '--ignore tests/unit_test --ignore tests/finetune --ignore tests/vllm --ignore tests/nightly_pipeline'
+
+// Noise filter applied to all pytest output.
+def OUTPUT_FILTER = "grep -Ev 'shape_type_inference|CtxGather3D type is missing'"
+
+// ---------------------------------------------------------------------------
+// Pipeline
+// ---------------------------------------------------------------------------
 
 pipeline {
     agent { node { label params.NODE_LABEL } }
 
     options {
         disableConcurrentBuilds()
-        // Skip the automatic checkout so we can chown first (previous Docker
-        // runs leave preflight_qeff/ owned by root, which blocks git clean).
+        // Defer checkout so we can chown first (previous Docker run leaves
+        // preflight_qeff/ owned by root, which blocks git clean).
         skipDefaultCheckout()
     }
 
     parameters {
         string(name: 'NODE_LABEL', defaultValue: 'qeff_node',
                description: 'Jenkins agent/node label to run this pipeline on')
+
         choice(name: 'TEST_PROFILE',
-               choices: ['tiny_model'],
-               description: 'CI test profile (tiny model only)')
-        string(name: 'SELECT_TEST_STAGES', defaultValue: 'ALL',
-               description: 'Select which test stages you want to run (all run by default)')
-        booleanParam(name: 'RUN_HL_APIS', defaultValue: true)
-        booleanParam(name: 'RUN_QAIC_FEATURE', defaultValue: true)
-        booleanParam(name: 'RUN_QAIC_MM', defaultValue: true)
-        booleanParam(name: 'RUN_QAIC_DIFFUSION', defaultValue: true)
-        booleanParam(name: 'RUN_CLI', defaultValue: true)
-        booleanParam(name: 'RUN_FINETUNE', defaultValue: false)
-        // Number of xdist workers / QAic cards on the host. Match to physical card count.
+               choices: ['tiny_model', 'full_model'],
+               description: 'CI test profile: tiny_model (fast, random-weight tinies) or full_model (real weights, nightly)')
+
+        // Phase 2 QAIC stage toggles
+        booleanParam(name: 'RUN_QAIC_LLM',       defaultValue: true,
+                     description: 'Run QAIC: LLM stage (Phase 2)')
+        booleanParam(name: 'RUN_QAIC_VLM',       defaultValue: true,
+                     description: 'Run QAIC: VLM stage (Phase 2)')
+        booleanParam(name: 'RUN_QAIC_DIFFUSION',  defaultValue: true,
+                     description: 'Run QAIC: Diffusion stage (Phase 2)')
+
+        // Optional stages
+        booleanParam(name: 'RUN_FINETUNE', defaultValue: false,
+                     description: 'Run Finetune stage (optional, off by default)')
+
+        // Number of xdist workers / QAIC cards on the host.
         string(name: 'QAIC_WORKERS', defaultValue: '4',
-               description: 'pytest-xdist worker count for QAic stages (one card per worker)')
+               description: 'pytest-xdist worker count for QAIC stages (one card per worker)')
     }
 
     environment {
         QAIC_N            = "${params.QAIC_WORKERS}"
         QEFF_TEST_PROFILE = "${params.TEST_PROFILE}"
         // Persistent QPC cache shared across CI runs to avoid cold-cache recompile.
-        // Keyed the same way as HF_PATH so QPCs built on run N are reused on run N+1.
         QEFF_QPC_CACHE    = "/home/ubuntu/.cache/qeff_qpcs"
         DOCKER_QPC_CACHE  = "/root/.cache/qeff_qpcs"
     }
 
     stages {
+
+        // ── Install ──────────────────────────────────────────────────────────
         stage('Install QEfficient') {
             steps {
-                // Fix ownership left by previous Docker run (container ran as root),
-                // then do the checkout that skipDefaultCheckout() deferred.
                 sh 'sudo chown -R ubuntu . || true'
                 checkout scm
                 sh '''
                     . ~/.bashrc
                     mkdir -p ${QEFF_QPC_CACHE}
-                    sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} -v ${QEFF_QPC_CACHE}:${DOCKER_QPC_CACHE} ${DOCKER_LATEST}:master_latest
+                    sudo docker run --privileged -dit --name ${BUILD_TAG} \
+                        -e HF_TOKEN=${HF_TOKEN} \
+                        -v ./:/efficient-transformers \
+                        -v ${HF_PATH}:${DOCKER_HF_PATH} \
+                        -v ${QEFF_QPC_CACHE}:${DOCKER_QPC_CACHE} \
+                        ${DOCKER_LATEST}:master_latest
                     sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    apt update &&
-                    DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv python3.12-dev build-essential &&
-                    python3.12 -m venv preflight_qeff &&
-                    . preflight_qeff/bin/activate &&
-                    pip install --upgrade pip setuptools &&
-                    pip install .[test] &&
-                    pip install junitparser pytest-xdist &&
-                    pip install librosa==0.10.2 soundfile==0.13.1 &&
-                    pip install qwen-vl-utils==0.0.14 &&
-                    pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1 &&
-                    pip install onnx_ir
-                    rm -rf QEfficient"
+                        cd /efficient-transformers &&
+                        apt update &&
+                        DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv python3.12-dev build-essential &&
+                        python3.12 -m venv preflight_qeff &&
+                        . preflight_qeff/bin/activate &&
+                        pip install --upgrade pip setuptools &&
+                        pip install .[test] &&
+                        pip install junitparser pytest-xdist &&
+                        pip install librosa==0.10.2 soundfile==0.13.1 &&
+                        pip install qwen-vl-utils==0.0.14 &&
+                        pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1 &&
+                        pip install onnx_ir &&
+                        rm -rf QEfficient"
                 '''
             }
         }
 
-        // ── Sequential test stages ───────────────────────────────────────────────
-        stage('Non-QAIC Tests') {
-            when { expression { params.RUN_HL_APIS } }
+        // ── Phase 1: Non-QAIC (parallel) ─────────────────────────────────────
+        // QEFF_HOME is set per model family. Phase 2 QAIC stages reuse the
+        // same paths so ONNX exports from Phase 1 are not re-generated.
+        stage('Phase 1: Non-QAIC Tests') {
+            parallel {
+
+                stage('Non-QAIC: LLM') {
+                    steps {
+                        catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                            timeout(time: qaicTimeoutMinutes(30), unit: qaicTimeoutUnit()) {
+                                sh """
+                                sudo docker exec ${BUILD_TAG} bash -c "
+                                    cd /efficient-transformers &&
+                                    . preflight_qeff/bin/activate &&
+                                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                                    export TOKENIZERS_PARALLELISM=false &&
+                                    export QEFF_HOME=${DOCKER_QPC_CACHE}/llm &&
+                                    set -o pipefail &&
+                                    pytest tests -m 'llm and non_qaic' \
+                                        ${PYTEST_IGNORE} \
+                                        -n auto --dist worksteal \
+                                        --junitxml=tests/tests_log_non_qaic_llm.xml \
+                                        --durations=10 2>&1 | ${OUTPUT_FILTER} &&
+                                    junitparser merge tests/tests_log_non_qaic_llm.xml tests/tests_log.xml &&
+                                    deactivate"
+                                """
+                            }
+                        }
+                    }
+                }
+
+                stage('Non-QAIC: VLM') {
+                    steps {
+                        catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                            timeout(time: qaicTimeoutMinutes(30), unit: qaicTimeoutUnit()) {
+                                sh """
+                                sudo docker exec ${BUILD_TAG} bash -c "
+                                    cd /efficient-transformers &&
+                                    . preflight_qeff/bin/activate &&
+                                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                                    export TOKENIZERS_PARALLELISM=false &&
+                                    export QEFF_HOME=${DOCKER_QPC_CACHE}/vlm &&
+                                    set -o pipefail &&
+                                    pytest tests -m 'vlm and non_qaic' \
+                                        ${PYTEST_IGNORE} \
+                                        -n auto --dist worksteal \
+                                        --junitxml=tests/tests_log_non_qaic_vlm.xml \
+                                        --durations=10 2>&1 | ${OUTPUT_FILTER} &&
+                                    junitparser merge tests/tests_log_non_qaic_vlm.xml tests/tests_log.xml &&
+                                    deactivate"
+                                """
+                            }
+                        }
+                    }
+                }
+
+                stage('Non-QAIC: Diffusion') {
+                    steps {
+                        catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                            timeout(time: qaicTimeoutMinutes(30), unit: qaicTimeoutUnit()) {
+                                sh """
+                                sudo docker exec ${BUILD_TAG} bash -c "
+                                    cd /efficient-transformers &&
+                                    . preflight_qeff/bin/activate &&
+                                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                                    export TOKENIZERS_PARALLELISM=false &&
+                                    export QEFF_HOME=${DOCKER_QPC_CACHE}/diffusion &&
+                                    set -o pipefail &&
+                                    pytest tests -m 'diffusion and non_qaic' \
+                                        ${PYTEST_IGNORE} \
+                                        -n auto --dist worksteal \
+                                        --junitxml=tests/tests_log_non_qaic_diffusion.xml \
+                                        --durations=10 2>&1 | ${OUTPUT_FILTER} &&
+                                    junitparser merge tests/tests_log_non_qaic_diffusion.xml tests/tests_log.xml &&
+                                    deactivate"
+                                """
+                            }
+                        }
+                    }
+                }
+
+                stage('Non-QAIC: Other') {
+                    steps {
+                        catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                            timeout(time: qaicTimeoutMinutes(30), unit: qaicTimeoutUnit()) {
+                                sh """
+                                sudo docker exec ${BUILD_TAG} bash -c "
+                                    cd /efficient-transformers &&
+                                    . preflight_qeff/bin/activate &&
+                                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                                    export TOKENIZERS_PARALLELISM=false &&
+                                    export QEFF_HOME=${DOCKER_QPC_CACHE}/other &&
+                                    set -o pipefail &&
+                                    pytest tests -m 'non_qaic and not llm and not vlm and not diffusion' \
+                                        ${PYTEST_IGNORE} \
+                                        -n auto --dist worksteal \
+                                        --junitxml=tests/tests_log_non_qaic_other.xml \
+                                        --durations=10 2>&1 | ${OUTPUT_FILTER} &&
+                                    junitparser merge tests/tests_log_non_qaic_other.xml tests/tests_log.xml &&
+                                    deactivate"
+                                """
+                            }
+                        }
+                    }
+                }
+
+            } // end parallel
+        } // end Phase 1
+
+        // ── Phase 2: QAIC (sequential) ────────────────────────────────────────
+        // Each stage reuses the same QEFF_HOME as its Phase 1 counterpart so
+        // that ONNX exports are found on disk and not re-generated.
+        stage('QAIC: LLM (cards 0-3)') {
+            when { expression { params.RUN_QAIC_LLM } }
             steps {
-                timeout(time: qaicTimeoutMinutes(30),
-                        unit: qaicTimeoutUnit()) {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Non_cli_qaic &&
-                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=${DOCKER_QPC_CACHE}/cpu &&
-                    set -o pipefail &&
-                    pytest tests -m '(non_qaic) and (not finetune) and (not cli)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n auto --dist worksteal --junitxml=tests/tests_log1.xml --durations=10 2>&1 | grep -Ev 'shape_type_inference|CtxGather3D type is missing' &&
-                    junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    timeout(time: qaicTimeoutMinutes(45), unit: qaicTimeoutUnit()) {
+                        sh """
+                        sudo docker exec ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=${DOCKER_QPC_CACHE}/llm &&
+                            export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
+                            export QEFF_QAIC_CARD_OFFSET=0 &&
+                            set -o pipefail &&
+                            pytest tests -m 'qaic and llm' \
+                                ${PYTEST_IGNORE} \
+                                -n ${QAIC_N} --dist worksteal \
+                                --junitxml=tests/tests_log_qaic_llm.xml \
+                                --durations=10 2>&1 | ${OUTPUT_FILTER} &&
+                            junitparser merge tests/tests_log_qaic_llm.xml tests/tests_log.xml &&
+                            deactivate"
+                        """
+                    }
                 }
             }
         }
 
-        stage('QAIC: CLI') {
-            when { expression { params.RUN_CLI } }
+        stage('QAIC: VLM (cards 0-3)') {
+            when { expression { params.RUN_QAIC_VLM } }
             steps {
-                timeout(time: 30, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/cli &&
-                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=${DOCKER_QPC_CACHE}/cli &&
-                    set -o pipefail &&
-                    pytest tests -m '(qaic and cli and not qnn) and (not finetune)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log3.xml --durations=10 2>&1 | grep -Ev 'shape_type_inference|CtxGather3D type is missing' &&
-                    junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    timeout(time: qaicTimeoutMinutes(30), unit: qaicTimeoutUnit()) {
+                        sh """
+                        sudo docker exec ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=${DOCKER_QPC_CACHE}/vlm &&
+                            export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
+                            export QEFF_QAIC_CARD_OFFSET=0 &&
+                            set -o pipefail &&
+                            pytest tests -m 'qaic and vlm' \
+                                ${PYTEST_IGNORE} \
+                                -n ${QAIC_N} --dist worksteal \
+                                --junitxml=tests/tests_log_qaic_vlm.xml \
+                                --durations=10 2>&1 | ${OUTPUT_FILTER} &&
+                            junitparser merge tests/tests_log_qaic_vlm.xml tests/tests_log.xml &&
+                            deactivate"
+                        """
+                    }
                 }
             }
         }
 
-
-        stage('QAIC: e2e non-VLM Model (cards 0-3)') {
-            when { expression { params.RUN_HL_APIS } }
-            steps {
-                timeout(time: qaicTimeoutMinutes(45),
-                        unit: qaicTimeoutUnit()) {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Non_qaic_llm &&
-                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=${DOCKER_QPC_CACHE}/llm &&
-                    export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
-                    export QEFF_QAIC_CARD_OFFSET=0 &&
-                    set -o pipefail &&
-                    pytest tests -m '(qaic and llm_model) and (not qnn)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${QAIC_N} --dist worksteal --junitxml=tests/tests_log2.xml --durations=10 2>&1 | grep -Ev 'shape_type_inference|CtxGather3D type is missing' &&
-                    junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
-                }
-            }
-        }
-
-        stage('QAIC: Feature (cards 0,1)') {
-            when { expression { params.RUN_QAIC_FEATURE } }
-            steps {
-                timeout(time: qaicTimeoutMinutes(20),
-                        unit: qaicTimeoutUnit()) {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Non_qaic_feature &&
-                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=${DOCKER_QPC_CACHE}/feature &&
-                    export QEFF_NUM_QAIC_CARDS=2 &&
-                    export QEFF_QAIC_CARD_OFFSET=0 &&
-                    set -o pipefail &&
-                    pytest tests -m '(qaic and feature) and (not qnn)' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 2 --dist worksteal --junitxml=tests/tests_log2_feature.xml --durations=10 2>&1 | grep -Ev 'shape_type_inference|CtxGather3D type is missing' &&
-                    junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
-                }
-            }
-        }
-
-        stage('QAIC: Diffusion (cards 2,3)') {
+        stage('QAIC: Diffusion (cards 2-3)') {
             when { expression { params.RUN_QAIC_DIFFUSION } }
             steps {
-                timeout(time: 60, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Non_cli_qaic_diffusion &&
-                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=${DOCKER_QPC_CACHE}/diffusion &&
-                    export HF_HUB_CACHE=/huggingface_hub &&
-                    export QEFF_NUM_QAIC_CARDS=2 &&
-                    export QEFF_QAIC_CARD_OFFSET=2 &&
-                    set -o pipefail &&
-                    pytest tests -m 'qaic and diffusion_models' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 2 --dist worksteal --junitxml=tests/tests_log_diffusion.xml --durations=10 2>&1 | grep -Ev 'shape_type_inference|CtxGather3D type is missing' &&
-                    junitparser merge tests/tests_log_diffusion.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    timeout(time: qaicTimeoutMinutes(60), unit: qaicTimeoutUnit()) {
+                        sh """
+                        sudo docker exec ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=${DOCKER_QPC_CACHE}/diffusion &&
+                            export HF_HUB_CACHE=/huggingface_hub &&
+                            export QEFF_NUM_QAIC_CARDS=2 &&
+                            export QEFF_QAIC_CARD_OFFSET=2 &&
+                            set -o pipefail &&
+                            pytest tests -m 'qaic and diffusion' \
+                                ${PYTEST_IGNORE} \
+                                -n 2 --dist worksteal \
+                                --junitxml=tests/tests_log_qaic_diffusion.xml \
+                                --durations=10 2>&1 | ${OUTPUT_FILTER} &&
+                            junitparser merge tests/tests_log_qaic_diffusion.xml tests/tests_log.xml &&
+                            deactivate"
+                        """
+                    }
                 }
             }
         }
 
-        stage('QAIC: VLM Model (cards 0-3)') {
-            when { expression { params.RUN_QAIC_MM } }
-            steps {
-                timeout(time: qaicTimeoutMinutes(30),
-                        unit: qaicTimeoutUnit()) {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Non_cli_qaic_multimodal &&
-                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=${DOCKER_QPC_CACHE}/multimodal &&
-                    export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
-                    export QEFF_QAIC_CARD_OFFSET=0 &&
-                    set -o pipefail &&
-                    pytest tests -m '(qaic and multimodal) and (not qnn) and (not reranker)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${QAIC_N} --dist worksteal --junitxml=tests/tests_log6.xml --durations=10 2>&1 | grep -Ev 'shape_type_inference|CtxGather3D type is missing' &&
-                    junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
-                }
-            }
-        }
-
-        stage('QAIC: Reranker Model') {
-            when { expression { params.RUN_QAIC_MM } }
-            steps {
-                timeout(time: 15, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Non_cli_qaic_reranker &&
-                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=${DOCKER_QPC_CACHE}/reranker &&
-                    export QEFF_RERANKER_DOC_LIMIT=1 &&
-                    set -o pipefail &&
-                    pytest -q tests/transformers/models/reranker/test_reranker_mad.py -m '(qaic and reranker)' --maxfail=1 --junitxml=tests/tests_log_reranker.xml --durations=10 2>&1 | grep -Ev 'shape_type_inference|CtxGather3D type is missing' &&
-                    junitparser merge tests/tests_log_reranker.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
-                }
-            }
-        }
-
+        // ── Optional: Finetune ────────────────────────────────────────────────
         stage('Finetune Tests') {
             when { expression { params.RUN_FINETUNE } }
             steps {
-                timeout(time: 20, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    pip install /opt/qti-aic/integrations/torch_qaic/py312/torch_qaic-0.1.0-cp312-cp312-manylinux_2_34_x86_64.whl &&
-                    pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cpu &&
-                    mkdir -p $PWD/cli_qaic_finetuning &&
-                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=${DOCKER_QPC_CACHE}/finetune &&
-                    set -o pipefail &&
-                    pytest tests -m '(finetune)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log_finetune.xml --durations=10 2>&1 | grep -Ev 'shape_type_inference|CtxGather3D type is missing' &&
-                    junitparser merge tests/tests_log_finetune.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    timeout(time: qaicTimeoutMinutes(20), unit: qaicTimeoutUnit()) {
+                        sh """
+                        sudo docker exec ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            pip install /opt/qti-aic/integrations/torch_qaic/py312/torch_qaic-0.1.0-cp312-cp312-manylinux_2_34_x86_64.whl &&
+                            pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cpu &&
+                            export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=${DOCKER_QPC_CACHE}/finetune &&
+                            set -o pipefail &&
+                            pytest tests -m 'finetune' \
+                                --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline \
+                                --junitxml=tests/tests_log_finetune.xml \
+                                --durations=10 2>&1 | ${OUTPUT_FILTER} &&
+                            junitparser merge tests/tests_log_finetune.xml tests/tests_log.xml &&
+                            deactivate"
+                        """
+                    }
                 }
             }
         }
-    }
+
+    } // end stages
 
     post {
         always {
