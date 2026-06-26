@@ -660,7 +660,6 @@ class QEFFBaseModel(ABC):
                     input_names.append(param)
         dynamic_axes = {k: v for k, v in dynamic_axes.items() if k in input_names}
 
-        import os
         import time
 
         layerwise_dir = export_dir / "onnx_layerwise_tmp"

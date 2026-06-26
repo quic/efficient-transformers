@@ -50,7 +50,7 @@ def main():
         num_devices=args.num_devices,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
-        aic_hw_version='ai200',
+        aic_hw_version="ai200",
         use_onnx_subfunctions=False,
         skip_vision=True,
         layerwise=False,
