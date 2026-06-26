@@ -92,7 +92,7 @@ def export_onnx(
     os.makedirs(f"{gen_models_path}_tmp", exist_ok=True)
     try:
         info("Exporting to ONNX...")
-        with layerwise_safe_onnx_export_patches(enabled=False):
+        with layerwise_safe_onnx_export_patches():
             torch.onnx.export(
                 pt_model,
                 tuple(pt_inputs),
