@@ -43,6 +43,7 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
     config_manager,
     set_execute_params,
 )
+from QEfficient.diffusers.pipelines.wan.magcache import WanMagCacheRuntime
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
 from QEfficient.utils.logging_utils import logger
@@ -517,6 +518,7 @@ class QEffWanPipeline:
         callback_on_step_end_tensor_inputs: List[str],
         cache_threshold_high: Optional[float] = None,
         cache_threshold_low: Optional[float] = None,
+        magcache_runtime: Optional[WanMagCacheRuntime] = None,
     ):
         transformer_perf = []
         with self.model.progress_bar(total=num_inference_steps) as progress_bar:
@@ -584,12 +586,19 @@ class QEffWanPipeline:
                         "tsp": model_type.detach().numpy(),
                     }
 
-                with current_model.cache_context("cond"):
+                def _run_unified_step(stream_name: str, inputs: Dict[str, np.ndarray]) -> torch.Tensor:
+                    if magcache_runtime is not None and magcache_runtime.should_skip(stream_name):
+                        cached_residual = magcache_runtime.get_cached_residual(stream_name)
+                        magcache_runtime.complete_skip(stream_name)
+                        if magcache_runtime.verbose:
+                            logger.info(f"MagCache skip: step={i}, stream={stream_name}, t={float(t):.2f}")
+                        return latents.to(cached_residual.dtype) + cached_residual
+
                     start_transformer_step_time = time.perf_counter()
-                    outputs = self.transformer.qpc_session.run(inputs_aic)
+                    outputs = self.transformer.qpc_session.run(inputs)
                     end_transformer_step_time = time.perf_counter()
                     transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
-                    noise_pred = self._reshape_noise_prediction(
+                    noise_pred_step = self._reshape_noise_prediction(
                         outputs,
                         batch_size,
                         post_patch_num_frames,
@@ -600,22 +609,20 @@ class QEffWanPipeline:
                         p_w,
                     )
 
+                    if magcache_runtime is not None:
+                        residual = noise_pred_step - latents.to(noise_pred_step.dtype)
+                        magcache_runtime.complete_call(stream_name, residual)
+                        if magcache_runtime.verbose:
+                            logger.info(f"MagCache run: step={i}, stream={stream_name}, t={float(t):.2f}")
+
+                    return noise_pred_step
+
+                with current_model.cache_context("cond"):
+                    noise_pred = _run_unified_step("cond", inputs_aic)
+
                 if self.do_classifier_free_guidance:
                     with current_model.cache_context("uncond"):
-                        start_transformer_step_time = time.perf_counter()
-                        outputs = self.transformer.qpc_session.run(inputs_aic2)
-                        end_transformer_step_time = time.perf_counter()
-                        transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
-                        noise_uncond = self._reshape_noise_prediction(
-                            outputs,
-                            batch_size,
-                            post_patch_num_frames,
-                            post_patch_height,
-                            post_patch_width,
-                            p_t,
-                            p_h,
-                            p_w,
-                        )
+                        noise_uncond = _run_unified_step("uncond", inputs_aic2)
                         noise_pred = noise_uncond + current_guidance_scale * (noise_pred - noise_uncond)
 
                 latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
@@ -650,6 +657,7 @@ class QEffWanPipeline:
         callback_on_step_end_tensor_inputs: List[str],
         cache_threshold_high: Optional[float] = None,
         cache_threshold_low: Optional[float] = None,
+        magcache_runtime: Optional[WanMagCacheRuntime] = None,
     ):
         transformer_perf = []
         with self.model.progress_bar(total=num_inference_steps) as progress_bar:
@@ -714,12 +722,19 @@ class QEffWanPipeline:
                         "timestep_proj": timestep_proj.detach().numpy(),
                     }
 
-                with current_model.cache_context("cond"):
+                def _run_non_unified_step(stream_name: str, inputs: Dict[str, np.ndarray]) -> torch.Tensor:
+                    if magcache_runtime is not None and magcache_runtime.should_skip(stream_name):
+                        cached_residual = magcache_runtime.get_cached_residual(stream_name)
+                        magcache_runtime.complete_skip(stream_name)
+                        if magcache_runtime.verbose:
+                            logger.info(f"MagCache skip: step={i}, stream={stream_name}, t={float(t):.2f}")
+                        return latents.to(cached_residual.dtype) + cached_residual
+
                     start_transformer_step_time = time.perf_counter()
-                    outputs = current_transformer_module.qpc_session.run(inputs_aic)
+                    outputs = current_transformer_module.qpc_session.run(inputs)
                     end_transformer_step_time = time.perf_counter()
                     transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
-                    noise_pred = self._reshape_noise_prediction(
+                    noise_pred_step = self._reshape_noise_prediction(
                         outputs,
                         batch_size,
                         post_patch_num_frames,
@@ -730,22 +745,20 @@ class QEffWanPipeline:
                         p_w,
                     )
 
+                    if magcache_runtime is not None:
+                        residual = noise_pred_step - latents.to(noise_pred_step.dtype)
+                        magcache_runtime.complete_call(stream_name, residual)
+                        if magcache_runtime.verbose:
+                            logger.info(f"MagCache run: step={i}, stream={stream_name}, t={float(t):.2f}")
+
+                    return noise_pred_step
+
+                with current_model.cache_context("cond"):
+                    noise_pred = _run_non_unified_step("cond", inputs_aic)
+
                 if self.do_classifier_free_guidance:
                     with current_model.cache_context("uncond"):
-                        start_transformer_step_time = time.perf_counter()
-                        outputs = current_transformer_module.qpc_session.run(inputs_aic2)
-                        end_transformer_step_time = time.perf_counter()
-                        transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
-                        noise_uncond = self._reshape_noise_prediction(
-                            outputs,
-                            batch_size,
-                            post_patch_num_frames,
-                            post_patch_height,
-                            post_patch_width,
-                            p_t,
-                            p_h,
-                            p_w,
-                        )
+                        noise_uncond = _run_non_unified_step("uncond", inputs_aic2)
                         noise_pred = noise_uncond + current_guidance_scale * (noise_pred - noise_uncond)
 
                 latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
@@ -788,6 +801,12 @@ class QEffWanPipeline:
         cache_threshold_high: Optional[float] = None,
         cache_threshold_low: Optional[float] = None,
         parallel_compile: bool = True,
+        use_magcache: bool = False,
+        magcache_thresh: float = 0.06,
+        magcache_K: int = 2,
+        magcache_retention_ratio: float = 0.4,
+        magcache_ratios: Optional[List[float]] = None,
+        magcache_verbose: bool = False,
     ):
         """
         Generate videos from text prompts using the QEfficient-optimized WAN pipeline on QAIC hardware.
@@ -834,6 +853,12 @@ class QEffWanPipeline:
             cache_threshold_low (float, optional): First-block-cache threshold for low-noise stage.
                 Used only when `enable_first_block_cache=True`.
             parallel_compile (bool, optional): Whether to compile modules in parallel. Default: True.
+            use_magcache (bool, optional): Enable WAN runtime MagCache skip/reuse logic. Default: False.
+            magcache_thresh (float, optional): MagCache accumulated error threshold. Default: 0.06.
+            magcache_K (int, optional): Maximum number of consecutive skipped calls per stream. Default: 2.
+            magcache_retention_ratio (float, optional): Stage retention ratio in [0, 1]. Default: 0.4.
+            magcache_ratios (List[float], optional): Optional custom MagCache ratio profile.
+            magcache_verbose (bool, optional): Emit per-call MagCache decisions to logger. Default: False.
 
         Returns:
             QEffPipelineOutput: A dataclass containing:
@@ -897,11 +922,34 @@ class QEffWanPipeline:
         if self.model.config.boundary_ratio is not None and guidance_scale_2 is None:
             guidance_scale_2 = guidance_scale
 
+        if isinstance(use_magcache, str):
+            lowered = use_magcache.strip().lower()
+            if lowered in {"1", "true", "yes", "on"}:
+                use_magcache = True
+            elif lowered in {"0", "false", "no", "off"}:
+                use_magcache = False
+            else:
+                raise ValueError(
+                    f"Invalid string value for `use_magcache`: {use_magcache!r}. "
+                    "Use one of: true/false, 1/0, yes/no, on/off."
+                )
+        elif not isinstance(use_magcache, bool):
+            use_magcache = bool(use_magcache)
+            logger.warning(f"Coerced non-bool `use_magcache` to {use_magcache}.")
+
         if not self.enable_first_block_cache and (cache_threshold_high is not None or cache_threshold_low is not None):
             logger.warning(
                 "Ignoring cache thresholds because first-block-cache is disabled. "
                 "Set `enable_first_block_cache=True` and `use_unified=False` to enable it."
             )
+        if not use_magcache and (
+            magcache_verbose
+            or magcache_ratios is not None
+            or magcache_thresh != 0.06
+            or magcache_K != 2
+            or magcache_retention_ratio != 0.4
+        ):
+            logger.warning("Ignoring MagCache knobs because `use_magcache=False`.")
 
         # Initialize pipeline state
         self._guidance_scale = guidance_scale
@@ -968,6 +1016,22 @@ class QEffWanPipeline:
         else:
             boundary_timestep = None
 
+        magcache_runtime = None
+        if use_magcache:
+            high_noise_steps = None
+            if boundary_timestep is not None:
+                high_noise_steps = int((timesteps >= boundary_timestep).sum().item())
+            magcache_runtime = WanMagCacheRuntime(
+                num_inference_steps=num_inference_steps,
+                do_classifier_free_guidance=self.do_classifier_free_guidance,
+                threshold=magcache_thresh,
+                max_skip_steps=magcache_K,
+                retention_ratio=magcache_retention_ratio,
+                split_step=high_noise_steps,
+                ratios=magcache_ratios,
+                verbose=magcache_verbose,
+            )
+
         # Step 7: Initialize transformer sessions and buffers
         cl, _, _, _ = calculate_latent_dimensions_with_frames(
             height,
@@ -996,6 +1060,7 @@ class QEffWanPipeline:
             callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs,
             cache_threshold_high=cache_threshold_high,
             cache_threshold_low=cache_threshold_low,
+            magcache_runtime=magcache_runtime,
         )
 
         self._current_timestep = None
