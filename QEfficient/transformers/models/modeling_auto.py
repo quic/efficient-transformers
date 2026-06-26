@@ -71,6 +71,7 @@ from QEfficient.transformers.quantizers.quant_transforms import (
     FP8DeQuantLinearToLinearTransform,
     GPTQToMatmulNbitsTransform,
     Mxfp4GptOssExpertDequantizeTransform,
+    PackQuantizedInt4ToMatMulNBitsTransform,
 )
 from QEfficient.utils import (
     apply_kv_cache_prefix,
@@ -3353,6 +3354,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
         FP8DeQuantLinearToLinearTransform,
+        PackQuantizedInt4ToMatMulNBitsTransform,
         Mxfp4GptOssExpertDequantizeTransform,
         CustomOpsTransform,
         KVCacheTransform,
@@ -3634,7 +3636,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.hash_params["moe_prefill_num_nsp"] = num_cores
             self.hash_params["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
             self.hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
-            if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe"}:
+            if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe", "kimi_k2", "kimi_k25"}:
                 return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
             return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
@@ -4027,6 +4029,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
                 prefill_only=prefill_only,
             )
+
+        if prefill_only:
+            assert prefill_seq_len is not None, "prefill_seq_len must be provided when prefill_only is True"
+            num_q_blocks_ffn = prefill_seq_len // constants.EXPERT_BLOCKING_PACKED_CHUNK_SIZE
+            num_q_blocks_ffn = num_q_blocks_ffn if num_q_blocks_ffn > 0 else 1
+            setattr(self.model.model, "num_q_blocks_ffn", num_q_blocks_ffn)
+
+        return self._export(
+            example_inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+            offload_pt_weights=kwargs.get("offload_pt_weights", True),
+            prefill_only=prefill_only,
+        )
 
     def build_prefill_specialization(
         self,
