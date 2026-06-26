@@ -43,10 +43,6 @@ from QEfficient.blocking.attention_blocking import (
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.models._layerwise import (
-    get_layerwise_context,
-    get_layerwise_end,
-    get_layerwise_start,
-    get_layerwise_total_layers,
     is_last_layer_window,
     is_layerwise_active,
     resolve_layer_window,
@@ -402,8 +398,8 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
-        if is_layerwise_active(self):
-            self.layer_idx = self.layer_idx - get_layerwise_start(self)
+        if is_layerwise_active():
+            self.layer_idx = self.layer_idx - getattr(QEffQwen3VLMoeTextModel, "_start", 0)
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
@@ -531,6 +527,10 @@ class QEffQwen3VLMoeTextDecoderLayer(Qwen3VLMoeTextDecoderLayer):
 
 
 class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
+    _start = 0
+    _end = 0
+    _total_layers = None
+
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3VLMoeTextRotaryEmbedding(config=self.config)
         # Export-only cap to avoid serializing oversized RoPE tables that are
@@ -601,7 +601,7 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         all_self_attns = () if output_attentions else None
 
         layer_idx = 0
-        start, end = resolve_layer_window(self, len(self.layers))
+        start, end = resolve_layer_window(QEffQwen3VLMoeTextModel, len(self.layers))
         layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
 
         for layer_idx, decoder_layer in enumerate(self.layers):
@@ -641,7 +641,7 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
                 )
             layer_idx += 1
 
-        if is_last_layer_window(self, len(self.layers)):
+        if is_last_layer_window(QEffQwen3VLMoeTextModel, len(self.layers)):
             hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
@@ -803,6 +803,9 @@ class QEffQwen3VLMoeTextExperts(Qwen3VLMoeTextExperts):
 
 
 class QEffQwen3VLDecoderWrapper(nn.Module):
+    _deepstack = None
+    _vision_mask = None
+
     def __init__(self, model):
         super().__init__()
         self.model = model
@@ -834,7 +837,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         else:
             inputs_embeds = inputs_embeds
 
-        if not is_layerwise_active(self):
+        if not is_layerwise_active():
             # Default (non-layerwise) path: image merge + full decoder + lm_head in
             # a single forward, identical to the pre-layerwise behavior/output contract.
             B, N, C = inputs_embeds.shape
@@ -873,8 +876,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
 
-        layerwise_context = get_layerwise_context(self)
-        if get_layerwise_start(self) == 0:
+        if QEffQwen3VLMoeTextModel._start == 0:
             B, N, C = inputs_embeds.shape
             selected = input_ids == self.model.config.image_token_id
             indices1 = selected.to(torch.int64).cumsum(1) - 1
@@ -895,10 +897,9 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             deepstack_visual_embeds = None
             if image_mask is not None:
                 visual_pos_masks = image_mask
+                QEffQwen3VLDecoderWrapper._vision_mask = visual_pos_masks
                 deepstack_visual_embeds = deepstack_features_expanded
-                if layerwise_context is not None:
-                    layerwise_context.vision_mask = visual_pos_masks
-                    layerwise_context.deepstack_visual_embeds = deepstack_visual_embeds
+                QEffQwen3VLDecoderWrapper._deepstack = deepstack_visual_embeds
 
             outputs = self.language_model(
                 inputs_embeds=inputs_embeds,
@@ -918,7 +919,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
 
-        elif get_layerwise_end(self) == get_layerwise_total_layers(self):
+        elif QEffQwen3VLMoeTextModel._end == QEffQwen3VLMoeTextModel._total_layers:
             outputs = self.language_model(
                 inputs_embeds=inputs_embeds,
                 position_ids=position_ids,
@@ -926,8 +927,8 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 use_cache=True,
-                visual_pos_masks=getattr(layerwise_context, "vision_mask", None),
-                deepstack_visual_embeds=getattr(layerwise_context, "deepstack_visual_embeds", None),
+                visual_pos_masks=QEffQwen3VLDecoderWrapper._vision_mask,
+                deepstack_visual_embeds=QEffQwen3VLDecoderWrapper._deepstack,
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
             hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
@@ -942,8 +943,8 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 use_cache=True,
-                visual_pos_masks=getattr(layerwise_context, "vision_mask", None),
-                deepstack_visual_embeds=getattr(layerwise_context, "deepstack_visual_embeds", None),
+                visual_pos_masks=QEffQwen3VLDecoderWrapper._vision_mask,
+                deepstack_visual_embeds=QEffQwen3VLDecoderWrapper._deepstack,
             )
             if outputs.last_hidden_state.shape[1] > 1:
                 hidden_states = outputs.last_hidden_state

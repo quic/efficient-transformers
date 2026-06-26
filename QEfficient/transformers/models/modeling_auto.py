@@ -16,7 +16,6 @@ import onnx
 import torch
 import torch.nn as nn
 from transformers import (
-    AutoConfig,
     AutoImageProcessor,
     AutoModel,
     AutoModelForCausalLM,
@@ -47,8 +46,6 @@ from QEfficient.transformers.modeling_utils import (
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
     _configure_proxy_for_model,
 )
-from QEfficient.transformers.models import _layerwise
-from QEfficient.transformers.models.custom_loader import CustomLoader
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheExternalModuleMapperTransform,
@@ -148,8 +145,12 @@ def _build_layerwise_vision_export_model(hf_auto_class, pretrained_model_name_or
     every decoder layer up front. Language ONNX/QPC export still goes through
     the regular layerwise driver, which reloads each window independently.
     """
+    from QEfficient.transformers.models import _layerwise
+
     config = kwargs.get("config", None)
     if config is None:
+        from transformers import AutoConfig
+
         config_kwargs = {
             key: kwargs[key]
             for key in ("trust_remote_code", "revision", "token", "subfolder", "cache_dir")
@@ -157,24 +158,17 @@ def _build_layerwise_vision_export_model(hf_auto_class, pretrained_model_name_or
         }
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, **config_kwargs)
         kwargs["config"] = config
-    _layerwise.assert_layerwise_supported(config)
+    model_type = _layerwise.assert_layerwise_supported(config)
     total_layers = _layerwise._resolve_text_total_layers(config)
-    context = _layerwise.create_layerwise_context(
-        model_id=str(pretrained_model_name_or_path),
-        config=config,
-        window_size=1,
-        load_kwargs=kwargs,
-    )
+    _layerwise._ensure_pretrained_window_attrs()
+    _layerwise._install_window_patches_for(model_type)
 
-    loader = CustomLoader(
-        pretrained_model_name_or_path, layer_indices=range(0, min(1, total_layers)), load_kwargs=kwargs
-    )
-    with _layerwise._layerwise_export_env(context):
-        _layerwise._set_layer_windows(0, min(1, total_layers), total_layers, context=context)
+    with _layerwise._layerwise_export_env():
+        _layerwise._set_layer_windows(0, min(1, total_layers), total_layers)
         try:
-            return loader.load_model(hf_auto_class)
+            return hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
         finally:
-            _layerwise._reset_layer_windows(context=context)
+            _layerwise._reset_layer_windows()
 
 
 def _build_meta_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
@@ -186,59 +180,18 @@ def _build_meta_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
     and buffer is a meta tensor — zero RAM. The layer-wise driver later
     rebuilds a real per-window model when ``compile()``/``export()`` runs.
     """
+    from transformers import AutoConfig
+
     config = kwargs.get("config", None)
     if config is None:
         config_kwargs = {
             k: kwargs[k] for k in ("trust_remote_code", "revision", "token", "subfolder", "cache_dir") if k in kwargs
         }
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, **config_kwargs)
-        kwargs["config"] = config
-    return CustomLoader.build_meta_model(
-        hf_auto_class,
-        pretrained_model_name_or_path,
-        config=config,
-        torch_dtype=kwargs.get("torch_dtype", torch.float32),
-    )
-
-
-def _ensure_config_for_layerwise(pretrained_model_name_or_path, kwargs):
-    config = kwargs.get("config", None)
-    if config is not None:
-        return config
-    config_kwargs = {
-        key: kwargs[key]
-        for key in ("trust_remote_code", "revision", "token", "subfolder", "cache_dir")
-        if key in kwargs
-    }
-    config = AutoConfig.from_pretrained(pretrained_model_name_or_path, **config_kwargs)
-    kwargs["config"] = config
-    return config
-
-
-def _warn_compile_export_layerwise_deprecated() -> None:
-    warnings.warn(
-        "Passing `layerwise` or `layerwise_window_size` to export()/compile() is deprecated. "
-        "Configure layerwise mode with from_pretrained(..., layerwise=True, layerwise_window_size=...) instead.",
-        DeprecationWarning,
-        stacklevel=3,
-    )
-
-
-def _resolve_layerwise_compile_export_request(model, layerwise, layerwise_window_size):
-    context = _layerwise.get_layerwise_context(model)
-    if layerwise is not None or layerwise_window_size is not None:
-        _warn_compile_export_layerwise_deprecated()
-    if layerwise and context is None:
-        raise ValueError(
-            "layerwise=True at export()/compile() can no longer enable layerwise mode. "
-            "Reload the model with from_pretrained(..., layerwise=True, layerwise_window_size=...)."
-        )
-    if context is not None and layerwise_window_size is not None and int(layerwise_window_size) != context.window_size:
-        raise ValueError(
-            "`layerwise_window_size` at export()/compile() conflicts with the from_pretrained() layerwise context. "
-            f"Got {layerwise_window_size}, expected {context.window_size}."
-        )
-    return context
+    torch_dtype = kwargs.get("torch_dtype", torch.float32)
+    with torch.device("meta"):
+        model = hf_auto_class.from_config(config, torch_dtype=torch_dtype)
+    return model
 
 
 def _compile_io_name(name: str, *, use_onnx_subfunctions: bool) -> str:
@@ -338,10 +291,6 @@ class QEFFTransformersBase(QEFFBaseModel):
 
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
-
-    @property
-    def layerwise(self) -> bool:
-        return _layerwise.has_layerwise_context(self.model)
 
     @classmethod
     @with_replaced_quantizers
@@ -1351,7 +1300,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             self.hash_params["prefill_only"] = False
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
-        if _layerwise.is_layerwise_active(self.model):
+        if QEfficient.base.modeling_qeff.QEFFBaseModel._layerwise_active:
             return self._export_layerwise(
                 inputs,
                 output_names=output_names,
@@ -1494,10 +1443,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # previous transform function.
         self.lang_model.model, _ = SamplerTransform.apply(self.lang_model.model, qaic_config, **kwargs)
 
-    @property
-    def layerwise(self) -> bool:
-        return _layerwise.has_layerwise_context(self.lang_model.model)
-
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, qaic_config: Optional[dict] = None, **kwargs):
         """
@@ -1567,8 +1512,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         prefill_seq_len: Optional[int] = None,
         prefill_only: bool = False,
         enable_chunking: bool = False,
-        layerwise: Optional[bool] = None,
-        layerwise_window_size: Optional[int] = None,
+        layerwise: bool = False,
+        layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
         **kwargs,
     ) -> str:
@@ -1593,12 +1538,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             A list containing the paths to the generated ONNX graph files for both components.
         """
         layerwise_cache_probe = kwargs.pop("_layerwise_cache_probe", False)
-        layerwise_context = _resolve_layerwise_compile_export_request(
-            self.lang_model.model, layerwise, layerwise_window_size
-        )
-        if layerwise_context is not None and not layerwise_context.active:
-            if prefill_only is not True:
-                raise ValueError("Layerwise export is supported only with prefill_only=True.")
+        if layerwise:
             return self._run_layerwise_export(
                 export_dir=export_dir,
                 use_onnx_subfunctions=use_onnx_subfunctions,
@@ -1607,8 +1547,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_seq_len=prefill_seq_len,
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
-                layerwise_window_size=layerwise_context.window_size,
-                _layerwise_context=layerwise_context,
+                layerwise_window_size=layerwise_window_size,
                 kv_cache_prefix=kv_cache_prefix,
                 **kwargs,
             )
@@ -1647,11 +1586,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 qaic_config=self.lang_model.model.qaic_config,
             )
 
-        layerwise_context = _layerwise.get_layerwise_context(self.lang_model.model)
-        layerwise_export = _layerwise.is_layerwise_active(self.lang_model.model)
+        layerwise_export = QEFFBaseModel._layerwise_active
 
         should_export = not skip_vision and (
-            not layerwise_export or (layerwise_context is not None and layerwise_context.is_last_window)
+            not layerwise_export
+            or (
+                layerwise_export
+                and QEfficient.base.modeling_qeff.QEFFBaseModel._end
+                == QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers
+            )
         )
         if should_export and not layerwise_cache_probe:
             self.vision_model.export(
@@ -1776,8 +1719,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise_window_size,
         **kwargs,
     ):
-        lang_module = getattr(self.lang_model, "model", self.lang_model)
-        context = kwargs.pop("_layerwise_context", None) or _layerwise.get_layerwise_context(lang_module)
+        from QEfficient.transformers.models import _layerwise
+
         model_id = self._pretrained_model_name_or_path
         if model_id is None:
             raise RuntimeError(
@@ -1800,9 +1743,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             qeff_factory=self._build_layerwise_factory(),
             compile_kwargs=compile_kwargs,
             probe_qeff_model=self,
-            window_size=context.window_size if context is not None else layerwise_window_size,
+            window_size=layerwise_window_size,
             final_compile=False,
-            context=context,
         )
 
     def _run_layerwise_compile(
@@ -1811,8 +1753,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise_window_size,
         **compile_kwargs,
     ):
-        lang_module = getattr(self.lang_model, "model", self.lang_model)
-        context = compile_kwargs.pop("_layerwise_context", None) or _layerwise.get_layerwise_context(lang_module)
+        from QEfficient.transformers.models import _layerwise
+
         model_id = self._pretrained_model_name_or_path
         if model_id is None:
             raise RuntimeError(
@@ -1826,9 +1768,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             qeff_factory=self._build_layerwise_factory(),
             compile_kwargs=compile_kwargs,
             probe_qeff_model=self,
-            window_size=context.window_size if context is not None else layerwise_window_size,
+            window_size=layerwise_window_size,
             final_compile=True,
-            context=context,
         )
         self.qpc_paths = qpc_paths
         if isinstance(qpc_paths, dict):
@@ -1865,8 +1806,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         prefill_only=None,
         enable_chunking=False,
         qaic_config: Optional[dict] = None,
-        layerwise: Optional[bool] = None,
-        layerwise_window_size: Optional[int] = None,
+        layerwise: bool = False,
+        layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ) -> str:
@@ -1927,10 +1868,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if skip_lang and skip_vision:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
 
-        layerwise_context = _resolve_layerwise_compile_export_request(
-            self.lang_model.model, layerwise, layerwise_window_size
-        )
-        if layerwise_context is not None and not layerwise_context.active:
+        if layerwise:
             if skip_lang and not skip_vision:
                 vision_wrapper = self._build_layerwise_vision_wrapper()
                 qpc_paths = vision_wrapper.compile(
@@ -1984,8 +1922,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 qaic_config=qaic_config,
-                layerwise_window_size=layerwise_context.window_size,
-                _layerwise_context=layerwise_context,
+                layerwise_window_size=layerwise_window_size,
                 kv_cache_prefix=kv_cache_prefix,
                 **compiler_options,
             )
@@ -2693,6 +2630,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
         kwargs.update({"attn_implementation": "eager", "low_cpu_mem_usage": False})
 
+        from transformers import AutoConfig
+
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
@@ -3304,7 +3243,6 @@ class QEFFAutoModelForImageTextToText:
         continuous_batching: bool = False,
         qaic_config: Optional[dict] = None,
         layerwise: bool = False,
-        layerwise_window_size: int = 1,
         **kwargs,
     ):
         """
@@ -3357,20 +3295,7 @@ class QEFFAutoModelForImageTextToText:
         )
 
         _resolve_torch_dtype(kwargs)
-        layerwise_context = None
         if layerwise:
-            if kv_offload is False:
-                raise NotImplementedError(
-                    "layerwise=True is currently supported only for ImageTextToText dual-QPC mode."
-                )
-
-            config = _ensure_config_for_layerwise(pretrained_model_name_or_path, kwargs)
-            layerwise_context = _layerwise.create_layerwise_context(
-                model_id=pretrained_model_name_or_path,
-                config=config,
-                window_size=layerwise_window_size,
-                load_kwargs=kwargs,
-            )
             # Layer-wise mode: build the outer model on the meta device so the
             # caller's ``from_pretrained`` does not pull the full checkpoint
             # into RAM. compile()/export() rebuilds a real per-window model
@@ -3401,7 +3326,6 @@ class QEFFAutoModelForImageTextToText:
         # other way) and so the driver knows weights still need to be loaded.
         if layerwise:
             instance._layerwise_outer_meta = True
-            _layerwise.attach_layerwise_context(instance.lang_model.model, layerwise_context)
         return instance
 
 
@@ -3574,10 +3498,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
 
-    @property
-    def layerwise(self) -> bool:
-        return _layerwise.has_layerwise_context(self.model)
-
     @classmethod
     @with_replaced_quantizers
     def from_pretrained(
@@ -3587,7 +3507,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         qaic_config: Optional[dict] = None,
         max_seq_len_cached: Optional[int] = None,
         layerwise: bool = False,
-        layerwise_window_size: int = 1,
         *args,
         **kwargs,
     ):
@@ -3657,15 +3576,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         )
 
         _resolve_torch_dtype(kwargs)
-        layerwise_context = None
         if layerwise:
-            config = _ensure_config_for_layerwise(pretrained_model_name_or_path, kwargs)
-            layerwise_context = _layerwise.create_layerwise_context(
-                model_id=pretrained_model_name_or_path,
-                config=config,
-                window_size=layerwise_window_size,
-                load_kwargs=kwargs,
-            )
             # Layer-wise mode: build the outer model on the meta device. The
             # caller still gets a typed wrapper, but no checkpoint weights are
             # pulled into RAM. compile()/export() rebuilds a real per-window
@@ -3697,7 +3608,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         )
         if layerwise:
             instance._layerwise_outer_meta = True
-            _layerwise.attach_layerwise_context(instance.model, layerwise_context)
         return instance
 
     @property
@@ -3777,8 +3687,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     def _run_layerwise(self, *, final_compile: bool, layerwise_window_size: int, **forward_kwargs):
         """Drive the layer-wise export/compile loop for CausalLM models."""
+        from QEfficient.transformers.models import _layerwise
 
-        context = forward_kwargs.pop("_layerwise_context", None) or _layerwise.get_layerwise_context(self.model)
         model_id = getattr(self.model, "pretrained_path", None)
         if model_id is None:
             raise RuntimeError(
@@ -3804,9 +3714,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             qeff_factory=_factory,
             compile_kwargs=forward_kwargs,
             probe_qeff_model=self,
-            window_size=context.window_size if context is not None else layerwise_window_size,
+            window_size=layerwise_window_size,
             final_compile=final_compile,
-            context=context,
         )
 
     def export(
@@ -3816,8 +3725,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         prefill_seq_len: Optional[int] = None,
         num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
-        layerwise: Optional[bool] = None,
-        layerwise_window_size: Optional[int] = None,
+        layerwise: bool = False,
+        layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
         **kwargs,
     ) -> str:
@@ -3846,14 +3755,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "Use the default non-prefill export path for standard CausalLM decode graphs."
             )
 
-        layerwise_context = _resolve_layerwise_compile_export_request(self.model, layerwise, layerwise_window_size)
-        if layerwise_context is not None and not layerwise_context.active:
-            if prefill_only is not True:
-                raise ValueError("Layerwise export is supported only with prefill_only=True.")
+        if layerwise:
             return self._run_layerwise(
                 final_compile=False,
-                layerwise_window_size=layerwise_context.window_size,
-                _layerwise_context=layerwise_context,
+                layerwise_window_size=layerwise_window_size,
                 export_dir=export_dir,
                 prefill_only=prefill_only,
                 prefill_seq_len=prefill_seq_len,
@@ -4109,7 +4014,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
             self.hash_params["kv_cache_prefix"] = kv_cache_prefix
 
-        if _layerwise.is_layerwise_active(self.model):
+        if QEFFBaseModel._layerwise_active:
             return self._export_layerwise(
                 example_inputs,
                 output_names=output_names,
@@ -4282,8 +4187,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         enable_chunking: Optional[bool] = False,
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         retain_full_kv: Optional[bool] = None,
-        layerwise: Optional[bool] = None,
-        layerwise_window_size: Optional[int] = None,
+        layerwise: bool = False,
+        layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ) -> str:
@@ -4373,12 +4278,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
-        layerwise_context = _resolve_layerwise_compile_export_request(self.model, layerwise, layerwise_window_size)
-        if layerwise_context is not None and not layerwise_context.active:
+        if layerwise:
             return self._run_layerwise(
                 final_compile=True,
-                layerwise_window_size=layerwise_context.window_size,
-                _layerwise_context=layerwise_context,
+                layerwise_window_size=layerwise_window_size,
                 onnx_path=onnx_path,
                 compile_dir=compile_dir,
                 prefill_seq_len=prefill_seq_len,
