@@ -34,7 +34,6 @@ import torch.onnx.utils as onnx_utils
 from torch import _C
 from torch.onnx._internal.torchscript_exporter import utils as ts_utils
 
-
 # Store original references before patching
 _original_setup_trace_module_map = onnx_utils._setup_trace_module_map
 _original_get_module_attributes = getattr(onnx_utils, "_get_module_attributes", None)
@@ -236,7 +235,7 @@ def layerwise_safe_onnx_export_patches(enabled: bool = True, keep_passes=None):
     default because some exported graphs need it to remove aten/prim nodes before
     PyTorch serializes ONNX. ``keep_passes`` can retain additional passes.
     """
-    if not enabled or not _layerwise_safe_export_passes_enabled():
+    if not enabled:
         yield
         return
 
