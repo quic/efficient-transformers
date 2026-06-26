@@ -36,6 +36,7 @@ from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
+from QEfficient.utils.logging_utils import logger
 
 _FP16_CLAMP_MIN = -65504.0
 _FP16_CLAMP_MAX = 65504.0
@@ -1176,6 +1177,17 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
+        # Gemma4 uses a fixed `vision_tokens` count (mm_tokens_per_image) rather
+        # than a dynamic `vision_size`. Pop `vision_size` so it is not forwarded
+        # to the QAIC compiler. This follows the same pattern used by all other VLMs
+        # (gemma3, llava, internvl, qwen2_5_vl, etc.) that consume vision_size from
+        # compiler_options before passing the remainder to qaic-compile.
+        if "vision_size" in compiler_options:
+            logger.warning(
+                "vision_size is not used by Gemma4 (uses fixed vision_tokens) ignoring"
+                " the value provided and removing from compiler_options"
+            )
+            compiler_options.pop("vision_size")
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         max_patches = self._get_vision_max_patches()
