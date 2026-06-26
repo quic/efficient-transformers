@@ -55,6 +55,7 @@ if skip_vision:
         aic_enable_depth_first=False,
         skip_vision=True,
         mos=1,
+        split_model_io=True,
         use_onnx_subfunctions=True,
         # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
     )
@@ -125,6 +126,7 @@ else:
         mxint8_kv_cache=True,
         aic_enable_depth_first=False,
         mos=1,
+        split_model_io=True,
         use_onnx_subfunctions=True,
         # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
     )

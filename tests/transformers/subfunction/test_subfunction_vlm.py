@@ -34,12 +34,14 @@ test_mm_models = [model_config["model_name"] for model_config in multimodal_mode
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
 
 
-def has_QwenLayer_function(onnx_path):
-    """Check if ONNX model contains QEffqwenlayer function definition."""
+def has_decoder_layer_function(onnx_path, expected_function_tokens):
+    """Check if ONNX model contains expected decoder-layer function definition."""
     model = onnx.load(onnx_path, load_external_data=False)
     function_names = [f.name for f in model.functions]
-    QwenLayer_functions = [name for name in function_names if "QEffQwen2_5_VLDecoderLayer" in name]
-    return len(QwenLayer_functions) > 0, QwenLayer_functions
+    decoder_layer_functions = [
+        name for name in function_names if any(token in name for token in expected_function_tokens)
+    ]
+    return len(decoder_layer_functions) > 0, decoder_layer_functions
 
 
 def check_image_text_to_text_subfunction_core(
@@ -92,12 +94,22 @@ def check_image_text_to_text_subfunction_core(
     if "pixel_values" in inputs:
         inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
 
-    # Verify that the model with subfunctions has QEffQwen2_5_VLDecoderLayer function definition
-    has_qwenlayer, qwenlayer_names = has_QwenLayer_function(with_sub_func_onnx[-1])
-    assert has_qwenlayer, (
-        "Model exported with use_onnx_subfunctions=True should contain QEffQwen2_5_VLDecoderLayer function definition"
+    model_type = getattr(qeff_model.model.config, "model_type", "")
+    expected_function_tokens = {
+        "qwen2_5_vl": ("QEffQwen2_5_VLDecoderLayer",),
+        "qwen3_5": ("QEffQwen3_5DecoderLayer",),
+        "qwen3_5_moe": ("QEffQwen3_5MoeDecoderLayer",),
+    }.get(model_type, tuple())
+    assert expected_function_tokens, f"Unsupported model_type for VLM subfunction test: {model_type}"
+
+    has_decoder_layer, decoder_layer_names = has_decoder_layer_function(
+        with_sub_func_onnx[-1], expected_function_tokens
     )
-    print(f"\nQwenLayer functions found: {qwenlayer_names}")
+    assert has_decoder_layer, (
+        "Model exported with use_onnx_subfunctions=True should contain expected decoder-layer function definition. "
+        f"model_type={model_type}, expected_any={expected_function_tokens}"
+    )
+    print(f"\nDecoder-layer functions found: {decoder_layer_names}")
 
     qeff_model.compile(
         img_size=img_size,
