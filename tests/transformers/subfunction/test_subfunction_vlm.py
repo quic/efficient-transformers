@@ -93,11 +93,12 @@ def check_image_text_to_text_subfunction_core(
         inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
 
     # Verify that the model with subfunctions has QEffQwen2_5_VLDecoderLayer function definition
-    has_qwenlayer, qwenlayer_names = has_QwenLayer_function(with_sub_func_onnx[-1])
-    assert has_qwenlayer, (
-        "Model exported with use_onnx_subfunctions=True should contain QEffQwen2_5_VLDecoderLayer function definition"
-    )
-    print(f"\nQwenLayer functions found: {qwenlayer_names}")
+    if model_name == "Qwen/Qwen2.5-VL-3B-Instruct":
+        has_qwenlayer, qwenlayer_names = has_QwenLayer_function(with_sub_func_onnx[-1])
+        assert has_qwenlayer, (
+            "Model exported with use_onnx_subfunctions=True should contain QEffQwen2_5_VLDecoderLayer function definition"
+        )
+        print(f"\nQwenLayer functions found: {qwenlayer_names}")
 
     qeff_model.compile(
         img_size=img_size,
