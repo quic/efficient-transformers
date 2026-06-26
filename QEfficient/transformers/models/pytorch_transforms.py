@@ -147,10 +147,12 @@ from transformers.models.mistral3.modeling_mistral3 import (
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
     MixtralDecoderLayer,
+    MixtralExperts,
     MixtralForCausalLM,
     MixtralModel,
     MixtralRMSNorm,
     MixtralSparseMoeBlock,
+    MixtralTopKRouter,
 )
 from transformers.models.mllama.modeling_mllama import (
     MllamaCrossAttentionDecoderLayer,
@@ -481,9 +483,11 @@ from QEfficient.transformers.models.mistral3.modeling_mistral3 import (
 from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
     QEffMixtralAttention,
     QeffMixtralDecoderLayer,
+    QEffMixtralExperts,
     QEffMixtralForCausalLM,
     QEffMixtralModel,
     QEffMixtralSparseMoeBlock,
+    QEffMixtralTopKRouter,
 )
 from QEfficient.transformers.models.mllama.modeling_mllama import (
     QEffMllamaCrossAttentionDecoderLayer,
@@ -832,6 +836,8 @@ class KVCacheTransform(ModuleMappingTransform):
         Mistral3ForConditionalGeneration: QEffMistral3ForConditionalGeneration,
         Mistral3Model: QEffMistral3Model,
         # Mixtral
+        MixtralExperts: QEffMixtralExperts,
+        MixtralTopKRouter: QEffMixtralTopKRouter,
         MixtralAttention: QEffMixtralAttention,
         MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
         MixtralDecoderLayer: QeffMixtralDecoderLayer,
