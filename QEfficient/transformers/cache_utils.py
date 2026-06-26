@@ -70,6 +70,7 @@ def _match_invalid_mask(invalid_mask: torch.Tensor, target_len: int) -> torch.Te
         return invalid_mask
     return invalid_mask[..., :target_len]
 
+
 def _remainder_with_symbolic_divisor(value: torch.Tensor, divisor) -> torch.Tensor:
     if torch.is_tensor(divisor):
         divisor_tensor = divisor.to(device=value.device, dtype=value.dtype)
@@ -387,7 +388,7 @@ class QEffDynamicLayer(CacheLayerMixin):
                 k_out = ctx_gather_interface(k_out, ctx_indices, ctx_len)
                 v_out = ctx_gather_interface(v_out, ctx_indices, ctx_len)
 
-            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out), v_out)
+            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=torch.float32), v_out)
 
         return k_out, v_out
 
@@ -467,7 +468,7 @@ class QEffDynamicLayer(CacheLayerMixin):
                 k_out = ctx_gather_3d_interface(k_out, ctx_indices)
                 v_out = ctx_gather_3d_interface(v_out, ctx_indices)
 
-            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out), v_out)
+            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=torch.float32), v_out)
 
         return k_out, v_out
 
@@ -898,8 +899,10 @@ class QEffHybridCache(HybridCache):
             )
 
             valid_mask = (kv_position_ids != -1).unsqueeze(1).unsqueeze(-1)
-            key_states = torch.where(valid_mask == 1, key_states, torch.zeros_like(key_states))
-            value_states = torch.where(valid_mask == 1, value_states, torch.zeros_like(value_states))
+            key_states = torch.where(valid_mask == 1, key_states, torch.zeros_like(key_states, dtype=key_states.dtype))
+            value_states = torch.where(
+                valid_mask == 1, value_states, torch.zeros_like(value_states, dtype=value_states.dtype)
+            )
 
             ctx_scatter_interface = select_interface(
                 CtxScatterFunc.apply,
@@ -936,7 +939,7 @@ class QEffHybridCache(HybridCache):
             )
             k_out = ctx_gather_interface(k_out, final_indices, ctx_len)
             v_out = ctx_gather_interface(v_out, final_indices, ctx_len)
-            ctx_v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out), v_out)
+            ctx_v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=torch.float32), v_out)
             v_out = torch.where((is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1))), v_out, ctx_v_out)
         return k_out, v_out
 
@@ -1022,8 +1025,10 @@ class QEffHybridChunkedCache(HybridChunkedCache):
             )
 
             valid_mask = (kv_position_ids != -1).unsqueeze(1).unsqueeze(-1)
-            key_states = torch.where(valid_mask == 1, key_states, torch.zeros_like(key_states))
-            value_states = torch.where(valid_mask == 1, value_states, torch.zeros_like(value_states))
+            key_states = torch.where(valid_mask == 1, key_states, torch.zeros_like(key_states, dtype=key_states.dtype))
+            value_states = torch.where(
+                valid_mask == 1, value_states, torch.zeros_like(value_states, dtype=value_states.dtype)
+            )
 
             ctx_scatter_interface = select_interface(
                 CtxScatterFunc.apply,
@@ -1671,8 +1676,8 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
         )
 
         valid_mask = (kv_position_ids != -1).unsqueeze(1).unsqueeze(-1)
-        key_states = torch.where(valid_mask, key_states, torch.zeros_like(key_states))
-        value_states = torch.where(valid_mask, value_states, torch.zeros_like(value_states))
+        key_states = torch.where(valid_mask, key_states, torch.zeros_like(key_states, dtype=key_states.dtype))
+        value_states = torch.where(valid_mask, value_states, torch.zeros_like(value_states, dtype=value_states.dtype))
 
         if batch_index is not None:
             invalid_scatter_index = torch.iinfo(torch.int32).max
