@@ -46,6 +46,11 @@ class AttentionBlockingConfig:
     head_block_size: Optional[int] = None
     skip_kv: Optional[bool] = True
     num_batch_blocks: Optional[int] = None
+    skip_softmax: bool = False
+    skip_softmax_scale: Optional[float] = None
+    skip_softmax_prefill_scale: float = 1.0
+    skip_softmax_decode_scale: float = 1.0
+    skip_softmax_min_keep_blocks: int = 1
 
 
 def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
@@ -164,10 +169,16 @@ def generic_blocked_attention_interface(
         num_kv_blocks=blocking_config.num_kv_blocks,
         num_q_blocks=blocking_config.num_q_blocks,
         head_block_size=blocking_config.head_block_size,
+        skip_kv=blocking_config.skip_kv,
         num_batch_blocks=blocking_config.num_batch_blocks,
         score_mod=score_mod,
         position_bias=position_bias,
         sinks=sinks,
+        skip_softmax=blocking_config.skip_softmax,
+        skip_softmax_scale=blocking_config.skip_softmax_scale,
+        skip_softmax_prefill_scale=blocking_config.skip_softmax_prefill_scale,
+        skip_softmax_decode_scale=blocking_config.skip_softmax_decode_scale,
+        skip_softmax_min_keep_blocks=blocking_config.skip_softmax_min_keep_blocks,
     )
 
     return attn_output, attn_weights
@@ -227,10 +238,16 @@ def generic_blocked_mla_attention_interface(
         num_kv_blocks=blocking_config.num_kv_blocks,
         num_q_blocks=blocking_config.num_q_blocks,
         head_block_size=blocking_config.head_block_size,
+        skip_kv=blocking_config.skip_kv,
         num_batch_blocks=blocking_config.num_batch_blocks,
         score_mod=score_mod,
         position_bias=position_bias,
         sinks=sinks,
+        skip_softmax=blocking_config.skip_softmax,
+        skip_softmax_scale=blocking_config.skip_softmax_scale,
+        skip_softmax_prefill_scale=blocking_config.skip_softmax_prefill_scale,
+        skip_softmax_decode_scale=blocking_config.skip_softmax_decode_scale,
+        skip_softmax_min_keep_blocks=blocking_config.skip_softmax_min_keep_blocks,
     )
 
     return attn_output, attn_weights
