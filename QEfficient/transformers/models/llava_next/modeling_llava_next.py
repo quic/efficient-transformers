@@ -29,6 +29,7 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.model.vision_model = self.model.model.vision_tower
+        self.config = self.model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """

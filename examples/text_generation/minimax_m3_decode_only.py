@@ -19,8 +19,8 @@ def main():
     parser = argparse.ArgumentParser(description="MiniMax-M3 VLM decode-only (PL=1) with API layerwise compile.")
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--ctx-len", type=int, default=1024)
-    parser.add_argument("--num-devices", type=int, default=16)
-    parser.add_argument("--num-cores", type=int, default=16)
+    parser.add_argument("--num-devices", type=int, default=24)
+    parser.add_argument("--num-cores", type=int, default=4)
     parser.add_argument("--generation-len", type=int, default=32)
     parser.add_argument("--prompt", default="Tell me about yourself.")
     parser.add_argument("--layerwise-window-size", type=int, default=1)
@@ -35,9 +35,11 @@ def main():
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         args.model_id,
         kv_offload=True,
-        dtype=torch.float16,
+        # dtype=torch.float16,
         config=config,
-        layerwise=True,
+        qaic_config={"num_replicate_kv_heads": 8},
+        layerwise=False,
+        torch_dtype=torch.float16,
     )
 
     qpc_paths = qeff_model.compile(
@@ -48,9 +50,11 @@ def main():
         num_devices=args.num_devices,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
-        use_onnx_subfunctions=True,
+        aic_hw_version="ai200",
+        use_onnx_subfunctions=False,
         skip_vision=True,
-        layerwise=True,
+        layerwise=False,
+        qaic_config={"num_replicate_kv_heads": 8},
         layerwise_window_size=args.layerwise_window_size,
     )
     print(f"QPC paths: {qpc_paths}")
@@ -80,6 +84,7 @@ def main():
     inputs["vision_embeds"] = torch.zeros((1, 4, config.text_config.hidden_size), dtype=torch.float16)
     output = qeff_model.generate(inputs=inputs, generation_len=args.generation_len)
 
+    print(output)
     print(output.generated_ids)
     print(tokenizer.batch_decode(output.generated_ids))
 
