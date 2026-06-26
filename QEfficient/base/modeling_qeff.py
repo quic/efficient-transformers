@@ -504,6 +504,11 @@ class QEFFBaseModel(ABC):
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "retain_full_kv": retain_full_kv,
         }
+        # Preserve internal layerwise cache probe flag so export paths can
+        # short-circuit before offload/meta checks.
+        if compiler_options.get("_layerwise_cache_probe", False):
+            kwargs["_layerwise_cache_probe"] = True
+            
         if kv_cache_prefix:
             kwargs["kv_cache_prefix"] = kv_cache_prefix
 

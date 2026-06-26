@@ -4022,6 +4022,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 export_dir=export_dir,
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
+                _layerwise_cache_probe=kwargs.get("_layerwise_cache_probe", False),
                 prefill_only=prefill_only,
                 kv_cache_prefix=kv_cache_prefix,
             )
