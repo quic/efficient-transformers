@@ -56,6 +56,10 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     qaic_config: Optional[dict] = None,
     retain_full_kv: Optional[bool] = None,
     compare_results: bool = False,
+    compile_only: bool = False,
+    mdp_num_partitions: Optional[int] = None,
+    mdp_strategy: Optional[str] = None,
+    use_onnx_subfunctions: bool = False,
 ):
     torch.manual_seed(42)
     replace_transformers_quantizers()
@@ -104,7 +108,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         else:
             pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
 
-    onnx_model_path = qeff_model.export()
+    onnx_model_path = qeff_model.export(use_onnx_subfunctions=use_onnx_subfunctions)
     if continuous_batching is False:
         ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
         gen_len = ort_tokens.shape[-1]
@@ -135,6 +139,12 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         }
         compiler_options["specializations"] = [prefill_spec, decode_spec]
 
+    mdp_compile_kwargs = {}
+    if mdp_num_partitions is not None:
+        mdp_compile_kwargs["mdp_num_partitions"] = mdp_num_partitions
+    if mdp_strategy is not None:
+        mdp_compile_kwargs["mdp_strategy"] = mdp_strategy
+
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
@@ -148,9 +158,15 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         prefill_only=prefill_only,
         batch_size=batch_size if continuous_batching else 1,
         full_batch_size=full_batch_size if continuous_batching else None,
+        use_onnx_subfunctions=use_onnx_subfunctions,
         **compiler_options,
+        **mdp_compile_kwargs,
     )
     assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
+
+    if compile_only:
+        manual_cleanup(onnx_model_path)
+        return
 
     # Generate
     exec_info = qeff_model.generate(tokenizer, prompts=prompts)
@@ -200,6 +216,10 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         "batch_size": batch_size if continuous_batching else 1,
         "full_batch_size": full_batch_size if continuous_batching else None,
         "compiler_options": compiler_options,
+        "compile_only": compile_only,
+        "mdp_num_partitions": mdp_num_partitions,
+        "mdp_strategy": mdp_strategy,
+        "use_onnx_subfunctions": use_onnx_subfunctions,
     }
     assert dump_and_compare_results(
         model_name,
