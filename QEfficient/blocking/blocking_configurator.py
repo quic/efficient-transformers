@@ -18,7 +18,14 @@ from typing import Any, Dict, List, Optional
 
 from QEfficient.blocking.attention_blocking import AttentionBlockingConfig, BlockingMode
 from QEfficient.utils import get_attr_or_key, require_value
-from QEfficient.utils.constants import DEFAULT_NUM_HEADS, FP16_BYTES, KV_LORA_RANK, ROPE_DIM, VTCM_SIZE_THRESHOLD
+from QEfficient.utils.constants import (
+    DEFAULT_AIC_NUM_CORES,
+    DEFAULT_NUM_HEADS,
+    FP16_BYTES,
+    KV_LORA_RANK,
+    ROPE_DIM,
+    VTCM_SIZE_THRESHOLD,
+)
 
 
 def _infer_head_dim(model_config: Any, num_heads: int) -> int:
@@ -327,13 +334,28 @@ def build_transformer_blocking_config_for_transform(
     qaic_config: Optional[dict] = None,
     **compile_options,
 ) -> Dict[str, Any]:
-    if qaic_config:
-        blocking_mode = BlockingMode(qaic_config.get("blocking_mode", "hqkv"))
-    else:
-        blocking_mode = BlockingMode.HQKV
-    enable_blocking = False if not qaic_config else qaic_config.get("enable_blocking", False)
+    requested_blocking_mode = None if not qaic_config else qaic_config.get("blocking_mode")
+    if requested_blocking_mode is None:
+        return None
 
-    if qaic_config is None and enable_blocking:
+    blocking_mode = BlockingMode.resolve(requested_blocking_mode)
+    blocking_config = AttentionBlockingConfig()
+    mode_from_config = ""
+    if qaic_config.get("num_kv_blocks", False) and "kv" in blocking_mode:
+        mode_from_config = "kv" + mode_from_config
+        blocking_config.num_kv_blocks = _get_valid_num_blocks(qaic_config, "num_kv_blocks")
+    if qaic_config.get("num_q_blocks", False) and "q" in blocking_mode:
+        mode_from_config = "q" + mode_from_config
+        blocking_config.num_q_blocks = _get_valid_num_blocks(qaic_config, "num_q_blocks")
+    if qaic_config.get("head_block_size", False) and "h" in blocking_mode:
+        mode_from_config = "h" + mode_from_config
+        blocking_config.head_block_size = _get_valid_num_blocks(qaic_config, "head_block_size")
+    if qaic_config.get("num_batch_blocks", False) and "b" in blocking_mode:
+        mode_from_config = "b" + mode_from_config
+        blocking_config.num_batch_blocks = _get_valid_num_blocks(qaic_config, "num_batch_blocks")
+
+    # check if qaic config did not provide any blocking details
+    if mode_from_config == "":
         blocking_config = build_transformer_blocking_config(
             model_config,
             blocking_mode=blocking_mode,
@@ -342,38 +364,23 @@ def build_transformer_blocking_config_for_transform(
             bs=bs,
             compile_config={"mdp_ts_num_devices": num_devices, **compile_options},
         )
-    elif not enable_blocking:
-        blocking_config = None
     else:
-        blocking_config = AttentionBlockingConfig()
-        mode_from_config = ""
-        if qaic_config.get("num_kv_blocks", False) and enable_blocking and "kv" in blocking_mode:
-            mode_from_config = "kv" + mode_from_config
-            blocking_config.num_kv_blocks = _get_valid_num_blocks(qaic_config, "num_kv_blocks")
-        if qaic_config.get("num_q_blocks", False) and enable_blocking and "q" in blocking_mode:
-            mode_from_config = "q" + mode_from_config
-            blocking_config.num_q_blocks = _get_valid_num_blocks(qaic_config, "num_q_blocks")
-        if qaic_config.get("head_block_size", False) and enable_blocking and "h" in blocking_mode:
-            mode_from_config = "h" + mode_from_config
-            blocking_config.head_block_size = _get_valid_num_blocks(qaic_config, "head_block_size")
-        if qaic_config.get("num_batch_blocks", False) and enable_blocking and "b" in blocking_mode:
-            mode_from_config = "b" + mode_from_config
-            blocking_config.num_batch_blocks = _get_valid_num_blocks(qaic_config, "num_batch_blocks")
+        blocking_config.mode = BlockingMode(mode_from_config)
 
-        # check if qaic config did not provide any blocking details
-        if mode_from_config == "":
-            blocking_config = build_transformer_blocking_config(
-                model_config,
-                blocking_mode=blocking_mode,
-                ctx_len=ctx_len,
-                seq_len=seq_len,
-                bs=bs,
-                compile_config={"mdp_ts_num_devices": num_devices, **compile_options},
-            )
-        else:
-            blocking_config.mode = BlockingMode(mode_from_config)
+    if qaic_config.get("skip_kv", False):
+        blocking_config.skip_kv = qaic_config.get("skip_kv")
 
-        if qaic_config.get("skip_kv", False) and enable_blocking:
-            blocking_config.skip_kv = qaic_config.get("skip_kv")
+    if qaic_config.get("prefill_block_chunks", False):
+        blocking_config.prefill_block_chunks = qaic_config.get("prefill_block_chunks")
+
+    if qaic_config.get("prefill_blocking_mode", False):
+        blocking_config.prefill_blocking_mode = qaic_config.get("prefill_blocking_mode")
+
+    if qaic_config.get("kv_blocking_headpar_split", None) is not None:
+        kv_blocking_headpar_split = qaic_config.get("kv_blocking_headpar_split")
+        # if default head parallel split, we split based on num cores
+        if kv_blocking_headpar_split == 0:
+            kv_blocking_headpar_split = compile_options.get("aic_num_cores", DEFAULT_AIC_NUM_CORES)
+        blocking_config.kv_blocking_headpar_split = kv_blocking_headpar_split
 
     return blocking_config
