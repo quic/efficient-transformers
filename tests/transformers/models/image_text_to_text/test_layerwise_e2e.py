@@ -18,6 +18,19 @@ MODEL_IDS = {
     "qwen3_vl_moe": "tiny-random/qwen3-vl-moe",
     "qwen3_5_moe": "tiny-random/qwen3.5-moe",
 }
+CB_LAYERWISE_CONFIG = {
+    "qwen3_vl_moe": {
+        "prefill_seq_len": 32,
+        "mxfp6_matmul": True,
+        "mxint8_kv_cache": True,
+        "num_devices": 1,
+    },
+    "qwen3_5_moe": {
+        "prefill_seq_len": 32,
+        "mxfp6_matmul": False,
+        "num_devices": 1,
+    },
+}
 IMAGE_URL = "https://picsum.photos/id/237/536/354"
 TEXT_PROMPT = "Descibe all the colors seen in the image."
 TEXT_ONLY_PROMPT = "Tell me about yourself."
@@ -26,6 +39,58 @@ PREFILL_SEQ_LEN = 32
 CTX_LEN = 4096
 GENERATION_LEN = 100
 SKIP_VISION = True
+
+
+@pytest.mark.on_qaic
+@pytest.mark.regular
+@pytest.mark.multimodal
+@pytest.mark.parametrize(
+    ("model_type", "model_id"),
+    [
+        pytest.param("qwen3_vl_moe", MODEL_IDS["qwen3_vl_moe"]),
+        pytest.param("qwen3_5_moe", MODEL_IDS["qwen3_5_moe"]),
+    ],
+)
+def test_qwen_layerwise_continuous_batching_compile_only(manual_cleanup, model_type, model_id):
+    compile_config = CB_LAYERWISE_CONFIG[model_type]
+    config = AutoConfig.from_pretrained(model_id)
+    config.torch_dtype = "float32"
+
+    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+        model_id,
+        attn_implementation="eager",
+        kv_offload=True,
+        config=config,
+        torch_dtype=torch.float32,
+        layerwise=True,
+        continuous_batching=True,
+    )
+
+    compile_kwargs = {
+        "batch_size": BATCH_SIZE,
+        "full_batch_size": 4,
+        "prefill_seq_len": compile_config["prefill_seq_len"],
+        "ctx_len": CTX_LEN,
+        "num_cores": 16,
+        "num_devices": compile_config["num_devices"],
+        "height": 354,
+        "width": 536,
+        "mxfp6_matmul": compile_config["mxfp6_matmul"],
+        "aic_enable_depth_first": True,
+        "skip_vision": True,
+        "split_retained_state_io": True,
+        "use_onnx_subfunctions": True,
+        "prefill_only": True,
+        "mos": 1,
+        "layerwise": True,
+        "layerwise_window_size": 1,
+    }
+    if "mxint8_kv_cache" in compile_config:
+        compile_kwargs["mxint8_kv_cache"] = compile_config["mxint8_kv_cache"]
+
+    qpc_path = qeff_model.compile(**compile_kwargs)
+    assert qpc_path is not None
+    manual_cleanup(qeff_model.onnx_path)
 
 
 @pytest.mark.on_qaic
