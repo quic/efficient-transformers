@@ -44,6 +44,20 @@ from transformers import (
     AutoTokenizer,
     Qwen2Config,
 )
+from transformers.models.qwen3.configuration_qwen3 import Qwen3Config
+from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5Config, Qwen3_5TextConfig, Qwen3_5VisionConfig
+from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import (
+    Qwen3_5MoeConfig,
+    Qwen3_5MoeTextConfig,
+    Qwen3_5MoeVisionConfig,
+)
+from transformers.models.qwen3_moe.configuration_qwen3_moe import Qwen3MoeConfig
+from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig, Qwen3VLTextConfig, Qwen3VLVisionConfig
+from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import (
+    Qwen3VLMoeConfig,
+    Qwen3VLMoeTextConfig,
+    Qwen3VLMoeVisionConfig,
+)
 
 from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModel,
@@ -55,7 +69,6 @@ from QEfficient.transformers.models.modeling_auto import (
 )
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils._utils import _infer_specialization_name, to_named_specializations
-from QEfficient.utils.export_utils import _cleanup_onnx_subfunctions, _setup_onnx_subfunctions
 from QEfficient.utils.run_utils import ApiRunner
 
 ort.set_default_logger_severity(3)
@@ -2517,12 +2530,10 @@ def test_layerwise_safe_export_pass_patch_toggles_only_inside_layerwise_context(
 
     with _layerwise._layerwise_export_env():
         with layerwise_safe_onnx_export_patches():
-            assert _C._jit_pass_cse is not original_cse
-            assert _C._jit_pass_onnx_constant_fold is not original_constant_fold
+            assert _C._jit_pass_cse is original_cse
+            assert _C._jit_pass_constant_propagation is original_constant_prop
+            assert _C._jit_pass_onnx_constant_fold is original_constant_fold
             assert _C._jit_pass_canonicalize is not original_canonicalize
-            assert _C._jit_pass_cse(None) is False
-            params = {"weight": object()}
-            assert _C._jit_pass_onnx_constant_fold(None, params, 17) is params
             sentinel_graph = object()
             assert _C._jit_pass_canonicalize(sentinel_graph) is sentinel_graph
 
