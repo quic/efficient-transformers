@@ -114,10 +114,16 @@ def split_layer_graph(
         ]
     )
     input_names = [n for n in preferred_inputs if n in graph_inputs] + cache_inputs
+    if "batch_index" in graph_inputs:
+        input_names.append("batch_index")
 
     output_names = list(graph_outputs)
-    if shard_idx != total_shards - 1 and "position_ids" in graph_inputs and "position_ids" not in output_names:
-        output_names.append("position_ids")
+    if shard_idx != total_shards - 1:
+        if "position_ids" in graph_inputs and "position_ids" not in output_names:
+            output_names.append("position_ids")
+
+        if "batch_index" in graph_inputs and "batch_index" not in output_names:
+            output_names.append("batch_index")
 
     model_ir.graph = onnx_ir.convenience.extract(
         model_ir.graph,
@@ -465,14 +471,15 @@ def run_merge_pipeline(
         if selected_output is None:
             raise RuntimeError(f"No mergeable decoder output found in {m1_path}. Outputs: {graph_outputs}")
 
-        merged_model = merge_models(
-            m1_pref,
-            m2_pref,
-            io_map=[
-                (selected_output, f"layer_{right}/inputs_embeds"),
-                (f"layer_{left}/position_ids", f"layer_{right}/position_ids"),
-            ],
-        )
+        io_map = [
+            (selected_output, f"layer_{right}/inputs_embeds"),
+            (f"layer_{left}/position_ids", f"layer_{right}/position_ids"),
+        ]
+
+        if any("batch_index" in item for item in graph_outputs):
+            io_map.append((f"layer_{left}/batch_index", f"layer_{right}/batch_index"))
+
+        merged_model = merge_models(m1_pref, m2_pref, io_map=io_map)
 
         if idx == len(shard_starts) - 2:
             CustomOpTransform.apply(merged_model)
