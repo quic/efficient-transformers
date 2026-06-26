@@ -26,6 +26,7 @@ def tmp_cache(tmp_path, monkeypatch):
     yield tmp_path
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models)
 def test_offload_weights_method(model_name):
     """Test the _offload_model_weights method with both True and False values."""
@@ -53,6 +54,7 @@ def test_offload_weights_method(model_name):
     assert not any(param.is_meta for param in qeff_model2.model.parameters())
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models)
 def test_re_export_behavior_with_offloaded_weights(model_name, tmp_cache):
     """Test that re-export fails when weights are offloaded."""
@@ -78,6 +80,7 @@ def test_re_export_behavior_with_offloaded_weights(model_name, tmp_cache):
         qeff_model.export()
 
 
+@pytest.mark.non_qaic
 def test_vlm_dual_qpc_memory_offload_behavior():
     """Test asymmetric memory offload behavior for VLM dual QPC models."""
 
@@ -114,6 +117,7 @@ def test_vlm_dual_qpc_memory_offload_behavior():
     assert lang_model._is_weights_offloaded  # Language model should be offloaded
 
 
+@pytest.mark.non_qaic
 def test_vlm_single_qpc_memory_offload_behavior():
     """Test memory offload behavior for VLM single QPC models with both True and False."""
 

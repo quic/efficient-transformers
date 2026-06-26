@@ -49,7 +49,8 @@ else:
     test_models_causal = list(causal_lm_models_dict.keys())
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_export_compile(model_name):
     if model_name in ModelConfig.SKIPPED_MODELS:
@@ -58,7 +59,8 @@ def test_export_compile(model_name):
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, export_compile_only=True)
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_export_compile_cb(model_name):
     if model_name in ModelConfig.SKIPPED_MODELS:
@@ -72,7 +74,7 @@ def test_export_compile_cb(model_name):
 
 
 @pytest.mark.qaic
-@pytest.mark.llm_model
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_generate(model_name):
     if model_name in ModelConfig.SKIPPED_MODELS:
@@ -82,7 +84,7 @@ def test_generate(model_name):
 
 
 @pytest.mark.qaic
-@pytest.mark.llm_model
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_generate_cb(model_name):
     if model_name in ModelConfig.SKIPPED_MODELS:

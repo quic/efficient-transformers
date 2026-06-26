@@ -40,7 +40,8 @@ else:
     test_models = image_text_models_dict.keys()
 
 
-@pytest.mark.multimodal
+@pytest.mark.non_qaic
+@pytest.mark.vlm
 @pytest.mark.parametrize("model_name", test_models)
 @pytest.mark.parametrize("kv_offload", [True, False])
 def test_export_compile(model_name, kv_offload):
@@ -57,7 +58,8 @@ def test_export_compile(model_name, kv_offload):
     )
 
 
-@pytest.mark.multimodal
+@pytest.mark.non_qaic
+@pytest.mark.vlm
 @pytest.mark.parametrize("model_name", test_models)
 @pytest.mark.parametrize("kv_offload", [True])  # TODO: Add support for kv_offload=False
 def test_export_compile_cb(model_name, kv_offload):
@@ -75,7 +77,7 @@ def test_export_compile_cb(model_name, kv_offload):
 
 
 @pytest.mark.qaic
-@pytest.mark.multimodal
+@pytest.mark.vlm
 @pytest.mark.parametrize("model_name", test_models)
 @pytest.mark.parametrize("kv_offload", [True, False])
 def test_generate(model_name, kv_offload):
@@ -92,7 +94,7 @@ def test_generate(model_name, kv_offload):
 
 
 @pytest.mark.qaic
-@pytest.mark.multimodal
+@pytest.mark.vlm
 @pytest.mark.parametrize("model_name", test_models)
 @pytest.mark.parametrize("kv_offload", [True])  # TODO: Add support for kv_offload=False
 def test_generate_cb(model_name, kv_offload):

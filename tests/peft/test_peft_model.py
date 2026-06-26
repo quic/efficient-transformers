@@ -61,6 +61,7 @@ def create_peft_model(base_config, adapter_config, adapter_name="default"):
     return base_model, adapted_model
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("base_config,adapter_config", configs)
 def test_auto_peft_model_for_causal_lm_init(base_config, adapter_config):
     base_model, ia3_model = create_peft_model(base_config, IA3Config(task_type="CAUSAL_LM"))
@@ -77,6 +78,7 @@ def test_auto_peft_model_for_causal_lm_init(base_config, adapter_config):
     assert set(qeff_model.adapter_weights.keys()) == {"testAdapter101", "testAdapter102"}
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("base_config,adapter_config", configs)
 def test_auto_peft_model_for_causal_lm_from_pretrained(base_config, adapter_config, tmp_path):
     base_path = tmp_path / "base"
@@ -97,8 +99,7 @@ def test_auto_peft_model_for_causal_lm_from_pretrained(base_config, adapter_conf
         QEffAutoPeftModelForCausalLM.from_pretrained(adapter_path / adapter_name, full_batch_size=4)
 
 
-# This test isn't required anymore as different adapter names should generate different hashes. We'll
-# phase out this test in some time.
+@pytest.mark.non_qaic
 @pytest.mark.skip(reason="Different adapter names will create different hashes so we'll skip this test.")
 def test_auto_peft_model_for_causal_lm_hash():
     base_config_0, adapter_config_0 = configs[0].values
@@ -138,6 +139,7 @@ def test_auto_peft_model_for_causal_lm_hash():
     assert hash_0_1_0 != hash_1_1
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("base_config,adapter_config", configs)
 def test_auto_peft_model_for_causal_lm_export(base_config, adapter_config, tmp_path):
     _, lora_model = create_peft_model(base_config, adapter_config)
@@ -165,6 +167,7 @@ def test_auto_peft_model_for_causal_lm_export(base_config, adapter_config, tmp_p
     assert export_time_1 < 0.01 * export_time_0
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("base_config,adapter_config", configs)
 def test_auto_peft_model_for_causal_lm_activate_invalid(base_config, adapter_config, tmp_path):
     _, lora_model = create_peft_model(base_config, adapter_config)
@@ -176,7 +179,7 @@ def test_auto_peft_model_for_causal_lm_activate_invalid(base_config, adapter_con
         qeff_model.set_adapter("invalid")
 
 
-@pytest.mark.feature
+@pytest.mark.llm
 @pytest.mark.qaic
 @pytest.mark.parametrize("batch_size", [1, 4], ids=["bs1", "bs4"])
 @pytest.mark.parametrize("base_config,adapter_config", configs)

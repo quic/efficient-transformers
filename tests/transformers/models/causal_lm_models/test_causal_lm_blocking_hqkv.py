@@ -28,7 +28,8 @@ else:
     test_models_blockedKV = list(blockedKV_causal_lm_models_dict.keys())
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_export_compile_blocking(model_name):
     HEAD_BLOCK_SIZE = 8
@@ -81,7 +82,8 @@ def test_export_compile_blocking(model_name):
     )
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_export_compile_blocking_CB(model_name):
     HEAD_BLOCK_SIZE = 8
@@ -140,7 +142,7 @@ def test_export_compile_blocking_CB(model_name):
 
 
 @pytest.mark.qaic
-@pytest.mark.llm_model
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_generate_blocking(model_name):
     HEAD_BLOCK_SIZE = 8
@@ -186,7 +188,7 @@ def test_generate_blocking(model_name):
 
 
 @pytest.mark.qaic
-@pytest.mark.llm_model
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_generate_blocking_cb(model_name):
     HEAD_BLOCK_SIZE = 8

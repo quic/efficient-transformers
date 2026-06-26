@@ -454,7 +454,7 @@ def check_pld_spec_decode_inference(
 
 
 @pytest.mark.qaic
-@pytest.mark.feature
+@pytest.mark.llm
 @pytest.mark.parametrize("draft_model_name, target_model_name", spd_config)
 def test_pld_inference(draft_model_name, target_model_name):
     """
@@ -463,6 +463,7 @@ def test_pld_inference(draft_model_name, target_model_name):
     check_pld_spec_decode_inference(draft_model_name, target_model_name)
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("draft_model_name, target_model_name", spd_config)
 @pytest.mark.parametrize("decode_ks", [[3], [0, 3], [1, 2, 3], [0, 1, 2, 3]])
 def test_multi_spec_structure(draft_model_name, target_model_name, decode_ks):
@@ -512,6 +513,7 @@ def test_multi_spec_structure(draft_model_name, target_model_name, decode_ks):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize(
     "actual_proposals,decode_ks,expected_k",
     [

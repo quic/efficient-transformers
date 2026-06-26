@@ -221,7 +221,7 @@ def _run_ai100_prefill(qpc_paths, prepared_inputs, vision_template):
 
 
 @pytest.mark.qaic
-@pytest.mark.reranker
+@pytest.mark.vlm
 @pytest.mark.parametrize("model_name", test_reranker_models)
 def test_qwen3_vl_reranker_mad_parity(model_name):
     torch.manual_seed(42)

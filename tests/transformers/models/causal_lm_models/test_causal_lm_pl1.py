@@ -24,7 +24,8 @@ else:
     test_models_pl1 = list(causal_lm_models_pl1_dict.keys())
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models_pl1)
 @pytest.mark.parametrize("retain_full_kv", [True, False])
 def test_export_compile_pl1(model_name, retain_full_kv):
@@ -40,7 +41,8 @@ def test_export_compile_pl1(model_name, retain_full_kv):
     )
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models_pl1)
 @pytest.mark.parametrize("retain_full_kv", [True, False])
 def test_export_compile_pl1_cb(model_name, retain_full_kv):
@@ -58,7 +60,7 @@ def test_export_compile_pl1_cb(model_name, retain_full_kv):
 
 
 @pytest.mark.qaic
-@pytest.mark.llm_model
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models_pl1)
 @pytest.mark.parametrize("retain_full_kv", [True, False])
 def test_generate_pl1(model_name, retain_full_kv):
@@ -73,7 +75,8 @@ def test_generate_pl1(model_name, retain_full_kv):
     )
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
+@pytest.mark.qaic
 @pytest.mark.parametrize("model_name", test_models_pl1)
 @pytest.mark.parametrize("retain_full_kv", [True, False])
 def test_generate_pl1_cb(model_name, retain_full_kv):

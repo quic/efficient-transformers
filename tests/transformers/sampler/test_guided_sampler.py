@@ -182,7 +182,7 @@ def check_guided_decoding_sampler(
 
 
 @pytest.mark.qaic
-@pytest.mark.feature
+@pytest.mark.llm  # FIXME split into llm and vllm later
 @pytest.mark.parametrize("model_name", test_models)
 def test_guided_decoding_sampler(model_name):
     """

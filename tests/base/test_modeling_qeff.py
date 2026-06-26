@@ -13,6 +13,7 @@ import pytest
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 
 
+@pytest.mark.non_qaic
 def test_compiler_invalid_file(tmp_path):
     qeff_obj = SimpleNamespace()
 
@@ -24,6 +25,7 @@ def test_compiler_invalid_file(tmp_path):
         QEFFBaseModel._compile(qeff_obj, invalid_file, tmp_path)
 
 
+@pytest.mark.non_qaic
 def test_compiler_invalid_flag(tmp_path):
     qeff_obj = SimpleNamespace()
 

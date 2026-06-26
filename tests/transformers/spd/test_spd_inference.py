@@ -358,7 +358,7 @@ def check_spec_decode_inference(
 # llama error with SPD, skipping dummy layer test for now
 @pytest.mark.skip(reason="Dummy layer test is currently failing for SPD, needs investigation")
 @pytest.mark.qaic
-@pytest.mark.feature
+@pytest.mark.llm
 @pytest.mark.parametrize("draft_model_name, target_model_name", spd_config)
 def test_spd_inference(draft_model_name, target_model_name):
     """Test dummy layer SPD inference."""
@@ -465,7 +465,7 @@ def _verify_tlm_spec(tlm_session, k, ref_tokens, ref_logits, start_pos, vocab_si
 
 
 @pytest.mark.qaic
-@pytest.mark.feature
+@pytest.mark.llm
 @pytest.mark.parametrize(
     "decode_ks",
     [

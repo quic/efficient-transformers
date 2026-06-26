@@ -72,7 +72,7 @@ def get_function(onnx_path):
     return function_names
 
 
-@pytest.mark.feature
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_subfunction_vs_nonsubfunction(config, tmp_path):
     model_0_0 = QEFFAutoModelForCausalLM(AutoModelForCausalLM.from_config(config, **model_kwargs), cb=False)
@@ -92,7 +92,7 @@ def test_subfunction_vs_nonsubfunction(config, tmp_path):
     model_0_0.compile(onnx_path=with_sub_func_onnx, **compile_params, use_onnx_subfunctions=True)
 
 
-@pytest.mark.feature
+@pytest.mark.non_qaic
 def test_tinyllama_exports_single_decoder_subfunction(tmp_path):
     model_id = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 

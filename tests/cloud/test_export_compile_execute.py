@@ -98,7 +98,8 @@ def check_export_compile_execute(mocker, model_name, full_batch_size=None, enabl
     cloud_ai_100_exec_kv_spy.assert_called_once()
 
 
-@pytest.mark.cli
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models)
 def test_export_compile(mocker, model_name):
     # testing export -> compile -> infer without full_batch_size
@@ -106,14 +107,15 @@ def test_export_compile(mocker, model_name):
 
 
 @pytest.mark.qaic
-@pytest.mark.cli
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models)
 def test_execute(mocker, model_name):
     # testing export -> compile -> infer without full_batch_size
     check_export_compile_execute(mocker, model_name)
 
 
-@pytest.mark.cli
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models)
 def test_export_compile_fbs(mocker, model_name):
     # testing export -> compile -> infer with full_batch_size
@@ -121,7 +123,7 @@ def test_export_compile_fbs(mocker, model_name):
 
 
 @pytest.mark.qaic
-@pytest.mark.cli
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models)
 def test_execute_fbs(mocker, model_name):
     # testing export -> compile -> infer with full_batch_size

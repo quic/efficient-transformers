@@ -181,7 +181,7 @@ def check_sampler_transform(
 
 
 @pytest.mark.qaic
-@pytest.mark.feature
+@pytest.mark.llm  # FIXME split into llm and vllm later
 @pytest.mark.parametrize("model_name", test_models)
 def test_sampler_transform(model_name: str):
     """

@@ -61,7 +61,7 @@ def check_blockedKV_onnx_function_count_with_subfunction(
     assert num_functions_no_block == num_functions_kv_block
 
 
-@pytest.mark.feature
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models_blockedKV)
 def test_blockedKV_onnx_function_count_with_subfunction(model_name):
     if model_name in ModelConfig.SKIPPED_MODELS:

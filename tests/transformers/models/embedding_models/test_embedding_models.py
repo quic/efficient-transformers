@@ -29,7 +29,8 @@ else:
     embed_test_models = original_embedding_models
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name, pooling", embed_test_models)
 def test_export_compile(model_name, pooling):
 
@@ -42,7 +43,8 @@ def test_export_compile(model_name, pooling):
     )
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name, pooling", embed_test_models)
 def test_export_compile_with_pooling(model_name, pooling):
 
@@ -56,7 +58,8 @@ def test_export_compile_with_pooling(model_name, pooling):
     )
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name, pooling", embed_test_models[:1])
 def test_export_compile_with_multiple_seq_len(model_name, pooling):
 
@@ -66,7 +69,7 @@ def test_export_compile_with_multiple_seq_len(model_name, pooling):
 
 
 @pytest.mark.qaic
-@pytest.mark.llm_model
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name, pooling", embed_test_models)
 def test_generate(model_name, pooling):
 
@@ -79,7 +82,7 @@ def test_generate(model_name, pooling):
 
 
 @pytest.mark.qaic
-@pytest.mark.llm_model
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name, pooling", embed_test_models)
 def test_generate_with_pooling(model_name, pooling):
 
@@ -93,7 +96,7 @@ def test_generate_with_pooling(model_name, pooling):
 
 
 @pytest.mark.qaic
-@pytest.mark.llm_model
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name, pooling", embed_test_models[:1])
 def test_generate_with_multiple_seq_len(model_name, pooling):
 

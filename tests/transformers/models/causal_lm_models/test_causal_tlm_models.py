@@ -26,7 +26,8 @@ else:
     test_models_spd = list(spd_causal_lm_models_dict.keys())
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models_spd)
 def test_export_compile_tlm(model_name):
 
@@ -37,7 +38,8 @@ def test_export_compile_tlm(model_name):
     )
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models_spd)
 def test_export_compile_tlm_cb(model_name):
 
@@ -50,7 +52,7 @@ def test_export_compile_tlm_cb(model_name):
 
 
 @pytest.mark.qaic
-@pytest.mark.llm_model
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models_spd)
 def test_generate_tlm(model_name):
 
@@ -61,7 +63,7 @@ def test_generate_tlm(model_name):
 
 
 @pytest.mark.qaic
-@pytest.mark.llm_model
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models_spd)
 def test_generate_tlm_cb(model_name):
 

@@ -103,7 +103,7 @@ def check_image_text_to_text_subfunction_core(
     )
 
 
-@pytest.mark.feature
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])
 def test_image_text_to_text_subfunction(model_name, kv_offload):

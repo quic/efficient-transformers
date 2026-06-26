@@ -498,7 +498,7 @@ def _run_flux_pipeline_test_case(
         raise
 
 
-@pytest.mark.diffusion_models
+@pytest.mark.diffusion
 @pytest.mark.qaic
 def test_flux_pipeline(flux_pipeline):
     _run_flux_pipeline_test_case(
@@ -512,7 +512,7 @@ def test_flux_pipeline(flux_pipeline):
     )
 
 
-@pytest.mark.diffusion_models
+@pytest.mark.diffusion
 @pytest.mark.qaic
 def test_flux_pipeline_first_block_cache(flux_pipeline_first_block_cache):
     _run_flux_pipeline_test_case(

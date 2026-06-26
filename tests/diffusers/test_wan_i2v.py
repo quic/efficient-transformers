@@ -508,7 +508,7 @@ def wan_i2v_pipeline():
     return pipeline, pytorch_pipeline
 
 
-@pytest.mark.diffusion_models
+@pytest.mark.diffusion
 @pytest.mark.qaic
 def test_wan_i2v_pipeline(wan_i2v_pipeline):
     """

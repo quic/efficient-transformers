@@ -25,6 +25,7 @@ class TestModel(nn.Module):
         return x
 
 
+@pytest.mark.non_qaic
 def test_module_mapping_transform():
     with pytest.raises(TypeError):
         ModuleMappingTransform()
@@ -43,6 +44,7 @@ def test_module_mapping_transform():
     assert torch.all(y2 == x)
 
 
+@pytest.mark.non_qaic
 def test_module_mutator_transform():
     with pytest.raises(TypeError):
         ModuleMutatorTransform()

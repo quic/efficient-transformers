@@ -48,9 +48,8 @@ def load_causal_lm_model(model_config):
     return model_hf, params
 
 
-# Use @pytest.mark.parametrize to apply the configurations
 @pytest.mark.qaic
-@pytest.mark.feature
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models)
 def test_generate_text_stream(
     model_name: str,
@@ -70,7 +69,6 @@ def test_generate_text_stream(
     """
     model_config = {"model_name": model_name, "n_layer": n_layer}
     model_hf, _ = load_causal_lm_model(model_config)
-    print(model_hf)
 
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
 
@@ -85,7 +83,6 @@ def test_generate_text_stream(
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
-        num_cores=14,
         mxfp6=False,
         aic_enable_depth_first=False,
         full_batch_size=full_batch_size,

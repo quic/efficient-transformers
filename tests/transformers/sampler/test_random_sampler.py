@@ -289,7 +289,7 @@ def check_random_sampler(
 
 
 @pytest.mark.qaic
-@pytest.mark.feature
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models)
 def test_random_sampler(model_name):
     """

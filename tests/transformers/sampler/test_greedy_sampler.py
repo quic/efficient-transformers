@@ -164,7 +164,7 @@ def check_greedy_sampler(
 
 
 @pytest.mark.qaic
-@pytest.mark.feature
+@pytest.mark.llm  # FIXME split into llm and vllm later
 @pytest.mark.parametrize("model_name", test_models)
 def test_greedy_sampler(model_name):
     """

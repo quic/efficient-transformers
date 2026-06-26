@@ -7,6 +7,7 @@
 
 import numpy as np
 import onnx
+import pytest
 
 from QEfficient.base.onnx_transforms import (
     FP16ClipTransform,
@@ -15,6 +16,7 @@ from QEfficient.base.onnx_transforms import (
 )
 
 
+@pytest.mark.non_qaic
 def test_fp16clip_transform():
     test_onnx = onnx.parser.parse_model("""
     <
@@ -45,6 +47,7 @@ def test_fp16clip_transform():
     assert onnx.numpy_helper.to_array(transformed_onnx.graph.node[1].attribute[0].t) == -65504.0
 
 
+@pytest.mark.non_qaic
 def test_fp16clip_transform_external(tmp_path):
     external_tensors_file = "fp32_min.raw"
     test_onnx = onnx.parser.parse_model(f"""
@@ -75,6 +78,7 @@ def test_fp16clip_transform_external(tmp_path):
     assert onnx.numpy_helper.to_array(transformed_onnx.graph.initializer[0]) == -65504.0
 
 
+@pytest.mark.non_qaic
 def test_split_tensors_transform(tmp_path):
     external_tensors_file = "tensors.raw"
     test_onnx = onnx.parser.parse_model(f"""

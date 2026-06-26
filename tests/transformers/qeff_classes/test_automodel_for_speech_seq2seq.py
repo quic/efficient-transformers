@@ -53,12 +53,14 @@ config_ids = [x.model_type for x in configs]
 model_kwargs = {"attn_implementation": "eager"}
 
 
+@pytest.mark.non_qaic
 def test_seq2seq_unsupported():
     model = AutoModelForSpeechSeq2Seq.from_config(AutoConfig.for_model("speech_to_text"))
     with pytest.warns():
         QEFFAutoModelForSpeechSeq2Seq(model)
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_seq2seq_init(config):
     model = AutoModelForSpeechSeq2Seq.from_config(config, **model_kwargs)
@@ -68,6 +70,7 @@ def test_seq2seq_init(config):
     assert qeff_model.model.model.__class__.__name__.startswith("QEff")
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_seq2seq_pretrained(config, tmp_path):
     model = AutoModelForSpeechSeq2Seq.from_config(config, **model_kwargs)
@@ -77,6 +80,7 @@ def test_seq2seq_pretrained(config, tmp_path):
     assert qeff_model.model.model.__class__.__name__.startswith("QEff")
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_seq2seq_export_and_hash(config, tmp_path):
     model_0_0 = QEFFAutoModelForSpeechSeq2Seq(AutoModelForSpeechSeq2Seq.from_config(config, **model_kwargs))
@@ -124,6 +128,7 @@ def test_seq2seq_export_and_hash(config, tmp_path):
     assert hash_0_0 != hash_1_0
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_seq2seq_hash_creation(config, tmp_path):
     model = AutoModelForSpeechSeq2Seq.from_config(config, **model_kwargs)
@@ -151,6 +156,7 @@ def tmp_cache(tmp_path, monkeypatch):
 
 
 # disable compile testing, compile not validated
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_causal_lm_compile(config, tmp_cache):
     model = AutoModelForSpeechSeq2Seq.from_config(config, **model_kwargs)

@@ -21,21 +21,23 @@ else:
     test_models = seq_classification_models_dict.keys()
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models)
 def test_export_compile(model_name):
 
     check_seq_classification_pytorch_vs_ai100(model_name=model_name, seq_len=32, export_compile_only=True)
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models)
 def test_export_compile_multiple_seq_len(model_name):
 
     check_seq_classification_pytorch_vs_ai100(model_name=model_name, seq_len=[32, 64, 128], export_compile_only=True)
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
 @pytest.mark.qaic
 @pytest.mark.parametrize("model_name", test_models)
 def test_generate(model_name):
@@ -46,7 +48,7 @@ def test_generate(model_name):
     )
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
 @pytest.mark.qaic
 @pytest.mark.parametrize("model_name", test_models)
 def test_generate_multiple_seq_len(model_name):

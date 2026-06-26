@@ -179,7 +179,7 @@ def prefix_caching_inference(model_name, qpc_path):
 
 
 @pytest.mark.qaic
-@pytest.mark.feature
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models)
 def test_simple_prefix_caching(model_name):
     """

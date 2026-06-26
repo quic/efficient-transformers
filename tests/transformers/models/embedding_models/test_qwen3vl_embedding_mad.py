@@ -20,7 +20,8 @@ else:
     test_models = image_text_embedding_models.keys()
 
 
-@pytest.mark.multimodal
+@pytest.mark.vlm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models)
 def test_export_compile(model_name):
 
@@ -28,7 +29,7 @@ def test_export_compile(model_name):
 
 
 @pytest.mark.qaic
-@pytest.mark.multimodal
+@pytest.mark.vlm
 @pytest.mark.parametrize("model_name", test_models)
 def test_generate(model_name):
 

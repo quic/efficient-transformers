@@ -81,7 +81,7 @@ def create_lora_base_model(base_config):
     return lora_base_model
 
 
-# test model initialization using __init__ approach
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples)
 def test_auto_lora_model_for_causal_lm_init(base_model_name, adapter_id_0, adapter_id_1):
     model_hf = AutoModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
@@ -92,7 +92,7 @@ def test_auto_lora_model_for_causal_lm_init(base_model_name, adapter_id_0, adapt
     assert len(qeff_model.active_adapter_to_id) == 0
 
 
-# test model initialization using from_pretrained approach
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples)
 def test_auto_lora_model_for_causal_lm_from_pretrained(base_model_name, adapter_id_0, adapter_id_1):
     qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(
@@ -104,7 +104,7 @@ def test_auto_lora_model_for_causal_lm_from_pretrained(base_model_name, adapter_
     assert len(qeff_model.active_adapter_to_id) == 0
 
 
-# test peft model initialization using from_pretrained approach
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples)
 def test_auto_peft_model_for_causal_lm_from_pretrained(base_model_name, adapter_id_0, adapter_id_1):
     qeff_model = QEffAutoPeftModelForCausalLM.from_pretrained(
@@ -130,7 +130,7 @@ def test_auto_peft_model_for_causal_lm_from_pretrained(base_model_name, adapter_
         QEffAutoLoraModelForCausalLM.from_pretrained(adapter_id_0, 0, finite_adapters=True, num_hidden_layers=1)
 
 
-# test the init assertion for models that are not supported
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("base_model_name", test_models)
 def test_auto_lora_model_for_causal_lm_init_from_unsupported_model(base_model_name):
     model_hf = AutoModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
@@ -141,8 +141,7 @@ def test_auto_lora_model_for_causal_lm_init_from_unsupported_model(base_model_na
         QEffAutoLoraModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
 
 
-# This test isn't required anymore as different adapter names should generate different hashes. We'll
-# phase out this test in some time.
+@pytest.mark.non_qaic
 @pytest.mark.skip(reason="Different adapter names will create different hashes so we'll skip this test.")
 def test_auto_lora_model_for_causal_lm_hash():
     base_config_0, adapter_config_0 = configs[0].values
@@ -214,7 +213,7 @@ def test_auto_lora_model_for_causal_lm_hash():
     assert model_hash_0_1 != model_hash_0_0
 
 
-# test download_adapter(), load_adapter() and unload_adapter()
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples[1:])
 def test_auto_lora_model_for_causal_lm_load_unload_adapter(base_model_name, adapter_id_0, adapter_id_1):
     qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(base_model_name, num_hidden_layers=1)
@@ -228,9 +227,8 @@ def test_auto_lora_model_for_causal_lm_load_unload_adapter(base_model_name, adap
     assert qeff_model.unload_adapter("adapter_0")  # valid unload
 
 
-# test the export, export caching, compile and generate workflow in noncb mode
 @pytest.mark.qaic
-@pytest.mark.feature
+@pytest.mark.llm
 @pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples[:1])
 def test_auto_lora_model_for_causal_lm_noncb_export_compile_generate(
     base_model_name, adapter_id_0, adapter_id_1, tmp_path
@@ -270,9 +268,8 @@ def test_auto_lora_model_for_causal_lm_noncb_export_compile_generate(
     )
 
 
-# test the compile and generate workflow in cb mode
 @pytest.mark.qaic
-@pytest.mark.feature
+@pytest.mark.llm
 @pytest.mark.parametrize("base_model_name,adapter_id_0,adapter_id_1", model_samples[:1])
 def test_auto_lora_model_for_causal_lm_cb_compile_generate(base_model_name, adapter_id_0, adapter_id_1, tmp_path):
     qeff_model = QEffAutoLoraModelForCausalLM.from_pretrained(

@@ -19,7 +19,8 @@ else:
     test_models = audio_embedding_models.keys()
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models)
 def test_export_compile(model_name):
 
@@ -27,7 +28,7 @@ def test_export_compile(model_name):
 
 
 @pytest.mark.qaic
-@pytest.mark.llm_model
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models)
 def test_generate(model_name):
 

@@ -134,7 +134,8 @@ def check_causal_lm_pytorch_vs_kv_vs_ai100(
     assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
 
 
-@pytest.mark.llm_model
+@pytest.mark.llm
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models)
 def test_export_compile_fp16(model_name):
 
@@ -146,7 +147,7 @@ def test_export_compile_fp16(model_name):
 
 
 @pytest.mark.qaic
-@pytest.mark.llm_model
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models)
 def test_generate_fp16(model_name):
 

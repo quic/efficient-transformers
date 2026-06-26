@@ -29,7 +29,8 @@ else:
     test_custom_dtype_support_models = image_text_custom_dtype_models_dict.keys()
 
 
-@pytest.mark.multimodal
+@pytest.mark.non_qaic
+@pytest.mark.vlm
 @pytest.mark.parametrize("model_name", test_custom_dtype_support_models)
 def test_export_compile_custom_dtype(model_name):
 
@@ -45,7 +46,7 @@ def test_export_compile_custom_dtype(model_name):
 
 
 @pytest.mark.qaic
-@pytest.mark.multimodal
+@pytest.mark.vlm
 @pytest.mark.parametrize("model_name", test_custom_dtype_support_models)
 def test_generate_custom_dtype(model_name):
 
