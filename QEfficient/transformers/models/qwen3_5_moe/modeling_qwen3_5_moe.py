@@ -2113,9 +2113,15 @@ class QEffQwen3_5MoeExperts(Qwen3_5MoeExperts):
         # HF 5.x keeps fused gate_up projections. Keep aliases expected by
         # QEff MoE execution paths without changing checkpoint behavior.
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
-        self.gate_proj = nn.Parameter(self.gate_up_proj[:, : self.expert_dim, :].detach().clone().transpose(1, 2))
-        self.up_proj = nn.Parameter(self.gate_up_proj[:, self.expert_dim :, :].detach().clone().transpose(1, 2))
-        self.down_proj_t = nn.Parameter(self.down_proj.detach().clone().transpose(1, 2))
+        gate_up_proj = self.gate_up_proj.detach()
+        down_proj = self.down_proj.detach()
+        self.gate_proj = nn.Parameter(
+            gate_up_proj[:, : self.expert_dim, :].transpose(1, 2), requires_grad=self.gate_up_proj.requires_grad
+        )
+        self.up_proj = nn.Parameter(
+            gate_up_proj[:, self.expert_dim :, :].transpose(1, 2), requires_grad=self.gate_up_proj.requires_grad
+        )
+        self.down_proj_t = nn.Parameter(down_proj.transpose(1, 2), requires_grad=self.down_proj.requires_grad)
 
 
 class QEffQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
