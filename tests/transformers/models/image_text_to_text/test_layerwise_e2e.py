@@ -41,9 +41,7 @@ SKIP_VISION = True
 @pytest.mark.skip(
     reason="These tests are currently failing due to token mismatch. They need to be fixed and re-enabled."
 )
-def test_qwen_multimodal_encoder_layerwise_vs_non_layerwise_tokens(
-    manual_cleanup, model_type, model_id
-):
+def test_qwen_multimodal_encoder_layerwise_vs_non_layerwise_tokens(manual_cleanup, model_type, model_id):
     skip_vision = SKIP_VISION
     processor = AutoProcessor.from_pretrained(model_id)
     if skip_vision:

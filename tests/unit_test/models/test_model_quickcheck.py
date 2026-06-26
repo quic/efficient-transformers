@@ -1499,7 +1499,6 @@ def test_layerwise_window_helpers():
 
 @pytest.mark.llm_model
 def test_layerwise_context_helpers_are_instance_scoped():
-
     config = type("Config", (), {"model_type": "qwen3_moe", "num_hidden_layers": 4})()
     context_a = _layerwise.create_layerwise_context(model_id="a", config=config, window_size=2)
     context_b = _layerwise.create_layerwise_context(model_id="b", config=config, window_size=1)
@@ -1524,7 +1523,6 @@ def test_layerwise_context_helpers_are_instance_scoped():
 
 @pytest.mark.llm_model
 def test_layerwise_compile_requires_from_pretrained_context():
-
     module = torch.nn.Linear(1, 1)
     with pytest.warns(DeprecationWarning):
         with pytest.raises(ValueError, match="from_pretrained"):
@@ -1533,7 +1531,6 @@ def test_layerwise_compile_requires_from_pretrained_context():
 
 @pytest.mark.llm_model
 def test_layerwise_window_size_conflict_rejected():
-
     config = type("Config", (), {"model_type": "qwen3_moe", "num_hidden_layers": 4})()
     context = _layerwise.create_layerwise_context(model_id="dummy", config=config, window_size=2)
     module = torch.nn.Linear(1, 1)
@@ -1922,7 +1919,6 @@ def test_split_layer_graph_keeps_qwen3_5_linear_states(tmp_path):
 
 @pytest.mark.llm_model
 def test_layerwise_supported_guard_accepts_qwen3_vl_moe():
-
     try:
         config = AutoConfig.from_pretrained(LAYERWISE_TINY_MODEL_ID)
     except Exception as exc:
@@ -2013,7 +2009,6 @@ def test_layerwise_context_manager_toggles_active_context():
 
 @pytest.mark.llm_model
 def test_layerwise_context_manager_restores_window_state():
-
     config = type("Config", (), {"model_type": "qwen3_moe", "num_hidden_layers": 4})()
     context = _layerwise.create_layerwise_context(model_id="dummy", config=config, window_size=1)
     context.set_window(2, 3)
@@ -2031,7 +2026,6 @@ def test_layerwise_context_manager_restores_window_state():
 
 @pytest.mark.llm_model
 def test_layerwise_contexts_do_not_share_window_state():
-
     config = type("Config", (), {"model_type": "qwen3_moe", "num_hidden_layers": 4})()
     first = _layerwise.create_layerwise_context(model_id="first", config=config, window_size=1)
     second = _layerwise.create_layerwise_context(model_id="second", config=config, window_size=2)
@@ -2052,7 +2046,6 @@ def test_layerwise_contexts_do_not_share_window_state():
 
 @pytest.mark.llm_model
 def test_custom_loader_scoped_loading_restores_transformers_hooks():
-
     loader = CustomLoader("dummy", layer_indices=[0])
     original_shard_fn = transformers.modeling_utils.get_checkpoint_shard_files
     original_safe_open = transformers.modeling_utils.safe_open
@@ -2070,7 +2063,6 @@ def test_custom_loader_scoped_loading_restores_transformers_hooks():
 
 @pytest.mark.llm_model
 def test_custom_loader_weight_policy_filters_layer_keys():
-
     policy = WeightSelectionPolicy.from_layer_indices([1])
 
     assert policy.include_key("model.layers.1.self_attn.q_proj.weight")
@@ -2082,7 +2074,6 @@ def test_custom_loader_weight_policy_filters_layer_keys():
 
 @pytest.mark.llm_model
 def test_custom_loader_meta_apis_clear_weights_from_ram():
-
     cfg = Qwen3MoeConfig(
         hidden_size=16,
         intermediate_size=32,
@@ -2191,7 +2182,6 @@ def test_layerwise_uses_probe_model_for_cached_export(monkeypatch, tmp_path):
 
 @pytest.mark.llm_model
 def test_layerwise_cache_miss_exports_all_windows(monkeypatch, tmp_path):
-
     class DummyConfig:
         model_type = "qwen3_moe"
         num_hidden_layers = 3
@@ -2245,7 +2235,6 @@ def test_layerwise_cache_miss_exports_all_windows(monkeypatch, tmp_path):
 
 @pytest.mark.llm_model
 def test_layerwise_cleanup_removes_intermediate_dirs(tmp_path):
-
     final_data = tmp_path / "final_data"
     onnx_tmp = tmp_path / "onnx_layerwise_tmp"
     final_data.mkdir()
@@ -2261,7 +2250,6 @@ def test_layerwise_cleanup_removes_intermediate_dirs(tmp_path):
 
 @pytest.mark.llm_model
 def test_layerwise_cached_merged_prefers_root_layout(tmp_path):
-
     root_merged = tmp_path / "merged_0-48.onnx"
     legacy_merged = tmp_path / "final_data" / "merged_0-48.onnx"
     legacy_merged.parent.mkdir()
@@ -2329,7 +2317,6 @@ def test_layerwise_merge_renames_decoder_function_variants_without_collisions():
 
 @pytest.mark.llm_model
 def test_layerwise_materializes_root_onnx_for_final_compile(monkeypatch, tmp_path):
-
     class DummyConfig:
         model_type = "qwen3_vl_moe"
         num_hidden_layers = 2
@@ -2371,7 +2358,6 @@ def test_layerwise_materializes_root_onnx_for_final_compile(monkeypatch, tmp_pat
 
 @pytest.mark.llm_model
 def test_layerwise_cache_hit_under_final_data_is_canonicalized(monkeypatch, tmp_path):
-
     class DummyConfig:
         model_type = "qwen3_vl_moe"
         num_hidden_layers = 2
@@ -2505,7 +2491,6 @@ def test_layerwise_compile_hydrates_outer_qpc_paths(monkeypatch, tmp_path):
 
 @pytest.mark.llm_model
 def test_layerwise_final_compile_suspends_context(monkeypatch, tmp_path):
-
     class DummyConfig:
         model_type = "qwen3_moe"
         num_hidden_layers = 1
@@ -2970,7 +2955,6 @@ def _capture_layerwise_export_names(qeff_model, *, window, total_layers, export_
 
 
 def _tiny_qwen3_moe_causal():
-
     import QEfficient
 
     cfg = Qwen3MoeConfig(

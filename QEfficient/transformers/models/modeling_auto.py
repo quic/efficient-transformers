@@ -1776,7 +1776,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise_window_size,
         **kwargs,
     ):
-
         lang_module = getattr(self.lang_model, "model", self.lang_model)
         context = kwargs.pop("_layerwise_context", None) or _layerwise.get_layerwise_context(lang_module)
         model_id = self._pretrained_model_name_or_path
@@ -1812,7 +1811,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise_window_size,
         **compile_kwargs,
     ):
-
         lang_module = getattr(self.lang_model, "model", self.lang_model)
         context = compile_kwargs.pop("_layerwise_context", None) or _layerwise.get_layerwise_context(lang_module)
         model_id = self._pretrained_model_name_or_path
