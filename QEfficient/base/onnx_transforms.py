@@ -233,14 +233,7 @@ class RenameFunctionOutputsTransform(BaseOnnxTransform):
                         else:
                             base = out_name[: -len("_InternalRetainedState")]
                             new = orig
-                            for token in (
-                                "past_key.",
-                                "past_value.",
-                                "compressed_kv.",
-                                "k_pe.",
-                                "recurrent_state.",
-                                "conv_state.",
-                            ):
+                            for token in ("past_key.", "past_value.", "compressed_kv.", "k_pe."):
                                 if not base.startswith(token):
                                     continue
                                 tail = base[len(token) :]

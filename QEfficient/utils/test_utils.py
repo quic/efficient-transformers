@@ -476,6 +476,8 @@ class ModelConfig:
         "jinaai/jina-embeddings-v2-base-code",
         "hpcai-tech/grok-1",
         "Qwen/Qwen2.5-VL-3B-Instruct",
+        "Qwen/Qwen3.5-0.8B",
+        "Qwen/Qwen3.6-35B-A3B",
     }
 
     DUAL_QPC_MODELS = {
