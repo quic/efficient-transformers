@@ -17,8 +17,8 @@ model_id = "Qwen/Qwen3.5-0.8B"
 config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
-config.vision_config.depth = 4
-config.text_config.num_hidden_layers = 2
+# config.vision_config.depth = 4
+# config.text_config.num_hidden_layers = 4
 config.torch_dtype = "float32"
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -51,10 +51,12 @@ if skip_vision:
         num_cores=16,
         num_devices=1,
         mxfp6_matmul=True,
-        mxint8_kv_cache=False,
+        mxint8_kv_cache=True,
         aic_enable_depth_first=False,
         skip_vision=True,
         mos=1,
+        split_model_io=True,
+        use_onnx_subfunctions=True,
         # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
     )
 
@@ -117,13 +119,15 @@ else:
         prefill_seq_len=PREFILL_SEQ_LEN,
         ctx_len=CTX_LEN,
         num_cores=16,
-        num_devices=4,
+        num_devices=1,
         height=354,
         width=536,
-        mxfp6_matmul=False,
-        mxint8_kv_cache=False,
+        mxfp6_matmul=True,
+        mxint8_kv_cache=True,
         aic_enable_depth_first=False,
         mos=1,
+        split_model_io=True,
+        use_onnx_subfunctions=True,
         # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
     )
 
