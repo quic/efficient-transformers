@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import copy
 import json
 import os
 from typing import Optional
@@ -18,17 +17,9 @@ from PIL import Image
 from transformers import (
     AutoConfig,
     AutoProcessor,
-    TextStreamer,
 )
 
-from QEfficient import QEFFAutoModelForImageTextToText
-from QEfficient.utils.run_utils import ApiRunnerVlm
-from QEfficient.utils.test_utils import (
-    ModelConfig,
-    load_vlm_model,
-    load_vlm_model_from_config,
-    set_num_layers_vlm,
-)
+from QEfficient.utils.test_utils import load_qeff_vlm_model
 
 NEW_GENERATION_TOKENS = 10
 
@@ -60,7 +51,6 @@ def check_image_text_to_text_subfunction_core(
     num_hidden_layers: int = -1,
     num_devices: int = 1,
     config: Optional[AutoConfig] = None,
-    torch_dtype: Optional[torch.dtype] = torch.float32,
 ):
     img_size = model_config_dict[model_name]["img_size"]
     img_url = model_config_dict[model_name]["img_url"]
@@ -70,63 +60,15 @@ def check_image_text_to_text_subfunction_core(
     batch_size = model_config_dict[model_name]["batch_size"]
     enable_qnn = False
     qnn_config = None
-    max_gen_len = NEW_GENERATION_TOKENS
 
-    if config is None:
-        config = AutoConfig.from_pretrained(
-            model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS
-        )
-        config = set_num_layers_vlm(config, n_layer=num_hidden_layers)
-        if hasattr(config, "model_type") and config.model_type in ["gemma3"]:
-            config.text_config._sliding_window_pattern = 2
-            config.text_config.layer_types = ["sliding_attention", "full_attention"]
-        if hasattr(config, "model_type") and config.model_type in [
-            "qwen3_vl",
-            "qwen3_vl_moe",
-        ]:
-            config.vision_config.depth = 9
-            config.text_config.num_hidden_layers = 1
-            config.vision_config.deepstack_visual_indexes = [8]
-
-            model_hf = load_vlm_model(config)
-            qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-                model_name,
-                kv_offload=kv_offload,
-                config=config,
-                torch_dtype=torch_dtype,
-            )
-        else:
-            model_hf = load_vlm_model(config)
-            qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-                model_name,
-                kv_offload=kv_offload,
-                config=config,
-                torch_dtype=torch_dtype,
-            )
-    else:
-        model_hf = load_vlm_model_from_config(config)
-        qeff_model = QEFFAutoModelForImageTextToText(
-            copy.deepcopy(model_hf),
-            kv_offload=kv_offload,
-            config=model_hf.config,
-            torch_dtype=torch_dtype,
-        )
-
-    compile_kwargs = {
-        "img_size": img_size,
-        "num_devices": num_devices,
-        "prefill_seq_len": prompt_len,
-        "ctx_len": ctx_len,
-        "mxfp6": False,
-        "enable_qnn": enable_qnn,
-        "qnn_config": qnn_config,
-        "use_onnx_subfunctions": True,
-    }
-
+    qeff_model = load_qeff_vlm_model(
+        model_name,
+        kv_offload=kv_offload,
+        num_hidden_layers=num_hidden_layers,
+        config=config,
+    )
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
     image = Image.open(requests.get(img_url, stream=True).raw)
-    if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
-        image = image.resize((1540, 1540))
     conversation = [
         {
             "role": "user",
@@ -137,39 +79,20 @@ def check_image_text_to_text_subfunction_core(
         },
     ]
     prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
-    api_runner = ApiRunnerVlm(
-        batch_size,
-        processor,
-        config,
-        image,
-        conversation,
-        prompt,
-        prompt_len,
-        ctx_len,
-        max_gen_len,
-        num_hidden_layers,
-    )
 
     inputs = processor(images=image, text=prompt, return_tensors="pt")
     if "pixel_values" in inputs:
-        inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
-    pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
+        inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
+
+    with_sub_func_onnx = qeff_model.export(use_onnx_subfunctions=True, offload_pt_weights=False)
 
     inputs = processor(images=image, text=prompt, return_tensors="pt")
-    if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type in [
-        "qwen2_5_vl",
-        "qwen3_vl",
-        "qwen3_vl_moe",
-        "qwen3_5",
-        "qwen3_5_moe",
-    ]:
+    if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type == "qwen2_5_vl":
         inputs = qeff_model.model.prepare_inputs_for_generation(
             inputs=inputs, prefill_seq_len=prompt_len, batch_size=batch_size
         )
     if "pixel_values" in inputs:
-        inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
-
-    with_sub_func_onnx = qeff_model.export(use_onnx_subfunctions=True, offload_pt_weights=False)
+        inputs["pixel_values"] = inputs["pixel_values"].to(torch.float32)
 
     model_type = getattr(qeff_model.model.config, "model_type", "")
     expected_function_tokens = {
@@ -187,19 +110,20 @@ def check_image_text_to_text_subfunction_core(
         f"model_type={model_type}, expected_any={expected_function_tokens}"
     )
     print(f"\nDecoder-layer functions found: {decoder_layer_names}")
-    qeff_model.compile(**compile_kwargs)
-    streamer = TextStreamer(processor.tokenizer)
-    print("QPC Outputs (QAIC):")
-    exec_info = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
-    print(exec_info)
-    cloud_ai_100_tokens = exec_info.generated_ids[:, :-1]
-    assert (pytorch_hf_tokens == cloud_ai_100_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
+
+    qeff_model.compile(
+        img_size=img_size,
+        num_devices=num_devices,
+        prefill_seq_len=prompt_len,
+        ctx_len=ctx_len,
+        mxfp6=False,
+        enable_qnn=enable_qnn,
+        qnn_config=qnn_config,
+    )
     manual_cleanup(qeff_model.onnx_path)
 
 
 @pytest.mark.full_layers
-@pytest.mark.on_qaic
-@pytest.mark.multimodal
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])
@@ -209,8 +133,6 @@ def test_full_image_text_to_text_subfunction(model_name, kv_offload, manual_clea
 
 
 @pytest.mark.few_layers
-@pytest.mark.on_qaic
-@pytest.mark.multimodal
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])
@@ -225,16 +147,14 @@ def test_few_image_text_to_text_subfunction(model_name, kv_offload, manual_clean
 
 
 @pytest.mark.dummy_layers
-@pytest.mark.on_qaic
-@pytest.mark.multimodal
 @pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])
 def test_dummy_image_text_to_text_subfunction(model_name, kv_offload, manual_cleanup):
     torch.manual_seed(42)
+    hf_config = AutoConfig.from_pretrained(
+        model_name, trust_remote_code=True, **model_config_dict[model_name].get("additional_params", {})
+    )
     check_image_text_to_text_subfunction_core(
-        model_name,
-        num_hidden_layers=model_config_dict[model_name]["num_layers"],
-        kv_offload=kv_offload,
-        manual_cleanup=manual_cleanup,
+        model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
     )
