@@ -118,7 +118,9 @@ class QEffMptAttention(MptAttention):
 
         if attention_mask is not None:
             attention_scores = torch.where(
-                attention_mask, torch.full_like(attention_scores, MIN_MASKED_ATTENTION_VALUE), attention_scores
+                attention_mask,
+                torch.full_like(attention_scores, MIN_MASKED_ATTENTION_VALUE, dtype=attention_scores.dtype),
+                attention_scores,
             )
 
         # (batch_size, n_heads, seq_length, key_length)
