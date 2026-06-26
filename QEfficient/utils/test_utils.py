@@ -490,7 +490,7 @@ class ModelConfig:
         "Qwen/Qwen3-VL-Reranker-2B",
         "Qwen/Qwen3-VL-Reranker-8B",
         "Qwen/Qwen3.5-0.8B",
-        "Qwen/Qwen3.6-35B-A3B",
+        "Qwen/Qwen3.5-35B-A3B",
         "tiny-random/gemma-4-dense",
         "tiny-random/gemma-4-moe",
     }
