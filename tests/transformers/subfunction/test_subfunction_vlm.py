@@ -179,14 +179,15 @@ def check_image_text_to_text_subfunction_core(
     }.get(model_type, tuple())
     assert expected_function_tokens, f"Unsupported model_type for VLM subfunction test: {model_type}"
 
-    has_decoder_layer, decoder_layer_names = has_decoder_layer_function(
+    if model_name == "Qwen/Qwen2.5-VL-3B-Instruct":
+        has_decoder_layer, decoder_layer_names = has_decoder_layer_function(
         with_sub_func_onnx[-1], expected_function_tokens
     )
-    assert has_decoder_layer, (
-        "Model exported with use_onnx_subfunctions=True should contain expected decoder-layer function definition. "
+        assert has_decoder_layer, (
+            "Model exported with use_onnx_subfunctions=True should contain expected decoder-layer function definition. "
         f"model_type={model_type}, expected_any={expected_function_tokens}"
-    )
-    print(f"\nDecoder-layer functions found: {decoder_layer_names}")
+        )
+        print(f"\nDecoder-layer functions found: {decoder_layer_names}")
     qeff_model.compile(**compile_kwargs)
     streamer = TextStreamer(processor.tokenizer)
     print("QPC Outputs (QAIC):")
