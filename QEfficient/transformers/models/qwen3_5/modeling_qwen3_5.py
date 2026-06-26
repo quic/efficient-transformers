@@ -29,6 +29,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5VisionAttention,
     Qwen3_5VisionModel,
     apply_rotary_pos_emb_vision,
+    l2norm,
     repeat_kv,
     rotate_half,
 )
@@ -538,12 +539,9 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         eye=None,
     ):
         initial_dtype = query.dtype
-        # if use_qk_l2norm_in_kernel:
-        #     query = l2norm(query, dim=-1, eps=1e-6)
-        #     key = l2norm(key, dim=-1, eps=1e-6)
         if use_qk_l2norm_in_kernel:
-            query = query * torch.rsqrt(torch.einsum("bthd,bthd->bth", query, query).unsqueeze(-1) + 1e-6)
-            key = key * torch.rsqrt(torch.einsum("bthd,bthd->bth", key, key).unsqueeze(-1) + 1e-6)
+            query = l2norm(query, dim=-1, eps=1e-6)
+            key = l2norm(key, dim=-1, eps=1e-6)
         query, key, value, beta, g = [
             x.transpose(1, 2).contiguous().to(torch.float32) for x in (query, key, value, beta, g)
         ]
@@ -553,7 +551,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         zeros = torch.zeros(g.shape, dtype=g.dtype, device=g.device)
 
         g = torch.where(mask, g, zeros)
-        # beta = torch.where(mask, beta, zeros)
+        beta = torch.where(mask, beta, zeros)
 
         qkv_zeros = torch.zeros(key.shape, dtype=key.dtype, device=key.device)
         key = torch.where(mask.unsqueeze(-1), key, qkv_zeros)
@@ -563,20 +561,13 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         batch_size, num_heads, sequence_length, k_head_dim = key.shape
         v_head_dim = value.shape[-1]
         pad_size = (chunk_size - sequence_length % chunk_size) % chunk_size
-        # query = F.pad(query, (0, 0, 0, pad_size))
-        # key = F.pad(key, (0, 0, 0, pad_size))
-        # value = F.pad(value, (0, 0, 0, pad_size))
-        # beta = F.pad(beta, (0, pad_size))
-
-        # # ck = g.clone()
-        # g = F.pad(g, (0, pad_size))
-        query = F.pad(query, (0, 0, 0, pad_size), mode="constant", value=0.0)
-        key = F.pad(key, (0, 0, 0, pad_size), mode="constant", value=0.0)
-        value = F.pad(value, (0, 0, 0, pad_size), mode="constant", value=0.0)
-        beta = F.pad(beta, (0, pad_size), mode="constant", value=0.0)
+        query = F.pad(query, (0, 0, 0, pad_size))
+        key = F.pad(key, (0, 0, 0, pad_size))
+        value = F.pad(value, (0, 0, 0, pad_size))
+        beta = F.pad(beta, (0, pad_size))
 
         # ck = g.clone()
-        g = F.pad(g, (0, pad_size), mode="constant", value=0.0)
+        g = F.pad(g, (0, pad_size))
         total_sequence_length = sequence_length + pad_size
         scale = 1 / (query.shape[-1] ** 0.5)
         query = query * scale
@@ -588,7 +579,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             x.reshape(x.shape[0], x.shape[1], -1, chunk_size, x.shape[-1]) for x in (query, key, value, k_beta, v_beta)
         ]
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
-        mask = mask_causal.to(device=query.device)
+        mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=0)
 
         #
         # chunk decay
@@ -612,9 +603,8 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         for i in range(1, chunk_size):
             row = attn[..., i, :i].clone()
             sub = attn[..., :i, :i].clone()
-            # attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
-            attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
-        attn = attn + eye.to(dtype=attn.dtype, device=attn.device)
+            attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
+        attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
 
         ## Approximation code ##
         # A = attn
@@ -640,7 +630,8 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
         # attn = L
 
-        # Horners Method
+        ## Horners method
+
         # A = attn.masked_fill(mask, 0)
         # acc_dtype = torch.float32
         # A64 = A.to(acc_dtype)
@@ -652,7 +643,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         # for _ in range(K):
         #     S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
 
-        # attn = S64.to(A.dtype)
+        # attn = S64
 
         value = attn @ v_beta
         k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))
@@ -663,7 +654,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             else initial_state.to(value)
         )
         core_attn_out = torch.zeros_like(value)
-        mask = mask_strict.to(device=query.device)
+        mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=1)
 
         # for each chunk
         for i in range(0, total_sequence_length // chunk_size):
@@ -698,10 +689,8 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         # L2 norm (matching chunk kernel behavior)
         q = query.float()
         k = key.float()
-        # q = q * torch.rsqrt((q * q).sum(dim=-1, keepdim=True) + 1e-6)
-        # k = k * torch.rsqrt((k * k).sum(dim=-1, keepdim=True) + 1e-6)
-        q = q * torch.rsqrt(torch.einsum("bthd,bthd->bth", q, q).unsqueeze(-1) + 1e-6)
-        k = k * torch.rsqrt(torch.einsum("bthd,bthd->bth", k, k).unsqueeze(-1) + 1e-6)
+        q = q * torch.rsqrt((q * q).sum(dim=-1, keepdim=True) + 1e-6)
+        k = k * torch.rsqrt((k * k).sum(dim=-1, keepdim=True) + 1e-6)
         v = value.float()
 
         scale = 1.0 / (q.shape[-1] ** 0.5)
@@ -721,12 +710,11 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         # Single step — no loop because T=1
         # S update
         S_decayed = S * decay[:, :, 0]  # (B, H, d_k, d_v)
-        # kv_mem = (S_decayed * k[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
-        kv_mem = torch.einsum("bhkv,bhk->bhv", S_decayed, k[:, :, 0])  # (B, H, d_v)
+        kv_mem = (S_decayed * k[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
         delta = (v[:, :, 0] - kv_mem) * b[:, :, 0]  # (B, H, d_v)
         S_new = S_decayed + k[:, :, 0].unsqueeze(-1) * delta.unsqueeze(-2)  # (B, H, d_k, d_v)
-        # out = (S_new * q[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
-        out = torch.einsum("bhkv,bhk->bhv", S_new, q[:, :, 0])  # (B, H, d_v)
+        out = (S_new * q[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
+
         out = out.unsqueeze(2).transpose(1, 2).to(dtype)  # (B, 1, H, d_v) → (B, T, H, d_v)
         return out, S_new.to(recurrent_state.dtype)
 
@@ -798,10 +786,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
         # ── Split Q/K/V ──────────────────────────────────────
         mixed_qkv = mixed_qkv.transpose(1, 2)
-        # query, key, value = torch.split(mixed_qkv, [self.key_dim, self.key_dim, self.value_dim], dim=-1)
-        query = mixed_qkv[..., : self.key_dim]
-        key = mixed_qkv[..., self.key_dim : 2 * self.key_dim]
-        value = mixed_qkv[..., 2 * self.key_dim :]
+        query, key, value = torch.split(mixed_qkv, [self.key_dim, self.key_dim, self.value_dim], dim=-1)
         query = query.reshape(batch_size, seq_len, -1, self.head_k_dim)
         key = key.reshape(batch_size, seq_len, -1, self.head_k_dim)
         value = value.reshape(batch_size, seq_len, -1, self.head_v_dim)
