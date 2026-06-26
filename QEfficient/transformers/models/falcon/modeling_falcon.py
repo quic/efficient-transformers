@@ -163,7 +163,9 @@ class QEffFalconAttention(FalconAttention):
         attention_scores = query_layer @ key_layer.transpose(-1, -2)
         attention_scores /= math.sqrt(self.head_dim)
         attention_scores = torch.where(
-            attention_mask, torch.full_like(attention_scores, MIN_MASKED_ATTENTION_VALUE), attention_scores
+            attention_mask,
+            torch.full_like(attention_scores, MIN_MASKED_ATTENTION_VALUE, dtype=attention_scores.dtype),
+            attention_scores,
         )
         attention_scores = F.softmax(attention_scores + attention_mask, dim=-1, dtype=torch.float32).to(
             query_layer.dtype

@@ -965,7 +965,6 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             return lang_output_names
         return output_names
 
-
     def get_onnx_dynamic_shapes(
         self,
         comp_ctx_lengths: Optional[List[int]] = None,
