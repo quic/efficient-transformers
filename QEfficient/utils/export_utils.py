@@ -335,7 +335,7 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     return export_hash, filtered_hash_params
 
 
-def _setup_onnx_subfunctions(qeff_model, args, kwargs):
+def _setup_onnx_subfunctions(qeff_model, args, kwargs, target_classnames=None):
     """
     Setup ONNX subfunction export environment.
 
@@ -423,6 +423,7 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
             kwargs["export_modules_as_functions"] = decoder_layer_classes
 
     return args, kwargs, {"onnx_transforms": original_transforms}
+
 
 def _cleanup_onnx_subfunctions(qeff_model, state=None):
     """
