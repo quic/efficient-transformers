@@ -395,6 +395,8 @@ class QEFFBaseModel(ABC):
         # TODO: Hack for retain_full_kv, handle this outside
         export_kwargs.pop("retain_full_kv", None)
         export_kwargs.pop("mla_absorption", None)
+        export_kwargs.pop("prefill_seq_len", None)
+        export_kwargs.pop("ctx_len", None)
         use_weight_free_export = export_kwargs.pop("use_weight_free_export", False)
         onnx_path = export_dir / f"{self.model_name}.onnx"
         weight_spec_path = resolve_weight_spec_path(onnx_path)
@@ -698,6 +700,7 @@ class QEFFBaseModel(ABC):
         qaic_config: Optional[dict] = None,
         moe_prefill_packed_chunk_size: Optional[int] = None,
         use_weight_free_export: Optional[bool] = False,
+        mla_absorption: Optional[bool] = None,
         kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ):

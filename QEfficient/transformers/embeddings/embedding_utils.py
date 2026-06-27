@@ -97,6 +97,16 @@ class PooledModel(nn.Module):
         output = self.base_model(input_ids, attention_mask, **kwargs)
         return self.pooling_fn(output[0], attention_mask)
 
+    def get_input_embeddings(self):
+        if hasattr(self.base_model, "get_input_embeddings"):
+            return self.base_model.get_input_embeddings()
+        return None
+
+    def get_output_embeddings(self):
+        if hasattr(self.base_model, "get_output_embeddings"):
+            return self.base_model.get_output_embeddings()
+        return None
+
 
 def validate_user_pooling_function(user_function):
     """

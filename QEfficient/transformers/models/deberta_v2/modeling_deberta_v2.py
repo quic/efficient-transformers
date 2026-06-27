@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import math
 import torch
 from torch import nn
 from transformers.models.deberta_v2.modeling_deberta_v2 import (
@@ -20,11 +21,11 @@ def make_log_bucket_position_onnx(relative_pos, bucket_size: int, max_position: 
     # Instead of torch.where with complex conditions, use mask-based approach
     # Original: torch.where((relative_pos < mid) & (relative_pos > -mid), mid-1, abs_pos)
     is_in_mid_range = abs_pos < mid
-    abs_pos_clamped = torch.where(is_in_mid_range, torch.tensor(mid - 1).type_as(relative_pos), abs_pos)
+    abs_pos_clamped = torch.where(is_in_mid_range, relative_pos.new_full((), mid - 1), abs_pos)
 
     # Compute log position
     log_pos = (
-        torch.ceil(torch.log(abs_pos_clamped / mid) / torch.log(torch.tensor((max_position - 1) / mid)) * (mid - 1))
+        torch.ceil(torch.log(abs_pos_clamped / mid) / math.log((max_position - 1) / mid) * (mid - 1))
         + mid
     )
 
@@ -65,8 +66,12 @@ def pos_dynamic_expand_onnx(pos_index, p2c_att, key_layer):
     return pos_index.expand(p2c_att.size()[:2] + (pos_index.size(-2), key_layer.size(-2)))
 
 
-def scaled_size_sqrt_onnx(query_layer: torch.Tensor, scale_factor: int):
-    return torch.sqrt(torch.tensor(query_layer.size(-1), dtype=torch.float) * scale_factor)
+def scaled_size_sqrt_onnx(query_layer: torch.Tensor, scale_factor: int) -> float:
+    # Return a plain Python float so no tensor constant is created inside
+    # the subfunction body during weight-free dynamo export.
+    # torch.tensor(...) here would produce a FakeTensor that cannot be
+    # serialized when saving the ONNX program with meta tensors.
+    return math.sqrt(query_layer.size(-1) * scale_factor)
 
 
 def build_rpos_onnx(query_layer, key_layer, relative_pos, position_buckets: int, max_relative_positions: int):
@@ -147,7 +152,7 @@ class QEffDisentangledSelfAttention(DisentangledSelfAttention):
                 dim=-1,
                 index=c2p_pos.squeeze(0).expand([query_layer.size(0), query_layer.size(1), relative_pos.size(-1)]),
             )
-            score += c2p_att / scale.to(dtype=c2p_att.dtype)
+            score += c2p_att / scale
 
         # position->content
         if "p2c" in self.pos_att_type:
@@ -166,7 +171,7 @@ class QEffDisentangledSelfAttention(DisentangledSelfAttention):
                 dim=-1,
                 index=p2c_pos.squeeze(0).expand([query_layer.size(0), key_layer.size(-2), key_layer.size(-2)]),
             ).transpose(-1, -2)
-            score += p2c_att / scale.to(dtype=p2c_att.dtype)
+            score += p2c_att / scale
 
         return score
 
@@ -196,7 +201,7 @@ class QEffDisentangledSelfAttention(DisentangledSelfAttention):
         if "p2c" in self.pos_att_type:
             scale_factor += 1
         scale = scaled_size_sqrt_onnx(query_layer, scale_factor)
-        attention_scores = torch.bmm(query_layer, key_layer.transpose(-1, -2) / scale.to(dtype=query_layer.dtype))
+        attention_scores = torch.bmm(query_layer, key_layer.transpose(-1, -2) / scale)
         if self.relative_attention:
             rel_embeddings = self.pos_dropout(rel_embeddings)
             rel_att = self.disentangled_attention_bias(
