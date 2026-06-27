@@ -28,6 +28,7 @@ Patches removed (upstreamed to PyTorch):
 
 import inspect
 from contextlib import contextmanager
+import inspect
 
 import torch
 import torch.onnx.utils as onnx_utils
@@ -295,7 +296,6 @@ def temporarily_enable_nested_compile_regions(model, target_classes=None):
     Wrap selected module ``forward`` methods with ``nested_compile_region``
     during export so repeated block functions are materialized by dynamo.
     """
-
     target_classes = tuple(target_classes) if target_classes else None
     patched_modules = []
 
@@ -338,6 +338,7 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
     forward() methods do not create unwanted subgraph splits during tracing.
     """
 
+
     target_classes = tuple(target_classes) if target_classes else None
     patched_modules = []
 
@@ -356,6 +357,7 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
                 continue
 
             # Extract the original forward from the closure
+
             closure = getattr(wrapped_forward, "__closure__", None) or ()
             original_forward = next(
                 (cell.cell_contents for cell in closure if inspect.isfunction(cell.cell_contents)),

@@ -9,7 +9,7 @@ import os
 import warnings
 from pathlib import Path
 from time import perf_counter
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import onnx
@@ -32,7 +32,12 @@ from transformers import (
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.base.onnx_transforms import FP16ClipTransform, RewriteUnsupportedOpsTransform
+from QEfficient.base.onnx_transforms import (
+    FP16ClipTransform,
+    RewriteUnsupportedOpsTransform,
+    SplitMultiInputMaxMinTransform,
+    SplitTensorsTransform,
+)
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
@@ -3468,7 +3473,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         KVCacheExternalModuleMapperTransform,
     ]
 
-    _onnx_transforms = [RewriteUnsupportedOpsTransform]
+    _onnx_transforms = [RewriteUnsupportedOpsTransform, SplitMultiInputMaxMinTransform]
 
     def prefill(
         self,
@@ -4262,9 +4267,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 kv_cache_prefix=kv_cache_prefix,
             )
         else:
+            use_dynamo = kwargs.get("use_dynamo", False)
+            use_weight_free_export = kwargs.get("use_weight_free_export", False)
             dynamic_shapes = None
-            if use_dynamo:
-                dynamic_shapes = self.convert_dynamic_axes_to_dynamic_shapes(dynamic_axes)
+            if use_dynamo or use_weight_free_export:
+                dynamic_shapes = self.convert_dynamic_axes_to_dynamic_shapes(dynamic_axes, example_inputs)
 
             return self._export(
                 example_inputs,
@@ -4273,10 +4280,87 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 export_dir=export_dir,
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
                 use_dynamo=use_dynamo,
+                use_weight_free_export=use_weight_free_export,
                 dynamic_shapes=dynamic_shapes,
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
                 prefill_only=prefill_only,
             )
+
+    def convert_dynamic_axes_to_dynamic_shapes(
+        self, dynamic_axes: Dict[str, Dict[int, str]], example_inputs: Dict
+    ) -> Dict:
+        """Convert ONNX dynamic_axes to torch.export dynamic_shapes format.
+
+        Reconstructs grouped args (past_key_values, compressed_kvs) from flat
+        ONNX names (past_key.0, past_value.0) back to the nested structure that
+        model.forward() accepts.
+        """
+        from torch.export import Dim
+
+        max_seq_len = getattr(self.model.config, "max_position_embeddings", 1024)
+        dim_registry: Dict[str, Any] = {}
+
+        def make_dim(dim_name: str) -> Any:
+            if dim_name in dim_registry:
+                return dim_registry[dim_name]
+            if dim_name == "batch_size":
+                d = Dim("batch_size", min=1, max=64)
+            elif "seq_len" in dim_name:
+                d = Dim("seq_len", min=2, max=max_seq_len)
+            elif "ctx_len" in dim_name:
+                d = Dim("ctx_len", min=2, max=max_seq_len)
+            elif "sliding_window" in dim_name:
+                d = Dim("sliding_window", min=2, max=getattr(self.model.config, "sliding_window", max_seq_len))
+            else:
+                d = Dim(dim_name, min=1, max=4096)
+            dim_registry[dim_name] = d
+            return d
+
+        GROUPED_PREFIXES = ("past_key.", "past_value.", "indexer_key_cache.", "compressed_kv.", "k_pe.")
+        dynamic_shapes: Dict[str, Any] = {}
+
+        # Flat inputs: directly match top-level forward() arg names
+        for input_name, axes_map in dynamic_axes.items():
+            if not any(input_name.startswith(p) for p in GROUPED_PREFIXES):
+                dynamic_shapes[input_name] = {i: make_dim(n) for i, n in axes_map.items()}
+
+        # past_key_values → [[key_0, val_0], [key_1, val_1], ...]
+        past_keys: Dict[int, Dict] = {}
+        past_values: Dict[int, Dict] = {}
+        for input_name, axes_map in dynamic_axes.items():
+            if input_name.startswith("past_key."):
+                idx = int(input_name.split(".")[1])
+                past_keys[idx] = {i: make_dim(n) for i, n in axes_map.items()}
+            elif input_name.startswith("past_value."):
+                idx = int(input_name.split(".")[1])
+                past_values[idx] = {i: make_dim(n) for i, n in axes_map.items()}
+        if past_keys or past_values:
+            max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
+            dynamic_shapes["past_key_values"] = [
+                [past_keys.get(i, {}), past_values.get(i, {})] for i in range(max_layer + 1)
+            ]
+
+        # compressed_kvs → [[ckv_0, k_pe_0], ...]
+        ckv: Dict[int, Dict] = {}
+        k_pe: Dict[int, Dict] = {}
+        for input_name, axes_map in dynamic_axes.items():
+            if input_name.startswith("compressed_kv."):
+                ckv[int(input_name.split(".")[1])] = {i: make_dim(n) for i, n in axes_map.items()}
+            elif input_name.startswith("k_pe."):
+                k_pe[int(input_name.split(".")[1])] = {i: make_dim(n) for i, n in axes_map.items()}
+        if ckv or k_pe:
+            max_idx = max(list(ckv.keys()) + list(k_pe.keys()))
+            dynamic_shapes["compressed_kvs"] = [[ckv.get(i, {}), k_pe.get(i, {})] for i in range(max_idx + 1)]
+
+        # Ensure every example_inputs key is present with a matching structure
+        def _none_struct(v: Any) -> Any:
+            return [_none_struct(x) for x in v] if isinstance(v, (list, tuple)) else None
+
+        for k, v in example_inputs.items():
+            if k not in dynamic_shapes:
+                dynamic_shapes[k] = _none_struct(v)
+
+        return dynamic_shapes
 
     def build_prefill_specialization(
         self,

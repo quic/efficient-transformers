@@ -5,3 +5,4 @@
 #
 # -----------------------------------------------------------------------------
 
+from QEfficient.exporter.weight_spec import load_weight_spec, resolve_weight_spec_path

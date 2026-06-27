@@ -13,14 +13,20 @@ from QEfficient.utils import constants
 from QEfficient.utils.custom_op_utils import select_interface
 
 ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
+# opset 18+ moved ReduceMean's axes from attribute to tensor input.
+# CustomRMSNorm uses opset18 throughout so OnnxRT (validating against the outer
+# opset 20 graph) accepts the function body. QAIC ignores the body and uses its
+# own native implementation.
+ops18 = onnxscript.opset18
 
 
 @onnxscript.script(onnxscript.values.Opset(domain="com.qti.aisw.onnx", version=1))
 def CustomRMSNorm(hidden_states: onnxscript.FLOAT, weight: onnxscript.FLOAT, epsilon: float) -> onnxscript.FLOAT:
-    weight = ops.Cast(weight, to=1)
-    variance = ops.ReduceMean(ops.Pow(hidden_states, 2), axes=[-1], keepdims=1)
-    epsilon = ops.Expand(epsilon, ops.Shape(variance))
-    hidden_states = hidden_states * ops.Reciprocal(ops.Sqrt(variance + epsilon))
+    weight = ops18.Cast(weight, to=1)
+    reduce_axes = ops18.Constant(value_ints=[-1])
+    variance = ops18.ReduceMean(ops18.Pow(hidden_states, 2), reduce_axes, keepdims=1)
+    epsilon = ops18.Expand(epsilon, ops18.Shape(variance))
+    hidden_states = hidden_states * ops18.Reciprocal(ops18.Sqrt(variance + epsilon))
     return weight * hidden_states
 
 

@@ -142,6 +142,115 @@ def get_decoder_layer_classes_for_export(model):
     return []
 
 
+def _resolve_attr_path(root, attr_path):
+    current = root
+    for attr in attr_path.split("."):
+        if current is None or not hasattr(current, attr):
+            return None
+        current = getattr(current, attr)
+    return current
+
+
+def _extract_repeated_block_class(candidate):
+    if isinstance(candidate, (nn.ModuleList, nn.Sequential, list, tuple)):
+        modules = [item for item in candidate if isinstance(item, nn.Module)]
+        if len(modules) < 2:
+            return None
+        first_cls = modules[0].__class__
+        if all(isinstance(item, first_cls) for item in modules):
+            return first_cls
+    return None
+
+
+def _discover_submodule_classes_for_export(model):
+    discovered = set()
+
+    attr_paths = [
+        "layers",
+        "h",
+        "model.layers",
+        "model.h",
+        "decoder.layers",
+        "model.decoder.layers",
+        "encoder.layer",
+        "encoder.layers",
+        "model.encoder.layer",
+        "model.encoder.layers",
+        "transformer.h",
+        "transformer.layers",
+        "model.transformer.h",
+        "model.transformer.layers",
+        "language_model.layers",
+        "language_model.model.layers",
+        "llm.layers",
+        "llm.model.layers",
+        "vision_model.encoder.layers",
+        "vision_model.transformer.layers",
+        "model.vision_model.encoder.layers",
+        "model.vision_model.transformer.layers",
+        "vision_tower.transformer.layers",
+        "vision_tower.vision_model.encoder.layers",
+        "model.vision_tower.transformer.layers",
+        "model.vision_tower.vision_model.encoder.layers",
+    ]
+
+    for attr_path in attr_paths:
+        candidate = _resolve_attr_path(model, attr_path)
+        repeated_cls = _extract_repeated_block_class(candidate)
+        if repeated_cls is not None:
+            discovered.add(repeated_cls)
+
+    if discovered:
+        return discovered
+
+    repeated_suffixes = (
+        ".layers",
+        ".layer",
+        ".h",
+        ".blocks",
+        ".block",
+        ".encoder_layers",
+        ".decoder_layers",
+    )
+
+    for module_name, module in model.named_modules():
+        if not module_name:
+            continue
+        if not module_name.endswith(repeated_suffixes):
+            continue
+        repeated_cls = _extract_repeated_block_class(module)
+        if repeated_cls is None:
+            continue
+        cls_name = repeated_cls.__name__.lower()
+        if any(token in cls_name for token in ("layer", "block", "decoder", "encoder")):
+            discovered.add(repeated_cls)
+
+    return discovered
+
+
+def get_decoder_layer_classes_for_export(model):
+    get_submodules_for_export = getattr(model, "get_submodules_for_export", None)
+    if get_submodules_for_export is not None:
+        try:
+            submodule_classes = get_submodules_for_export()
+            if submodule_classes:
+                return {cls for cls in submodule_classes if inspect.isclass(cls)}
+        except Exception as exc:
+            logger.warning(
+                f"get_submodules_for_export failed for {model.__class__.__name__}: "
+                f"{type(exc).__name__}: {exc}. Falling back to auto-discovery."
+            )
+
+    discovered = _discover_submodule_classes_for_export(model)
+    if discovered:
+        logger.info(
+            "Auto-discovered repeated submodule classes for export: "
+            + ", ".join(sorted(cls.__name__ for cls in discovered))
+        )
+        return discovered
+    return []
+
+
 def export_wrapper(func):
     """
     Decorator for export methods that orchestrates the complete export lifecycle.

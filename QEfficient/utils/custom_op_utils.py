@@ -77,6 +77,7 @@ def ctx_gather_op(data: torch.Tensor, ctx_indices: torch.Tensor, comp_ctx_len: i
     return data[batch_indices, head_indices, ctx_indices]
 
 
+
 # @ctx_gather_op.register_fake
 # def _(
 #     data: torch.Tensor,
