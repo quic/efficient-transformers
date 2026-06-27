@@ -22,14 +22,8 @@
 // Helpers
 // ---------------------------------------------------------------------------
 
-def qaicTimeoutMinutes(int minutes) { return minutes }
-def qaicTimeoutUnit()               { return 'MINUTES' }
-
 // Common ignore flags shared by every pytest invocation.
 def PYTEST_IGNORE = '--ignore tests/unit_test --ignore tests/finetune --ignore tests/vllm --ignore tests/nightly_pipeline'
-
-// Noise filter applied to all pytest output.
-def OUTPUT_FILTER = "grep -Ev 'shape_type_inference|CtxGather3D type is missing'"
 
 // ---------------------------------------------------------------------------
 // Pipeline
@@ -121,7 +115,6 @@ pipeline {
                 stage('Non-QAIC: LLM') {
                     steps {
                         catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                            timeout(time: qaicTimeoutMinutes(30), unit: qaicTimeoutUnit()) {
                                 sh """
                                 sudo docker exec ${BUILD_TAG} bash -c "
                                     cd /efficient-transformers &&
@@ -134,19 +127,17 @@ pipeline {
                                         ${PYTEST_IGNORE} \
                                         -n auto --dist worksteal \
                                         --junitxml=tests/tests_log_non_qaic_llm.xml \
-                                        --durations=10 2>&1 | ${OUTPUT_FILTER} &&
+                                        --log-level=ERROR --no-header &&
                                     junitparser merge tests/tests_log_non_qaic_llm.xml tests/tests_log.xml &&
                                     deactivate"
                                 """
                             }
-                        }
                     }
                 }
 
                 stage('Non-QAIC: VLM') {
                     steps {
                         catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                            timeout(time: qaicTimeoutMinutes(30), unit: qaicTimeoutUnit()) {
                                 sh """
                                 sudo docker exec ${BUILD_TAG} bash -c "
                                     cd /efficient-transformers &&
@@ -159,19 +150,17 @@ pipeline {
                                         ${PYTEST_IGNORE} \
                                         -n auto --dist worksteal \
                                         --junitxml=tests/tests_log_non_qaic_vlm.xml \
-                                        --durations=10 2>&1 | ${OUTPUT_FILTER} &&
+                                        --log-level=ERROR --no-header &&
                                     junitparser merge tests/tests_log_non_qaic_vlm.xml tests/tests_log.xml &&
                                     deactivate"
                                 """
                             }
-                        }
                     }
                 }
 
                 stage('Non-QAIC: Diffusion') {
                     steps {
                         catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                            timeout(time: qaicTimeoutMinutes(30), unit: qaicTimeoutUnit()) {
                                 sh """
                                 sudo docker exec ${BUILD_TAG} bash -c "
                                     cd /efficient-transformers &&
@@ -184,19 +173,17 @@ pipeline {
                                         ${PYTEST_IGNORE} \
                                         -n auto --dist worksteal \
                                         --junitxml=tests/tests_log_non_qaic_diffusion.xml \
-                                        --durations=10 2>&1 | ${OUTPUT_FILTER} &&
+                                        --log-level=ERROR --no-header &&
                                     junitparser merge tests/tests_log_non_qaic_diffusion.xml tests/tests_log.xml &&
                                     deactivate"
                                 """
                             }
-                        }
                     }
                 }
 
                 stage('Non-QAIC: Other') {
                     steps {
                         catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                            timeout(time: qaicTimeoutMinutes(30), unit: qaicTimeoutUnit()) {
                                 sh """
                                 sudo docker exec ${BUILD_TAG} bash -c "
                                     cd /efficient-transformers &&
@@ -209,12 +196,11 @@ pipeline {
                                         ${PYTEST_IGNORE} \
                                         -n auto --dist worksteal \
                                         --junitxml=tests/tests_log_non_qaic_other.xml \
-                                        --durations=10 2>&1 | ${OUTPUT_FILTER} &&
+                                        --log-level=ERROR --no-header &&
                                     junitparser merge tests/tests_log_non_qaic_other.xml tests/tests_log.xml &&
                                     deactivate"
                                 """
                             }
-                        }
                     }
                 }
 
@@ -228,7 +214,6 @@ pipeline {
             when { expression { params.RUN_QAIC_LLM } }
             steps {
                 catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    timeout(time: qaicTimeoutMinutes(45), unit: qaicTimeoutUnit()) {
                         sh """
                         sudo docker exec ${BUILD_TAG} bash -c "
                             cd /efficient-transformers &&
@@ -243,12 +228,11 @@ pipeline {
                                 ${PYTEST_IGNORE} \
                                 -n ${QAIC_N} --dist worksteal \
                                 --junitxml=tests/tests_log_qaic_llm.xml \
-                                --durations=10 2>&1 | ${OUTPUT_FILTER} &&
+                                --log-level=ERROR --no-header &&
                             junitparser merge tests/tests_log_qaic_llm.xml tests/tests_log.xml &&
                             deactivate"
                         """
                     }
-                }
             }
         }
 
@@ -256,7 +240,6 @@ pipeline {
             when { expression { params.RUN_QAIC_VLM } }
             steps {
                 catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    timeout(time: qaicTimeoutMinutes(30), unit: qaicTimeoutUnit()) {
                         sh """
                         sudo docker exec ${BUILD_TAG} bash -c "
                             cd /efficient-transformers &&
@@ -271,12 +254,11 @@ pipeline {
                                 ${PYTEST_IGNORE} \
                                 -n ${QAIC_N} --dist worksteal \
                                 --junitxml=tests/tests_log_qaic_vlm.xml \
-                                --durations=10 2>&1 | ${OUTPUT_FILTER} &&
+                                --log-level=ERROR --no-header &&
                             junitparser merge tests/tests_log_qaic_vlm.xml tests/tests_log.xml &&
                             deactivate"
                         """
                     }
-                }
             }
         }
 
@@ -284,7 +266,6 @@ pipeline {
             when { expression { params.RUN_QAIC_DIFFUSION } }
             steps {
                 catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    timeout(time: qaicTimeoutMinutes(60), unit: qaicTimeoutUnit()) {
                         sh """
                         sudo docker exec ${BUILD_TAG} bash -c "
                             cd /efficient-transformers &&
@@ -300,12 +281,11 @@ pipeline {
                                 ${PYTEST_IGNORE} \
                                 -n 2 --dist worksteal \
                                 --junitxml=tests/tests_log_qaic_diffusion.xml \
-                                --durations=10 2>&1 | ${OUTPUT_FILTER} &&
+                                --log-level=ERROR --no-header &&
                             junitparser merge tests/tests_log_qaic_diffusion.xml tests/tests_log.xml &&
                             deactivate"
                         """
                     }
-                }
             }
         }
 
@@ -314,7 +294,6 @@ pipeline {
             when { expression { params.RUN_FINETUNE } }
             steps {
                 catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    timeout(time: qaicTimeoutMinutes(20), unit: qaicTimeoutUnit()) {
                         sh """
                         sudo docker exec ${BUILD_TAG} bash -c "
                             cd /efficient-transformers &&
@@ -328,12 +307,11 @@ pipeline {
                             pytest tests -m 'finetune' \
                                 --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline \
                                 --junitxml=tests/tests_log_finetune.xml \
-                                --durations=10 2>&1 | ${OUTPUT_FILTER} &&
+                                --log-level=ERROR --no-header &&
                             junitparser merge tests/tests_log_finetune.xml tests/tests_log.xml &&
                             deactivate"
                         """
                     }
-                }
             }
         }
 
