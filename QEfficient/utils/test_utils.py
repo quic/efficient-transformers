@@ -20,7 +20,7 @@ try:
     # Test-only override map. Living under tests/ so it's never imported in
     # production code paths — the import is wrapped in try/except to keep
     # production users insulated from a missing `tests/` dir on installed wheels.
-    from tests.utils.tiny_overrides import resolve_model_id as _resolve_model_id  # type: ignore
+    from tests.utils.profile_test_config import resolve_model_id as _resolve_model_id  # type: ignore
 except Exception:  # pragma: no cover - production path
 
     def _resolve_model_id(model_id: str) -> str:

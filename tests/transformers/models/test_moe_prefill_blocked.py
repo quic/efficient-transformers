@@ -7,6 +7,7 @@
 import copy
 from collections import Counter
 
+import pytest
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM
 
@@ -32,6 +33,7 @@ GLM4_MOE_CFG = dict(
 )
 
 
+@pytest.mark.non_qaic
 def test_glm4_moe_blocked_prefill_forward_parity():
     from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
         QEffGlm4MoeMoE,
@@ -61,6 +63,7 @@ def test_glm4_moe_blocked_prefill_forward_parity():
     assert torch.allclose(orig, blocked, atol=1e-4, rtol=1e-4)
 
 
+@pytest.mark.non_qaic
 def test_glm4_moe_decode_export(tmp_path):
     config = AutoConfig.for_model("glm4_moe", **GLM4_MOE_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
@@ -69,6 +72,7 @@ def test_glm4_moe_decode_export(tmp_path):
     assert qeff.onnx_path.is_file()
 
 
+@pytest.mark.non_qaic
 def test_glm4_moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(tmp_path):
     import onnx
 
@@ -101,6 +105,7 @@ def test_glm4_moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
         assert op_counts["CtxScatter3DInt"] == 2
 
 
+@pytest.mark.non_qaic
 def test_glm4_moe_kv_blocking_transform_and_prefill_export(tmp_path):
     import onnx
 
@@ -168,6 +173,7 @@ GPTOSS_CFG = dict(
 # ── Qwen3MOE ──────────────────────────────────────────────────────────────────
 
 
+@pytest.mark.non_qaic
 def test_qwen3moe_blocked_forward_parity():
     from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
         QEffPrefillChunkedQwen3MoeSparseMoeBlock,
@@ -199,6 +205,7 @@ def test_qwen3moe_blocked_forward_parity():
     assert (orig - blocked).abs().max().item() < 0.1, "Qwen3MOE parity failed"
 
 
+@pytest.mark.non_qaic
 def test_qwen3moe_decode_export(tmp_path):
     config = AutoConfig.for_model("qwen3_moe", **QWEN3_MOE_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
@@ -207,6 +214,7 @@ def test_qwen3moe_decode_export(tmp_path):
     assert qeff.onnx_path.is_file()
 
 
+@pytest.mark.non_qaic
 def test_qwen3moe_prefill_chunked_export(tmp_path):
     config = AutoConfig.for_model("qwen3_moe", **QWEN3_MOE_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
@@ -215,6 +223,7 @@ def test_qwen3moe_prefill_chunked_export(tmp_path):
     assert qeff.onnx_path.is_file()
 
 
+@pytest.mark.non_qaic
 def test_qwen3moe_disagg_compile_uses_distinct_decode_and_prefill_onnx(tmp_path, monkeypatch):
     import subprocess
 
@@ -265,6 +274,7 @@ def test_qwen3moe_disagg_compile_uses_distinct_decode_and_prefill_onnx(tmp_path,
     assert compiled_onnx_args[1] == f"-m={prefill_onnx_path}"
 
 
+@pytest.mark.non_qaic
 def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(tmp_path):
     import onnx
     from onnx import numpy_helper
@@ -311,6 +321,7 @@ def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
 # ── GPT-OSS ───────────────────────────────────────────────────────────────────
 
 
+@pytest.mark.non_qaic
 def test_gptoss_blocked_forward_parity():
     from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import (
         QEffPrefillOnlyChunkedGptOssMLP,
@@ -342,6 +353,7 @@ def test_gptoss_blocked_forward_parity():
     assert (orig - blocked).abs().max().item() < 0.1, "GPT-OSS parity failed"
 
 
+@pytest.mark.non_qaic
 def test_gptoss_decode_export(tmp_path):
     config = AutoConfig.for_model("gpt_oss", **GPTOSS_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
@@ -350,6 +362,7 @@ def test_gptoss_decode_export(tmp_path):
     assert qeff.onnx_path.is_file()
 
 
+@pytest.mark.non_qaic
 def test_gptoss_prefill_chunked_export(tmp_path):
     config = AutoConfig.for_model("gpt_oss", **GPTOSS_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
@@ -358,6 +371,7 @@ def test_gptoss_prefill_chunked_export(tmp_path):
     assert qeff.onnx_path.is_file()
 
 
+@pytest.mark.non_qaic
 def test_gptoss_prefill_chunked_export_traces_packed_chunks(tmp_path):
     import onnx
     from onnx import numpy_helper

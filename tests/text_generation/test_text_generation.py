@@ -17,7 +17,11 @@ from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.device_utils import get_available_device_id
 
-configs = [pytest.param("gpt2", 2, None, 32, id="gpt2_config")]
+test_models_dict = {"gpt2": "hf-internal-testing/tiny-random-GPT2LMHeadModel"}
+
+test_models = list(test_models_dict.keys())
+if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
+    test_models = list(test_models_dict.values())
 
 
 def load_causal_lm_model(model_config):
@@ -36,7 +40,6 @@ def load_causal_lm_model(model_config):
     model_hf = AutoModelForCausalLM.from_pretrained(
         model_path,
         use_cache=True,
-        num_hidden_layers=model_config["n_layer"],
         attn_implementation="eager",
         low_cpu_mem_usage=False,
     )  # Run models for single layers only
@@ -45,15 +48,14 @@ def load_causal_lm_model(model_config):
     return model_hf, params
 
 
-# Use @pytest.mark.parametrize to apply the configurations
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.parametrize("model_name, n_layer, full_batch_size, max_gen_len", configs)
+@pytest.mark.qaic
+@pytest.mark.llm
+@pytest.mark.parametrize("model_name", test_models)
 def test_generate_text_stream(
     model_name: str,
-    n_layer: int,
-    full_batch_size: int,
-    max_gen_len: int,
+    n_layer: int = -1,
+    full_batch_size: int = None,
+    max_gen_len: int = 32,
     prompt_len: int = Constants.PROMPT_LEN,
     ctx_len: int = Constants.CTX_LEN,
 ):
@@ -81,7 +83,6 @@ def test_generate_text_stream(
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
-        num_cores=14,
         mxfp6=False,
         aic_enable_depth_first=False,
         full_batch_size=full_batch_size,

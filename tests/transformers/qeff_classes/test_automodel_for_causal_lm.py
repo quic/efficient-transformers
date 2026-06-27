@@ -80,6 +80,7 @@ prefill_only_config_ids = [x.model_type for x in prefill_only_configs]
 model_kwargs = {"attn_implementation": "eager"}
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 def test_causal_lm_unsupported(cb):
     model = AutoModelForCausalLM.from_config(AutoConfig.for_model("opt"))
@@ -87,6 +88,7 @@ def test_causal_lm_unsupported(cb):
         QEFFAutoModelForCausalLM(model, cb)
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_causal_lm_init(config, cb):
@@ -97,6 +99,7 @@ def test_causal_lm_init(config, cb):
     assert qeff_model.model.__class__.__name__.startswith("QEff")
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_causal_lm_pretrained(config, cb, tmp_path):
@@ -107,6 +110,7 @@ def test_causal_lm_pretrained(config, cb, tmp_path):
     assert qeff_model.model.__class__.__name__.startswith("QEff")
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_causal_lm_export_and_hash(config, cb, tmp_path):
@@ -160,6 +164,7 @@ def test_causal_lm_export_and_hash(config, cb, tmp_path):
         assert hash_0_0 != hash_0_no_cb
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 @pytest.mark.parametrize("subfunc", [False, True], ids=["non-subfunc", "subfunc"])
 @pytest.mark.parametrize("prefill_only", [False, True], ids=["pref+decode", "prefill-only"])
@@ -235,6 +240,7 @@ def test_causal_lm_hash_creation(config, cb, subfunc, prefill_only, tmp_path):
     assert manual_hash == qeff_model.export_hash
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 @pytest.mark.parametrize("config", prefill_only_configs, ids=prefill_only_config_ids)
 def test_prefill_only_specialized_models(config, cb, tmp_path):
@@ -259,6 +265,7 @@ def tmp_cache(tmp_path, monkeypatch):
     yield tmp_path
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("prefill_only", [False, True], ids=["pref+decode", "prefill_only"])
 @pytest.mark.parametrize("cb", [False, True], ids=["nocb", "cb"])
 @pytest.mark.parametrize("config", configs, ids=config_ids)
@@ -298,6 +305,7 @@ def test_causal_lm_compile(config, cb, prefill_only, tmp_cache):
 
 
 # FIXME: there should be a CB test here
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", ["gpt2"], ids=lambda x: x)
 def test_causal_lm_export_with_deprecated_api(model_name):
     model = AutoModelForCausalLM.from_pretrained(

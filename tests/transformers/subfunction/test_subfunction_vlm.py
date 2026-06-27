@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import json
 import os
 from typing import Optional
 
@@ -21,17 +20,12 @@ from transformers import (
 
 from QEfficient.utils.test_utils import load_qeff_vlm_model
 
-NEW_GENERATION_TOKENS = 10
+vlm_subfunction_models_dict = {"Qwen2.5-VL-3B-Instruct": "optimum-intel-internal-testing/tiny-random-qwen2.5-vl"}
 
-
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/image_text_model_configs.json")
-
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    multimodal_models = config_data["image_text_subfunction_models"]
-
-test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
-model_config_dict = {model["model_name"]: model for model in multimodal_models}
+if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
+    test_mm_models = list(vlm_subfunction_models_dict.values())
+else:
+    test_mm_models = list(vlm_subfunction_models_dict.keys())
 
 
 def has_QwenLayer_function(onnx_path):
@@ -44,18 +38,17 @@ def has_QwenLayer_function(onnx_path):
 
 def check_image_text_to_text_subfunction_core(
     model_name: str,
-    manual_cleanup: callable,
     kv_offload: bool = False,
     num_hidden_layers: int = -1,
     num_devices: int = 1,
     config: Optional[AutoConfig] = None,
 ):
-    img_size = model_config_dict[model_name]["img_size"]
-    img_url = model_config_dict[model_name]["img_url"]
-    query = model_config_dict[model_name]["text_prompt"]
-    prompt_len = model_config_dict[model_name]["prompt_len"]
-    ctx_len = model_config_dict[model_name]["ctx_len"]
-    batch_size = model_config_dict[model_name]["batch_size"]
+    batch_size = 1
+    prompt_len = 128
+    ctx_len = 4096
+    img_size = 1540
+    img_url = "https://picsum.photos/id/237/536/354"
+    query = "Can you describe the image in detail."
     enable_qnn = False
     qnn_config = None
 
@@ -108,41 +101,12 @@ def check_image_text_to_text_subfunction_core(
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
     )
-    manual_cleanup(qeff_model.onnx_path)
 
 
-@pytest.mark.full_layers
-@pytest.mark.feature
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])
-def test_full_image_text_to_text_subfunction(model_name, kv_offload, manual_cleanup):
+def test_image_text_to_text_subfunction(model_name, kv_offload):
     torch.manual_seed(42)
-    check_image_text_to_text_subfunction_core(model_name, kv_offload=kv_offload, manual_cleanup=manual_cleanup)
 
-
-@pytest.mark.few_layers
-@pytest.mark.feature
-@pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True])
-def test_few_image_text_to_text_subfunction(model_name, kv_offload, manual_cleanup):
-    torch.manual_seed(42)
-    check_image_text_to_text_subfunction_core(
-        model_name,
-        kv_offload=kv_offload,
-        num_hidden_layers=model_config_dict[model_name].get("n_layers", 2),
-        manual_cleanup=manual_cleanup,
-    )
-
-
-@pytest.mark.dummy_layers
-@pytest.mark.feature
-@pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True])
-def test_dummy_image_text_to_text_subfunction(model_name, kv_offload, manual_cleanup):
-    torch.manual_seed(42)
-    hf_config = AutoConfig.from_pretrained(
-        model_name, trust_remote_code=True, **model_config_dict[model_name].get("additional_params", {})
-    )
-    check_image_text_to_text_subfunction_core(
-        model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
-    )
+    check_image_text_to_text_subfunction_core(model_name, kv_offload=kv_offload)

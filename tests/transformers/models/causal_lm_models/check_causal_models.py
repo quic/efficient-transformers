@@ -24,11 +24,11 @@ from ..check_model_results import dump_and_compare_results
 
 
 def _tiny_lane_active() -> bool:
-    """True under per-PR profile (random-weight tinies). Token-equality on
+    """True under tiny_model profile (random-weight tinies). Token-equality on
     flat logits is an unreliable proxy here — fp16↔fp32 ULP drift flips argmax
-    constantly. Real-weight runs (full_layers_model / unset) keep strict checks.
+    constantly. Non-tiny / unset runs keep strict checks.
     """
-    return os.environ.get("QEFF_TEST_PROFILE", "").strip() in {"dummy_layers_model", "few_layers_model"}
+    return os.environ.get("QEFF_TEST_PROFILE", "").strip() == "tiny_model"
 
 
 def _tokens_match_or_first_token(reference, candidate, *, label: str, length: int = 24, vlm: bool = False) -> None:
@@ -44,7 +44,7 @@ def _tokens_match_or_first_token(reference, candidate, *, label: str, length: in
     runtime failures further into the decode loop), so we keep the strict
     first-token check until per-VLM mitigations are in.
 
-    Under full_layers_model (nightly) this is the original ``[:length]`` equality.
+    Under non-tiny profiles this is the original ``[:length]`` equality.
     """
     ref = np.asarray(reference)
     cand = np.asarray(candidate)
@@ -77,7 +77,6 @@ def get_custom_n_layers(model_name):
 
 def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
-    manual_cleanup: callable,
     num_devices: int = 1,
     continuous_batching: bool = False,
     prompt_len: int = Constants.PROMPT_LEN,
@@ -92,6 +91,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     qaic_config: Optional[dict] = None,
     retain_full_kv: Optional[bool] = None,
     compare_results: bool = False,
+    export_compile_only: Optional[bool] = False,
 ):
     torch.manual_seed(42)
     replace_transformers_quantizers()
@@ -188,6 +188,9 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     )
     assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
 
+    if export_compile_only:
+        return
+
     # Generate
     exec_info = qeff_model.generate(tokenizer, prompts=prompts)
 
@@ -220,7 +223,6 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
                 label="Tokens don't match for ONNXRT output and Cloud AI 100 output.",
             )
 
-    manual_cleanup(onnx_model_path)  # Clean up the model files after the tests are done.
     if compare_results is False:
         return
     # Compare results for full model only.

@@ -5,8 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
-import os
 from typing import Optional
 
 import pytest
@@ -19,10 +17,31 @@ from QEfficient.utils.test_utils import (
     load_qeff_model_with_sampler,
 )
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/feature_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    sampler_models = config_data["sampler_config"]
+sampler_models = [
+    {
+        "model_name": "hf-internal-testing/tiny-random-LlamaForCausalLM",
+        "is_vlm": False,
+        "prompts": ["My name is", "My name is"],
+        "image_urls": [],
+        "prefill_seq_len": 32,
+        "ctx_len": 64,
+        "generation_len": 20,
+        "full_batch_size": 2,
+        "spec_length": 1,
+    },
+    {
+        "model_name": "optimum-intel-internal-testing/tiny-random-internvl2",
+        "is_vlm": True,
+        "prompts": ["Can you describe the image in detail.", "Can you describe the image in detail."],
+        "image_urls": ["https://picsum.photos/id/237/536/354", "https://picsum.photos/id/237/536/354"],
+        "prefill_seq_len": 128,
+        "ctx_len": 4096,
+        "generation_len": 20,
+        "full_batch_size": 2,
+        "spec_length": None,
+    },
+]
+
 test_models = [model["model_name"] for model in sampler_models]
 model_config_dict = {model["model_name"]: model for model in sampler_models}
 
@@ -161,41 +180,10 @@ def check_sampler_transform(
     manual_cleanup(model_wo_sampler.onnx_path)
 
 
-@pytest.mark.full_layers
-@pytest.mark.on_qaic
-@pytest.mark.feature
+@pytest.mark.qaic
+@pytest.mark.llm  # FIXME split into llm and vllm later
 @pytest.mark.parametrize("model_name", test_models)
-def test_full_sampler_transform(model_name, manual_cleanup):
-    """
-    Test for full layer models if `SamplerTransform` adds nodes at the output of a `QEffForCausalLM model` to enable the
-    sampling of next tokens at the device (instead of the host) and returns the
-    next tokens and/or probability distributions.
-    """
-    # Export and compile QEfficient models
-    torch.manual_seed(42)
-    check_sampler_transform(model_name, manual_cleanup=manual_cleanup)
-
-
-@pytest.mark.few_layers
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.parametrize("model_name", test_models)
-def test_2layers_sampler_transform(model_name, manual_cleanup):
-    """
-    Test for 2 layers model if `SamplerTransform` adds nodes at the output of a `QEffForCausalLM model` to enable the
-    sampling of next tokens at the device (instead of the host) and returns the
-    next tokens and/or probability distributions.
-    """
-    # Export and compile QEfficient models
-    torch.manual_seed(42)
-    check_sampler_transform(model_name, num_hidden_layers=2, manual_cleanup=manual_cleanup)
-
-
-@pytest.mark.dummy_layers
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.parametrize("model_name", test_models)
-def test_dummy_sampler_transform(model_name: str, manual_cleanup):
+def test_sampler_transform(model_name: str):
     """
     Test for dummy model if `SamplerTransform` adds nodes at the output of a `QEffForCausalLM model` to enable the
     sampling of next tokens at the device (instead of the host) and returns the
@@ -203,9 +191,5 @@ def test_dummy_sampler_transform(model_name: str, manual_cleanup):
     """
     # Export and compile QEfficient models
     torch.manual_seed(42)
-    hf_config = AutoConfig.from_pretrained(
-        model_name,
-        trust_remote_code=True,
-        **model_config_dict[model_name].get("additional_params", {}),
-    )
-    check_sampler_transform(model_name, config=hf_config, manual_cleanup=manual_cleanup)
+
+    check_sampler_transform(model_name)

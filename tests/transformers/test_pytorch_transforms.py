@@ -221,6 +221,7 @@ def run_kv_cache_transform_and_test(
 
 
 # FIXME: Temporarily skip because Qwen3.5 gated RMSNorm fails in this generic test without a gate input.
+@pytest.mark.non_qaic
 @pytest.mark.skip(reason="Qwen3.5 gated RMSNorm requires gate input; generic RMSNorm test needs update")
 @pytest.mark.parametrize("input_size", [2, 5], ids=lambda x: "input_size=" + str(x))
 @pytest.mark.parametrize("hidden_size", [64, 1024], ids=lambda x: "hidden_size=" + str(x))
@@ -252,6 +253,7 @@ def test_rms_norm_ops_transform(module: torch.nn.Module, hidden_size: int, input
     assert torch.all(original_output == transformed_model_output)
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize(
     "config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance",
     KVCacheTransformTestConfigs,
@@ -292,6 +294,7 @@ def test_kv_cache_transform(
     )
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize(
     "config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance",
     SpDTransformTestConfigs,
@@ -334,6 +337,7 @@ def test_spd_transform(config_class, num_hidden_layers, num_attention_heads, hid
     )
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize(
     "config_class, num_hidden_layers, num_attention_heads, hidden_size, kwargs, logits_tolerance",
     SpDTransformProjTestConfigs,
@@ -389,6 +393,7 @@ def test_spd_proj_transform(
     )
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("in_features", [2048, 4096])
 @pytest.mark.parametrize("out_features", [2048, 4096])
 @pytest.mark.skipif(platform.machine() == "aarch64", reason="Test skipped on aarch64 platform")
@@ -414,6 +419,7 @@ def test_awq_to_matmulnbits_transform(in_features, out_features):
     )
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("in_features", [4096, 4096])
 @pytest.mark.parametrize("out_features", [4096, 4096])
 def test_gptq_to_matmulnbits_transform(in_features, out_features):
