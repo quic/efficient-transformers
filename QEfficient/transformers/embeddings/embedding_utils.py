@@ -107,6 +107,11 @@ class PooledModel(nn.Module):
             return self.base_model.get_output_embeddings()
         return None
 
+    def get_submodules_for_export(self):
+        if hasattr(self.base_model, "get_submodules_for_export"):
+            return self.base_model.get_submodules_for_export()
+        return None
+
 
 def validate_user_pooling_function(user_function):
     """
