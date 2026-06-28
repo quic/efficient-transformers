@@ -70,10 +70,17 @@ class CustomRMSNormAIC(nn.Module):
 
 
 class GemmaCustomRMSNormAIC(CustomRMSNormAIC):
-    """
-    Modify the init function to add +1 to the weights
+    """RMSNorm for Gemma using HF-compatible formula: output = (weight + 1.0) * norm(hidden_states).
+
+    HF's GemmaRMSNorm stores weight as zeros and adds 1.0 at forward time.
+    This class matches that behaviour so standard export AND weight-free export
+    both produce correct results — the +1.0 is applied at runtime, not stored.
     """
 
-    def __qeff_init__(self):
-        with torch.no_grad():
-            self.weight.copy_(self.weight + 1.0)
+    def forward(self, hidden_states):
+        rms_interface = select_interface(CustomRMSNormFunc.apply, torch.ops.qefficient.rms_norm)
+        return rms_interface(
+            hidden_states,
+            self.weight + 1.0,
+            self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps,
+        )
