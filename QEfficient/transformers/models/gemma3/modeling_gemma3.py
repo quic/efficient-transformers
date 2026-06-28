@@ -135,6 +135,8 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
+    cos = cos.to(device=q.device)
+    sin = sin.to(device=q.device)
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
 
@@ -168,8 +170,8 @@ def eager_attention_forward(
     mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
 
     if attention_mask is not None:
-        # Apply the attention mask
-        attn_weights = torch.where(attention_mask, mask_value, attn_weights)
+        masked_fill = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
+        attn_weights = torch.where(attention_mask, masked_fill, attn_weights)
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
