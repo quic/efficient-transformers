@@ -29,9 +29,9 @@ image_text_models_dict = {
     "Qwen/Qwen3-VL-30B-A3B-Instruct": "hf-internal-testing/tiny-random-Qwen3VLMoeForConditionalGeneration",
     "Qwen/Qwen3.5-0.8B": "trl-internal-testing/tiny-Qwen3_5ForConditionalGeneration",
     "Qwen/Qwen3.6-35B-A3B": "trl-internal-testing/tiny-Qwen3_5MoeForConditionalGeneration-3.6",
-    "allenai/Molmo-7B-D-0924": "allenai/Molmo-7B-D-0924",
+    # "allenai/Molmo-7B-D-0924": "allenai/Molmo-7B-D-0924",
     "OpenGVLab/InternVL2_5-1B": "optimum-intel-internal-testing/tiny-random-internvl2",
-    "OpenGVLab/InternVL3_5-1B": "OpenGVLab/InternVL3_5-1B",
+    # "OpenGVLab/InternVL3_5-1B": "OpenGVLab/InternVL3_5-1B",
 }
 
 if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":

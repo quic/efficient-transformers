@@ -7,7 +7,6 @@
 
 
 import os
-from pathlib import Path
 
 import pytest
 from transformers import logging
@@ -162,32 +161,32 @@ def _qaic_device_for_xdist_worker():
     os.environ["QAIC_VISIBLE_DEVICES"] = str(offset + (idx % cards))
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _qeff_home_per_xdist_worker():
-    """Give each xdist worker its own QEFF_HOME subdirectory so concurrent
-    export/compile cache writes do not race each other.  Serial runs are
-    untouched.
+# @pytest.fixture(scope="session", autouse=True)
+# def _qeff_home_per_xdist_worker():
+#     """Give each xdist worker its own QEFF_HOME subdirectory so concurrent
+#     export/compile cache writes do not race each other.  Serial runs are
+#     untouched.
 
-    Setting os.environ alone is insufficient because QEfficient.utils.cache
-    and QEfficient.utils.export_utils bind QEFF_HOME to a module-level
-    constant at import time.  Both module attributes are patched directly so
-    every call to _prepare_export_directory() resolves to the per-worker path.
-    """
-    idx = _xdist_worker_index()
-    if idx is None:
-        return
-    base = os.environ.get("QEFF_HOME")
-    if not base:
-        return
+#     Setting os.environ alone is insufficient because QEfficient.utils.cache
+#     and QEfficient.utils.export_utils bind QEFF_HOME to a module-level
+#     constant at import time.  Both module attributes are patched directly so
+#     every call to _prepare_export_directory() resolves to the per-worker path.
+#     """
+#     idx = _xdist_worker_index()
+#     if idx is None:
+#         return
+#     base = os.environ.get("QEFF_HOME")
+#     if not base:
+#         return
 
-    import QEfficient.utils.cache as _cache_mod
-    import QEfficient.utils.export_utils as _export_mod
+#     import QEfficient.utils.cache as _cache_mod
+#     import QEfficient.utils.export_utils as _export_mod
 
-    worker_home = Path(base) / f"worker_{idx}"
-    worker_home.mkdir(parents=True, exist_ok=True)
-    os.environ["QEFF_HOME"] = str(worker_home)
-    _cache_mod.QEFF_HOME = worker_home
-    _export_mod.QEFF_HOME = worker_home
+#     worker_home = Path(base) / f"worker_{idx}"
+#     worker_home.mkdir(parents=True, exist_ok=True)
+#     os.environ["QEFF_HOME"] = str(worker_home)
+#     _cache_mod.QEFF_HOME = worker_home
+# _export_mod.QEFF_HOME = worker_home
 
 
 def pytest_sessionstart(session):

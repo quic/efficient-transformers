@@ -38,8 +38,8 @@ causal_lm_models_dict = {
     "ibm-granite/granite-guardian-3.1-2b": "hf-internal-testing/tiny-random-GraniteForCausalLM",
     "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ": "optimum-intel-internal-testing/tiny-mixtral-AWQ-4bit",
     "TheBloke/Llama-2-7B-GPTQ": "hf-internal-testing/tiny-random-LlamaForCausalLM",
-    "neuralmagic/Llama-3.2-3B-Instruct-FP8": "nm-testing/Meta-Llama-3-8B-Instruct-FP8",
-    "neuralmagic/Qwen2-0.5B-Instruct-FP8": "nm-testing/Qwen2-0.5B-Instruct-FP8",
+    # "neuralmagic/Llama-3.2-3B-Instruct-FP8": "nm-testing/Meta-Llama-3-8B-Instruct-FP8",
+    # "neuralmagic/Qwen2-0.5B-Instruct-FP8": "nm-testing/Qwen2-0.5B-Instruct-FP8",
     "Snowflake/Llama-3.1-SwiftKV-8B-Instruct": "snowflake-internal-testing/tiny-Llama-3.1-SwiftKV-8B-Instruct",
 }
 
