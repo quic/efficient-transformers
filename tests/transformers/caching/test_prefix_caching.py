@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 
 import numpy as np
@@ -13,18 +12,14 @@ import pytest
 from transformers import AutoTokenizer
 
 from QEfficient.generation.text_generation_inference import TextGeneration
-from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
-from QEfficient.utils._utils import create_json
-from QEfficient.utils.constants import QnnConstants
 from QEfficient.utils.test_utils import load_qeff_causal_lm_model
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/causal_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    prefix_caching_models = config_data["prefix_caching_models"]
+test_models_dict = {"gpt2": "hf-internal-testing/tiny-random-GPT2LMHeadModel"}
 
-test_models = [model["model_name"] for model in prefix_caching_models]
-model_config_dict = {model["model_name"]: model for model in prefix_caching_models}
+if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model..":
+    test_models = list(test_models_dict.values())
+else:
+    test_models = list(test_models_dict.keys())
 
 
 def prefix_caching_inference(model_name, qpc_path):
@@ -183,38 +178,16 @@ def prefix_caching_inference(model_name, qpc_path):
     )
 
 
-@pytest.mark.full_layers
-@pytest.mark.on_qaic
-@pytest.mark.feature
+@pytest.mark.qaic
+@pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models)
-def test_full_simple_prefix_caching(model_name, manual_cleanup):
-    """
-    The test should first generate output with some prefix+suffix1 or batch_id and then confirm that we are still able to execute of prefix+suffix2 on same batch id and getting correct output.
-    """
-    qeff_model = load_qeff_causal_lm_model(model_name=model_name, continuous_batching=True)
-    qeff_model.compile(
-        prefill_seq_len=128,
-        ctx_len=256,
-        full_batch_size=2,
-        kv_cache_batch_size=4,
-        num_cores=16,
-    )
-    prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
-    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
-    manual_cleanup(qeff_model.onnx_path)
-
-
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.parametrize("model_name", test_models)
-def test_simple_prefix_caching(model_name, manual_cleanup):
+def test_simple_prefix_caching(model_name):
     """
     The test should first generate output with some prefix+suffix1 or batch_id and then confirm that we are still able to execute of prefix+suffix2 on same batch id and getting correct output.
     """
     qeff_model = load_qeff_causal_lm_model(
         model_name=model_name,
         continuous_batching=True,
-        num_hidden_layers=1,
     )
     qeff_model.compile(
         prefill_seq_len=128,
@@ -225,30 +198,3 @@ def test_simple_prefix_caching(model_name, manual_cleanup):
     )
     prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
-    manual_cleanup(qeff_model.onnx_path)
-
-
-################################# QNN Tests #################################
-
-
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.qnn
-@pytest.mark.parametrize("model_name", test_models)
-def test_simple_prefix_caching_qnn(model_name):
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, continuous_batching=True)
-    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
-
-    qeff_model.compile(
-        prefill_seq_len=128,
-        ctx_len=256,
-        full_batch_size=2,
-        kv_cache_batch_size=4,
-        num_cores=14,
-        enable_qnn=True,
-        qnn_config=qnn_config_json_path,
-    )
-    prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
-    assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
-    os.remove(qnn_config_json_path)

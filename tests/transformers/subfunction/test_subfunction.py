@@ -80,7 +80,7 @@ def get_gpt2block_call_count(onnx_path):
     return gpt2block_calls
 
 
-@pytest.mark.feature
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("config", configs, ids=config_ids)
 def test_subfunction_vs_nonsubfunction(config, tmp_path):
     # tokenizer = AutoTokenizer.from_pretrained(config.model_type)

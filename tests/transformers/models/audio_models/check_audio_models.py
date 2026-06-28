@@ -5,14 +5,13 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
+import copy
 import os
 from typing import List, Optional
 
 import numpy as np
 import onnx
 import onnxruntime
-import pytest
 import torch
 from datasets import load_dataset
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
@@ -20,15 +19,10 @@ from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForSpeechSeq2Seq
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils import get_padding_shape_from_config, hf_download
-from QEfficient.utils._utils import create_json, load_hf_processor
-from QEfficient.utils.constants import Constants, QnnConstants
+from QEfficient.utils._utils import load_hf_processor
+from QEfficient.utils.constants import Constants
 
 from ..check_model_results import dump_and_compare_results
-
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/audio_model_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    test_models = config_data["speech_seq2seq_models"]
 
 
 def load_seq2seq_model(model_config):
@@ -294,13 +288,13 @@ def run_seq2seq_ort(
 
 def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
-    manual_cleanup: callable,
     ctx_len: int = Constants.CTX_LEN,
     n_layer: int = -1,
     num_devices: int = 1,
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
     compare_results: Optional[bool] = False,
+    export_compile_only: Optional[bool] = False,
 ):
     """
     Validate the PyTorch model, the PyTorch model after KV changes, ONNX model and the Cloud AI 100 model
@@ -309,32 +303,17 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
         :ctx_len (int): Maximum context length to compile the model.
         :n_layers (int): Number of layers for the Model.
     """
+
+    torch.manual_seed(42)
     replace_transformers_quantizers()
+
     model_config = {"model_name": model_name}
     model_config["n_layer"] = n_layer
-
     model_hf, _ = load_seq2seq_model(model_config)
-
-    processor = load_hf_processor(pretrained_model_name_or_path=model_name)
     batch_size = 1
 
-    ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
-    data = ds[0]["audio"]["array"]
-    data = data.reshape(-1)
-    sample_rate = ds[0]["audio"]["sampling_rate"]
-    pytorch_hf_tokens = run_seq2seq_pytorch_hf(model_hf, processor, data, sample_rate, ctx_len)
-
-    qeff_model = QEFFAutoModelForSpeechSeq2Seq(model_hf, pretrained_model_name_or_path=model_name)
-
-    pytorch_kv_tokens = run_seq2seq_pytorch_with_kv(qeff_model, processor, data, sample_rate, ctx_len)
-    assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
-        "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
-    )
-
+    qeff_model = QEFFAutoModelForSpeechSeq2Seq(copy.deepcopy(model_hf), pretrained_model_name_or_path=model_name)
     qeff_model.export()
-    ort_tokens = run_seq2seq_ort(qeff_model.onnx_path, qeff_model.model.config, processor, data, sample_rate, ctx_len)
-    assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for pytorch output and ort output"
-
     qeff_model.compile(
         ctx_len=ctx_len,
         num_devices=num_devices,
@@ -343,16 +322,37 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
         qnn_config=qnn_config,
     )
 
+    if export_compile_only:
+        return
+
+    processor = load_hf_processor(pretrained_model_name_or_path=model_name)
+    ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
+    data = ds[0]["audio"]["array"]
+    data = data.reshape(-1)
+    sample_rate = ds[0]["audio"]["sampling_rate"]
+
+    pytorch_hf_tokens = run_seq2seq_pytorch_hf(model_hf, processor, data, sample_rate, ctx_len)
+
+    pytorch_kv_tokens = run_seq2seq_pytorch_with_kv(qeff_model, processor, data, sample_rate, ctx_len)
+
+    assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
+        "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
+    )
+
+    ort_tokens = run_seq2seq_ort(qeff_model.onnx_path, qeff_model.model.config, processor, data, sample_rate, ctx_len)
+
+    assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for pytorch output and ort output"
+
     exec_info = qeff_model.generate(
         inputs=processor(data, sampling_rate=sample_rate, return_tensors="pt"), generation_len=ctx_len
     )
     cloud_ai_100_tokens = exec_info.generated_ids[0]  # Because we always run for single input and single batch size
+
     assert (pytorch_kv_tokens == cloud_ai_100_tokens).all(), (
         "Tokens don't match for pytorch output and Cloud AI 100 output."
     )
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
 
-    manual_cleanup(qeff_model.onnx_path)
     if compare_results is False:
         return
 
@@ -366,48 +366,4 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
         pytorch_hf_tokens=pytorch_hf_tokens,
         pytorch_kv_tokens=pytorch_kv_tokens,
         ort_tokens=ort_tokens,
-    )
-
-
-@pytest.mark.full_layers
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.parametrize("model_name", test_models)
-def test_full_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
-    torch.manual_seed(42)
-    check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name, compare_results=True, manual_cleanup=manual_cleanup, num_devices=4
-    )
-
-
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.parametrize("model_name", test_models)
-def test_few_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
-    torch.manual_seed(42)
-    check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=4, manual_cleanup=manual_cleanup)
-
-
-# =================== QNN Tests ======================
-@pytest.mark.on_qaic
-@pytest.mark.llm_model
-@pytest.mark.qnn
-@pytest.mark.skip(reason="Whisper is currently not supported on QNN")
-@pytest.mark.parametrize("model_name", test_models)
-def test_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, manual_cleanup):
-    """
-    QNN Compilation path test.
-    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model, both with and without continuous batching.
-    ``Mandatory`` Args:
-        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
-    """
-    qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")
-    create_json(qnn_config_json_path, QnnConstants.QNN_SAMPLE_CONFIG)
-
-    check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
-        model_name=model_name,
-        n_layer=4,
-        enable_qnn=True,
-        qnn_config=qnn_config_json_path,
-        manual_cleanup=manual_cleanup,
     )

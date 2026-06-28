@@ -4,23 +4,18 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+import os
 
 import pytest
-from transformers import AutoConfig, AutoModelForCausalLM
+from transformers import AutoModelForCausalLM
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
-# Simple test config for memory reduction testing
-test_config = AutoConfig.for_model(
-    "gpt2",
-    max_position_embeddings=256,
-    num_hidden_layers=2,
-    num_attention_heads=4,
-    hidden_size=128,
-    intermediate_size=512,
-    vocab_size=127,
-    num_key_value_heads=2,
-)
+test_models_dict = {"gpt2": "hf-internal-testing/tiny-random-GPT2LMHeadModel"}
+
+test_models = list(test_models_dict.keys())
+if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
+    test_models = list(test_models_dict.values())
 
 model_kwargs = {"attn_implementation": "eager"}
 
@@ -31,9 +26,11 @@ def tmp_cache(tmp_path, monkeypatch):
     yield tmp_path
 
 
-def test_offload_weights_method():
+@pytest.mark.non_qaic
+@pytest.mark.parametrize("model_name", test_models)
+def test_offload_weights_method(model_name):
     """Test the _offload_model_weights method with both True and False values."""
-    model = AutoModelForCausalLM.from_config(test_config, **model_kwargs)
+    model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
     qeff_model = QEFFAutoModelForCausalLM(model, continuous_batching=False)
 
     # Initially weights should not be offloaded
@@ -47,7 +44,7 @@ def test_offload_weights_method():
     assert all(param.is_meta for param in qeff_model.model.parameters())
 
     # Reset for next test
-    model2 = AutoModelForCausalLM.from_config(test_config, **model_kwargs)
+    model2 = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
     qeff_model2 = QEFFAutoModelForCausalLM(model2, continuous_batching=False)
 
     # Test with offload_pt_weights=False
@@ -57,9 +54,11 @@ def test_offload_weights_method():
     assert not any(param.is_meta for param in qeff_model2.model.parameters())
 
 
-def test_re_export_behavior_with_offloaded_weights(tmp_cache):
+@pytest.mark.non_qaic
+@pytest.mark.parametrize("model_name", test_models)
+def test_re_export_behavior_with_offloaded_weights(model_name, tmp_cache):
     """Test that re-export fails when weights are offloaded."""
-    model = AutoModelForCausalLM.from_config(test_config, **model_kwargs)
+    model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
     qeff_model = QEFFAutoModelForCausalLM(model, continuous_batching=False)
 
     # First export should succeed
@@ -81,6 +80,7 @@ def test_re_export_behavior_with_offloaded_weights(tmp_cache):
         qeff_model.export()
 
 
+@pytest.mark.non_qaic
 def test_vlm_dual_qpc_memory_offload_behavior():
     """Test asymmetric memory offload behavior for VLM dual QPC models."""
 
@@ -117,6 +117,7 @@ def test_vlm_dual_qpc_memory_offload_behavior():
     assert lang_model._is_weights_offloaded  # Language model should be offloaded
 
 
+@pytest.mark.non_qaic
 def test_vlm_single_qpc_memory_offload_behavior():
     """Test memory offload behavior for VLM single QPC models with both True and False."""
 

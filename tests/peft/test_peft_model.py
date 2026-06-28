@@ -17,32 +17,36 @@ from transformers import AutoConfig, AutoModelForCausalLM
 
 from QEfficient import QEffAutoPeftModelForCausalLM
 
-configs = [
+original_configs = [
     pytest.param(
-        AutoConfig.for_model(
-            "llama",
-            num_hidden_layers=2,
-            num_attention_heads=4,
-            num_key_value_heads=2,
-            hidden_size=128,
-            architectures=["LlamaForCausalLM"],
-        ),
+        AutoConfig.from_pretrained("meta-llama/Meta-Llama-3-8B"),
         LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=8),
-        id="llama-2l-4h-2kvh-128d-qv",
+        id="llama-model",
     ),
     pytest.param(
-        AutoConfig.for_model(
-            "mistral",
-            num_hidden_layers=2,
-            num_attention_heads=4,
-            num_key_value_heads=2,
-            hidden_size=128,
-            architectures=["MistralForCausalLM"],
-        ),
+        AutoConfig.from_pretrained("mistralai/Mistral-7B-v0.1"),
         LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=6),
-        id="mistral-2l-4h-128d-qv",
+        id="mistral-model",
     ),
 ]
+
+tiny_configs = [
+    pytest.param(
+        AutoConfig.from_pretrained("hf-internal-testing/tiny-random-LlamaForCausalLM"),
+        LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=8),
+        id="tiny-llama-model",
+    ),
+    pytest.param(
+        AutoConfig.from_pretrained("hf-internal-testing/tiny-random-MistralForCausalLM"),
+        LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=6),
+        id="tiny-mistral-model",
+    ),
+]
+
+if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
+    configs = tiny_configs
+else:
+    configs = original_configs
 
 
 def create_peft_model(base_config, adapter_config, adapter_name="default"):
@@ -57,6 +61,7 @@ def create_peft_model(base_config, adapter_config, adapter_name="default"):
     return base_model, adapted_model
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("base_config,adapter_config", configs)
 def test_auto_peft_model_for_causal_lm_init(base_config, adapter_config):
     base_model, ia3_model = create_peft_model(base_config, IA3Config(task_type="CAUSAL_LM"))
@@ -73,6 +78,7 @@ def test_auto_peft_model_for_causal_lm_init(base_config, adapter_config):
     assert set(qeff_model.adapter_weights.keys()) == {"testAdapter101", "testAdapter102"}
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("base_config,adapter_config", configs)
 def test_auto_peft_model_for_causal_lm_from_pretrained(base_config, adapter_config, tmp_path):
     base_path = tmp_path / "base"
@@ -93,8 +99,7 @@ def test_auto_peft_model_for_causal_lm_from_pretrained(base_config, adapter_conf
         QEffAutoPeftModelForCausalLM.from_pretrained(adapter_path / adapter_name, full_batch_size=4)
 
 
-# This test isn't required anymore as different adapter names should generate different hashes. We'll
-# phase out this test in some time.
+@pytest.mark.non_qaic
 @pytest.mark.skip(reason="Different adapter names will create different hashes so we'll skip this test.")
 def test_auto_peft_model_for_causal_lm_hash():
     base_config_0, adapter_config_0 = configs[0].values
@@ -134,6 +139,7 @@ def test_auto_peft_model_for_causal_lm_hash():
     assert hash_0_1_0 != hash_1_1
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("base_config,adapter_config", configs)
 def test_auto_peft_model_for_causal_lm_export(base_config, adapter_config, tmp_path):
     _, lora_model = create_peft_model(base_config, adapter_config)
@@ -161,6 +167,7 @@ def test_auto_peft_model_for_causal_lm_export(base_config, adapter_config, tmp_p
     assert export_time_1 < 0.01 * export_time_0
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("base_config,adapter_config", configs)
 def test_auto_peft_model_for_causal_lm_activate_invalid(base_config, adapter_config, tmp_path):
     _, lora_model = create_peft_model(base_config, adapter_config)
@@ -172,8 +179,8 @@ def test_auto_peft_model_for_causal_lm_activate_invalid(base_config, adapter_con
         qeff_model.set_adapter("invalid")
 
 
-@pytest.mark.feature
-@pytest.mark.on_qaic
+@pytest.mark.llm
+@pytest.mark.qaic
 @pytest.mark.parametrize("batch_size", [1, 4], ids=["bs1", "bs4"])
 @pytest.mark.parametrize("base_config,adapter_config", configs)
 def test_auto_peft_model_for_causal_lm_compile_generate(base_config, adapter_config, batch_size, tmp_path):

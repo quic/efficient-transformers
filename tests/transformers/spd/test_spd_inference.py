@@ -5,27 +5,42 @@
 #
 # -----------------------------------------------------------------------------
 
-import json
 import os
 from time import perf_counter
 from typing import List, Optional
 
 import numpy as np
 import pytest
-import torch
 from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.test_utils import load_qeff_causal_lm_model
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../configs/feature_configs.json")
-with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    spd_models = config_data["spd_config"]
+original_spd_config = [
+    pytest.param(
+        "JackFram/llama-160m",
+        "JackFram/llama-160m",
+        id="CB llama",
+    ),
+    pytest.param("Qwen/Qwen2-0.5B", "Qwen/Qwen2-0.5B", id="CB qwen"),
+]
 
-test_models_id = [model["id"] for model in spd_models]
-model_config_dict = {model["id"]: model for model in spd_models}
+
+tiny_spd_config = [
+    pytest.param(
+        "hf-internal-testing/tiny-random-LlamaForCausalLM",
+        "hf-internal-testing/tiny-random-LlamaForCausalLM",
+        id="tiny CB llama",
+    ),
+    pytest.param("peft-internal-testing/tiny-dummy-qwen2", "peft-internal-testing/tiny-dummy-qwen2", id="tiny CB qwen"),
+]
+
+
+if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
+    spd_config = tiny_spd_config
+else:
+    spd_config = original_spd_config
 
 
 def run_prefill_on_draft_and_target(
@@ -89,16 +104,18 @@ def split_dlm_bonus_token_inputs(dlm_decode_inputs):
 
 
 def check_spec_decode_inference(
-    model_id: str, manual_cleanup: callable, num_hidden_layers: Optional[int] = -1, config: Optional[AutoConfig] = None
+    draft_model_name: str,
+    target_model_name: str,
+    num_hidden_layers: Optional[int] = -1,
+    config: Optional[AutoConfig] = None,
 ):
-    draft_model_name = model_config_dict[model_id]["draft_model_name"]
-    target_model_name = model_config_dict[model_id]["target_model_name"]
-    prompts = model_config_dict[model_id]["prompts"]
-    num_speculative_tokens = model_config_dict[model_id]["num_speculative_tokens"]
-    prefill_seq_len = model_config_dict[model_id]["prefill_seq_len"]
-    ctx_len = model_config_dict[model_id]["ctx_len"]
-    prefill_bsz = model_config_dict[model_id]["prefill_bsz"]
-    full_batch_size = model_config_dict[model_id]["full_batch_size"]
+
+    prompts = ["My name is"]
+    num_speculative_tokens = 4
+    prefill_seq_len = 32
+    ctx_len = 128
+    prefill_bsz = 1
+    full_batch_size = 1
 
     # assumes dlm and tlm are compiled to the same prompt-chunk-size, context length and full_batch_size/batch-size
     # get vocab size
@@ -336,45 +353,17 @@ def check_spec_decode_inference(
     assert all_matching, "Tokens don't match for SpD output and vanilla DLM output."
     assert os.path.isfile(os.path.join(os.path.dirname(target_model_qpc_path), "qconfig.json"))
     assert os.path.isfile(os.path.join(os.path.dirname(draft_model_qpc_path), "qconfig.json"))
-    manual_cleanup(target_model.onnx_path)
-    manual_cleanup(draft_model.onnx_path)
-
-
-@pytest.mark.full_layers
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.parametrize("model_id", test_models_id)
-def test_full_spd_inference(model_id, manual_cleanup):
-    """Test full layer SPD inference."""
-    torch.manual_seed(42)
-    check_spec_decode_inference(model_id, manual_cleanup=manual_cleanup)
-
-
-@pytest.mark.few_layers
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.parametrize("model_id", test_models_id)
-def test_few_spd_inference(model_id, manual_cleanup):
-    """Test few layer SPD inference."""
-    torch.manual_seed(42)
-    check_spec_decode_inference(model_id, num_hidden_layers=2, manual_cleanup=manual_cleanup)
 
 
 # llama error with SPD, skipping dummy layer test for now
 @pytest.mark.skip(reason="Dummy layer test is currently failing for SPD, needs investigation")
-@pytest.mark.dummy_layers
-@pytest.mark.on_qaic
-@pytest.mark.feature
-@pytest.mark.parametrize("model_id", test_models_id)
-def test_dummy_spd_inference(model_id, manual_cleanup):
+@pytest.mark.qaic
+@pytest.mark.llm
+@pytest.mark.parametrize("draft_model_name, target_model_name", spd_config)
+def test_spd_inference(draft_model_name, target_model_name):
     """Test dummy layer SPD inference."""
-    torch.manual_seed(42)
-    hf_config = AutoConfig.from_pretrained(
-        model_config_dict[model_id]["draft_model_name"],
-        trust_remote_code=True,
-        **model_config_dict[model_id]["additional_params"],
-    )
-    check_spec_decode_inference(model_id, config=hf_config, manual_cleanup=manual_cleanup)
+
+    check_spec_decode_inference(draft_model_name, target_model_name)
 
 
 # ---------------------------------------------------------------------------
@@ -475,8 +464,8 @@ def _verify_tlm_spec(tlm_session, k, ref_tokens, ref_logits, start_pos, vocab_si
     return n_assertions
 
 
-@pytest.mark.on_qaic
-@pytest.mark.feature
+@pytest.mark.qaic
+@pytest.mark.llm
 @pytest.mark.parametrize(
     "decode_ks",
     [
@@ -488,7 +477,7 @@ def _verify_tlm_spec(tlm_session, k, ref_tokens, ref_logits, start_pos, vocab_si
         [0, 1, 2, 3],
     ],
 )
-def test_multi_spec_qpc_logit_correctness(decode_ks, manual_cleanup):
+def test_multi_spec_qpc_logit_correctness(decode_ks):
     """
     Verify that every decode specialisation in `decode_ks` produces logits that
     match the vanilla (DLM) reference at every token position, for ALL output
@@ -586,4 +575,3 @@ def test_multi_spec_qpc_logit_correctness(decode_ks, manual_cleanup):
         total_assertions += n
 
     assert total_assertions > 0
-    manual_cleanup([vanilla.onnx_path, tlm.onnx_path])

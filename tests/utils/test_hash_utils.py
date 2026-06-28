@@ -18,6 +18,7 @@ def get_random_string(length: int) -> str:
     return "".join([chr(random.randint(0x20, 0x7E)) for _ in range(length)])
 
 
+@pytest.mark.non_qaic
 def test_to_hashable_dict():
     dct = {get_random_string(i): i for i in range(5)}
     dct = dict(sorted(dct.items()))
@@ -29,16 +30,19 @@ def test_to_hashable_dict():
     assert hash1 == hash2
 
 
+@pytest.mark.non_qaic
 def test_to_hashable_set():
     assert to_hashable(set(range(4))) == to_hashable(set(range(4 - 1, -1, -1)))
 
 
+@pytest.mark.non_qaic
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
 def test_to_hashable_float_nan(value):
     with pytest.raises(ValueError):
         to_hashable(value)
 
 
+@pytest.mark.non_qaic
 def test_json_serializable():
     # Test with a set
     assert json_serializable({1, 2, 3}) == ["1", "2", "3"]
@@ -47,6 +51,7 @@ def test_json_serializable():
         json_serializable({1, 2, 3, {4, 5}})
 
 
+@pytest.mark.non_qaic
 def test_to_hashable():
     # Test with a simple dictionary
     obj = {"key": "value"}
@@ -79,6 +84,7 @@ def test_to_hashable():
     assert to_hashable(obj_with_set) == expected_with_set
 
 
+@pytest.mark.non_qaic
 def test_hash_dict_params():
     # Test with a simple dictionary
     dict_items = {"key": "value"}

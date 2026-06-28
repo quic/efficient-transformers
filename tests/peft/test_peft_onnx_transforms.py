@@ -8,10 +8,12 @@
 import textwrap
 
 import onnx
+import pytest
 
 from QEfficient.peft.onnx_transforms import AdapterWeightsToInputsTransform
 
 
+@pytest.mark.non_qaic
 def test_adapter_weights_to_inputs_transform():
     external_tensors_file = "weight.raw"
     adapter_name = "testAdapter1"

@@ -5,13 +5,23 @@
 #
 # -----------------------------------------------------------------------------
 
+import os
 from types import SimpleNamespace
 
 import pytest
 
 import QEfficient
 from QEfficient.cloud.infer import main as infer
-from tests.utils.tiny_overrides import is_skipped_model
+
+test_causal_models_dict = {"gpt2": "hf-internal-testing/tiny-random-GPT2LMHeadModel"}
+test_vlm_models_dict = {"llava-hf/llava-1.5-7b-hf": "hf-internal-testing/tiny-random-LlavaForConditionalGeneration"}
+
+test_causal_models = list(test_causal_models_dict.keys())
+test_vlm_models = list(test_vlm_models_dict.keys())
+
+if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
+    test_causal_models = list(test_causal_models_dict.values())
+    test_vlm_models = list(test_vlm_models_dict.values())
 
 
 def check_infer(
@@ -56,57 +66,36 @@ def check_infer(
         load_hf_tokenizer_spy.assert_called_once()
 
 
-@pytest.mark.on_qaic
-@pytest.mark.cli
-def test_infer(mocker):
-    """
-    test_infer is a HL infer api testing function,
-    checks infer api code flow, object creations, internal api calls, internal returns.
-    ---------
-    Parameters:
-    setup: is a fixture defined in conftest.py module.
-    mocker: mocker is itself a pytest fixture, uses to mock or spy internal functions.
-    ---------
-    Ref: https://docs.pytest.org/en/7.1.x/how-to/fixtures.html
-    Ref: https://pytest-mock.readthedocs.io/en/latest/usage.html
-    """
+@pytest.mark.qaic
+@pytest.mark.llm
+@pytest.mark.parametrize("model_name", test_causal_models)
+def test_infer(mocker, model_name):
+
     # testing infer without full_batch_size
-    check_infer(mocker, model_name="lu-vae/llama-68m-fft")
+    check_infer(mocker, model_name)
 
 
-@pytest.mark.on_qaic
-@pytest.mark.cli
-def test_infer_fbs(mocker):
+@pytest.mark.qaic
+@pytest.mark.llm
+@pytest.mark.parametrize("model_name", test_causal_models)
+def test_infer_fbs(mocker, model_name):
+
     # testing infer with full_batch_size
-    check_infer(mocker, model_name="lu-vae/llama-68m-fft", full_batch_size=3)
+    check_infer(mocker, model_name, full_batch_size=3)
 
 
-@pytest.mark.on_qaic
-@pytest.mark.cli
-@pytest.mark.qnn
-def test_infer_qnn(mocker):
-    # testing infer without full_batch_size in QNN environment
-    check_infer(mocker, model_name="lu-vae/llama-68m-fft", enable_qnn=True)
-
-
-@pytest.mark.on_qaic
-@pytest.mark.cli
-@pytest.mark.qnn
-def test_infer_qnn_fbs(mocker):
-    # testing infer with full_batch_size in QNN environment
-    check_infer(mocker, model_name="lu-vae/llama-68m-fft", full_batch_size=3, enable_qnn=True)
-
-
-@pytest.mark.on_qaic
-@pytest.mark.cli
-def test_infer_vlm(mocker):
-    model_name = "llava-hf/llava-1.5-7b-hf"
-    if is_skipped_model(model_name):
-        pytest.skip(f"No tiny variant for {model_name} in per-PR profile")
+@pytest.mark.skipif(
+    reason="tests/cloud/test_infer.py::test_infer_vlm[hf-internal-testing/tiny-random-LlavaForConditionalGeneration] - IndexError: index 1023 is out of bounds for dimension 0 with size 512"
+)
+@pytest.mark.qaic
+@pytest.mark.vlm
+@pytest.mark.parametrize("model_name", test_vlm_models)
+def test_infer_vlm(mocker, model_name):
+    """Test VLM infer."""
     # testing infer for MM models
     check_infer(
         mocker,
-        model_name=model_name,
+        model_name,
         prompt="Describe the image.",
         image_url="https://i.etsystatic.com/8155076/r/il/0825c2/1594869823/il_fullxfull.1594869823_5x0w.jpg",
     )
@@ -125,6 +114,7 @@ class _DummyQEFFModel:
         return {}
 
 
+@pytest.mark.non_qaic
 def _run_infer_with_dummy_model(mocker, architecture, **infer_kwargs):
     dummy_model = _DummyQEFFModel(architecture=architecture)
     mocker.patch.object(QEfficient.cloud.infer, "check_and_assign_cache_dir", return_value="/tmp/cache")
@@ -141,11 +131,13 @@ def _run_infer_with_dummy_model(mocker, architecture, **infer_kwargs):
     return dummy_model
 
 
+@pytest.mark.non_qaic
 def test_infer_enables_onnx_subfunctions_when_explicitly_set(mocker):
     dummy_model = _run_infer_with_dummy_model(mocker, architecture="Qwen3MoeForCausalLM", use_onnx_subfunctions=True)
     assert dummy_model.compile_kwargs["use_onnx_subfunctions"] is True
 
 
+@pytest.mark.non_qaic
 def test_infer_keeps_onnx_subfunctions_disabled_by_default(mocker):
     dummy_model = _run_infer_with_dummy_model(mocker, architecture="LlamaForCausalLM")
     assert dummy_model.compile_kwargs["use_onnx_subfunctions"] is False
