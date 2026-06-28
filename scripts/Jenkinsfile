@@ -109,8 +109,8 @@ pipeline {
         // ── Phase 1: Non-QAIC (parallel) ─────────────────────────────────────
         // QEFF_HOME is set per model family. Phase 2 QAIC stages reuse the
         // same paths so ONNX exports from Phase 1 are not re-generated.
-        stage('Phase 1: Tests') {
-            parallel {
+        // stage('Phase 1: Tests') {
+        //     parallel {
 
                 // stage('Non-QAIC: LLM') {
                 //     steps {
@@ -181,114 +181,112 @@ pipeline {
                     // }
                 // }
 
-                stage('Non-QAIC: Other') {
-                    steps {
-                        catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                                sh """
-                                sudo docker exec ${BUILD_TAG} bash -c "
-                                    cd /efficient-transformers &&
-                                    . preflight_qeff/bin/activate &&
-                                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                                    export TOKENIZERS_PARALLELISM=false &&
-                                    export QEFF_HOME=${DOCKER_QPC_CACHE}/other &&
-                                    set -o pipefail &&
-                                    pytest tests -m 'non_qaic and not llm and not vlm and not diffusion' \
-                                        ${PYTEST_IGNORE} \
-                                        -n 8 --dist worksteal \
-                                        --junitxml=tests/tests_log_non_qaic_other.xml \
-                                        --durations=20 \
-                                        --log-level=ERROR --no-header &&
-                                    junitparser merge tests/tests_log_non_qaic_other.xml tests/tests_log.xml &&
-                                    deactivate"
-                                """
-                            }
+        stage('Non-QAIC: Other') {
+            steps {
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                        sh """
+                        sudo docker exec ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=${DOCKER_QPC_CACHE}/other &&
+                            set -o pipefail &&
+                            pytest tests -m 'non_qaic and not llm and not vlm and not diffusion' \
+                                ${PYTEST_IGNORE} \
+                                -n 8 --dist worksteal \
+                                --junitxml=tests/tests_log_non_qaic_other.xml \
+                                --durations=20 \
+                                --log-level=ERROR --no-header &&
+                            junitparser merge tests/tests_log_non_qaic_other.xml tests/tests_log.xml &&
+                            deactivate"
+                        """
                     }
-                }
+            }
+        }
 
-                    // } // end parallel
-                // } // end Phase 1
+            // } // end parallel
+        // } // end Phase 1
 
-                // ── Phase 2: QAIC (sequential) ────────────────────────────────────────
-                // Each stage reuses the same QEFF_HOME as its Phase 1 counterpart so
-                // that ONNX exports are found on disk and not re-generated.
-                stage('QAIC: LLM (cards 0-1)') {
-                    when { expression { params.RUN_QAIC_LLM } }
-                    steps {
-                        catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                                sh """
-                                sudo docker exec ${BUILD_TAG} bash -c "
-                                    cd /efficient-transformers &&
-                                    . preflight_qeff/bin/activate &&
-                                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                                    export TOKENIZERS_PARALLELISM=false &&
-                                    export QEFF_HOME=${DOCKER_QPC_CACHE}/llm &&
-                                    export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
-                                    export QEFF_QAIC_CARD_OFFSET=0 &&
-                                    set -o pipefail &&
-                                    pytest tests -m 'qaic and llm' \
-                                        ${PYTEST_IGNORE} \
-                                        --junitxml=tests/tests_log_qaic_llm.xml \
-                                        --durations=20 \
-                                        --log-level=ERROR --no-header &&
-                                    junitparser merge tests/tests_log_qaic_llm.xml tests/tests_log.xml &&
-                                    deactivate"
-                                """
-                            }
+        // ── Phase 2: QAIC (sequential) ────────────────────────────────────────
+        // Each stage reuses the same QEFF_HOME as its Phase 1 counterpart so
+        // that ONNX exports are found on disk and not re-generated.
+        stage('QAIC: LLM (cards 0-1)') {
+            when { expression { params.RUN_QAIC_LLM } }
+            steps {
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                        sh """
+                        sudo docker exec ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=${DOCKER_QPC_CACHE}/llm &&
+                            export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
+                            export QEFF_QAIC_CARD_OFFSET=0 &&
+                            set -o pipefail &&
+                            pytest tests -m 'qaic and llm' \
+                                ${PYTEST_IGNORE} \
+                                --junitxml=tests/tests_log_qaic_llm.xml \
+                                --durations=20 \
+                                --log-level=ERROR --no-header &&
+                            junitparser merge tests/tests_log_qaic_llm.xml tests/tests_log.xml &&
+                            deactivate"
+                        """
                     }
-                }
+            }
+        }
 
-                stage('QAIC: VLM (cards 2-3)') {
-                    when { expression { params.RUN_QAIC_VLM } }
-                    steps {
-                        catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                                sh """
-                                sudo docker exec ${BUILD_TAG} bash -c "
-                                    cd /efficient-transformers &&
-                                    . preflight_qeff/bin/activate &&
-                                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                                    export TOKENIZERS_PARALLELISM=false &&
-                                    export QEFF_HOME=${DOCKER_QPC_CACHE}/vlm &&
-                                    export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
-                                    export QEFF_QAIC_CARD_OFFSET=2 &&
-                                    set -o pipefail &&
-                                    pytest tests -m 'qaic and vlm' \
-                                        ${PYTEST_IGNORE} \
-                                        --junitxml=tests/tests_log_qaic_vlm.xml \
-                                        --durations=20 \
-                                        --log-level=ERROR --no-header &&
-                                    junitparser merge tests/tests_log_qaic_vlm.xml tests/tests_log.xml &&
-                                    deactivate"
-                                """
-                            }
+        stage('QAIC: VLM (cards 2-3)') {
+            when { expression { params.RUN_QAIC_VLM } }
+            steps {
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                        sh """
+                        sudo docker exec ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=${DOCKER_QPC_CACHE}/vlm &&
+                            export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
+                            export QEFF_QAIC_CARD_OFFSET=2 &&
+                            set -o pipefail &&
+                            pytest tests -m 'qaic and vlm' \
+                                ${PYTEST_IGNORE} \
+                                --junitxml=tests/tests_log_qaic_vlm.xml \
+                                --durations=20 \
+                                --log-level=ERROR --no-header &&
+                            junitparser merge tests/tests_log_qaic_vlm.xml tests/tests_log.xml &&
+                            deactivate"
+                        """
                     }
-                }
+            }
+        }
 
-                stage('QAIC: Diffusion (cards 4-5)') {
-                    when { expression { params.RUN_QAIC_DIFFUSION } }
-                    steps {
-                        catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                                sh """
-                                sudo docker exec ${BUILD_TAG} bash -c "
-                                    cd /efficient-transformers &&
-                                    . preflight_qeff/bin/activate &&
-                                    export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                                    export TOKENIZERS_PARALLELISM=false &&
-                                    export QEFF_HOME=${DOCKER_QPC_CACHE}/diffusion &&
-                                    export HF_HUB_CACHE=/huggingface_hub &&
-                                    export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
-                                    export QEFF_QAIC_CARD_OFFSET=4 &&
-                                    set -o pipefail &&
-                                    pytest tests -m 'qaic and diffusion' \
-                                        ${PYTEST_IGNORE} \
-                                        --junitxml=tests/tests_log_qaic_diffusion.xml \
-                                        --durations=20 \
-                                        --log-level=ERROR --no-header &&
-                                    junitparser merge tests/tests_log_qaic_diffusion.xml tests/tests_log.xml &&
-                                    deactivate"
-                                """
-                            }
+        stage('QAIC: Diffusion (cards 4-5)') {
+            when { expression { params.RUN_QAIC_DIFFUSION } }
+            steps {
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                        sh """
+                        sudo docker exec ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=${DOCKER_QPC_CACHE}/diffusion &&
+                            export HF_HUB_CACHE=/huggingface_hub &&
+                            export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
+                            export QEFF_QAIC_CARD_OFFSET=4 &&
+                            set -o pipefail &&
+                            pytest tests -m 'qaic and diffusion' \
+                                ${PYTEST_IGNORE} \
+                                --junitxml=tests/tests_log_qaic_diffusion.xml \
+                                --durations=20 \
+                                --log-level=ERROR --no-header &&
+                            junitparser merge tests/tests_log_qaic_diffusion.xml tests/tests_log.xml &&
+                            deactivate"
+                        """
                     }
-                }
             }
         }
 
