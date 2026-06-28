@@ -182,6 +182,7 @@ from transformers.models.phi3.modeling_phi3 import (
     Phi3Attention,
     Phi3DecoderLayer,
     Phi3ForCausalLM,
+    Phi3MLP,
     Phi3Model,
     Phi3RMSNorm,
 )
@@ -541,6 +542,7 @@ from QEfficient.transformers.models.phi3.modeling_phi3 import (
     QEffPhi3Attention,
     QEffPhi3DecoderLayer,
     QEffPhi3ForCausalLM,
+    QEffPhi3MLP,
     QEffPhi3Model,
 )
 from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
@@ -860,6 +862,7 @@ class KVCacheTransform(ModuleMappingTransform):
         MptModel: QEFfMptModel,
         MptForCausalLM: QEffMptForCausalLM,
         # Phi3
+        Phi3MLP: QEffPhi3MLP,
         Phi3Attention: QEffPhi3Attention,
         Phi3DecoderLayer: QEffPhi3DecoderLayer,
         Phi3Model: QEffPhi3Model,
