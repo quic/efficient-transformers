@@ -52,6 +52,10 @@ class CtxScatterFuncCB(torch.autograd.Function):
         pass
 
     @staticmethod
+    def backward(ctx, grad_output):
+        # Not needed for inference/export
+        return None, None, None, None
+    @staticmethod
     def symbolic(
         g: torch.Graph, data: torch.Value, batch_index: torch.Value, position_ids: torch.Value, updates: torch.Value
     ) -> torch.Value:
@@ -92,6 +96,10 @@ class CtxScatterFuncCB3D(torch.autograd.Function):
     def setup_context(ctx, inputs, outputs):
         pass
 
+    @staticmethod
+    def backward(ctx, grad_output):
+        # Not needed for inference/export
+        return None, None, None, None
     @staticmethod
     def symbolic(
         g: torch.Graph, data: torch.Value, batch_index: torch.Value, position_ids: torch.Value, updates: torch.Value
@@ -138,6 +146,10 @@ class CtxGatherFuncCB(torch.autograd.Function):
         pass
 
     @staticmethod
+    def backward(ctx, grad_output):
+        # Not needed for inference/export
+        return None, None, None, None
+    @staticmethod
     def symbolic(
         g: torch.Graph, data: torch.Value, batch_index: torch.Value, ctx_indices: torch.Value, comp_ctx_len: int
     ) -> torch.Value:
@@ -179,6 +191,10 @@ class CtxGatherFuncBlockedKVCB(torch.autograd.Function):
         pass
 
     @staticmethod
+    def backward(ctx, grad_output):
+        # Not needed for inference/export
+        return None, None, None
+    @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, batch_index: torch.Value, ctx_indices: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxGatherBlockedKVCB, data, batch_index, ctx_indices).setTypeAs(data)
 
@@ -212,6 +228,10 @@ class CtxGatherFuncCB3D(torch.autograd.Function):
     def setup_context(ctx, inputs, outputs):
         pass
 
+    @staticmethod
+    def backward(ctx, grad_output):
+        # Not needed for inference/export
+        return None, None, None
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, batch_index: torch.Value, ctx_indices: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxGatherCB3D, data, batch_index, ctx_indices).setTypeAs(data)
