@@ -884,15 +884,15 @@ class QEffHybridCache(HybridCache):
             sliding_window_pattern = cache_kwargs.get("sliding_window_pattern")
             is_sliding_layer = torch.tensor(bool((layer_idx + 1) % sliding_window_pattern))
             layer_ctx_len = self.key_cache[layer_idx].shape[2]
+            _ctx_t = torch.zeros_like(position_ids) + layer_ctx_len
+            _ctx_m1_t = torch.zeros_like(position_ids) + (layer_ctx_len - 1)
             kv_position_ids = torch.where(
-                (~is_sliding_layer | (position_ids == -1)),
-                position_ids,
-                _remainder_with_symbolic_divisor(position_ids, layer_ctx_len - 1),
+                (~is_sliding_layer | (position_ids == -1)), position_ids, torch.fmod(position_ids, _ctx_m1_t)
             )
 
             kv_position_ids = torch.where(
                 is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1) * 2),
-                _remainder_with_symbolic_divisor(position_ids + 1, layer_ctx_len),
+                torch.fmod(position_ids + 1, _ctx_t),
                 kv_position_ids,
             )
 
@@ -921,11 +921,7 @@ class QEffHybridCache(HybridCache):
             ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
             all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
-            rolling_indices = torch.where(
-                all_indices > layer_ctx_len - 1,
-                _remainder_with_symbolic_divisor(all_indices, layer_ctx_len),
-                all_indices,
-            )
+            rolling_indices = torch.where(all_indices > layer_ctx_len - 1, torch.fmod(all_indices, _ctx_t), all_indices)
             rolling_indices = rolling_indices[:ctx_len]
             final_indices = torch.where(
                 (is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1))), rolling_indices, ctx_indices
@@ -1005,15 +1001,15 @@ class QEffHybridCache(HybridCache):
 
             # Update the position_ids to handle the sliding window
             layer_ctx_len = self.key_cache[layer_idx].shape[2]
+            _ctx_t = torch.zeros_like(position_ids) + layer_ctx_len
+            _ctx_m1_t = torch.zeros_like(position_ids) + (layer_ctx_len - 1)
             kv_position_ids = torch.where(
-                (~is_sliding_layer | (position_ids == -1)),
-                position_ids,
-                _remainder_with_symbolic_divisor(position_ids, layer_ctx_len - 1),
+                (~is_sliding_layer | (position_ids == -1)), position_ids, torch.fmod(position_ids, _ctx_m1_t)
             )
 
             kv_position_ids = torch.where(
                 is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1) * 2),
-                _remainder_with_symbolic_divisor(position_ids + 1, layer_ctx_len),
+                torch.fmod(position_ids + 1, _ctx_t),
                 kv_position_ids,
             )
 
@@ -1044,11 +1040,7 @@ class QEffHybridCache(HybridCache):
 
             # Rolling indices for sliding window
             all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
-            rolling_indices = torch.where(
-                all_indices > layer_ctx_len - 1,
-                _remainder_with_symbolic_divisor(all_indices, layer_ctx_len),
-                all_indices,
-            )
+            rolling_indices = torch.where(all_indices > layer_ctx_len - 1, torch.fmod(all_indices, _ctx_t), all_indices)
             rolling_indices = rolling_indices[:ctx_len]
             final_indices = torch.where(
                 (is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1))), rolling_indices, ctx_indices
@@ -1151,8 +1143,9 @@ class QEffSlidingWindowCache:
                 position_ids = cache_position.unsqueeze(0).repeat(key_states.shape[0], 1)
             else:
                 position_ids = cache_position
-        if position_ids is not None:
+        if position_ids is not None and not torch._dynamo.is_compiling():
             # Track logical progression independent of preallocated tensor shape.
+            # Skipped during dynamo/torch.export tracing — .item() cannot be traced.
             self.seen_tokens = max(self.seen_tokens, int(position_ids.max().item()) + 1)
 
         if len(self.key_cache) <= layer_idx:
@@ -1169,9 +1162,7 @@ class QEffSlidingWindowCache:
 
             if is_sliding_layer:
                 sliding_window_len = self.key_cache[layer_idx].shape[2]
-                kv_position_ids = torch.where(
-                    position_ids == -1, position_ids, _remainder_with_symbolic_divisor(position_ids, sliding_window_len)
-                )
+                kv_position_ids = torch.where(position_ids == -1, position_ids, torch.fmod(position_ids, torch.zeros_like(position_ids) + sliding_window_len))
             else:
                 kv_position_ids = position_ids
 
@@ -1203,7 +1194,7 @@ class QEffSlidingWindowCache:
             else:
                 ctx_len = cache_kwargs.get("CCL", self.key_cache[layer_idx].shape[2])
 
-                ctx_indices = torch.arange(ctx_len, device=position_ids.device)[None, None, ...]
+            ctx_indices = torch.arange(ctx_len, device=position_ids.device)[None, None, ...]
             gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
             invalid_mask = ctx_indices > gather_limit
             invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
@@ -1376,11 +1367,7 @@ class QEffSlidingWindowCache:
             batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value from the kwargs
 
             if is_sliding_layer:
-                kv_position_ids = torch.where(
-                    position_ids == -1,
-                    position_ids,
-                    _remainder_with_symbolic_divisor(position_ids, sliding_window),
-                )
+                kv_position_ids = torch.where(position_ids == -1, position_ids, torch.fmod(position_ids, torch.zeros_like(position_ids) + sliding_window))
             else:
                 kv_position_ids = position_ids
 
@@ -1421,7 +1408,7 @@ class QEffSlidingWindowCache:
             else:
                 ctx_len = cache_kwargs.get("CCL", self.key_cache[layer_idx].shape[2])
 
-                ctx_indices = torch.arange(ctx_len, device=position_ids.device)[None, None, ...]
+            ctx_indices = torch.arange(ctx_len, device=position_ids.device)[None, None, ...]
             gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
             invalid_mask = ctx_indices > gather_limit
             invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
@@ -1652,12 +1639,10 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
         batch_index = cache_kwargs.get("batch_index", None)
         layer_ctx_len = self.keys.shape[2]
 
-        kv_position_ids = torch.where(
-            position_ids == -1, position_ids, _remainder_with_symbolic_divisor(position_ids, layer_ctx_len)
-        )
+        kv_position_ids = torch.where(position_ids == -1, position_ids, torch.fmod(position_ids, torch.zeros_like(position_ids) + layer_ctx_len))
         kv_position_ids = torch.where(
             position_ids.max() >= (layer_ctx_len - 1) * 2,
-            _remainder_with_symbolic_divisor(position_ids + 1, layer_ctx_len),
+            torch.fmod(position_ids + 1, torch.zeros_like(position_ids) + layer_ctx_len),
             kv_position_ids,
         )
 
@@ -1693,9 +1678,7 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
         all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
-        rolling_indices = torch.where(
-            all_indices > layer_ctx_len - 1, _remainder_with_symbolic_divisor(all_indices, layer_ctx_len), all_indices
-        )
+        rolling_indices = torch.where(all_indices > layer_ctx_len - 1, torch.fmod(all_indices, torch.zeros_like(all_indices) + layer_ctx_len), all_indices)
         rolling_indices = rolling_indices[:ctx_len]
         use_rolling_indices = position_ids.max() >= (layer_ctx_len - 1)
         final_indices = torch.where(use_rolling_indices, rolling_indices, ctx_indices)
