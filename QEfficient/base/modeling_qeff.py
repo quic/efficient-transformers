@@ -15,7 +15,7 @@ import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional, OrderedDict, Union
+from typing import Any, Dict, List, Optional, OrderedDict, Union
 
 import onnx
 import torch
@@ -153,6 +153,73 @@ class QEFFBaseModel(ABC):
 
     def _transform_names(self) -> List[str]:
         return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
+
+    def convert_dynamic_axes_to_dynamic_shapes(
+        self, dynamic_axes: Dict[str, Dict[int, str]], example_inputs: Dict
+    ) -> Dict:
+        """Convert ONNX dynamic_axes to torch.export dynamic_shapes format."""
+        from torch.export import Dim
+
+        max_seq_len = getattr(self.model.config, "max_position_embeddings", 1024)
+        dim_registry: Dict[str, Any] = {}
+
+        def make_dim(dim_name: str) -> Any:
+            if dim_name in dim_registry:
+                return dim_registry[dim_name]
+            if dim_name == "batch_size":
+                d = Dim("batch_size", min=1, max=64)
+            elif "seq_len" in dim_name:
+                d = Dim("seq_len", min=2, max=max_seq_len)
+            elif "ctx_len" in dim_name:
+                d = Dim("ctx_len", min=2, max=max_seq_len)
+            elif "sliding_window" in dim_name:
+                d = Dim("sliding_window", min=2, max=getattr(self.model.config, "sliding_window", max_seq_len))
+            else:
+                d = Dim(dim_name, min=1, max=4096)
+            dim_registry[dim_name] = d
+            return d
+
+        GROUPED_PREFIXES = ("past_key.", "past_value.", "indexer_key_cache.", "compressed_kv.", "k_pe.")
+        dynamic_shapes: Dict[str, Any] = {}
+
+        for input_name, axes_map in dynamic_axes.items():
+            if not any(input_name.startswith(p) for p in GROUPED_PREFIXES):
+                dynamic_shapes[input_name] = {i: make_dim(n) for i, n in axes_map.items()}
+
+        past_keys: Dict[int, Dict] = {}
+        past_values: Dict[int, Dict] = {}
+        for input_name, axes_map in dynamic_axes.items():
+            if input_name.startswith("past_key."):
+                idx = int(input_name.split(".")[1])
+                past_keys[idx] = {i: make_dim(n) for i, n in axes_map.items()}
+            elif input_name.startswith("past_value."):
+                idx = int(input_name.split(".")[1])
+                past_values[idx] = {i: make_dim(n) for i, n in axes_map.items()}
+        if past_keys or past_values:
+            max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
+            dynamic_shapes["past_key_values"] = [
+                [past_keys.get(i, {}), past_values.get(i, {})] for i in range(max_layer + 1)
+            ]
+
+        ckv: Dict[int, Dict] = {}
+        k_pe: Dict[int, Dict] = {}
+        for input_name, axes_map in dynamic_axes.items():
+            if input_name.startswith("compressed_kv."):
+                ckv[int(input_name.split(".")[1])] = {i: make_dim(n) for i, n in axes_map.items()}
+            elif input_name.startswith("k_pe."):
+                k_pe[int(input_name.split(".")[1])] = {i: make_dim(n) for i, n in axes_map.items()}
+        if ckv or k_pe:
+            max_idx = max(list(ckv.keys()) + list(k_pe.keys()))
+            dynamic_shapes["compressed_kvs"] = [[ckv.get(i, {}), k_pe.get(i, {})] for i in range(max_idx + 1)]
+
+        def _none_struct(v: Any) -> Any:
+            return [_none_struct(x) for x in v] if isinstance(v, (list, tuple)) else None
+
+        for k, v in example_inputs.items():
+            if k not in dynamic_shapes:
+                dynamic_shapes[k] = _none_struct(v)
+
+        return dynamic_shapes
 
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
