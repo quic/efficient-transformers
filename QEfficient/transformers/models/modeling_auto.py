@@ -4025,6 +4025,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 _layerwise_cache_probe=kwargs.get("_layerwise_cache_probe", False),
                 prefill_only=prefill_only,
                 kv_cache_prefix=kv_cache_prefix,
+                _layerwise_cache_probe=kwargs.get("_layerwise_cache_probe", False),
             )
         else:
             return self._export(

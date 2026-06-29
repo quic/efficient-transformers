@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import argparse
+import hashlib
 import os
 import re
 import shutil
@@ -26,6 +27,17 @@ SAVE_WORKERS = 8
 DELETE_WORKERS = 8
 DELETE_SUFFIXES = ("all_down_proj", "all_gate_proj", "all_up_proj")
 _delete_pool = ThreadPoolExecutor(max_workers=DELETE_WORKERS)
+
+_NONDETERMINISTIC_ONNX_OPS = frozenset(
+    {
+        "Dropout",
+        "Multinomial",
+        "RandomNormal",
+        "RandomNormalLike",
+        "RandomUniform",
+        "RandomUniformLike",
+    }
+)
 
 
 def _discover_layer_windows(exported_path: str, start_layer: int = 0) -> List[Tuple[int, int]]:
@@ -490,10 +502,116 @@ def run_merge_pipeline(
     final_path = f"{base_dir}/merged_{first_start}-{last_end}.onnx"
     model = onnx.load(final_path, load_external_data=False)
     RemovePrefix.apply(model)
+    _deduplicate_redundant_onnx_nodes(model, verbose=verbose)
     onnx.save(model, final_path)
     if verbose:
         print(f"[DONE] merge pipeline complete in {time.time() - start:.2f}s")
     return final_path
+
+
+def _canonical_value_name(value_name: str, rename_map: dict[str, str]) -> str:
+    """Resolve the canonical producer name after prior node dedup rewrites."""
+    while value_name in rename_map:
+        value_name = rename_map[value_name]
+    return value_name
+
+
+def _attribute_signature(attr: onnx.AttributeProto):
+    """Build a stable hashable signature for ONNX node attributes."""
+    attr_type = attr.type
+    if attr_type == onnx.AttributeProto.FLOAT:
+        return (attr.name, attr_type, attr.f)
+    if attr_type == onnx.AttributeProto.INT:
+        return (attr.name, attr_type, attr.i)
+    if attr_type == onnx.AttributeProto.STRING:
+        return (attr.name, attr_type, bytes(attr.s))
+    if attr_type == onnx.AttributeProto.FLOATS:
+        return (attr.name, attr_type, tuple(attr.floats))
+    if attr_type == onnx.AttributeProto.INTS:
+        return (attr.name, attr_type, tuple(attr.ints))
+    if attr_type == onnx.AttributeProto.STRINGS:
+        return (attr.name, attr_type, tuple(bytes(v) for v in attr.strings))
+    if attr_type == onnx.AttributeProto.TENSOR:
+        # Ignore TensorProto.name because exporters can emit different internal
+        # names for identical constant values.
+        tensor = onnx.TensorProto()
+        tensor.CopyFrom(attr.t)
+        tensor.name = ""
+        tensor_data = tensor.SerializeToString()
+        return (attr.name, attr_type, hashlib.sha256(tensor_data).hexdigest())
+    return (attr.name, attr_type, attr.SerializeToString())
+
+
+def _node_signature(node: onnx.NodeProto, normalized_inputs: list[str]):
+    attrs = tuple(_attribute_signature(attr) for attr in sorted(node.attribute, key=lambda x: x.name))
+    return (
+        node.domain,
+        node.op_type,
+        tuple(normalized_inputs),
+        attrs,
+        len(node.output),
+    )
+
+
+def _deduplicate_redundant_onnx_nodes(model: onnx.ModelProto, verbose: bool = False) -> int:
+    """Run a local CSE pass on merged layerwise ONNX graph nodes.
+
+    Layerwise stitch can duplicate equivalent pure ONNX precompute chains
+    (mask/rope prep) across windows. This pass canonicalizes duplicate nodes by
+    reusing the first producer value.
+    """
+    graph = model.graph
+    graph_outputs = {value.name for value in graph.output}
+    rename_map: dict[str, str] = {}
+    seen_signatures: dict[tuple, tuple[str, ...]] = {}
+    deduped_nodes = []
+    removed_nodes = 0
+
+    for node in graph.node:
+        normalized_inputs = [_canonical_value_name(name, rename_map) for name in node.input]
+        if tuple(normalized_inputs) != tuple(node.input):
+            del node.input[:]
+            node.input.extend(normalized_inputs)
+
+        has_subgraph_attr = any(
+            attr.type in (onnx.AttributeProto.GRAPH, onnx.AttributeProto.GRAPHS) for attr in node.attribute
+        )
+        skip_dedup = (
+            node.domain not in ("", "ai.onnx")
+            or not node.output
+            or node.op_type in _NONDETERMINISTIC_ONNX_OPS
+            or has_subgraph_attr
+            or any(output_name in graph_outputs for output_name in node.output)
+        )
+        if skip_dedup:
+            deduped_nodes.append(node)
+            continue
+
+        signature = _node_signature(node, normalized_inputs)
+        existing_outputs = seen_signatures.get(signature)
+        if existing_outputs is None:
+            seen_signatures[signature] = tuple(node.output)
+            deduped_nodes.append(node)
+            continue
+
+        for duplicate_output, canonical_output in zip(node.output, existing_outputs):
+            rename_map[duplicate_output] = canonical_output
+        removed_nodes += 1
+
+    if removed_nodes == 0:
+        return 0
+
+    for node in deduped_nodes:
+        normalized_inputs = [_canonical_value_name(name, rename_map) for name in node.input]
+        if tuple(normalized_inputs) != tuple(node.input):
+            del node.input[:]
+            node.input.extend(normalized_inputs)
+
+    del graph.node[:]
+    graph.node.extend(deduped_nodes)
+    if verbose:
+        print(f"[INFO] layerwise dedup removed {removed_nodes} duplicate ONNX nodes")
+    return removed_nodes
 
 
 # ============================================================
