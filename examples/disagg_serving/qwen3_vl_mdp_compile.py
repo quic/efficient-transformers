@@ -5,58 +5,22 @@
 #
 # -----------------------------------------------------------------------------
 
-"""Compile-only validation: Qwen3-VL-30B language-prefill QPC with MDP (intersection flow).
+"""Compile-only validation: Qwen3-VL language-prefill QPC with disaggregated MDP.
 
-**Purpose — compile validation only.**
-This script is intended *solely* to verify that the Qwen3-VL language-prefill
-compile succeeds with Multi-Device Partitioning (MDP) using the two-pass
-intersection strategy.  It does **not** run inference, create a
-``QAICInferenceSession``, or execute any generated QPCs.  Use it to confirm
-that the export + compile pipeline works end-to-end on your hardware
-configuration before integrating the QPC into a serving stack.
+Runs export + compile for the language-prefill component only; no inference is performed.
 
-**Two-pass intersection flow**
+MDP strategies:
+  onnx         — single pass, ONNX-derived partition config (~19 MB JSON, may compile slowly).
+  intersection — two-pass: Pass 1 dumps compiler node list, Pass 2 compiles with compact
+                 intersected config (~1-2 MB, Glow-IR-aligned; recommended for large models).
+  both         — run ONNX flow then intersection flow.
 
-The script performs two sequential compile calls against the same loaded model:
-
-Pass 1 — compiler dump
-    Calls ``compile()`` *without* ``mdp_num_partitions`` (defaults to 1) but
-    with ``mdp_dump_partition_config=<json_path>``.  This instructs the QAIC
-    compiler to write the exact Glow IR node names it sees into the JSON file
-    while still producing a (single-partition) QPC that is discarded.
-
-Pass 2 — intersection compile
-    Calls ``compile()`` with ``mdp_num_partitions``, ``mdp_strategy="intersection"``,
-    and ``mdp_compiler_dump_path=<json_path>`` pointing at the file written in
-    Pass 1.  The MDP generator intersects the ONNX-derived node superset with
-    the compiler dump, producing a compact partition config (~1-2 MB vs ~19 MB
-    for the ONNX-only strategy) that maps cleanly to hardware Glow IR names.
-
-.. warning::
-    MDP with ``use_onnx_subfunctions=False`` and **without** the intersection
-    strategy enumerates every node in the ONNX graph (~19 MB JSON).  Many of
-    those names do not match the Glow IR names the compiler actually uses,
-    which can produce a very large node list that makes compilation extremely
-    slow or causes it to stall.  This script always uses the two-pass
-    intersection flow (Pass 1 dump + Pass 2 intersection compile) to avoid
-    that problem.
-
-Running this script will **load / download the HF model weights** and invoke
-the QEfficient export + compile pipeline.  Make sure:
-
-  * A valid QEfficient installation and Qualcomm Cloud AI 100 toolchain are
-    available in the active environment.
-  * ``HF_HUB_CACHE`` points to a location with sufficient disk space if you
-    want to redirect where the model is downloaded.
-  * ``QEFF_HOME`` controls where QPC artifacts are written (optional; defaults
-    to ``~/.cache/qeff``).
-
-No secrets or absolute environment-specific paths are embedded here.
+Requires a valid QEfficient installation and Qualcomm Cloud AI 100 toolchain.
+Set HF_HUB_CACHE to control model download location; QEFF_HOME for QPC artifact output.
 """
 
 import argparse
 import sys
-import warnings
 
 import torch
 from transformers import AutoConfig
@@ -70,9 +34,9 @@ def parse_args() -> argparse.Namespace:
     """Return parsed command-line arguments."""
     parser = argparse.ArgumentParser(
         description=(
-            "Two-pass intersection compile for Qwen3-VL-30B language-prefill QPC with MDP. "
-            "Pass 1 dumps the compiler MDP node list; Pass 2 compiles the final QPC using "
-            "intersection to produce a compact partition config."
+            "Compile Qwen3-VL-30B language-prefill QPC with MDP. "
+            "Supports 'onnx' (direct compile), 'intersection' (two-pass compact compile), "
+            "or 'both' flows.  No inference is performed."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -104,40 +68,85 @@ def parse_args() -> argparse.Namespace:
         "--mdp_num_partitions",
         type=int,
         default=2,
-        help="Number of pipeline-parallel partitions for disaggregated prefill (used in Pass 2).",
+        help="Number of pipeline-parallel partitions for disaggregated prefill.",
+    )
+    parser.add_argument(
+        "--mdp_strategy",
+        choices=["onnx", "intersection", "both"],
+        default="intersection",
+        help=(
+            "MDP compile strategy to run. "
+            "'onnx': single compile pass using ONNX-derived partition config. "
+            "'intersection': two-pass compile — Pass 1 dumps compiler node list, "
+            "Pass 2 compiles with the intersected compact config (recommended). "
+            "'both': run ONNX strategy then intersection strategy."
+        ),
     )
     parser.add_argument(
         "--mdp_compiler_dump_path",
         default=_DEFAULT_COMPILER_DUMP_JSON,
         help=(
-            "Path for the compiler MDP dump JSON file. "
+            "Path for the compiler MDP dump JSON file used by the intersection strategy. "
             "Pass 1 writes this file; Pass 2 reads it. "
-            "Relative paths are resolved from the current working directory."
+            "Relative paths are resolved from the current working directory. "
+            "Ignored when --mdp_strategy onnx is selected."
         ),
     )
 
     return parser.parse_args()
 
 
+def _run_onnx_flow(qeff_model, shared_kwargs: dict, mdp_num_partitions: int) -> str:
+    """Run a single-pass ONNX-strategy MDP compile. Returns QPC path."""
+    print(f"[ONNX] Compiling with mdp_num_partitions={mdp_num_partitions}, mdp_strategy='onnx'")
+    qpc_path = qeff_model.compile(
+        **shared_kwargs,
+        mdp_num_partitions=mdp_num_partitions,
+        mdp_strategy="onnx",
+    )
+    print(f"[ONNX] QPC path: {qpc_path}")
+    return qpc_path
+
+
+def _run_intersection_flow(
+    qeff_model,
+    shared_kwargs: dict,
+    mdp_num_partitions: int,
+    mdp_compiler_dump_path: str,
+) -> str:
+    """Run two-pass intersection MDP compile.
+
+    Pass 1 dumps the compiler node list; Pass 2 compiles with the compact intersected config.
+    Returns QPC path from Pass 2.
+    """
+    print(f"[Intersection Pass 1] Dumping compiler MDP partition config to: {mdp_compiler_dump_path}")
+    qeff_model.compile(
+        **shared_kwargs,
+        mdp_dump_partition_config=mdp_compiler_dump_path,
+    )
+    print(f"[Intersection Pass 1] Compiler dump written to: {mdp_compiler_dump_path}")
+
+    print(
+        f"[Intersection Pass 2] Compiling final QPC with mdp_num_partitions={mdp_num_partitions}, "
+        f"mdp_strategy='intersection', mdp_compiler_dump_path={mdp_compiler_dump_path}"
+    )
+    qpc_path = qeff_model.compile(
+        **shared_kwargs,
+        mdp_num_partitions=mdp_num_partitions,
+        mdp_strategy="intersection",
+        mdp_compiler_dump_path=mdp_compiler_dump_path,
+    )
+    print(f"[Intersection Pass 2] QPC path: {qpc_path}")
+    return qpc_path
+
+
 def main() -> None:
-    """Run two-pass intersection compile for Qwen3-VL language-prefill.
+    """Run ONNX and/or intersection MDP compile for Qwen3-VL language-prefill.
 
-    Pass 1: dump compiler MDP node list to a JSON file (no mdp_num_partitions).
-    Pass 2: compile final QPC with mdp_num_partitions, mdp_strategy='intersection',
-            and mdp_compiler_dump_path pointing at the Pass-1 dump.
-
-    No ``QAICInferenceSession`` is created and no runtime inference is performed.
+    Strategy is governed by --mdp_strategy: 'onnx', 'intersection', or 'both'.
+    No QAICInferenceSession is created; no runtime inference is performed.
     """
     args = parse_args()
-
-    warnings.warn(
-        "MDP with use_onnx_subfunctions=False and without the intersection strategy can "
-        "produce a very large node list (~19 MB JSON) of ONNX names that do not match "
-        "Glow IR, making compilation extremely slow. This script uses the two-pass "
-        "intersection flow (use_onnx_subfunctions=False + Pass 1 dump + Pass 2 intersection) "
-        "to avoid that problem.",
-        stacklevel=1,
-    )
 
     config = AutoConfig.from_pretrained(args.model_id)
     config.dtype = "float16"
@@ -151,7 +160,7 @@ def main() -> None:
         layerwise=False,
     )
 
-    _shared_compile_kwargs = dict(
+    shared_compile_kwargs = dict(
         batch_size=args.batch_size,
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
@@ -172,24 +181,19 @@ def main() -> None:
         layerwise=False,
     )
 
-    print(f"[Pass 1] Dumping compiler MDP partition config to: {args.mdp_compiler_dump_path}")
-    qeff_model.compile(
-        **_shared_compile_kwargs,
-        mdp_dump_partition_config=args.mdp_compiler_dump_path,
-    )
-    print(f"[Pass 1] Compiler dump written to: {args.mdp_compiler_dump_path}")
+    run_onnx = args.mdp_strategy in ("onnx", "both")
+    run_intersection = args.mdp_strategy in ("intersection", "both")
 
-    print(
-        f"[Pass 2] Compiling final QPC with mdp_num_partitions={args.mdp_num_partitions}, "
-        f"mdp_strategy='intersection', mdp_compiler_dump_path={args.mdp_compiler_dump_path}"
-    )
-    prefill_qpc_path = qeff_model.compile(
-        **_shared_compile_kwargs,
-        mdp_num_partitions=args.mdp_num_partitions,
-        mdp_strategy="intersection",
-        mdp_compiler_dump_path=args.mdp_compiler_dump_path,
-    )
-    print(f"[Pass 2] Prefill QPC path: {prefill_qpc_path}")
+    if run_onnx:
+        _run_onnx_flow(qeff_model, shared_compile_kwargs, args.mdp_num_partitions)
+
+    if run_intersection:
+        _run_intersection_flow(
+            qeff_model,
+            shared_compile_kwargs,
+            args.mdp_num_partitions,
+            args.mdp_compiler_dump_path,
+        )
 
 
 if __name__ == "__main__":

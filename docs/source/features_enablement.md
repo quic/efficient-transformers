@@ -138,37 +138,16 @@ compiler writes its partition layout to the file; no QPC is produced. The
 resulting file is used only as input to intersection — it does not represent
 the desired final partitioning.
 
-```python
-from QEfficient import QEFFAutoModelForImageTextToText
-
-model = QEFFAutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-7B-Instruct")
-model.export()  # export without subfunctions
-
-# Dump pass: compiler writes its MDP layout; no QPC is produced.
-model.compile(
-    num_cores=16,
-    num_devices=4,
-    mdp_dump_partition_config="/path/to/compiler_mdp_dump.json",
-)
-```
-
 #### Step 2 — Intersection compile
 
 Set `mdp_num_partitions`, point `mdp_compiler_dump_path` at the dump from
 Step 1, and set `mdp_strategy="intersection"`. QEff generates its own MDP
 config, intersects it with the compiler dump, and performs the final compile.
 
-```python
-from QEfficient import QEFFAutoModelForImageTextToText
+#### Complete working example
 
-model = QEFFAutoModelForImageTextToText.from_pretrained("Qwen/Qwen3-VL-7B-Instruct")
+A self-contained script demonstrating both the `mdp_strategy="onnx"` direct
+compile and the two-pass `mdp_strategy="intersection"` flow (including the
+dump-pass required to generate `mdp_compiler_dump_path`) is available here:
 
-# Intersection compile: QEff MDP intersected with the compiler dump.
-qpc_path = model.compile(
-    num_cores=16,
-    num_devices=4,
-    mdp_num_partitions=4,
-    mdp_compiler_dump_path="/path/to/compiler_mdp_dump.json",
-    mdp_strategy="intersection",
-)
-```
+[`examples/disagg_serving/qwen3_vl_mdp_compile.py`](../../examples/disagg_serving/qwen3_vl_mdp_compile.py)
