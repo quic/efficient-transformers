@@ -1196,7 +1196,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 "ctx_len": ctx_len,
                 "sliding_window": self.model.language_model.config.sliding_window,
                 "vision_batch_size": batch_size,
-                "vision_tokens": vision_size,
+                "vision_size": vision_size,
             }
             if comp_ctx_lengths is not None:
                 spec["comp_ctx_lengths"] = comp_ctx_lengths
@@ -1215,7 +1215,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 "ctx_len": ctx_len,
                 "sliding_window": self.model.language_model.config.sliding_window,
                 "vision_batch_size": batch_size,
-                "vision_tokens": vision_size,
+                "vision_size": vision_size,
             }
             if comp_ctx_lengths is not None:
                 spec["comp_ctx_lengths"] = comp_ctx_lengths
@@ -1243,7 +1243,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         }
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
-            "vision_embeds": {0: "vision_batch_size", 1: "vision_tokens"},
+            "vision_embeds": {0: "vision_batch_size", 1: "vision_size"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
             "mm_token_type_ids": {0: "batch_size", 1: "seq_len"},
         }
