@@ -495,16 +495,35 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
                 num of experts.
 
         """
+        # logits = self.layer(hidden_states).float()
+        # top_k_logits, top_k_indices = torch.topk(logits, self.top_k, dim=1)  # [num_tokens, top_k]
+        # top_k_gates = torch.softmax(top_k_logits, dim=1).type_as(hidden_states)  # [num_tokens, top_k]
+
+        # B, K = top_k_indices.shape
+        # E = int(self.num_experts)
+        # flat = top_k_indices.reshape(-1)
+        # mask = torch.zeros((B * K, E), dtype=torch.int64, device=top_k_indices.device)
+        # mask[torch.arange(B * K, device=flat.device), flat] = torch.ones(1, dtype=torch.int64, device=flat.device)
+        # expert_mask = mask.view(B, K, E).permute(2, 1, 0)
+        # return top_k_gates, expert_mask, logits, self.num_experts
+
         logits = self.layer(hidden_states).float()
-        top_k_logits, top_k_indices = torch.topk(logits, self.top_k, dim=1)  # [num_tokens, top_k]
-        top_k_gates = torch.softmax(top_k_logits, dim=1).to(torch.float32)  # [num_tokens, top_k]
+
+        top_k_logits, top_k_indices = torch.topk(logits, self.top_k, dim=1)  # [B, K]
+        top_k_gates = torch.softmax(top_k_logits, dim=1).to(hidden_states.dtype)  # [B, K]
 
         B, K = top_k_indices.shape
         E = int(self.num_experts)
-        flat = top_k_indices.reshape(-1)
-        mask = torch.zeros((B * K, E), dtype=torch.int64, device=top_k_indices.device)
-        mask[torch.arange(B * K, device=flat.device), flat] = torch.ones(1, dtype=torch.int64, device=flat.device)
-        expert_mask = mask.view(B, K, E).permute(2, 1, 0)
+
+        # Create expert indices [E]
+        expert_ids = torch.arange(E, device=top_k_indices.device)
+
+        # Compare and build mask: [B, K, E]
+        expert_mask = (top_k_indices.unsqueeze(-1) == expert_ids).to(torch.int64)
+
+        # Match original layout: [E, K, B]
+        expert_mask = expert_mask.permute(2, 1, 0)
+
         return top_k_gates, expert_mask, logits, self.num_experts
 
 
@@ -526,16 +545,24 @@ class QEffGraniteMoeMoE(GraniteMoeMoE):
         bsz, length, emb_size = layer_input.size()
         layer_input = layer_input.reshape(-1, emb_size)
         topk_gates, expert_mask, router_logits, num_experts = self.router(layer_input)
-        final_hidden_states = layer_input * 0.0
+        final_hidden_states = torch.zeros_like(layer_input, dtype=layer_input.dtype)
         for expert_idx in range(num_experts):
-            mask = expert_mask[expert_idx].transpose(0, 1).to(torch.float32)
-            mask_weight = torch.einsum("be,be->b", topk_gates, mask)[:, None]
+            mask = expert_mask[expert_idx].transpose(0, 1).to(layer_input.dtype)
+            # mask_weight = torch.einsum("be,be->b", topk_gates, mask.to(topk_gates.dtype))[:, None]
+            mask_weight = torch.einsum("be,be->b", topk_gates, mask.to(dtype=topk_gates.dtype))[:, None]
             hidden_states = self.input_linear(layer_input, expert_idx)
             chunked_hidden_states = hidden_states.chunk(2, dim=-1)
             hidden_states = self.activation(chunked_hidden_states[0]) * chunked_hidden_states[1]
             expert_outputs = self.output_linear(hidden_states, expert_idx)
-            current_hidden_states = expert_outputs * mask_weight * (mask_weight > 0).to(torch.float32)
-            final_hidden_states = final_hidden_states + current_hidden_states
+            # current_hidden_states = torch.where(mask_weight > 0, expert_outputs * mask_weight, 0.0, dtype=mask_weight.dtype)
+
+            current_hidden_states = torch.where(
+                mask_weight > 0,
+                expert_outputs * mask_weight,
+                torch.zeros_like(expert_outputs * mask_weight, dtype=final_hidden_states.dtype),
+            )
+
+            final_hidden_states += current_hidden_states
         final_hidden_states = final_hidden_states.view(bsz, length, self.input_size)
         return final_hidden_states, router_logits
 
