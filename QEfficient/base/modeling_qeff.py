@@ -1119,7 +1119,6 @@ class QEFFBaseModel(ABC):
         retain_full_kv: Optional[bool] = None,
         qaic_config: Optional[dict] = None,
         specialization_module_name: Optional[str] = None,
-        use_dynamo: Optional[bool] = False,
         use_weight_free_export: Optional[bool] = False,
         kv_cache_prefix: Optional[str] = None,
         **compiler_options,

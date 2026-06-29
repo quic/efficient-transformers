@@ -79,6 +79,8 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin):
     """
 
     # Apply rotation
+    cos = cos.to(device=q.device, dtype=q.dtype)
+    sin = sin.to(device=q.device, dtype=q.dtype)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     # Cast back to original dtype
@@ -96,6 +98,8 @@ def eager_attention_forward(
     key_states = repeat_kv(key, module.num_key_value_groups)
 
     value_states = repeat_kv(value, module.num_key_value_groups)
+    key_states = key_states.to(dtype=query.dtype)                                                                              
+    value_states = value_states.to(dtype=query.dtype)                                                                          
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
 
@@ -204,9 +208,32 @@ class QEffQwen3MoeTopKRouter(Qwen3MoeTopKRouter):
 class QEffQwen3MoeExperts(Qwen3MoeExperts):
     def __qeff_init__(self):
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
+        if self.gate_up_proj.device.type == "meta":
+            # Weight-free export path: gate_up_proj/down_proj exist directly in the
+            # checkpoint so skip creating derived params. The forward will split inline,
+            # so the ONNX graph references the original checkpoint tensor names and
+            # _promote_initializers_and_build_spec can resolve them. The compiler
+            # constant-folds the Transpose+Slice at compile time — zero runtime cost.
+            return
         self.gate_proj = nn.Parameter(self.gate_up_proj[:, : self.expert_dim, :].detach().clone().transpose(1, 2))
         self.up_proj = nn.Parameter(self.gate_up_proj[:, self.expert_dim :, :].detach().clone().transpose(1, 2))
         self.down_proj_t = nn.Parameter(self.down_proj.detach().clone().transpose(1, 2))
+
+    def get_gate_up_down(self):
+        """Return (gate_W, up_W, down_W) in matmul-ready layout [E,H,D], [E,H,D], [E,D,H].
+
+        Normal export: returns pre-derived params created in __qeff_init__ (contiguous).
+        Weight-free export: splits gate_up_proj and transposes inline so the ONNX
+        graph references the original checkpoint keys directly.
+        """
+        if hasattr(self, "gate_proj"):
+            return self.gate_proj, self.up_proj, self.down_proj_t
+        gate_up = self.gate_up_proj.transpose(1, 2)  # [E, 2D, H] -> [E, H, 2D]
+        return (
+            gate_up[..., : self.expert_dim],   # [E, H, D]
+            gate_up[..., self.expert_dim :],   # [E, H, D]
+            self.down_proj.transpose(1, 2),    # [E, H, D] -> [E, D, H]
+        )
 
 
 class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
@@ -230,9 +257,10 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         expert_out = x.new_zeros((T, H))
         for expert_idx in range(self.num_experts):
             routing_weight = routing_weights[:, expert_idx].unsqueeze(-1)
-            gate = x @ self.experts.gate_proj[expert_idx]
-            up = x @ self.experts.up_proj[expert_idx]
-            down = (up * act_fn(gate)) @ self.experts.down_proj_t[expert_idx]
+            gate_proj_all, up_proj_all, down_proj_t_all = self.experts.get_gate_up_down()
+            gate = x @ gate_proj_all[expert_idx]
+            up = x @ up_proj_all[expert_idx]
+            down = (up * act_fn(gate)) @ down_proj_t_all[expert_idx]
             expert_out += down * routing_weight
         return expert_out.view(B, S, H), router_logits
 
@@ -254,9 +282,10 @@ class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
 
         local_experts = self.num_experts // num_nsp
         rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_u = self.experts.up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_d = self.experts.down_proj_t.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
+        gate_proj_all, up_proj_all, down_proj_t_all = self.experts.get_gate_up_down()
+        W_g = gate_proj_all.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_u = up_proj_all.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_d = down_proj_t_all.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
         expert_out = x.new_zeros((num_nsp, T, H))
         routing_weights_unsqueezed = rw.unsqueeze(-1)
         act_fn = getattr(self.experts, "act_fn", F.silu)
@@ -290,9 +319,10 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         router_logits, top_w, top_i = self.gate(hidden_states)
         top_w = top_w.to(hidden_states.dtype)
         idx = top_i.reshape(-1)
-        gate_proj = self.experts.gate_proj[idx.flatten()]
-        up_proj = self.experts.up_proj[idx.flatten()]
-        down_proj = self.experts.down_proj_t[idx.flatten()]
+        gate_proj_all, up_proj_all, down_proj_t_all = self.experts.get_gate_up_down()
+        gate_proj = gate_proj_all[idx.flatten()]
+        up_proj   = up_proj_all[idx.flatten()]
+        down_proj = down_proj_t_all[idx.flatten()]
         expert_in = hidden_states.unsqueeze(1).expand(-1, self.top_k, -1).contiguous().view(-1, 1, H)
         gate = torch.bmm(expert_in, gate_proj)
         up = torch.bmm(expert_in, up_proj)

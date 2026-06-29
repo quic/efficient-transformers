@@ -560,7 +560,7 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         output_names = ["output"]
 
-        use_dynamo = kwargs.get("use_dynamo", False)
+        use_dynamo = use_dynamo or kwargs.get("use_dynamo", False)
         use_weight_free_export = kwargs.get("use_weight_free_export", False)
         dynamic_shapes = None
         if use_dynamo or use_weight_free_export:
@@ -4121,7 +4121,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 kv_cache_prefix=kv_cache_prefix,
             )
         else:
-            use_dynamo = kwargs.get("use_dynamo", False)
+            use_dynamo = use_dynamo or kwargs.get("use_dynamo", False)
             use_weight_free_export = kwargs.get("use_weight_free_export", False)
             dynamic_shapes = None
             if use_dynamo or use_weight_free_export:
