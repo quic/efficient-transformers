@@ -209,6 +209,7 @@ class QEFFMistral3DecoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
+        self.config = self.model.config
         self.language_model = self.model.model.language_model
 
     def get_submodules_for_export(self) -> Type[nn.Module]:

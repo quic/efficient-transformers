@@ -593,6 +593,7 @@ class QEffMolmoDecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         # self.language_model = self.model.language_model
+        self.config = self.model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
