@@ -3298,7 +3298,6 @@ class QEFFAutoModelForImageTextToText:
         )
 
         _resolve_torch_dtype(kwargs)
-        layerwise_context = None
         if layerwise:
             # Layer-wise mode: build the outer model on the meta device so the
             # caller's ``from_pretrained`` does not pull the full checkpoint
@@ -3574,7 +3573,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         )
 
         _resolve_torch_dtype(kwargs)
-        layerwise_context = None
         if layerwise:
             # Layer-wise mode: build the outer model on the meta device. The
             # caller still gets a typed wrapper, but no checkpoint weights are
