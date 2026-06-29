@@ -20,6 +20,7 @@ Set HF_HUB_CACHE to control model download location; QEFF_HOME for QPC artifact 
 """
 
 import argparse
+import logging
 import sys
 
 import torch
@@ -92,6 +93,12 @@ def parse_args() -> argparse.Namespace:
             "Ignored when --mdp_strategy onnx is selected."
         ),
     )
+    parser.add_argument(
+        "--use_onnx_subfunctions",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable ONNX subfunction splitting during compile (--no-use_onnx_subfunctions to disable).",
+    )
 
     return parser.parse_args()
 
@@ -148,6 +155,8 @@ def main() -> None:
     """
     args = parse_args()
 
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
     config = AutoConfig.from_pretrained(args.model_id)
     config.dtype = "float16"
 
@@ -177,7 +186,7 @@ def main() -> None:
         prefill_only=True,
         enable_chunking=True,
         skip_vision=True,
-        use_onnx_subfunctions=False,
+        use_onnx_subfunctions=args.use_onnx_subfunctions,
         layerwise=False,
     )
 
