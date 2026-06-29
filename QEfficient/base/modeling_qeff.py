@@ -118,6 +118,34 @@ class QEFFBaseModel(ABC):
     def _transform_names(self) -> List[str]:
         return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
 
+    def maybe_apply_replicate_kv_transform(self, model_config, num_devices: int, qaic_config: Optional[dict]) -> int:
+        if model_config is None or qaic_config is None or "EncoderWrapper" in self.model.__class__.__name__:
+            return 1
+
+        num_replicate_kv_heads = qaic_config.get("num_replicate_kv_heads")
+        if num_replicate_kv_heads is None:
+            num_replicate_kv_heads = calculate_num_replicate_kv_heads(
+                num_devices=num_devices,
+                text_model_config=model_config,
+            )
+        if num_replicate_kv_heads is not None:
+            num_replicate_kv_heads = int(num_replicate_kv_heads)
+            qaic_config["num_replicate_kv_heads"] = num_replicate_kv_heads
+        if num_replicate_kv_heads is None or num_replicate_kv_heads <= 1:
+            return 1
+
+        self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(
+            self.model,
+            num_replicate_kv_heads,
+        )
+        if not replicate_kv_transformed:
+            return 1
+
+        self.hash_params["config"] = (
+            model_config.to_diff_dict() if hasattr(model_config, "to_diff_dict") else model_config
+        )
+        return num_replicate_kv_heads
+
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
         self.model = model
@@ -794,36 +822,12 @@ class QEFFBaseModel(ABC):
         model_config = getattr(self.model, "config", None) or getattr(
             getattr(self.model, "model", None), "config", None
         )
-        num_replicate_kv_heads = 1
-        if model_config is not None:
-            num_replicate_kv_heads = calculate_num_replicate_kv_heads(
-                num_devices=num_devices,
-                text_model_config=model_config,
-            )
-
-        effective_num_replicate_kv_heads = 1
+        effective_num_replicate_kv_heads = self.maybe_apply_replicate_kv_transform(
+            model_config,
+            num_devices,
+            qaic_config,
+        )
         if model_config:
-            if qaic_config is not None:
-                num_replicate_kv_heads = qaic_config.get("num_replicate_kv_heads", num_replicate_kv_heads)
-                qaic_config["num_replicate_kv_heads"] = num_replicate_kv_heads
-                should_apply_repeat_kv = num_replicate_kv_heads is not None and num_replicate_kv_heads > 1
-                if not should_apply_repeat_kv:
-                    replicate_kv_transformed = False
-                else:
-                    self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(
-                        self.model,
-                        num_replicate_kv_heads,
-                    )
-                    # RepeatKV is intentionally skipped for encoder wrappers, but we still
-                    # want the requested value reflected in encoder hash params.
-                    if "EncoderWrapper" in self.model.__class__.__name__:
-                        effective_num_replicate_kv_heads = num_replicate_kv_heads
-                if replicate_kv_transformed:
-                    if hasattr(model_config, "to_diff_dict"):
-                        self.hash_params["config"] = model_config.to_diff_dict()
-                    else:
-                        self.hash_params["config"] = model_config
-                    effective_num_replicate_kv_heads = num_replicate_kv_heads
             blocking_config = build_transformer_blocking_config_for_transform(
                 model_config,
                 ctx_len=ctx_len,

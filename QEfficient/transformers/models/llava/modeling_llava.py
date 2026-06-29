@@ -29,7 +29,6 @@ class QEFFLlavaEncoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.model.vision_model = self.model.model.vision_tower
-        self.config = self.model.config
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
@@ -60,7 +59,6 @@ class QEFFLlavaDecoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
-        self.config = self.model.config
         self.language_model = self.model.model.language_model
         self.lm_head = self.model.lm_head
 

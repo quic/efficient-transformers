@@ -59,7 +59,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
     qaic_config: Optional[dict] = None,
-    num_replicate_kv_heads: Optional[int] = 1,
     test_kv_replicate: Optional[bool] = None,
     torch_dtype: Optional[torch.dtype] = torch.float32,
     compare_results: Optional[bool] = False,
