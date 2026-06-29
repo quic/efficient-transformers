@@ -962,7 +962,7 @@ class QEFFBaseModel(ABC):
                 logger.warning(
                     "mdp_strategy='onnx' enumerates all ONNX nodes, leading to slow compilation on large models. "
                     "Prefer mdp_strategy='intersection' with mdp_compiler_dump_path for a compact, "
-                    "Glow-IR\u2013aligned partition config."
+                    "Glow-IR-aligned partition config."
                 )
             num_cores = compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
             num_layers = getattr(self, "num_layers", None)
