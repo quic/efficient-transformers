@@ -113,6 +113,14 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         "full_batch_size": full_batch_size,
         "mxfp6_matmul": False,
     }
+    if model_name in [
+        "qwen2_5_vl",
+        "qwen3_vl",
+        "qwen3_vl_moe",
+        "qwen3_5",
+        "qwen3_5_moe",
+    ]:
+        compile_kwargs["use_onnx_subfunctions"] = True
 
     images = []
     generation_config = None
