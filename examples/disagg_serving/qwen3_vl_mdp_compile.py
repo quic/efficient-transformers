@@ -75,12 +75,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mos", type=int, default=1, help="Memory-over-subscription factor.")
 
     parser.add_argument(
-        "--mdp_ts_num_devices",
+        "--num_devices",
         type=int,
         default=4,
         help=(
             "Total AIC-100 devices used across all pipeline stages. "
-            "Each stage receives mdp_ts_num_devices // mdp_num_partitions devices."
+            "Each stage receives num_devices // mdp_num_partitions devices."
         ),
     )
     parser.add_argument(
@@ -151,7 +151,7 @@ def main() -> None:
         width=args.width,
         num_cores=args.num_cores,
         mos=args.mos,
-        mdp_ts_num_devices=args.mdp_ts_num_devices,  # total devices spread across all pipeline stages
+        num_devices=args.num_devices,  # total devices spread across all pipeline stages
         mdp_num_partitions=args.mdp_num_partitions,  # number of pipeline-parallel stages (partitions)
         mdp_strategy=args.mdp_strategy,  # "onnx" (default) or "intersection" (needs compiler dump)
         mdp_compiler_dump_path=args.mdp_compiler_dump_path,  # required only for intersection strategy
