@@ -194,6 +194,9 @@ def eager_attention_forward_blocked_kv(
         # Compute attention scores for the block
         attn_weights_block = torch.matmul(query, K_block_states.transpose(2, 3)) * scaling
         if attention_mask is not None:
+            masked_tensor = torch.full_like(
+                attn_weights_block, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights_block.dtype
+            ).to(attn_weights_block.device)
             attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
 
         # Update Running row maximum
@@ -359,7 +362,7 @@ class QEffGlm4MoeAttention(Glm4MoeAttention):
 
         if sin_cached is not None and cos_cached is not None:
             sin, cos = sin_cached, cos_cached
-            rotary_dim = int(self.rotary_emb.cos_cached.shape[-1])
+            rotary_dim = int(self.rotary_emb.cos_cached.detach().clone().shape[-1])
             query_states, key_states = qeff_apply_precomputed_rotary_pos_emb(
                 query_states, key_states, cos, sin, rotary_dim
             )
