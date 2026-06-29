@@ -960,9 +960,9 @@ class QEFFBaseModel(ABC):
             # Disaggregated (pipeline-parallel) MDP — delegate to focused helper.
             if not use_onnx_subfunctions and mdp_strategy is MdpStrategy.ONNX:
                 logger.warning(
-                    "mdp_strategy='onnx' enumerates every ONNX node (~19 MB JSON) and can compile "
-                    "extremely slowly for large models. Prefer mdp_strategy='intersection' with "
-                    "mdp_compiler_dump_path for a compact Glow-IR-aligned partition config."
+                    "mdp_strategy='onnx' enumerates all ONNX nodes, leading to slow compilation on large models. "
+                    "Prefer mdp_strategy='intersection' with mdp_compiler_dump_path for a compact, "
+                    "Glow-IR\u2013aligned partition config."
                 )
             num_cores = compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
             num_layers = getattr(self, "num_layers", None)
