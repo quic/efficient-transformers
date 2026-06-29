@@ -22,6 +22,7 @@ model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 # model_id = "tiny-random/qwen3-vl-moe"
 config = AutoConfig.from_pretrained(model_id)
 config.dtype = "float16"
+config.torch_dtype = torch.float16
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
 # config.vision_config.depth = 9
@@ -29,7 +30,7 @@ config.dtype = "float16"
 # config.vision_config.deepstack_visual_indexes = [8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=True, config=config, dtype=torch.float16, layerwise=True
+    model_id, attn_implementation="eager", kv_offload=True, config=config, dtype=torch.float16, layerwise=False
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -55,8 +56,29 @@ if not skip_vision:
         split_model_io=True,
         skip_lang=True,
         use_onnx_subfunctions=True,
-        layerwise=True,
+        layerwise=False,
     )
+
+decode_qpc_path = qeff_model.compile(
+    batch_size=BS,
+    prefill_seq_len=1,
+    ctx_len=CTX_LEN,
+    height=354,
+    width=536,
+    num_cores=16,
+    num_devices=1,
+    mxfp6_matmul=True,
+    mxint8_kv_cache=True,
+    split_model_io=True,  # This should be used for disagg serving via VLLM
+    mos=1,
+    aic_enable_depth_first=True,
+    prefill_only=False,
+    skip_vision=True,
+    use_onnx_subfunctions=True,
+    layerwise=False,
+    offload_pt_weights=False,
+)
+
 
 prefill_qpc_path = qeff_model.compile(
     batch_size=BS,
@@ -76,29 +98,8 @@ prefill_qpc_path = qeff_model.compile(
     enable_chunking=True,
     skip_vision=True,
     use_onnx_subfunctions=True,
-    layerwise=True,
-    layerwise_window_size=1,
-)
-
-
-decode_qpc_path = qeff_model.compile(
-    batch_size=BS,
-    prefill_seq_len=1,
-    ctx_len=CTX_LEN,
-    height=354,
-    width=536,
-    num_cores=16,
-    num_devices=1,
-    mxfp6_matmul=True,
-    mxint8_kv_cache=True,
-    split_model_io=True,  # This should be used for disagg serving via VLLM
-    mos=1,
-    aic_enable_depth_first=True,
-    prefill_only=False,
-    skip_vision=True,
-    use_onnx_subfunctions=True,
-    layerwise=True,
-    layerwise_window_size=1,
+    layerwise=False,
+    offload_pt_weights=True,
 )
 
 print(f"Prefill qpc path {prefill_qpc_path}")
