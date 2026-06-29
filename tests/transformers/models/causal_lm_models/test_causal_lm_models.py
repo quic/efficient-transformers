@@ -53,6 +53,26 @@ def test_few_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, manual_cleanup=manual_cleanup)
 
 
+@pytest.mark.few_layers
+@pytest.mark.on_qaic
+@pytest.mark.llm_model
+@pytest.mark.parametrize("use_onnx_subfunctions", [False, True])
+@pytest.mark.parametrize("model_name", test_models_causal)
+def test_few_causal_lm_onnx_mdp_compile_only(model_name, use_onnx_subfunctions, manual_cleanup):
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to issues in HF.")
+    n_layer = get_custom_n_layers(model_name)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        n_layer=n_layer,
+        manual_cleanup=manual_cleanup,
+        compile_only=True,
+        mdp_num_partitions=2,
+        mdp_strategy="onnx",
+        use_onnx_subfunctions=use_onnx_subfunctions,
+    )
+
+
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
