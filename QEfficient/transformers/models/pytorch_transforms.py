@@ -1005,95 +1005,48 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
     """
 
     @classmethod
-    def mutate(cls, original_module: nn.Module, parent_module: nn.Module, n_repeat: int) -> nn.Module:
+    def mutate(
+        cls,
+        original_module: nn.Module,
+        parent_module: nn.Module,  # noqa: ARG003
+        n_repeat: int,
+        orig_kv_heads: int,
+        new_kv_heads: int,
+        num_attention_heads: int,
+        hidden_size: int,
+    ) -> nn.Module:
         """
-        Mutates the matched top-level model module in-place by replicating its KV heads.
-
-        Args:
-            original_module: The matched top-level model module to mutate.
-            parent_module: The parent module (unused, present for interface compatibility).
-            n_repeat: The number of times to repeat the KV heads.
-
-        Returns:
-            The mutated module (same object, modified in-place).
+        Mutates one attention module in-place by replicating its KV projection weights.
         """
-        text_model = get_text_model(original_module)
+        head_dim = getattr(original_module, "head_dim", hidden_size // num_attention_heads)
+        k_proj = get_projection_layer(original_module, ("k_proj", "key_proj"))
+        v_proj = get_projection_layer(original_module, ("v_proj", "value_proj"))
+        duplicate_kv_projection_weights(
+            k_proj,
+            orig_kv_heads,
+            n_repeat,
+            head_dim,
+            hidden_size,
+            layer_name=f"{original_module.__class__.__name__}.k_proj",
+        )
+        duplicate_kv_projection_weights(
+            v_proj,
+            orig_kv_heads,
+            n_repeat,
+            head_dim,
+            hidden_size,
+            layer_name=f"{original_module.__class__.__name__}.v_proj",
+        )
 
-        cfg = text_model.config
-        if is_mla_model(text_model):
-            logger.warning("Skipping RepeatKVTransform: MLA models don't apply replicate KV changes.")
-            return original_module
-
-        current_kv_heads = resolve_kv_heads(cfg)
-        configured_orig_kv_heads = getattr(cfg, "orig_kv_heads", None)
-        if configured_orig_kv_heads is not None:
-            if configured_orig_kv_heads < 1:
-                raise ValueError(f"Invalid stored orig_kv_heads in config for RepeatKV: {configured_orig_kv_heads}")
-            expected_kv_heads = configured_orig_kv_heads * n_repeat
-            if current_kv_heads == expected_kv_heads:
-                logger.warning("Skipping RepeatKVTransform: model already has requested repeated KV heads.")
-                return original_module
-            orig_kv_heads = configured_orig_kv_heads
-        else:
-            orig_kv_heads = current_kv_heads
-        num_attention_heads = resolve_attention_heads(cfg)
-        hidden_size = resolve_hidden_size(cfg)
-
-        if orig_kv_heads is None or num_attention_heads is None or hidden_size is None:
-            raise ValueError(
-                "Unable to resolve attention/KV heads or hidden size from config for RepeatKV transform. "
-                f"Supported attention keys={ATTENTION_HEAD_CONFIG_KEYS}, kv keys={KV_HEAD_CONFIG_KEYS}, "
-                f"hidden size keys={HIDDEN_SIZE_CONFIG_KEYS}."
-            )
-        if orig_kv_heads < 1 or num_attention_heads < 1:
-            raise ValueError(
-                f"Invalid head values for RepeatKV transform: "
-                f"num_attention_heads={num_attention_heads}, num_key_value_heads={orig_kv_heads}"
-            )
-        new_kv_heads = n_repeat * orig_kv_heads
-        if new_kv_heads > num_attention_heads or (num_attention_heads % new_kv_heads) != 0:
-            raise ValueError(
-                f"Invalid RepeatKV configuration: num_attention_heads={num_attention_heads}, "
-                f"orig_kv_heads={orig_kv_heads}, num_replicate_kv_heads={n_repeat}, new_kv_heads={new_kv_heads}. "
-                "Expected new_kv_heads <= num_attention_heads and divisibility."
-            )
-
-        cfg.orig_kv_heads = orig_kv_heads
-        set_kv_head_aliases(cfg, new_kv_heads)
-
-        logger.warning(f"Original KV heads: {orig_kv_heads}")
-        logger.warning(f"Modified KV heads: {new_kv_heads}")
-        for block in text_model.layers:
-            attn = get_attention_module(block)
-            if hasattr(attn, "num_key_value_heads"):
-                attn.num_key_value_heads = new_kv_heads
-            if hasattr(attn, "n_kv_heads"):
-                attn.n_kv_heads = new_kv_heads
-
-            n_kv_groups = num_attention_heads // new_kv_heads
-            if hasattr(attn, "num_key_value_groups"):
-                attn.num_key_value_groups = n_kv_groups
-            if hasattr(attn, "n_kv_groups"):
-                attn.n_kv_groups = n_kv_groups
-            head_dim = getattr(attn, "head_dim", hidden_size // num_attention_heads)
-            k_proj = get_projection_layer(attn, ("k_proj", "key_proj"))
-            v_proj = get_projection_layer(attn, ("v_proj", "value_proj"))
-            duplicate_kv_projection_weights(
-                k_proj,
-                orig_kv_heads,
-                n_repeat,
-                head_dim,
-                hidden_size,
-                layer_name=f"{attn.__class__.__name__}.k_proj",
-            )
-            duplicate_kv_projection_weights(
-                v_proj,
-                orig_kv_heads,
-                n_repeat,
-                head_dim,
-                hidden_size,
-                layer_name=f"{attn.__class__.__name__}.v_proj",
-            )
+        if hasattr(original_module, "num_key_value_heads"):
+            original_module.num_key_value_heads = new_kv_heads
+        if hasattr(original_module, "n_kv_heads"):
+            original_module.n_kv_heads = new_kv_heads
+        n_kv_groups = num_attention_heads // new_kv_heads
+        if hasattr(original_module, "num_key_value_groups"):
+            original_module.num_key_value_groups = n_kv_groups
+        if hasattr(original_module, "n_kv_groups"):
+            original_module.n_kv_groups = n_kv_groups
         return original_module
 
     @classmethod
@@ -1111,32 +1064,70 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
         else:
             kwargs.pop("num_replicate_kv_heads", None)
             n_repeat = num_replicate_kv_heads
-        transformed = False
-        if n_repeat is not None and n_repeat > 1:
-            # RepeatKV is decode-language only; encoder wrappers are explicitly excluded.
-            if "EncoderWrapper" in model.__class__.__name__:
-                return model, transformed
-            before_kv_heads = resolve_kv_heads(get_text_model(model).config)
-            mutated_model = cls.mutate(model, None, n_repeat)
-            if mutated_model is None:
-                raise RuntimeError(
-                    f"{cls.__name__}.mutate returned None for model class {model.__class__.__name__}. "
-                    "Expected the (possibly in-place) mutated model instance."
-                )
-            if not isinstance(mutated_model, nn.Module):
-                raise TypeError(
-                    f"{cls.__name__}.mutate returned {type(mutated_model).__name__} for model class "
-                    f"{model.__class__.__name__}; expected an nn.Module."
-                )
-            if mutated_model is not model:
-                raise RuntimeError(
-                    f"{cls.__name__}.mutate returned a different module instance for {model.__class__.__name__}. "
-                    "RepeatKV mutate is expected to mutate and return the same instance."
-                )
-            after_kv_heads = resolve_kv_heads(get_text_model(mutated_model).config)
-            transformed = after_kv_heads != before_kv_heads
-            return mutated_model, transformed
-        return model, transformed
+        if n_repeat is None or n_repeat <= 1:
+            return model, False
+
+        text_model = get_text_model(model)
+        cfg = text_model.config
+        if is_mla_model(text_model):
+            logger.warning("Skipping RepeatKVTransform: MLA models don't apply replicate KV changes.")
+            return model, False
+
+        current_kv_heads = resolve_kv_heads(cfg)
+        configured_orig_kv_heads = getattr(cfg, "orig_kv_heads", None)
+        if configured_orig_kv_heads is not None:
+            if configured_orig_kv_heads < 1:
+                raise ValueError(f"Invalid stored orig_kv_heads in config for RepeatKV: {configured_orig_kv_heads}")
+            expected_kv_heads = configured_orig_kv_heads * n_repeat
+            if current_kv_heads == expected_kv_heads:
+                logger.warning("Skipping RepeatKVTransform: model already has requested repeated KV heads.")
+                return model, False
+            orig_kv_heads = configured_orig_kv_heads
+        else:
+            orig_kv_heads = current_kv_heads
+        num_attention_heads = resolve_attention_heads(cfg)
+        hidden_size = resolve_hidden_size(cfg)
+
+        if orig_kv_heads is None or num_attention_heads is None or hidden_size is None:
+            raise ValueError(
+                "Unable to resolve attention/KV heads or hidden size from config for RepeatKV transform. "
+                f"Supported attention keys={ATTENTION_HEAD_CONFIG_KEYS}, kv keys={KV_HEAD_CONFIG_KEYS}, "
+                f"hidden size keys={HIDDEN_SIZE_CONFIG_KEYS}."
+            )
+        if orig_kv_heads < 1 or num_attention_heads < 1:
+            raise ValueError(
+                f"Invalid head values for RepeatKV transform: "
+                f"num_attention_heads={num_attention_heads}, num_key_value_heads={orig_kv_heads}"
+            )
+        if orig_kv_heads == num_attention_heads:
+            raise ValueError(
+                "RepeatKV is supported only for GQA/MQA models where num_key_value_heads is smaller than "
+                f"num_attention_heads; got num_attention_heads={num_attention_heads}, "
+                f"num_key_value_heads={orig_kv_heads}."
+            )
+        new_kv_heads = n_repeat * orig_kv_heads
+        if new_kv_heads > num_attention_heads or (num_attention_heads % new_kv_heads) != 0:
+            raise ValueError(
+                f"Invalid RepeatKV configuration: num_attention_heads={num_attention_heads}, "
+                f"orig_kv_heads={orig_kv_heads}, num_replicate_kv_heads={n_repeat}, new_kv_heads={new_kv_heads}. "
+                "Expected new_kv_heads <= num_attention_heads and divisibility."
+            )
+
+        logger.warning(f"Original KV heads: {orig_kv_heads}")
+        logger.warning(f"Modified KV heads: {new_kv_heads}")
+        for block in text_model.layers:
+            cls.mutate(
+                get_attention_module(block),
+                block,
+                n_repeat,
+                orig_kv_heads,
+                new_kv_heads,
+                num_attention_heads,
+                hidden_size,
+            )
+        cfg.orig_kv_heads = orig_kv_heads
+        set_kv_head_aliases(cfg, new_kv_heads)
+        return model, True
 
 
 class SpDTransform:
