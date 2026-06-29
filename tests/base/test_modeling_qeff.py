@@ -42,3 +42,35 @@ def test_compiler_invalid_flag(tmp_path):
 
     with pytest.raises(RuntimeError):
         QEFFBaseModel._compile(qeff_obj, valid_file, tmp_path, convert_tofp16=True, aic_binary_dir=tmp_path)
+
+
+def test_compiler_ignores_removed_compile_only_option(tmp_path, monkeypatch):
+    qeff_obj = SimpleNamespace()
+
+    onnx_model = onnx.parser.parse_model("""
+    <
+        ir_version: 8,
+        opset_import: ["": 17]
+    >
+    test_compiler(float x) => (float y)
+    {
+        y = Identity(x)
+    }
+    """)
+    valid_file = tmp_path / "valid.onnx"
+    onnx.save(onnx_model, valid_file)
+
+    captured_command = None
+
+    def fake_run(command, **kwargs):
+        nonlocal captured_command
+        captured_command = command
+        (tmp_path / "qpc" / "programqpc.bin").parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "qpc" / "programqpc.bin").touch()
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("QEfficient.base.modeling_qeff.subprocess.run", fake_run)
+
+    QEFFBaseModel._compile(qeff_obj, valid_file, tmp_path, compile_only=True, **{"compile-only": True})
+
+    assert "-compile-only" not in captured_command

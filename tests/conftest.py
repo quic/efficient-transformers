@@ -50,6 +50,30 @@ _QUICKCHECK_META = {
         "Causal LM",
         "Subfunction export check (with/without QEffGPT2Block)",
     ),
+    "test_qwen_quickcheck_subfunction_registration": (
+        "Qwen",
+        "Tiny synthetic decoder subfunction registration",
+    ),
+    "test_qwen_quickcheck_subfunction_setup_toggle": (
+        "Qwen",
+        "Subfunction/non-subfunction setup without ONNX export",
+    ),
+    "test_qwen_moe_quickcheck_layerwise_mode": (
+        "Qwen MoE",
+        "Layerwise/non-layerwise decoder registration",
+    ),
+    "test_qwen_quickcheck_hf_qeff_ort_default_parity": (
+        "Qwen",
+        "Full logits parity: HF PyTorch vs QEff PyTorch vs ORT (default export)",
+    ),
+    "test_qwen_moe_quickcheck_hf_qeff_ort_prefill_only_parity": (
+        "Qwen MoE",
+        "Full logits parity: HF PyTorch vs QEff PyTorch vs ORT (prefill-only transform)",
+    ),
+    "test_qwen_moe_quickcheck_layerwise_hf_qeff_ort_parity": (
+        "Qwen MoE",
+        "Full logits parity: HF PyTorch vs QEff PyTorch vs ORT (layerwise)",
+    ),
     "test_causal_subfunction_export_smoke_all_models": (
         "Causal LM",
         "Full parity: HF PyTorch vs QEff PyTorch vs ORT tokens (subfunctions)",

@@ -506,6 +506,9 @@ class QEFFBaseModel(ABC):
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "retain_full_kv": retain_full_kv,
         }
+        layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
+        if layerwise_cache_probe:
+            kwargs["_layerwise_cache_probe"] = True
         if kv_cache_prefix:
             kwargs["kv_cache_prefix"] = kv_cache_prefix
 
@@ -593,9 +596,6 @@ class QEFFBaseModel(ABC):
                 return self.onnx_path
         if cache_probe:
             return None
-
-        # check if the model is in meta state or weights are offloaded
-        self._model_offloaded_check()
 
         export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -691,10 +691,6 @@ class QEFFBaseModel(ABC):
                 val for i, val in enumerate(example_inputs["compressed_kvs"]) if i < window_size
             ]
 
-        # if "past_key_values" in example_inputs:
-        #     example_inputs["past_key_values"] = [
-        #         val for i, val in enumerate(example_inputs["past_key_values"]) if i < window_size
-        #     ]
         if "past_key_values" in example_inputs:
             pkv_layers = _resolve_pkv_layers(example_inputs["past_key_values"])
             if pkv_layers is not None:
@@ -886,6 +882,8 @@ class QEFFBaseModel(ABC):
         mdp_strategy = MdpStrategy(compiler_options.pop("mdp_strategy", MdpStrategy.ONNX))
         mdp_compiler_dump_path = compiler_options.pop("mdp_compiler_dump_path", None)
 
+        for removed_option in ("compile_only", "compile-only"):
+            compiler_options.pop(removed_option, None)
         if onnx_path is None:
             # If weights were offloaded after export, compiling must use the existing
             # ONNX because re-exporting is no longer possible. Otherwise export for
