@@ -656,6 +656,7 @@ class QEffGemma3DecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.language_model = self.model.language_model
+        self.config = self.model.config
         self.lm_head = self.model.lm_head
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
