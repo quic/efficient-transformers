@@ -16,9 +16,11 @@ Use this skill when creating or debugging `node_precision_info` YAML for QEffici
 - If adding a modeling `Clip` before returning to fp16, include **both**:
   - the inserted `Clip` node output
   - the output of the node immediately feeding that `Clip`
-- Do not use `custom_io` for internal fp32 nodes; reserve it for graph inputs/outputs and retained-state IO precision.
+- Do not use `custom_io` (the compile parameter for graph input/output dtypes, commonly used for KV-cache
+  precision) for internal fp32 nodes; reserve it for graph inputs/outputs and retained-state IO precision.
 - Avoid broad NPI lists first. Broad non-MatMul or all-node NPI can exceed QAIC VA/static memory limits.
-- Prefer proving HF/QPC parity without NPI first. If baseline QPC mismatches HF, NPI is not yet the right lever.
+- First prove the baseline state without NPI: if HF/QPC already match, do not add NPI; if fp16 QPC mismatches HF
+  after export/compile issues are ruled out, use focused NPI hypotheses.
 
 ## Required Setup
 - Use the user-provided venv and cache if supplied.
@@ -34,7 +36,7 @@ Use this skill when creating or debugging `node_precision_info` YAML for QEffici
    - For huge models, use layerwise export and start with a small `num_hidden_layers`.
    - For Qwen3.5-MoE, one-layer compile is not reliable; use at least 2 layers and `layerwise_window_size=1`.
 3. Establish baseline parity before NPI.
-   - Compare HF float32 against QPC generated tokens.
+   - Compare HF float32 against generated tokens from a QPC compiled with fp16 conversion and without NPI.
    - Run at least the requested number of output tokens; if the user does not specify, start with 32 greedy tokens.
    - HF should use plain model inputs; do not pass QEff retained-state `past_key_values` to HF.
    - QPC should follow the model example path: `prepare_inputs_for_generation(...)` then `qeff_model.generate(...)`.
@@ -43,10 +45,15 @@ Use this skill when creating or debugging `node_precision_info` YAML for QEffici
    - Record exact compiler command and stderr.
 5. If baseline compiles but mismatches HF, create focused NPI candidates.
    - Start with known high-risk ops: `Exp`, norm/reduction outputs, recurrent-state update outputs, MoE router/expert combine outputs, and any inserted `Clip` + producer pairs.
-   - If we can't control the fact that an operations output will go beyond fp16 range, then we can add a `torch.clip(out, fp32_min, fp32_max)` operation in pytorch modeling file if by doing this the output of final model doesn't change a lot and we can be within e-1, e-2 range of MAD between pytorch an QPC execution.
+   - If an operation output can exceed the fp16 range, first prefer NPI for that output. Only consider adding
+     `torch.clamp(out, min=-65504.0, max=65504.0)` in the QEfficient model wrapper, not upstream HF code, when the
+     clamp keeps final-model MAD within the 1e-1 to 1e-2 range, preserves end-to-end output consistency, and has a
+     documented architectural reason. If that holds, modify the wrapper and validate the resulting QPC instead of
+     adding NPI for that node. See `QEfficient/transformers/models/gemma4/modeling_gemma4.py` for the standard fp16
+     clamp values.
    - Avoid MatMul outputs unless there is direct evidence; MatMul-heavy NPI often causes VA space failures.
 6. Iterate narrowly.
-   - Generate one candidate NPI per hypothesis. The candidate need not be just single node it can be a pattern found in the ONNX graph.
+   - Generate one candidate NPI per hypothesis. The candidate need not be a single node; it can be a pattern found in the ONNX graph.
    - Compile and run the same HF/QPC token comparison.
    - Keep the smallest NPI that matches.
 
@@ -67,7 +74,10 @@ FP32NodeInstanceNames: []
 ```
 
 ## Node Name Discovery
-- Load ONNX with `onnx.load(path, load_external_data=False)`.
+- Load ONNX with the option that matches the inspection goal:
+  - Use `onnx.load(path, load_external_data=False)` for fast graph-structure and node-name inspection.
+  - Use `onnx.load(path, load_external_data=True)` for models with external weight files, such as large `*.bin` or
+    `*.data` files, or when weight values need inspection.
 - Inspect both `model.graph.node` and `model.functions[*].node`; subfunction exports hide many useful node names in functions.
 - Match by output names, op type, and surrounding producer/consumer edges.
 - For compiler-reported instantiated names, note that names may include prefixes such as `Decode_<FunctionName>_<instance>_<output>`. If direct ONNX output names do not work, first verify whether the issue is a compiler/export bug rather than missing NPI.
