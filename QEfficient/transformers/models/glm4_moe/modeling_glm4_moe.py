@@ -105,6 +105,8 @@ def qeff_apply_rotary_pos_emb(
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
+    cos = cos.to(device=q.device)
+    sin = sin.to(device=q.device)
     cos = cos[position_ids].unsqueeze(unsqueeze_dim)
     sin = sin[position_ids].unsqueeze(unsqueeze_dim)
 
@@ -132,6 +134,9 @@ def qeff_apply_precomputed_rotary_pos_emb(
     sin: torch.Tensor,
     rotary_dim: int,
 ):
+    
+    cos = cos.to(device=q.device)
+    sin = sin.to(device=q.device)
     q_rot, q_pass = q[..., :rotary_dim], q[..., rotary_dim:]
     k_rot, k_pass = k[..., :rotary_dim], k[..., rotary_dim:]
     half_dim = rotary_dim // 2
@@ -194,6 +199,9 @@ def eager_attention_forward_blocked_kv(
         # Compute attention scores for the block
         attn_weights_block = torch.matmul(query, K_block_states.transpose(2, 3)) * scaling
         if attention_mask is not None:
+            masked_tensor = torch.full_like(
+                attn_weights_block, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights_block.dtype
+            ).to(attn_weights_block.device)
             attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
 
         # Update Running row maximum
@@ -359,7 +367,7 @@ class QEffGlm4MoeAttention(Glm4MoeAttention):
 
         if sin_cached is not None and cos_cached is not None:
             sin, cos = sin_cached, cos_cached
-            rotary_dim = int(self.rotary_emb.cos_cached.shape[-1])
+            rotary_dim = int(self.rotary_emb.cos_cached.detach().clone().shape[-1])
             query_states, key_states = qeff_apply_precomputed_rotary_pos_emb(
                 query_states, key_states, cos, sin, rotary_dim
             )
@@ -572,7 +580,7 @@ class QEffGlm4MoeModel(Glm4MoeModel):
 class QEffGlm4MoeTopkRouter(nn.Module):
     @torch.no_grad()
     def get_topk_indices(self, scores):
-        scores_for_choice = scores.view(-1, self.n_routed_experts) + self.e_score_correction_bias.unsqueeze(0)
+        scores_for_choice = scores.view(-1, self.n_routed_experts) + self.e_score_correction_bias.to(device=scores.device).unsqueeze(0)
         group_scores = (
             scores_for_choice.view(-1, self.n_group, self.n_routed_experts // self.n_group)
             .topk(2, dim=-1)[0]
@@ -613,7 +621,7 @@ class QEffGlm4MoeTopkRouter(nn.Module):
         router_scores = router_logits.sigmoid()  # (0,1), [T, 160]
 
         # Only used for choosing which experts win
-        scores_for_choice = router_scores + self.e_score_correction_bias.unsqueeze(0)  # [T, 160]
+        scores_for_choice = router_scores + self.e_score_correction_bias.to(device=router_scores.device).unsqueeze(0)  # [T, 160]
 
         # Choose top_k experts globally (top_k == num_experts_per_tok == 8)
         topk_indices = torch.topk(scores_for_choice, k=self.top_k, dim=-1, sorted=False)[1]  # [T, 8]
@@ -638,26 +646,32 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
     def __qeff_init__(
         self,
     ):
-        if hasattr(self.experts, "gate_up_proj"):
-            gate_proj, up_proj = self.experts.gate_up_proj.chunk(2, dim=1)
-            self.all_gate_proj = torch.nn.Parameter(gate_proj.transpose(1, 2).contiguous())
-            self.all_up_proj = torch.nn.Parameter(up_proj.transpose(1, 2).contiguous())
-            self.all_down_proj = torch.nn.Parameter(self.experts.down_proj.transpose(1, 2).contiguous())
+        if self.experts.gate_up_proj.device.type == "meta":
+            # Weight-free export: skip deriving params. get_all_projections() will
+            # split gate_up_proj inline so the ONNX references checkpoint-resolvable keys.
             self.act_fn = self.experts.act_fn
             self.num_experts = self.experts.num_experts
             return
+        gate_proj, up_proj = self.experts.gate_up_proj.chunk(2, dim=1)
+        self.all_gate_proj = torch.nn.Parameter(gate_proj.transpose(1, 2).contiguous())
+        self.all_up_proj = torch.nn.Parameter(up_proj.transpose(1, 2).contiguous())
+        self.all_down_proj = torch.nn.Parameter(self.experts.down_proj.transpose(1, 2).contiguous())
+        self.act_fn = self.experts.act_fn
+        self.num_experts = self.experts.num_experts
 
-        self.all_gate_proj = torch.nn.Parameter(
-            torch.cat([exp.gate_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
-        )
-        self.all_up_proj = torch.nn.Parameter(
-            torch.cat([exp.up_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
-        )
-        self.all_down_proj = torch.nn.Parameter(
-            torch.cat([exp.down_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
-        )
-        self.act_fn = self.experts[0].act_fn
-        self.num_experts = len(self.experts)
+    def get_all_projections(self):
+        """Return (gate_W, up_W, down_W) in bmm-ready layout [E,H,I], [E,H,I], [E,I,H].
+
+        Normal export: returns pre-derived params from __qeff_init__ (contiguous).
+        Weight-free export: splits gate_up_proj inline so the ONNX graph references
+        the checkpoint key directly (compiler constant-folds the split at compile time).
+        """
+        if hasattr(self, "all_gate_proj"):
+            return self.all_gate_proj, self.all_up_proj, self.all_down_proj
+        # Weight-free path: split from HF batched format [E, 2I, H]
+        gate_up = self.experts.gate_up_proj.transpose(1, 2)  # [E, H, 2I]
+        mid = gate_up.shape[-1] // 2
+        return gate_up[..., :mid], gate_up[..., mid:], self.experts.down_proj.transpose(1, 2)
 
     def orig_moe(self, hidden_states: torch.Tensor, topk_indices: torch.Tensor, topk_weights: torch.Tensor):
         r"""
@@ -698,9 +712,10 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
         bs, seq_len, _ = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
-        gate_proj = self.all_gate_proj[topk_indices.flatten()]
-        up_proj = self.all_up_proj[topk_indices.flatten()]
-        down_proj = self.all_down_proj[topk_indices.flatten()]
+        all_gate_proj, all_up_proj, all_down_proj = self.get_all_projections()
+        gate_proj = all_gate_proj[topk_indices.flatten()]
+        up_proj = all_up_proj[topk_indices.flatten()]
+        down_proj = all_down_proj[topk_indices.flatten()]
         expert_in = (
             hidden_states.unsqueeze(1).expand(-1, self.gate.top_k, -1).contiguous().view(-1, 1, self.config.hidden_size)
         )
@@ -751,9 +766,10 @@ class QEffPrefillChunkedGlm4MoeMoE(QEffGlm4MoeMoE):
 
         local_experts = num_experts // num_nsp
         rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        W_g = self.all_gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_u = self.all_up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_d = self.all_down_proj.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
+        all_gate_proj, all_up_proj, all_down_proj = self.get_all_projections()
+        W_g = all_gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_u = all_up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_d = all_down_proj.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
         expert_out = hidden_states.new_zeros((num_nsp, T, H))
         routing_weights_unsqueezed = rw.unsqueeze(-1)
 

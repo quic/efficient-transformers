@@ -241,7 +241,7 @@ class CtxGatherFunc3DGeneralized(torch.autograd.Function):
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
 def CtxGather(
-    data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32, comp_ctx_len: onnxscript.INT32
+    data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32, comp_ctx_len: onnxscript.INT64
 ) -> onnxscript.FLOAT:
     # Create a shape tensor based on comp_ctx_len
     shape_tensor = ops.Concat(ops.Shape(data)[:2], ops.Reshape(comp_ctx_len, [1]), axis=0)
