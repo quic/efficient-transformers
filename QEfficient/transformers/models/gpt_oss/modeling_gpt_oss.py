@@ -125,8 +125,8 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
 
         gate = (x_chunk @ W_g) + b_g.unsqueeze(1)
         up = (x_chunk @ W_u) + b_u.unsqueeze(1)
-        gate = gate.clamp(min=torch.finfo(torch.float16).min, max=limit)
-        up = up.clamp(min=-limit, max=limit)
+        gate = torch.clamp(gate, min=torch.finfo(torch.float16).min, max=limit)
+        up = torch.clamp(up, min=-limit, max=limit)
         glu = gate * torch.sigmoid(gate * alpha)
         intermediate = (up + 1) * glu
         down_chunk = (intermediate @ W_d) + b_d.unsqueeze(1)
@@ -251,8 +251,8 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
             up = (hidden @ W_u) + b_u  # [T, I]
 
             # Apply GptOss activation with clamping
-            gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
-            up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
+            gate = torch.clamp(gate, min=torch.finfo(torch.float16).min, max=self.experts.limit)
+            up = torch.clamp(up, min=-self.experts.limit, max=self.experts.limit)
 
             # GLU activation
             glu = gate * torch.sigmoid(gate * self.experts.alpha)
@@ -319,8 +319,8 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
                 up = (tgb @ W_u) + b_u  # [T, I]
 
                 # Apply GptOss activation with clamping
-                gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
-                up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
+                gate = torch.clamp(gate, min=torch.finfo(torch.float16).min, max=self.experts.limit)
+                up = torch.clamp(up, min=-self.experts.limit, max=self.experts.limit)
 
                 # GLU activation
                 glu = gate * torch.sigmoid(gate * self.experts.alpha)
@@ -400,8 +400,8 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
                         cur_gate = (tgb @ W_g[:, i * 128 : (i + 1) * 128]) + b_g[i * 128 : (i + 1) * 128]
                         cur_up = (tgb @ W_u[:, i * 128 : (i + 1) * 128]) + b_u[i * 128 : (i + 1) * 128]
 
-                    cur_gate = cur_gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
-                    cur_up = cur_up.clamp(min=-self.experts.limit, max=self.experts.limit)
+                    cur_gate = torch.clamp(cur_gate, min=torch.finfo(torch.float16).min, max=self.experts.limit)
+                    cur_up = torch.clamp(cur_up, min=-self.experts.limit, max=self.experts.limit)
                     cur_glu = cur_gate * torch.sigmoid(cur_gate * self.experts.alpha)
                     cur_intermediate = (cur_up + 1) * cur_glu
                     intermediates.append(cur_intermediate)
@@ -460,8 +460,8 @@ class QEffGptOssMLP(GptOssMLP):
         gate, up = gate_up[..., ::2], gate_up[..., 1::2]
 
         # Apply activation with clamping
-        gate = gate.clamp(min=None, max=self.experts.limit)
-        up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
+        gate = torch.clamp(gate, min=None, max=self.experts.limit)
+        up = torch.clamp(up, min=-self.experts.limit, max=self.experts.limit)
         glu = gate * torch.sigmoid(gate * self.experts.alpha)
         gated_output = (up + 1) * glu
 
@@ -505,8 +505,8 @@ class QEffGptOssMLP(GptOssMLP):
         up = torch.bmm(expert_in, up_proj) + up_proj_bias.unsqueeze(1)
 
         # Apply activation with clamping
-        gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
-        up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
+        gate = torch.clamp(gate, min=torch.finfo(torch.float16).min, max=self.experts.limit)
+        up = torch.clamp(up, min=-self.experts.limit, max=self.experts.limit)
 
         # GLU activation
         glu = gate * torch.sigmoid(gate * self.experts.alpha)
@@ -570,8 +570,8 @@ class QEffGptOssMLP(GptOssMLP):
             up = (hidden_states @ W_u) + b_u  # [T, I]
 
             # Apply GptOss activation with clamping
-            gate = gate.clamp(min=None, max=self.experts.limit)
-            up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
+            gate = torch.clamp(gate, min=None, max=self.experts.limit)
+            up = torch.clamp(up, min=-self.experts.limit, max=self.experts.limit)
 
             # GLU activation
             glu = gate * torch.sigmoid(gate * self.experts.alpha)
