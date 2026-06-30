@@ -113,7 +113,6 @@ def _build_meta_qeff_model(qeff_model):
 
     if quant_config is None:
         target_dtype = getattr(config, "dtype", torch.float32) or torch.float32
-        target_dtype=torch.float16
         if target_dtype == torch.bfloat16:
             target_dtype = torch.float16
         meta_model = meta_model.to(dtype=target_dtype)
@@ -342,22 +341,6 @@ def export_weight_free_onnx(
     else:
         export_context = temporarily_disable_nested_compile_regions(meta_qeff_model.model, decoder_layer_classes)
 
-    # Cast floating-point example inputs to the meta model's dtype before converting
-    # to meta tensors. Without this, KV cache inputs (fp32 by default) cause a dtype
-    # mismatch when dynamo traces fp16 query against fp32 past_key in attention matmul.
-    try:
-        _model_dtype = next(iter(meta_qeff_model.model.parameters())).dtype
-        def _cast_floats(val):
-            if isinstance(val, torch.Tensor) and val.is_floating_point():
-                return val.to(_model_dtype)
-            if isinstance(val, dict):
-                return {k: _cast_floats(v) for k, v in val.items()}
-            if isinstance(val, (list, tuple)):
-                return type(val)(_cast_floats(v) for v in val)
-            return val
-        example_inputs = _cast_floats(example_inputs)
-    except StopIteration:
-        pass
     meta_example_inputs = _to_meta(example_inputs)
     model_ref = meta_qeff_model.hash_params["pretrained_model_name_or_path"]
     meta_qeff_model.model.requires_grad_(False)
