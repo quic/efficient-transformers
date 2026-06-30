@@ -132,7 +132,6 @@ def main():
             qeff_model._compile(
                 onnx_path=str(onnx_path),
                 compile_dir=compile_dir,
-                compile_only=True,
                 retained_state=True,
                 specializations=specializations,
                 convert_to_fp16=True,
