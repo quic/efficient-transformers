@@ -30,6 +30,7 @@ from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRun
 from QEfficient.utils.test_utils import (
     InternProcessor,
     ModelConfig,
+    get_text_config,
     load_vlm_model,
     load_vlm_model_from_config,
     set_num_layers_vlm,
@@ -57,6 +58,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
+    qaic_config: Optional[dict] = None,
+    test_kv_replicate: Optional[bool] = None,
     torch_dtype: Optional[torch.dtype] = torch.float32,
     compare_results: Optional[bool] = False,
     compile_only: bool = False,
@@ -75,11 +78,17 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     pytorch_kv_tokens = None
     ort_tokens = None
     n_layer = num_hidden_layers
+    qaic_config = copy.deepcopy(qaic_config) if qaic_config is not None else None
     if config is None:
         config = AutoConfig.from_pretrained(
             model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS
         )
         config = set_num_layers_vlm(config, n_layer=n_layer)
+        if test_kv_replicate:
+            text_config = get_text_config(config)
+            num_replicate_kv_heads = text_config.num_attention_heads // text_config.num_key_value_heads
+            qaic_config = qaic_config or {}
+            qaic_config["num_replicate_kv_heads"] = num_replicate_kv_heads
         if hasattr(config, "model_type") and config.model_type in ["gemma3"]:
             config.text_config._sliding_window_pattern = 2
             config.text_config.layer_types = ["sliding_attention", "full_attention"]
@@ -97,6 +106,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
                 model_name,
                 kv_offload=kv_offload,
                 config=config,
+                qaic_config=qaic_config,
                 torch_dtype=torch_dtype,
             )
         else:
@@ -105,14 +115,21 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
                 model_name,
                 kv_offload=kv_offload,
                 config=config,
+                qaic_config=qaic_config,
                 torch_dtype=torch_dtype,
             )
     else:
+        if test_kv_replicate:
+            text_config = get_text_config(config)
+            num_replicate_kv_heads = text_config.num_attention_heads // text_config.num_key_value_heads
+            qaic_config = qaic_config or {}
+            qaic_config["num_replicate_kv_heads"] = num_replicate_kv_heads
         model_hf = load_vlm_model_from_config(config)
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
             kv_offload=kv_offload,
             config=model_hf.config,
+            qaic_config=qaic_config,
             torch_dtype=torch_dtype,
         )
     compile_kwargs = {
@@ -122,6 +139,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         "mxfp6": False,
         "enable_qnn": enable_qnn,
         "qnn_config": qnn_config,
+        "qaic_config": qaic_config,
         "use_onnx_subfunctions": use_onnx_subfunctions,
     }
 
@@ -386,6 +404,57 @@ def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_o
             kv_offload=kv_offload,
             manual_cleanup=manual_cleanup,
         )
+
+
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.dummy_layers
+@pytest.mark.parametrize("model_name", test_mm_models)
+@pytest.mark.parametrize("kv_offload", [True, False])
+def test_custom_replicate_kv_pytorch_vs_ai100(
+    model_name,
+    kv_offload,
+    manual_cleanup,
+):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    torch.manual_seed(42)
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to some issues.")
+    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
+        pytest.skip("These models require kv_offload=True for testing.")
+
+    if model_name in ModelConfig.REPEAT_KV_TEST_MODELS:
+        hf_config = None
+        if model_name in ModelConfig.STANDARD_VLM_MODELS:
+            model_type = model_config_dict[model_name].get("model_type")
+            custom_config = model_config_dict[model_name].get("additional_params", {})
+            hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
+            hf_config.name_or_path = model_name
+
+        if hf_config is not None:
+            check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+                model_name=model_name,
+                kv_offload=kv_offload,
+                config=hf_config,
+                qaic_config={},
+                test_kv_replicate=True,
+                manual_cleanup=manual_cleanup,
+            )
+        else:
+            check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+                model_name=model_name,
+                num_hidden_layers=model_config_dict[model_name]["num_layers"],
+                kv_offload=kv_offload,
+                qaic_config={},
+                test_kv_replicate=True,
+                manual_cleanup=manual_cleanup,
+            )
+    else:
+        pytest.skip(f"Skipping replicate KV test for {model_name} as it's not in REPEAT_KV_TEST_MODELS")
 
 
 ################################ QNN Tests ################################
