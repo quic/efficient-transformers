@@ -6,17 +6,12 @@
 # ----------------------------------------------------------------------------
 
 import math
-import sys as _sys
-from io import BytesIO
-from pathlib import Path
 from typing import List, Optional, Tuple, Type, Union
 
-import requests
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from PIL import Image
-from transformers import AutoProcessor, activations
+from transformers import activations
 
 try:
     from transformers.activations import PytorchGELUTanh
@@ -366,8 +361,6 @@ class QEffKimiK25EncoderWrapper(nn.Module):
         Returns:
             image_embeds: Projected image embeddings as a single tensor.
         """
-        _kimi_module = _sys.modules[type(self).__module__]
-        _get_rope_shape = _kimi_module.get_rope_shape
 
         h_shape = h_shape.to(pixel_values.device)
         w_shape = w_shape.to(pixel_values.device)
@@ -387,7 +380,7 @@ class QEffKimiK25EncoderWrapper(nn.Module):
 
         # Positional embedding (single image, t=1)
         pos_emb_module = self.model.vision_tower.patch_embed.pos_emb
-        pos_emb_2d = _get_rope_shape(
+        pos_emb_2d = get_rope_shape(
             pos_emb_module.weight,
             interpolation_mode=pos_emb_module.interpolation_mode,
             shape=(h, w),
@@ -468,12 +461,7 @@ class QEffKimiK25DecoderWrapper(nn.Module):
         use_cache: Optional[bool] = None,
         **kwargs,
     ) -> Tuple:
-        if inputs_embeds is None:
-            inputs_embeds = self.model.get_input_embeddings()(input_ids)
-
-        if image_idx is None:
-            image_idx = torch.zeros((inputs_embeds.shape[0], 1), dtype=torch.int64, device=inputs_embeds.device)
-
+        inputs_embeds = self.model.get_input_embeddings()(input_ids)
         image_embeds_for_state = None
         if image_embeds is not None:
             if image_embeds.dim() == 3:
@@ -487,17 +475,7 @@ class QEffKimiK25DecoderWrapper(nn.Module):
 
         if image_embeds_for_state is not None and input_ids is not None:
             if attention_mask is None:
-                # ONNX prefill/decode callers may omit attention_mask but still
-                # provide position_ids with `-1` on padded slots.
-                if position_ids is not None:
-                    attention_mask = (position_ids >= 0).to(dtype=torch.long, device=input_ids.device)
-                else:
-                    pad_token_id = getattr(self.config, "pad_token_id", None)
-                    if pad_token_id is None:
-                        attention_mask = torch.ones_like(input_ids, dtype=torch.long, device=input_ids.device)
-                    else:
-                        attention_mask = (input_ids != pad_token_id).to(dtype=torch.long, device=input_ids.device)
-
+                attention_mask = (position_ids >= 0).to(dtype=torch.long, device=input_ids.device)
             selected = input_ids == self.config.media_placeholder_token_id
             selected_any = selected.any(dim=1, keepdim=True)
             selected_image_tokens = selected.to(torch.int64).sum(dim=1, keepdim=True)
@@ -544,13 +522,10 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             position_ids = attention_mask.long().cumsum(-1) - 1
             position_ids = torch.where(attention_mask > 0, position_ids, torch.full_like(position_ids, -1))
         elif position_ids is not None and attention_mask is not None:
-            # Preserve `-1` on padded slots so cache updates skip them without
-            # creating dynamic Slice nodes unsupported by compile.
             position_ids = torch.where(attention_mask > 0, position_ids, torch.full_like(position_ids, -1))
 
         outputs = self.model.language_model(
             inputs_embeds=inputs_embeds,
-            attention_mask=attention_mask,
             position_ids=position_ids,
             compressed_kvs=compressed_kvs,
             past_key_values=past_key_values,
@@ -559,8 +534,6 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             use_cache=True if use_cache is None else use_cache,
             **kwargs,
         )
-
-        # QEff Deepseek language_model.forward already returns final logits.
         logits = outputs[0].float()
 
         mla_absorption = getattr(self.model, "mla_absorption", None)
@@ -695,8 +668,6 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
         input_ids: torch.LongTensor | None = None,
         pixel_values: torch.FloatTensor | list[torch.FloatTensor] | None = None,
         grid_thws: torch.Tensor | None = None,
-        # h_shape: torch.Tensor | None = None,
-        # w_shape: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
@@ -863,45 +834,25 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
-        model_path = Path(
-            "/home/huggingface_hub/models--moonshotai--Kimi-K2.5/snapshots/4d01dfe0332d63057c186e0b262165819efb6611"
+        inputs_shapes = {}
+        inputs_shapes["pixel_values"] = (
+            constants.KIMI_NUM_PATCHES,
+            constants.ONNX_EXPORT_IMAGE_DEPTH,
+            constants.KIMI_PATCH_SIZE,
+            constants.KIMI_PATCH_SIZE,
         )
-        processor = AutoProcessor.from_pretrained(str(model_path), trust_remote_code=True)
-        image_url = "https://huggingface.co/moonshotai/Kimi-K2.5/resolve/main/figures/kimi-logo.png"
-        image = Image.open(BytesIO(requests.get(image_url).content)).convert("RGB")
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": image},
-                    {"type": "text", "text": "Describe this image."},
-                ],
-            }
-        ]
-        inputs = processor(
-            messages=messages,
-            add_generation_prompt=True,
-            tokenize=False,
-            return_tensors="pt",
+        inputs_shapes["image_embeds"] = (
+            constants.KIMI_NUM_IMAGE_TOKENS,
+            self.language_model.config.hidden_size,
         )
-
-        # Read grid dimensions before moving tensors to model device. During
-        # export flows that materialize modules on `meta`, calling `.item()` on
-        # meta tensors raises `RuntimeError`.
-        grid_thws_val = inputs["grid_thws"]
-        h_val = int(grid_thws_val[0, 1].item())
-        w_val = int(grid_thws_val[0, 2].item())
-
-        inputs = {k: v.to(self.language_model.device) if hasattr(v, "to") else v for k, v in inputs.items()}
-
-        # Build h_shape and w_shape from grid_thws (single image, t=1)
-        h_shape_tensor = torch.ones(h_val, dtype=torch.int64, device=self.language_model.device)
-        w_shape_tensor = torch.ones(w_val, dtype=torch.int64, device=self.language_model.device)
+        inputs_shapes["image_idx"] = (1, 1)
+        inputs_shapes["h"] = constants.KIMI_IMAGE_HEIGHT
+        inputs_shapes["w"] = constants.KIMI_IMAGE_WIDTH
 
         vision_inputs = {
-            "pixel_values": inputs["pixel_values"],
-            "h_shape": h_shape_tensor,
-            "w_shape": w_shape_tensor,
+            "pixel_values": torch.zeros((inputs_shapes["pixel_values"]), dtype=self.config.torch_dtype),
+            "h_shape": torch.zeros((inputs_shapes["h"]), dtype=torch.int64),
+            "w_shape": torch.zeros((inputs_shapes["w"]), dtype=torch.int64),
         }
 
         # Ensure ONNX export traces the multimodal merge path in decoder wrapper.
@@ -909,6 +860,7 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
         # branch and produce a decoder graph that ignores `image_embeds`.
         input_ids = torch.ones((bs, prefill_seq_len), dtype=torch.int64)
         input_ids[:, 0] = self.config.media_placeholder_token_id
+
         lang_inputs = {
             "input_ids": input_ids,
             "position_ids": torch.arange(prefill_seq_len, dtype=torch.int64).view(1, prefill_seq_len).repeat(bs, 1),
@@ -923,7 +875,7 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
         pkv_cache = self.language_model.get_dummy_pkv_cache(
             config=self.language_model.config,
             batch_size=fbs if continuous_batching else bs,
-            seq_len=1024,
+            seq_len=constants.ONNX_EXPORT_CTX_LEN,
         )
 
         if cache_compressed:
@@ -945,12 +897,6 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
                     torch.zeros(pkv_cache[0][1].shape, dtype=self.language_model.config.torch_dtype)
                 )
 
-        inputs_shapes = {}
-        # Decoder expects image embeddings indexed by token position. Keep this as
-        # [num_image_tokens, hidden_size] so `num_image_tokens` maps to axis 0.
-        inputs_shapes["image_embeds"] = (600, 7168)
-        inputs_shapes["pixel_values"] = (2400, 3, 14, 14)
-        inputs_shapes["image_idx"] = (1, 1)
         lang_inputs["image_embeds"] = torch.zeros(
             inputs_shapes["image_embeds"],
             dtype=self.language_model.config.torch_dtype,
@@ -959,9 +905,6 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
 
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
-
-        if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int64)
 
         inputs = {}
         if kv_offload:
@@ -1035,13 +978,13 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
         w = compiler_options.pop("w", None)
         num_image_tokens = compiler_options.pop("num_image_tokens", None)
 
-        prefill_seq_len = prefill_seq_len if prefill_seq_len else 32  # constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        ctx_len = ctx_len if ctx_len else 1024  # constants.ONNX_EXPORT_EXAMPLE_CTX_LEN
+        prefill_seq_len = prefill_seq_len if prefill_seq_len else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        ctx_len = ctx_len if ctx_len else constants.ONNX_EXPORT_CTX_LEN
 
-        num_patches = num_patches if num_patches is not None else 2400
-        h = h if h is not None else 30
-        w = w if w is not None else 80
-        num_image_tokens = num_image_tokens if num_image_tokens is not None else 600
+        num_patches = num_patches if num_patches is not None else constants.KIMI_NUM_PATCHES
+        h = h if h is not None else constants.KIMI_IMAGE_HEIGHT
+        w = w if w is not None else constants.KIMI_IMAGE_WIDTH
+        num_image_tokens = num_image_tokens if num_image_tokens is not None else constants.KIMI_NUM_IMAGE_TOKENS
 
         vision = [
             {

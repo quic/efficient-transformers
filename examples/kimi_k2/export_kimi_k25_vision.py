@@ -355,10 +355,6 @@ def main():
     _patch_kimi_tie_weights_compat(kimi_cls)
     _patch_deepseek_init_weights_compat(kimi_cls)
 
-    kimi_module = sys.modules[kimi_cls.__module__]
-    if hasattr(kimi_module, "MoonViT3dEncoder"):
-        kimi_module.MoonViT3dEncoder.use_deterministic_attn = False
-
     model_kwargs = {
         "config": config,
         "trust_remote_code": True,
