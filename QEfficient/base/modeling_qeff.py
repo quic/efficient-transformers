@@ -878,6 +878,11 @@ class QEFFBaseModel(ABC):
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
         moe_prefill_packed_chunk_size = compiler_options.pop("moe_prefill_packed_chunk_size", None)
 
+        for removed_option in ("compile_only", "compile-only"):
+            if removed_option in compiler_options:
+                logger.warning(f"'{removed_option}' is deprecated and is ignored; removing it from compiler options.")
+                compiler_options.pop(removed_option, None)
+
         mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
         mdp_strategy = MdpStrategy(compiler_options.pop("mdp_strategy", MdpStrategy.ONNX))
         mdp_compiler_dump_path = compiler_options.pop("mdp_compiler_dump_path", None)
