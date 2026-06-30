@@ -7,14 +7,14 @@
 
 import argparse
 
-from transformers import AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 
 
 def main():
     parser = argparse.ArgumentParser(description="Continuous batching inference")
-    parser.add_argument("--model-name", type=str, default="Qwen/Qwen2-1.5B-Instruct", help="HuggingFace model ID")
+    parser.add_argument("--model-name", type=str, default="mistralai/Mixtral-8x7B-v0.1", help="HuggingFace model ID")
     parser.add_argument(
         "--prompts",
         type=str,
@@ -26,10 +26,11 @@ def main():
     parser.add_argument("--full-batch-size", type=int, default=4, help="Full batch size for continuous batching")
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
+    parser.add_argument("--num-layers", type=int, default=4, help="Override number of decoder layers (e.g. 4 for quick testing)")
     parser.add_argument(
         "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
-        default=None,
+        default=1,
         help="Device IDs (comma-separated) e.g. [0,1]",
     )
     args = parser.parse_args()
@@ -40,7 +41,14 @@ def main():
 
     # Load tokenizer and model with continuous batching enabled
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, continuous_batching=True)
+
+    if args.num_layers is not None:
+        config = AutoConfig.from_pretrained(args.model_name)
+        config.num_hidden_layers = args.num_layers
+        print(f"Overriding num_hidden_layers to {args.num_layers}")
+        model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, config=config, continuous_batching=True)
+    else:
+        model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, continuous_batching=True)
 
     # Compile the model with full_batch_size for continuous batching
     qpc_path = model.compile(
@@ -48,7 +56,9 @@ def main():
         ctx_len=args.ctx_len,
         full_batch_size=args.full_batch_size,
         num_cores=args.num_cores,
-        num_devices=(1 if args.device_group is None else len(args.device_group)),
+        mxfp6_matmul=True,
+        use_onnx_subfunctions=True,
+        num_devices=(4 if args.device_group is None else len(args.device_group)),
     )
     print(f"Model compiled to: {qpc_path}")
 
