@@ -7,10 +7,7 @@
 
 from transformers.configuration_utils import PretrainedConfig
 
-try:
-    from QEfficient.transformers.models.deepseek_v3.configuration_deepseek import DeepseekV3Config
-except ImportError:
-    from QEfficient.transformers.models.deepseek_v3.configuration_deepseek import DeepseekV3Config
+from QEfficient.transformers.models.deepseek_v3.configuration_deepseek import DeepseekV3Config
 
 
 class KimiK25VisionConfig(PretrainedConfig):

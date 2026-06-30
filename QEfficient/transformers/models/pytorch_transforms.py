@@ -1232,6 +1232,7 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "forward": QEFFGrok1CustomRMSNormAIC.forward,
         },
         "KimiK25ForConditionalGeneration": {
+            "_merge_input_ids_with_image_features": QEffKimiK25ForConditionalGeneration._qeff_merge_input_ids_with_image_features,
             "get_qeff_vision_encoder": QEffKimiK25ForConditionalGeneration.get_qeff_vision_encoder,
             "get_qeff_language_decoder": QEffKimiK25ForConditionalGeneration.get_qeff_language_decoder,
             "get_specializations": QEffKimiK25ForConditionalGeneration.get_specializations,

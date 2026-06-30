@@ -7,23 +7,16 @@
 
 import math
 import sys as _sys
-from collections.abc import Sequence
-from copy import deepcopy
 from io import BytesIO
 from pathlib import Path
-
-# from QEfficient import QEFFAutoModelForImageTextToText
 from typing import List, Optional, Tuple, Type, Union
 
-import numpy as np
 import requests
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
 from transformers import AutoProcessor, activations
-
-from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import QEffDeepseekV3ForCausalLM
 
 try:
     from transformers.activations import PytorchGELUTanh
@@ -34,13 +27,9 @@ except ImportError:
     PytorchGELUTanh = GELUTanh
 from transformers.activations import PytorchGELUTanh
 from transformers.cache_utils import Cache
-from transformers.configuration_utils import PretrainedConfig
-from transformers.modeling_utils import PreTrainedModel
 from transformers.models.llava.modeling_llava import LlavaCausalLMOutputWithPast
 
 from QEfficient.utils import constants
-
-from .configuration_kimi_k25 import KimiK25Config
 
 
 def eager_attention_forward(q, k, v, **kwargs):
@@ -111,134 +100,9 @@ def apply_rope(xq, xk, freqs_cis):
     return xq_out.type_as(xq), xk_out.type_as(xk)
 
 
-def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
-    """
-    From:
-    https://github.com/OpenGVLab/InternVideo/blob/421f6d2361fc8f61a3394244571f2601a4e99e29/InternVideo2/multi_modality/models/backbones/internvideo2/pos_embed.py#L86
-    embed_dim: output dimension for each position
-    pos: a list of positions to be encoded: size (M,)
-    out: (M, D)
-    """
-    assert embed_dim % 2 == 0
-    omega = np.arange(embed_dim // 2, dtype=np.float32)
-    omega /= embed_dim / 2.0
-    omega = 1.0 / 10000**omega  # (D/2,)
-
-    pos = pos.reshape(-1)  # (M,)
-    out = np.einsum("m,d->md", pos, omega)  # (M, D/2), outer product
-
-    emb_sin = np.sin(out)  # (M, D/2)
-    emb_cos = np.cos(out)  # (M, D/2)
-
-    emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
-    return emb
-
-
-def get_1d_sincos_pos_embed(embed_dim, t_size, cls_token=False):
-    """
-    t_size: int of the temporal size
-    return:
-    pos_embed: [t_size, embed_dim] or [1+t_size, embed_dim] (w/ or w/o cls_token)
-    """
-    grid_t = np.arange(t_size, dtype=np.float32)
-    pos_embed = get_1d_sincos_pos_embed_from_grid(embed_dim, grid_t)
-    if cls_token:
-        pos_embed = np.concatenate([np.zeros([1, embed_dim]), pos_embed], axis=0)
-    return pos_embed
-
-
 class QEffLearnable2DInterpPosEmbDivided_fixed(nn.Module):
     def __qeff_init__(self):
         self.interpolation_mode = "bilinear"
-
-    """def __qeff_init__(self,
-                 height: int,
-                 width: int,
-                 num_frames: int,
-                 dim: int,
-                 interpolation_mode: str = 'bilinear') -> None:
-        super().__init__()
-        self.height = height
-        self.width = width
-        self.num_frames = num_frames
-        self.dim = dim
-        self.interpolation_mode = interpolation_mode
-        self.weight = nn.Parameter(torch.empty(height, width, dim))
-        self.register_buffer('time_weight',
-                             torch.from_numpy(
-                                 get_1d_sincos_pos_embed(
-                                     self.dim,
-                                     self.num_frames)).float().unsqueeze(1),
-                             persistent=False)
-
-        self.reset_parameters()
-    """
-
-    def reset_parameters(self):
-        nn.init.normal_(self.weight)
-
-    def forward(self, x: torch.Tensor, grid_thws: torch.Tensor) -> torch.Tensor:
-        pos_embs = []
-        for t, h, w in grid_thws.tolist():
-            assert t <= self.num_frames, f"t:{t} > self.num_frames:{self.num_frames}"
-            if (h, w) == self.weight.shape[:-1]:
-                pos_emb_2d = self.weight.flatten(end_dim=1)
-            else:
-                pos_emb_2d = get_rope_shape(
-                    self.weight,
-                    interpolation_mode=self.interpolation_mode,
-                    shape=(h, w),
-                )
-            if t == 1:
-                pos_emb_3d = pos_emb_2d
-            else:
-                pos_emb_3d = pos_emb_2d.unsqueeze(0).repeat(t, 1, 1) + self.time_weight[0:t]
-
-            pos_embs.append(pos_emb_3d.reshape(-1, pos_emb_3d.shape[-1]))
-
-        out = x + torch.cat(pos_embs)
-        return out
-
-
-class MoonVision3dPatchEmbed(nn.Module):
-    def __init__(
-        self,
-        out_dim: int,
-        in_dim: int = 3,
-        patch_size: int | tuple[int, int] = (14, 14),
-        pos_emb_height: int = 14,
-        pos_emb_width: int = 14,
-        pos_emb_time: int = 4,
-        pos_emb_type: str = "divided_fixed",
-    ):
-        super().__init__()
-        assert isinstance(patch_size, int | Sequence), f"Invalid patch_size type: {type(patch_size)}"
-        if isinstance(patch_size, int):
-            patch_size = (patch_size, patch_size)
-        assert len(patch_size) == 2, f"Expected patch_size to be a tuple of 2, got {patch_size}"
-        self.patch_size = patch_size
-
-        self.proj = nn.Conv2d(in_dim, out_dim, kernel_size=patch_size, stride=patch_size)
-
-        if pos_emb_type == "divided_fixed":
-            self.pos_emb = QEffLearnable2DInterpPosEmbDivided_fixed(
-                height=pos_emb_height, width=pos_emb_width, num_frames=pos_emb_time, dim=out_dim
-            )
-        else:
-            raise NotImplementedError(f"Not support pos_emb_type: {pos_emb_type}")
-
-    def forward(self, x: torch.Tensor, grid_thws: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x (L, Channels): input tensor
-            grid_hws (N, 3): temporal, height and width
-        Returns:
-            (L, Cout) tensor
-        """
-        x = self.proj(x).view(x.size(0), -1)
-        # apply positional embedding
-        x = self.pos_emb(x, grid_thws)
-        return x
 
 
 class Rope2DPosEmbRepeated(nn.Module):
@@ -471,236 +335,6 @@ class QEffMoonViT3dEncoder(nn.Module):
             new_blocks.append(new_block.to(device=old_block.wqkv.weight.device, dtype=old_block.wqkv.weight.dtype))
         self.blocks = nn.ModuleList(new_blocks)
 
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        grid_thws: torch.Tensor,
-    ) -> torch.Tensor:
-        # if not hasattr(self.rope_2d, 'freqs_cos'):
-        #    self.rope_2d.register_buffer('freqs_cos', self.rope_2d.freqs_cis.real.contiguous(), persistent=False)
-        #    self.rope_2d.register_buffer('freqs_sin', self.rope_2d.freqs_cis.imag.contiguous(), persistent=False)
-        rope_freqs_cis = self.rope_2d.get_freqs_cis(grid_thws=grid_thws, device=hidden_states.device)
-
-        lengths = torch.cat(
-            (
-                torch.zeros(1, dtype=grid_thws.dtype, device=grid_thws.device),
-                grid_thws[:, 0] * grid_thws[:, 1] * grid_thws[:, 2],
-            )
-        )
-
-        max_seqlen = lengths.max()
-        cu_seqlens = lengths.to(hidden_states.device).cumsum(dim=0, dtype=torch.int32)
-        for block in self.blocks:
-            hidden_states = block(hidden_states, cu_seqlens, max_seqlen, rope_freqs_cis=rope_freqs_cis)
-
-        hidden_states = self.final_layernorm(hidden_states)
-        return hidden_states
-
-
-def tpool_patch_merger(
-    x: torch.Tensor,
-    grid_thws: torch.Tensor,
-    merge_kernel_size: tuple[int, int] = (2, 2),
-) -> list[torch.Tensor]:
-    d_model = x.size(-1)
-
-    outputs = []
-    pre_sum = 0
-    for t, h, w in grid_thws.tolist():
-        # Get the current sequence
-        seq = x[pre_sum : pre_sum + t * h * w]
-        # Reshape along self.merge_kernel_size and concat to the last dimension
-        kernel_height, kernel_width = merge_kernel_size
-        new_height, new_width = h // kernel_height, w // kernel_width
-        reshaped_seq = seq.view(t, new_height, kernel_height, new_width, kernel_width, d_model)
-        reshaped_seq = reshaped_seq.permute(0, 1, 3, 2, 4, 5).contiguous().mean(dim=0)  # temporal pooling
-        padded_seq = reshaped_seq.view(new_height * new_width, kernel_height * kernel_width, -1)
-        outputs.append(padded_seq)
-        pre_sum += t * h * w
-
-    return outputs
-
-
-class MoonViT3dPretrainedModel(PreTrainedModel):
-    config_class = None
-    model_type = "moonvit3d"
-    _no_split_modules = ["PackingTransformer"]
-    _supports_flash_attn_2 = True
-    _supports_sdpa = True
-
-    def __init__(self, config, *inputs, **kwargs):
-        super().__init__(config, *inputs, **kwargs)
-        config = deepcopy(config)
-        self.merge_kernel_size = config.merge_kernel_size
-        self.patch_size = config.patch_size
-        self.merge_type = config.merge_type
-
-        self.patch_embed = MoonVision3dPatchEmbed(
-            out_dim=config.hidden_size,
-            patch_size=config.patch_size,
-            pos_emb_height=config.init_pos_emb_height,
-            pos_emb_width=config.init_pos_emb_width,
-            pos_emb_time=config.init_pos_emb_time,
-            pos_emb_type=config.pos_emb_type,
-        )
-
-        self.encoder = QEffMoonViT3dEncoder(
-            hidden_dim=config.hidden_size,
-            num_layers=config.num_hidden_layers,
-            block_cfg={
-                "num_heads": config.num_attention_heads,
-                "hidden_dim": config.hidden_size,
-                "mlp_dim": config.intermediate_size,
-                "activation": PytorchGELUTanh(),
-                "attn_bias": True,
-                "attn_implementation": config._attn_implementation,
-            },
-            video_attn_type=config.video_attn_type,
-        )
-
-    def forward(self, pixel_values: torch.Tensor, grid_thws: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            pixel_values (torch.Tensor): The input pixel values.
-            grid_thws (torch.Tensor): Temporal, height and width.
-        Returns:
-            torch.Tensor: The output tokens.
-        """
-        # grid_thws = grid_thws.to('cpu')
-        assert grid_thws.ndim == 2, f"grid_thws should be 2D, got {grid_thws.ndim}"
-        assert grid_thws.size(1) == 3, f"No support for thw: {grid_thws}"
-        hidden_states = self.patch_embed(pixel_values, grid_thws)
-        hidden_states = self.encoder(hidden_states, grid_thws)
-        if self.merge_type == "sd2_tpool":  # spatial downsampling 2x with temporal pooling all
-            hidden_states = tpool_patch_merger(hidden_states, grid_thws, merge_kernel_size=self.merge_kernel_size)
-        else:
-            raise NotImplementedError(f"Not support {self.merge_type}")
-
-        return hidden_states
-
-
-# ============================================================================
-# MM Projector Helper Classes (from mm_projector/modeling_mm_projectors.py)
-# ============================================================================
-
-
-class IdentityMap(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x, *args, **kwargs):
-        return x
-
-
-class MLP(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        # TODO, use faster LayerNorm
-        self.pre_norm = nn.LayerNorm(config.mm_hidden_size)
-        self.proj = nn.Sequential(
-            nn.Linear(config.mm_hidden_size, config.hidden_size),
-            nn.GELU(),
-            nn.Linear(config.hidden_size, config.hidden_size),
-        )
-
-    def forward(self, x, *args, **kwargs):
-        assert isinstance(x, list | tuple), f"x is not a list or tuple: {type(x)}"
-        lengths = [item.shape[0] for item in x]
-        x = torch.cat(x, dim=0)
-        x = self.pre_norm(x)
-        x = self.proj(x)
-        x = torch.split(x, lengths, dim=0)
-
-        return x
-
-
-class PatchMergerMLP(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        eps = config.projector_ln_eps
-        self.hidden_size = config.mm_hidden_size * (config.merge_kernel_size[0] * config.merge_kernel_size[1])
-        self.pre_norm = nn.LayerNorm(config.mm_hidden_size, eps=eps)
-        self.proj = nn.Sequential(
-            nn.Linear(self.hidden_size, self.hidden_size),
-            nn.GELU(),
-            nn.Linear(self.hidden_size, config.hidden_size),
-        )
-
-    def forward(self, x, *args, **kwargs):
-        if isinstance(x, list) or isinstance(x, tuple):
-            x = [self.proj(self.pre_norm(item).view(item.shape[0], -1)) for item in x]
-        else:
-            # B, N, N_k, C = x.shape
-            B = x.shape[0]
-            x = self.proj(self.pre_norm(x).view(B, -1, self.hidden_size))
-        return x
-
-
-class KimiK25PreTrainedModel(PreTrainedModel):
-    config_class = KimiK25Config
-    base_model_prefix = "model"
-    _no_split_modules = [
-        "MoonViT3dPretrainedModel",
-        "MoonViTEncoderLayer",
-        "DeepseekDecoderLayer",
-        "PatchMergerMLP",
-    ]
-    _skip_keys_device_placement = "past_key_values"
-    _supports_flash_attn_2 = True
-    _supports_sdpa = False
-
-    def _init_weights(self, module):
-        # important: this ported version of Llava isn't meant for training from scratch - only
-        # inference and fine-tuning - so the proper init weights code has been removed - the original codebase
-        # https://github.com/haotian-liu/LLaVA/tree/main/llava should serve for that purpose
-        std = (
-            self.config.initializer_range
-            if hasattr(self.config, "initializer_range")
-            else self.config.text_config.initializer_range
-        )
-
-        if hasattr(module, "class_embedding"):
-            module.class_embedding.data.normal_(mean=0.0, std=std)
-
-        if isinstance(module, (nn.Linear, nn.Conv2d)):
-            module.weight.data.normal_(mean=0.0, std=std)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=std)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
-
-
-class VisionTowerConfig(PretrainedConfig):
-    model_type = "moonvit3d"
-
-    def __init__(self, config: KimiK25Config, **kwargs):
-        super().__init__(**kwargs)
-        self.patch_size = config.patch_size
-        self.init_pos_emb_height = config.init_pos_emb_height
-        self.init_pos_emb_width = config.init_pos_emb_width
-        self.init_pos_emb_time = config.init_pos_emb_time
-        self.pos_emb_type = config.pos_emb_type
-        self.num_attention_heads = config.vt_num_attention_heads
-        self.num_hidden_layers = config.vt_num_hidden_layers
-        self.hidden_size = config.vt_hidden_size
-        self.intermediate_size = config.vt_intermediate_size
-        self.merge_kernel_size = config.merge_kernel_size
-        self.video_attn_type = config.video_attn_type
-        self.merge_type = config.merge_type
-        self._attn_implementation = config._attn_implementation
-
-
-class ProjectorConfig:
-    def __init__(self, config: KimiK25Config):
-        self.mm_projector_type = config.mm_projector_type
-        self.mm_hidden_size = config.mm_hidden_size
-        self.hidden_size = config.text_hidden_size
-        self.merge_kernel_size = config.merge_kernel_size
-        self.projector_hidden_act = config.projector_hidden_act
-        self.projector_ln_eps = config.projector_ln_eps
-
 
 class QEffKimiK25EncoderWrapper(nn.Module):
     def __init__(self, model):
@@ -717,22 +351,6 @@ class QEffKimiK25EncoderWrapper(nn.Module):
         """
         return {self.model.vision_model.model.layers[0].__class__}
         # return {self.model.layers[0].__class__}
-
-    def forward_only_image(self, pixel_values: torch.Tensor, grid_thws: torch.Tensor) -> list[torch.Tensor]:
-        """
-        Run only the vision tower and mm_projector to extract image embeddings.
-
-        Args:
-            pixel_values: Preprocessed image pixel values.
-            grid_thws: Grid temporal/height/width info for the images.
-
-        Returns:
-            image_embeds: List of projected image embedding tensors, one per image.
-        """
-        image_features = self._extract_image_features(pixel_values, grid_thws)
-        if self.mm_projector:
-            image_features = self.mm_projector(image_features)
-        return image_features
 
     def forward(self, pixel_values: torch.Tensor, h_shape: torch.Tensor, w_shape: torch.Tensor) -> torch.Tensor:
         """
@@ -867,26 +485,68 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             else:
                 raise ValueError(f"Expected image_embeds rank 2 or 3, got {image_embeds.dim()}.")
 
-        if image_embeds_for_state is not None and input_ids is not None and input_ids.shape[1] != 1:
-            selected = input_ids == self.config.media_placeholder_token_id
-            if selected.any():
-                if attention_mask is None:
-                    attention_mask = torch.ones_like(input_ids, dtype=torch.long, device=input_ids.device)
+        if image_embeds_for_state is not None and input_ids is not None:
+            if attention_mask is None:
+                # ONNX prefill/decode callers may omit attention_mask but still
+                # provide position_ids with `-1` on padded slots.
+                if position_ids is not None:
+                    attention_mask = (position_ids >= 0).to(dtype=torch.long, device=input_ids.device)
+                else:
+                    pad_token_id = getattr(self.config, "pad_token_id", None)
+                    if pad_token_id is None:
+                        attention_mask = torch.ones_like(input_ids, dtype=torch.long, device=input_ids.device)
+                    else:
+                        attention_mask = (input_ids != pad_token_id).to(dtype=torch.long, device=input_ids.device)
 
-                image_features = [image_embeds_for_state]
-                inputs_embeds = inputs_embeds.to(image_embeds_for_state.dtype)
-                inputs_embeds, attention_mask, _, position_ids = self.model._merge_input_ids_with_image_features(
+            selected = input_ids == self.config.media_placeholder_token_id
+            selected_any = selected.any(dim=1, keepdim=True)
+            selected_image_tokens = selected.to(torch.int64).sum(dim=1, keepdim=True)
+
+            image_features = [image_embeds_for_state]
+            inputs_embeds = inputs_embeds.to(image_embeds_for_state.dtype)
+
+            merged_inputs_embeds, merged_attention_mask, _, merged_position_ids = (
+                self.model._merge_input_ids_with_image_features(
                     image_features=image_features,
                     inputs_embeds=inputs_embeds,
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     labels=None,
                 )
-                image_idx = image_idx + torch.tensor(
-                    [[sum(feature.shape[0] for feature in image_features)]],
-                    dtype=torch.int64,
-                    device=image_idx.device,
+            )
+
+            inputs_embeds = merged_inputs_embeds
+            attention_mask = merged_attention_mask
+            if position_ids is None:
+                position_ids = merged_position_ids
+            else:
+                # Preserve caller-provided absolute position offset (needed for
+                # chunked prefill/decode parity) while using merged sequence
+                # positions for image-expanded tokens.
+                position_offset = position_ids[:, :1] + image_idx.to(
+                    device=position_ids.device, dtype=position_ids.dtype
                 )
+                position_ids = torch.where(
+                    merged_attention_mask > 0,
+                    merged_position_ids + position_offset,
+                    torch.full_like(merged_position_ids, -1),
+                )
+
+            merged_image_tokens = torch.tensor(
+                [[sum(feature.shape[0] for feature in image_features)]],
+                dtype=torch.int64,
+                device=image_idx.device,
+            )
+            image_position_delta = torch.clamp(merged_image_tokens - selected_image_tokens, min=0)
+            image_idx = image_idx + selected_any.to(torch.int64) * image_position_delta
+
+        if position_ids is None and attention_mask is not None:
+            position_ids = attention_mask.long().cumsum(-1) - 1
+            position_ids = torch.where(attention_mask > 0, position_ids, torch.full_like(position_ids, -1))
+        elif position_ids is not None and attention_mask is not None:
+            # Preserve `-1` on padded slots so cache updates skip them without
+            # creating dynamic Slice nodes unsupported by compile.
+            position_ids = torch.where(attention_mask > 0, position_ids, torch.full_like(position_ids, -1))
 
         outputs = self.model.language_model(
             inputs_embeds=inputs_embeds,
@@ -917,66 +577,14 @@ class QEffKimiK25DecoderWrapper(nn.Module):
 
 
 # ref https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/llava/modeling_llava.py#L240
-class QEffKimiK25ForConditionalGeneration(KimiK25PreTrainedModel):
-    def __init__(self, config: KimiK25Config):
-        super().__init__(config)
-
-        vt_config = VisionTowerConfig(config.vision_config)
-        self.vision_tower = MoonViT3dPretrainedModel(vt_config)
-
-        proj_config = ProjectorConfig(config.vision_config)
-        if proj_config.mm_projector_type == "identity":
-            self.mm_projector = IdentityMap()
-        elif proj_config.mm_projector_type == "mlp":
-            self.mm_projector = MLP(proj_config)
-        elif proj_config.mm_projector_type == "patchmerger":
-            self.mm_projector = PatchMergerMLP(proj_config)
-        else:
-            raise ValueError(f"Unsupported mm_projector_type: {proj_config.mm_projector_type}")
-
-        self.language_model = QEffDeepseekV3ForCausalLM(config.text_config)
-        self.post_init()
-
-        if hasattr(self.language_model, "dtype"):
-            target_dtype = self.language_model.dtype
-            self.vision_tower = self.vision_tower.to(dtype=target_dtype)
-            self.mm_projector = self.mm_projector.to(dtype=target_dtype)
-
+class QEffKimiK25ForConditionalGeneration(nn.Module):
     def get_qeff_vision_encoder(self):
         return QEffKimiK25EncoderWrapper(self)
 
     def get_qeff_language_decoder(self):
         return QEffKimiK25DecoderWrapper(self)
 
-    def get_input_embeddings(self):
-        return self.language_model.get_input_embeddings()
-
-    def set_input_embeddings(self, value):
-        self.language_model.set_input_embeddings(value)
-
-    def get_output_embeddings(self):
-        return self.language_model.get_output_embeddings()
-
-    def set_output_embeddings(self, new_embeddings):
-        self.language_model.set_output_embeddings(new_embeddings)
-
-    def set_decoder(self, decoder):
-        self.language_model.set_decoder(decoder)
-
-    def get_decoder(self):
-        return self.language_model.get_decoder()
-
-    def tie_weights(self):
-        return self.language_model.tie_weights()
-
-    def resize_token_embeddings(self, new_num_tokens: int | None = None, pad_to_multiple_of=None) -> nn.Embedding:
-        model_embeds = self.language_model.resize_token_embeddings(new_num_tokens, pad_to_multiple_of)
-        # update vocab size
-        self.config.text_config.vocab_size = model_embeds.num_embeddings
-        self.vocab_size = model_embeds.num_embeddings
-        return model_embeds
-
-    def _merge_input_ids_with_image_features(
+    def _qeff_merge_input_ids_with_image_features(
         self,
         image_features: list[torch.Tensor],
         inputs_embeds: torch.Tensor,
@@ -997,118 +605,90 @@ class QEffKimiK25ForConditionalGeneration(KimiK25PreTrainedModel):
             labels (:obj:`torch.Tensor` of shape :obj:`(batch_size, sequence_length)`, *optional*):
                 The labels.
         """
+        if len(image_features) == 0:
+            raise ValueError("At least one image_features tensor is required.")
+
         _, embed_dim = image_features[0].shape
         feature_lengths = [x.shape[0] for x in image_features]
-        image_features = torch.cat(image_features, dim=0)
+        image_features_cat = torch.cat(image_features, dim=0)
 
         image_token_index: int = self.config.media_placeholder_token_id
         pad_token_id: int = self.config.pad_token_id
-        ignore_index: int = self.config.ignore_index
 
-        batch_size, sequence_length = input_ids.shape
-        left_padding = not torch.sum(input_ids[:, -1] == torch.tensor(pad_token_id))
-
-        # 1. Create a mask to know where special image tokens are
-        _token_occupation_table = torch.ones_like(input_ids.flatten())
-        _token_occupation_table[input_ids.flatten() == image_token_index] = torch.tensor(
-            feature_lengths, dtype=torch.long, device=input_ids.device
-        )
-        _token_occupation_table = _token_occupation_table.reshape(input_ids.shape)
-
-        max_embed_dim = _token_occupation_table.sum(-1).max().item()
-        assert max_embed_dim >= sequence_length, (
-            f"The maximum embedding dimension ({max_embed_dim}) is less than the sequence length ({sequence_length})"
-        )
-        batch_indices, non_image_indices = torch.where(input_ids != image_token_index)
-
-        # 2. Compute the positions where text should be written
-        # Calculate new positions for text tokens in merged image-text sequence.
-        new_token_positions = torch.cumsum(_token_occupation_table, -1) - 1
-        nb_image_pad = max_embed_dim - 1 - new_token_positions[:, -1]
-        if left_padding:
-            new_token_positions += nb_image_pad[:, None]  # offset for left padding
-        text_to_overwrite = new_token_positions[batch_indices, non_image_indices]
-
-        # 3. Create the full embedding, already padded to the maximum position
-        final_embedding = torch.zeros(
-            batch_size,
-            max_embed_dim,
-            embed_dim,
-            dtype=inputs_embeds.dtype,
-            device=inputs_embeds.device,
-        )
-        final_attention_mask = torch.zeros(
-            batch_size, max_embed_dim, dtype=attention_mask.dtype, device=inputs_embeds.device
-        )
-        if labels is not None:
-            final_labels = torch.full(
-                (batch_size, max_embed_dim),
-                ignore_index,
-                dtype=input_ids.dtype,
-                device=input_ids.device,
-            )
-        # In case the Vision model or the Language model has been offloaded to CPU, we need to manually
-        # set the corresponding tensors into their correct target device.
+        batch_size, _ = input_ids.shape
         target_device = inputs_embeds.device
-        batch_indices, non_image_indices, text_to_overwrite = (
-            batch_indices.to(target_device),
-            non_image_indices.to(target_device),
-            text_to_overwrite.to(target_device),
-        )
-        attention_mask = attention_mask.to(target_device)
 
-        # 4. Fill the embeddings based on the mask.
-        final_embedding[batch_indices, text_to_overwrite] = inputs_embeds[batch_indices, non_image_indices]
-        final_attention_mask[batch_indices, text_to_overwrite] = attention_mask[batch_indices, non_image_indices]
-        if labels is not None:
-            final_labels[batch_indices, text_to_overwrite] = labels[batch_indices, non_image_indices]
+        left_padding = (~(input_ids[:, -1] == pad_token_id)).sum() == 0
 
-        # 5. Fill the embeddings corresponding to the images. Anything that is not `text_positions` needs filling (#29835)
-        image_to_overwrite = torch.full(
-            (batch_size, max_embed_dim), True, dtype=torch.bool, device=inputs_embeds.device
-        )
-        image_to_overwrite[batch_indices, text_to_overwrite] = False
-        image_to_overwrite &= image_to_overwrite.cumsum(-1) - 1 >= nb_image_pad[:, None].to(target_device)
+        image_token_mask = input_ids == image_token_index
+        non_image_mask = ~image_token_mask
 
-        if image_to_overwrite.sum() != image_features.shape[:-1].numel():
-            raise ValueError(
-                f"The input provided to the model are wrong. The number of image tokens is {image_to_overwrite.sum()} while"
-                f" the number of image features given to the model is {image_features.shape[:-1].numel()}. "
-                "This prevents correct indexing and breaks batch generation."
+        flat_image_token_mask = image_token_mask.reshape(-1).to(torch.long)
+        flat_image_order = torch.cumsum(flat_image_token_mask, dim=0)
+        feature_lengths_tensor = torch.tensor(feature_lengths, dtype=input_ids.dtype, device=input_ids.device)
+        flat_image_lengths = torch.zeros_like(flat_image_order, dtype=input_ids.dtype)
+        for idx in range(len(feature_lengths)):
+            flat_image_lengths = (
+                flat_image_lengths + (flat_image_order == (idx + 1)).to(input_ids.dtype) * (feature_lengths_tensor[idx])
             )
 
-        final_embedding[image_to_overwrite] = image_features.contiguous().reshape(-1, embed_dim).to(target_device)
-        final_attention_mask |= image_to_overwrite
-        position_ids = (final_attention_mask.cumsum(-1) - 1).masked_fill_((final_attention_mask == 0), 1)
+        token_occupation_table = torch.ones_like(input_ids)
+        token_occupation_table = token_occupation_table.reshape(-1)
+        token_occupation_table = torch.where(flat_image_token_mask.bool(), flat_image_lengths, token_occupation_table)
+        token_occupation_table = token_occupation_table.reshape(input_ids.shape)
 
-        # 6. Mask out the embedding at padding positions, as we later use the past_key_value value to determine the non-attended tokens.
-        batch_indices, pad_indices = torch.where(input_ids == pad_token_id)
-        indices_to_mask = new_token_positions[batch_indices, pad_indices]
+        max_embed_dim = int(token_occupation_table.sum(-1).max().item())
 
-        final_embedding[batch_indices, indices_to_mask] = 0
+        new_token_positions = torch.cumsum(token_occupation_table, 1) - 1
+        nb_image_pad = max_embed_dim - 1 - new_token_positions[:, -1]
+        if bool(left_padding):
+            new_token_positions = new_token_positions + nb_image_pad[:, None]
 
-        if labels is None:
-            final_labels = None
+        merged_positions = torch.arange(max_embed_dim, device=input_ids.device).view(1, 1, -1)
+        text_position_one_hot = merged_positions == new_token_positions.unsqueeze(-1)
+        text_position_one_hot = torch.logical_and(text_position_one_hot, non_image_mask.unsqueeze(-1))
 
-        return final_embedding, final_attention_mask, final_labels, position_ids
+        final_embedding = (
+            text_position_one_hot.to(inputs_embeds.dtype).unsqueeze(-1) * inputs_embeds.unsqueeze(2)
+        ).sum(dim=1)
+        final_attention_mask = (text_position_one_hot.to(attention_mask.dtype) * attention_mask.unsqueeze(-1)).sum(
+            dim=1
+        )
 
-    def _extract_image_features(self, pixel_values: torch.Tensor, grid_thws: torch.Tensor) -> list[torch.Tensor]:
-        """
-        Args:
-            pixel_values (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, num_channels, height, width)`):
-                The pixel values of the images processed by image processor.
-            grid_thws (:obj:`torch.Tensor` of shape :obj:`(batch_size, 3)`):
-                The grid, height, width of the images.
-        Returns:
-            selected_image_feature (:obj:`torch.FloatTensor` of shape :obj:`(num_image_tokens, embed_dim)`):
-                The selected image features to use as input to the projector head.
-        """
+        image_to_overwrite = torch.logical_not(text_position_one_hot.any(dim=1))
+        image_to_overwrite_cumsum = torch.cumsum(image_to_overwrite.to(torch.int64), dim=1)
+        image_to_overwrite = torch.logical_and(
+            image_to_overwrite,
+            image_to_overwrite_cumsum - 1 >= nb_image_pad[:, None].to(target_device),
+        )
 
-        target_dtype = self.vision_tower.patch_embed.proj.weight.dtype
-        pixel_values = pixel_values.to(target_dtype)
+        image_slot_ids = torch.cumsum(image_to_overwrite.to(torch.int64), dim=1) - 1
+        if image_features_cat.shape[0] > 0:
+            valid_image_slots = torch.logical_and(image_to_overwrite, image_slot_ids < image_features_cat.shape[0])
+            image_slot_ids = torch.clamp(image_slot_ids, min=0, max=image_features_cat.shape[0] - 1)
+            gathered_image_embeddings = image_features_cat.to(target_device)[image_slot_ids]
+            final_embedding = torch.where(valid_image_slots.unsqueeze(-1), gathered_image_embeddings, final_embedding)
+            image_to_overwrite = valid_image_slots
+        else:
+            image_to_overwrite = torch.zeros_like(image_to_overwrite)
 
-        image_features = self.vision_tower(pixel_values, grid_thws)
-        return image_features
+        final_attention_mask = torch.logical_or(final_attention_mask.bool(), image_to_overwrite).to(
+            final_attention_mask.dtype
+        )
+
+        position_ids = torch.cumsum(final_attention_mask, dim=1) - 1
+        position_ids = torch.where(final_attention_mask == 0, torch.ones_like(position_ids), position_ids)
+
+        pad_token_mask = input_ids == pad_token_id
+        pad_position_one_hot = torch.logical_and(
+            merged_positions == new_token_positions.unsqueeze(-1), pad_token_mask.unsqueeze(-1)
+        )
+        pad_positions_mask = pad_position_one_hot.any(dim=1)
+        final_embedding = torch.where(
+            pad_positions_mask.unsqueeze(-1), torch.zeros_like(final_embedding), final_embedding
+        )
+
+        return final_embedding, final_attention_mask, labels, position_ids
 
     def forward(
         self,
@@ -1237,70 +817,6 @@ class QEffKimiK25ForConditionalGeneration(KimiK25PreTrainedModel):
             attentions=outputs.attentions,
         )
 
-    def prepare_inputs_for_generation(
-        self,
-        input_ids,
-        past_key_values=None,
-        inputs_embeds=None,
-        pixel_values=None,
-        grid_thws=None,
-        attention_mask=None,
-        **kwargs,
-    ):
-        if past_key_values is not None:
-            if isinstance(past_key_values, Cache):
-                cache_length = past_key_values.get_seq_length()
-                past_length = getattr(past_key_values, "seen_tokens", cache_length)
-            else:
-                cache_length = past_length = past_key_values[0][0].shape[2]
-
-            # Keep only the unprocessed tokens:
-            # 1 - If the length of the attention_mask exceeds the length of input_ids, then we are in a setting where
-            # some of the inputs are exclusively passed as part of the cache (e.g. when passing input_embeds as
-            # input)
-            if attention_mask is not None and attention_mask.shape[1] > input_ids.shape[1]:
-                input_ids = input_ids[:, -(attention_mask.shape[1] - past_length) :]
-            # 2 - If the past_length is smaller than input_ids', then input_ids holds all input tokens. We can discard
-            # input_ids based on the past_length.
-            elif past_length < input_ids.shape[1]:
-                input_ids = input_ids[:, past_length:]
-            # 3 - Otherwise (past_length >= input_ids.shape[1]), let's assume input_ids only has unprocessed tokens.
-            elif self.config.media_placeholder_token_id in input_ids:
-                input_ids = input_ids[:, input_ids.shape[1] - 1 :]
-            # If the cache has seen more tokens than it can hold, then the cache has a size limit. Let's discard the
-            # older attention values, as their corresponding values are not part of the input.
-            if cache_length < past_length and attention_mask is not None:
-                attention_mask = attention_mask[:, -(cache_length + input_ids.shape[1]) :]
-
-        position_ids = kwargs.get("position_ids", None)
-        if attention_mask is not None and position_ids is None:
-            # create position_ids on the fly for batch generation
-            position_ids = attention_mask.long().cumsum(-1) - 1
-            position_ids.masked_fill_(attention_mask == 0, 1)
-            if past_key_values:
-                position_ids = position_ids[:, -input_ids.shape[1] :]
-
-        # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
-        if inputs_embeds is not None and past_key_values is None:
-            model_inputs = {"inputs_embeds": inputs_embeds}
-        else:
-            model_inputs = {"input_ids": input_ids}
-
-        model_inputs.update(
-            {
-                "position_ids": position_ids,
-                "past_key_values": past_key_values,
-                "use_cache": kwargs.get("use_cache"),
-                "attention_mask": attention_mask,
-                "pixel_values": pixel_values,
-                "grid_thws": grid_thws,
-            }
-        )
-        return model_inputs
-
-    def _reorder_cache(self, *args, **kwargs):
-        return self.language_model._reorder_cache(*args, **kwargs)
-
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["image_embeds"]
         lang_output_names = ["logits"]
@@ -1358,7 +874,7 @@ class QEffKimiK25ForConditionalGeneration(KimiK25PreTrainedModel):
                 "role": "user",
                 "content": [
                     {"type": "image_url", "image_url": image},
-                    {"type": "text", "text": "Tell me about yourself."},
+                    {"type": "text", "text": "Describe this image."},
                 ],
             }
         ]
@@ -1368,12 +884,17 @@ class QEffKimiK25ForConditionalGeneration(KimiK25PreTrainedModel):
             tokenize=False,
             return_tensors="pt",
         )
-        inputs = {k: v.to(self.language_model.device) if hasattr(v, "to") else v for k, v in inputs.items()}
 
-        # Build h_shape and w_shape from grid_thws (single image, t=1)
+        # Read grid dimensions before moving tensors to model device. During
+        # export flows that materialize modules on `meta`, calling `.item()` on
+        # meta tensors raises `RuntimeError`.
         grid_thws_val = inputs["grid_thws"]
         h_val = int(grid_thws_val[0, 1].item())
         w_val = int(grid_thws_val[0, 2].item())
+
+        inputs = {k: v.to(self.language_model.device) if hasattr(v, "to") else v for k, v in inputs.items()}
+
+        # Build h_shape and w_shape from grid_thws (single image, t=1)
         h_shape_tensor = torch.ones(h_val, dtype=torch.int64, device=self.language_model.device)
         w_shape_tensor = torch.ones(w_val, dtype=torch.int64, device=self.language_model.device)
 
@@ -1383,8 +904,13 @@ class QEffKimiK25ForConditionalGeneration(KimiK25PreTrainedModel):
             "w_shape": w_shape_tensor,
         }
 
+        # Ensure ONNX export traces the multimodal merge path in decoder wrapper.
+        # A dummy sequence without the media placeholder token can dead-code this
+        # branch and produce a decoder graph that ignores `image_embeds`.
+        input_ids = torch.ones((bs, prefill_seq_len), dtype=torch.int64)
+        input_ids[:, 0] = self.config.media_placeholder_token_id
         lang_inputs = {
-            "input_ids": torch.zeros((bs, prefill_seq_len), dtype=torch.int64),
+            "input_ids": input_ids,
             "position_ids": torch.arange(prefill_seq_len, dtype=torch.int64).view(1, prefill_seq_len).repeat(bs, 1),
         }
 
@@ -1397,7 +923,7 @@ class QEffKimiK25ForConditionalGeneration(KimiK25PreTrainedModel):
         pkv_cache = self.language_model.get_dummy_pkv_cache(
             config=self.language_model.config,
             batch_size=fbs if continuous_batching else bs,
-            seq_len=prefill_seq_len,
+            seq_len=1024,
         )
 
         if cache_compressed:
@@ -1510,7 +1036,7 @@ class QEffKimiK25ForConditionalGeneration(KimiK25PreTrainedModel):
         num_image_tokens = compiler_options.pop("num_image_tokens", None)
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32  # constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        ctx_len = ctx_len if ctx_len else 32  # constants.ONNX_EXPORT_EXAMPLE_CTX_LEN
+        ctx_len = ctx_len if ctx_len else 1024  # constants.ONNX_EXPORT_EXAMPLE_CTX_LEN
 
         num_patches = num_patches if num_patches is not None else 2400
         h = h if h is not None else 30

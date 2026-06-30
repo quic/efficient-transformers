@@ -36,8 +36,10 @@ NUM_EXPERTS_PER_TOKEN = 2
 
 EXPERT_KEY_PATTERN = re.compile(r"^(language_model\.model\.layers\.\d+\.mlp\.experts\.)(\d+)(\..+)$")
 
+
 def _set_deterministic(seed: int):
     import random
+
     import numpy as np
 
     random.seed(seed)
@@ -46,6 +48,7 @@ def _set_deterministic(seed: int):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
     torch.use_deterministic_algorithms(True)
+
 
 def _ensure_torch_fx_import_compatibility():
     """Backfill `is_torch_fx_available` for remote model code expecting older Transformers APIs."""
@@ -399,7 +402,7 @@ def main():
         qeff_model.compile(
             qaic_config=qaic_config,
             prefill_seq_len=1,
-            ctx_len=4096,
+            ctx_len=1024,
             num_cores=16,
             num_devices=1,
             mxfp6_matmul=False,
@@ -407,10 +410,6 @@ def main():
             aic_enable_depth_first=False,
             skip_vision=True,  # Skip vision encoder for text-only inference
             mos=1,
-            num_patches=2400,  # num_patches
-            h=30,  # h
-            w=80,  # w
-            num_image_tokens=600,  # num_image_tokens
         )
         ## STEP 4: Prepare Text-Only Input
         # Create a text-only message without any image
@@ -433,7 +432,7 @@ def main():
         )
 
         ## STEP 6: Run Text-Only Inference
-        output = qeff_model.generate(inputs=inputs, device_ids=[0, 1], generation_len=10)
+        output = qeff_model.generate(inputs=inputs, device_ids=[0], generation_len=10)
 
         ## STEP 7: Display Results
         print(output.generated_ids)
@@ -448,7 +447,7 @@ def main():
         qeff_model.compile(
             qaic_config=qaic_config,
             prefill_seq_len=1,
-            ctx_len=4096,
+            ctx_len=1024,
             num_cores=16,
             num_devices=1,
             mxfp6_matmul=False,
@@ -488,7 +487,7 @@ def main():
         inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
 
         ## STEP 6: Run Vision+Text Inference
-        output = qeff_model.generate(inputs=inputs, device_ids=[0], generation_len=10)
+        output = qeff_model.generate(inputs=inputs, generation_len=10)
 
         ## STEP 7: Display Results
         print(output.generated_ids)

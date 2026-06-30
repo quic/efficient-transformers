@@ -1234,7 +1234,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
         self.continuous_batching = False
         if qaic_config:
-            self.ccl_enabled = qaic_config.get("ccl_enabled", False)
             if mla_absorption := qaic_config.get("mla_absorption", None):
                 self.hash_params["mla_absorption"] = mla_absorption
                 setattr(self.model.language_model, "mla_absorption", mla_absorption)
@@ -1989,8 +1988,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         custom_io_vision = {}
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
-        if target_dtype == torch.bfloat16 and constants.DEFAULT_AIC_HW_VERSION != "ai200":
-            target_dtype = torch.float16
         kv_cache_dtype = "mxint8" if mxint8_kv_cache else CUSTOM_IO_DTYPE_MAP[target_dtype]
         molmo = hasattr(self.model.config, "model_type") and self.model.config.model_type == "molmo"
         if molmo:
@@ -2328,6 +2325,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         vision_inputs_fp16 = {"pixel_values", "image_masks"}
         vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
 
+        grid_thws_val = inputs.pop("grid_thws", None)
+        if grid_thws_val is not None:
+            h_val = int(grid_thws_val[0, 1].item())
+            w_val = int(grid_thws_val[0, 2].item())
+            vision_inputs["h_shape"] = np.ones((h_val), dtype=np.int64)
+            vision_inputs["w_shape"] = np.ones((w_val), dtype=np.int64)
+
         vision_start = perf_counter()
 
         vision_outputs = {}
@@ -2437,6 +2441,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
             if self._write_io_dir is not None:
                 write_io_files(lang_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
+
+        if "image_idx_output" in outputs:
+            lang_inputs["image_idx"] = chunk_inputs["image_idx"]
 
         prefill_time = perf_counter() - lang_start + vision_end - vision_start
         # Skip inputs/outputs again
@@ -3064,7 +3071,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         prefill_time = perf_counter() - prefill_start
         # Get first token
         inputs["input_ids"] = outputs["logits"].argmax(2)
-        inputs["position_ids"] = input_len.numpy()
+        inputs["position_ids"] = np.max(inputs["position_ids"], axis=-1, keepdims=True) + 1
+        if "image_idx_output" in outputs:
+            inputs["image_idx"] = chunk_inputs["image_idx"]
 
         if "cross_attention_mask" in inputs:
             bs, _, num_images, img_tiles = inputs["cross_attention_mask"].shape
