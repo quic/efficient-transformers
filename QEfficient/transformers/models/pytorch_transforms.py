@@ -240,6 +240,19 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     Qwen3_5MoeVisionAttention,
     Qwen3_5MoeVisionModel,
 )
+from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
+    MiniMaxM3SparseForConditionalGeneration,
+    MiniMaxM3VLAttention,
+    MiniMaxM3VLDecoderLayer,
+    MiniMaxM3VLIndexer,
+    MiniMaxM3VLRMSNorm,
+    MiniMaxM3VLRotaryEmbedding,
+    MiniMaxM3VLSparseMoeBlock,
+    MiniMaxM3VLTextModel,
+    MiniMaxM3VLTopKRouter,
+    MiniMaxM3VLVisionAttention,
+    MiniMaxM3VLVisionModel,
+)
 from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     Qwen3MoeAttention,
     Qwen3MoeDecoderLayer,
@@ -467,6 +480,20 @@ from QEfficient.transformers.models.llava_next.modeling_llava_next import (
     QEffLlavaNextDecoderWrapper,
     QEffLlavaNextForConditionalGeneration,
 )
+from QEfficient.transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
+    QEffMiniMaxM3SparseForConditionalGeneration,
+    QEffMiniMaxM3VLAttention,
+    QEffMiniMaxM3VLDecoderLayer,
+    QEffMiniMaxM3VLDecoderWrapper,
+    QEffMiniMaxM3VLEncoderWrapper,
+    QEffMiniMaxM3VLIndexer,
+    QEffMiniMaxM3VLRotaryEmbedding,
+    QEffMiniMaxM3VLSparseMoeBlock,
+    QEffMiniMaxM3VLTextModel,
+    QEffMiniMaxM3VLTopKRouter,
+    QEffMiniMaxM3VLVisionAttention,
+    QEffMiniMaxM3VLVisionModel,
+)
 from QEfficient.transformers.models.mistral.modeling_mistral import (
     QEffMistralAttention,
     QEffMistralDecoderLayer,
@@ -671,6 +698,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3VLMoeTextRMSNorm: CustomRMSNormAIC,
         Qwen3VLTextRMSNorm: CustomRMSNormAIC,
         Glm4MoeRMSNorm: CustomRMSNormAIC,
+        MiniMaxM3VLRMSNorm: GemmaCustomRMSNormAIC,
         Wav2Vec2Encoder: QEffWav2Vec2Encoder,
         Wav2Vec2EncoderStableLayerNorm: QEffWav2Vec2EncoderStableLayerNorm,
         # BERT-family: replace _create_attention_masks (uses create_bidirectional_mask,
@@ -762,6 +790,17 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
         Qwen3VLMoeTextRotaryEmbedding: QEffQwen3VLMoeTextRotaryEmbedding,
         Qwen3VLMoeTextTopKRouter: QEffQwen3VLMoeTextTopKRouter,
+        # MiniMax-M3 VL (sparse-MoE VLM, partial-RoPE, Gemma-style RMSNorm)
+        MiniMaxM3SparseForConditionalGeneration: QEffMiniMaxM3SparseForConditionalGeneration,
+        MiniMaxM3VLAttention: QEffMiniMaxM3VLAttention,
+        MiniMaxM3VLDecoderLayer: QEffMiniMaxM3VLDecoderLayer,
+        MiniMaxM3VLIndexer: QEffMiniMaxM3VLIndexer,
+        MiniMaxM3VLTextModel: QEffMiniMaxM3VLTextModel,
+        MiniMaxM3VLRotaryEmbedding: QEffMiniMaxM3VLRotaryEmbedding,
+        MiniMaxM3VLSparseMoeBlock: QEffMiniMaxM3VLSparseMoeBlock,
+        MiniMaxM3VLTopKRouter: QEffMiniMaxM3VLTopKRouter,
+        MiniMaxM3VLVisionAttention: QEffMiniMaxM3VLVisionAttention,
+        MiniMaxM3VLVisionModel: QEffMiniMaxM3VLVisionModel,
         # Qwen3vl
         Qwen3VLForConditionalGeneration: QEffQwen3VLForConditionalGeneration,
         Qwen3VLModel: QEffQwen3VLModel,
