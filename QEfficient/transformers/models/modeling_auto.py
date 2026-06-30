@@ -1515,6 +1515,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
+        offload_pt_weights: Optional[bool] = None,
         **kwargs,
     ) -> str:
         """
@@ -1569,7 +1570,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             inputs = self.model.get_dummy_inputs(
                 kv_offload=True,
                 comp_ctx_lengths=self.comp_ctx_lengths_decode,
-                prefill_seq_len=prefill_seq_len,
             )
             dynamic_axes = self.model.get_onnx_dynamic_axes(
                 kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
@@ -1611,13 +1611,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 use_onnx_subfunctions=use_onnx_subfunctions,
             )
 
-        requested_offload_pt_weights = kwargs.get("offload_pt_weights")
-        if requested_offload_pt_weights is not None:
-            offload_pt_weights = requested_offload_pt_weights
-        elif prefill_only and prefill_seq_len > 1:
-            offload_pt_weights = False  # to keep weight for decode onnx
-        else:
-            offload_pt_weights = True
+        if offload_pt_weights is None:
+            if prefill_only and prefill_seq_len > 1:
+                offload_pt_weights = False  # keep weights resident for the decode export
+            else:
+                offload_pt_weights = True
 
         if not skip_lang:
             self.lang_model.export(
@@ -2015,9 +2013,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         needs_lang_export = not skip_lang and lang_onnx_path is None
 
         if needs_vision_export or needs_lang_export:
-            export_kwargs = {}
-            if offload_pt_weights is not None:
-                export_kwargs["offload_pt_weights"] = offload_pt_weights
             self.export(
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 skip_vision=skip_vision,
@@ -2027,7 +2022,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_seq_len=prefill_seq_len,
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
-                **export_kwargs,
+                offload_pt_weights=offload_pt_weights,
             )
             if layerwise_cache_probe:
                 return self.lang_model.onnx_path
