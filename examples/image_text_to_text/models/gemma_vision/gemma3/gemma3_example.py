@@ -14,13 +14,13 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 
 # Change model_id to "google/gemma-3-27b-it" for 27B model
-model_id = "google/gemma-3-27b-it"
+model_id = "google/gemma-3-4b-it"
 
 config = AutoConfig.from_pretrained(model_id)
 
 # For Testing Purpose Only atleast 6 layers are required
-# config.text_config.num_hidden_layers = 6
-# config.vision_config.num_hidden_layers = 6
+config.text_config.num_hidden_layers = 6
+config.vision_config.num_hidden_layers = 6
 
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -37,7 +37,7 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
 
 
 ### use skip_vision=True, if want to run only text, or false ###
-skip_vision = False
+skip_vision = True
 
 if skip_vision:
     ## Only Text ##
@@ -53,6 +53,8 @@ if skip_vision:
         skip_vision=True,
         mos=1,
         node_precision_info=npi_file_full_path,
+        use_dynamo=True,
+        use_onnx_subfunctions=True,
     )
 
     messages = [
@@ -90,6 +92,8 @@ else:
         mos=1,
         node_precision_info=npi_file_full_path,
         split_model_io=True,
+        use_dynamo=True,
+        use_onnx_subfunctions=True,
     )
 
     ### IMAGE + TEXT ###
