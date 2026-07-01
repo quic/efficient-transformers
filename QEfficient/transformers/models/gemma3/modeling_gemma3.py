@@ -776,6 +776,8 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                 for layer in present.layers:
                     legacy_cache += ((getattr(layer, "keys", None), getattr(layer, "values", None)),)
                 present = legacy_cache
+
+        pixel_values = pixel_values.detach().clone()
         return logits, pixel_values, image_idx, present
 
     def get_npi_file(self, model_name: str) -> str:
@@ -948,29 +950,11 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
 
-    def get_output_names(self, kv_offload: bool = False):
-        vision_output_names = ["vision_embeds"]
-        lang_output_names = ["logits"]
-        for i in range(self.language_model.config.num_hidden_layers):
-            for kv in ["key", "value"]:
-                lang_output_names.append(f"past_{kv}.{i}_RetainedState")
-
-        output_names = {}
-        if kv_offload:
-            lang_output_names.insert(1, "vision_embeds_RetainedState")
-            lang_output_names.insert(2, "image_idx_output")
-            output_names["vision"] = vision_output_names
-            output_names["lang"] = lang_output_names
-        else:
-            lang_output_names.insert(1, "pixel_values_RetainedState")
-            lang_output_names.insert(2, "image_idx_output")
-            return lang_output_names
-        return output_names
-
     def get_onnx_dynamic_shapes(
         self,
         comp_ctx_lengths: Optional[List[int]] = None,
         kv_offload: bool = False,
+        continuous_batching: bool = False,
     ) -> Dict[str, Any]:
         """
         - Handles past_key_values as a list of (key, value) pairs per layer
@@ -987,7 +971,6 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
 
         num_layers = self.language_model.config.num_hidden_layers
         # config = self.language_model.config
-
         # layer_switch = config.sliding_window_pattern if hasattr(config, "sliding_window_pattern") else 2
         # has_sliding_window = hasattr(config, "sliding_window")
         # sliding_window = getattr(config, "sliding_window", None)
@@ -1011,7 +994,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             elif "ctx_len" in dim_name:
                 d = Dim(dim_name, min=2, max=4095)
             elif "sliding_window" in dim_name:
-                d = Dim.STATIC
+                d = Dim(dim_name, min=2, max=1024)
             elif "idx" in dim_name:
                 d = Dim.STATIC
             elif "comp_ctx_lengths" in dim_name:
@@ -1030,6 +1013,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             where cache_len is either ctx_len or sliding_window, depending on layer.
             """
             past_kv_shapes: List[Tuple[Dict[int, Any], Dict[int, Any]]] = []
+            batch_dim = get_dim("full_batch_size") if continuous_batching else get_dim("batch_size")
             for i in range(num_layers):
                 # Decide whether this layer uses global ctx_len or sliding_window
                 # if has_sliding_window and ((i + 1) % layer_switch):
@@ -1038,14 +1022,14 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                 # else:
                 #     # global cache layer
                 #     cache_len_dim = get_dim("ctx_len")
-                cache_len_dim = get_dim("ctx_len")
 
+                cache_len_dim = get_dim("ctx_len")
                 past_key_shape = {
-                    0: get_dim("batch_size"),
+                    0: batch_dim,
                     2: cache_len_dim,
                 }
                 past_value_shape = {
-                    0: get_dim("batch_size"),
+                    0: batch_dim,
                     2: cache_len_dim,
                 }
                 past_kv_shapes.append((past_key_shape, past_value_shape))
@@ -1070,7 +1054,7 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
                     1: get_dim("seq_len"),
                 },
                 "vision_embeds": {
-                    0: get_dim("batch_size"),
+                    0: get_dim("vision_batch_size"),
                     1: get_dim("vision_size"),
                 },
                 "position_ids": {
@@ -1136,6 +1120,25 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
 
         return dynamic_shapes
 
+    def get_output_names(self, kv_offload: bool = False):
+        vision_output_names = ["vision_embeds"]
+        lang_output_names = ["logits"]
+        for i in range(self.language_model.config.num_hidden_layers):
+            for kv in ["key", "value"]:
+                lang_output_names.append(f"past_{kv}.{i}_RetainedState")
+
+        output_names = {}
+        if kv_offload:
+            lang_output_names.insert(1, "vision_embeds_RetainedState")
+            lang_output_names.insert(2, "image_idx_output")
+            output_names["vision"] = vision_output_names
+            output_names["lang"] = lang_output_names
+        else:
+            lang_output_names.insert(1, "pixel_values_RetainedState")
+            lang_output_names.insert(2, "image_idx_output")
+            return lang_output_names
+        return output_names
+
     def get_dummy_pkv_cache(self, config, batch_size, seq_len, dtype=None):
         dtype = dtype or getattr(config, "torch_dtype", torch.float32)
         n_heads = config.num_key_value_heads
@@ -1184,8 +1187,8 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
         else:
             vision_size = 256
 
-        bs: int = 2 if use_dynamo else constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-
+        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE if (not use_dynamo) else 2
+        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
         # Define shapes
         inputs_shapes = {}
         inputs_shapes["input_ids"] = (bs, prefill_seq_len)
@@ -1194,7 +1197,10 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             vision_size,  # constants.INTERN_FEATURE_SIZE,
             self.language_model.config.hidden_size,  # 5120
         )
-        inputs_shapes["position_ids"] = (bs, prefill_seq_len)
+        inputs_shapes["position_ids"] = (
+            bs,
+            prefill_seq_len,
+        )
         inputs_shapes["pixel_values"] = (
             bs,
             constants.INTERN_NUM_CHANNELS,
@@ -1213,7 +1219,6 @@ class QEffGemma3ForConditionalGeneration(Gemma3ForConditionalGeneration):
             torch.arange(prefill_seq_len, dtype=torch.int64).view(1, prefill_seq_len).repeat(bs, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
-        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         # Add data for KV
         lang_inputs["past_key_values"] = self.get_dummy_pkv_cache(

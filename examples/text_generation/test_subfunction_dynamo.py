@@ -12,10 +12,10 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils.run_utils import ApiRunner
 
-model_name = "mistralai/Mixtral-8x7B-Instruct-v0.1"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-config = AutoConfig.from_pretrained(model_name)
-# config.num_hidden_layers = 4
+model_name = "zai-org/GLM-4.7"
+tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+config.num_hidden_layers = 4
 config.torch_dtype = torch.float16
 # print(config)
 runner = ApiRunner(
@@ -28,11 +28,11 @@ runner = ApiRunner(
 )
 
 # PyTorch (KV) output
-hf_model = AutoModelForCausalLM.from_pretrained(model_name, config=config)
+hf_model = AutoModelForCausalLM.from_pretrained(model_name, config=config, trust_remote_code=True)
 hf_tokens = runner.run_hf_model_on_pytorch(hf_model)
 print(hf_tokens)
 
-qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, config=config)
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, config=config, trust_remote_code=True)
 pt_tokens = runner.run_kv_model_on_pytorch(qeff_model.model)
 print(pt_tokens)
 
