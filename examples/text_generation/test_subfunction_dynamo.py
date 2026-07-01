@@ -12,10 +12,10 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils.run_utils import ApiRunner
 
-model_name = "openai/gpt-oss-20b"
+model_name = "mistralai/Mixtral-8x7B-Instruct-v0.1"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 config = AutoConfig.from_pretrained(model_name)
-config.num_hidden_layers = 4
+# config.num_hidden_layers = 4
 config.torch_dtype = torch.float16
 # print(config)
 runner = ApiRunner(
@@ -42,11 +42,7 @@ print(pt_tokens)
 # print(ort_tokens)
 
 qeff_model.compile(
-    prefill_seq_len=1,
-    ctx_len=2048,
-    use_dynamo=True,
-    use_onnx_subfunctions=True,
-    num_devices=1,
+    prefill_seq_len=1, ctx_len=2048, use_dynamo=True, use_onnx_subfunctions=True, num_devices=4, mxfp6_matmul=True
 )
 print("compile done")
 print("QEff Transformed Onnx Model Outputs(AIC Backend)")
