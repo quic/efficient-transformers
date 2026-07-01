@@ -435,16 +435,19 @@ def qeff_torch_causal_conv1d_update(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     _, hidden_size, seq_len = hidden_states.shape
     state_len = conv_state.shape[-1]
-    idx = position_ids[0].flatten()
-    zeros = torch.zeros(state_len, dtype=idx.dtype, device=idx.device)
-    out = torch.cat([zeros, idx], dim=0)
-    order = torch.argsort(out)  # sorted positions
-    last4_positions = order[-state_len:]  # (4,)
+    pos_ids = position_ids[0]
+    zeros = torch.zeros((pos_ids.shape[0], state_len), dtype=pos_ids.dtype, device=pos_ids.device)
+    out = torch.cat([zeros, pos_ids], dim=1)
+    order = torch.argsort(out, dim=1)  # sorted positions per batch row
+    last_positions = order[:, -state_len:]  # (B, state_len)
 
     # ad_on = torch.where(hidden_states.shape[2] == torch.tensor(1), torch.tensor(1), cache_position.argmax(0))
     hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
 
-    updated_conv_state = hidden_states_new.index_select(2, last4_positions.long())
+    batch_idx = torch.arange(hidden_states_new.shape[0], device=hidden_states_new.device)[:, None, None]
+    hidden_idx = torch.arange(hidden_size, device=hidden_states_new.device)[None, :, None]
+    ctx_idx = last_positions.to(torch.long).unsqueeze(1)
+    updated_conv_state = hidden_states_new[batch_idx, hidden_idx, ctx_idx]
     # updated_conv_state = hidden_states_new[:, :, -state_len:].to(hidden_states_new.dtype)
     # updated_conv_state = hidden_states_new[:, :, position_ids[0].argmax(1) + 1: position_ids[0].argmax(1) + state_len].to(hidden_states_new.dtype)
     out = F.conv1d(hidden_states_new, weight.unsqueeze(1), bias, padding=0, groups=hidden_size)
@@ -557,10 +560,10 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # Precompute all constant masks — no triu/tril with diagonal args at runtime
         # mask_causal: upper triangular including diagonal (diagonal=0)
         # = triu(ones, diagonal=0)
-        mask_causal = torch.ones(chunk_size, chunk_size, dtype=torch.bool)
+        mask_causal = torch.zeros(chunk_size, chunk_size, dtype=torch.bool)
         for i in range(chunk_size):
-            for j in range(i + 1):
-                mask_causal[i, j] = False
+            for j in range(i, chunk_size):
+                mask_causal[i, j] = True
         self.register_buffer("_mask_causal", mask_causal, persistent=False)
         # shape: (C, C), True above diagonal inclusive
 
@@ -618,7 +621,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         zeros = torch.zeros(g.shape, dtype=g.dtype, device=g.device)
 
         g = torch.where(mask, g, zeros)
-        # beta = torch.where(mask, beta, zeros)
+        beta = torch.where(mask, beta, zeros)
 
         qkv_zeros = torch.zeros(key.shape, dtype=key.dtype, device=key.device)
         key = torch.where(mask.unsqueeze(-1), key, qkv_zeros)
@@ -653,7 +656,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             x.reshape(x.shape[0], x.shape[1], -1, chunk_size, x.shape[-1]) for x in (query, key, value, k_beta, v_beta)
         ]
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
-        mask = mask_causal.to(device=query.device)
+        # mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=0)
+        mask = mask_causal
 
         #
         # chunk decay
@@ -728,7 +732,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             else initial_state.to(value)
         )
         core_attn_out = torch.zeros_like(value)
-        mask = mask_strict.to(device=query.device)
+        # mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=1)
+        mask = mask_strict
 
         # for each chunk
         for i in range(0, total_sequence_length // chunk_size):
@@ -820,16 +825,13 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
             # Continuous batching path: gather only active rows, then scatter updates back.
             if batch_index is not None:
-                batch_index = batch_index.to(conv_state_all.device)
-                conv_batch_index = batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)
+                conv_batch_index = batch_index.to(conv_state_all.device)
                 conv_ctx_indices = torch.arange(
                     conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
                 )[None, :]
                 conv_state = CtxGatherFuncCB3D.apply(conv_state_all, conv_batch_index, conv_ctx_indices)
 
-                recurrent_batch_index = (batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)).to(
-                    recurrent_state_all.device
-                )
+                recurrent_batch_index = batch_index.to(recurrent_state_all.device)
                 recurrent_ctx_indices = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, None, :]
@@ -848,8 +850,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 self.conv1d.bias,
             )
             if batch_index is not None:
-                conv_batch_index = batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)
-                conv_batch_index = conv_batch_index.to(conv_state_all.device)
+                conv_batch_index = batch_index.to(conv_state_all.device)
                 conv_position_ids = torch.arange(
                     conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
                 )[None, :]
@@ -909,9 +910,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             last_recurrent_state = torch.where(is_decode, recurrent_S, chunk_S)
 
             if batch_index is not None:
-                recurrent_batch_index = (batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)).to(
-                    recurrent_state_all.device
-                )
+                recurrent_batch_index = batch_index.to(recurrent_state_all.device)
                 recurrent_position_ids = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, :].expand(recurrent_batch_index.shape[0], -1)
@@ -1949,7 +1948,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, dummy_seq_len)
 
         inputs_shapes["position_ids"] = (
-            3,
+            4,
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             dummy_seq_len,
         )

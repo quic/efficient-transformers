@@ -29,7 +29,6 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5VisionAttention,
     Qwen3_5VisionModel,
     apply_rotary_pos_emb_vision,
-    l2norm,
     repeat_kv,
     rotate_half,
 )
@@ -372,16 +371,19 @@ def qeff_torch_causal_conv1d_update(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     _, hidden_size, seq_len = hidden_states.shape
     state_len = conv_state.shape[-1]
-    idx = position_ids[0].flatten()
-    zeros = torch.zeros(state_len, dtype=idx.dtype, device=idx.device)
-    out = torch.cat([zeros, idx], dim=0)
-    order = torch.argsort(out)  # sorted positions
-    last4_positions = order[-state_len:]  # (4,)
+    pos_ids = position_ids[0]
+    zeros = torch.zeros((pos_ids.shape[0], state_len), dtype=pos_ids.dtype, device=pos_ids.device)
+    out = torch.cat([zeros, pos_ids], dim=1)
+    order = torch.argsort(out, dim=1)  # sorted positions per batch row
+    last_positions = order[:, -state_len:]  # (B, state_len)
 
     # ad_on = torch.where(hidden_states.shape[2] == torch.tensor(1), torch.tensor(1), cache_position.argmax(0))
     hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
 
-    updated_conv_state = hidden_states_new.index_select(2, last4_positions.long())
+    batch_idx = torch.arange(hidden_states_new.shape[0], device=hidden_states_new.device)[:, None, None]
+    hidden_idx = torch.arange(hidden_size, device=hidden_states_new.device)[None, :, None]
+    ctx_idx = last_positions.to(torch.long).unsqueeze(1)
+    updated_conv_state = hidden_states_new[batch_idx, hidden_idx, ctx_idx]
     # updated_conv_state = hidden_states_new[:, :, -state_len:].to(hidden_states_new.dtype)
     # updated_conv_state = hidden_states_new[:, :, position_ids[0].argmax(1) + 1: position_ids[0].argmax(1) + state_len].to(hidden_states_new.dtype)
     out = F.conv1d(hidden_states_new, weight.unsqueeze(1), bias, padding=0, groups=hidden_size)
@@ -493,11 +495,13 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         # Precompute all constant masks — no triu/tril with diagonal args at runtime
         # mask_causal: upper triangular including diagonal (diagonal=0)
         # = triu(ones, diagonal=0)
-        mask_causal = torch.ones(chunk_size, chunk_size, dtype=torch.bool)
+
+        mask_causal = torch.zeros(chunk_size, chunk_size, dtype=torch.bool)
         for i in range(chunk_size):
-            for j in range(i + 1):
-                mask_causal[i, j] = False
+            for j in range(i, chunk_size):
+                mask_causal[i, j] = True
         self.register_buffer("_mask_causal", mask_causal, persistent=False)
+
         # shape: (C, C), True above diagonal inclusive
 
         # mask_strict: strict upper triangular (diagonal=1)
@@ -539,9 +543,12 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         eye=None,
     ):
         initial_dtype = query.dtype
+        # if use_qk_l2norm_in_kernel:
+        #     query = l2norm(query, dim=-1, eps=1e-6)
+        #     key = l2norm(key, dim=-1, eps=1e-6)
         if use_qk_l2norm_in_kernel:
-            query = l2norm(query, dim=-1, eps=1e-6)
-            key = l2norm(key, dim=-1, eps=1e-6)
+            query = query * torch.rsqrt(torch.einsum("bthd,bthd->bth", query, query).unsqueeze(-1) + 1e-6)
+            key = key * torch.rsqrt(torch.einsum("bthd,bthd->bth", key, key).unsqueeze(-1) + 1e-6)
         query, key, value, beta, g = [
             x.transpose(1, 2).contiguous().to(torch.float32) for x in (query, key, value, beta, g)
         ]
@@ -561,13 +568,20 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         batch_size, num_heads, sequence_length, k_head_dim = key.shape
         v_head_dim = value.shape[-1]
         pad_size = (chunk_size - sequence_length % chunk_size) % chunk_size
-        query = F.pad(query, (0, 0, 0, pad_size))
-        key = F.pad(key, (0, 0, 0, pad_size))
-        value = F.pad(value, (0, 0, 0, pad_size))
-        beta = F.pad(beta, (0, pad_size))
+        # query = F.pad(query, (0, 0, 0, pad_size))
+        # key = F.pad(key, (0, 0, 0, pad_size))
+        # value = F.pad(value, (0, 0, 0, pad_size))
+        # beta = F.pad(beta, (0, pad_size))
+
+        # # ck = g.clone()
+        # g = F.pad(g, (0, pad_size))
+        query = F.pad(query, (0, 0, 0, pad_size), mode="constant", value=0.0)
+        key = F.pad(key, (0, 0, 0, pad_size), mode="constant", value=0.0)
+        value = F.pad(value, (0, 0, 0, pad_size), mode="constant", value=0.0)
+        beta = F.pad(beta, (0, pad_size), mode="constant", value=0.0)
 
         # ck = g.clone()
-        g = F.pad(g, (0, pad_size))
+        g = F.pad(g, (0, pad_size), mode="constant", value=0.0)
         total_sequence_length = sequence_length + pad_size
         scale = 1 / (query.shape[-1] ** 0.5)
         query = query * scale
@@ -579,7 +593,8 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             x.reshape(x.shape[0], x.shape[1], -1, chunk_size, x.shape[-1]) for x in (query, key, value, k_beta, v_beta)
         ]
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
-        mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=0)
+        # mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=0)
+        mask = mask_causal
 
         #
         # chunk decay
@@ -603,8 +618,9 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         for i in range(1, chunk_size):
             row = attn[..., i, :i].clone()
             sub = attn[..., :i, :i].clone()
-            attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
-        attn = attn + torch.eye(chunk_size, dtype=attn.dtype, device=attn.device)
+            # attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
+            attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
+        attn = attn + eye.to(dtype=attn.dtype, device=attn.device)
 
         ## Approximation code ##
         # A = attn
@@ -630,8 +646,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
         # attn = L
 
-        ## Horners method
-
+        # Horners Method
         # A = attn.masked_fill(mask, 0)
         # acc_dtype = torch.float32
         # A64 = A.to(acc_dtype)
@@ -643,7 +658,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         # for _ in range(K):
         #     S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
 
-        # attn = S64
+        # attn = S64.to(A.dtype)
 
         value = attn @ v_beta
         k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))
@@ -654,7 +669,8 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             else initial_state.to(value)
         )
         core_attn_out = torch.zeros_like(value)
-        mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=1)
+        # mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=1)
+        mask = mask_strict
 
         # for each chunk
         for i in range(0, total_sequence_length // chunk_size):
@@ -689,8 +705,10 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         # L2 norm (matching chunk kernel behavior)
         q = query.float()
         k = key.float()
-        q = q * torch.rsqrt((q * q).sum(dim=-1, keepdim=True) + 1e-6)
-        k = k * torch.rsqrt((k * k).sum(dim=-1, keepdim=True) + 1e-6)
+        # q = q * torch.rsqrt((q * q).sum(dim=-1, keepdim=True) + 1e-6)
+        # k = k * torch.rsqrt((k * k).sum(dim=-1, keepdim=True) + 1e-6)
+        q = q * torch.rsqrt(torch.einsum("bthd,bthd->bth", q, q).unsqueeze(-1) + 1e-6)
+        k = k * torch.rsqrt(torch.einsum("bthd,bthd->bth", k, k).unsqueeze(-1) + 1e-6)
         v = value.float()
 
         scale = 1.0 / (q.shape[-1] ** 0.5)
@@ -710,11 +728,12 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         # Single step — no loop because T=1
         # S update
         S_decayed = S * decay[:, :, 0]  # (B, H, d_k, d_v)
-        kv_mem = (S_decayed * k[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
+        # kv_mem = (S_decayed * k[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
+        kv_mem = torch.einsum("bhkv,bhk->bhv", S_decayed, k[:, :, 0])  # (B, H, d_v)
         delta = (v[:, :, 0] - kv_mem) * b[:, :, 0]  # (B, H, d_v)
         S_new = S_decayed + k[:, :, 0].unsqueeze(-1) * delta.unsqueeze(-2)  # (B, H, d_k, d_v)
-        out = (S_new * q[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
-
+        # out = (S_new * q[:, :, 0].unsqueeze(-1)).sum(dim=-2)  # (B, H, d_v)
+        out = torch.einsum("bhkv,bhk->bhv", S_new, q[:, :, 0])  # (B, H, d_v)
         out = out.unsqueeze(2).transpose(1, 2).to(dtype)  # (B, 1, H, d_v) → (B, T, H, d_v)
         return out, S_new.to(recurrent_state.dtype)
 
@@ -742,16 +761,13 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
             # Continuous batching path: gather only active rows, then scatter updates back.
             if batch_index is not None:
-                batch_index = batch_index.to(conv_state_all.device)
-                conv_batch_index = batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)
+                conv_batch_index = batch_index.to(conv_state_all.device)
                 conv_ctx_indices = torch.arange(
                     conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
                 )[None, :]
                 conv_state = CtxGatherFuncCB3D.apply(conv_state_all, conv_batch_index, conv_ctx_indices)
 
-                recurrent_batch_index = (batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)).to(
-                    recurrent_state_all.device
-                )
+                recurrent_batch_index = batch_index.to(recurrent_state_all.device)
                 recurrent_ctx_indices = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, None, :]
@@ -770,8 +786,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 self.conv1d.bias,
             )
             if batch_index is not None:
-                conv_batch_index = batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)
-                conv_batch_index = conv_batch_index.to(conv_state_all.device)
+                conv_batch_index = batch_index.to(conv_state_all.device)
                 conv_position_ids = torch.arange(
                     conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
                 )[None, :]
@@ -786,7 +801,10 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
         # ── Split Q/K/V ──────────────────────────────────────
         mixed_qkv = mixed_qkv.transpose(1, 2)
-        query, key, value = torch.split(mixed_qkv, [self.key_dim, self.key_dim, self.value_dim], dim=-1)
+        # query, key, value = torch.split(mixed_qkv, [self.key_dim, self.key_dim, self.value_dim], dim=-1)
+        query = mixed_qkv[..., : self.key_dim]
+        key = mixed_qkv[..., self.key_dim : 2 * self.key_dim]
+        value = mixed_qkv[..., 2 * self.key_dim :]
         query = query.reshape(batch_size, seq_len, -1, self.head_k_dim)
         key = key.reshape(batch_size, seq_len, -1, self.head_k_dim)
         value = value.reshape(batch_size, seq_len, -1, self.head_v_dim)
@@ -828,9 +846,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
             last_recurrent_state = torch.where(is_decode, recurrent_S, chunk_S)
 
             if batch_index is not None:
-                recurrent_batch_index = (batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)).to(
-                    recurrent_state_all.device
-                )
+                recurrent_batch_index = batch_index.to(recurrent_state_all.device)
                 recurrent_position_ids = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, :].expand(recurrent_batch_index.shape[0], -1)
@@ -1768,7 +1784,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, dummy_seq_len)
 
         inputs_shapes["position_ids"] = (
-            3,
+            4,
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             dummy_seq_len,
         )
