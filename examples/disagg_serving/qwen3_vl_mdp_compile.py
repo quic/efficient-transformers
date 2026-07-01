@@ -23,9 +23,6 @@ import argparse
 import logging
 import sys
 
-import torch
-from transformers import AutoConfig
-
 from QEfficient import QEFFAutoModelForImageTextToText
 
 _DEFAULT_COMPILER_DUMP_JSON = "qwen3_vl_mdp_compiler_dump.json"
@@ -68,7 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mdp_num_partitions",
         type=int,
-        default=2,
+        default=4,
         help="Number of pipeline-parallel partitions for disaggregated prefill.",
     )
     parser.add_argument(
@@ -157,15 +154,10 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
-    config = AutoConfig.from_pretrained(args.model_id)
-    config.dtype = "float16"
-
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         args.model_id,
         attn_implementation="eager",
         kv_offload=True,
-        config=config,
-        dtype=torch.float16,
         layerwise=False,
     )
 
