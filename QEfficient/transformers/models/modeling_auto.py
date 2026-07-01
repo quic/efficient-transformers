@@ -1611,6 +1611,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 use_onnx_subfunctions=use_onnx_subfunctions,
             )
 
+        # TODO: remove the current pt weight offload capability once CustomLoader is in place
         if offload_pt_weights is None:
             if prefill_only and prefill_seq_len > 1:
                 offload_pt_weights = False  # keep weights resident for the decode export
