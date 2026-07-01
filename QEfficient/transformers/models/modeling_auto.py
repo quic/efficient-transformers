@@ -1629,6 +1629,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 kv_offload=True,
                 continuous_batching=self.continuous_batching,
                 comp_ctx_lengths=self.comp_ctx_lengths_decode,
+                prefill_seq_len=prefill_seq_len,
+                use_dynamo=use_dynamo,
             )
             dynamic_axes = self.model.get_onnx_dynamic_axes(
                 kv_offload=True,
@@ -1637,8 +1639,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
         except TypeError:
             inputs = self.model.get_dummy_inputs(
-                kv_offload=True,
-                comp_ctx_lengths=self.comp_ctx_lengths_decode,
+                kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode, use_dynamo=use_dynamo
             )
             dynamic_axes = self.model.get_onnx_dynamic_axes(
                 kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
@@ -2797,7 +2798,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             self.hash_params["prefill_only"] = False
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
-        inputs = self.model.get_dummy_inputs(comp_ctx_lengths=self.comp_ctx_lengths_decode)
+        inputs = self.model.get_dummy_inputs(comp_ctx_lengths=self.comp_ctx_lengths_decode, use_dynamo=use_dynamo)
         dynamic_axes = self.model.get_onnx_dynamic_axes(comp_ctx_lengths=self.comp_ctx_lengths_decode)
         output_names = self.model.get_output_names()
         # Prefix only the LLM KV-cache retained buffers (vision/multimodal buffers untouched).
