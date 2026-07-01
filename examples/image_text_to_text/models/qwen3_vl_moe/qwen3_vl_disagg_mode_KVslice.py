@@ -6,48 +6,6 @@
 # -----------------------------------------------------------------------------
 """
 Disaggregated serving for Qwen3-VL-MoE with zero-copy DMA KV-slice handoff.
-
-Session layout
---------------
-  vision_session      :  Runs once per request; produces vision_embeds + deepstack_features.
-
-  lang_prefill_session : QAICInferenceSession (cloud_infer_KV_share)
-      cluster_id="prefill", stages=STAGES
-      exec-obj pool: [slot-0 .. slot-STAGES]  (prefill only)
-
-  lang_decode_session  : QAICInferenceSession (cloud_infer_KV_share)
-      cluster_id="decode"
-      exec-obj pool: [slot-0]  (decode only)
-
-Shared KV buffers
------------------
-  kv_cache : list[np.ndarray]  — one array per (layer, key/value) pair,
-             shape = lang_prefill_session.kv_shape  (per-batch-slot)
-             dtype = lang_prefill_session.kv_size
-
-  Allocated once before prefill.  On the last prefill chunk the runtime DMA-
-  writes the RetainedState outputs directly into kv_cache via
-  setDataWithSlices (zero-copy).  The decode session reads the same arrays as
-  inputs and writes updated KV back into them each step — also via
-  setDataWithSlices — so no numpy copy ever crosses the prefill→decode or
-  decode→decode boundary.
-
-Chunked prefill
----------------
-  Non-last chunks : np_run(is_prefill=True) + complete_inf()
-                    KV RetainedState outputs are skipped (on-device retained
-                    state carries KV across chunks automatically).
-  Last chunk      : np_run_pipeline(last_chunk=True, kv_cache_buffers=kv_cache)
-                    set_data_for_kv_handoff() wires RetainedState outputs into
-                    kv_cache via setDataWithSlices before enqueue — zero-copy.
-
-Decode loop
------------
-  Each step calls run_decode_step() which:
-    1. Wires RetainedState OUTPUT slots → kv_cache via set_data_for_kv_handoff
-       (so the runtime DMA-writes updated KV into kv_cache after inference).
-    2. np_run(is_prefill=False) + complete_inf() + get_outputs()
-  decode_inputs[kv_name] always points at kv_cache[i] — never reassigned.
 """
 
 import time
@@ -77,16 +35,17 @@ BS = 1
 STAGES = 2  # pipeline stages for lang prefill; set >1 for pipelined PP prefill
 PREFILL_NUM_DEVICES = 2
 DECODE_NUM_DEVICES = 2
+LAYERWISE = False
 config = AutoConfig.from_pretrained(model_id)
 config.dtype = "float16"
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
-config.vision_config.depth = 9
-config.text_config.num_hidden_layers = 6
-config.vision_config.deepstack_visual_indexes = [8]
+# config.vision_config.depth = 9
+# config.text_config.num_hidden_layers = 6
+# config.vision_config.deepstack_visual_indexes = [8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=True, config=config, dtype=torch.float16, layerwise=False
+    model_id, attn_implementation="eager", kv_offload=True, config=config, dtype=torch.float16, layerwise=LAYERWISE
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -112,7 +71,7 @@ if not skip_vision:
         split_model_io=True,
         skip_lang=True,
         use_onnx_subfunctions=True,
-        layerwise=False,
+        layerwise=LAYERWISE,
     )
 
 prefill_qpc_path = qeff_model.compile(
@@ -133,7 +92,7 @@ prefill_qpc_path = qeff_model.compile(
     enable_chunking=True,
     skip_vision=True,
     use_onnx_subfunctions=True,
-    layerwise=False,
+    layerwise=LAYERWISE,
     layerwise_window_size=1,
     mdp_num_partitions=STAGES,
     mdp_strategy="onnx",
@@ -156,18 +115,16 @@ decode_qpc_path = qeff_model.compile(
     prefill_only=False,
     skip_vision=True,
     use_onnx_subfunctions=True,
-    layerwise=False,
+    layerwise=LAYERWISE,
     layerwise_window_size=1,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Load sessions
 # ─────────────────────────────────────────────────────────────────────────────
-# Vision session: no KV cache, use the standard session
 if not skip_vision:
     vision_session = _StandardSession(vision_qpc_path.get("vision_qpc_path"))
 
-# Lang prefill session: pipelined, KV-share capable
 print("\nLoading lang prefill session (cluster_id='prefill') …")
 lang_prefill_session = _KVShareSession(
     qpc_path=prefill_qpc_path.get("lang_prefill_qpc_path"),
@@ -178,8 +135,6 @@ lang_prefill_session = _KVShareSession(
 print("  lang_prefill_session loaded ✓")
 print(f"  prefill exec-obj pool size : {lang_prefill_session.prefill_num_execObj}")
 print(f"  kv_shape : {lang_prefill_session.kv_shape}  kv_dtype : {lang_prefill_session.kv_size}")
-
-# Lang decode session: single decode exec-obj, KV-share capable
 print("\nLoading lang decode session (cluster_id='decode') …")
 lang_decode_session = _KVShareSession(
     qpc_path=decode_qpc_path.get("lang_decode_qpc_path"),
@@ -289,10 +244,6 @@ if not skip_vision:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Allocate shared KV cache buffers
-#
-# One numpy array per (layer, key/value) pair.
-# lang_prefill_session.kv_only_buff_map contains only past_key.*/past_value.*
-# RetainedState entries — for both text-only and VLM QPCs.
 # ─────────────────────────────────────────────────────────────────────────────
 kv_cache: list[np.ndarray] = [
     np.zeros(lang_prefill_session.kv_shape, dtype=lang_prefill_session.kv_size)
@@ -337,22 +288,18 @@ for chunk_idx in range(num_chunks):
     chunk_inputs["position_ids"] = lang_inputs["position_ids"][..., start:end]
 
     if is_last:
-        # Provide logits output buffer so the QPC writes the first token logits
-        # into logits_buf in-place
         chunk_inputs["logits"] = logits_buf
 
     t0 = time.perf_counter()
 
     if is_last:
-        # Last chunk: wire KV RetainedState outputs → kv_cache via DMA slice,
-        # then enqueue.  No numpy copy of KV at the prefill→decode boundary.
+        # Last chunk: wire KV RetainedState outputs → kv_cache via DMA slice
         exec_idx = lang_prefill_session.np_run_pipeline(
             inputs=chunk_inputs,
             last_chunk=True,
             kv_cache_buffers=kv_cache,
         )
     else:
-        # Non-last chunks: KV is retained on-device; no KV output needed here.
         exec_idx = lang_prefill_session.np_run(
             inputs=chunk_inputs,
             is_prefill=True,
@@ -381,10 +328,6 @@ print(f"First generated token id = {first_token}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Build decode inputs
-#
-# KV slots point directly at kv_cache arrays — never reassigned.
-# decode_buff_map is sorted by (layer, key/value) and matches the order in
-# which kv_cache was allocated from kv_only_buff_map.
 # ─────────────────────────────────────────────────────────────────────────────
 next_pos = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1  # shape [3, BS, 1]
 
@@ -401,10 +344,6 @@ all_tokens = [first_token]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Decode helper
-#
-# 1. Wire RetainedState OUTPUT slots → kv_cache via setDataWithSlices so the
-#    runtime DMA-writes updated KV directly into kv_cache after inference.
-# 2. np_run + complete_inf + get_outputs.
 # ─────────────────────────────────────────────────────────────────────────────
 def run_decode_step() -> dict[str, np.ndarray]:
     lang_decode_session.set_data_for_kv_handoff(

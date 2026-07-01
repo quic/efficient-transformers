@@ -4,22 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-"""
-Session layout
---------------
-  prefill_session : cluster_id="prefill", stages=1
-      exec-obj pool: [slot-1]  (prefill only, no decode slot)
-
-  decode_session  : cluster_id="decode"
-      exec-obj pool: [slot-0]  (decode only, no prefill pool)
-
-Shared KV buffers
------------------
-  kv_cache : list[np.ndarray]  — one array per (layer, key/value) pair,
-             shape = prefill_session.kv_shape, dtype = prefill_session.kv_size
-             Allocated once; written by prefill via DMA slice, read by decode
-             via the same pointer — no copy at the prefill→decode boundary.
-"""
 
 import math
 import time
@@ -52,8 +36,9 @@ PREFILL_QPC_PATH = qeff_model.compile(
     num_speculative_tokens=None,
     prefill_only=True,
     enable_chunking=True,
-    stages=STAGES,
-    # use_onnx_subfunctions=True,
+    mdp_num_partitions=STAGES,
+    use_onnx_subfunctions=True,
+    offload_pt_weights=False,
 )
 
 DECODE_QPC_PATH = qeff_model.compile(
@@ -62,12 +47,11 @@ DECODE_QPC_PATH = qeff_model.compile(
     num_cores=16,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
-    num_devices=2,
+    num_devices=4,
     split_retained_state_io=True,
     mos=1,
     aic_enable_depth_first=True,
     num_speculative_tokens=None,
-    offload_pt_weights=False,
     retain_full_kv=True,
 )
 
@@ -117,7 +101,6 @@ print("\nLoading prefill session (cluster_id='prefill', stages) …")
 prefill_session = QAICInferenceSession(
     qpc_path=PREFILL_QPC_PATH,
     full_batch_size=1,
-    device_ids=[0, 1, 2, 3, 4, 5, 6, 7],
     cluster_id="prefill",
     stages=STAGES,
 )
@@ -129,17 +112,12 @@ print("\nLoading decode session (cluster_id='decode') …")
 decode_session = QAICInferenceSession(
     qpc_path=DECODE_QPC_PATH,
     full_batch_size=1,
-    device_ids=[8, 9],  # 2-device MQ decode
     cluster_id="decode",
 )
 print("  decode_session loaded ✓")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Allocate shared KV cache buffers
-#
-# One numpy array per (layer, key/value) pair.
-# These arrays are shared between prefill (written via DMA slice) and decode
-# (read as direct inputs) — no copy at the boundary.
 # ─────────────────────────────────────────────────────────────────────────────
 kv_cache: list[np.ndarray] = [
     np.zeros(prefill_session.kv_shape, dtype=prefill_session.kv_size)
@@ -152,11 +130,6 @@ print(f"\nAllocated {len(kv_cache)} shared KV buffers  shape={prefill_session.kv
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Chunked prefill
-#
-# Non-last chunks: np_run(is_prefill=True)
-# Last chunk:      np_run_pipeline(last_chunk=True, kv_cache_buffers=kv_cache)
-#                  set_data_for_kv_handoff() wires RetainedState outputs into
-#                  kv_cache via setDataWithSlices before enqueue — zero-copy.
 # ─────────────────────────────────────────────────────────────────────────────
 print("\n── Chunked prefill ──")
 prefill_logits = None
@@ -177,8 +150,6 @@ for chunk_idx in range(num_chunks):
     t0 = time.perf_counter()
 
     if is_last:
-        # Last chunk: wire KV outputs into shared kv_cache via DMA slice,
-        # then enqueue.  No numpy copy of KV at the prefill→decode boundary.
         exec_idx = prefill_session.np_run_pipeline(
             inputs=chunk_inputs,
             last_chunk=True,
@@ -203,16 +174,7 @@ first_token = int(np.argmax(prefill_logits))
 print(f"\n  Prefill done.  First generated token id = {first_token}")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Decode — shared DMA KV buffer design
-#
-# kv_cache is the single shared numpy buffer across all decode steps:
-#   - prefill wrote into it via setDataWithSlices (zero-copy DMA slice)
-#   - each decode step reads KV from it as input (decode_buff_map INPUT slots)
-#   - each decode step writes updated KV back into it via set_data_for_kv_handoff
-#     (setDataWithSlices on RetainedState OUTPUT slots → same kv_cache arrays)
-#
 # decode_inputs[kv_name] always points at kv_cache[i] — never reassigned.
-# After complete_inf, kv_cache is updated in-place with the new token's KV.
 # ─────────────────────────────────────────────────────────────────────────────
 print("\n── Decode ──")
 

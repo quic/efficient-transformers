@@ -4,9 +4,19 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
+"""
+GPT-OSS disaggregated serving with chunked prefill and KV-slice DMA handoff.
 
+Shared KV buffers
+-----------------
+  kv_cache : list[np.ndarray]  — one array per (layer, key/value) pair,
+             shape = prefill_session.kv_shape, dtype = prefill_session.kv_size
+             Allocated once; written by prefill via DMA slice, read by decode
+             via the same pointer — no copy at the prefill->decode boundary.
+"""
 
 import math
+import os
 import time
 
 import numpy as np
@@ -15,56 +25,80 @@ from transformers import AutoConfig, AutoTokenizer
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer_KV_share import QAICInferenceSession
 
+dir_path = os.path.dirname(os.path.realpath(__file__))
+subfunc_npi_file_path = os.path.join(dir_path, "subfunction_120b_npi.yaml")
+non_subfunc_npi_file_path = os.path.join(dir_path, "non_subfunction_120b_npi.yaml")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
-MODEL_ID = "Qwen/Qwen3-30B-A3B-Instruct-2507"
-PREFILL_SEQ_LEN = 128
-CTX_LEN = 256  # = PREFILL_SEQ_LEN * 2
-STAGES = 2  # prefill pp stages
+MODEL_ID = "tiny-random/gpt-oss-bf16"
+# MODEL_ID = "openai/gpt-oss-20b"
+PREFILL_SEQ_LEN = 512
+CTX_LEN = 1024
+NUM_CORES = 16
+MOE_PREFILL_PACKED_CHUNK_SIZE = 256
+STAGES = 2
+PREFILL_NUM_DEVICES = 4
+DECODE_NUM_DEVICES = 4
+LAYERWISE = False
 
-qeff_model = QEFFAutoModelForCausalLM.from_pretrained(MODEL_ID, num_hidden_layers=2)
-PREFILL_QPC_PATH = qeff_model.compile(
-    prefill_seq_len=PREFILL_SEQ_LEN,
+PROMPT = """
+Once upon a time, in a small town, there lived a young boy named Alex. Alex was a curious and adventurous child, always eager to explore the world around him. One day, while playing in the park, Alex stumbled upon a mysterious old book hidden beneath a pile of leaves. The book was filled with stories of distant lands, magical creatures, and extraordinary adventures.
+
+As Alex flipped through the pages, he discovered a map that led to a hidden treasure. Excited by the prospect of a real-life treasure hunt, Alex decided to embark on a thrilling journey. He packed his backpack with snacks, a flashlight, and a compass, and set off into the unknown.
+
+The path to the treasure was not an easy one. Alex had to navigate through dense forests, cross rickety bridges, and solve riddles that guarded the treasure's location.
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Compile decode and prefill QPCs
+# ─────────────────────────────────────────────────────────────────────────────
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(MODEL_ID, layerwise=LAYERWISE)
+
+decode_qpc_path = qeff_model.compile(
+    prefill_seq_len=1,
     ctx_len=CTX_LEN,
-    num_cores=16,
+    num_cores=NUM_CORES,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
-    num_devices=2,  #  TS num_devices/STAGES
-    split_retained_state_io=True,
+    num_devices=DECODE_NUM_DEVICES,
     mos=1,
     aic_enable_depth_first=True,
+    num_speculative_tokens=None,
+    use_onnx_subfunctions=True,
+    offload_pt_weights=False,
+    retain_full_kv=True,
+    split_model_io=True,
+    split_retained_state_io=True,
+    # node_precision_info=non_subfunc_npi_file_path,
+)
+
+prefill_qpc_path = qeff_model.compile(
+    prefill_seq_len=PREFILL_SEQ_LEN,
+    ctx_len=CTX_LEN,
+    num_cores=NUM_CORES,
+    moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
+    mxfp6_matmul=True,
+    mxint8_kv_cache=True,
+    num_devices=PREFILL_NUM_DEVICES,
+    mos=1,
+    user_tiled=True,
+    aic_enable_depth_first=False,
     num_speculative_tokens=None,
     prefill_only=True,
     enable_chunking=True,
-    mdp_num_partitions=STAGES,
     use_onnx_subfunctions=True,
-)
-
-DECODE_QPC_PATH = qeff_model.compile(
-    prefill_seq_len=1,
-    ctx_len=CTX_LEN,
-    num_cores=16,
-    mxfp6_matmul=True,
-    mxint8_kv_cache=True,
-    num_devices=1,
+    split_model_io=True,
     split_retained_state_io=True,
-    mos=1,
-    aic_enable_depth_first=True,
-    num_speculative_tokens=None,
-    offload_pt_weights=False,
-    retain_full_kv=True,
-    use_onnx_subfunctions=True,
+    # node_precision_info=subfunc_npi_file_path,
+    mdp_num_partitions=STAGES,
 )
-
-PROMPT = """
-Explain quantum computing in simple terms.
-"""
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Load tokenizer and model config
 # ─────────────────────────────────────────────────────────────────────────────
-print("Loading tokenizer and config …")
+print("Loading tokenizer and config ...")
 config = AutoConfig.from_pretrained(MODEL_ID)
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 num_layers = config.num_hidden_layers
@@ -77,7 +111,7 @@ raw_inputs = tokenizer(PROMPT, return_tensors="np", padding=True)
 generation_len = CTX_LEN - int(raw_inputs["attention_mask"].sum(1, keepdims=True).max())
 
 padded_len = raw_inputs["input_ids"].shape[1]
-num_chunks = math.ceil(padded_len / PREFILL_SEQ_LEN)  # ceil divide
+num_chunks = math.ceil(padded_len / PREFILL_SEQ_LEN)
 padded_len = num_chunks * PREFILL_SEQ_LEN
 
 inputs = tokenizer(
@@ -97,44 +131,41 @@ inputs.pop("past_key_values", None)
 print(f"  prompt tokens = {padded_len}  num_chunks = {num_chunks}  generation_len = {generation_len}")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Load sessions
+# Load sessions (KV-share sessions with cluster_id separation)
 # ─────────────────────────────────────────────────────────────────────────────
-print("\nLoading prefill session (cluster_id='prefill', stages) …")
+print("\nLoading prefill session (cluster_id='prefill') ...")
 prefill_session = QAICInferenceSession(
-    qpc_path=PREFILL_QPC_PATH,
+    qpc_path=prefill_qpc_path,
     full_batch_size=1,
     cluster_id="prefill",
     stages=STAGES,
 )
-print("  prefill_session loaded ✓")
+print("  prefill_session loaded")
 print(f"  prefill exec-obj pool size : {prefill_session.prefill_num_execObj}")
 print(f"  kv_shape : {prefill_session.kv_shape}  kv_dtype : {prefill_session.kv_size}")
 
-print("\nLoading decode session (cluster_id='decode') …")
+print("\nLoading decode session (cluster_id='decode') ...")
 decode_session = QAICInferenceSession(
-    qpc_path=DECODE_QPC_PATH,
+    qpc_path=decode_qpc_path,
     full_batch_size=1,
     cluster_id="decode",
 )
-print("  decode_session loaded ✓")
+print("  decode_session loaded")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Allocate shared KV cache buffers
 # ─────────────────────────────────────────────────────────────────────────────
 kv_cache: list[np.ndarray] = [
-    np.zeros(prefill_session.kv_shape, dtype=prefill_session.kv_size)
-    for _ in prefill_session.prefill_buff_map[:-1]  # KV entries only, no logits
+    np.zeros(prefill_session.kv_shape, dtype=prefill_session.kv_size) for _ in prefill_session.kv_only_buff_map
 ]
-# Logits output buffer for the last prefill chunk (written in-place by the QPC)
 logits_buf = np.zeros((1, 1, config.vocab_size), dtype=np.float32)
 
 print(f"\nAllocated {len(kv_cache)} shared KV buffers  shape={prefill_session.kv_shape}")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Chunked prefill
+# Chunked prefill with DMA KV-slice handoff
 # ─────────────────────────────────────────────────────────────────────────────
-print("\n── Chunked prefill ──")
-prefill_logits = None
+print("\n-- Chunked prefill --")
 
 for chunk_idx in range(num_chunks):
     start = chunk_idx * PREFILL_SEQ_LEN
@@ -168,15 +199,13 @@ for chunk_idx in range(num_chunks):
 
     print(f"  chunk {chunk_idx + 1}/{num_chunks}  last={is_last}  time={elapsed * 1000:.1f} ms")
 
-# After the last chunk, logits_buf has been written in-place by the QPC
-prefill_logits = logits_buf
-first_token = int(np.argmax(prefill_logits))
+first_token = int(np.argmax(logits_buf))
 print(f"\n  Prefill done.  First generated token id = {first_token}")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Decode — shared DMA KV buffer design
+# Run decode loop kv_cache is updated in-place with the new token's KV.
 # ─────────────────────────────────────────────────────────────────────────────
-print("\n── Decode ──")
+print("\n-- Decode --")
 
 next_pos = int(np.max(inputs["position_ids"])) + 1
 
@@ -186,17 +215,18 @@ decode_inputs: dict[str, np.ndarray] = {
     "logits": logits_buf,
 }
 for (kv_name, _), kv_buf in zip(decode_session.decode_buff_map, kv_cache):
-    decode_inputs[kv_name] = kv_buf  # same kv_cache array, no copy
+    decode_inputs[kv_name] = kv_buf
 
 all_tokens = [first_token]
 
 
 def run_decode_step():
+    """Execute one decode step with DMA KV handoff (zero-copy in-place update)."""
     decode_session.set_data_for_kv_handoff(
         kv_cache,
         [("batch_index", 0), ("ctx_start", 0)],
         decode_session.decode_execObj_idx,
-        decode_session.decode_rs_buff_map,
+        decode_session.decode_rs_kv_only_buff_map,
     )
     exec_idx = decode_session.np_run(decode_inputs, is_prefill=False)
     decode_session.complete_inf(exec_idx, is_prefill=False)
@@ -212,7 +242,7 @@ all_tokens.append(next_token)
 next_pos += 1
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Decode loop — kv_cache updated in-place each step, no KV copy or reassignment
+# Decode loop -- kv_cache updated in-place each step, no KV copy or reassignment
 # ─────────────────────────────────────────────────────────────────────────────
 t_loop_start = time.perf_counter()
 

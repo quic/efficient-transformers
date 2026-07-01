@@ -165,8 +165,8 @@ prefill_qpc_path = qeff_model.compile(
     width=536,
     num_cores=16,
     num_devices=PREFILL_NUM_DEVICES,
-    mxfp6_matmul=False,
-    mxint8_kv_cache=False,
+    mxfp6_matmul=True,
+    mxint8_kv_cache=True,
     retain_full_kv=True,
     split_retained_state_io=True,
     split_model_io=True,
@@ -193,8 +193,8 @@ decode_qpc_path = qeff_model.compile(
     width=536,
     num_cores=16,
     num_devices=DECODE_NUM_DEVICES,
-    mxfp6_matmul=False,
-    mxint8_kv_cache=False,
+    mxfp6_matmul=True,
+    mxint8_kv_cache=True,
     split_retained_state_io=True,
     split_model_io=True,
     mos=1,
@@ -204,7 +204,6 @@ decode_qpc_path = qeff_model.compile(
     use_onnx_subfunctions=True,
     layerwise=LAYERWISE,
     layerwise_window_size=LAYERWISE_WINDOW_SIZE,
-    offload_pt_weights=False,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
