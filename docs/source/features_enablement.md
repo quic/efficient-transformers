@@ -86,3 +86,68 @@ dlm.compile()
 ```
 
 The `qaic_config` dictionary is fed during the instantiation of the model because slight changes to the ONNX graph are required. Once complete, the user can specify `num_speculative_tokens` to define the actual number of speculations that the TLM will take as input during the decode phase. As for the DLM, no new changes are required at the ONNX or compile level.
+
+---
+
+(id-mdp-multi-device-partitioning)=
+## Multi-Device Partitioning (MDP)
+
+MDP splits a model graph across multiple devices at compile time. A partition
+config is a JSON file listing the graph nodes assigned to each device.
+**Compilation time scales with the number of nodes in that config** — keeping
+the node list compact is critical for acceptable compile times.
+
+### MDP compile flows
+
+| Flow | Recommended? | Notes |
+|------|:---:|-------|
+| Final compile — QEff MDP with `mdp_strategy="onnx"` | ✅ Yes | Standard path; uses ONNX subfunction names as node keys. |
+| Compiler dump-only pass (`mdp_dump_partition_config`) | ✅ Yes (Step 1 only) | Produces a JSON used as input to intersection; no QPC emitted. Do **not** pass `mdp_num_partitions` here. |
+| Final intersection compile (`mdp_strategy="intersection"`) | ✅ Yes (no-subfunction models) | Trims QEff node list to compiler-known nodes before final compile. Preferred for no-subfunction flows. |
+| No-subfunction compile without intersection | ⚠️ Not recommended | Compiler MDP dump can have one entry per low-level op, making the node list enormous and compilation **extremely slow**. |
+| Passing `mdp_num_partitions` during the dump-only pass | ❌ Do not use | `mdp_num_partitions` triggers disaggregated MDP generation; omit it during the dump pass to get a plain compiler dump. |
+
+### MDP compile options reference
+
+| Option | Purpose | When to set | Warnings / Notes |
+|--------|---------|-------------|-----------------|
+| `num_devices` | Number of devices to compile for (tensor-slice MDP). | Always set to the number of target devices. | Controls `mdp_ts_num_devices` internally. |
+| `mdp_num_partitions` | Number of pipeline-parallel partitions (disaggregated MDP). | Set only during the final compile (Step 2), not the dump pass. | When `> 1`, triggers full node-list generation from the ONNX graph. |
+| `mdp_strategy` | Selects MDP node-list generation strategy: `"onnx"` or `"intersection"`. | Set to `"intersection"` when using a compiler dump for a no-subfunction model. | `"intersection"` requires `mdp_compiler_dump_path` to also be set. |
+| `mdp_compiler_dump_path` | Path to the compiler MDP dump produced in Step 1. | Set during the intersection compile (Step 2). | Required when `mdp_strategy="intersection"`. The compiler dump is **not** the desired final partitioning; it is used only to identify valid node names. |
+| `mdp_dump_partition_config` | Compiler option telling `qaic-compile` to write its own MDP layout to this path instead of producing a QPC. | Set only during the dump-only pass (Step 1). | Passed as a `**compiler_options` kwarg. Omit `mdp_num_partitions` when using this. |
+| `use_onnx_subfunctions` | Export the ONNX model with subgraph subfunctions, reducing node count. | Set `True` when ONNX subfunctions are acceptable for the model. | Without subfunctions the compiler dump grows very large; the intersection flow is then strongly recommended. |
+
+### Two-pass flow for no-subfunction models
+
+When a model is exported without ONNX subfunctions, the compiler MDP dump
+contains one entry per low-level operation rather than per subgraph. Passing
+that full node list directly to the compiler makes compilation **extremely slow**.
+
+Use this two-pass flow instead:
+
+1. **Dump pass** — generate the compiler MDP dump (no QPC produced).
+2. **Intersection compile** — QEff intersects its own MDP config with the
+   compiler dump, trimming it to only nodes the compiler recognises, then
+   performs the final compile.
+
+#### Step 1 — Generate the compiler MDP dump
+
+Pass `mdp_dump_partition_config` and **omit** `mdp_num_partitions`. The
+compiler writes its partition layout to the file; no QPC is produced. The
+resulting file is used only as input to intersection — it does not represent
+the desired final partitioning.
+
+#### Step 2 — Intersection compile
+
+Set `mdp_num_partitions`, point `mdp_compiler_dump_path` at the dump from
+Step 1, and set `mdp_strategy="intersection"`. QEff generates its own MDP
+config, intersects it with the compiler dump, and performs the final compile.
+
+#### Complete working example
+
+A self-contained script demonstrating both the `mdp_strategy="onnx"` direct
+compile and the two-pass `mdp_strategy="intersection"` flow (including the
+dump-pass required to generate `mdp_compiler_dump_path`) is available here:
+
+[`examples/disagg_serving/qwen3_vl_mdp_compile.py`](../../examples/disagg_serving/qwen3_vl_mdp_compile.py)
