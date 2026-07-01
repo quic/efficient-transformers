@@ -127,6 +127,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         "enable_qnn": enable_qnn,
         "qnn_config": qnn_config,
         "use_onnx_subfunctions": use_onnx_subfunctions,
+        "split-model-io": True,
     }
 
     mdp_compile_kwargs = {}
@@ -135,7 +136,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     if mdp_strategy is not None:
         mdp_compile_kwargs["mdp_strategy"] = mdp_strategy
     if model_name == "tiny-random/gemma-4-dense" or model_name == "tiny-random/gemma-4-moe":
-        compile_kwargs["split-model-io"] = True
         compile_kwargs["node_precision_info"] = True
     if model_name in ModelConfig.INTERNVL_MODELS:
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
