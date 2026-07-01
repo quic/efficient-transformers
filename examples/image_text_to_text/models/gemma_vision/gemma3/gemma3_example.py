@@ -19,8 +19,8 @@ model_id = "google/gemma-3-4b-it"
 config = AutoConfig.from_pretrained(model_id)
 
 # For Testing Purpose Only atleast 6 layers are required
-config.text_config.num_hidden_layers = 6
-config.vision_config.num_hidden_layers = 6
+# config.text_config.num_hidden_layers = 6
+# config.vision_config.num_hidden_layers = 6
 
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -32,12 +32,15 @@ npi_file_full_path = str(gemma_vision_dir / "configs" / "gemma_updated_npi.yaml"
 
 # For single QPC: kv_offload=False, For dual QPC: kv_offload=True
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, config=config, attn_implementation="eager", kv_offload=True
+    model_id,
+    config=config,
+    attn_implementation="eager",
+    kv_offload=False,
 )
 
 
 ### use skip_vision=True, if want to run only text, or false ###
-skip_vision = True
+skip_vision = False
 
 if skip_vision:
     ## Only Text ##
