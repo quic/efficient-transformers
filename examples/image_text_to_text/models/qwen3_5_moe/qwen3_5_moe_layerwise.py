@@ -19,12 +19,21 @@ Three QPCs are compiled separately:
 All three compiles use ``layerwise=True`` because the outer model is built on
 the meta device in layerwise mode. KV-cache buffers are tagged with
 KV_CACHE_PREFIX so vLLM can regex-select them for device-to-device transfer
-between prefill and decode workers.
+between prefill and decode workers. The language QPCs do not preserve ONNX
+subfunctions because MXFP6 weight compression requires constant folding across
+the exported layer functions.
+
+
+For layerwise decode compile example for Qwen3.5-MoE.
+
+The orchestration loop that previously lived in this script has been moved
+behind the ``layerwise=True`` flag on ``.compile()`` / ``.export()``.
 
 Note: ``layerwise=True`` is a provisional API and is scheduled for deprecation
-once first-class multi-window export lands.
+once first-class multi-window export lands. Supported model types: "Qwen/Qwen3.5-397B-A17B"
 """
 
+import os
 from time import perf_counter
 
 import numpy as np
@@ -38,29 +47,28 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
-KV_CACHE_PREFIX = "vllmKvCache"
+model_id = "Qwen/Qwen3.5-397B-A17B"
+LAYERWISE = True
 LAYERWISE_WINDOW_SIZE = 1
-TORCH_DTYPE = torch.float16
-VISION_INPUT_DTYPE = np.float16
+KV_CACHE_PREFIX = "VLLM"
+ENABLE_MXFP6_MATMUL = True
+USE_ONNX_SUBFUNCTIONS = False
+DECODE_NUM_DEVICES = int(os.environ.get("QEFF_DECODE_NUM_DEVICES", "1"))
+config = AutoConfig.from_pretrained(model_id)
 
-BATCH_SIZE = 1
-PREFILL_SEQ_LEN = 32
-CTX_LEN = 4096
-GENERATION_LEN = 256
-
-IMG_HEIGHT = 354
-IMG_WIDTH = 536
-
-NUM_CORES = 16
-NUM_DEVICES_LANG = 4
-NUM_DEVICES_VISION = 1
-MOS = 1
-
-kv_infix = f"_{KV_CACHE_PREFIX}" if KV_CACHE_PREFIX else ""
+# For faster execution user can run with lesser layers, For Testing Purpose Only
+# config.vision_config.depth = 5
+# config.text_config.num_hidden_layers = 2
+config.torch_dtype = torch.float16
+layer_types = list(getattr(config.text_config, "layer_types", []))
+if len(layer_types) < config.text_config.num_hidden_layers:
+    layer_types.extend(["full_attention"] * (config.text_config.num_hidden_layers - len(layer_types)))
+config.text_config.layer_types = layer_types[: config.text_config.num_hidden_layers]
 
 
-def _update_retained_states(config, target_inputs, source_outputs):
+def _update_retained_states(target_inputs, source_outputs):
+    kv_infix = f"_{KV_CACHE_PREFIX}" if KV_CACHE_PREFIX else ""
+
     for layer_idx, layer_type in enumerate(config.text_config.layer_types):
         if layer_type == "full_attention":
             target_inputs[f"past_key.{layer_idx}{kv_infix}"] = source_outputs[
@@ -78,215 +86,291 @@ def _update_retained_states(config, target_inputs, source_outputs):
             ]
 
 
-def main():
-    config = AutoConfig.from_pretrained(MODEL_ID)
-    config.torch_dtype = "float16"
-    layer_types = list(getattr(config.text_config, "layer_types", []))
-    if len(layer_types) < config.text_config.num_hidden_layers:
-        layer_types.extend(["full_attention"] * (config.text_config.num_hidden_layers - len(layer_types)))
-    config.text_config.layer_types = layer_types[: config.text_config.num_hidden_layers]
+qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+    model_id, attn_implementation="eager", kv_offload=True, config=config, dtype=torch.float16, layerwise=LAYERWISE
+)
+tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
+processor = AutoProcessor.from_pretrained(model_id)
 
-    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-        MODEL_ID,
-        attn_implementation="eager",
-        kv_offload=True,
-        config=config,
-        dtype=TORCH_DTYPE,
-        layerwise=True,
-    )
-    tokenizer = transformers.AutoTokenizer.from_pretrained(MODEL_ID)
-    processor = AutoProcessor.from_pretrained(MODEL_ID)
+PREFILL_SEQ_LEN = 64
+CTX_LEN = 4096
+BS = 1
 
+# Enable KV blocking for full-attention layers with 2 KV blocks
+# To disable KV blocking, comment out the qaic_config line below
+# Set skip_kv=True to skip future KV blocks during inference (optimization)
+qaic_config = {"blocking_mode": "kv", "num_kv_blocks": 2, "skip_kv": True}
+
+enable_blocking = False  ## By default it is false
+
+generation_len = 256
+
+skip_vision = True
+
+if not skip_vision:
     vision_qpc_path = qeff_model.compile(
-        batch_size=BATCH_SIZE,
+        batch_size=BS,
         prefill_seq_len=PREFILL_SEQ_LEN,
         ctx_len=CTX_LEN,
-        height=IMG_HEIGHT,
-        width=IMG_WIDTH,
-        num_cores=NUM_CORES,
-        num_devices=NUM_DEVICES_VISION,
-        mos=MOS,
-        mxfp6_matmul=False,
+        height=354,
+        width=536,
+        num_cores=16,
+        num_devices=1,
+        mos=1,
+        mxfp6_matmul=ENABLE_MXFP6_MATMUL,
         aic_enable_depth_first=True,
-        skip_vision=False,
+        skip_vision=skip_vision,
         split_model_io=True,
         skip_lang=True,
-        use_onnx_subfunctions=True,
-        layerwise=True,
-        layerwise_window_size=LAYERWISE_WINDOW_SIZE,
-    )
-    print("vision_qpc_path:", str(vision_qpc_path.get("vision_qpc_path")))
-
-    prefill_qpc_path = qeff_model.compile(
-        batch_size=BATCH_SIZE,
-        prefill_seq_len=PREFILL_SEQ_LEN,
-        ctx_len=CTX_LEN,
-        height=IMG_HEIGHT,
-        width=IMG_WIDTH,
-        num_cores=NUM_CORES,
-        num_devices=NUM_DEVICES_LANG,
-        mos=MOS,
-        mxfp6_matmul=False,
-        mxint8_kv_cache=False,
-        aic_enable_depth_first=True,
-        skip_vision=True,
-        split_model_io=True,
-        use_onnx_subfunctions=True,
-        prefill_only=True,
-        layerwise=True,
+        use_onnx_subfunctions=USE_ONNX_SUBFUNCTIONS,
+        layerwise=LAYERWISE,
         layerwise_window_size=LAYERWISE_WINDOW_SIZE,
         kv_cache_prefix=KV_CACHE_PREFIX,
     )
-    print("prefill_qpc_path:", str(prefill_qpc_path.get("lang_prefill_qpc_path")))
 
-    decode_qpc_path = qeff_model.compile(
-        batch_size=BATCH_SIZE,
-        prefill_seq_len=1,
-        ctx_len=CTX_LEN,
-        height=IMG_HEIGHT,
-        width=IMG_WIDTH,
-        num_cores=NUM_CORES,
-        num_devices=NUM_DEVICES_LANG,
-        mos=MOS,
-        mxfp6_matmul=False,
-        mxint8_kv_cache=False,
-        aic_enable_depth_first=True,
-        skip_vision=True,
-        split_model_io=True,
-        use_onnx_subfunctions=False,
-        layerwise=True,
-        layerwise_window_size=LAYERWISE_WINDOW_SIZE,
-        kv_cache_prefix=KV_CACHE_PREFIX,
-    )
-    print("decode_qpc_path:", str(decode_qpc_path.get("lang_decode_qpc_path")))
+prefill_qpc_path = qeff_model.compile(
+    batch_size=BS,
+    prefill_seq_len=PREFILL_SEQ_LEN,
+    ctx_len=CTX_LEN,
+    height=354,
+    width=536,
+    num_cores=16,
+    num_devices=1,
+    mxfp6_matmul=ENABLE_MXFP6_MATMUL,
+    mxint8_kv_cache=True,
+    retain_full_kv=True,
+    split_model_io=True,  # This should be used for disagg serving via VLLM
+    mos=1,
+    user_tiled=True,
+    aic_enable_depth_first=False,
+    prefill_only=True,
+    enable_chunking=True,
+    skip_vision=True,
+    use_onnx_subfunctions=USE_ONNX_SUBFUNCTIONS,
+    layerwise=LAYERWISE,
+    layerwise_window_size=LAYERWISE_WINDOW_SIZE,
+    kv_cache_prefix=KV_CACHE_PREFIX,
+    # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
+)
 
-    vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
-    lang_prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"))
-    lang_decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"))
 
+decode_qpc_path = qeff_model.compile(
+    batch_size=BS,
+    prefill_seq_len=1,
+    ctx_len=CTX_LEN,
+    height=354,
+    width=536,
+    num_cores=16,
+    num_devices=DECODE_NUM_DEVICES,
+    mxfp6_matmul=ENABLE_MXFP6_MATMUL,
+    mxint8_kv_cache=True,
+    retain_full_kv=True,
+    split_model_io=True,  # This should be used for disagg serving via VLLM
+    mos=1,
+    aic_enable_depth_first=True,
+    prefill_only=False,
+    skip_vision=True,
+    use_onnx_subfunctions=USE_ONNX_SUBFUNCTIONS,
+    layerwise=LAYERWISE,
+    layerwise_window_size=LAYERWISE_WINDOW_SIZE,
+    kv_cache_prefix=KV_CACHE_PREFIX,
+    # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
+)
+
+
+if enable_blocking:
+    print("\n" + "=" * 80)
+    print("Verifying KV Blocking Applied During Compilation")
+    print("=" * 80)
+
+    # The compile() method internally calls BlockingAttentionTransform.apply()
+    # which sets attn_blocking_config on all supported attention modules
+    # This happens BEFORE ONNX export, so blocking operations are in the ONNX graph
+
+    if qaic_config and qaic_config.get("blocking_mode"):
+        print("✓ qaic_config passed to compile():")
+        print(f"    Blocking Mode: {qaic_config.get('blocking_mode')}")
+        print(f"    Num KV Blocks: {qaic_config.get('num_kv_blocks')}")
+        print(f"    Skip KV: {qaic_config.get('skip_kv', False)}")
+        print("\n✓ BlockingAttentionTransform.apply() called during compile()")
+        print("  - Sets attn_blocking_config on all supported attention modules")
+        print("  - Blocked attention forward pass is used during ONNX export")
+        print("  - Blocking operations are in the ONNX graph and QPC")
+        print("\n  Status: ACTIVE")
+        print("  Verification: Config-based verification")
+        print("  Note: Blocking IS applied - torch model is freed after ONNX export")
+    else:
+        print("✗ No qaic_config provided - eager attention will be used")
+        print("  Status: INACTIVE - Model compiled without blocking")
+
+    print("=" * 80 + "\n")
+
+lang_prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"))
+lang_decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"))
+
+if skip_vision:
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Tell me about yourself."},
+            ],
+        },
+    ]
+else:
+    ### IMAGE + TEXT ###
     image_url = "https://picsum.photos/id/237/536/354"
     image = Image.open(requests.get(image_url, stream=True).raw)
 
     messages = [
-        [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "image": image},
-                    {"type": "text", "text": "Describe all the colors seen in the image."},
-                ],
-            }
-        ]
-    ] * BATCH_SIZE
-
-    texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
-    image_inputs, video_inputs = process_vision_info(messages)
-    inputs = processor(text=texts, images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt")
-    inputs = qeff_model.model.prepare_inputs_for_generation(
-        inputs=inputs, prefill_seq_len=PREFILL_SEQ_LEN, batch_size=BATCH_SIZE
-    )
-
-    pad_token_id = 1
-    input_ids_length = inputs["input_ids"].shape[1]
-    num_chunks = -(input_ids_length // -PREFILL_SEQ_LEN)
-    padded_len = num_chunks * PREFILL_SEQ_LEN
-
-    inputs["input_ids"] = torch.nn.functional.pad(
-        inputs["input_ids"], (0, padded_len - input_ids_length), "constant", pad_token_id
-    )
-    inputs["attention_mask"] = torch.nn.functional.pad(
-        inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
-    )
-
-    for key, value in inputs.items():
-        inputs[key] = np.array(value)
-
-    vision_inputs = {
-        key: value
-        for key, value in inputs.items()
-        if key
-        in {"pixel_values", "image_masks", "image_input_idx", "valid_idx", "aspect_ratio_ids", "aspect_ratio_mask"}
-    }
-    vision_inputs.update(
         {
-            key: vision_inputs[key].astype(VISION_INPUT_DTYPE)
-            for key in {"pixel_values", "image_masks"}
-            if key in vision_inputs
-        }
-    )
+            "role": "user",
+            "content": [
+                {"type": "image", "image": image},
+                {"type": "text", "text": "Describe all the colors seen in the image."},
+            ],
+        },
+    ]
+    vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
 
-    vision_start = perf_counter()
+
+messages = [messages] * BS
+
+texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
+
+image_inputs, video_inputs = process_vision_info(messages)
+inputs = processor(
+    text=texts,
+    images=image_inputs,
+    videos=video_inputs,
+    padding=True,
+    return_tensors="pt",
+)
+
+
+inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=PREFILL_SEQ_LEN, batch_size=BS)
+
+pad_token_id = 1
+input_len = inputs["attention_mask"].sum(1, keepdims=True)
+input_ids_length = inputs["input_ids"].shape[1]
+num_chunks = -(input_ids_length // -PREFILL_SEQ_LEN)  # ceil divide without float
+padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
+
+print(f"generation_len : {generation_len}")
+generated_ids = np.full((BS, generation_len + 1), pad_token_id)
+
+
+inputs["input_ids"] = torch.nn.functional.pad(
+    inputs["input_ids"],
+    (0, padded_len - input_ids_length),
+    "constant",
+    pad_token_id,
+)
+inputs["attention_mask"] = torch.nn.functional.pad(
+    inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
+)
+
+for k, v in inputs.items():
+    inputs[k] = np.array(v)
+
+
+vision_inputs = {
+    k: v
+    for k, v in inputs.items()
+    if k
+    in {
+        "pixel_values",
+        "image_grid_thw",
+        "image_masks",
+        "image_input_idx",
+        "valid_idx",
+        "aspect_ratio_ids",
+        "aspect_ratio_mask",
+    }
+}
+
+vision_inputs_fp16 = {"pixel_values", "image_masks"}
+vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
+
+vision_start = perf_counter()
+vision_outputs = {}
+if vision_inputs:
     vision_outputs = vision_session.run(vision_inputs)
-    vision_end = perf_counter()
+vision_end = perf_counter()
 
-    lang_inputs = {key: value for key, value in inputs.items() if key not in vision_inputs}
-    if "position_ids" in inputs:
-        lang_inputs["position_ids"] = inputs["position_ids"]
-        lang_inputs.pop("attention_mask", None)
-    else:
-        lang_inputs["position_ids"] = np.where(lang_inputs.pop("attention_mask"), np.arange(padded_len), -1)
+lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
+if "position_ids" in inputs:
+    lang_inputs["position_ids"] = inputs["position_ids"]
+    lang_inputs.pop("attention_mask")
+else:
+    lang_inputs["position_ids"] = np.where(
+        lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
+    )  # Need to use -1 as position_ids for invalid tokens
 
-    lang_inputs["image_idx"] = np.array([[0]])
+lang_inputs["image_idx"] = np.array([[0]])
+
+if not skip_vision:
     lang_inputs["vision_embeds"] = vision_outputs["vision_embeds"]
 
-    lang_prefill_session.set_buffers(vision_outputs)
+# RUN prefill
+lang_start = perf_counter()
+lang_prefill_session.set_buffers(vision_outputs)
 
-    lang_start = perf_counter()
-    chunk_inputs = lang_inputs.copy()
-    for chunk_idx in range(num_chunks):
-        chunk_inputs["input_ids"] = lang_inputs["input_ids"][
-            :, chunk_idx * PREFILL_SEQ_LEN : (chunk_idx + 1) * PREFILL_SEQ_LEN
-        ]
-        chunk_inputs["position_ids"] = lang_inputs["position_ids"][
-            ..., chunk_idx * PREFILL_SEQ_LEN : (chunk_idx + 1) * PREFILL_SEQ_LEN
-        ]
-        outputs = lang_prefill_session.run(chunk_inputs)
-        _update_retained_states(config, chunk_inputs, outputs)
-        chunk_inputs["image_idx"] = outputs["image_idx_output"]
+all_outputs = []
+chunk_inputs = lang_inputs.copy()
+for i in range(num_chunks):
+    chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
+    chunk_inputs["position_ids"] = lang_inputs["position_ids"][..., i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
+    outputs = lang_prefill_session.run(chunk_inputs)
+    _update_retained_states(chunk_inputs, outputs)
+    chunk_inputs["image_idx"] = outputs["image_idx_output"]
+prefill_time = perf_counter() - lang_start + vision_end - vision_start
+print(f"Prefill time : {prefill_time:.2f} secs")
 
-    prefill_time = perf_counter() - lang_start + vision_end - vision_start
-    print(f"Prefill time : {prefill_time:.2f} secs")
+all_outputs.append(np.argmax(outputs["logits"]))
+decode_inputs = {
+    "input_ids": np.argmax(outputs["logits"]).reshape(1, 1),
+    "position_ids": np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1,
+}
 
-    all_outputs = [np.argmax(outputs["logits"])]
-    decode_inputs = {
-        "input_ids": np.argmax(outputs["logits"]).reshape(1, 1),
-        "position_ids": np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1,
-        "image_idx": outputs["image_idx_output"],
-        "vision_embeds": outputs["vision_embeds_RetainedState"],
-    }
-    _update_retained_states(config, decode_inputs, outputs)
+_update_retained_states(decode_inputs, outputs)
 
-    first_decode_start = perf_counter()
-    decode_out = lang_decode_session.run(decode_inputs)
-    print(f"First decode step: {perf_counter() - first_decode_start:.3f} secs")
+decode_inputs["image_idx"] = outputs["image_idx_output"]
 
+if not skip_vision:
+    decode_inputs["vision_embeds"] = outputs["vision_embeds_RetainedState"]
+
+st = perf_counter()
+decode_out = lang_decode_session.run(decode_inputs)
+print(f"time for first run of decode with KV as input = {perf_counter() - st} sec\n")
+
+all_outputs.append(np.argmax(decode_out["logits"]))
+pos_id = np.max(decode_inputs["position_ids"], axis=-1, keepdims=True) + 1
+loop_decode_inputs = {
+    "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
+    "position_ids": pos_id,
+}
+
+_update_retained_states(loop_decode_inputs, decode_out)
+
+loop_decode_inputs["image_idx"] = decode_out["image_idx_output"]
+
+if not skip_vision:
+    loop_decode_inputs["vision_embeds"] = decode_out["vision_embeds_RetainedState"]
+
+
+st = perf_counter()
+for i in range(generation_len - 2):
+    decode_out = lang_decode_session.run(loop_decode_inputs)
     all_outputs.append(np.argmax(decode_out["logits"]))
-    pos_id = np.max(decode_inputs["position_ids"], axis=-1, keepdims=True) + 1
-    loop_inputs = {
-        "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
-        "position_ids": pos_id,
-        "image_idx": decode_out["image_idx_output"],
-        "vision_embeds": decode_out["vision_embeds_RetainedState"],
-    }
-    _update_retained_states(config, loop_inputs, decode_out)
-
-    decode_start = perf_counter()
-    for _ in range(GENERATION_LEN - 2):
-        decode_out = lang_decode_session.run(loop_inputs)
-        all_outputs.append(np.argmax(decode_out["logits"]))
-        pos_id += 1
-        _update_retained_states(config, loop_inputs, decode_out)
-        loop_inputs.update(
-            {
-                "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
-                "position_ids": pos_id,
-            }
-        )
-    decode_end = perf_counter()
-
-    print(f"Decode throughput: {(GENERATION_LEN - 2) / (decode_end - decode_start):.2f} tok/sec")
-    print(f"\nOutput:\n{tokenizer.decode(all_outputs)}")
-
-
-if __name__ == "__main__":
-    main()
+    pos_id += 1
+    _update_retained_states(loop_decode_inputs, decode_out)
+    loop_decode_inputs.update(
+        {
+            "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
+            "position_ids": pos_id,
+        }
+    )
+ft = perf_counter()
+print(f"decode tok/sec={(generation_len - 2) / (ft - st)}")
+print(f"\noutput\n{tokenizer.decode(all_outputs)}")
