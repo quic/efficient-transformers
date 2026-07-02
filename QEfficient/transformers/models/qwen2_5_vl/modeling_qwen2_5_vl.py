@@ -175,6 +175,7 @@ class QEffQwen2_5_VLVisionAttention(Qwen2_5_VLVisionAttention):
 
 
 class QEffQwen2_5_VLVisionBlock(Qwen2_5_VLVisionBlock):
+    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -278,7 +279,7 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
 
         mask = (index_padded == -100).to(torch.int32)
 
-        if torch.jit.is_tracing():
+        if torch.jit.is_tracing() or torch._dynamo.is_compiling():
             order = torch.argsort(mask)
         else:
             order = torch.argsort(mask, stable=True)
@@ -514,7 +515,8 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         if not output_attentions:
             attn_weights = None
 
-        return attn_output, attn_weights, past_key_values
+        layer = past_key_values.layers[self.layer_idx]
+        return attn_output, attn_weights, (layer.keys.clone(), layer.values.clone())
 
 
 class QEffQwen2_5_VLDecoderLayer(Qwen2_5_VLDecoderLayer):
@@ -763,9 +765,7 @@ class QEffQwen_2_5_vl_EncoderWrapper(nn.Module):
     def forward(self, pixel_values, image_grid_thw):
         image_embeds = self.model.visual(pixel_values, grid_thw=image_grid_thw)
         bs = image_grid_thw.shape[0]
-        split_size = torch.floor_divide(torch.tensor(image_embeds.size(0)), bs)
-        image_embeds = image_embeds.reshape(bs, split_size, image_embeds.size(1))
-
+        image_embeds = image_embeds.reshape(bs, image_embeds.size(0) // bs, image_embeds.size(1))
         return image_embeds
 
 
@@ -817,7 +817,7 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         logits = self.model.lm_head(hidden_states)
         logits = logits.float()
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-
+        vision_embeds = vision_embeds.detach().clone()
         return logits, vision_embeds, image_idx, outputs.past_key_values
 
 
@@ -1204,7 +1204,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
 
             # KV cache for decoder: list of (key, value) per layer:
             #   key/value: (batch_size or full_batch_size, num_heads, ctx_len, head_dim)
-            past_kv_shapes: List[Tuple[Dict[int, Any], Dict[int, Any]]] = []
+            past_kv_shapes: List[List[Dict[int, Any], Dict[int, Any]]] = []
             batch_dim_name = "full_batch_size" if continuous_batching else "batch_size"
             for _ in range(num_layers):
                 past_key_shape = {
@@ -1215,7 +1215,7 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                     0: get_dim(batch_dim_name),
                     2: get_dim("ctx_len"),
                 }
-                past_kv_shapes.append((past_key_shape, past_value_shape))
+                past_kv_shapes.append([past_key_shape, past_value_shape])
 
             lang_dynamic_shapes["past_key_values"] = past_kv_shapes
 
@@ -1353,3 +1353,9 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                 shape=("batch_size", 3, "image_size", "image_size"),
             ),
         ]
+
+
+# class QEffQwen2_5_VLVisionBlockRegion(QEffQwen2_5_VLVisionBlock):
+#     @torch.compiler.nested_compile_region
+#     def forward(self, *args, **kwargs):
+#         return super().forward(*args, **kwargs)

@@ -12,7 +12,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils.run_utils import ApiRunner
 
-model_name = "zai-org/GLM-4.7"
+model_name = "Qwen/Qwen3-30B-A3B-Instruct-2507"
 tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
 config.num_hidden_layers = 4
@@ -42,7 +42,7 @@ print(pt_tokens)
 # print(ort_tokens)
 
 qeff_model.compile(
-    prefill_seq_len=1, ctx_len=2048, use_dynamo=True, use_onnx_subfunctions=True, num_devices=4, mxfp6_matmul=True
+    prefill_seq_len=1, ctx_len=2048, use_dynamo=False, use_onnx_subfunctions=True, num_devices=4, mxfp6_matmul=True
 )
 print("compile done")
 print("QEff Transformed Onnx Model Outputs(AIC Backend)")
