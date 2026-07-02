@@ -29,8 +29,8 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
 
-def _get_kv_states(module: nn.Module, key: torch.Tensor, value: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-    num_kv_groups = getattr(module, "num_key_value_groups", None)
+def _get_kv_states(module: nn.Module, key: torch.Tensor, value: torch.Tensor, num_repeat: Optional[int]) -> Tuple[torch.Tensor, torch.Tensor]:
+    num_kv_groups = getattr(module, "num_key_value_groups", None) if not num_repeat else num_repeat
     if num_kv_groups is None:
         return key, value
     return repeat_kv(key, num_kv_groups), repeat_kv(value, num_kv_groups)
@@ -211,7 +211,6 @@ def blocked_kv_attention_forward(
 
     return attn_output, attn_weights
 
-
 def blocked_kv_attention_forward_headpar_offline(
     module: nn.Module,
     query: torch.Tensor,
@@ -376,6 +375,229 @@ def blocked_kv_attention_forward_headpar_offline(
     )
     return attn_output.transpose(1, 2).contiguous(), None
 
+def blocked_qkv_attention_forward_prefill_headpar_offline(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    num_q_blocks: int,
+    num_kv_blocks: int,
+    cache_kwargs: Dict[str, Any],
+    layer_idx: int,
+    past_key_value: Cache,
+    ctx_len: int,
+    *,
+    use_causal_mask: bool = False,
+    sliding_window: Optional[int] = None,
+    skip_kv: bool = False,
+    position_bias: Optional[torch.Tensor] = None,
+    sinks: Optional[torch.Tensor] = None,
+    configured_split: Optional[int] = None,
+    **kwargs,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """Prefill: head-parallel split, online softmax per Q chunk.
+    K is split into `split` chunks along ctx (same as headpar decode).
+    impls=parallel path.
+
+    ql_chunk:     Q tokens processed per iteration (q_block_size).
+    n_rep_chunk:  Q head groups processed per KV block iteration.
+                    1 = process all n_rep Q heads per KV head at once.
+                    >1 = split Q head groups into smaller chunks to reduce memory.
+    """
+    batch_size, num_heads, seq_len, head_dim = query.shape
+    num_kv_groups = getattr(module, "num_key_value_groups", None)
+    num_kv_heads = num_heads // num_kv_groups
+    split = _get_headpar_split(configured_split, num_kv_groups)
+    num_kv_blocks = max(1, num_kv_blocks)
+    kv_block_size = -(-ctx_len // num_kv_blocks)
+    n_rep_chunk = num_kv_groups
+    ql_chunk = -(-ctx_len // num_q_blocks)
+    position_ids = cache_kwargs.get("position_ids")
+
+    query_folded = query.reshape(batch_size, num_kv_heads, num_kv_groups, seq_len, head_dim)
+
+    t_chunks = []
+    for t_start in range(0, seq_len, ql_chunk):
+        t_end = min(t_start + ql_chunk, seq_len)
+        tc = t_end - t_start
+        pos_sub          = position_ids[:, t_start:t_end]
+        current_position = pos_sub.max(dim=-1).values
+
+        r_ranges = [(r_start, min(r_start + n_rep_chunk, num_kv_groups))
+                    for r_start in range(0, num_kv_groups, n_rep_chunk)]
+
+        assert kv_block_size % split == 0, f"kv_block_size ({kv_block_size}) must be divisible by split ({split})"
+        T_h_nom = kv_block_size // split
+        kv_offsets = (
+            torch.arange(split, device=query.device)[:, None] * T_h_nom
+            + torch.arange(T_h_nom, device=query.device)[None, :]
+        ).repeat(num_kv_heads, 1)  # [num_kv_heads*split, T_h_nom]
+        is_export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
+        masked_tensor = torch.tensor(-3.0e4, dtype=query.dtype, device=query.device)
+
+        accs = []
+        for r_start, r_end in r_ranges:
+            rc = r_end - r_start
+            accs.append({
+                "rc":    rc,
+                "query": query_folded[:, :, r_start:r_end, t_start:t_end, :]
+                            .reshape(batch_size, num_kv_heads, rc * tc, head_dim)
+                            .repeat_interleave(split, dim=1),  # [B, num_kv_heads*split, rc*tc, head_dim]
+                "m_acc": torch.full((batch_size, num_kv_heads * split, rc * tc), float(MIN_MASKED_ATTENTION_VALUE),
+                                    device=query.device, dtype=query.dtype),
+                "s_acc": torch.zeros(batch_size, num_kv_heads * split, rc * tc, device=query.device, dtype=query.dtype),
+                "o_acc": torch.zeros(batch_size, num_kv_heads * split, rc * tc, head_dim, device=query.device, dtype=query.dtype),
+            })
+
+        for j in range(num_kv_blocks):
+            start_index  = j * kv_block_size
+            kv_len_block = (ctx_len - start_index) if j == num_kv_blocks - 1 else kv_block_size
+            end_index    = start_index + kv_len_block
+            split_block_len = kv_len_block // split
+
+            skip_future = None
+            if skip_kv:
+                skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+                if not is_export and skip_future.item():
+                    break
+
+            k_block = past_key_value.read_only_blocked_K(start_index, end_index, layer_idx, cache_kwargs)
+            v_block = past_key_value.read_only_blocked_V(start_index, end_index, layer_idx, cache_kwargs)
+            key_5d = k_block.view(batch_size, num_kv_heads, split, split_block_len, head_dim)
+            value_5d = v_block.view(batch_size, num_kv_heads, split, split_block_len, head_dim)
+            K_4d = key_5d.reshape(batch_size, num_kv_heads * split, split_block_len, head_dim)
+            V_4d = value_5d.reshape(batch_size, num_kv_heads * split, split_block_len, head_dim)
+
+            off               = kv_offsets if split_block_len == T_h_nom else kv_offsets[:, :split_block_len]
+            causal_mask_block = off[None, :, None, :] > (pos_sub - start_index)[:, None, :, None]
+            skip_split        = (kv_offsets[:, 0] > (pos_sub.min() - start_index)).view(1, num_kv_heads * split)
+
+            for acc in accs:
+                rc = acc["rc"]
+                # causal_mask_block: [B, num_kv_heads*split, tc, split_block_len] → expand to [B, num_kv_heads*split, rc*tc, split_block_len]
+                causal_rc          = causal_mask_block.repeat(1, 1, rc, 1) if rc > 1 else causal_mask_block
+                attn_weights_block = torch.matmul(acc["query"], K_4d.transpose(-1, -2)) * scaling
+                attn_weights_block = torch.where(causal_rc, masked_tensor, attn_weights_block)
+                acc["m_acc"], acc["s_acc"], acc["o_acc"] = update_running_softmax(
+                    acc["m_acc"], attn_weights_block, acc["s_acc"], acc["o_acc"], V_4d,
+                    skip_kv=True, skip_future=skip_split.unsqueeze(-1),
+                )
+
+        r_chunks = []
+        for acc in accs:
+            rc = acc["rc"]
+            m = acc["m_acc"].view(batch_size, num_kv_heads, split, rc * tc)
+            s = acc["s_acc"].view(batch_size, num_kv_heads, split, rc * tc)
+            o = acc["o_acc"].view(batch_size, num_kv_heads, split, rc * tc, head_dim)
+            split_max    = m.max(dim=2).values
+            split_weight = torch.exp(m - split_max.unsqueeze(2))
+            split_sum    = (split_weight * s).sum(dim=2)
+            split_out    = (split_weight.unsqueeze(-1) * o).sum(dim=2)
+            r_chunks.append((split_out / split_sum.unsqueeze(-1)).view(batch_size, num_kv_heads, rc, tc, head_dim))
+
+        t_chunks.append(torch.cat(r_chunks, dim=2))
+
+    output = torch.cat(t_chunks, dim=3)
+    attn_output = output.reshape(batch_size, num_heads, seq_len, head_dim)
+    return attn_output.transpose(1, 2).contiguous(), None
+
+def blocked_qkv_attention_forward_prefill_online(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    num_q_blocks: int,
+    num_kv_blocks: int,
+    cache_kwargs: Dict[str, Any],
+    layer_idx: int,
+    past_key_value: Cache,
+    ctx_len: int,
+    **kwargs,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    B, NQH, QL, D = query.shape
+    num_kv_groups = getattr(module, "num_key_value_groups", None)
+    Hkv = NQH // num_kv_groups
+    num_cores_per_device = getattr(module.config, "num_cores_per_device", None) if hasattr(module, "config") else None
+    num_cores = num_cores_per_device if num_cores_per_device is not None else Hkv
+    kv_repeat = num_cores // Hkv
+    n_rep_per_core = NQH // num_cores
+    skip_kv = kwargs.get("skip_kv", False)
+    num_kv_blocks = max(1, num_kv_blocks)
+    kv_block_size = -(-ctx_len // num_kv_blocks)
+    ql_chunk = -(-ctx_len // num_q_blocks)
+    n_rep_chunk = n_rep_per_core
+    position_ids = cache_kwargs.get("position_ids")
+
+    assert n_rep_per_core % n_rep_chunk == 0, (
+        f"q_head_block_chunk ({n_rep_chunk}) must divide NQH//num_cores ({n_rep_per_core})."
+    )
+
+    q_fold = query.reshape(B, num_cores, n_rep_per_core, QL, D)
+    is_export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
+
+    t_chunks = []
+    for t_start in range(0, QL, ql_chunk):
+        t_end = min(t_start + ql_chunk, QL)
+        tc = t_end - t_start
+        pos_sub          = position_ids[:, t_start:t_end]
+        current_position = pos_sub.max(dim=-1).values
+
+        r_ranges = [(r_start, min(r_start + n_rep_chunk, n_rep_per_core))
+                    for r_start in range(0, n_rep_per_core, n_rep_chunk)]
+
+        accs = []
+        for r_start, r_end in r_ranges:
+            rc = r_end - r_start
+            accs.append({
+                "rc":    rc,
+                "Q":     q_fold[:, :, r_start:r_end, t_start:t_end, :]
+                            .reshape(B, num_cores, rc * tc, D),
+                "m_acc": torch.full((B, num_cores, rc * tc), float(MIN_MASKED_ATTENTION_VALUE),
+                                    device=query.device, dtype=query.dtype),
+                "s_acc": torch.zeros(B, num_cores, rc * tc, device=query.device, dtype=query.dtype),
+                "o_acc": torch.zeros(B, num_cores, rc * tc, D, device=query.device, dtype=query.dtype),
+            })
+
+        for j in range(num_kv_blocks):
+            start_index  = j * kv_block_size
+            kv_len_block = (ctx_len - start_index) if j == num_kv_blocks - 1 else kv_block_size
+            end_index    = start_index + kv_len_block
+
+            skip_future = None
+            if skip_kv:
+                skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+                if not is_export and skip_future.item():
+                    break
+
+            k_block = past_key_value.read_only_blocked_K(start_index, end_index, layer_idx, cache_kwargs)
+            v_block = past_key_value.read_only_blocked_V(start_index, end_index, layer_idx, cache_kwargs)
+            k_block, v_block = _get_kv_states(module, k_block, v_block, num_repeat=kv_repeat)
+
+            k_abs  = torch.arange(start_index, end_index, device=query.device)
+            causal = k_abs[None, None, None, :] > pos_sub[:, None, :, None]
+
+            for acc in accs:
+                rc     = acc["rc"]
+                attn   = torch.matmul(acc["Q"], k_block.transpose(2, 3)) * scaling
+                attn_m = attn.view(B, num_cores, rc, tc, -1).masked_fill(causal.unsqueeze(2), float(MIN_MASKED_ATTENTION_VALUE)).view(B, num_cores, rc * tc, -1)
+                acc["m_acc"], acc["s_acc"], acc["o_acc"] = update_running_softmax(
+                    acc["m_acc"], attn_m, acc["s_acc"], acc["o_acc"], v_block, skip_kv, skip_future,
+                )
+
+        r_chunks = []
+        for acc in accs:
+            rc  = acc["rc"]
+            out = acc["o_acc"] / acc["s_acc"].unsqueeze(-1)
+            r_chunks.append(out.view(B, num_cores, rc, tc, D))
+        t_chunks.append(torch.cat(r_chunks, dim=2))
+
+    attn_output = torch.cat(t_chunks, dim=3).reshape(B, NQH, QL, D)
+    return attn_output.transpose(1, 2).contiguous(), None
+
 
 def blocked_kv_attention_forward_prefill_headpar_offline(
     module: nn.Module,
@@ -509,46 +731,46 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
         out_buf.append(out_blk)
 
     # ── Stage 1: merge across KV blocks ──────────────────────────────────────
-    # max_stk = torch.stack(max_buf)  # [nkvb, B, Hkv, split, n_rep, QL]
-    # sum_stk = torch.stack(sum_buf)
-    # out_stk = torch.stack(out_buf)  # [nkvb, B, Hkv, split, n_rep, QL, kv_lora_rank]
-    # m1 = max_stk.max(dim=0).values
-    # w1 = torch.exp(max_stk - m1.unsqueeze(0))
-    # s1 = torch.einsum("nbhsrq->bhsrq", w1 * sum_stk)
-    # o1 = torch.einsum("nbhsrqv->bhsrqv", w1.unsqueeze(-1) * out_stk)
-    m_run = max_buf[0]
-    s_run = sum_buf[0]
-    o_run = out_buf[0]
+    max_stk = torch.stack(max_buf)  # [nkvb, B, Hkv, split, n_rep, QL]
+    sum_stk = torch.stack(sum_buf)
+    out_stk = torch.stack(out_buf)  # [nkvb, B, Hkv, split, n_rep, QL, kv_lora_rank]
+    m1 = max_stk.max(dim=0).values
+    w1 = torch.exp(max_stk - m1.unsqueeze(0))
+    s1 = torch.einsum("nbhsrq->bhsrq", w1 * sum_stk)
+    o1 = torch.einsum("nbhsrqv->bhsrqv", w1.unsqueeze(-1) * out_stk)
+    # m_run = max_buf[0]
+    # s_run = sum_buf[0]
+    # o_run = out_buf[0]
 
-    for i in range(1, len(max_buf)):
-        m_new = torch.maximum(m_run, max_buf[i])
-        e_old = torch.exp(m_run      - m_new)   # [B, Hkv, split, n_rep, QL]
-        e_new = torch.exp(max_buf[i] - m_new)
-        s_run = e_old * s_run + e_new * sum_buf[i]
-        o_run = e_old.unsqueeze(-1) * o_run + e_new.unsqueeze(-1) * out_buf[i]
-        m_run = m_new
-    m1 = m_run
-    s1 = s_run
-    o1 = o_run
+    # for i in range(1, len(max_buf)):
+    #     m_new = torch.maximum(m_run, max_buf[i])
+    #     e_old = torch.exp(m_run      - m_new)   # [B, Hkv, split, n_rep, QL]
+    #     e_new = torch.exp(max_buf[i] - m_new)
+    #     s_run = e_old * s_run + e_new * sum_buf[i]
+    #     o_run = e_old.unsqueeze(-1) * o_run + e_new.unsqueeze(-1) * out_buf[i]
+    #     m_run = m_new
+    # m1 = m_run
+    # s1 = s_run
+    # o1 = o_run
 
     # ── Stage 2: merge across splits ─────────────────────────────────────────
-    # m2 = m1.max(dim=2).values  # [B, Hkv, n_rep, QL]
-    # w2 = torch.exp(m1 - m2.unsqueeze(2))
-    # s2 = torch.einsum("bhsrq->bhrq", w2 * s1)
-    # o2 = torch.einsum("bhsrqv->bhrqv", w2.unsqueeze(-1) * o1)
-    m_run_2 = m1[:, :, 0, :, :]   # [B, Hkv, n_rep, QL]
-    s_run_2 = s1[:, :, 0, :, :]
-    o_run_2 = o1[:, :, 0, :, :, :]
+    m2 = m1.max(dim=2).values  # [B, Hkv, n_rep, QL]
+    w2 = torch.exp(m1 - m2.unsqueeze(2))
+    s2 = torch.einsum("bhsrq->bhrq", w2 * s1)
+    o2 = torch.einsum("bhsrqv->bhrqv", w2.unsqueeze(-1) * o1)
+    # m_run_2 = m1[:, :, 0, :, :]   # [B, Hkv, n_rep, QL]
+    # s_run_2 = s1[:, :, 0, :, :]
+    # o_run_2 = o1[:, :, 0, :, :, :]
 
-    for i in range(1, m1.shape[2]):
-        m_new = torch.maximum(m_run_2, m1[:, :, i, :, :])
-        e_old = torch.exp(m_run_2 - m_new)
-        e_new = torch.exp(m1[:, :, i, :, :] - m_new)
-        s_run_2 = e_old * s_run_2 + e_new * s1[:, :, i, :, :]
-        o_run_2 = e_old.unsqueeze(-1) * o_run_2 + e_new.unsqueeze(-1) * o1[:, :, i, :, :, :]
-        m_run = m_new
-    s2 = s_run_2
-    o2 = o_run_2
+    # for i in range(1, m1.shape[2]):
+    #     m_new = torch.maximum(m_run_2, m1[:, :, i, :, :])
+    #     e_old = torch.exp(m_run_2 - m_new)
+    #     e_new = torch.exp(m1[:, :, i, :, :] - m_new)
+    #     s_run_2 = e_old * s_run_2 + e_new * s1[:, :, i, :, :]
+    #     o_run_2 = e_old.unsqueeze(-1) * o_run_2 + e_new.unsqueeze(-1) * o1[:, :, i, :, :, :]
+    #     m_run = m_new
+    # s2 = s_run_2
+    # o2 = o_run_2
 
     if sinks is not None:
         # sinks: [NQH] → per-head logit, same for all query positions

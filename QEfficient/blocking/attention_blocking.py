@@ -26,6 +26,8 @@ from QEfficient.blocking.blocked_attention_forwards import (
     blocked_q_attention_forward,
     blocked_q_attention_forward_prefill,
     blocked_qkv_attention_forward,
+    blocked_qkv_attention_forward_prefill_headpar_offline,
+    blocked_qkv_attention_forward_prefill_online,
 )
 
 
@@ -62,6 +64,7 @@ class AttentionBlockingConfig:
     kv_blocking_headpar_split: Optional[int] = None
     prefill_block_chunks: Optional[int] = None
     prefill_blocking_mode: Optional[str] = None  # "q" (default) or "kv"
+    ctx_len: Optional[int] = None
 
 
 def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
@@ -88,6 +91,13 @@ _STRATEGIES_HEADPAR: Dict[BlockingMode, Callable] = {
 _STRATEGIES_MLA: Dict[BlockingMode, Callable] = {
     BlockingMode.KV: blocked_kv_mla_attention_forward,
     BlockingMode.H: blocked_h_mla_attention_forward,
+}
+
+_STRATEGIES_PREFILL: Dict[BlockingMode, Callable] = {
+    "q": blocked_q_attention_forward_prefill,
+    "kv": blocked_kv_attention_forward_prefill_headpar_offline,
+    "qkv": blocked_qkv_attention_forward_prefill_headpar_offline,
+    "online": blocked_qkv_attention_forward_prefill_online,
 }
 
 
@@ -284,25 +294,9 @@ def prefill_blocked_attention_interface(
         "past_seen_tokens": past_seen_tokens,
         "batch_index": batch_index,
     }
-    if blocking_config.prefill_blocking_mode == "kv":
-        return blocked_kv_attention_forward_prefill_headpar_offline(
-            module=module,
-            query=query,
-            key=k_cache,
-            value=v_cache,
-            attention_mask=attention_mask,
-            scaling=scaling,
-            num_kv_blocks=blocking_config.num_kv_blocks,
-            cache_kwargs=cache_kwargs,
-            layer_idx=layer_idx,
-            past_key_value=past_key_value,
-            skip_kv=blocking_config.skip_kv or False,
-            sliding_window=sliding_window,
-            sinks=sinks,
-            configured_split=blocking_config.kv_blocking_headpar_split,
-            **kwargs,
-        )
-    return blocked_q_attention_forward_prefill(
+    print(blocking_config.prefill_blocking_mode)
+    strategy = _STRATEGIES_PREFILL.get(blocking_config.prefill_blocking_mode)
+    return strategy(
         module=module,
         query=query,
         key=k_cache,
@@ -310,6 +304,7 @@ def prefill_blocked_attention_interface(
         attention_mask=attention_mask,
         scaling=scaling,
         num_q_blocks=blocking_config.prefill_block_chunks,
+        num_kv_blocks=blocking_config.num_kv_blocks,
         cache_kwargs=cache_kwargs,
         layer_idx=layer_idx,
         past_key_value=past_key_value,
@@ -317,5 +312,6 @@ def prefill_blocked_attention_interface(
         sliding_window=sliding_window,
         sinks=sinks,
         configured_split=blocking_config.kv_blocking_headpar_split,
+        ctx_len=blocking_config.ctx_len,
         **kwargs,
     )

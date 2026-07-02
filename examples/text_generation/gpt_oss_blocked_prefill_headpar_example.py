@@ -206,10 +206,11 @@ def main():
     # blocked_kv_attention_forward_prefill_headpar_offline
     prefill_qaic_config = {
         "blocking_mode": "kv",
-        "num_kv_blocks": args.num_kv_blocks,
+        "num_kv_blocks": 2,
         "kv_blocking_headpar_split": headpar_split,
         "prefill_block_chunks": 2,
-        "prefill_blocking_mode": "kv",  # supported modes are q and kv, kv is with head parallel softmax
+        "prefill_blocking_mode": "online",  # supported modes are q and kv, kv is with head parallel softmax
+        "ctx_len": args.ctx_len,
     }
 
     compile_kwargs = dict(
