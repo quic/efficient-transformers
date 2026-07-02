@@ -470,7 +470,7 @@ class QEFFBaseModel(ABC):
         sig = inspect.signature(self.model.forward)
 
         ordered_example_inputs = OrderedDict()
-        ordered_dynamic_shapes = OrderedDict() if dynamic_shapes is not None else None
+        ordered_dynamic_shapes = {} if dynamic_shapes is not None else None
 
         # First, add keys that are in the forward signature (in that order)
         for name, param in sig.parameters.items():
@@ -500,6 +500,7 @@ class QEFFBaseModel(ABC):
                 dynamic_axes = None
                 export_kwargs = dict(export_kwargs)
                 export_kwargs.setdefault("report", True)
+                export_kwargs.setdefault("verbose", True)
                 export_kwargs.setdefault("optimize", False)
                 export_kwargs["dynamo"] = True
                 export_kwargs["custom_translation_table"] = {
