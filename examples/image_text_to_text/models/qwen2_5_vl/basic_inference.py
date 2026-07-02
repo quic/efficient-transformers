@@ -14,18 +14,18 @@ from transformers import AutoConfig, AutoProcessor, TextStreamer
 from QEfficient import QEFFAutoModelForImageTextToText
 
 ## For AWQ model update pytorch version to 2.8.*
-model_id = "Qwen/Qwen2.5-VL-32B-Instruct"
+model_id = "Qwen/Qwen2.5-VL-3B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 config.text_config.num_hidden_layers = 2
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=True, config=config
+    model_id, attn_implementation="eager", kv_offload=False, config=config
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
 ### use skip_vision=Ture, if want to run only text, ow false ###
-skip_vision = True
+skip_vision = False
 
 if skip_vision:
     ## Only Text ##
@@ -44,6 +44,8 @@ if skip_vision:
         aic_enable_depth_first=True,
         skip_vision=True,
         mos=1,
+        use_dynamo=True,
+        use_onnx_subfunctions=True,
     )
 
     messages = [
@@ -88,6 +90,8 @@ else:
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
         mos=1,
+        use_dynamo=False,
+        use_onnx_subfunctions=True,
     )
 
     ### IMAGE + TEXT ###
