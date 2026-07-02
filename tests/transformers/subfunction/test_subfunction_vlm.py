@@ -61,6 +61,7 @@ def check_image_text_to_text_subfunction_core(
     num_devices: int = 1,
     config: Optional[AutoConfig] = None,
     torch_dtype: Optional[torch.dtype] = torch.float32,
+    zero_model_weights: bool = False,
 ):
     img_size = model_config_dict[model_name]["img_size"]
     img_url = model_config_dict[model_name]["img_url"]
@@ -105,11 +106,33 @@ def check_image_text_to_text_subfunction_core(
             )
     else:
         model_hf = load_vlm_model_from_config(config)
+        if zero_model_weights:
+            for param in model_hf.parameters():
+                param.data.zero_()
+            for buffer in model_hf.buffers():
+                if buffer.is_floating_point():
+                    buffer.data.zero_()
+        # load_vlm_model_from_config recasts bf16/fp16 params to fp32 for a
+        # traceable export graph, but leaves config.torch_dtype untouched. QEff
+        # derives the KV-cache buffer dtype and custom-IO precision from that
+        # config, so a stale bf16 dtype yields bf16 KV buffers (mismatching the
+        # fp32 params during ONNX export) and bf16 custom-IO (rejected by the
+        # ai100 compiler). Align the config dtype with the fp32 export graph; the
+        # compiler still emits an fp16 QPC via -convert-to-fp16 (custom-IO fp16).
+        export_dtype = getattr(model_hf, "dtype", torch.float32)
+        for sub_config in (
+            model_hf.config,
+            getattr(model_hf.config, "text_config", None),
+            getattr(model_hf.config, "vision_config", None),
+        ):
+            if sub_config is not None:
+                sub_config.torch_dtype = export_dtype
+                sub_config.dtype = export_dtype
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
             kv_offload=kv_offload,
             config=model_hf.config,
-            torch_dtype=torch_dtype,
+            torch_dtype=export_dtype,
         )
 
     compile_kwargs = {
@@ -232,9 +255,25 @@ def test_few_image_text_to_text_subfunction(model_name, kv_offload, manual_clean
 @pytest.mark.parametrize("kv_offload", [True])
 def test_dummy_image_text_to_text_subfunction(model_name, kv_offload, manual_cleanup):
     torch.manual_seed(42)
+    dummy_config = AutoConfig.from_pretrained(
+        model_name,
+        trust_remote_code=True,
+        padding=model_name not in ModelConfig.MOLMO_MODELS,
+        **model_config_dict[model_name].get("additional_params", {}),
+    )
+    if (
+        getattr(dummy_config, "model_type", None) == "qwen3_5_moe"
+        and hasattr(dummy_config, "text_config")
+        and dummy_config.text_config.num_hidden_layers == 1
+    ):
+        dummy_config.text_config.num_hidden_layers = 2
+        dummy_config.text_config.layer_types = ["linear_attention", "full_attention"]
+
     check_image_text_to_text_subfunction_core(
         model_name,
         num_hidden_layers=model_config_dict[model_name]["num_layers"],
         kv_offload=kv_offload,
+        config=dummy_config,
+        zero_model_weights=True,
         manual_cleanup=manual_cleanup,
     )

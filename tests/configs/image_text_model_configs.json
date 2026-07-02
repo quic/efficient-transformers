@@ -341,11 +341,11 @@
       }
     },
     {
-      "model_name": "Qwen/Qwen3.5-0.8B",
+      "model_name": "tiny-random/qwen3.5",
       "model_type": "qwen3_5",
       "batch_size": 1,
       "prompt_len": 64,
-      "ctx_len": 4096,
+      "ctx_len": 256,
       "img_size": 1540,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
@@ -409,11 +409,11 @@
       }
     },
     {
-      "model_name": "Qwen/Qwen3.5-35B-A3B",
+      "model_name": "tiny-random/qwen3.5-moe",
       "model_type": "qwen3_5_moe",
       "batch_size": 1,
       "prompt_len": 64,
-      "ctx_len": 4096,
+      "ctx_len": 256,
       "img_size": 1540,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
@@ -685,11 +685,11 @@
       }
     },
     {
-      "model_name": "Qwen/Qwen3.5-0.8B",
+      "model_name": "tiny-random/qwen3.5",
       "model_type": "qwen3_5",
       "batch_size": 1,
       "prompt_len": 64,
-      "ctx_len": 4096,
+      "ctx_len": 256,
       "img_size": 1540,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
@@ -744,11 +744,11 @@
       }
     },
     {
-      "model_name": "Qwen/Qwen3.5-35B-A3B",
+      "model_name": "tiny-random/qwen3.5-moe",
       "model_type": "qwen3_5_moe",
       "batch_size": 1,
       "prompt_len": 64,
-      "ctx_len": 4096,
+      "ctx_len": 256,
       "img_size": 1540,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
