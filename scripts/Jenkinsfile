@@ -222,8 +222,6 @@ pipeline {
                             export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
                             export TOKENIZERS_PARALLELISM=false &&
                             export QEFF_HOME=${DOCKER_QPC_CACHE}/llm &&
-                            export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
-                            export QEFF_QAIC_CARD_OFFSET=0 &&
                             set -o pipefail &&
                             pytest tests -m 'qaic and llm' \
                                 ${PYTEST_IGNORE} \
@@ -248,8 +246,6 @@ pipeline {
                             export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
                             export TOKENIZERS_PARALLELISM=false &&
                             export QEFF_HOME=${DOCKER_QPC_CACHE}/vlm &&
-                            export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
-                            export QEFF_QAIC_CARD_OFFSET=2 &&
                             set -o pipefail &&
                             pytest tests -m 'qaic and vlm' \
                                 ${PYTEST_IGNORE} \
@@ -275,8 +271,6 @@ pipeline {
                             export TOKENIZERS_PARALLELISM=false &&
                             export QEFF_HOME=${DOCKER_QPC_CACHE}/diffusion &&
                             export HF_HUB_CACHE=/huggingface_hub &&
-                            export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
-                            export QEFF_QAIC_CARD_OFFSET=4 &&
                             set -o pipefail &&
                             pytest tests -m 'qaic and diffusion' \
                                 ${PYTEST_IGNORE} \

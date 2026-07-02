@@ -18,7 +18,7 @@ from QEfficient.utils.test_utils import ModelConfig, load_hf_causal_lm_model
 test_models_blockedKV_dict = {
     "unsloth/gemma-2b": "optimum-intel-internal-testing/tiny-random-gemma2",
     "unsloth/gemma-2-2b": "optimum-intel-internal-testing/tiny-random-gemma2",
-    "ibm-granite/granite-3.1-1b-a400m-base": "optimum-intel-internal-testing/tiny-random-GraniteMoeForCausalLM",
+    "ibm-granite/granite-3.1-1b-a400m-base": "optimum-intel-internal-testing/tiny-random-granite-moe",
     "meta-llama/Llama-3.2-1B": "optimum-intel-internal-testing/tiny-random-LlamaForCausalLM",
     "wtang06/mpt-125m-c4": "optimum-intel-internal-testing/tiny-random-MptForCausalLM",
     "bigcode/starcoder2-3b": "optimum-intel-internal-testing/tiny-random-Starcoder2ForCausalLM",
