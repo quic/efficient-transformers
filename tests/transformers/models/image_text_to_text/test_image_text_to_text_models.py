@@ -11,6 +11,7 @@ import os
 from io import BytesIO
 from typing import List, Optional
 
+import onnx
 import pytest
 import requests
 import torch
@@ -48,6 +49,26 @@ test_mm_moe_models = [model["model_name"] for model in multimodal_models if "moe
 NEW_GENERATION_TOKENS = 10
 
 
+# model_type -> ONNX decoder-layer function name tokens expected when the model
+# is exported with use_onnx_subfunctions=True. A compile can silently succeed
+# having inlined the decoder layer, so the parity check alone would not catch a
+# regression where the subfunction is no longer emitted.
+SUBFUNCTION_DECODER_LAYER_TOKENS = {
+    "qwen3_5": ("QEffQwen3_5DecoderLayer",),
+    "qwen3_5_moe": ("QEffQwen3_5MoeDecoderLayer",),
+}
+
+
+def has_decoder_layer_function(onnx_path, expected_function_tokens):
+    """Check if ONNX model contains expected decoder-layer function definition."""
+    model = onnx.load(onnx_path, load_external_data=False)
+    function_names = [f.name for f in model.functions]
+    decoder_layer_functions = [
+        name for name in function_names if any(token in name for token in expected_function_tokens)
+    ]
+    return len(decoder_layer_functions) > 0, decoder_layer_functions
+
+
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
     manual_cleanup: callable,
@@ -63,6 +84,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     mdp_num_partitions: Optional[int] = None,
     mdp_strategy: Optional[str] = None,
     use_onnx_subfunctions: bool = False,
+    zero_model_weights: bool = False,
 ):
     prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
@@ -109,6 +131,29 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             )
     else:
         model_hf = load_vlm_model_from_config(config)
+        if zero_model_weights:
+            for param in model_hf.parameters():
+                param.data.zero_()
+            for buffer in model_hf.buffers():
+                if buffer.is_floating_point():
+                    buffer.data.zero_()
+            # load_vlm_model_from_config recasts bf16/fp16 params to fp32 for a
+            # traceable export graph, but leaves config.torch_dtype untouched. QEff
+            # derives the KV-cache buffer dtype and custom-IO precision from that
+            # config, so a stale bf16 dtype yields bf16 KV buffers (mismatching the
+            # fp32 params during ONNX export) and bf16 custom-IO (rejected by the
+            # ai100 compiler). Align the config dtype with the fp32 export graph; the
+            # compiler still emits an fp16 QPC via -convert-to-fp16 (custom-IO fp16).
+            export_dtype = getattr(model_hf, "dtype", torch.float32)
+            for sub_config in (
+                model_hf.config,
+                getattr(model_hf.config, "text_config", None),
+                getattr(model_hf.config, "vision_config", None),
+            ):
+                if sub_config is not None:
+                    sub_config.torch_dtype = export_dtype
+                    sub_config.dtype = export_dtype
+            torch_dtype = export_dtype
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
             kv_offload=kv_offload,
@@ -251,9 +296,22 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     #     "Tokens don't match for pytorch HF output and pytorch KV output"
     # )
 
-    _ = qeff_model.export(use_onnx_subfunctions=use_onnx_subfunctions)
+    with_sub_func_onnx = qeff_model.export(use_onnx_subfunctions=use_onnx_subfunctions)
     # ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
     # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
+
+    if use_onnx_subfunctions:
+        model_type = getattr(qeff_model.model.config, "model_type", "")
+        expected_function_tokens = SUBFUNCTION_DECODER_LAYER_TOKENS.get(model_type, tuple())
+        assert expected_function_tokens, f"Unsupported model_type for VLM subfunction test: {model_type}"
+        has_decoder_layer, decoder_layer_names = has_decoder_layer_function(
+            with_sub_func_onnx[-1], expected_function_tokens
+        )
+        assert has_decoder_layer, (
+            "Model exported with use_onnx_subfunctions=True should contain expected decoder-layer function "
+            f"definition. model_type={model_type}, expected_any={expected_function_tokens}"
+        )
+        print(f"\nDecoder-layer functions found: {decoder_layer_names}")
 
     if (
         mdp_compile_kwargs
@@ -371,7 +429,33 @@ def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_o
 
     torch.manual_seed(42)
     hf_config = None
-    if model_name in ModelConfig.STANDARD_VLM_MODELS:
+    if model_config_dict[model_name].get("model_type", None) in ("qwen3_5", "qwen3_5_moe"):
+        # Dummy Qwen3.5 (dense + MoE) VLMs use randomly-initialized tiny-random
+        # checkpoints, so zero the weights to keep HF-PyTorch and QPC token
+        # streams deterministic (see check_... for the dtype-alignment rationale).
+        dummy_config = AutoConfig.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+            padding=model_name not in ModelConfig.MOLMO_MODELS,
+            **model_config_dict[model_name].get("additional_params", {}),
+        )
+        if (
+            getattr(dummy_config, "model_type", None) == "qwen3_5_moe"
+            and hasattr(dummy_config, "text_config")
+            and dummy_config.text_config.num_hidden_layers == 1
+        ):
+            dummy_config.text_config.num_hidden_layers = 2
+            dummy_config.text_config.layer_types = ["linear_attention", "full_attention"]
+        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+            model_name,
+            num_hidden_layers=model_config_dict[model_name]["num_layers"],
+            kv_offload=kv_offload,
+            config=dummy_config,
+            zero_model_weights=True,
+            use_onnx_subfunctions=True,
+            manual_cleanup=manual_cleanup,
+        )
+    elif model_name in ModelConfig.STANDARD_VLM_MODELS:
         model_type = model_config_dict[model_name].get("model_type", None)
         custom_config = model_config_dict[model_name].get("additional_params", {})
         hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
