@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from qwen_vl_utils import smart_resize
+from torch.export import Dim
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
@@ -611,7 +612,7 @@ class QEffQwen3VLTextModel(Qwen3VLTextModel):
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
 
-            if deepstack_visual_embeds is not None and layer_idx in range(deepstack_visual_embeds.shape[0]):
+            if deepstack_visual_embeds is not None and layer_idx in range(len(deepstack_visual_embeds)):
                 hidden_states = self._deepstack_process(
                     hidden_states,
                     visual_pos_masks,
@@ -706,7 +707,8 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
     ):
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
-        selected = input_ids == self.model.config.image_token_id
+        # selected = input_ids == self.model.config.image_token_id
+        selected = torch.eq(input_ids, self.model.config.image_token_id)
         indices1 = selected.to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
@@ -716,9 +718,14 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         x = deepstack_features.reshape(num_features, bs * split_size, C)
         deepstack_features_expanded = x[:, indices1, :]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
+        # inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
 
-        image_mask = selected.clone()
+        seq_len_tensor = input_ids.new_full((), input_ids.size(1))
+        cond = torch.eq(seq_len_tensor, seq_len_tensor.new_ones(()))
+
+        inputs_embeds = torch.where(cond, inputs_embeds, image_input_embeds)
+
+        image_mask = selected.detach().clone()
 
         visual_pos_masks = None
         deepstack_visual_embeds = None
@@ -741,6 +748,9 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
         logits = self.model.lm_head(hidden_states)
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+
+        vision_embeds = vision_embeds.detach().clone()
+        deepstack_features = deepstack_features.detach().clone()
         if _should_export_embedding_output(self):
             return logits, vision_embeds, deepstack_features, image_idx, hidden_states, outputs.past_key_values
         return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
@@ -820,7 +830,8 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
 
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
-        selected = input_ids == self.model.config.image_token_id
+        # selected = input_ids == self.model.config.image_token_id
+        selected = torch.eq(input_ids, self.model.config.image_token_id)
         indices1 = selected.to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
@@ -828,6 +839,10 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         # TODO: deepstack_features are not processed for single QPC setup yet. Will do if required.
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
+        # seq_len_tensor = input_ids.new_full((), input_ids.size(1))
+        # cond = torch.eq(seq_len_tensor, seq_len_tensor.new_ones(()))
+
+        # inputs_embeds = torch.where(cond, inputs_embeds, image_input_embeds)
         outputs = self.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
@@ -842,6 +857,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         if _should_export_embedding_output(self):
             return logits, image_embeds, image_idx, hidden_states, outputs.past_key_values
+
         return logits, image_embeds, image_idx, outputs.past_key_values
 
     def get_dummy_inputs(
@@ -1154,6 +1170,158 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             lang_dynamic_axes.pop("vision_embeds")
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
+
+    def get_onnx_dynamic_shapes(
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+    ):
+        num_layers = self.config.text_config.num_hidden_layers
+
+        dim_registry: Dict[str, Any] = {}
+
+        def get_dim(dim_name: str):
+            if dim_name in dim_registry:
+                return dim_registry[dim_name]
+            if dim_name == "batch_size":
+                d = Dim(dim_name, min=1, max=1024)
+            elif dim_name == "vision_batch_size":
+                d = Dim(dim_name, min=1, max=1024)
+            elif dim_name == "full_batch_size":
+                d = Dim(dim_name, min=1, max=2048)
+            elif "seq_len" in dim_name:
+                d = Dim(dim_name, min=1, max=4096)
+            elif dim_name == "ctx_len":
+                d = Dim(dim_name, min=1, max=4096)
+            elif dim_name == "grid_height":
+                d = Dim(dim_name, min=1, max=65536)
+            elif dim_name == "grid_width":
+                d = Dim(dim_name, min=1, max=8192)
+            elif dim_name == "grid_h":
+                d = Dim(dim_name, min=1, max=1024)
+            elif dim_name == "grid_w":
+                d = Dim(dim_name, min=1, max=1024)
+            elif dim_name == "time":
+                d = Dim(dim_name, min=1, max=256)
+            elif "vision_size" in dim_name:
+                d = Dim(dim_name, min=1, max=65536)
+            elif "num_feature_layers" in dim_name:
+                d = Dim(dim_name, min=1, max=64)
+                # d = Dim.STATIC
+            elif "comp_ctx_lengths" in dim_name:
+                d = Dim(dim_name, min=1, max=4096)
+            else:
+                d = Dim(dim_name, min=1, max=4096)
+            dim_registry[dim_name] = d
+            return d
+
+        batch_dim_name = "full_batch_size" if continuous_batching else "batch_size"
+
+        def build_past_kv_shapes():
+            shapes = []
+            for _ in range(num_layers):
+                shapes.append(
+                    [
+                        {0: get_dim(batch_dim_name), 2: get_dim("ctx_len")},
+                        {0: get_dim(batch_dim_name), 2: get_dim("ctx_len")},
+                    ]
+                )
+            return shapes
+
+        if kv_offload:
+            vision_dynamic_shapes: Dict[str, Any] = {
+                "pixel_values": {
+                    0: get_dim("grid_height"),
+                    1: get_dim("grid_width"),
+                },
+                "image_grid_thw": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("time"),
+                    2: get_dim("grid_h"),
+                    3: get_dim("grid_w"),
+                },
+                "deepstack_features": {
+                    0: get_dim("num_feature_layers"),
+                    1: get_dim("vision_batch_size"),
+                    2: get_dim("vision_size"),
+                },
+            }
+
+            lang_dynamic_shapes: Dict[str, Any] = {
+                "input_ids": {
+                    0: get_dim("batch_size"),
+                    1: get_dim("seq_len"),
+                },
+                "position_ids": {
+                    1: get_dim("batch_size"),
+                    2: get_dim("seq_len"),
+                },
+                "vision_embeds": {
+                    0: get_dim("vision_batch_size"),
+                    1: get_dim("vision_size"),
+                },
+                "image_idx": {
+                    0: Dim.STATIC,
+                    1: Dim.STATIC,
+                },
+                "deepstack_features": {
+                    0: get_dim("num_feature_layers"),
+                    1: get_dim("vision_batch_size"),
+                    2: get_dim("vision_size"),
+                },
+            }
+
+            lang_dynamic_shapes["past_key_values"] = build_past_kv_shapes()
+
+            if continuous_batching:
+                lang_dynamic_shapes["batch_index"] = {0: get_dim("batch_size")}
+
+            if comp_ctx_lengths is not None:
+                lang_dynamic_shapes["comp_ctx_lengths"] = {0: get_dim("comp_ctx_lengths")}
+
+            return {"vision": vision_dynamic_shapes, "lang": lang_dynamic_shapes}
+
+        # kv_offload=False: combined export
+        dynamic_shapes: Dict[str, Any] = {
+            "pixel_values": {
+                0: get_dim("grid_height"),
+                1: get_dim("grid_width"),
+            },
+            "image_grid_thw": {
+                0: get_dim("batch_size"),
+                1: get_dim("time"),
+                2: get_dim("grid_h"),
+                3: get_dim("grid_w"),
+            },
+            "deepstack_features": {
+                0: get_dim("num_feature_layers"),
+                1: get_dim("batch_size"),
+                2: get_dim("vision_size"),
+            },
+            "input_ids": {
+                0: get_dim("batch_size"),
+                1: get_dim("seq_len"),
+            },
+            "position_ids": {
+                1: get_dim("batch_size"),
+                2: get_dim("seq_len"),
+            },
+            "image_idx": {
+                0: Dim.STATIC,
+                1: Dim.STATIC,
+            },
+        }
+
+        dynamic_shapes["past_key_values"] = build_past_kv_shapes()
+
+        if continuous_batching:
+            dynamic_shapes["batch_index"] = {0: get_dim("batch_size")}
+
+        if comp_ctx_lengths is not None:
+            dynamic_shapes["comp_ctx_lengths"] = {0: get_dim("comp_ctx_lengths")}
+
+        return dynamic_shapes
 
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]

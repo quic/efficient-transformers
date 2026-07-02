@@ -560,6 +560,7 @@ from QEfficient.transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     QEffQwen2_5_VLTextModel,
     QEffQwen2_5_VLVisionAttention,
     QEffQwen2_5_VLVisionBlock,
+    # QEffQwen2_5_VLVisionBlockRegion,
     QEffQwen_2_5_vl_DecoderWrapper,
     QEffQwen_2_5_vl_ForConditionalGeneration,
 )
@@ -956,7 +957,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Llama4VisionEncoderLayer: QEffLlama4VisionEncoderLayer,
         MllamaVisionEncoderLayer: QEffMllamaVisionEncoderLayer,
         PixtralAttentionLayer: QEffPixtralAttentionLayer,
-        # Qwen2_5_VLVisionBlock: QEffQwen2_5_VLVisionBlock,
+        # Qwen2_5_VLVisionBlock: QEffQwen2_5_VLVisionBlockRegion,
         Qwen3VLVisionBlock: QEffQwen3VLVisionBlock,
         Qwen3VLMoeVisionBlock: QEffQwen3VLMoeVisionBlock,
         SiglipEncoderLayer: QEffSiglipEncoderLayer,
