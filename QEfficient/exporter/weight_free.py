@@ -5,6 +5,7 @@
 
 import copy
 import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -16,6 +17,7 @@ from accelerate import init_empty_weights
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from torch import nn
+from QEfficient.exporter.checkpoint_transforms import CheckpointTransformPipeline
 from QEfficient.transformers.embeddings.embedding_utils import PooledModel
 from QEfficient.transformers.models.pytorch_transforms import PoolingTransform
 from QEfficient.exporter.weight_spec import (
@@ -38,6 +40,15 @@ from QEfficient.utils.torch_patches import (
     temporarily_disable_nested_compile_regions,
     temporarily_enable_nested_compile_regions,
 )
+
+# Memory profiler from scripts/memory_profiling — optional, degrades gracefully
+# if the scripts directory is not on the path or matplotlib is missing.
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
+try:
+    from memory_profiling import QEffMemoryProfiler as _QEffMemoryProfiler
+    _HAS_PROFILER = True
+except ImportError:
+    _HAS_PROFILER = False
 
 
 def _to_meta(value: Any) -> Any:
@@ -343,6 +354,7 @@ def export_weight_free_onnx(
 
     meta_example_inputs = _to_meta(example_inputs)
     model_ref = meta_qeff_model.hash_params["pretrained_model_name_or_path"]
+
     meta_qeff_model.model.requires_grad_(False)
     with export_context:
         onnx_program = torch.onnx.export(
@@ -359,9 +371,33 @@ def export_weight_free_onnx(
         if onnx_program is None:
             raise RuntimeError("torch.onnx.export returned None for weight-free dynamo export")
 
+        # Prepare checkpoint: stack MoE experts (if needed) and convert dtype.
+        # Store next to the SOURCE checkpoint directory (not inside the hashed export dir)
+        # so any model config variant pointing at the same source reuses the prepared data.
+        prep_pipeline = CheckpointTransformPipeline(transforms=qeff_model._checkpoint_transforms)
+        source_dir = _resolve_checkpoint_dir(model_ref)
+        prepared_out = source_dir.parent / (source_dir.name + "-qeff-prepared")
+
+        _prep_profiler = _QEffMemoryProfiler(sampling_interval=0.05, verbose=False)
+        _prep_profiler.start_monitoring()
+        _prep_profiler.mark_operation("Checkpoint Prep")
+
+        prepared_model_ref = str(
+            prep_pipeline.apply(
+                src=source_dir,
+                out=prepared_out,
+                target_dtype=torch.float32,
+            )
+        )
+
+        _prep_profiler.stop_monitoring()
+        print(_prep_profiler.get_memory_report())
+        logger.info(_prep_profiler.get_memory_report())
+
+
         spec = _promote_initializers_and_build_spec(
             onnx_program=onnx_program,
-            model_ref=model_ref,
+            model_ref=prepared_model_ref,
             model_name=qeff_model.model_name,
             qeff_model=meta_qeff_model,
         )

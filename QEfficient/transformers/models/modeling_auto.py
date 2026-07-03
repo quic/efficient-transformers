@@ -39,6 +39,10 @@ from QEfficient.base.onnx_transforms import (
     SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
+from QEfficient.exporter.checkpoint_transforms import (
+    DtypeConversionCheckpointTransform,
+    MoEExpertStackingCheckpointTransform,
+)
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfoNew,
@@ -3451,6 +3455,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     ]
 
     _onnx_transforms = [RewriteUnsupportedOpsTransform, SplitMultiInputMaxMinTransform]
+
+    _checkpoint_transforms = [
+        MoEExpertStackingCheckpointTransform,   # MoE: stacks experts + converts dtype in one pass
+        DtypeConversionCheckpointTransform,     # dense: dtype conversion only
+    ]
 
     def prefill(
         self,

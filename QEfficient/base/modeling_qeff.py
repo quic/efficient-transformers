@@ -15,7 +15,7 @@ import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, OrderedDict, Union
+from typing import Any, Dict, List, Optional, OrderedDict, Type, Union
 
 import onnx
 import torch
@@ -48,6 +48,7 @@ from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxScatterCB3D,
 )
 from QEfficient.customop.rms_norm import CustomRMSNorm
+from QEfficient.exporter.checkpoint_transforms import BaseCheckpointTransform, DtypeConversionCheckpointTransform
 from QEfficient.exporter.weight_spec import resolve_weight_spec_path
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
@@ -150,6 +151,7 @@ class QEFFBaseModel(ABC):
     _layerwise_active = False
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
+    _checkpoint_transforms: List[Type[BaseCheckpointTransform]] = [DtypeConversionCheckpointTransform]
 
     def _transform_names(self) -> List[str]:
         return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
