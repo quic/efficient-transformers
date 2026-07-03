@@ -17,8 +17,8 @@ model_id = "Qwen/Qwen3-VL-2B-Instruct"
 config = AutoConfig.from_pretrained(model_id)
 
 config.vision_config.depth = 9
-config.text_config.num_hidden_layers = 2
-config.vision_config.deepstack_visual_indexes = [4, 6, 8]
+config.text_config.num_hidden_layers = 9
+config.vision_config.deepstack_visual_indexes = [2, 4, 6, 7, 8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config

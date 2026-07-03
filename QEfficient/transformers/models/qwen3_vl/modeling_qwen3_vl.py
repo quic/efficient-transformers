@@ -448,6 +448,10 @@ class QEffQwen3VLTextAttention(Qwen3VLTextAttention):
 
         if not output_attentions:
             attn_weights = None
+
+        # layer = past_key_values.layers[self.layer_idx]
+        # return attn_output, attn_weights,  (layer.keys.clone(), layer.values.clone())
+
         return attn_output, attn_weights, past_key_values
 
 
@@ -549,7 +553,7 @@ class QEffQwen3VLTextModel(Qwen3VLTextModel):
         return_dict: Optional[bool] = None,
         visual_pos_masks: Optional[torch.Tensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        deepstack_visual_embeds: Optional[list[torch.Tensor]] = None,
+        deepstack_visual_embeds: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -612,7 +616,7 @@ class QEffQwen3VLTextModel(Qwen3VLTextModel):
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
 
-            if deepstack_visual_embeds is not None and layer_idx in range(len(deepstack_visual_embeds)):
+            if deepstack_visual_embeds is not None and layer_idx < self._deepstack_num_feature_layers:
                 hidden_states = self._deepstack_process(
                     hidden_states,
                     visual_pos_masks,
@@ -684,6 +688,8 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.language_model = self.model.model.language_model
+        deepstack_indexes = getattr(model.config.vision_config, "deepstack_visual_indexes", None)
+        self.language_model._deepstack_num_feature_layers = len(deepstack_indexes) if deepstack_indexes else 0
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
@@ -718,12 +724,12 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         x = deepstack_features.reshape(num_features, bs * split_size, C)
         deepstack_features_expanded = x[:, indices1, :]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-        # inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
+        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
 
-        seq_len_tensor = input_ids.new_full((), input_ids.size(1))
-        cond = torch.eq(seq_len_tensor, seq_len_tensor.new_ones(()))
+        # seq_len_tensor = input_ids.new_full((), input_ids.size(1))
+        # cond = torch.eq(seq_len_tensor, seq_len_tensor.new_ones(()))
 
-        inputs_embeds = torch.where(cond, inputs_embeds, image_input_embeds)
+        # inputs_embeds = torch.where(cond, inputs_embeds, image_input_embeds)
 
         image_mask = selected.detach().clone()
 
@@ -1207,8 +1213,8 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             elif "vision_size" in dim_name:
                 d = Dim(dim_name, min=1, max=65536)
             elif "num_feature_layers" in dim_name:
-                d = Dim(dim_name, min=1, max=64)
-                # d = Dim.STATIC
+                # d = Dim(dim_name, min=1, max=128)
+                d = Dim.STATIC
             elif "comp_ctx_lengths" in dim_name:
                 d = Dim(dim_name, min=1, max=4096)
             else:
