@@ -19,7 +19,7 @@ config = AutoConfig.from_pretrained(model_id)
 config.text_config.num_hidden_layers = 2
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=False, config=config
+    model_id, attn_implementation="eager", kv_offload=True, config=config
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -90,7 +90,7 @@ else:
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
         mos=1,
-        use_dynamo=False,
+        use_dynamo=True,
         use_onnx_subfunctions=True,
     )
 
