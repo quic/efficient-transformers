@@ -67,7 +67,7 @@ class QAICInferenceSession:
         device_ids: Optional[List[int]] = None,
         activate: bool = True,
         enable_debug_logs: bool = False,
-        data_path_timeout_ms: int = 120_000,
+        data_path_timeout_ms: int = 60_000,
     ):
         """
         Initialise for QAIC inference Session
