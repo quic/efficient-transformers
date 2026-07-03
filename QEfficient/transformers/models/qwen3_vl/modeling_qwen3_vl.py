@@ -150,10 +150,11 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
         freq_table = self.rotary_pos_emb(max_hw)  # (max_hw, dim // 2)
         device = freq_table.device
         bs, num_frames, height, width = grid_thw.shape
-        grid_thw = (torch.tensor(grid_thw.shape, dtype=torch.int64)).unsqueeze(0)
+        # grid_thw = (torch.tensor(grid_thw.shape, dtype=torch.int64)).unsqueeze(0)
 
-        total_tokens = int(torch.prod(grid_thw, dim=1).sum().item())
-        pos_ids = torch.empty((total_tokens, 2), dtype=torch.long, device=device)
+        # total_tokens = int(torch.prod(grid_thw, dim=1).sum().item())
+        # total_tokens = int(torch.prod(grid_thw, dim=1).sum())
+        # pos_ids = torch.empty((total_tokens, 2), dtype=torch.long, device=device)
 
         merged_h, merged_w = height // merge_size, width // merge_size
 
@@ -174,8 +175,10 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
         if num_frames > 1:
             coords = coords.repeat(num_frames, 1)
 
-        pos_ids = coords
-        embeddings = freq_table[pos_ids]  # lookup rotary embeddings
+        coords = coords.repeat(bs, 1)  # extra for bs >1
+
+        # pos_ids = coords
+        embeddings = freq_table[coords]  # lookup rotary embeddings
         embeddings = embeddings.flatten(1)
         return embeddings
 
@@ -219,17 +222,22 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
         pos_embeds = self.pos_embed(idx_tensor) * weight_tensor[:, :, None]
         patch_pos_embeds = pos_embeds[0] + pos_embeds[1] + pos_embeds[2] + pos_embeds[3]
 
-        patch_pos_embeds = patch_pos_embeds.split([h * w])
+        # patch_pos_embeds has shape (h*w, embed_dim). We need just [0],
+        # but split([h*w]) bakes a static concrete [748] into the graph.
+        # Use narrow/slice instead so the first-dim stays symbolic.
+        patch_pos_embeds = patch_pos_embeds.narrow(0, 0, h * w)
 
         patch_pos_embeds_permute = []
         merge_size = self.config.spatial_merge_size
-        pos_embed = patch_pos_embeds[0]
+        pos_embed = patch_pos_embeds
         pos_embed = pos_embed.repeat(t, 1)
+        embed_dim = pos_embed.shape[-1]
 
         pos_embed = (
-            pos_embed.view(t, h // merge_size, merge_size, w // merge_size, merge_size, -1)
+            pos_embed.view(t, h // merge_size, merge_size, w // merge_size, merge_size, embed_dim)
             .permute(0, 1, 3, 2, 4, 5)
-            .flatten(0, 4)
+            .contiguous()
+            .view(-1, embed_dim)
         )
         patch_pos_embeds_permute.append(pos_embed)
         patch_pos_embeds = torch.cat(patch_pos_embeds_permute)
@@ -253,9 +261,9 @@ class QEffQwen3VLVisionModel(Qwen3VLVisionModel):
         position_embeddings = (emb.cos(), emb.sin())
         bs, t, h, w = grid_thw.shape
 
-        t = torch.arange(t, t + 1).squeeze().expand(bs)
-        h = torch.arange(h, h + 1).squeeze().expand(bs)
-        w = torch.arange(w, w + 1).squeeze().expand(bs)
+        t = torch.full((bs,), t, dtype=torch.int64)
+        h = torch.full((bs,), h, dtype=torch.int64)
+        w = torch.full((bs,), w, dtype=torch.int64)
 
         cu_seqlens = (h * w).cumsum(
             dim=0,
@@ -310,12 +318,8 @@ class QEffQwen3VLVisionAttention(Qwen3VLVisionAttention):
             cos, sin = position_embeddings
         q, k = apply_rotary_pos_emb_vision(q, k, cos, sin)
 
-        attention_mask = torch.full(
-            [1, seq_length, seq_length], torch.finfo(q.dtype).min, device=q.device, dtype=q.dtype
-        )
-
         # Create index grids
-        seq_len = attention_mask.shape[-1]
+        seq_len = seq_length
         rows = torch.arange(seq_len).view(1, -1)
         cols = torch.arange(seq_len).view(-1, 1)
 
@@ -328,13 +332,15 @@ class QEffQwen3VLVisionAttention(Qwen3VLVisionAttention):
         col_mask = (cols >= start) & (cols < end)
         block_mask = row_mask & col_mask  # shape: (num_blocks, seq_len, seq_len)
 
-        # Combine all blocks into one mask
-        final_mask = torch.ones((seq_len, seq_len), dtype=self.config.dtype)
-        final_mask[block_mask.any(dim=0)] = 0
-
-        final_mask = torch.where(final_mask == 1.0, torch.finfo(q.dtype).min, final_mask)
-
-        attention_mask[0] = final_mask
+        # Combine all blocks into one mask.
+        # Use torch.where directly on the boolean mask to avoid a boolean-indexed
+        # assignment (final_mask[mask] = 0) which lowers to index_put with a 0-d
+        # scalar tensor constant that becomes a FakeTensor in the
+        # @nested_compile_region subfunction and cannot be serialized to ONNX.
+        valid = block_mask.any(dim=0)  # True where attention is allowed
+        attention_mask = torch.where(
+            valid, torch.zeros((seq_len, seq_len), dtype=q.dtype, device=q.device), torch.finfo(q.dtype).min
+        ).unsqueeze(0)
 
         q = q.transpose(0, 1)
         k = k.transpose(0, 1)
@@ -674,7 +680,7 @@ class QEffQwen3VLEncoderWrapper(nn.Module):
     def forward(self, pixel_values, image_grid_thw):
         image_embeds, deepstack_feature_lists = self.model.visual(pixel_values, grid_thw=image_grid_thw)
         bs = image_grid_thw.shape[0]
-        split_size = torch.floor_divide(torch.tensor(image_embeds.size(0)), bs)
+        split_size = image_embeds.size(0) // bs
         image_embeds = image_embeds.reshape(bs, split_size, image_embeds.size(1))
         deepstack_features = torch.stack(
             [feature.reshape(bs, split_size, feature.size(1)) for feature in deepstack_feature_lists],
@@ -849,7 +855,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         # cond = torch.eq(seq_len_tensor, seq_len_tensor.new_ones(()))
 
         # inputs_embeds = torch.where(cond, inputs_embeds, image_input_embeds)
-        outputs = self.language_model(
+        outputs = self.model.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
             past_key_values=past_key_values,
@@ -861,6 +867,8 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+
+        image_embeds = image_embeds.detach().clone()
         if _should_export_embedding_output(self):
             return logits, image_embeds, image_idx, hidden_states, outputs.past_key_values
 
@@ -871,34 +879,38 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         comp_ctx_lengths: Optional[List[int]] = None,
         kv_offload: bool = False,
         continuous_batching: bool = False,
+        use_dynamo: bool = False,
         **kwargs,
     ):
         prefill_seq_len = kwargs.get("prefill_seq_len", constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE if not use_dynamo else 2
+        # bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
         if prefill_seq_len is None:
             prefill_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         prefill_seq_len = int(prefill_seq_len)
 
         inputs_shapes = {}
-        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, prefill_seq_len)
+        inputs_shapes["input_ids"] = (bs, prefill_seq_len)
         # vision_size = 1024
         vision_size = 187
         inputs_shapes["vision_embeds"] = (
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             vision_size,
             self.model.config.vision_config.out_hidden_size,
         )
-        inputs_shapes["image_grid_thw"] = (1, 1, 22, 34)
+        inputs_shapes["image_grid_thw"] = (bs, 1, 22, 34)
         inputs_shapes["position_ids"] = (
             3,
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             prefill_seq_len,
         )
-        inputs_shapes["pixel_values"] = (748, 1536)
+        inputs_shapes["pixel_values"] = (748 * bs, 1536)
         inputs_shapes["image_idx"] = (1, 1)
-        inputs_shapes["image_sizes"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 2)
+        inputs_shapes["image_sizes"] = (bs, 2)
         inputs_shapes["deepstack_features"] = (
             len(self.config.vision_config.deepstack_visual_indexes),
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             vision_size,
             self.model.config.vision_config.out_hidden_size,
         )
@@ -914,11 +926,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             (inputs_shapes["vision_embeds"]), dtype=self.model.config.torch_dtype
         )
         lang_inputs["position_ids"] = (
-            (
-                torch.arange(prefill_seq_len, dtype=torch.int64)
-                .view(1, prefill_seq_len)
-                .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
-            )
+            (torch.arange(prefill_seq_len, dtype=torch.int64).view(1, prefill_seq_len).repeat(bs, 1))
             .unsqueeze(0)
             .repeat(4, 1, 1)
         )
@@ -927,9 +935,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             (inputs_shapes["deepstack_features"]), dtype=self.model.config.torch_dtype
         )
         # Add data for KV
-
-        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
@@ -1205,11 +1210,11 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             elif dim_name == "grid_width":
                 d = Dim(dim_name, min=1, max=8192)
             elif dim_name == "grid_h":
-                d = Dim(dim_name, min=1, max=1024)
+                d = Dim.STATIC
             elif dim_name == "grid_w":
-                d = Dim(dim_name, min=1, max=1024)
+                d = Dim.STATIC
             elif dim_name == "time":
-                d = Dim(dim_name, min=1, max=256)
+                d = Dim.STATIC
             elif "vision_size" in dim_name:
                 d = Dim(dim_name, min=1, max=65536)
             elif "num_feature_layers" in dim_name:
@@ -1246,11 +1251,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                     1: get_dim("time"),
                     2: get_dim("grid_h"),
                     3: get_dim("grid_w"),
-                },
-                "deepstack_features": {
-                    0: get_dim("num_feature_layers"),
-                    1: get_dim("vision_batch_size"),
-                    2: get_dim("vision_size"),
                 },
             }
 
