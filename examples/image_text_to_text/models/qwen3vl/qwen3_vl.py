@@ -21,12 +21,12 @@ config.text_config.num_hidden_layers = 9
 config.vision_config.deepstack_visual_indexes = [2, 4, 6, 7, 8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=True, config=config
+    model_id, attn_implementation="eager", kv_offload=False, config=config
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 ### use skip_vision=Ture, if want to run only text, else false ###
-skip_vision = True
+skip_vision = False
 
 if skip_vision:
     ## Only Text ##
@@ -91,7 +91,7 @@ else:
         aic_enable_depth_first=True,
         mos=1,
         use_onnx_subfunctions=True,
-        use_dynamo=True,
+        use_dynamo=False,
     )
 
     ### IMAGE + TEXT ###
