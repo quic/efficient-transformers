@@ -934,7 +934,7 @@ class QEffTextGenerationBase:
                         new_token_id = self.update_decode_input(outputs, position_ids, generation_len, decode_batch_id)
 
                         batch_id_map[decode_batch_id] = max(batch_id_map.values()) + 1
-                        self.generated_ids[batch_id_map[decode_batch_id], 0] = new_token_id.squeeze(1)
+                        self.generated_ids[batch_id_map[decode_batch_id], 0] = new_token_id.squeeze()
                         generated_id_current_index[decode_batch_id] = 1
 
                         self._set_output_buffers(

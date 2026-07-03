@@ -278,10 +278,11 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         next_token_id = self._fetch_next_token_id(outputs)
 
         # Store the generated values.
-        self.decode_input_ids[decode_batch_id or slice(None)] = next_token_id
-        self.decode_pos_ids[:, decode_batch_id] = position_ids.squeeze(1)
-        self.generated_ids[decode_batch_id or slice(None), 0] = next_token_id.squeeze(1)
-        self.generation_len[decode_batch_id or slice(None)] = generation_len
+        decode_batch = decode_batch_id if decode_batch_id is not None else slice(None)
+        self.decode_input_ids[decode_batch] = next_token_id
+        self.decode_pos_ids[:, decode_batch] = position_ids.squeeze(1)
+        self.generated_ids[decode_batch, 0] = next_token_id.squeeze()
+        self.generation_len[decode_batch] = generation_len
         return next_token_id
 
     def _execute_chunked_prefill(
