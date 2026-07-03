@@ -1660,10 +1660,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         ):
             logits_index = output_names["lang"].index("logits")
             output_names["lang"][logits_index] = "next_tokens"
-            inputs["lang"], output_names["lang"], dynamic_axes["lang"] = get_sampling_inputs_and_outputs(
+            inputs["lang"], output_names["lang"], dynamic_axes["lang"], _ = get_sampling_inputs_and_outputs(
                 example_inputs=inputs["lang"],
                 output_names=output_names["lang"],
                 dynamic_axes=dynamic_axes["lang"],
+                dynamic_shapes=dynamic_shapes["lang"],
                 continuous_batching=self.continuous_batching,
                 vocab_size=self.model.language_model.config.vocab_size,
                 qaic_config=self.lang_model.model.qaic_config,
@@ -4182,7 +4183,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
 
         if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
-            example_inputs, output_names, dynamic_axes = get_sampling_inputs_and_outputs(
+            example_inputs, output_names, dynamic_axes, _ = get_sampling_inputs_and_outputs(
                 example_inputs=example_inputs,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
