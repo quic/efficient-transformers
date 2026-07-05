@@ -194,9 +194,11 @@ class QEffQwen3MoeTopKRouter(Qwen3MoeTopKRouter):
 class QEffQwen3MoeExperts(Qwen3MoeExperts):
     def __qeff_init__(self):
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
-        self.gate_proj = nn.Parameter(self.gate_up_proj[:, : self.expert_dim, :].detach().clone().transpose(1, 2))
-        self.up_proj = nn.Parameter(self.gate_up_proj[:, self.expert_dim :, :].detach().clone().transpose(1, 2))
-        self.down_proj_t = nn.Parameter(self.down_proj.detach().clone().transpose(1, 2))
+        gate_up_proj = self.gate_up_proj.detach()
+        down_proj = self.down_proj.detach()
+        self.gate_proj = nn.Parameter(gate_up_proj[:, : self.expert_dim, :].transpose(1, 2), requires_grad=False)
+        self.up_proj = nn.Parameter(gate_up_proj[:, self.expert_dim :, :].transpose(1, 2), requires_grad=False)
+        self.down_proj_t = nn.Parameter(down_proj.transpose(1, 2), requires_grad=False)
 
 
 class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
