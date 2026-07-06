@@ -19,7 +19,8 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 subfunc_npi_file_path = os.path.join(dir_path, "subfunction_120b_npi.yaml")
 non_subfunc_npi_file_path = os.path.join(dir_path, "non_subfunction_120b_npi.yaml")
 
-model_id = "tiny-random/gpt-oss-bf16"  # weights are not required to convert to fp32
+# model_id = "tiny-random/gpt-oss-bf16"  # weights are not required to convert to fp32
+model_id = "openai/gpt-oss-20b"
 
 prompt = """
 Once upon a time, in a small town, there lived a young boy named Alex. Alex was a curious and adventurous child, always eager to explore the world around him. One day, while playing in the park, Alex stumbled upon a mysterious old book hidden beneath a pile of leaves. The book was filled with stories of distant lands, magical creatures, and extraordinary adventures.
@@ -30,13 +31,15 @@ The path to the treasure was not an easy one. Alex had to navigate through dense
 """
 # Run prefill
 config = AutoConfig.from_pretrained(model_id)
+config.num_hidden_layers = 2
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 PREFILL_SEQ_LEN = 512
-CTX_LEN = 1024
-NUM_CORES = 4
+PROMPT_LEN = 4096
+CTX_LEN = 8192
+NUM_CORES = 16
 MOE_PREFILL_PACKED_CHUNK_SIZE = 256
 
-qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, num_hidden_layers=2)
 
 decode_qpc_path = qeff_model.compile(
     prefill_seq_len=1,
@@ -77,12 +80,12 @@ prefill_qpc_path = qeff_model.compile(
     node_precision_info=subfunc_npi_file_path,
 )
 
+print(f"prefill qpc path: {prefill_qpc_path}")
 
 inputs = tokenizer(prompt, return_tensors="np", padding=True)
 position_ids = inputs["attention_mask"].sum(1, keepdims=True)
 generation_len = CTX_LEN - position_ids.max()
-padded_len = inputs["input_ids"].shape[1]
-num_chunks = -(padded_len // -PREFILL_SEQ_LEN)  # ceil divide without float
+num_chunks = -(PROMPT_LEN // -PREFILL_SEQ_LEN)  # ceil divide without float
 padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
 inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
@@ -96,6 +99,7 @@ decode_session = QAICInferenceSession(decode_qpc_path)
 prefill_session = QAICInferenceSession(prefill_qpc_path)
 
 all_outputs = []
+loop_start = time.time()
 for i in range(num_chunks):
     chunk_inputs = inputs.copy()
     chunk_inputs["input_ids"] = inputs["input_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
@@ -106,6 +110,9 @@ for i in range(num_chunks):
     for i in range(config.num_hidden_layers):
         inputs[f"past_key.{i}"] = qpc_out[f"past_key.{i}_RetainedState"]
         inputs[f"past_value.{i}"] = qpc_out[f"past_value.{i}_RetainedState"]
+print(f"ttft={(time.time() - loop_start):.3f}")
+
+exit(0)
 
 all_outputs.append(np.argmax(qpc_out["logits"]))
 decode_inputs = {
