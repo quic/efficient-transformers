@@ -1520,6 +1520,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
+        offload_pt_weights: Optional[bool] = None,
         **kwargs,
     ) -> str:
         """
@@ -1563,6 +1564,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 kv_offload=True,
                 continuous_batching=self.continuous_batching,
                 comp_ctx_lengths=self.comp_ctx_lengths_decode,
+                prefill_seq_len=prefill_seq_len,
             )
             dynamic_axes = self.model.get_onnx_dynamic_axes(
                 kv_offload=True,
@@ -1570,7 +1572,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 comp_ctx_lengths=self.comp_ctx_lengths_decode,
             )
         except TypeError:
-            inputs = self.model.get_dummy_inputs(kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode)
+            inputs = self.model.get_dummy_inputs(
+                kv_offload=True,
+                comp_ctx_lengths=self.comp_ctx_lengths_decode,
+            )
             dynamic_axes = self.model.get_onnx_dynamic_axes(
                 kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
             )
@@ -1611,10 +1616,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 use_onnx_subfunctions=use_onnx_subfunctions,
             )
 
-        if prefill_only and prefill_seq_len > 1:
-            offload_pt_weights = False  # to keep weight for decode onnx
-        else:
-            offload_pt_weights = kwargs.get("offload_pt_weights", True)
+        # TODO: remove the current pt weight offload capability once CustomLoader is in place
+        if offload_pt_weights is None:
+            if prefill_only and prefill_seq_len > 1:
+                offload_pt_weights = False  # keep weights resident for the decode export
+            else:
+                offload_pt_weights = True
 
         if not skip_lang:
             self.lang_model.export(
@@ -1807,6 +1814,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         skip_lang: Optional[bool] = False,
         use_onnx_subfunctions: bool = False,
         prefill_only=None,
+        offload_pt_weights: Optional[bool] = None,
         enable_chunking=False,
         qaic_config: Optional[dict] = None,
         layerwise: bool = False,
@@ -1894,6 +1902,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     skip_lang=skip_lang,
                     use_onnx_subfunctions=use_onnx_subfunctions,
                     prefill_only=prefill_only,
+                    offload_pt_weights=offload_pt_weights,
                     enable_chunking=enable_chunking,
                     qaic_config=qaic_config,
                     kv_cache_prefix=kv_cache_prefix,
@@ -1923,6 +1932,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 skip_lang=skip_lang,
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 prefill_only=prefill_only,
+                offload_pt_weights=offload_pt_weights,
                 enable_chunking=enable_chunking,
                 qaic_config=qaic_config,
                 layerwise_window_size=layerwise_window_size,
@@ -2018,6 +2028,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_seq_len=prefill_seq_len,
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
+                offload_pt_weights=offload_pt_weights,
             )
             if layerwise_cache_probe:
                 return self.lang_model.onnx_path
@@ -4033,6 +4044,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
                 prefill_only=prefill_only,
                 kv_cache_prefix=kv_cache_prefix,
+                _layerwise_cache_probe=kwargs.get("_layerwise_cache_probe", False),
             )
         else:
             return self._export(

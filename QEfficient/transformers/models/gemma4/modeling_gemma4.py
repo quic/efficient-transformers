@@ -18,6 +18,7 @@ import yaml
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.models.gemma4.modeling_gemma4 import (
+    Gemma4ClippableLinear,
     Gemma4ForCausalLM,
     Gemma4ForConditionalGeneration,
     Gemma4TextAttention,
@@ -25,6 +26,7 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4TextExperts,
     Gemma4TextModel,
     Gemma4TextRouter,
+    Gemma4VisionAttention,
     apply_rotary_pos_emb,
     eager_attention_forward,
 )
@@ -56,6 +58,31 @@ def _saturating_residual_add(residual: torch.Tensor, hidden_states: torch.Tensor
     return (residual.float() + hidden_states.float()).clamp(_FP16_CLAMP_MIN, _FP16_CLAMP_MAX).to(hidden_states.dtype)
 
 
+def _attention_mask_min(dtype: torch.dtype, device: torch.device | None = None) -> torch.Tensor:
+    # During export with -convert-to-fp16, using finfo(float32).min can create
+    # extreme constants that destabilize downstream compiler passes.
+    if _is_onnx_export():
+        return torch.tensor(_FP16_CLAMP_MIN, dtype=dtype, device=device)
+    return torch.tensor(torch.finfo(dtype).min, dtype=dtype, device=device)
+
+
+def _sanitize_clippable_linear_bounds(module: nn.Module) -> None:
+    # Ensure clipping bounds are finite before ONNX export.
+    for submodule in module.modules():
+        if not getattr(submodule, "use_clipped_linears", False):
+            continue
+        for name, fallback in (
+            ("input_min", -1e30),
+            ("input_max", 1e30),
+            ("output_min", -1e30),
+            ("output_max", 1e30),
+        ):
+            buf = getattr(submodule, name, None)
+            if isinstance(buf, torch.Tensor) and (torch.isinf(buf).any() or torch.isnan(buf).any()):
+                with torch.no_grad():
+                    buf.fill_(fallback)
+
+
 def _build_additive_attention_mask(
     position_ids: torch.Tensor,
     target_length,
@@ -67,7 +94,7 @@ def _build_additive_attention_mask(
         target_length=target_length,
         sliding_window=sliding_window,
     )
-    return causal_mask.to(dtype=dtype) * torch.finfo(dtype).min
+    return causal_mask.to(dtype=dtype) * _attention_mask_min(dtype, causal_mask.device)
 
 
 def _build_bidirectional_vision_attention_mask(
@@ -88,7 +115,7 @@ def _build_bidirectional_vision_attention_mask(
         sliding_window=sliding_window,
     )
     if mm_token_type_ids is None:
-        return base_mask.to(dtype=dtype) * torch.finfo(dtype).min
+        return base_mask.to(dtype=dtype) * _attention_mask_min(dtype, base_mask.device)
 
     is_vision = (mm_token_type_ids == 1) | (mm_token_type_ids == 2)
     is_prev_vision = torch.roll(is_vision, shifts=1, dims=-1)
@@ -105,7 +132,65 @@ def _build_bidirectional_vision_attention_mask(
 
     same_group = (vision_group_ids.unsqueeze(-1) == kv_group_ids.unsqueeze(1)) & (vision_group_ids.unsqueeze(-1) >= 0)
     attention_mask = base_mask & ~same_group.unsqueeze(1)
-    return attention_mask.to(dtype=dtype) * torch.finfo(dtype).min
+    return attention_mask.to(dtype=dtype) * _attention_mask_min(dtype, attention_mask.device)
+
+
+def apply_multidimensional_rope(
+    x: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    position_ids: torch.Tensor,
+    unsqueeze_dim: int = 2,
+) -> torch.Tensor:
+    """Applies multidimensional RoPE to inputs.
+
+    For ndim==2 (Gemma4 vision), applies RoPE split-free and reshape-free to
+    avoid QAIC issues with non-constant Split inputs and shape-driven reshapes.
+    """
+    ndim = int(position_ids.shape[-1])
+    num_input_channels = int(x.shape[-1])
+    num_rotated_channels_per_dim = 2 * (num_input_channels // (2 * ndim))
+
+    if num_rotated_channels_per_dim <= 0:
+        raise ValueError(
+            "Invalid configuration: num_rotated_channels_per_dim must be > 0, got"
+            f" {num_rotated_channels_per_dim} (num_input_channels={num_input_channels},"
+            f" ndim={ndim})"
+        )
+
+    total_rotated_channels = num_rotated_channels_per_dim * ndim
+    if total_rotated_channels != num_input_channels:
+        raise ValueError(
+            "Invalid configuration: expected head dim to be divisible by 2 * ndim."
+            f" got num_input_channels={num_input_channels}, ndim={ndim}"
+        )
+
+    if ndim == 2:
+        c = num_rotated_channels_per_dim
+        y0 = apply_rotary_pos_emb(
+            x=x[..., :c],
+            cos=cos[..., :c],
+            sin=sin[..., :c],
+            unsqueeze_dim=unsqueeze_dim,
+        )
+        y1 = apply_rotary_pos_emb(
+            x=x[..., c : 2 * c],
+            cos=cos[..., c : 2 * c],
+            sin=sin[..., c : 2 * c],
+            unsqueeze_dim=unsqueeze_dim,
+        )
+        return torch.cat((y0, y1), dim=-1)
+
+    x_grouped = x.reshape(*x.shape[:-1], ndim, num_rotated_channels_per_dim)
+    cos_grouped = cos.reshape(*cos.shape[:-1], ndim, num_rotated_channels_per_dim)
+    sin_grouped = sin.reshape(*sin.shape[:-1], ndim, num_rotated_channels_per_dim)
+    y_grouped = apply_rotary_pos_emb(
+        x=x_grouped,
+        cos=cos_grouped,
+        sin=sin_grouped,
+        unsqueeze_dim=unsqueeze_dim,
+    )
+    return y_grouped.reshape(*x.shape[:-1], total_rotated_channels)
 
 
 class QEffGemma4TextRouter(Gemma4TextRouter):
@@ -132,6 +217,39 @@ class QEffGemma4TextRouter(Gemma4TextRouter):
         top_k_weights = top_k_weights * self.per_expert_scale[top_k_index]
 
         return router_probabilities, top_k_weights, top_k_index
+
+
+class QEffGemma4ClippableLinear(Gemma4ClippableLinear):
+    def __init__(
+        self,
+        config,
+        in_features: int,
+        out_features: int,
+    ) -> None:
+        super().__init__(config, in_features, out_features)
+        if self.use_clipped_linears:
+            with torch.no_grad():
+                self.input_min.fill_(-1e30)
+                self.input_max.fill_(1e30)
+                self.output_min.fill_(-1e30)
+                self.output_max.fill_(1e30)
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        if self.use_clipped_linears:
+            in_min = self.input_min.to(dtype=hidden_states.dtype, device=hidden_states.device)
+            in_max = self.input_max.to(dtype=hidden_states.dtype, device=hidden_states.device)
+            hidden_states = torch.maximum(hidden_states, in_min)
+            hidden_states = torch.minimum(hidden_states, in_max)
+
+        hidden_states = self.linear(hidden_states)
+
+        if self.use_clipped_linears:
+            out_min = self.output_min.to(dtype=hidden_states.dtype, device=hidden_states.device)
+            out_max = self.output_max.to(dtype=hidden_states.dtype, device=hidden_states.device)
+            hidden_states = torch.maximum(hidden_states, out_min)
+            hidden_states = torch.minimum(hidden_states, out_max)
+
+        return hidden_states
 
 
 class QEffGemma4CustomRMSNormAIC(nn.Module):
@@ -231,6 +349,50 @@ class QEffPrefillChunckedGemma4TextExperts(Gemma4TextExperts):
         return out
 
 
+class QEffGemma4VisionAttention(Gemma4VisionAttention):
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: torch.Tensor = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        **kwargs,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.head_dim)
+
+        cos, sin = position_embeddings
+
+        query_states = self.q_proj(hidden_states).view(hidden_shape)
+        query_states = self.q_norm(query_states)
+        query_states = apply_multidimensional_rope(query_states, cos, sin, position_ids)
+        query_states = query_states.transpose(1, 2)
+
+        key_states = self.k_proj(hidden_states).view(hidden_shape)
+        key_states = self.k_norm(key_states)
+        key_states = apply_multidimensional_rope(key_states, cos, sin, position_ids)
+        key_states = key_states.transpose(1, 2)
+
+        value_states = self.v_proj(hidden_states).view(hidden_shape)
+        value_states = self.v_norm(value_states)
+        value_states = value_states.transpose(1, 2)
+
+        attn_output, attn_weights = eager_attention_forward(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            dropout=self.attention_dropout if self.training else 0.0,
+            scaling=self.scaling,
+            **kwargs,
+        )
+
+        attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+        attn_output = self.o_proj(attn_output)
+        return attn_output, attn_weights
+
+
 class QEffGemma4TextAttention(Gemma4TextAttention):
     def __qeff_init__(self):
         for norm_name in ("q_norm", "k_norm", "v_norm"):
@@ -251,6 +413,9 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
+        cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+        token_key_states = None
+        token_value_states = None
 
         cos, sin = position_embeddings
 
@@ -263,6 +428,10 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
             key_states, value_states = past_key_values.shared_layers[self.kv_shared_layer_index]
             key_states = key_states.to(query_states.device)
             value_states = value_states.to(query_states.device)
+            if hasattr(past_key_values, "shared_layers_token"):
+                token_states = past_key_values.shared_layers_token.get(self.kv_shared_layer_index)
+                if token_states is not None:
+                    token_key_states, token_value_states = token_states
         else:
             key_states = self.k_proj(hidden_states).view(hidden_shape)
             value_states = self.v_proj(hidden_states).view(hidden_shape) if self.v_proj is not None else key_states
@@ -273,19 +442,32 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
 
             value_states = self.v_norm(value_states)
             value_states = value_states.transpose(1, 2)
+            token_key_states, token_value_states = key_states, value_states
 
         if past_key_values is not None:
-            if not self.is_kv_shared_layer:
+            if self.is_kv_shared_layer:
+                if token_key_states is not None and token_value_states is not None:
+                    key_states, value_states = past_key_values.update(
+                        token_key_states,
+                        token_value_states,
+                        self.layer_idx,
+                        cache_kwargs,
+                    )
+            else:
                 key_states, value_states = past_key_values.update(
                     key_states,
                     value_states,
                     self.layer_idx,
-                    {"position_ids": position_ids, "batch_index": batch_index},
+                    cache_kwargs,
                 )
             if self.store_full_length_kv:
                 if not hasattr(past_key_values, "shared_layers"):
                     past_key_values.shared_layers = {}
+                if not hasattr(past_key_values, "shared_layers_token"):
+                    past_key_values.shared_layers_token = {}
                 past_key_values.shared_layers[self.layer_idx] = key_states, value_states
+                if token_key_states is not None and token_value_states is not None:
+                    past_key_values.shared_layers_token[self.layer_idx] = token_key_states, token_value_states
 
         if mm_token_type_ids is not None and hidden_states.shape[1] != 1:
             attention_mask = _build_bidirectional_vision_attention_mask(
@@ -997,7 +1179,13 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         max_patches = self._get_vision_max_patches()
-        mm_tokens_per_image = self._get_mm_tokens_per_image()
+        user_vision_size = compiler_options.pop("vision_size", None)
+        if user_vision_size:
+            if user_vision_size >= ctx_len:
+                raise ValueError("vision_size must be less than ctx_len")
+            vision_size = user_vision_size
+        else:
+            vision_size = self._get_mm_tokens_per_image()
 
         vision = [{"batch_size": batch_size, "max_patches": max_patches}]
 
@@ -1008,7 +1196,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 "ctx_len": ctx_len,
                 "sliding_window": self.model.language_model.config.sliding_window,
                 "vision_batch_size": batch_size,
-                "vision_tokens": mm_tokens_per_image,
+                "vision_size": vision_size,
             }
             if comp_ctx_lengths is not None:
                 spec["comp_ctx_lengths"] = comp_ctx_lengths
@@ -1027,7 +1215,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 "ctx_len": ctx_len,
                 "sliding_window": self.model.language_model.config.sliding_window,
                 "vision_batch_size": batch_size,
-                "vision_tokens": mm_tokens_per_image,
+                "vision_size": vision_size,
             }
             if comp_ctx_lengths is not None:
                 spec["comp_ctx_lengths"] = comp_ctx_lengths
@@ -1055,7 +1243,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         }
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
-            "vision_embeds": {0: "vision_batch_size", 1: "vision_tokens"},
+            "vision_embeds": {0: "vision_batch_size", 1: "vision_size"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
             "mm_token_type_ids": {0: "batch_size", 1: "seq_len"},
         }

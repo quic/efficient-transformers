@@ -23,6 +23,7 @@ import os
 import shutil
 import tempfile
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from copy import deepcopy
 from io import StringIO
 from pathlib import Path
 from typing import Dict, Optional, Set
@@ -37,10 +38,25 @@ from transformers import (
     AutoModel,
     AutoModelForCausalLM,
     AutoModelForCTC,
+    AutoModelForImageTextToText,
     AutoModelForSequenceClassification,
     AutoModelForSpeechSeq2Seq,
     AutoTokenizer,
     Qwen2Config,
+)
+from transformers.models.qwen3.configuration_qwen3 import Qwen3Config
+from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5Config, Qwen3_5TextConfig, Qwen3_5VisionConfig
+from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import (
+    Qwen3_5MoeConfig,
+    Qwen3_5MoeTextConfig,
+    Qwen3_5MoeVisionConfig,
+)
+from transformers.models.qwen3_moe.configuration_qwen3_moe import Qwen3MoeConfig
+from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig, Qwen3VLTextConfig, Qwen3VLVisionConfig
+from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import (
+    Qwen3VLMoeConfig,
+    Qwen3VLMoeTextConfig,
+    Qwen3VLMoeVisionConfig,
 )
 
 from QEfficient.transformers.models.modeling_auto import (
@@ -104,6 +120,24 @@ TINY_AUDIO_CTC_MODEL_ID = "hf-internal-testing/tiny-random-wav2vec2"
 TINY_WHISPER_MODEL_ID = "hf-internal-testing/tiny-random-WhisperForConditionalGeneration"
 TINY_SEQ_CLASSIFICATION_MODEL_ID = "ydshieh/tiny-random-BertForSequenceClassification"
 TINY_AWQ_MODEL_ID = "optimum-intel-internal-testing/tiny-mixtral-AWQ-4bit"
+
+QWEN_QUICKCHECK_MODEL_TYPES = (
+    "qwen3",
+    "qwen3_5",
+    "qwen3_moe",
+    "qwen3_vl",
+    "qwen3_vl_moe",
+    "qwen3_5_moe",
+)
+QWEN_MOE_QUICKCHECK_MODEL_TYPES = ("qwen3_moe", "qwen3_vl_moe", "qwen3_5_moe")
+QWEN_EXPECTED_DECODER_LAYERS = {
+    "qwen3": "QEffQwen3DecoderLayer",
+    "qwen3_5": "QEffQwen3_5DecoderLayer",
+    "qwen3_moe": "QEffQwen3MoeDecoderLayer",
+    "qwen3_vl": "QEffQwen3VLTextDecoderLayer",
+    "qwen3_vl_moe": "QEffQwen3VLMoeTextDecoderLayer",
+    "qwen3_5_moe": "QEffQwen3_5MoeDecoderLayer",
+}
 
 TINY_MOE_PREFILL_SUBFUNCTION_CONFIGS = {
     "glm4_moe": dict(
@@ -176,6 +210,63 @@ def _ort_session(onnx_path: Path) -> ort.InferenceSession:
     threads = _per_test_thread_budget()
     options.intra_op_num_threads = threads
     options.inter_op_num_threads = 1
+
+    onnx_model = onnx.load(onnx_path, load_external_data=True)
+    int32_max = torch.iinfo(torch.int32).max
+    graph_was_patched = False
+    added_initializers = {}
+
+    def _zero_int32_max_tensor_attr(attr) -> bool:
+        if attr.type != onnx.AttributeProto.TENSOR:
+            return False
+        np_tensor = onnx.numpy_helper.to_array(attr.t, os.path.dirname(onnx_path))
+        if np.issubdtype(np_tensor.dtype, np.integer) and np.any(np_tensor == int32_max):
+            patched_tensor = np.where(np_tensor == int32_max, np.array(0, dtype=np_tensor.dtype), np_tensor)
+            attr.t.CopyFrom(onnx.numpy_helper.from_array(patched_tensor.astype(np_tensor.dtype, copy=False)))
+            return True
+        return False
+
+    def _patch_constant_nodes(nodes, *, allow_initializers: bool = False) -> bool:
+        patched = False
+        for node in nodes:
+            if node.op_type in {"Constant", "ConstantOfShape"}:
+                for attr in node.attribute:
+                    if _zero_int32_max_tensor_attr(attr):
+                        patched = True
+                        if allow_initializers and node.op_type == "Constant":
+                            np_tensor = onnx.numpy_helper.to_array(attr.t, os.path.dirname(onnx_path))
+                            added_initializers[node.output[0]] = ort.OrtValue.ortvalue_from_numpy(np_tensor)
+        return patched
+
+    def _patch_ort_index_inputs(nodes) -> bool:
+        patched = False
+        for index, node in list(enumerate(nodes)):
+            if node.op_type not in {"GatherND", "ScatterND"} or len(node.input) < 2:
+                continue
+            indices_name = node.input[1]
+            cast_output = f"{indices_name}__ort_int64"
+            cast_node = onnx.helper.make_node(
+                "Cast",
+                inputs=[indices_name],
+                outputs=[cast_output],
+                name=f"{node.name or node.op_type}_IndicesCastToInt64",
+                to=onnx.TensorProto.INT64,
+            )
+            nodes.insert(index, cast_node)
+            node.input[1] = cast_output
+            patched = True
+        return patched
+
+    graph_was_patched |= _patch_constant_nodes(onnx_model.graph.node, allow_initializers=True)
+    graph_was_patched |= _patch_ort_index_inputs(onnx_model.graph.node)
+    for function_proto in onnx_model.functions:
+        graph_was_patched |= _patch_constant_nodes(function_proto.node)
+        graph_was_patched |= _patch_ort_index_inputs(function_proto.node)
+
+    for name, value in added_initializers.items():
+        options.add_initializer(name, value)
+    if graph_was_patched:
+        return ort.InferenceSession(onnx_model.SerializeToString(), sess_options=options)
     return ort.InferenceSession(str(onnx_path), sess_options=options)
 
 
@@ -366,6 +457,459 @@ def _export_vlm_with_text_fallback(model_id: str, out_dir: Path) -> Path:
             _skip_on_model_fetch_error(text_exc, model_id)
     except Exception as cfg_exc:
         _skip_on_model_fetch_error(cfg_exc, model_id)
+
+
+def _tiny_qwen3_config() -> Qwen3Config:
+    return Qwen3Config(
+        vocab_size=64,
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=8,
+        max_position_embeddings=32,
+        dtype="float32",
+    )
+
+
+def _tiny_qwen3_moe_config() -> Qwen3MoeConfig:
+    return Qwen3MoeConfig(
+        vocab_size=64,
+        hidden_size=16,
+        intermediate_size=32,
+        moe_intermediate_size=16,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        num_experts=2,
+        num_experts_per_tok=1,
+        max_position_embeddings=256,
+        decoder_sparse_step=1,
+        norm_topk_prob=True,
+        mlp_only_layers=[],
+        dtype="float32",
+    )
+
+
+def _tiny_qwen3_5_text_config(*, moe: bool = False) -> Qwen3_5TextConfig | Qwen3_5MoeTextConfig:
+    kwargs = dict(
+        vocab_size=64,
+        hidden_size=16,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=8,
+        max_position_embeddings=32,
+        layer_types=["full_attention", "linear_attention"],
+        dtype="float32",
+    )
+    if moe:
+        kwargs.update(
+            moe_intermediate_size=16,
+            shared_expert_intermediate_size=16,
+            num_experts=2,
+            num_experts_per_tok=1,
+        )
+        return Qwen3_5MoeTextConfig(**kwargs)
+
+    kwargs.update(
+        intermediate_size=32,
+        linear_key_head_dim=8,
+        linear_value_head_dim=8,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+    )
+    return Qwen3_5TextConfig(**kwargs)
+
+
+def _tiny_qwen_vision_config(config_cls, *, deepstack: bool = False):
+    kwargs = dict(
+        depth=1,
+        hidden_size=16,
+        intermediate_size=32,
+        num_heads=2,
+        patch_size=4,
+        temporal_patch_size=1,
+        spatial_merge_size=1,
+        out_hidden_size=16,
+        num_position_embeddings=64,
+        dtype="float32",
+    )
+    if deepstack:
+        kwargs["deepstack_visual_indexes"] = []
+    return config_cls(**kwargs)
+
+
+def _tiny_qwen3_vl_config() -> Qwen3VLConfig:
+    text_config = Qwen3VLTextConfig(
+        vocab_size=64,
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=8,
+        max_position_embeddings=32,
+        rope_scaling={"rope_type": "default", "mrope_section": [11, 11, 10]},
+        dtype="float32",
+    )
+    return Qwen3VLConfig(
+        text_config=text_config,
+        vision_config=_tiny_qwen_vision_config(Qwen3VLVisionConfig, deepstack=True),
+        image_token_id=3,
+        video_token_id=4,
+        vision_start_token_id=5,
+        vision_end_token_id=6,
+    )
+
+
+def _tiny_qwen3_vl_moe_config() -> Qwen3VLMoeConfig:
+    text_config = Qwen3VLMoeTextConfig(
+        vocab_size=64,
+        hidden_size=16,
+        intermediate_size=32,
+        moe_intermediate_size=16,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=8,
+        max_position_embeddings=32,
+        num_experts=2,
+        num_experts_per_tok=1,
+        decoder_sparse_step=1,
+        mlp_only_layers=[],
+        rope_scaling={"rope_type": "default", "mrope_section": [11, 11, 10]},
+        dtype="float32",
+    )
+    return Qwen3VLMoeConfig(
+        text_config=text_config,
+        vision_config=_tiny_qwen_vision_config(Qwen3VLMoeVisionConfig, deepstack=True),
+        image_token_id=3,
+        video_token_id=4,
+        vision_start_token_id=5,
+        vision_end_token_id=6,
+    )
+
+
+def _tiny_qwen3_5_config() -> Qwen3_5Config:
+    return Qwen3_5Config(
+        text_config=_tiny_qwen3_5_text_config(),
+        vision_config=_tiny_qwen_vision_config(Qwen3_5VisionConfig),
+        image_token_id=3,
+        video_token_id=4,
+        vision_start_token_id=5,
+        vision_end_token_id=6,
+    )
+
+
+def _tiny_qwen3_5_moe_config() -> Qwen3_5MoeConfig:
+    return Qwen3_5MoeConfig(
+        text_config=_tiny_qwen3_5_text_config(moe=True),
+        vision_config=_tiny_qwen_vision_config(Qwen3_5MoeVisionConfig),
+        image_token_id=3,
+        video_token_id=4,
+        vision_start_token_id=5,
+        vision_end_token_id=6,
+    )
+
+
+def _tiny_qwen_config(model_type: str):
+    config_builders = {
+        "qwen3": _tiny_qwen3_config,
+        "qwen3_5": _tiny_qwen3_5_config,
+        "qwen3_moe": _tiny_qwen3_moe_config,
+        "qwen3_vl": _tiny_qwen3_vl_config,
+        "qwen3_vl_moe": _tiny_qwen3_vl_moe_config,
+        "qwen3_5_moe": _tiny_qwen3_5_moe_config,
+    }
+    return config_builders[model_type]()
+
+
+def _tiny_qwen_qeff_model(model_type: str):
+    config = _tiny_qwen_config(model_type)
+    torch.manual_seed(0)
+    if model_type in {"qwen3", "qwen3_moe"}:
+        hf_model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS).eval()
+        return QEFFAutoModelForCausalLM(hf_model, continuous_batching=False)
+
+    hf_model = AutoModelForImageTextToText.from_config(config).eval()
+    return QEFFAutoModelForImageTextToText(hf_model, kv_offload=True)
+
+
+def _qwen_decoder_qeff_model(qeff_model):
+    return qeff_model if isinstance(qeff_model, QEFFAutoModelForCausalLM) else qeff_model.lang_model
+
+
+def _qwen_decoder_export_model(qeff_model):
+    return _qwen_decoder_qeff_model(qeff_model).model
+
+
+def _qwen_decoder_subfunction_names(qeff_model) -> Set[str]:
+    return {module_cls.__name__ for module_cls in _qwen_decoder_export_model(qeff_model).get_submodules_for_export()}
+
+
+def _tiny_qwen_hf_model(model_type: str):
+    config = _tiny_qwen_config(model_type)
+    torch.manual_seed(0)
+    if model_type in {"qwen3", "qwen3_moe"}:
+        return AutoModelForCausalLM.from_config(config, **MODEL_KWARGS).eval()
+
+    return AutoModelForImageTextToText.from_config(config).eval()
+
+
+def _tiny_qwen_checkpoint_path(model_type: str, tmp_path) -> Path:
+    checkpoint_dir = tmp_path / f"{model_type}-tiny-checkpoint"
+    if checkpoint_dir.is_dir():
+        return checkpoint_dir
+
+    hf_model = _tiny_qwen_hf_model(model_type)
+    assert _tiny_qwen_text_config(model_type).num_hidden_layers == 2
+    hf_model.save_pretrained(checkpoint_dir)
+    return checkpoint_dir
+
+
+def _tiny_qwen_layerwise_hf_qeff_pair(model_type: str, tmp_path):
+    checkpoint_path = str(_tiny_qwen_checkpoint_path(model_type, tmp_path))
+    if model_type in {"qwen3", "qwen3_moe"}:
+        hf_model = AutoModelForCausalLM.from_pretrained(checkpoint_path, **MODEL_KWARGS).eval()
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
+            checkpoint_path,
+            continuous_batching=False,
+            layerwise=True,
+            layerwise_window_size=1,
+            **MODEL_KWARGS,
+        )
+    else:
+        hf_model = AutoModelForImageTextToText.from_pretrained(checkpoint_path, **MODEL_KWARGS).eval()
+        qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+            checkpoint_path,
+            kv_offload=True,
+            layerwise=True,
+            layerwise_window_size=1,
+            **MODEL_KWARGS,
+        )
+    return hf_model, qeff_model
+
+
+def _tiny_qwen_hf_qeff_pair(model_type: str, tmp_path=None, *, layerwise: bool = False):
+    if layerwise:
+        if tmp_path is None:
+            raise ValueError("Layerwise quickcheck requires tmp_path for the tiny checkpoint.")
+        return _tiny_qwen_layerwise_hf_qeff_pair(model_type, tmp_path)
+
+    hf_model = _tiny_qwen_hf_model(model_type)
+    qeff_source = deepcopy(hf_model).eval()
+    if model_type in {"qwen3", "qwen3_moe"}:
+        qeff_model = QEFFAutoModelForCausalLM(qeff_source, continuous_batching=False)
+    else:
+        qeff_model = QEFFAutoModelForImageTextToText(qeff_source, kv_offload=True)
+    return hf_model, qeff_model
+
+
+def _tiny_qwen_text_config(model_type: str):
+    config = _tiny_qwen_config(model_type)
+    return getattr(config, "text_config", config)
+
+
+def _qwen_causal_inputs(config, *, seq_len: int = 4, ctx_len: int = 8):
+    input_ids = (torch.arange(seq_len, dtype=torch.int64).view(1, seq_len) % (config.vocab_size - 1)) + 1
+    position_ids = torch.arange(seq_len, dtype=torch.int64).view(1, seq_len)
+    head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+    past_key_values = tuple(
+        (
+            torch.zeros((1, config.num_key_value_heads, ctx_len, head_dim), dtype=torch.float32),
+            torch.zeros((1, config.num_key_value_heads, ctx_len, head_dim), dtype=torch.float32),
+        )
+        for _ in range(config.num_hidden_layers)
+    )
+    return {
+        "input_ids": input_ids,
+        "position_ids": position_ids,
+        "past_key_values": past_key_values,
+    }
+
+
+def _qwen_vlm_lang_inputs(qeff_model, *, prefill_seq_len: int = 4):
+    try:
+        inputs = qeff_model.model.get_dummy_inputs(kv_offload=True, prefill_seq_len=prefill_seq_len)["lang"]
+    except TypeError:
+        inputs = qeff_model.model.get_dummy_inputs(kv_offload=True)["lang"]
+    inputs = deepcopy(inputs)
+    if "input_ids" in inputs:
+        inputs["input_ids"].fill_(1)
+    return inputs
+
+
+def _qwen_export_io(qeff_model, *, prefill_seq_len: int = 4):
+    if isinstance(qeff_model, QEFFAutoModelForCausalLM):
+        return None, None, None
+
+    inputs = qeff_model.model.get_dummy_inputs(kv_offload=True, prefill_seq_len=prefill_seq_len)
+    dynamic_axes = qeff_model.model.get_onnx_dynamic_axes(kv_offload=True)
+    output_names = qeff_model.model.get_output_names(kv_offload=True)
+    lang_inputs = deepcopy(inputs["lang"])
+    if "input_ids" in lang_inputs:
+        lang_inputs["input_ids"].fill_(1)
+    return lang_inputs, output_names["lang"], dynamic_axes["lang"]
+
+
+def _extract_qwen_logits(outputs):
+    if hasattr(outputs, "logits"):
+        return outputs.logits.detach().float().numpy()
+    if isinstance(outputs, (tuple, list)):
+        return outputs[0].detach().float().numpy()
+    return outputs.detach().float().numpy()
+
+
+def _as_hf_past_key_values(past_key_values):
+    if past_key_values is None:
+        return None
+    return tuple(tuple(tensor.detach().clone() for tensor in layer) for layer in past_key_values)
+
+
+def _hf_qwen_vlm_text_logits(hf_model, inputs):
+    language_model = (
+        hf_model.model.language_model if hasattr(hf_model.model, "language_model") else hf_model.language_model
+    )
+    outputs = language_model(
+        input_ids=inputs["input_ids"],
+        position_ids=inputs["position_ids"],
+        use_cache=True,
+    )
+    position_ids = inputs["position_ids"]
+    text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
+    logit_index = text_position_ids.to(torch.int32).argmax(1, keepdim=True)
+    hidden_states = outputs.last_hidden_state[torch.arange(text_position_ids.shape[0]).view(-1, 1), logit_index]
+    return hf_model.lm_head(hidden_states).detach().float().numpy()
+
+
+def _hf_qwen_logits(model_type: str, hf_model, inputs):
+    with torch.no_grad():
+        if model_type in {"qwen3", "qwen3_moe"}:
+            hf_inputs = {
+                "input_ids": inputs["input_ids"],
+                "position_ids": inputs["position_ids"],
+                "use_cache": True,
+            }
+            logits = _extract_qwen_logits(hf_model(**hf_inputs))
+            logit_index = inputs["position_ids"].to(torch.int32).argmax(1, keepdim=True).detach().cpu().numpy()
+            batch_index = np.arange(inputs["position_ids"].shape[0]).reshape(-1, 1)
+            return logits[batch_index, logit_index]
+        return _hf_qwen_vlm_text_logits(hf_model, inputs)
+
+
+def _qeff_qwen_logits(qeff_model, inputs):
+    with torch.no_grad():
+        return _extract_qwen_logits(_qwen_decoder_qeff_model(qeff_model).model(**inputs))
+
+
+def _flatten_qwen_ort_inputs(inputs, session_inputs, qeff_export_model):
+    flat_inputs = {name: value.detach().numpy() for name, value in inputs.items() if torch.is_tensor(value)}
+    past_key_values = inputs.get("past_key_values")
+    if past_key_values is not None:
+        for layer_idx, layer_state in enumerate(past_key_values):
+            if hasattr(qeff_export_model, "get_onnx_past_key_value_names"):
+                names = qeff_export_model.get_onnx_past_key_value_names(layer_idx, layer_state)
+            elif len(layer_state) == 2:
+                names = [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
+            else:
+                names = [f"past_state.{layer_idx}.{state_idx}" for state_idx in range(len(layer_state))]
+            for name, tensor in zip(names, layer_state):
+                flat_inputs[name] = tensor.detach().numpy()
+    return {name: flat_inputs[name] for name in session_inputs if name in flat_inputs}
+
+
+def _ort_qwen_logits(onnx_path: Path, qeff_model, inputs):
+    session = _ort_session(onnx_path)
+    session_inputs = [item.name for item in session.get_inputs()]
+    session_outputs = [item.name for item in session.get_outputs()]
+    ort_inputs = _flatten_qwen_ort_inputs(inputs, session_inputs, _qwen_decoder_export_model(qeff_model))
+    outputs = dict(zip(session_outputs, session.run(session_outputs, ort_inputs)))
+    return outputs["logits"].astype(np.float32)
+
+
+def _export_qwen_decoder_onnx(qeff_model, inputs, tmp_path, *, model_type: str, prefill_only: bool, layerwise: bool):
+    export_dir = (
+        tmp_path / f"{model_type}-{'layerwise' if layerwise else 'default'}-{'prefill' if prefill_only else 'decode'}"
+    )
+    if isinstance(qeff_model, QEFFAutoModelForCausalLM):
+        if layerwise:
+            return _exported_onnx_path(
+                qeff_model.export(
+                    export_dir,
+                    prefill_only=prefill_only,
+                    prefill_seq_len=inputs["input_ids"].shape[1],
+                    offload_pt_weights=False,
+                )
+            )
+        return _exported_onnx_path(
+            qeff_model.export(
+                export_dir,
+                prefill_only=prefill_only,
+                prefill_seq_len=inputs["input_ids"].shape[1],
+                offload_pt_weights=False,
+            )
+        )
+
+    _, output_names, dynamic_axes = _qwen_export_io(qeff_model, prefill_seq_len=inputs["input_ids"].shape[1])
+    lang_model = _qwen_decoder_qeff_model(qeff_model)
+    if layerwise:
+        return _exported_onnx_path(
+            qeff_model.export(
+                export_dir=export_dir,
+                skip_vision=True,
+                prefill_only=prefill_only,
+                prefill_seq_len=inputs["input_ids"].shape[1],
+                offload_pt_weights=False,
+            )
+        )
+
+    return _exported_onnx_path(
+        lang_model.export(
+            inputs,
+            output_names,
+            dynamic_axes,
+            export_dir=export_dir,
+            offload_pt_weights=False,
+            prefill_only=prefill_only,
+            prefill_seq_len=inputs["input_ids"].shape[1],
+        )
+    )
+
+
+def _assert_qwen_hf_qeff_ort_parity(model_type: str, tmp_path, *, prefill_only: bool = False, layerwise: bool = False):
+    hf_model, qeff_model = _tiny_qwen_hf_qeff_pair(model_type, tmp_path, layerwise=layerwise)
+    seq_len = 4
+    if prefill_only:
+        seq_len = 256 if model_type == "qwen3_moe" else 8
+
+    if isinstance(qeff_model, QEFFAutoModelForCausalLM):
+        ctx_len = seq_len if layerwise else max(seq_len, 8)
+        inputs = _qwen_causal_inputs(_tiny_qwen_text_config(model_type), seq_len=seq_len, ctx_len=ctx_len)
+    else:
+        inputs = _qwen_vlm_lang_inputs(qeff_model, prefill_seq_len=seq_len)
+
+    hf_logits = _hf_qwen_logits(model_type, hf_model, inputs)
+    qeff_logits = None if (prefill_only or layerwise) else _qeff_qwen_logits(qeff_model, inputs)
+    onnx_path = _export_qwen_decoder_onnx(
+        qeff_model,
+        inputs,
+        tmp_path,
+        model_type=model_type,
+        prefill_only=prefill_only,
+        layerwise=layerwise,
+    )
+    if qeff_logits is None and not layerwise:
+        qeff_logits = _qeff_qwen_logits(qeff_model, inputs)
+    ort_logits = _ort_qwen_logits(onnx_path, qeff_model, inputs)
+
+    atol = 2e-3 if model_type == "qwen3_5_moe" else 1e-4
+    if layerwise:
+        assert np.allclose(hf_logits, ort_logits, atol=atol, rtol=1e-4)
+    else:
+        assert np.allclose(hf_logits, qeff_logits, atol=atol, rtol=1e-4)
+        assert np.allclose(qeff_logits, ort_logits, atol=atol, rtol=1e-4)
 
 
 @pytest.mark.llm_model
@@ -576,6 +1120,51 @@ def test_causal_subfunction_export_smoke(tmp_path):
     without_names = [func.name for func in without_subfunctions_model.functions]
     assert any("QEffGPT2Block" in name for name in with_names)
     assert not any("QEffGPT2Block" in name for name in without_names)
+
+
+@pytest.mark.llm_model
+def test_gemma3_vlm_export_parity_with_and_without_subfunctions(tmp_path):
+    """Gemma3 VLM export keeps retained-state/output signatures stable across subfunction toggles.
+
+    This guards the Gemma3 cache-bridging export patch on the supported VLM path:
+    the historical working non-subfunction export remains the reference, and
+    enabling subfunctions must preserve the exported graph interface.
+    """
+    qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+        VLM_TEXT_RUNTIME_MODEL_ID,
+        trust_remote_code=True,
+        kv_offload=True,
+    )
+
+    with_subfunctions_path = _exported_onnx_path(
+        qeff_model.export(
+            tmp_path / "gemma3-vlm-with-subfunctions",
+            use_onnx_subfunctions=True,
+            offload_pt_weights=False,
+        )
+    )
+    without_subfunctions_path = _exported_onnx_path(
+        qeff_model.export(
+            tmp_path / "gemma3-vlm-without-subfunctions",
+            use_onnx_subfunctions=False,
+            offload_pt_weights=False,
+        )
+    )
+
+    with_model = onnx.load(with_subfunctions_path, load_external_data=False)
+    without_model = onnx.load(without_subfunctions_path, load_external_data=False)
+
+    # Ensure the subfunction export path really emits decoder-block subfunctions
+    # for the Gemma3 language decoder, not just a graph with matching IO names.
+    with_subfunction_names = _decoder_block_subfunction_names(with_model, qeff_model.lang_model)
+    without_subfunction_names = _decoder_block_subfunction_names(without_model, qeff_model.lang_model)
+    assert with_subfunction_names, "Expected Gemma3 decoder-layer subfunctions with use_onnx_subfunctions=True"
+    assert not without_subfunction_names, (
+        "Did not expect Gemma3 decoder-layer subfunctions with use_onnx_subfunctions=False"
+    )
+
+    assert [value.name for value in with_model.graph.input] == [value.name for value in without_model.graph.input]
+    assert [value.name for value in with_model.graph.output] == [value.name for value in without_model.graph.output]
 
 
 @pytest.mark.llm_model
@@ -1935,17 +2524,16 @@ def test_layerwise_safe_export_pass_patch_toggles_only_inside_layerwise_context(
     from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
     original_cse = _C._jit_pass_cse
+    original_constant_prop = _C._jit_pass_constant_propagation
     original_constant_fold = _C._jit_pass_onnx_constant_fold
     original_canonicalize = _C._jit_pass_canonicalize
 
     with _layerwise._layerwise_export_env():
         with layerwise_safe_onnx_export_patches():
-            assert _C._jit_pass_cse is not original_cse
-            assert _C._jit_pass_onnx_constant_fold is not original_constant_fold
+            assert _C._jit_pass_cse is original_cse
+            assert _C._jit_pass_constant_propagation is original_constant_prop
+            assert _C._jit_pass_onnx_constant_fold is original_constant_fold
             assert _C._jit_pass_canonicalize is not original_canonicalize
-            assert _C._jit_pass_cse(None) is False
-            params = {"weight": object()}
-            assert _C._jit_pass_onnx_constant_fold(None, params, 17) is params
             sentinel_graph = object()
             assert _C._jit_pass_canonicalize(sentinel_graph) is sentinel_graph
 
@@ -1956,6 +2544,43 @@ def test_layerwise_safe_export_pass_patch_toggles_only_inside_layerwise_context(
     assert _C._jit_pass_cse is original_cse
     assert _C._jit_pass_onnx_constant_fold is original_constant_fold
     assert _C._jit_pass_canonicalize is original_canonicalize
+
+    assert _C._jit_pass_cse is original_cse
+    assert _C._jit_pass_constant_propagation is original_constant_prop
+    assert _C._jit_pass_onnx_constant_fold is original_constant_fold
+    assert _C._jit_pass_canonicalize is original_canonicalize
+
+
+@pytest.mark.llm_model
+def test_layerwise_post_merge_dedup_removes_duplicate_onnx_nodes():
+    from onnx import TensorProto, helper
+
+    from QEfficient.utils.layerwise_pipeline import _deduplicate_redundant_onnx_nodes
+
+    one_value = helper.make_tensor(name="one", data_type=TensorProto.FLOAT, dims=[1], vals=[1.0])
+    const_a = helper.make_node("Constant", inputs=[], outputs=["c0"], value=one_value)
+    # Same value but different TensorProto.name; dedup should still match it.
+    one_value_2 = helper.make_tensor(name="one_2", data_type=TensorProto.FLOAT, dims=[1], vals=[1.0])
+    const_b = helper.make_node("Constant", inputs=[], outputs=["c1"], value=one_value_2)
+    add_a = helper.make_node("Add", inputs=["c0", "c0"], outputs=["sum0"])
+    add_b = helper.make_node("Add", inputs=["c1", "c1"], outputs=["sum1"])
+
+    graph = helper.make_graph(
+        [const_a, const_b, add_a, add_b],
+        "dedup_test",
+        [],
+        [helper.make_tensor_value_info("sum0", TensorProto.FLOAT, [1])],
+    )
+    model = helper.make_model(graph)
+
+    removed = _deduplicate_redundant_onnx_nodes(model)
+
+    # The pass performs CSE (not full dead-code elimination), so Add is
+    # deduplicated on non-graph-output nodes while preserving graph outputs.
+    assert removed == 1
+    assert len(model.graph.node) == 3
+    assert [node.op_type for node in model.graph.node] == ["Constant", "Add", "Add"]
+    assert list(model.graph.node[2].input) == ["c0", "c0"]
 
 
 @pytest.mark.llm_model

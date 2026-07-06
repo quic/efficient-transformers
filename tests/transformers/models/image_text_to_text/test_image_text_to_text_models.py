@@ -47,6 +47,7 @@ with open(CONFIG_PATH, "r") as f:
     multimodal_models = config_data["image_text_models"]
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
+test_mm_moe_models = [model["model_name"] for model in multimodal_models if "moe" in model.get("model_type", "")]
 
 NEW_GENERATION_TOKENS = 10
 KIMI_K25_MODEL_NAME = "moonshotai/Kimi-K2.5"
@@ -206,6 +207,10 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     config: Optional[AutoConfig] = None,
     torch_dtype: Optional[torch.dtype] = torch.float32,
     compare_results: Optional[bool] = False,
+    compile_only: bool = False,
+    mdp_num_partitions: Optional[int] = None,
+    mdp_strategy: Optional[str] = None,
+    use_onnx_subfunctions: bool = False,
 ):
     prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
@@ -269,7 +274,14 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         "mxfp6": False,
         "enable_qnn": enable_qnn,
         "qnn_config": qnn_config,
+        "use_onnx_subfunctions": use_onnx_subfunctions,
     }
+
+    mdp_compile_kwargs = {}
+    if mdp_num_partitions is not None:
+        mdp_compile_kwargs["mdp_num_partitions"] = mdp_num_partitions
+    if mdp_strategy is not None:
+        mdp_compile_kwargs["mdp_strategy"] = mdp_strategy
 
     if model_name in ModelConfig.INTERNVL_MODELS:
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
@@ -438,11 +450,26 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     #     "Tokens don't match for pytorch HF output and pytorch KV output"
     # )
 
-    _ = qeff_model.export()
+    _ = qeff_model.export(use_onnx_subfunctions=use_onnx_subfunctions)
     # ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
     # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
 
+    if (
+        mdp_compile_kwargs
+        and model_name not in ModelConfig.INTERNVL_MODELS
+        and model_name not in ModelConfig.MOLMO_MODELS
+    ):
+        compile_kwargs["skip_vision"] = True
+        compile_kwargs.update(mdp_compile_kwargs)
+    elif mdp_compile_kwargs:
+        compile_kwargs.update(mdp_compile_kwargs)
+
     qeff_model.compile(**compile_kwargs)
+
+    if compile_only:
+        manual_cleanup(qeff_model.onnx_path)
+        return
+
     streamer = TextStreamer(processor.tokenizer)
     print("QPC Outputs (QAIC):")
     exec_info = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
@@ -503,6 +530,30 @@ def test_few_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_off
         num_hidden_layers=model_config_dict[model_name]["num_layers"],
         kv_offload=kv_offload,
         manual_cleanup=manual_cleanup,
+    )
+
+
+@pytest.mark.few_layers
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("model_name", test_mm_moe_models)
+@pytest.mark.parametrize("kv_offload", [True, False])
+def test_few_image_text_to_text_onnx_mdp_compile_only(model_name, kv_offload, manual_cleanup):
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to some issues.")
+    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
+        pytest.skip("These models require kv_offload=True for testing.")
+
+    torch.manual_seed(42)
+    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name,
+        num_hidden_layers=model_config_dict[model_name]["num_layers"],
+        kv_offload=kv_offload,
+        manual_cleanup=manual_cleanup,
+        compile_only=True,
+        mdp_num_partitions=2,
+        mdp_strategy="onnx",
+        use_onnx_subfunctions=True,
     )
 
 
