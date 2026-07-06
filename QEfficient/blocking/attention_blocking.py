@@ -63,7 +63,7 @@ class AttentionBlockingConfig:
     num_batch_blocks: Optional[int] = None
     kv_blocking_headpar_split: Optional[int] = None
     prefill_block_chunks: Optional[int] = None
-    prefill_blocking_mode: Optional[str] = None  # "q" (default) or "kv"
+    prefill_blocking_mode: Optional[str] = None  # "q", "kv", "qkv" or "online"
     ctx_len: Optional[int] = None
 
 
