@@ -275,8 +275,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     # assert (pytorch_kv_tokens == pytorch_hf_tokens).all(), (
     #     "Tokens don't match for pytorch HF output and pytorch KV output"
     # )
-
-    _ = qeff_model.export(use_onnx_subfunctions=use_onnx_subfunctions)
     # ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
     # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
 
@@ -289,7 +287,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         compile_kwargs.update(mdp_compile_kwargs)
     elif mdp_compile_kwargs:
         compile_kwargs.update(mdp_compile_kwargs)
-
+    compile_kwargs["use_onnx_subfunctions"] = use_onnx_subfunctions
     qeff_model.compile(**compile_kwargs)
 
     if compile_only:

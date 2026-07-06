@@ -1116,8 +1116,16 @@ class ReplicateKVHeadTransform(ModuleMutatorTransform):
         logger.warning(f"Original KV heads: {orig_kv_heads}")
         logger.warning(f"Modified KV heads: {new_kv_heads}")
         for block in text_model.layers:
+            try:
+                attn = get_attention_module(block)
+            except AttributeError:
+                logger.warning(
+                    f"Skipping RepeatKV for block type {block.__class__.__name__}: "
+                    "no replicable attention module found."
+                )
+                continue
             cls.mutate(
-                get_attention_module(block),
+                attn,
                 block,
                 n_repeat,
                 orig_kv_heads,
