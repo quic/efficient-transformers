@@ -42,6 +42,11 @@ from QEfficient.blocking.attention_blocking import (
     past_key_value_update,
     prefill_blocked_attention_interface,
 )
+from QEfficient.customop.ctx_scatter_gather import (
+    CtxGatherFunc3DGeneralized,
+    CtxScatterFunc3DGeneralized,
+    CtxScatterFunc3DInt,
+)
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.models._layerwise import (
@@ -363,7 +368,7 @@ def eager_attention_forward(
     cache_kwargs: Optional[Dict[str, Any]] = None,
     layer_idx: int = None,
     past_key_value: Optional[Cache] = None,
-    **kwargs,
+    **_unused_kwargs,
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
@@ -400,7 +405,7 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         sin_cached=None,
         cos_cached=None,
-        **kwargs,
+        **_unused_kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
@@ -466,7 +471,7 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
                 value_states,
                 attention_mask,
                 scaling=self.scaling,
-                **kwargs,
+                **_unused_kwargs,
             )
 
         attn_output = attn_output.reshape(bsz, q_len, -1)
@@ -493,7 +498,7 @@ class QEffQwen3VLMoeTextDecoderLayer(Qwen3VLMoeTextDecoderLayer):
         cache_position: Optional[torch.LongTensor] = None,
         sin_cached=None,
         cos_cached=None,
-        **kwargs,
+        **_unused_kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -714,7 +719,7 @@ class QEffQwen3VLMoeModel(Qwen3VLMoeModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        **kwargs,
+        **_unused_kwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -738,7 +743,7 @@ class QEffQwen3VLMoeModel(Qwen3VLMoeModel):
             output_hidden_states=output_hidden_states,
             return_dict=True,
             cache_position=cache_position,
-            **kwargs,
+            **_unused_kwargs,
         )
 
         output = Qwen3VLMoeModelOutputWithPast(
@@ -1004,6 +1009,70 @@ class QEffQwen3VLMoeTextSparseMoeBlock(QEffMoEBlockMixin, Qwen3VLMoeTextSparseMo
 
 
 QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock = QEffQwen3VLMoeTextSparseMoeBlock
+
+    def forward_expert_parallel(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+        # x: [B, S, H]. T2E is N-batched: each NSP independently derives its
+        # own local_T2E from the gate's topk indices, eliminating the
+        # cross-NSP T-axis exchange the previous routing_weights.scatter_
+        # form required.
+        x = hidden_states
+        router_logits, topk_weight, topk_idx = self.gate(x)
+
+        B, S, H = x.shape
+        T = B * S
+        num_nsp = getattr(self, "expert_blocking_num_nsp", self.num_experts)
+        local_experts = self.num_experts // num_nsp
+        N, L = self.num_nsp, local_experts
+        x_flat = x.view(T, H)
+
+        # expert_ids[n, le] = le * N + n  — matches the prior
+        # routing_weights.view(L,N,T).transpose(0,1) layout, so semantics
+        # are preserved bit-for-bit.
+        expert_ids = torch.arange(L, device=x.device, dtype=topk_idx.dtype).unsqueeze(0) * N + torch.arange(
+            N, device=x.device, dtype=topk_idx.dtype
+        ).unsqueeze(1)  # [N, L]
+
+        # Cast→ReduceSum→Greater rather than .any() because the AOT compiler
+        # currently rejects ReduceMax over the rank-4 bool tensor here.
+        eq = topk_idx.unsqueeze(0).unsqueeze(0) == expert_ids.unsqueeze(-1).unsqueeze(-1)
+        local_T2E = torch.einsum("nlti->nlt", eq.to(topk_idx.dtype)) > 0  # [N, L, T]
+        routing_weights = torch.einsum(
+            "nlti,nlti->nlt",
+            eq.to(topk_weight.dtype),
+            topk_weight.unsqueeze(0).unsqueeze(0).expand_as(eq),
+        ).unsqueeze(-1)
+        expert_out = torch.zeros(N, T, H, dtype=x_flat.dtype, device=x_flat.device)
+
+        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
+        if self.num_experts % num_nsp != 0:
+            raise ValueError(
+                f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})"
+            )
+
+        rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
+        W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_u = self.experts.up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_d = self.experts.down_proj_t.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
+
+        for local_expert in range(local_experts):
+            rw = routing_weights[:, local_expert]
+            expert_out = cumsum_scatter_gather_update_one_local_expert(
+                x=x_flat,
+                T2Ei=local_T2E[:, local_expert, :],
+                W_g=W_g[:, local_expert, :, :],
+                W_u=W_u[:, local_expert, :, :],
+                W_d=W_d[:, local_expert, :, :],
+                expert_out=expert_out,
+                packed_chunk_size=packed_chunk_size,
+                router_weights=rw,
+                act_fn=self.experts.act_fn,
+            )
+        expert_out_sum = torch.einsum("nth->th", expert_out)
+        return expert_out_sum.view(B, S, H), router_logits
+
+
+class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(QEffQwen3VLMoeTextSparseMoeBlock):
+    pass
 
 
 class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration):
