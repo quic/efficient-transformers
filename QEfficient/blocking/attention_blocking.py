@@ -294,7 +294,6 @@ def prefill_blocked_attention_interface(
         "past_seen_tokens": past_seen_tokens,
         "batch_index": batch_index,
     }
-    print(blocking_config.prefill_blocking_mode)
     strategy = _STRATEGIES_PREFILL.get(blocking_config.prefill_blocking_mode)
     return strategy(
         module=module,
