@@ -39,6 +39,7 @@ from QEfficient.blocking.attention_blocking import (
     BlockingMode,
     generic_blocked_attention_interface,
     past_key_value_update,
+    prefill_blocked_attention_interface,
 )
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -404,21 +405,39 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
         if use_blocking:
-            attn_output, attn_weights = generic_blocked_attention_interface(
-                module=self,
-                query=query_states,
-                key=key_states,
-                value=value_states,
-                attention_mask=attention_mask,
-                scaling=self.scaling,
-                layer_idx=self.layer_idx,
-                past_key_value=past_key_values,
-                blocking_config=blocking_config,
-                comp_ctx_length=comp_ctx_lengths,
-                batch_index=batch_index,
-                position_ids=position_ids[0],
-                past_seen_tokens=past_seen_tokens,
-            )
+            use_prefill = blocking_config.prefill_blocking_mode != None
+            if use_prefill:
+                attn_output, attn_weights = generic_blocked_attention_interface(
+                    module=self,
+                    query=query_states,
+                    key=key_states,
+                    value=value_states,
+                    attention_mask=attention_mask,
+                    scaling=self.scaling,
+                    layer_idx=self.layer_idx,
+                    past_key_value=past_key_values,
+                    blocking_config=blocking_config,
+                    comp_ctx_length=comp_ctx_lengths,
+                    batch_index=batch_index,
+                    position_ids=position_ids[0],
+                    past_seen_tokens=past_seen_tokens,
+                )
+            else:
+                attn_output, attn_weights = prefill_blocked_attention_interface(
+                    module=self,
+                    query=query_states,
+                    key=key_states,
+                    value=value_states,
+                    attention_mask=attention_mask,
+                    scaling=self.scaling,
+                    layer_idx=self.layer_idx,
+                    past_key_value=past_key_values,
+                    blocking_config=blocking_config,
+                    comp_ctx_length=comp_ctx_lengths,
+                    batch_index=batch_index,
+                    position_ids=position_ids[0],
+                    past_seen_tokens=past_seen_tokens,
+                )
         else:
             key_states, value_states, attention_mask, _ = past_key_value_update(
                 module=self,
