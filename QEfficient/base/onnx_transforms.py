@@ -505,7 +505,7 @@ class RewriteUnsupportedOpsTransform(BaseOnnxTransform):
             nodes = list(container.node)
             if not nodes:
                 return False
-
+            print("top of rewrite")
             output_to_node = {out: n for n in nodes for out in n.output}
             skip_nodes: Set[int] = set()
             replace_map: Dict[str, str] = {}
@@ -1019,8 +1019,8 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         if AdapterWeightsToInputsTransform in requested:
             applied[AdapterWeightsToInputsTransform] = AdapterWeightsToInputsTransform.apply(model, **kwargs)
 
-        if RewriteUnsupportedOpsTransform in requested:
-            applied[RewriteUnsupportedOpsTransform] = RewriteUnsupportedOpsTransform.apply(model)
+        # if RewriteUnsupportedOpsTransform in requested:
+        #     applied[RewriteUnsupportedOpsTransform] = RewriteUnsupportedOpsTransform.apply(model)
 
         for t, done in applied.items():
             logger.info(f"Transform '{t.__name__}' applied={done}")
