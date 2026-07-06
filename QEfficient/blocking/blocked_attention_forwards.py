@@ -29,7 +29,7 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
 
-def _get_kv_states(module: nn.Module, key: torch.Tensor, value: torch.Tensor, num_repeat: Optional[int]) -> Tuple[torch.Tensor, torch.Tensor]:
+def _get_kv_states(module: nn.Module, key: torch.Tensor, value: torch.Tensor, num_repeat: Optional[int] = None) -> Tuple[torch.Tensor, torch.Tensor]:
     num_kv_groups = getattr(module, "num_key_value_groups", None) if not num_repeat else num_repeat
     if num_kv_groups is None:
         return key, value

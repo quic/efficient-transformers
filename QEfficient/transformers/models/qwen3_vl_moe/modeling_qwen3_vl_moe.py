@@ -406,7 +406,7 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
         if use_blocking:
             use_prefill = blocking_config.prefill_blocking_mode != None
-            if use_prefill:
+            if not use_prefill:
                 attn_output, attn_weights = generic_blocked_attention_interface(
                     module=self,
                     query=query_states,
@@ -426,8 +426,8 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
                 attn_output, attn_weights = prefill_blocked_attention_interface(
                     module=self,
                     query=query_states,
-                    key=key_states,
-                    value=value_states,
+                    k_cache=key_states,
+                    v_cache=value_states,
                     attention_mask=attention_mask,
                     scaling=self.scaling,
                     layer_idx=self.layer_idx,
