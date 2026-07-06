@@ -41,6 +41,11 @@ from QEfficient.blocking.attention_blocking import (
     past_key_value_update,
     prefill_blocked_attention_interface,
 )
+from QEfficient.customop.ctx_scatter_gather import (
+    CtxGatherFunc3DGeneralized,
+    CtxScatterFunc3DGeneralized,
+    CtxScatterFunc3DInt,
+)
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.models._layerwise import (
@@ -353,7 +358,7 @@ def eager_attention_forward(
     cache_kwargs: Optional[Dict[str, Any]] = None,
     layer_idx: int = None,
     past_key_value: Optional[Cache] = None,
-    **kwargs,
+    **_unused_kwargs,
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
@@ -390,7 +395,7 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         sin_cached=None,
         cos_cached=None,
-        **kwargs,
+        **_unused_kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
@@ -456,7 +461,7 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
                 value_states,
                 attention_mask,
                 scaling=self.scaling,
-                **kwargs,
+                **_unused_kwargs,
             )
 
         attn_output = attn_output.reshape(bsz, q_len, -1)
@@ -483,7 +488,7 @@ class QEffQwen3VLMoeTextDecoderLayer(Qwen3VLMoeTextDecoderLayer):
         cache_position: Optional[torch.LongTensor] = None,
         sin_cached=None,
         cos_cached=None,
-        **kwargs,
+        **_unused_kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -689,37 +694,6 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         return hidden_states + (visual_embeds * visual_mask)
 
 
-class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
-    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        B, S, H = hidden_states.shape
-        T = B * S
-        x = hidden_states.view(T, H)
-        act = getattr(self.experts, "act_fn", F.silu)
-
-        router_logits, top_w, top_i = self.gate(x)
-        top_w = top_w.to(hidden_states.dtype)
-        num_experts = getattr(self, "num_experts", self.gate.num_experts)
-        routing_weights = torch.zeros((T, num_experts), dtype=x.dtype)
-        routing_weights.scatter_(1, top_i, top_w)
-
-        expert_out = torch.zeros_like(x, dtype=x.dtype)
-
-        for e in range(num_experts):
-            routing_weight = routing_weights[:, e].unsqueeze(-1)
-            W_g = self.experts.gate_proj[e]  # [H, I]
-            W_u = self.experts.up_proj[e]  # [H, I]
-            W_d = self.experts.down_proj_t[e]  # [I, H]
-            gate = x @ W_g
-            up = x @ W_u
-            down = (up * act(gate)) @ W_d
-            masked_down = torch.where(
-                routing_weight > 0, down * routing_weight, torch.zeros_like(expert_out, dtype=down.dtype)
-            )  # TODO: verify and remove
-            expert_out += masked_down
-        expert_out = expert_out.to(x.dtype).view(B, S, H)
-        return expert_out, router_logits
-
-
 class QEffQwen3VLMoeModel(Qwen3VLMoeModel):
     def forward(
         self,
@@ -735,7 +709,7 @@ class QEffQwen3VLMoeModel(Qwen3VLMoeModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        **kwargs,
+        **_unused_kwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -759,7 +733,7 @@ class QEffQwen3VLMoeModel(Qwen3VLMoeModel):
             output_hidden_states=output_hidden_states,
             return_dict=True,
             cache_position=cache_position,
-            **kwargs,
+            **_unused_kwargs,
         )
 
         output = Qwen3VLMoeModelOutputWithPast(
@@ -975,8 +949,80 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             return logits, outputs.past_key_values
 
 
+def build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
+    batch_size, seq_len = T2Ei.shape
+    int32_max = torch.iinfo(torch.int32).max
+    int32_max_scalar = torch.tensor(int32_max, dtype=torch.int32, device=T2Ei.device)
+    token_idx = torch.arange(seq_len, dtype=torch.int32, device=T2Ei.device).unsqueeze(0).expand(batch_size, -1)
+    valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
+    valid_dest = valid_prefix - 1
+    scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
+    matched_idx = torch.full_like(token_idx, int32_max)
+    # matched_idx = int32_max_scalar.expand_as(token_idx)
+    matched_idx = CtxScatterFunc3DInt.apply(
+        matched_idx.unsqueeze(-1),
+        scatter_pos,
+        token_idx.unsqueeze(-1),
+    ).squeeze(-1)
+    return matched_idx
+
+
+def cumsum_scatter_gather_update_one_local_expert(
+    x: torch.Tensor,
+    T2Ei: torch.Tensor,
+    W_g: torch.Tensor,
+    W_u: torch.Tensor,
+    W_d: torch.Tensor,
+    expert_out: torch.Tensor,
+    packed_chunk_size: int,
+    router_weights=None,
+    act_fn=F.silu,
+    **_unused_kwargs,
+) -> torch.Tensor:
+    batch_size, seq_len = T2Ei.shape
+    packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
+
+    matched_idx = build_matched_idx_from_cumsum(T2Ei)
+    valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
+    row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
+    x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
+
+    for packed_start in range(0, seq_len, packed_chunk_size):
+        packed_stop = packed_start + packed_chunk_size
+        chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
+
+        x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
+        gate_prime = x_chunk @ W_g
+        up_prime = x_chunk @ W_u
+        down_chunk = (up_prime * act_fn(gate_prime)) @ W_d
+
+        expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
+        rw_chunk = CtxGatherFunc3DGeneralized.apply(router_weights, chunk_matched_idx)
+        down_chunk *= rw_chunk
+
+        updated_chunk = expert_out_chunk + down_chunk
+
+        chunk_valid_rows = torch.clamp(valid_rows - packed_start, min=0, max=packed_chunk_size)
+        updated_chunk = torch.where(
+            (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
+        )
+        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
+
+    return expert_out
+
+
 class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
+    supports_moe_prefill_blocking = True
+
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if getattr(self, "expert_parallel", False):
+            expert_out, router_logits = self.forward_expert_parallel(hidden_states)
+            if expert_out.shape != hidden_states.shape:
+                expert_out = expert_out.view_as(hidden_states)
+            return expert_out, router_logits
+        return self.forward_gather_bmm(hidden_states)
+
+    def forward_gather_bmm(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, S, H = hidden_states.shape
         T = B * S
         x = hidden_states.view(T, H)
@@ -997,6 +1043,69 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         experts_out = experts_out.view(T, top_k, H) * top_w.unsqueeze(-1)
         experts_out = torch.einsum("bnd->bd", experts_out)
         return experts_out.view(B, S, H), router_logits
+
+    def forward_expert_parallel(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+        # x: [B, S, H]. T2E is N-batched: each NSP independently derives its
+        # own local_T2E from the gate's topk indices, eliminating the
+        # cross-NSP T-axis exchange the previous routing_weights.scatter_
+        # form required.
+        x = hidden_states
+        
+        router_logits, topk_weight, topk_idx = self.gate(x)
+
+        B, S, H = x.shape
+        T = B * S
+        num_nsp = getattr(self, "expert_blocking_num_nsp", self.num_experts)
+        local_experts = self.num_experts // num_nsp
+        N, L = self.num_nsp, local_experts
+        x_flat = x.view(T, H)
+
+        # expert_ids[n, le] = le * N + n  — matches the prior
+        # routing_weights.view(L,N,T).transpose(0,1) layout, so semantics
+        # are preserved bit-for-bit.
+        expert_ids = torch.arange(L, device=x.device, dtype=topk_idx.dtype).unsqueeze(0) * N + torch.arange(
+            N, device=x.device, dtype=topk_idx.dtype
+        ).unsqueeze(1)  # [N, L]
+
+        # Cast→ReduceSum→Greater rather than .any() because the AOT compiler
+        # currently rejects ReduceMax over the rank-4 bool tensor here.
+        eq = topk_idx.unsqueeze(0).unsqueeze(0) == expert_ids.unsqueeze(-1).unsqueeze(-1)
+        local_T2E = eq.to(topk_idx.dtype).sum(dim=-1) > 0  # [N, L, T]
+        routing_weights = (eq.to(topk_weight.dtype) * topk_weight.unsqueeze(0).unsqueeze(0)).sum(dim=-1).unsqueeze(-1)
+        expert_out = torch.zeros(N, T, H, dtype=x_flat.dtype, device=x_flat.device)
+
+        
+        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
+        if self.num_experts % num_nsp != 0:
+            raise ValueError(
+                f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})"
+            )
+
+        
+        rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
+        W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_u = self.experts.up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_d = self.experts.down_proj_t.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
+
+        for local_expert in range(local_experts):
+            rw = routing_weights[:, local_expert]
+            expert_out = cumsum_scatter_gather_update_one_local_expert(
+                x=x_flat,
+                T2Ei=local_T2E[:, local_expert, :],
+                W_g=W_g[:, local_expert, :, :],
+                W_u=W_u[:, local_expert, :, :],
+                W_d=W_d[:, local_expert, :, :],
+                expert_out=expert_out,
+                packed_chunk_size=packed_chunk_size,
+                router_weights=rw,
+                act_fn=self.experts.act_fn,
+            )
+        expert_out_sum = torch.einsum("nth->th", expert_out)
+        return expert_out_sum.view(B, S, H), router_logits
+
+
+class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(QEffQwen3VLMoeTextSparseMoeBlock):
+    pass
 
 
 class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration):

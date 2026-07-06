@@ -18,6 +18,7 @@ This file intentionally uses two coverage tiers:
      but do not yet have a stable CPU runtime parity path in the consolidated test
 """
 
+import inspect
 import logging
 import os
 import shutil
@@ -2186,6 +2187,149 @@ def test_moe_prefill_transform_does_not_require_enable_chunking():
     assert (
         PrefillOnlyTransform._module_mapping[QEffQwen3_5MoeSparseMoeBlock] is QEffPrefillChunkedQwen3_5MoeSparseMoeBlock
     )
+
+
+def _tiny_qwen3_vl_moe_sparse_block_pair():
+    from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextSparseMoeBlock
+
+    from QEfficient.transformers.models.pytorch_transforms import KVCacheTransform
+
+    config = _tiny_qwen3_vl_moe_config().text_config
+    torch.manual_seed(0)
+    hf_block = Qwen3VLMoeTextSparseMoeBlock(config).eval()
+    with torch.no_grad():
+        hf_block.gate.weight.normal_(mean=0.0, std=0.02)
+        hf_block.experts.gate_up_proj.normal_(mean=0.0, std=0.02)
+        hf_block.experts.down_proj.normal_(mean=0.0, std=0.02)
+
+    qeff_block = Qwen3VLMoeTextSparseMoeBlock(config).eval()
+    qeff_block.load_state_dict(hf_block.state_dict())
+    qeff_block, transformed = KVCacheTransform.apply(qeff_block)
+    assert transformed
+    return hf_block, qeff_block, config
+
+
+def test_qwen3_vl_moe_sparse_gather_bmm_matches_hf():
+    hf_block, qeff_block, config = _tiny_qwen3_vl_moe_sparse_block_pair()
+    hidden_states = torch.randn(2, 3, config.hidden_size)
+
+    with torch.no_grad():
+        hf_output = hf_block(hidden_states)
+        qeff_output, _ = qeff_block.forward_gather_bmm(hidden_states)
+
+    torch.testing.assert_close(qeff_output, hf_output, atol=1e-6, rtol=1e-6)
+
+
+def test_qwen3_vl_moe_sparse_expert_parallel_dispatch_and_parity(monkeypatch):
+    from QEfficient.transformers.models.modeling_auto import _configure_vlm_moe_expert_parallel
+
+    hf_block, qeff_block, config = _tiny_qwen3_vl_moe_sparse_block_pair()
+    _configure_vlm_moe_expert_parallel(
+        qeff_block,
+        {},
+        expert_parallel=True,
+        num_cores=2,
+        moe_prefill_packed_chunk_size=2,
+    )
+    hidden_states = torch.randn(1, 4, config.hidden_size)
+    called = {"expert_parallel": False}
+    orig_forward_expert_parallel = qeff_block.forward_expert_parallel
+
+    def wrapped_forward_expert_parallel(hidden_states):
+        called["expert_parallel"] = True
+        return orig_forward_expert_parallel(hidden_states)
+
+    monkeypatch.setattr(qeff_block, "forward_expert_parallel", wrapped_forward_expert_parallel)
+
+    with torch.no_grad():
+        hf_output = hf_block(hidden_states)
+        qeff_output, _ = qeff_block(hidden_states)
+
+    assert called["expert_parallel"]
+    assert qeff_output.shape == hidden_states.shape
+    torch.testing.assert_close(qeff_output, hf_output, atol=1e-6, rtol=1e-6)
+
+
+def test_qwen3_vl_moe_sparse_configurator_sets_and_clears_dispatch(monkeypatch):
+    from QEfficient.transformers.models.modeling_auto import _configure_vlm_moe_expert_parallel
+
+    _, qeff_block, config = _tiny_qwen3_vl_moe_sparse_block_pair()
+    hash_params = {}
+    _configure_vlm_moe_expert_parallel(
+        qeff_block,
+        hash_params,
+        expert_parallel=True,
+        num_cores=2,
+        moe_prefill_packed_chunk_size=3,
+    )
+
+    assert qeff_block.expert_parallel is True
+    assert qeff_block.expert_blocking_num_nsp == 2
+    assert qeff_block.expert_blocking_packed_chunk_size == 3
+    assert qeff_block.num_nsp == 2
+    assert qeff_block.local_experts == 1
+    assert hash_params["expert_parallel"] is True
+    assert hash_params["moe_prefill_num_nsp"] == 2
+    assert hash_params["moe_prefill_packed_chunk_size"] == 3
+
+    _configure_vlm_moe_expert_parallel(
+        qeff_block,
+        hash_params,
+        expert_parallel=False,
+        num_cores=2,
+        moe_prefill_packed_chunk_size=3,
+    )
+
+    assert qeff_block.expert_parallel is False
+    assert "expert_parallel" not in hash_params
+    assert "moe_prefill_num_nsp" not in hash_params
+    assert "moe_prefill_packed_chunk_size" not in hash_params
+    for attr_name in ("expert_blocking_num_nsp", "expert_blocking_packed_chunk_size", "num_nsp", "local_experts"):
+        assert not hasattr(qeff_block, attr_name)
+
+    called = {"gather": False, "expert_parallel": False}
+    orig_forward_gather_bmm = qeff_block.forward_gather_bmm
+
+    def wrapped_forward_gather_bmm(hidden_states):
+        called["gather"] = True
+        return orig_forward_gather_bmm(hidden_states)
+
+    def wrapped_forward_expert_parallel(hidden_states):
+        called["expert_parallel"] = True
+        raise AssertionError("expert-parallel path should be disabled")
+
+    monkeypatch.setattr(qeff_block, "forward_gather_bmm", wrapped_forward_gather_bmm)
+    monkeypatch.setattr(qeff_block, "forward_expert_parallel", wrapped_forward_expert_parallel)
+    with torch.no_grad():
+        qeff_block(torch.randn(1, 2, config.hidden_size))
+
+    assert called["gather"]
+    assert not called["expert_parallel"]
+
+
+def test_qwen3_vl_moe_sparse_expert_parallel_resolver_prefill_wins():
+    from QEfficient.transformers.models.modeling_auto import _resolve_vlm_expert_parallel
+
+    assert _resolve_vlm_expert_parallel(prefill_only=True, expert_parallel=False) is True
+    assert _resolve_vlm_expert_parallel(prefill_only=False, expert_parallel=True) is True
+    assert _resolve_vlm_expert_parallel(prefill_only=False, expert_parallel=None) is False
+    with pytest.raises(TypeError):
+        _resolve_vlm_expert_parallel(prefill_only=False, expert_parallel="true")
+
+
+def test_qwen3_vl_moe_sparse_vlm_compile_signatures_expose_expert_parallel_args():
+    from QEfficient.transformers.models.modeling_auto import (
+        _QEffAutoModelForImageTextToTextDualQPC,
+        _QEFFAutoModelForImageTextToTextSingleQPC,
+    )
+    from QEfficient.utils import constants
+
+    for wrapper_cls in (_QEffAutoModelForImageTextToTextDualQPC, _QEFFAutoModelForImageTextToTextSingleQPC):
+        params = inspect.signature(wrapper_cls.compile).parameters
+        assert params["expert_parallel"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert params["expert_parallel"].default is None
+        assert params["moe_prefill_packed_chunk_size"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert params["moe_prefill_packed_chunk_size"].default == constants.MOE_PREFILL_PACKED_CHUNK_SIZE
 
 
 def test_layerwise_matches_default_path_for_qwen3_moe():
