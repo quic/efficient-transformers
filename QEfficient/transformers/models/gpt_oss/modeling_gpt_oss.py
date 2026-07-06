@@ -175,17 +175,16 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         #     routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
         # )
 
-        expert_ids = (
-            torch.arange(local_experts, device=hidden.device, dtype=top_i.dtype).unsqueeze(0) * num_nsp
-            + torch.arange(num_nsp, device=hidden.device, dtype=top_i.dtype).unsqueeze(1)
-        )  # [N, L]
+        expert_ids = torch.arange(local_experts, device=hidden.device, dtype=top_i.dtype).unsqueeze(
+            0
+        ) * num_nsp + torch.arange(num_nsp, device=hidden.device, dtype=top_i.dtype).unsqueeze(1)  # [N, L]
 
         # Cast→ReduceSum→Greater rather than .any() because the AOT compiler
         # currently rejects ReduceMax over the rank-4 bool tensor here.
         eq = top_i.unsqueeze(0).unsqueeze(0) == expert_ids.unsqueeze(-1).unsqueeze(-1)
         local_T2E = eq.to(top_i.dtype).sum(dim=-1) > 0  # [N, L, T]
         local_rw = (eq.to(top_w.dtype) * top_w.unsqueeze(0).unsqueeze(0)).sum(dim=-1)
-        
+
         W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, expert_dim).transpose(0, 1).contiguous()
         W_u = self.experts.up_proj.view(local_experts, num_nsp, H, expert_dim).transpose(0, 1).contiguous()
         W_d = self.experts.down_proj.view(local_experts, num_nsp, expert_dim, H).transpose(0, 1).contiguous()

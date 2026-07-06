@@ -29,7 +29,9 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
 
-def _get_kv_states(module: nn.Module, key: torch.Tensor, value: torch.Tensor, num_repeat: Optional[int] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+def _get_kv_states(
+    module: nn.Module, key: torch.Tensor, value: torch.Tensor, num_repeat: Optional[int] = None
+) -> Tuple[torch.Tensor, torch.Tensor]:
     num_kv_groups = getattr(module, "num_key_value_groups", None) if not num_repeat else num_repeat
     if num_kv_groups is None:
         return key, value
@@ -211,6 +213,7 @@ def blocked_kv_attention_forward(
 
     return attn_output, attn_weights
 
+
 def blocked_kv_attention_forward_headpar_offline(
     module: nn.Module,
     query: torch.Tensor,
@@ -375,6 +378,7 @@ def blocked_kv_attention_forward_headpar_offline(
     )
     return attn_output.transpose(1, 2).contiguous(), None
 
+
 def blocked_qkv_attention_forward_prefill_headpar_offline(
     module: nn.Module,
     query: torch.Tensor,
@@ -422,11 +426,12 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
     for t_start in range(0, seq_len, ql_chunk):
         t_end = min(t_start + ql_chunk, seq_len)
         tc = t_end - t_start
-        pos_sub          = position_ids[:, t_start:t_end]
+        pos_sub = position_ids[:, t_start:t_end]
         current_position = pos_sub.max(dim=-1).values
 
-        r_ranges = [(r_start, min(r_start + n_rep_chunk, num_kv_groups))
-                    for r_start in range(0, num_kv_groups, n_rep_chunk)]
+        r_ranges = [
+            (r_start, min(r_start + n_rep_chunk, num_kv_groups)) for r_start in range(0, num_kv_groups, n_rep_chunk)
+        ]
 
         assert kv_block_size % split == 0, f"kv_block_size ({kv_block_size}) must be divisible by split ({split})"
         T_h_nom = kv_block_size // split
@@ -440,21 +445,31 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
         accs = []
         for r_start, r_end in r_ranges:
             rc = r_end - r_start
-            accs.append({
-                "rc":    rc,
-                "query": query_folded[:, :, r_start:r_end, t_start:t_end, :]
-                            .reshape(batch_size, num_kv_heads, rc * tc, head_dim)
-                            .repeat_interleave(split, dim=1),  # [B, num_kv_heads*split, rc*tc, head_dim]
-                "m_acc": torch.full((batch_size, num_kv_heads * split, rc * tc), float(MIN_MASKED_ATTENTION_VALUE),
-                                    device=query.device, dtype=query.dtype),
-                "s_acc": torch.zeros(batch_size, num_kv_heads * split, rc * tc, device=query.device, dtype=query.dtype),
-                "o_acc": torch.zeros(batch_size, num_kv_heads * split, rc * tc, head_dim, device=query.device, dtype=query.dtype),
-            })
+            accs.append(
+                {
+                    "rc": rc,
+                    "query": query_folded[:, :, r_start:r_end, t_start:t_end, :]
+                    .reshape(batch_size, num_kv_heads, rc * tc, head_dim)
+                    .repeat_interleave(split, dim=1),  # [B, num_kv_heads*split, rc*tc, head_dim]
+                    "m_acc": torch.full(
+                        (batch_size, num_kv_heads * split, rc * tc),
+                        float(MIN_MASKED_ATTENTION_VALUE),
+                        device=query.device,
+                        dtype=query.dtype,
+                    ),
+                    "s_acc": torch.zeros(
+                        batch_size, num_kv_heads * split, rc * tc, device=query.device, dtype=query.dtype
+                    ),
+                    "o_acc": torch.zeros(
+                        batch_size, num_kv_heads * split, rc * tc, head_dim, device=query.device, dtype=query.dtype
+                    ),
+                }
+            )
 
         for j in range(num_kv_blocks):
-            start_index  = j * kv_block_size
+            start_index = j * kv_block_size
             kv_len_block = (ctx_len - start_index) if j == num_kv_blocks - 1 else kv_block_size
-            end_index    = start_index + kv_len_block
+            end_index = start_index + kv_len_block
             split_block_len = kv_len_block // split
 
             skip_future = None
@@ -470,19 +485,24 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
             K_4d = key_5d.reshape(batch_size, num_kv_heads * split, split_block_len, head_dim)
             V_4d = value_5d.reshape(batch_size, num_kv_heads * split, split_block_len, head_dim)
 
-            off               = kv_offsets if split_block_len == T_h_nom else kv_offsets[:, :split_block_len]
+            off = kv_offsets if split_block_len == T_h_nom else kv_offsets[:, :split_block_len]
             causal_mask_block = off[None, :, None, :] > (pos_sub - start_index)[:, None, :, None]
-            skip_split        = (kv_offsets[:, 0] > (pos_sub.min() - start_index)).view(1, num_kv_heads * split)
+            skip_split = (kv_offsets[:, 0] > (pos_sub.min() - start_index)).view(1, num_kv_heads * split)
 
             for acc in accs:
                 rc = acc["rc"]
                 # causal_mask_block: [B, num_kv_heads*split, tc, split_block_len] → expand to [B, num_kv_heads*split, rc*tc, split_block_len]
-                causal_rc          = causal_mask_block.repeat(1, 1, rc, 1) if rc > 1 else causal_mask_block
+                causal_rc = causal_mask_block.repeat(1, 1, rc, 1) if rc > 1 else causal_mask_block
                 attn_weights_block = torch.matmul(acc["query"], K_4d.transpose(-1, -2)) * scaling
                 attn_weights_block = torch.where(causal_rc, masked_tensor, attn_weights_block)
                 acc["m_acc"], acc["s_acc"], acc["o_acc"] = update_running_softmax(
-                    acc["m_acc"], attn_weights_block, acc["s_acc"], acc["o_acc"], V_4d,
-                    skip_kv=True, skip_future=skip_split.unsqueeze(-1),
+                    acc["m_acc"],
+                    attn_weights_block,
+                    acc["s_acc"],
+                    acc["o_acc"],
+                    V_4d,
+                    skip_kv=True,
+                    skip_future=skip_split.unsqueeze(-1),
                 )
 
         r_chunks = []
@@ -491,10 +511,10 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
             m = acc["m_acc"].view(batch_size, num_kv_heads, split, rc * tc)
             s = acc["s_acc"].view(batch_size, num_kv_heads, split, rc * tc)
             o = acc["o_acc"].view(batch_size, num_kv_heads, split, rc * tc, head_dim)
-            split_max    = m.max(dim=2).values
+            split_max = m.max(dim=2).values
             split_weight = torch.exp(m - split_max.unsqueeze(2))
-            split_sum    = (split_weight * s).sum(dim=2)
-            split_out    = (split_weight.unsqueeze(-1) * o).sum(dim=2)
+            split_sum = (split_weight * s).sum(dim=2)
+            split_out = (split_weight.unsqueeze(-1) * o).sum(dim=2)
             r_chunks.append((split_out / split_sum.unsqueeze(-1)).view(batch_size, num_kv_heads, rc, tc, head_dim))
 
         t_chunks.append(torch.cat(r_chunks, dim=2))
@@ -502,6 +522,7 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
     output = torch.cat(t_chunks, dim=3)
     attn_output = output.reshape(batch_size, num_heads, seq_len, head_dim)
     return attn_output.transpose(1, 2).contiguous(), None
+
 
 def blocked_qkv_attention_forward_prefill_online(
     module: nn.Module,
@@ -543,29 +564,35 @@ def blocked_qkv_attention_forward_prefill_online(
     for t_start in range(0, QL, ql_chunk):
         t_end = min(t_start + ql_chunk, QL)
         tc = t_end - t_start
-        pos_sub          = position_ids[:, t_start:t_end]
+        pos_sub = position_ids[:, t_start:t_end]
         current_position = pos_sub.max(dim=-1).values
 
-        r_ranges = [(r_start, min(r_start + n_rep_chunk, n_rep_per_core))
-                    for r_start in range(0, n_rep_per_core, n_rep_chunk)]
+        r_ranges = [
+            (r_start, min(r_start + n_rep_chunk, n_rep_per_core)) for r_start in range(0, n_rep_per_core, n_rep_chunk)
+        ]
 
         accs = []
         for r_start, r_end in r_ranges:
             rc = r_end - r_start
-            accs.append({
-                "rc":    rc,
-                "Q":     q_fold[:, :, r_start:r_end, t_start:t_end, :]
-                            .reshape(B, num_cores, rc * tc, D),
-                "m_acc": torch.full((B, num_cores, rc * tc), float(MIN_MASKED_ATTENTION_VALUE),
-                                    device=query.device, dtype=query.dtype),
-                "s_acc": torch.zeros(B, num_cores, rc * tc, device=query.device, dtype=query.dtype),
-                "o_acc": torch.zeros(B, num_cores, rc * tc, D, device=query.device, dtype=query.dtype),
-            })
+            accs.append(
+                {
+                    "rc": rc,
+                    "Q": q_fold[:, :, r_start:r_end, t_start:t_end, :].reshape(B, num_cores, rc * tc, D),
+                    "m_acc": torch.full(
+                        (B, num_cores, rc * tc),
+                        float(MIN_MASKED_ATTENTION_VALUE),
+                        device=query.device,
+                        dtype=query.dtype,
+                    ),
+                    "s_acc": torch.zeros(B, num_cores, rc * tc, device=query.device, dtype=query.dtype),
+                    "o_acc": torch.zeros(B, num_cores, rc * tc, D, device=query.device, dtype=query.dtype),
+                }
+            )
 
         for j in range(num_kv_blocks):
-            start_index  = j * kv_block_size
+            start_index = j * kv_block_size
             kv_len_block = (ctx_len - start_index) if j == num_kv_blocks - 1 else kv_block_size
-            end_index    = start_index + kv_len_block
+            end_index = start_index + kv_len_block
 
             skip_future = None
             if skip_kv:
@@ -577,20 +604,30 @@ def blocked_qkv_attention_forward_prefill_online(
             v_block = past_key_value.read_only_blocked_V(start_index, end_index, layer_idx, cache_kwargs)
             k_block, v_block = _get_kv_states(module, k_block, v_block, num_repeat=kv_repeat)
 
-            k_abs  = torch.arange(start_index, end_index, device=query.device)
+            k_abs = torch.arange(start_index, end_index, device=query.device)
             causal = k_abs[None, None, None, :] > pos_sub[:, None, :, None]
 
             for acc in accs:
-                rc     = acc["rc"]
-                attn   = torch.matmul(acc["Q"], k_block.transpose(2, 3)) * scaling
-                attn_m = attn.view(B, num_cores, rc, tc, -1).masked_fill(causal.unsqueeze(2), float(MIN_MASKED_ATTENTION_VALUE)).view(B, num_cores, rc * tc, -1)
+                rc = acc["rc"]
+                attn = torch.matmul(acc["Q"], k_block.transpose(2, 3)) * scaling
+                attn_m = (
+                    attn.view(B, num_cores, rc, tc, -1)
+                    .masked_fill(causal.unsqueeze(2), float(MIN_MASKED_ATTENTION_VALUE))
+                    .view(B, num_cores, rc * tc, -1)
+                )
                 acc["m_acc"], acc["s_acc"], acc["o_acc"] = update_running_softmax(
-                    acc["m_acc"], attn_m, acc["s_acc"], acc["o_acc"], v_block, skip_kv, skip_future,
+                    acc["m_acc"],
+                    attn_m,
+                    acc["s_acc"],
+                    acc["o_acc"],
+                    v_block,
+                    skip_kv,
+                    skip_future,
                 )
 
         r_chunks = []
         for acc in accs:
-            rc  = acc["rc"]
+            rc = acc["rc"]
             out = acc["o_acc"] / acc["s_acc"].unsqueeze(-1)
             r_chunks.append(out.view(B, num_cores, rc, tc, D))
         t_chunks.append(torch.cat(r_chunks, dim=2))

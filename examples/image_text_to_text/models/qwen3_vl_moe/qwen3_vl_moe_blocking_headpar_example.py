@@ -263,7 +263,7 @@ def run_prefill_config(
 
     # ── Run chunked prefill ───────────────────────────────────────────────────
     prefill_session = QAICInferenceSession(prefill_qpc)
-    decode_session = QAICInferenceSession(decode_qpc)
+    # decode_session = QAICInferenceSession(decode_qpc)
 
     chunk_inputs = {"image_idx": np.array([[0]])}
     prefill_out = None

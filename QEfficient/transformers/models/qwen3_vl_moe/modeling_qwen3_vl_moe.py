@@ -405,7 +405,7 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
         if use_blocking:
-            use_prefill = blocking_config.prefill_blocking_mode != None
+            use_prefill = blocking_config.prefill_blocking_mode is not None
             if not use_prefill:
                 attn_output, attn_weights = generic_blocked_attention_interface(
                     module=self,
