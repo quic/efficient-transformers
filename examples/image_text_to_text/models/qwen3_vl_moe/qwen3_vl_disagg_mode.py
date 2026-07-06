@@ -39,6 +39,29 @@ PREFILL_SEQ_LEN = 128
 CTX_LEN = 4096
 BS = 1
 
+NUM_KV_BLOCKS = 2
+NUM_Q_BLOCKS = 2
+HEAD_BLOCK_SIZE = 8
+PREFILL_BLOCK_CHUNKS = 2
+PREFILL_MODE = "online" # None, "online" or "qkv" depending on whether we want online prefill or headparallel prefill
+
+def _decode_qaic_config() -> dict:
+    return {
+        "blocking_mode": "kv",
+        "num_kv_blocks": NUM_KV_BLOCKS,
+        "kv_blocking_headpar_split": 0,  # 0 → resolved to num_cores at compile time
+    }
+
+
+def _qaic_config() -> dict:
+    cfg = _decode_qaic_config()
+    if PREFILL_MODE is None:
+        return cfg
+    cfg["prefill_block_chunks"] = PREFILL_BLOCK_CHUNKS
+    cfg["prefill_blocking_mode"] = PREFILL_MODE
+    cfg["ctx_len"] = CTX_LEN
+    return cfg
+
 skip_vision = False
 if not skip_vision:
     vision_qpc_path = qeff_model.compile(
@@ -71,12 +94,13 @@ decode_qpc_path = qeff_model.compile(
     mxint8_kv_cache=True,
     split_model_io=True,  # This should be used for disagg serving via VLLM
     mos=1,
-    aic_enable_depth_first=True,
+    user_tiled=True,
     prefill_only=False,
     skip_vision=True,
     use_onnx_subfunctions=True,
     layerwise=False,
     offload_pt_weights=False,
+    qaic_config=_qaic_config()
 )
 
 
@@ -100,6 +124,7 @@ prefill_qpc_path = qeff_model.compile(
     use_onnx_subfunctions=True,
     layerwise=False,
     offload_pt_weights=True,
+    qaic_config=_qaic_config()
 )
 
 print(f"Prefill qpc path {prefill_qpc_path}")
