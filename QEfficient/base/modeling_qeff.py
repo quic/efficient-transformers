@@ -499,6 +499,7 @@ class QEFFBaseModel(ABC):
         qaic_config: Optional[dict] = None,
         moe_prefill_packed_chunk_size: Optional[int] = None,
         kv_cache_prefix: Optional[str] = None,
+        expert_parallel: Optional[bool] = None,
         **compiler_options,
     ):
         kwargs = {
@@ -511,6 +512,15 @@ class QEFFBaseModel(ABC):
             kwargs["_layerwise_cache_probe"] = True
         if kv_cache_prefix:
             kwargs["kv_cache_prefix"] = kv_cache_prefix
+
+        if expert_parallel is not None:
+            kwargs["expert_parallel"] = expert_parallel
+            kwargs["num_cores"] = compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
+            kwargs["moe_prefill_packed_chunk_size"] = (
+                constants.MOE_PREFILL_PACKED_CHUNK_SIZE
+                if moe_prefill_packed_chunk_size is None
+                else moe_prefill_packed_chunk_size
+            )
 
         if prefill_only:
             kwargs.update(
@@ -844,6 +854,7 @@ class QEFFBaseModel(ABC):
         qaic_config: Optional[dict] = None,
         specialization_module_name: Optional[str] = None,
         kv_cache_prefix: Optional[str] = None,
+        expert_parallel: Optional[bool] = None,
         **compiler_options,
     ) -> str:
         """
@@ -905,6 +916,7 @@ class QEFFBaseModel(ABC):
                     num_devices=mdp_ts_num_devices,
                     qaic_config=qaic_config,
                     moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+                    expert_parallel=expert_parallel,
                     _layerwise_cache_probe=layerwise_cache_probe,
                     kv_cache_prefix=kv_cache_prefix,
                     **compiler_options,
@@ -1038,6 +1050,8 @@ class QEFFBaseModel(ABC):
             "mdp_ts_json": mdp_ts_json,
             "num_speculative_tokens": num_speculative_tokens,
             "prefill_only": prefill_only,
+            "expert_parallel": expert_parallel,
+            "moe_prefill_packed_chunk_size": moe_prefill_packed_chunk_size,
         }
         compile_hash = hash_dict_params(compile_hash_params)
 

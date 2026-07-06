@@ -18,8 +18,8 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-# model_id = "tiny-random/qwen3-vl-moe"
+# model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+model_id = "tiny-random/qwen3-vl-moe"
 config = AutoConfig.from_pretrained(model_id)
 config.dtype = "float16"
 config.torch_dtype = torch.float16
@@ -96,6 +96,7 @@ decode_qpc_path = qeff_model.compile(
     mos=1,
     user_tiled=True,
     prefill_only=False,
+    expert_parallel=True,
     skip_vision=True,
     use_onnx_subfunctions=True,
     layerwise=False,
