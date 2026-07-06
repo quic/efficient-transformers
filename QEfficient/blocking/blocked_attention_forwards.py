@@ -514,7 +514,7 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
             split_max = m.max(dim=2).values
             split_weight = torch.exp(m - split_max.unsqueeze(2))
             split_sum = (split_weight * s).sum(dim=2)
-            split_out = (split_weight.unsqueeze(-1) * o).sum(dim=2)
+            split_out = (split_weight.unsqueeze(-1) * s.unsqueeze(-1) * o).sum(dim=2)
             r_chunks.append((split_out / split_sum.unsqueeze(-1)).view(batch_size, num_kv_heads, rc, tc, head_dim))
 
         t_chunks.append(torch.cat(r_chunks, dim=2))
@@ -628,7 +628,7 @@ def blocked_qkv_attention_forward_prefill_online(
         r_chunks = []
         for acc in accs:
             rc = acc["rc"]
-            out = acc["o_acc"] / acc["s_acc"].unsqueeze(-1)
+            out = acc["o_acc"]
             r_chunks.append(out.view(B, num_cores, rc, tc, D))
         t_chunks.append(torch.cat(r_chunks, dim=2))
 
