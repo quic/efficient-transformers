@@ -1179,7 +1179,13 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
         max_patches = self._get_vision_max_patches()
-        mm_tokens_per_image = self._get_mm_tokens_per_image()
+        user_vision_size = compiler_options.pop("vision_size", None)
+        if user_vision_size:
+            if user_vision_size >= ctx_len:
+                raise ValueError("vision_size must be less than ctx_len")
+            vision_size = user_vision_size
+        else:
+            vision_size = self._get_mm_tokens_per_image()
 
         vision = [{"batch_size": batch_size, "max_patches": max_patches}]
 
@@ -1190,7 +1196,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 "ctx_len": ctx_len,
                 "sliding_window": self.model.language_model.config.sliding_window,
                 "vision_batch_size": batch_size,
-                "vision_tokens": mm_tokens_per_image,
+                "vision_size": vision_size,
             }
             if comp_ctx_lengths is not None:
                 spec["comp_ctx_lengths"] = comp_ctx_lengths
@@ -1209,7 +1215,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 "ctx_len": ctx_len,
                 "sliding_window": self.model.language_model.config.sliding_window,
                 "vision_batch_size": batch_size,
-                "vision_tokens": mm_tokens_per_image,
+                "vision_size": vision_size,
             }
             if comp_ctx_lengths is not None:
                 spec["comp_ctx_lengths"] = comp_ctx_lengths
@@ -1237,7 +1243,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         }
         lang_dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
-            "vision_embeds": {0: "vision_batch_size", 1: "vision_tokens"},
+            "vision_embeds": {0: "vision_batch_size", 1: "vision_size"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
             "mm_token_type_ids": {0: "batch_size", 1: "seq_len"},
         }
