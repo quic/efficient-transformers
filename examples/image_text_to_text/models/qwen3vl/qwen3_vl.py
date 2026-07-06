@@ -21,12 +21,12 @@ config.text_config.num_hidden_layers = 9
 config.vision_config.deepstack_visual_indexes = [2, 4, 6, 7, 8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=False, config=config
+    model_id, attn_implementation="eager", kv_offload=True, config=config
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 ### use skip_vision=Ture, if want to run only text, else false ###
-skip_vision = False
+skip_vision = True
 
 if skip_vision:
     ## Only Text ##
@@ -69,7 +69,7 @@ if skip_vision:
     )
     inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=128, batch_size=batch_size)
     streamer = TextStreamer(tokenizer)
-    output = qeff_model.generate(inputs=inputs, generation_len=100)
+    output = qeff_model.generate(inputs=inputs, generation_len=100, write_io=True)
     print(output.generated_ids)
     print(processor.tokenizer.batch_decode(output.generated_ids))
     print(output)
@@ -91,7 +91,7 @@ else:
         aic_enable_depth_first=True,
         mos=1,
         use_onnx_subfunctions=True,
-        use_dynamo=False,
+        use_dynamo=True,
     )
 
     ### IMAGE + TEXT ###
