@@ -983,7 +983,7 @@ def cumsum_scatter_gather_update_one_local_expert(
     packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
 
     matched_idx = build_matched_idx_from_cumsum(T2Ei)
-    valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
+    valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
     row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
 
@@ -1002,7 +1002,11 @@ def cumsum_scatter_gather_update_one_local_expert(
 
         updated_chunk = expert_out_chunk + down_chunk
 
-        chunk_valid_rows = torch.clamp(valid_rows - packed_start, min=0, max=packed_chunk_size)
+        chunk_valid_rows = torch.clamp(
+            valid_rows - packed_start,
+            min=torch.zeros_like(valid_rows),
+            max=torch.full_like(valid_rows, packed_chunk_size),
+        )
         updated_chunk = torch.where(
             (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
         )
@@ -1050,7 +1054,6 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         # cross-NSP T-axis exchange the previous routing_weights.scatter_
         # form required.
         x = hidden_states
-        
         router_logits, topk_weight, topk_idx = self.gate(x)
 
         B, S, H = x.shape
@@ -1070,18 +1073,20 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         # Cast→ReduceSum→Greater rather than .any() because the AOT compiler
         # currently rejects ReduceMax over the rank-4 bool tensor here.
         eq = topk_idx.unsqueeze(0).unsqueeze(0) == expert_ids.unsqueeze(-1).unsqueeze(-1)
-        local_T2E = eq.to(topk_idx.dtype).sum(dim=-1) > 0  # [N, L, T]
-        routing_weights = (eq.to(topk_weight.dtype) * topk_weight.unsqueeze(0).unsqueeze(0)).sum(dim=-1).unsqueeze(-1)
+        local_T2E = torch.einsum("nlti->nlt", eq.to(topk_idx.dtype)) > 0  # [N, L, T]
+        routing_weights = torch.einsum(
+            "nlti,nlti->nlt",
+            eq.to(topk_weight.dtype),
+            topk_weight.unsqueeze(0).unsqueeze(0).expand_as(eq),
+        ).unsqueeze(-1)
         expert_out = torch.zeros(N, T, H, dtype=x_flat.dtype, device=x_flat.device)
 
-        
         packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
         if self.num_experts % num_nsp != 0:
             raise ValueError(
                 f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})"
             )
 
-        
         rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
         W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
         W_u = self.experts.up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
