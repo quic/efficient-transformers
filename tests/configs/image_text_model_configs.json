@@ -618,11 +618,19 @@
       "img_size": 384,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
+      "img_url_list": [
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
+      ],
+      "text_prompt_list": [
+        "Can you describe the image in detail?",
+        "What are the objects in the image?"
+      ],
+      "full_batch_size": 2,
       "num_layers": 1,
       "additional_params": {
         "image_token_id": 258880,
         "text_config": {
-          "dtype": "float32",
           "layer_types": [
             "sliding_attention"
           ],
@@ -651,10 +659,18 @@
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
       "num_layers": 1,
+      "img_url_list": [
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
+        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
+      ],
+      "text_prompt_list": [
+        "Can you describe the image in detail?",
+        "What are the objects in the image?"
+      ],
+      "full_batch_size": 2,
       "additional_params": {
         "image_token_id": 258880,
         "text_config": {
-          "dtype": "float32",
           "layer_types": [
             "sliding_attention"
           ],
