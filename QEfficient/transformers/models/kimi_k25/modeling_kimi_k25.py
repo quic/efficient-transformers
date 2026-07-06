@@ -28,10 +28,25 @@ from QEfficient.utils import constants
 
 
 def eager_attention_forward(q, k, v, **kwargs):
+    q_cu_seqlens = kwargs.get("q_cu_seqlens")
+    seq_length = q.shape[0]
+    if q_cu_seqlens is not None:
+        attention_mask = torch.zeros([1, seq_length, seq_length], device=q.device, dtype=torch.bool)
+        for idx in range(1, len(q_cu_seqlens)):
+            attention_mask[
+                ...,
+                q_cu_seqlens[idx - 1] : q_cu_seqlens[idx],
+                q_cu_seqlens[idx - 1] : q_cu_seqlens[idx],
+            ] = True
+    else:
+        attention_mask = None
+
     q = q.transpose(0, 1)  # (num_heads, seq_len, head_dim)
     k = k.transpose(0, 1)
     v = v.transpose(0, 1)
     attn_weight = q @ k.transpose(-2, -1) / math.sqrt(q.shape[-1])
+    if attention_mask is not None:
+        attn_weight = attn_weight + attention_mask
     attn_weight = torch.softmax(attn_weight, dim=-1, dtype=torch.float32).to(q.dtype)
     attn_out = attn_weight @ v
     attn_out = attn_out.transpose(0, 1)  # (seq_len, num_heads, head_dim)
@@ -344,8 +359,7 @@ class QEffKimiK25EncoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.vision_model.model.layers[0].__class__}
-        # return {self.model.layers[0].__class__}
+        return {self.model.vision_tower.encoder.blocks[0].__class__}
 
     def forward(self, pixel_values: torch.Tensor, h_shape: torch.Tensor, w_shape: torch.Tensor) -> torch.Tensor:
         """
@@ -359,7 +373,8 @@ class QEffKimiK25EncoderWrapper(nn.Module):
             w_shape: int64 ones tensor of shape (w,) encoding number of patch columns.
 
         Returns:
-            image_embeds: Projected image embeddings as a single tensor.
+            image_embeds: Projected image embeddings as a single tensor. For multiple
+                same-sized images, embeddings are concatenated in input order.
         """
 
         h_shape = h_shape.to(pixel_values.device)
@@ -371,58 +386,60 @@ class QEffKimiK25EncoderWrapper(nn.Module):
 
         h = h_shape.shape[0]
         w = w_shape.shape[0]
+        num_tokens_per_image = h * w
+        if pixel_values.shape[0] % num_tokens_per_image != 0:
+            raise ValueError(
+                f"pixel_values first dimension ({pixel_values.shape[0]}) must be divisible by h*w ({num_tokens_per_image})."
+            )
+        num_images = pixel_values.shape[0] // num_tokens_per_image
 
         target_dtype = self.model.vision_tower.patch_embed.proj.weight.dtype
         pixel_values = pixel_values.to(target_dtype)
 
-        # --- Patch embedding ---
-        x = self.model.vision_tower.patch_embed.proj(pixel_values).view(pixel_values.size(0), -1)
+        hidden_states = self.model.vision_tower.patch_embed.proj(pixel_values).view(pixel_values.size(0), -1)
 
-        # Positional embedding (single image, t=1)
         pos_emb_module = self.model.vision_tower.patch_embed.pos_emb
         pos_emb_2d = get_rope_shape(
             pos_emb_module.weight,
             interpolation_mode=pos_emb_module.interpolation_mode,
             shape=(h, w),
         )
-        x = x + pos_emb_2d
+        hidden_states = hidden_states + pos_emb_2d.repeat(num_images, 1)
 
-        # --- Encoder ---
-        # For single image with t=1: cu_seqlens = [0, h*w]
-        num_tokens = h * w
-        cu_seqlens = torch.zeros(2, dtype=torch.int32, device=x.device)
-        cu_seqlens[1] = num_tokens
-        max_seqlen = num_tokens
-
-        # RoPE frequencies for single image (stacked real/imag to avoid complex tensors in ONNX)
-        # Shape: (2, num_tokens, dim//2) where [0]=cos, [1]=sin
         rope_2d = self.model.vision_tower.encoder.rope_2d
-        rope_2d._ensure_precomputed_freqs(x.device)
-        freqs_cos = rope_2d.freqs_cos[:h, :w].reshape(-1, rope_2d.dim // 2)
-        freqs_sin = rope_2d.freqs_sin[:h, :w].reshape(-1, rope_2d.dim // 2)
+        rope_2d._ensure_precomputed_freqs(pixel_values.device)
+        freqs_cos = rope_2d.freqs_cos[:h, :w].reshape(-1, rope_2d.dim // 2).repeat(num_images, 1)
+        freqs_sin = rope_2d.freqs_sin[:h, :w].reshape(-1, rope_2d.dim // 2).repeat(num_images, 1)
         freqs_cis = torch.stack([freqs_cos, freqs_sin], dim=0)
 
-        encoder_dtype = self.model.vision_tower.encoder.blocks[0].wqkv.weight.dtype
-        x = x.to(encoder_dtype)
-        freqs_cis = freqs_cis.to(encoder_dtype)
+        if num_images == 1:
+            cu_seqlens = None
+        else:
+            lengths = torch.full(
+                (num_images + 1,), num_tokens_per_image, dtype=torch.int64, device=hidden_states.device
+            )
+            lengths[0] = 0
+            cu_seqlens = lengths.cumsum(dim=0, dtype=torch.int64)
+        max_seqlen = num_tokens_per_image
 
+        encoder_dtype = self.model.vision_tower.encoder.blocks[0].wqkv.weight.dtype
+        hidden_states = hidden_states.to(encoder_dtype)
+        freqs_cis = freqs_cis.to(encoder_dtype)
         for block in self.model.vision_tower.encoder.blocks:
-            x = block(x, cu_seqlens, max_seqlen, rope_freqs_cis=freqs_cis)
+            hidden_states = block(hidden_states, cu_seqlens, max_seqlen, rope_freqs_cis=freqs_cis)
 
         final_ln_dtype = self.model.vision_tower.encoder.final_layernorm.weight.dtype
-        x = self.model.vision_tower.encoder.final_layernorm(x.to(final_ln_dtype))
+        hidden_states = self.model.vision_tower.encoder.final_layernorm(hidden_states.to(final_ln_dtype))
 
-        # --- tpool_patch_merger (single image, t=1) ---
         merge_kernel_size = self.model.vision_tower.merge_kernel_size
         kernel_height, kernel_width = merge_kernel_size
-        d_model = x.size(-1)
         new_height = h // kernel_height
         new_width = w // kernel_width
-        reshaped = x.view(1, new_height, kernel_height, new_width, kernel_width, d_model)
-        reshaped = reshaped.permute(0, 1, 3, 2, 4, 5).contiguous().mean(dim=0)
-        merged = reshaped.view(new_height * new_width, kernel_height * kernel_width, -1)
+        d_model = hidden_states.size(-1)
+        reshaped = hidden_states.view(num_images, new_height, kernel_height, new_width, kernel_width, d_model)
+        reshaped = reshaped.permute(0, 1, 3, 2, 4, 5).contiguous()
+        merged = reshaped.view(num_images * new_height * new_width, kernel_height * kernel_width, -1)
 
-        # --- mm_projector (PatchMergerMLP on single tensor) ---
         pre_norm_dtype = self.model.mm_projector.pre_norm.weight.dtype
         merged = merged.to(pre_norm_dtype)
         image_embeds = self.model.mm_projector.proj(self.model.mm_projector.pre_norm(merged).view(merged.shape[0], -1))
@@ -475,12 +492,21 @@ class QEffKimiK25DecoderWrapper(nn.Module):
 
         if image_embeds_for_state is not None and input_ids is not None:
             if attention_mask is None:
-                attention_mask = (position_ids >= 0).to(dtype=torch.long, device=input_ids.device)
+                if position_ids is None:
+                    attention_mask = torch.ones_like(input_ids, dtype=torch.long, device=input_ids.device)
+                else:
+                    attention_mask = (position_ids >= 0).to(dtype=torch.long, device=input_ids.device)
+            if image_idx is None:
+                image_idx = torch.zeros((input_ids.shape[0], 1), dtype=torch.int64, device=input_ids.device)
             selected = input_ids == self.config.media_placeholder_token_id
             selected_any = selected.any(dim=1, keepdim=True)
             selected_image_tokens = selected.to(torch.int64).sum(dim=1, keepdim=True)
 
-            image_features = [image_embeds_for_state]
+            num_selected_images = int(selected_image_tokens.max().item())
+            if num_selected_images > 0 and image_embeds_for_state.shape[0] % num_selected_images == 0:
+                image_features = list(torch.chunk(image_embeds_for_state, num_selected_images, dim=0))
+            else:
+                image_features = [image_embeds_for_state]
             inputs_embeds = inputs_embeds.to(image_embeds_for_state.dtype)
 
             merged_inputs_embeds, merged_attention_mask, _, merged_position_ids = (
@@ -821,7 +847,6 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
 
     def get_dummy_inputs(
         self,
-        comp_ctx_lengths: Optional[List[int]] = None,
         kv_offload: bool = False,
         continuous_batching: bool = False,
         **kwargs,
@@ -855,10 +880,7 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
             "w_shape": torch.zeros((inputs_shapes["w"]), dtype=torch.int64),
         }
 
-        # Ensure ONNX export traces the multimodal merge path in decoder wrapper.
-        # A dummy sequence without the media placeholder token can dead-code this
-        # branch and produce a decoder graph that ignores `image_embeds`.
-        input_ids = torch.ones((bs, prefill_seq_len), dtype=torch.int64)
+        input_ids = torch.zeros((bs, prefill_seq_len), dtype=torch.int64)
         input_ids[:, 0] = self.config.media_placeholder_token_id
 
         lang_inputs = {
