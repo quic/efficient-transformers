@@ -129,6 +129,7 @@ def _compile_cb_qpc_skip_vision(qeff_model, layerwise, full_batch_size):
         compile_kwargs["layerwise_window_size"] = 1
     qeff_model.compile(**compile_kwargs)
 
+
 @pytest.mark.on_qaic
 @pytest.mark.regular
 @pytest.mark.parametrize(
@@ -142,10 +143,7 @@ def test_qwen_layerwise_vs_non_layerwise_cb_tokens_match(manual_cleanup, model_t
     generation_len = 10
     prompts = _build_cb_prompts(full_batch_size)
     processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True, padding=True)
-    messages = [
-        [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
-        for prompt in prompts
-    ]
+    messages = [[{"role": "user", "content": [{"type": "text", "text": prompt}]}] for prompt in prompts]
     text_inputs = processor.apply_chat_template(
         messages,
         add_generation_prompt=True,
