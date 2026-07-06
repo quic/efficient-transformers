@@ -20,14 +20,20 @@ from QEfficient.blocking.blocked_attention_forwards import (
     blocked_h_mla_attention_forward,
     blocked_hqkv_attention_forward,
     blocked_kv_attention_forward,
+    blocked_kv_attention_forward_headpar_offline,
+    blocked_kv_attention_forward_prefill_headpar_offline,
     blocked_kv_mla_attention_forward,
     blocked_q_attention_forward,
+    blocked_q_attention_forward_prefill,
     blocked_qkv_attention_forward,
+    blocked_qkv_attention_forward_prefill_headpar_offline,
+    blocked_qkv_attention_forward_prefill_online,
 )
 
 
 class BlockingMode(str, Enum):
     NONE = ""
+    AUTO = "auto"
     KV = "kv"
     Q = "q"
     H = "h"
@@ -36,6 +42,15 @@ class BlockingMode(str, Enum):
     HKV = "hkv"
     HQKV = "hqkv"
     BHQKV = "bhqkv"
+
+    @classmethod
+    def resolve(cls, mode: Optional[str | "BlockingMode"]) -> "BlockingMode":
+        if mode is None:
+            return cls.NONE
+        resolved_mode = cls(mode)
+        if resolved_mode == cls.AUTO:
+            return cls.HQKV
+        return resolved_mode
 
 
 @dataclass
@@ -46,6 +61,10 @@ class AttentionBlockingConfig:
     head_block_size: Optional[int] = None
     skip_kv: Optional[bool] = True
     num_batch_blocks: Optional[int] = None
+    kv_blocking_headpar_split: Optional[int] = None
+    prefill_block_chunks: Optional[int] = None
+    prefill_blocking_mode: Optional[str] = None  # "q", "kv", "qkv" or "online"
+    ctx_len: Optional[int] = None
 
 
 def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
@@ -63,9 +82,22 @@ _STRATEGIES: Dict[BlockingMode, Callable] = {
     BlockingMode.BHQKV: blocked_bhqkv_attention_forward,
 }
 
+# replace just the KV blocking strategy with headpar version
+_STRATEGIES_HEADPAR: Dict[BlockingMode, Callable] = {
+    **_STRATEGIES,
+    BlockingMode.KV: blocked_kv_attention_forward_headpar_offline,
+}
+
 _STRATEGIES_MLA: Dict[BlockingMode, Callable] = {
     BlockingMode.KV: blocked_kv_mla_attention_forward,
     BlockingMode.H: blocked_h_mla_attention_forward,
+}
+
+_STRATEGIES_PREFILL: Dict[BlockingMode, Callable] = {
+    "q": blocked_q_attention_forward_prefill,
+    "kv": blocked_kv_attention_forward_prefill_headpar_offline,
+    "qkv": blocked_qkv_attention_forward_prefill_headpar_offline,
+    "online": blocked_qkv_attention_forward_prefill_online,
 }
 
 
@@ -150,7 +182,10 @@ def generic_blocked_attention_interface(
                 sliding_window=sliding_window,
             )
 
-    strategy = _STRATEGIES.get(blocking_config.mode)
+    if blocking_config.kv_blocking_headpar_split is not None:
+        strategy = _STRATEGIES_HEADPAR.get(blocking_config.mode)
+    else:
+        strategy = _STRATEGIES.get(blocking_config.mode)
     attn_output, attn_weights = strategy(
         module=module,
         query=query,
@@ -165,6 +200,7 @@ def generic_blocked_attention_interface(
         num_q_blocks=blocking_config.num_q_blocks,
         head_block_size=blocking_config.head_block_size,
         num_batch_blocks=blocking_config.num_batch_blocks,
+        configured_split=blocking_config.kv_blocking_headpar_split,
         score_mod=score_mod,
         position_bias=position_bias,
         sinks=sinks,
@@ -234,3 +270,48 @@ def generic_blocked_mla_attention_interface(
     )
 
     return attn_output, attn_weights
+
+
+def prefill_blocked_attention_interface(
+    module,
+    query: torch.Tensor,
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    layer_idx: int,
+    blocking_config: AttentionBlockingConfig,
+    position_ids: Optional[torch.Tensor] = None,
+    past_seen_tokens: Optional[int] = None,
+    batch_index: Optional[int] = None,
+    sinks: Optional[torch.Tensor] = None,
+    sliding_window: Optional[int] = None,
+    past_key_value: Optional[Cache] = None,
+    **kwargs,
+):
+    cache_kwargs = {
+        "position_ids": position_ids,
+        "past_seen_tokens": past_seen_tokens,
+        "batch_index": batch_index,
+    }
+    print(blocking_config.prefill_blocking_mode)
+    strategy = _STRATEGIES_PREFILL.get(blocking_config.prefill_blocking_mode)
+    return strategy(
+        module=module,
+        query=query,
+        key=k_cache,
+        value=v_cache,
+        attention_mask=attention_mask,
+        scaling=scaling,
+        num_q_blocks=blocking_config.prefill_block_chunks,
+        num_kv_blocks=blocking_config.num_kv_blocks,
+        cache_kwargs=cache_kwargs,
+        layer_idx=layer_idx,
+        past_key_value=past_key_value,
+        skip_kv=blocking_config.skip_kv or False,
+        sliding_window=sliding_window,
+        sinks=sinks,
+        configured_split=blocking_config.kv_blocking_headpar_split,
+        ctx_len=blocking_config.ctx_len,
+        **kwargs,
+    )
