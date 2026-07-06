@@ -112,7 +112,6 @@ vision_qpc_path = qeff_model.compile(
     split_model_io=True,
     skip_lang=True,
     use_onnx_subfunctions=True,
-    layerwise=False,
 )
 print("vision_qpc_path:", str(vision_qpc_path.get("vision_qpc_path")))
 
@@ -135,8 +134,6 @@ prefill_qpc_path = qeff_model.compile(
     split_model_io=True,
     use_onnx_subfunctions=True,
     prefill_only=True,
-    layerwise=True,
-    layerwise_window_size=1,
     kv_cache_prefix=KV_CACHE_PREFIX,
 )
 print("prefill_qpc_path:", str(prefill_qpc_path.get("lang_prefill_qpc_path")))
@@ -159,8 +156,6 @@ decode_qpc_path = qeff_model.compile(
     skip_vision=True,
     split_model_io=True,
     use_onnx_subfunctions=False,
-    layerwise=True,
-    layerwise_window_size=1,
     kv_cache_prefix=KV_CACHE_PREFIX,
 )
 print("decode_qpc_path:", str(decode_qpc_path.get("lang_decode_qpc_path")))
