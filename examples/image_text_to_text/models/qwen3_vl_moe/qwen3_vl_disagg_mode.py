@@ -43,7 +43,7 @@ NUM_KV_BLOCKS = 2
 NUM_Q_BLOCKS = 2
 HEAD_BLOCK_SIZE = 8
 PREFILL_BLOCK_CHUNKS = 2
-PREFILL_MODE = None # None, "online" or "qkv" depending on whether we want online prefill or headparallel prefill
+PREFILL_MODE = "qkv" # None, "online" or "qkv" depending on whether we want online prefill or headparallel prefill
 
 def _decode_qaic_config() -> dict:
     return {

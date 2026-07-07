@@ -487,8 +487,24 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
             V_4d = value_5d.reshape(batch_size, num_kv_heads * split, split_block_len, head_dim)
 
             off = kv_offsets if split_block_len == T_h_nom else kv_offsets[:, :split_block_len]
-            causal_mask_block = off[None, :, None, :] > (pos_sub - start_index)[:, None, :, None]
-            skip_split = (kv_offsets[:, 0] > (pos_sub.min() - start_index)).view(1, num_kv_heads * split)
+            split_causal_masks = []
+            for s in range(split):
+                s_start = start_index + s * split_block_len
+                mask_s = _create_causal_mask(
+                    position_ids=pos_sub,
+                    target_length=s_start + split_block_len,
+                    sliding_window=sliding_window,
+                    start_index=s_start,
+                )
+                # mask_s: [B, 1, Q, split_block_len]
+                split_causal_masks.append(mask_s)
+            causal_mask_block = (
+                torch.stack(split_causal_masks, dim=2)
+                .expand(batch_size, num_kv_heads, split, tc, split_block_len)
+                .reshape(batch_size, num_kv_heads * split, tc, split_block_len)
+            )
+            # causal_mask_block = off[None, :, None, :] > (pos_sub - start_index)[:, None, :, None]
+            skip_split = (kv_offsets[:, 0] > (pos_sub.max() - start_index)).view(1, num_kv_heads * split)
 
             for acc in accs:
                 rc = acc["rc"]

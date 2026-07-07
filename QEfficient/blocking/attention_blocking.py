@@ -295,6 +295,14 @@ def prefill_blocked_attention_interface(
         "past_seen_tokens": past_seen_tokens,
         "batch_index": batch_index,
     }
+    if sliding_window is not None:
+        cache_kwargs.update(
+            {
+                "is_sliding": sliding_window is not None,
+                "sliding_window": past_key_value.sliding_window_len,
+            }
+        )
+    past_key_value.write_only(k_cache, v_cache, module.layer_idx, cache_kwargs)
     strategy = _STRATEGIES_PREFILL.get(blocking_config.prefill_blocking_mode)
     return strategy(
         module=module,
