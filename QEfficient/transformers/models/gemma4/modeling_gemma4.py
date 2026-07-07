@@ -1130,7 +1130,7 @@ class QEffGemma4EncoderWrapper(nn.Module):
             vision_embeds = vision_embeds.unsqueeze(0)
 
         # Keep the encoder output fixed-shape for dual-QPC export/compile.
-        # Gemma4 E2B uses vision_config.default_output_length/image_seq_length
+        # Gemma4 uses vision_config.default_output_length/image_seq_length
         # image placeholders (280), while the vision pooler may emit extra
         # padded bins for the max-patch canvas.
         del pooler_mask
