@@ -1151,7 +1151,9 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         return default_output_length * pooling_kernel_size * pooling_kernel_size
 
     def _get_mm_tokens_per_image(self) -> int:
-        return getattr(self.config, "mm_tokens_per_image", getattr(self.config.vision_config, "default_output_length", 280))
+        return getattr(
+            self.config, "mm_tokens_per_image", getattr(self.config.vision_config, "default_output_length", 280)
+        )
 
     def get_qeff_vision_encoder(self):
         return QEffGemma4EncoderWrapper(self)
