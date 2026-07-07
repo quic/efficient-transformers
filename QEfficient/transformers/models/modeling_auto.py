@@ -9,7 +9,7 @@ import os
 import warnings
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Dict, List, Optional, Union
+from typing import List, Optional, Union
 
 import numpy as np
 import onnx
@@ -36,11 +36,11 @@ from QEfficient.base.onnx_transforms import (
     FP16ClipTransform,
     RewriteUnsupportedOpsTransform,
     SplitMultiInputMaxMinTransform,
-    SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
 from QEfficient.exporter.checkpoint_transforms import (
     DtypeConversionCheckpointTransform,
+    GptOssMxfp4ExpertDequantSplitCheckpointTransform,
     MoEExpertStackingCheckpointTransform,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
@@ -3457,8 +3457,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     _onnx_transforms = [RewriteUnsupportedOpsTransform, SplitMultiInputMaxMinTransform]
 
     _checkpoint_transforms = [
-        MoEExpertStackingCheckpointTransform,   # MoE: stacks experts + converts dtype in one pass
-        DtypeConversionCheckpointTransform,     # dense: dtype conversion only
+        GptOssMxfp4ExpertDequantSplitCheckpointTransform,  # gpt_oss MXFP4: dequant + split fused proj
+        MoEExpertStackingCheckpointTransform,  # MoE: stacks experts + converts dtype in one pass
+        DtypeConversionCheckpointTransform,  # dense: dtype conversion only
     ]
 
     def prefill(

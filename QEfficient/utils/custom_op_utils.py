@@ -77,7 +77,6 @@ def ctx_gather_op(data: torch.Tensor, ctx_indices: torch.Tensor, comp_ctx_len: i
     return data[batch_indices, head_indices, ctx_indices]
 
 
-
 # @ctx_gather_op.register_fake
 # def _(
 #     data: torch.Tensor,
@@ -217,12 +216,12 @@ def _(
     We derive the output shape from input shapes:
     - batch_size: from batch_index
     - num_heads: from data
-    - seq_len: from ctx_indices (dimension 1, typically)
+    - seq_len: from ctx_indices (dimension -1 = ctx_len, not dim 1 which is the dummy head dim)
     - hidden dims: from data (starting from dim 3)
     """
     batch_size = batch_index.shape[0]
     num_heads = data.shape[1]
-    seq_len = ctx_indices.shape[1]
+    seq_len = ctx_indices.shape[-1]  # ctx_indices is (batch, 1, ctx_len): use dim -1 not dim 1
 
     # Remaining feature dimensions (e.g., head_dim or more)
     feature_shape = data.shape[3:]  # could be () if 3D

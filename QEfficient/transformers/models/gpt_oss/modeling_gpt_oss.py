@@ -53,6 +53,18 @@ class QEffGptOssExperts(GptOssExperts):
         # transformers>=5 uses fused gate_up projections. Keep backward-compatible
         # aliases expected by existing QEff paths.
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-1] // 2)
+
+        if self.gate_up_proj.device.type == "meta":
+            # Weight-free export: register shape-only placeholder parameters on meta device.
+            # Values come from the preprocessed checkpoint at QAIC compile time via weight_spec.json.
+            E, H = self.gate_up_proj.shape[0], self.gate_up_proj.shape[1]
+            self.gate_proj = nn.Parameter(torch.empty(E, H, self.expert_dim, device="meta"))
+            self.up_proj = nn.Parameter(torch.empty(E, H, self.expert_dim, device="meta"))
+            self.gate_proj_bias = nn.Parameter(torch.empty(E, self.expert_dim, device="meta"))
+            self.up_proj_bias = nn.Parameter(torch.empty(E, self.expert_dim, device="meta"))
+            return
+
+        # Normal export: compute derived params — values embedded in ONNX.
         self.gate_proj = nn.Parameter(self.gate_up_proj[:, :, : self.expert_dim].detach().clone())
         self.up_proj = nn.Parameter(self.gate_up_proj[:, :, self.expert_dim :].detach().clone())
         self.gate_proj_bias = nn.Parameter(self.gate_up_proj_bias[:, : self.expert_dim].detach().clone())
@@ -671,7 +683,8 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-
+    cos = cos.to(device=q.device, dtype=q.dtype)
+    sin = sin.to(device=q.device, dtype=q.dtype)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
 
@@ -875,7 +888,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
             attention_mask = sliding_mask
             # positive_pos_ids = torch.where(position_ids<0, 0, position_ids)
             ctx_len = position_ids.shape[1] + self.sliding_window
-            ctx_indices = torch.arange(ctx_len)
+            ctx_indices = torch.arange(ctx_len, device=position_ids.device)
             first_pos_idx = position_ids[0][0]
             add_idx = torch.where(first_pos_idx >= self.sliding_window, first_pos_idx - self.sliding_window, 0)
             # start_idx = torch.where(first_pos_idx>=self.sliding_window, first_pos_idx-self.sliding_window, 0)
@@ -943,7 +956,9 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
             }
             if self.sliding_window is not None:
                 sliding_window_len = past_key_values.sliding_window_len
-                short_read_idx = torch.arange(past_key_values.key_cache[self.layer_idx].shape[2])
+                short_read_idx = torch.arange(
+                    past_key_values.key_cache[self.layer_idx].shape[2], device=position_ids.device
+                )
                 read_idx = short_read_idx + torch.where(
                     position_ids.max() > sliding_window_len - 1, position_ids.max() - sliding_window_len + 1, 0
                 )
@@ -1409,7 +1424,9 @@ class QEffGptOssForCausalLM(GptOssForCausalLM):
         hidden_states = outputs.last_hidden_state
 
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+        hidden_states = outputs[0][
+            torch.arange(position_ids.shape[0], device=position_ids.device).view(-1, 1), logit_index
+        ]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
 

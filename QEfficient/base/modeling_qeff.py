@@ -755,6 +755,16 @@ class QEFFBaseModel(ABC):
                 cleanup_weight_free_export()
 
         self.onnx_path = onnx_path
+
+        if use_weight_free_export and self.weight_spec_path is not None:
+            from QEfficient.exporter.weight_spec import load_weight_spec
+
+            spec = load_weight_spec(self.weight_spec_path)
+            prepared_out = Path(spec.model_id)
+            symlink = onnx_path.parent / prepared_out.name
+            if prepared_out.exists() and not symlink.exists():
+                symlink.symlink_to(prepared_out)
+
         return onnx_path
 
     def get_onnx_path(

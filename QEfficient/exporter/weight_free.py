@@ -9,7 +9,7 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
-import json
+
 import numpy as np
 import onnx_ir as ir
 import torch
@@ -17,9 +17,8 @@ from accelerate import init_empty_weights
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from torch import nn
+
 from QEfficient.exporter.checkpoint_transforms import CheckpointTransformPipeline
-from QEfficient.transformers.embeddings.embedding_utils import PooledModel
-from QEfficient.transformers.models.pytorch_transforms import PoolingTransform
 from QEfficient.exporter.weight_spec import (
     ExternalDataFile,
     TiedWeightAlias,
@@ -30,6 +29,8 @@ from QEfficient.exporter.weight_spec import (
     resolve_weight_spec_path,
     save_weight_spec,
 )
+from QEfficient.transformers.embeddings.embedding_utils import PooledModel
+from QEfficient.transformers.models.pytorch_transforms import PoolingTransform
 from QEfficient.utils.export_utils import (
     _cleanup_onnx_subfunctions,
     _setup_onnx_subfunctions,
@@ -46,6 +47,7 @@ from QEfficient.utils.torch_patches import (
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
 try:
     from memory_profiling import QEffMemoryProfiler as _QEffMemoryProfiler
+
     _HAS_PROFILER = True
 except ImportError:
     _HAS_PROFILER = False
@@ -137,12 +139,8 @@ def _build_meta_qeff_model(qeff_model):
     )
     meta_qeff_model.hash_params.update(copy.deepcopy(qeff_model.hash_params))
 
-    
-    
     if isinstance(qeff_model.model, PooledModel):
-        meta_qeff_model.model, _ = PoolingTransform.apply(
-            meta_qeff_model.model, qeff_model.model.pooling_fn
-        )
+        meta_qeff_model.model, _ = PoolingTransform.apply(meta_qeff_model.model, qeff_model.model.pooling_fn)
 
     if quant_config is not None:
         # For quantized models the meta model must use the same quantized layer types as the
@@ -151,7 +149,10 @@ def _build_meta_qeff_model(qeff_model):
         # no weight loading) AFTER __init__ so that Mxfp4GptOssExpertDequantizeTransform —
         # which is part of _pytorch_transforms and targets QEffMxfp4GptOssExperts — has
         # already run as a no-op and will not undo the replacement below.
-        from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, QEFF_AUTO_QUANTIZER_MAPPING
+        from QEfficient.transformers.quantizers.auto import (
+            QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING,
+            QEFF_AUTO_QUANTIZER_MAPPING,
+        )
 
         # quantization_config may be a plain dict (AutoConfig.from_pretrained) or a proper
         # config object (QEFFAutoModelForCausalLM.from_pretrained).  Normalise to an object.
@@ -160,8 +161,7 @@ def _build_meta_qeff_model(qeff_model):
             config_cls = QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING.get(quant_type)
             if config_cls is None:
                 raise NotImplementedError(
-                    f"Weight-free export is not implemented for quantization type '{quant_type}'. "
-                    "Supported: mxfp4"
+                    f"Weight-free export is not implemented for quantization type '{quant_type}'. Supported: mxfp4"
                 )
             init_kwargs = {k: v for k, v in quant_config.items() if k != "quant_method"}
             quant_config = config_cls(**init_kwargs)
@@ -172,8 +172,7 @@ def _build_meta_qeff_model(qeff_model):
         quantizer_cls = QEFF_AUTO_QUANTIZER_MAPPING.get(quant_type) if quant_type else None
         if quantizer_cls is None:
             raise NotImplementedError(
-                f"Weight-free export is not implemented for quantization type '{quant_type}'. "
-                "Supported: mxfp4"
+                f"Weight-free export is not implemented for quantization type '{quant_type}'. Supported: mxfp4"
             )
         quantizer = quantizer_cls(quant_config)
         # Run inside init_empty_weights so newly created quantized layer buffers stay on
@@ -228,7 +227,7 @@ def _find_checkpoint_key(
     """
     Resolve an ONNX initializer name to its key in the safetensors checkpoint.
 
-    Three lookups are attempted in order:
+    Four lookups are attempted in order:
 
     1. Direct match — ONNX name == checkpoint key.
        Covers decoder-only LLMs (Llama, GPT-OSS) and any model exported
@@ -244,30 +243,46 @@ def _find_checkpoint_key(
        → "roberta." prefix).  HuggingFace defines base_model_prefix on every
        model class as exactly the attribute name the task class uses to store
        the backbone, so this is generalized — no per-model-family list needed.
+
+    4. Strip backbone.base_model_prefix from the front of the ONNX name.
+       Covers ForCausalLM models (e.g. GPT2LMHeadModel) whose checkpoint was
+       saved from the base model class (e.g. GPT2Model) so keys lack the LM
+       wrapper prefix — ONNX name "transformer.wte.weight" maps to checkpoint
+       key "wte.weight" after stripping the "transformer." prefix.
     """
     # 1. Direct match
     if onnx_name in checkpoint_index:
         return onnx_name
 
     # Strip PooledModel's "base_model." wrapper prefix
-    stripped = onnx_name[len("base_model."):] if onnx_name.startswith("base_model.") else onnx_name
+    stripped = onnx_name[len("base_model.") :] if onnx_name.startswith("base_model.") else onnx_name
 
     # 2. Bare key — checkpoint saved from base class
     if stripped in checkpoint_index:
         return stripped
 
-    # 3. Task-class prefix — checkpoint saved from ForSequenceClassification etc.
     prefix = getattr(backbone, "base_model_prefix", "")
+
+    # 3. Task-class prefix — checkpoint saved from ForSequenceClassification etc.
     if prefix:
         prefixed = f"{prefix}.{stripped}"
         if prefixed in checkpoint_index:
             return prefixed
+
+    # 4. Strip base_model_prefix from ONNX name — checkpoint saved from the
+    #    base model class so keys lack the ForCausalLM wrapper prefix
+    #    (e.g. GPT2: ONNX "transformer.wte.weight" → checkpoint "wte.weight").
+    if prefix and stripped.startswith(f"{prefix}."):
+        without_prefix = stripped[len(f"{prefix}.") :]
+        if without_prefix in checkpoint_index:
+            return without_prefix
 
     return None
 
 
 def _promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name: str, qeff_model) -> WeightSpec:
     from QEfficient.transformers.embeddings.embedding_utils import PooledModel
+
     model_ir = onnx_program.model
     model_names = {name for name, _ in qeff_model.model.named_parameters()}
     model_names.update({name for name, _ in qeff_model.model.named_buffers()})
@@ -393,7 +408,6 @@ def export_weight_free_onnx(
         _prep_profiler.stop_monitoring()
         print(_prep_profiler.get_memory_report())
         logger.info(_prep_profiler.get_memory_report())
-
 
         spec = _promote_initializers_and_build_spec(
             onnx_program=onnx_program,

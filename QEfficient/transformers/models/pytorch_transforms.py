@@ -1258,7 +1258,10 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "forward": QEffGrok1DecoderLayer.forward,
             "__qeff_init__": QEffGrok1DecoderLayer.__qeff_init__,
         },
-        "MoeBlock": {"forward": QEffGrok1MoeBlock.forward},
+        "MoeBlock": {
+            "forward": QEffGrok1MoeBlock.forward,
+            "__qeff_init__": QEffGrok1MoeBlock.__qeff_init__,
+        },
         "MultiHeadAttention": {
             "forward": QEffGrok1MultiHeadAttention.forward,
         },
