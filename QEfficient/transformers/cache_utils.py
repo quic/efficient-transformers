@@ -515,11 +515,7 @@ class QEffDynamicCompressedKVRopeLayer:
         k_pe_out = select_interface(CtxGatherFunc.apply, torch.ops.qefficient.ctx_gather)(
             k_pe_out, ctx_indices, ctx_len
         )
-        k_pe_out = torch.where(
-            invalid_mask.unsqueeze(-1),
-            torch.zeros(1, dtype=k_pe_out.dtype, device=k_pe_out.device),
-            k_pe_out,
-        )
+        k_pe_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(k_pe_out, dtype=torch.float32), k_pe_out)
         return k_pe_out
 
     def read_only_blocked_ckv(self, start_index, end_index, cache_kwargs):

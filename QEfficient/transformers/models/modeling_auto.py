@@ -3843,7 +3843,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         dynamic_shapes = {}
 
         max_seq_len = getattr(self.model.config, "max_position_embeddings", 1024)
-        batch_min = 1 if getattr(self.model.config, "model_type", None) in ("gpt_oss", "glm_moe_dsa") else 2
+        batch_min = 1 if getattr(self.model.config, "model_type", None) == "gpt_oss" else 2
         model_type = getattr(self.model.config, "model_type", None)
 
         def resolve_dim(dim_name):
@@ -3851,6 +3851,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             if dim_name not in dim_registry:
                 if dim_name == "batch_size":
                     dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=512)
+                elif dim_name == "full_batch_size":
+                    dim_registry[dim_name] = Dim("full_batch_size", min=batch_min, max=512)
                 elif "seq_len" in dim_name:
                     dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
                 elif "ctx_len" in dim_name:
