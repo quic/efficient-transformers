@@ -49,6 +49,8 @@ def main():
         full_batch_size=args.full_batch_size,
         num_cores=args.num_cores,
         num_devices=(1 if args.device_group is None else len(args.device_group)),
+        use_dynamo=True,
+        use_onnx_subfunctions=True,
     )
     print(f"Model compiled to: {qpc_path}")
 
