@@ -367,27 +367,30 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, target_classnames=None):
     apply_torch_patches()
     InvalidIndexProvider.SUBFUNC_ENABLED = True
 
-    # Transform output names for subfunction compatibility
-    if "output_names" in kwargs:
-        kwargs["output_names"] = [
-            re.sub("_RetainedState", "_InternalRetainedState", name)
-            if name.endswith("_RetainedState")
-            and (
-                "key" in name
-                or "value" in name
-                or "compressed_kv" in name
-                or "k_pe" in name
-                or "conv" in name
-                or "recurrent" in name
+    # Transform output names for subfunction compatibility (TorchScript path only).
+    # The dynamo path keeps _RetainedState so that PreserveNestedCacheRetainedStateTransform
+    # can locate and wire the dangling outputs; it does its own renaming internally.
+    if not use_dynamo:
+        if "output_names" in kwargs:
+            kwargs["output_names"] = [
+                re.sub("_RetainedState", "_InternalRetainedState", name)
+                if name.endswith("_RetainedState")
+                and (
+                    "key" in name
+                    or "value" in name
+                    or "compressed_kv" in name
+                    or "k_pe" in name
+                    or "conv" in name
+                    or "recurrent" in name
+                )
+                else name
+                for name in kwargs["output_names"]
+            ]
+        else:
+            warnings.warn(
+                "ONNX subfunctions are enabled, but no retained-state output names were found to rewrite. "
+                "Ensure `output_names` includes key/value retained states if subfunction compatibility is required."
             )
-            else name
-            for name in kwargs["output_names"]
-        ]
-    else:
-        warnings.warn(
-            "ONNX subfunctions are enabled, but no retained-state output names were found to rewrite. "
-            "Ensure `output_names` includes key/value retained states if subfunction compatibility is required."
-        )
 
     # Work on an instance-local copy and restore it in cleanup. Without this,
     # failed or repeated subfunction exports can leak transforms into later exports.
