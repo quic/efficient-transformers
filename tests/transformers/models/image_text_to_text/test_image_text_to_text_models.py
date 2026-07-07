@@ -51,7 +51,6 @@ test_mm_moe_models = [model["model_name"] for model in multimodal_models if "moe
 
 NEW_GENERATION_TOKENS = 10
 KIMI_K25_MODEL_NAME = "moonshotai/Kimi-K2.5"
-KIMI_K25_QAIC_CONFIG = {"mla_absorption": {"cache_compressed": True, "absorption": False, "online": False}}
 
 
 def _is_kimi_k25(model_name: str) -> bool:
@@ -152,6 +151,56 @@ def _get_kimi_k25_num_image_tokens(config, grid_thws):
     return int(grid_thws[0, 1].item() // merge_height) * int(grid_thws[0, 2].item() // merge_width)
 
 
+def _disable_compressed_tensor_forward_pre_hooks(module: torch.nn.Module):
+    if hasattr(module, "_forward_pre_hooks"):
+        module._forward_pre_hooks.clear()
+
+
+def _load_kimi_k25_layer_subset_model():
+    examples_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../examples/kimi_k2"))
+    if examples_dir not in sys.path:
+        sys.path.insert(0, examples_dir)
+
+    from test_kimi_k25 import (  # noqa: PLC0415
+        LOADED_EXPERT_IDS,
+        NUM_EXPERTS_PER_TOKEN,
+        NUM_TEXT_LAYERS,
+        NUM_VISION_LAYERS,
+        _disable_compressed_tensor_forward_pre_hooks as _example_disable_compressed_tensor_forward_pre_hooks,
+        _load_layer_subset_model,
+        _materialize_missing_linear_weights,
+        _patch_deepseek_init_weights_compat,
+        _patch_kimi_tie_weights_compat,
+        _prepare_config,
+        _resolve_model_path,
+        _set_deterministic,
+    )
+
+    _set_deterministic(1234)
+    _ensure_torch_fx_import_compatibility()
+    model_path = _resolve_model_path()
+    config = _prepare_config(model_path)
+    kimi_cls = get_class_from_dynamic_module("modeling_kimi_k25.KimiK25ForConditionalGeneration", str(model_path))
+    _patch_kimi_tie_weights_compat(kimi_cls)
+    _patch_deepseek_init_weights_compat(kimi_cls)
+
+    model, tokenizer, processor = _load_layer_subset_model(
+        model_path=model_path,
+        kimi_cls=kimi_cls,
+        config=config,
+        num_vision_layers=NUM_VISION_LAYERS,
+        num_text_layers=NUM_TEXT_LAYERS,
+        loaded_expert_ids=LOADED_EXPERT_IDS,
+        num_experts_per_tok=NUM_EXPERTS_PER_TOKEN,
+        dtype=torch.float32,
+    )
+    _materialize_missing_linear_weights(model.language_model)
+    _example_disable_compressed_tensor_forward_pre_hooks(model)
+    model.vision_tower.patch_embed.pos_emb.interpolation_mode = "bilinear"
+    model = model.eval().to("cpu")
+    return model, tokenizer, processor
+
+
 @torch.no_grad()
 def _run_kimi_k25_hf_model_on_pytorch(model, processor, inputs, max_gen_len):
     generated_ids = inputs["input_ids"]
@@ -223,9 +272,19 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     pytorch_kv_tokens = None
     ort_tokens = None
     n_layer = num_hidden_layers
+    kimi_tokenizer = None
+    kimi_processor = None
     if _is_kimi_k25(model_name) and config is None:
-        config = _get_kimi_k25_test_config(model_name)
-    if config is None:
+        model_hf, kimi_tokenizer, kimi_processor = _load_kimi_k25_layer_subset_model()
+        config = model_hf.config
+        qeff_model = QEFFAutoModelForImageTextToText(
+            copy.deepcopy(model_hf),
+            kv_offload=kv_offload,
+            config=model_hf.config,
+            torch_dtype=torch_dtype,
+        )
+        _disable_compressed_tensor_forward_pre_hooks(qeff_model.model)
+    elif config is None:
         config = AutoConfig.from_pretrained(
             model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS
         )
@@ -259,11 +318,9 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             )
     else:
         model_hf = load_vlm_model_from_config(config)
-        qaic_config = KIMI_K25_QAIC_CONFIG if _is_kimi_k25(model_name) else None
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
             kv_offload=kv_offload,
-            qaic_config=qaic_config,
             config=model_hf.config,
             torch_dtype=torch_dtype,
         )
@@ -353,7 +410,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         compile_kwargs["img_size"] = img_size
 
     elif _is_kimi_k25(model_name):
-        processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
+        processor = kimi_processor
+        tokenizer = kimi_tokenizer
         image = Image.open(requests.get(img_url, stream=True).raw).convert("RGB")
         conversation = [
             {
@@ -392,6 +450,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         )
         compile_kwargs.update(
             {
+                "prefill_seq_len": 1,
                 "num_patches": int(inputs["pixel_values"].shape[0]),
                 "h": int(inputs["grid_thws"][0, 1].item()),
                 "w": int(inputs["grid_thws"][0, 2].item()),
