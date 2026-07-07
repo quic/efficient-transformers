@@ -201,6 +201,7 @@ def generic_blocked_attention_interface(
         head_block_size=blocking_config.head_block_size,
         num_batch_blocks=blocking_config.num_batch_blocks,
         configured_split=blocking_config.kv_blocking_headpar_split,
+        ctx_len=blocking_config.ctx_len,
         score_mod=score_mod,
         position_bias=position_bias,
         sinks=sinks,
@@ -294,6 +295,14 @@ def prefill_blocked_attention_interface(
         "past_seen_tokens": past_seen_tokens,
         "batch_index": batch_index,
     }
+    if sliding_window is not None:
+        cache_kwargs.update(
+            {
+                "is_sliding": sliding_window is not None,
+                "sliding_window": past_key_value.sliding_window_len,
+            }
+        )
+    past_key_value.write_only(k_cache, v_cache, module.layer_idx, cache_kwargs)
     strategy = _STRATEGIES_PREFILL.get(blocking_config.prefill_blocking_mode)
     return strategy(
         module=module,
