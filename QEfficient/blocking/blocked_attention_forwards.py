@@ -132,7 +132,7 @@ def blocked_kv_attention_forward(
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks else 1
     kv_block_size = -(-past_seen_tokens // num_kv_blocks)
     if hasattr(module, "config"):
         mask_dtype = module.config.torch_dtype
@@ -242,9 +242,9 @@ def blocked_qkv_attention_forward(
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
 
-    num_q_blocks = max(1, num_q_blocks)
+    num_q_blocks = max(1, num_q_blocks) if num_q_blocks else 1
     q_block_positions = [-(-i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks else 1
     kv_block_size = -(-past_seen_tokens // num_kv_blocks)
 
     q_output_blocks = []
@@ -382,9 +382,9 @@ def blocked_hqkv_attention_forward(
     if head_block_size <= 0:
         head_block_size = num_heads
     num_head_blocks = math.ceil(num_heads / head_block_size)
-    num_q_blocks = max(1, num_q_blocks)
+    num_q_blocks = max(1, num_q_blocks) if num_q_blocks else 1
     q_block_positions = [-(-i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks else 1
     kv_block_size = -(-past_seen_tokens // num_kv_blocks)
 
     h_output_blocks = []
@@ -540,9 +540,9 @@ def blocked_bhqkv_attention_forward(
     if head_block_size <= 0:
         head_block_size = num_heads
     num_head_blocks = math.ceil(num_heads / head_block_size)
-    num_q_blocks = max(1, _normalize_int(num_q_blocks))
+    num_q_blocks = max(1, _normalize_int(num_q_blocks)) if num_q_blocks else 1
     q_block_positions = [-(-i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks else 1
     kv_block_size = -(-past_seen_tokens // num_kv_blocks)
 
     h_output_blocks = []
@@ -779,7 +779,7 @@ def blocked_q_attention_forward(
     Q-blocked attention that slices the query sequence into blocks and processes each block.
     """
     batch_size, num_heads, q_len, _ = query.shape
-    num_q_blocks = max(1, _normalize_int(num_q_blocks))
+    num_q_blocks = max(1, _normalize_int(num_q_blocks)) if num_q_blocks else 1
     key_states, value_states = _get_kv_states(module, key, value)
 
     q_block_positions = [-(-i * q_len) // num_q_blocks for i in range(num_q_blocks)]

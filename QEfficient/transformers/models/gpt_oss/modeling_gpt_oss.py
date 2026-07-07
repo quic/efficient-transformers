@@ -961,6 +961,9 @@ class QEffGptOssAttention(GptOssAttention):
             and (blocking_config.mode != BlockingMode.NONE)
             and (self.sliding_window is None)
         )
+        if use_blocking and blocking_config.mode == BlockingMode.Q:
+            logger.warning("GPT-OSS does not support Q-blocking only in prefill+decode mode, downgrading to non-blocked attention")
+            use_blocking = False
         if use_blocking:
             attn_output, attn_weights = generic_blocked_attention_interface(
                 module=self,
