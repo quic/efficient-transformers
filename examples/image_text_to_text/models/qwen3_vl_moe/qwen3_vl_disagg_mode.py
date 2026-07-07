@@ -43,13 +43,14 @@ NUM_KV_BLOCKS = 2
 NUM_Q_BLOCKS = 2
 HEAD_BLOCK_SIZE = 8
 PREFILL_BLOCK_CHUNKS = 2
-PREFILL_MODE = "online" # None, "online" or "qkv" depending on whether we want online prefill or headparallel prefill
+PREFILL_MODE = None # None, "online" or "qkv" depending on whether we want online prefill or headparallel prefill
 
 def _decode_qaic_config() -> dict:
     return {
         "blocking_mode": "kv",
         "num_kv_blocks": NUM_KV_BLOCKS,
         "kv_blocking_headpar_split": 0,  # 0 → resolved to num_cores at compile time
+        "ctx_len": CTX_LEN,
     }
 
 
@@ -59,7 +60,6 @@ def _qaic_config() -> dict:
         return cfg
     cfg["prefill_block_chunks"] = PREFILL_BLOCK_CHUNKS
     cfg["prefill_blocking_mode"] = PREFILL_MODE
-    cfg["ctx_len"] = CTX_LEN
     return cfg
 
 skip_vision = False
@@ -98,7 +98,7 @@ decode_qpc_path = qeff_model.compile(
     prefill_only=False,
     expert_parallel=True,
     skip_vision=True,
-    use_onnx_subfunctions=True,
+    use_onnx_subfunctions=False,
     layerwise=False,
     offload_pt_weights=False,
     qaic_config=_qaic_config()
@@ -122,7 +122,7 @@ prefill_qpc_path = qeff_model.compile(
     prefill_only=True,
     enable_chunking=True,
     skip_vision=True,
-    use_onnx_subfunctions=True,
+    use_onnx_subfunctions=False,
     layerwise=False,
     offload_pt_weights=True,
     qaic_config=_qaic_config()

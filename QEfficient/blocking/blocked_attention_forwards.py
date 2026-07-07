@@ -225,6 +225,7 @@ def blocked_kv_attention_forward_headpar_offline(
     cache_kwargs: Dict[str, Any],
     layer_idx: int,
     past_key_value: Cache,
+    ctx_len: int,
     *,
     use_causal_mask: bool = False,
     sliding_window: Optional[int] = None,
@@ -239,7 +240,7 @@ def blocked_kv_attention_forward_headpar_offline(
     # merged (across kv-blocks, then across splits).
     batch_size, num_heads, seq_len, head_dim = query.shape
     num_kv_groups = getattr(module, "num_key_value_groups", None)
-    past_seen_tokens = cache_kwargs.get("past_seen_tokens")
+    past_seen_tokens = ctx_len
     position_ids = cache_kwargs.get("position_ids")
     num_kv_heads = num_heads // num_kv_groups
     split = _get_headpar_split(configured_split, num_kv_groups)

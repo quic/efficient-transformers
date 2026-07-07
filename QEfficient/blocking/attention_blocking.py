@@ -201,6 +201,7 @@ def generic_blocked_attention_interface(
         head_block_size=blocking_config.head_block_size,
         num_batch_blocks=blocking_config.num_batch_blocks,
         configured_split=blocking_config.kv_blocking_headpar_split,
+        ctx_len=blocking_config.ctx_len,
         score_mod=score_mod,
         position_bias=position_bias,
         sinks=sinks,
