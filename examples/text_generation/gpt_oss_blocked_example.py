@@ -78,7 +78,7 @@ def main():
         num_cores=args.num_cores,
         num_devices=1,
         qaic_config=qaic_config,
-        use_dynamo=False,
+        use_dynamo=True,
         use_onnx_subfunctions=True,
     )
     print(f"Model compiled to: {qpc_path_blocked}")
