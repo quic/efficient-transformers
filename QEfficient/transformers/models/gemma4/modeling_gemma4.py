@@ -473,7 +473,6 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
             mm_token_type_ids is not None
             and hidden_states.shape[1] != 1
             and getattr(self.config, "use_bidirectional_attention", None) == "vision"
-            and self.sliding_window is not None
         ):
             attention_mask = _build_bidirectional_vision_attention_mask(
                 position_ids=position_ids,
