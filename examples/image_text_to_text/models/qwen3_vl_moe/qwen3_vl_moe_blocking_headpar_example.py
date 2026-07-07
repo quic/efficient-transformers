@@ -66,6 +66,7 @@ def _decode_qaic_config() -> dict:
         "num_q_blocks": NUM_Q_BLOCKS,
         "head_block_size": HEAD_BLOCK_SIZE,
         "kv_blocking_headpar_split": 0,  # 0 → resolved to num_cores at compile time
+        "ctx_len": CTX_LEN,
     }
 
 
@@ -73,7 +74,6 @@ def _prefill_qaic_config(prefill_mode: str) -> dict:
     cfg = _decode_qaic_config()
     cfg["prefill_block_chunks"] = PREFILL_BLOCK_CHUNKS
     cfg["prefill_blocking_mode"] = prefill_mode
-    cfg["ctx_len"] = CTX_LEN
     return cfg
 
 
@@ -263,7 +263,7 @@ def run_prefill_config(
 
     # ── Run chunked prefill ───────────────────────────────────────────────────
     prefill_session = QAICInferenceSession(prefill_qpc)
-    # decode_session = QAICInferenceSession(decode_qpc)
+    decode_session = QAICInferenceSession(decode_qpc)
 
     chunk_inputs = {"image_idx": np.array([[0]])}
     prefill_out = None
@@ -279,38 +279,38 @@ def run_prefill_config(
     t_prefill = time.time() - t0
     print(f"  Prefill done: {num_chunks} chunk(s) in {t_prefill:.3f}s")
 
-    # # ── Build decode seed inputs from last prefill output ─────────────────────
-    # # position_ids max over last dim for the decode start position
-    # decode_pos = np.max(position_ids, axis=-1, keepdims=True) + 1  # [..., 1]
-    # decode_inputs = {
-    #     "input_ids": np.argmax(prefill_out["logits"]).reshape(1, 1),
-    #     "position_ids": decode_pos,
-    #     "image_idx": prefill_out["image_idx_output"],
-    # }
-    # for layer in range(num_layers):
-    #     decode_inputs[f"past_key.{layer}"] = prefill_out[f"past_key.{layer}_RetainedState"]
-    #     decode_inputs[f"past_value.{layer}"] = prefill_out[f"past_value.{layer}_RetainedState"]
+    # ── Build decode seed inputs from last prefill output ─────────────────────
+    # position_ids max over last dim for the decode start position
+    decode_pos = np.max(position_ids, axis=-1, keepdims=True) + 1  # [..., 1]
+    decode_inputs = {
+        "input_ids": np.argmax(prefill_out["logits"]).reshape(1, 1),
+        "position_ids": decode_pos,
+        "image_idx": prefill_out["image_idx_output"],
+    }
+    for layer in range(num_layers):
+        decode_inputs[f"past_key.{layer}"] = prefill_out[f"past_key.{layer}_RetainedState"]
+        decode_inputs[f"past_value.{layer}"] = prefill_out[f"past_value.{layer}_RetainedState"]
 
-    # # ── Decode loop ───────────────────────────────────────────────────────────
-    # all_tokens = [decode_inputs["input_ids"].flatten()]
-    # t0 = time.time()
-    # for _ in range(gen_len - 1):
-    #     out = decode_session.run(decode_inputs)
-    #     next_tok = np.argmax(out["logits"], axis=-1).reshape(1, 1)
-    #     all_tokens.append(next_tok.flatten())
-    #     decode_inputs["input_ids"] = next_tok
-    #     decode_inputs["position_ids"] = decode_inputs["position_ids"] + 1
-    #     decode_inputs["image_idx"] = out["image_idx_output"]
-    #     for layer in range(num_layers):
-    #         decode_inputs[f"past_key.{layer}"] = out[f"past_key.{layer}_RetainedState"]
-    #         decode_inputs[f"past_value.{layer}"] = out[f"past_value.{layer}_RetainedState"]
-    # t_decode = time.time() - t0
-    # print(f"  Decode {gen_len} tokens in {t_decode:.2f}s ({gen_len / t_decode:.1f} tok/s)")
+    # ── Decode loop ───────────────────────────────────────────────────────────
+    all_tokens = [decode_inputs["input_ids"].flatten()]
+    t0 = time.time()
+    for _ in range(gen_len - 1):
+        out = decode_session.run(decode_inputs)
+        next_tok = np.argmax(out["logits"], axis=-1).reshape(1, 1)
+        all_tokens.append(next_tok.flatten())
+        decode_inputs["input_ids"] = next_tok
+        decode_inputs["position_ids"] = decode_inputs["position_ids"] + 1
+        decode_inputs["image_idx"] = out["image_idx_output"]
+        for layer in range(num_layers):
+            decode_inputs[f"past_key.{layer}"] = out[f"past_key.{layer}_RetainedState"]
+            decode_inputs[f"past_value.{layer}"] = out[f"past_value.{layer}_RetainedState"]
+    t_decode = time.time() - t0
+    print(f"  Decode {gen_len} tokens in {t_decode:.2f}s ({gen_len / t_decode:.1f} tok/s)")
 
-    # aic_tokens = np.concatenate(all_tokens)
-    # text = processor.tokenizer.decode(aic_tokens, skip_special_tokens=True)
-    # print(f"  [aic/{label}] {text}")
-    # return aic_tokens
+    aic_tokens = np.concatenate(all_tokens)
+    text = processor.tokenizer.decode(aic_tokens, skip_special_tokens=True)
+    print(f"  [aic/{label}] {text}")
+    return aic_tokens
 
 
 # ── Comparison helper ─────────────────────────────────────────────────────────
@@ -369,9 +369,9 @@ def main():
 
     raw_inputs = build_processor_inputs(processor, args.prompt)
 
-    # # ── PyTorch reference ─────────────────────────────────────────────────────
-    # print("\n--- PyTorch reference (vanilla HF model) ---")
-    # pt_tokens = run_pytorch_reference(model_hf, raw_inputs, args.gen_len, tokenizer=processor.tokenizer)
+    # ── PyTorch reference ─────────────────────────────────────────────────────
+    print("\n--- PyTorch reference (vanilla HF model) ---")
+    pt_tokens = run_pytorch_reference(model_hf, raw_inputs, args.gen_len, tokenizer=processor.tokenizer)
 
     # ── Run selected blocking config(s) ──────────────────────────────────────
     results = {}
@@ -388,17 +388,17 @@ def main():
         results[mode] = aic_tokens
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    # print("\n" + "=" * 60)
-    # print("RESULTS")
-    # print("=" * 60)
-    # all_pass = True
-    # for mode, aic_tokens in results.items():
-    #     passed = compare_tokens(pt_tokens, aic_tokens, mode)
-    #     all_pass = all_pass and passed
+    print("\n" + "=" * 60)
+    print("RESULTS")
+    print("=" * 60)
+    all_pass = True
+    for mode, aic_tokens in results.items():
+        passed = compare_tokens(pt_tokens, aic_tokens, mode)
+        all_pass = all_pass and passed
 
-    # print("=" * 60)
-    # print(f"Overall: {'ALL PASS' if all_pass else 'FAILURES DETECTED'}")
-    # print("=" * 60)
+    print("=" * 60)
+    print(f"Overall: {'ALL PASS' if all_pass else 'FAILURES DETECTED'}")
+    print("=" * 60)
 
 
 if __name__ == "__main__":

@@ -225,6 +225,7 @@ def blocked_kv_attention_forward_headpar_offline(
     cache_kwargs: Dict[str, Any],
     layer_idx: int,
     past_key_value: Cache,
+    ctx_len: int,
     *,
     use_causal_mask: bool = False,
     sliding_window: Optional[int] = None,
@@ -239,7 +240,7 @@ def blocked_kv_attention_forward_headpar_offline(
     # merged (across kv-blocks, then across splits).
     batch_size, num_heads, seq_len, head_dim = query.shape
     num_kv_groups = getattr(module, "num_key_value_groups", None)
-    past_seen_tokens = cache_kwargs.get("past_seen_tokens")
+    past_seen_tokens = ctx_len
     position_ids = cache_kwargs.get("position_ids")
     num_kv_heads = num_heads // num_kv_groups
     split = _get_headpar_split(configured_split, num_kv_groups)
@@ -486,8 +487,24 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
             V_4d = value_5d.reshape(batch_size, num_kv_heads * split, split_block_len, head_dim)
 
             off = kv_offsets if split_block_len == T_h_nom else kv_offsets[:, :split_block_len]
-            causal_mask_block = off[None, :, None, :] > (pos_sub - start_index)[:, None, :, None]
-            skip_split = (kv_offsets[:, 0] > (pos_sub.min() - start_index)).view(1, num_kv_heads * split)
+            split_causal_masks = []
+            for s in range(split):
+                s_start = start_index + s * split_block_len
+                mask_s = _create_causal_mask(
+                    position_ids=pos_sub,
+                    target_length=s_start + split_block_len,
+                    sliding_window=sliding_window,
+                    start_index=s_start,
+                )
+                # mask_s: [B, 1, Q, split_block_len]
+                split_causal_masks.append(mask_s)
+            causal_mask_block = (
+                torch.stack(split_causal_masks, dim=2)
+                .expand(batch_size, num_kv_heads, split, tc, split_block_len)
+                .reshape(batch_size, num_kv_heads * split, tc, split_block_len)
+            )
+            # causal_mask_block = off[None, :, None, :] > (pos_sub - start_index)[:, None, :, None]
+            skip_split = (kv_offsets[:, 0] > (pos_sub.max() - start_index)).view(1, num_kv_heads * split)
 
             for acc in accs:
                 rc = acc["rc"]
