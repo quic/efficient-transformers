@@ -336,7 +336,15 @@ class QAICInferenceSession:
             base_name = name.replace("_RetainedState", "")
             elem_size = self.aic_to_np_dtype_mapping[binding.type].itemsize
             dim_spec = FULL_ATTN_DIMSPEC if len(binding.dims) == 4 else LINEAR_ATTN_DIMSPEC
-            buffer_specs.append({"Name": f"{base_name}.*", "ElemSize": elem_size, "DimSpecs": dim_spec})
+            # `Name` is matched as a regex. A bare `{base_name}.*` lets a lower index
+            # swallow a longer one that shares its prefix (e.g. "past_key.3.*" also
+            # matches "past_key.34_RetainedState"); in a hybrid cache layers 3 (sliding)
+            # and 34 (full) carry different ctx sizes, so that collision applies the wrong
+            # DimSpec and the runtime rejects the buffer. Bound the layer index exactly and
+            # allow an optional "_RetainedState" suffix: the decode handoff wires both the
+            # bare KV *input* binding ("past_key.34") and its *_RetainedState output against
+            # this same spec, so the pattern must match both — and only — those two names.
+            buffer_specs.append({"Name": f"{base_name}(_.*)?", "ElemSize": elem_size, "DimSpecs": dim_spec})
         return json.dumps({"BufferSpecs": buffer_specs})
 
     def _create_slicing_spec_handle(self, buffer_spec_json: str):
