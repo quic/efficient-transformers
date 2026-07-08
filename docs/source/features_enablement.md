@@ -111,7 +111,7 @@ the node list compact is critical for acceptable compile times.
 
 | Option | Purpose | When to set | Warnings / Notes |
 |--------|---------|-------------|-----------------|
-| `num_devices` | Number of devices to compile for (tensor-slice MDP). | Always set to the number of target devices. | Controls `mdp_ts_num_devices` internally. |
+| `num_devices` | Number of devices to compile for | Always set to the number of target devices. | Controls overall number of devices |
 | `mdp_num_partitions` | Number of pipeline-parallel partitions (disaggregated MDP). | Set only during the final compile (Step 2), not the dump pass. | When `> 1`, triggers full node-list generation from the ONNX graph. |
 | `mdp_strategy` | Selects MDP node-list generation strategy: `"onnx"` or `"intersection"`. | Set to `"intersection"` when using a compiler dump for a no-subfunction model. | `"intersection"` requires `mdp_compiler_dump_path` to also be set. |
 | `mdp_compiler_dump_path` | Path to the compiler MDP dump produced in Step 1. | Set during the intersection compile (Step 2). | Required when `mdp_strategy="intersection"`. The compiler dump is **not** the desired final partitioning; it is used only to identify valid node names. |

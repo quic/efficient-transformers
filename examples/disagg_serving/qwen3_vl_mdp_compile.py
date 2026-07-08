@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mdp_strategy",
         choices=["onnx", "intersection", "both"],
-        default="intersection",
+        default="onnx",
         help=(
             "MDP compile strategy to run. "
             "'onnx': single compile pass using ONNX-derived partition config. "
