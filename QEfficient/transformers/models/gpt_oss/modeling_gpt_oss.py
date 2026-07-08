@@ -167,7 +167,7 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
         if num_experts % num_nsp != 0:
             raise ValueError(f"num_experts ({num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})")
-        
+
         local_experts = num_experts // num_nsp
         routing_weights_by_expert = routing_weights.transpose(0, 1).contiguous()
 
