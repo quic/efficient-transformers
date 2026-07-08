@@ -150,6 +150,56 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
 class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
     supports_moe_prefill_blocking = True
 
+    def __qeff_init__(self):
+        num_experts = self.experts.num_experts
+        num_nsp = getattr(self, "expert_blocking_num_nsp", num_experts)
+        local_experts = num_experts // num_nsp
+        expert_dim = self.experts.expert_dim
+        hidden_size = self.hidden_size
+
+        self.W_g = nn.Parameter(
+            self.experts.gate_proj.view(local_experts, num_nsp, hidden_size, expert_dim)
+            .transpose(0, 1)
+            .contiguous()
+            .detach()
+            .clone()
+        )
+        self.W_u = nn.Parameter(
+            self.experts.up_proj.view(local_experts, num_nsp, hidden_size, expert_dim)
+            .transpose(0, 1)
+            .contiguous()
+            .detach()
+            .clone()
+        )
+        self.W_d = nn.Parameter(
+            self.experts.down_proj.view(local_experts, num_nsp, expert_dim, hidden_size)
+            .transpose(0, 1)
+            .contiguous()
+            .detach()
+            .clone()
+        )
+        self.b_g = nn.Parameter(
+            self.experts.gate_proj_bias.view(local_experts, num_nsp, expert_dim)
+            .transpose(0, 1)
+            .contiguous()
+            .detach()
+            .clone()
+        )
+        self.b_u = nn.Parameter(
+            self.experts.up_proj_bias.view(local_experts, num_nsp, expert_dim)
+            .transpose(0, 1)
+            .contiguous()
+            .detach()
+            .clone()
+        )
+        self.b_d = nn.Parameter(
+            self.experts.down_proj_bias.view(local_experts, num_nsp, hidden_size)
+            .transpose(0, 1)
+            .contiguous()
+            .detach()
+            .clone()
+        )
+
     def forward(self, hidden: torch.Tensor):
         B, S, H = hidden.shape
         T = B * S
@@ -169,28 +219,24 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
             raise ValueError(f"num_experts ({num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})")
 
         local_experts = num_experts // num_nsp
-        routing_weights_by_expert = routing_weights.transpose(0, 1).contiguous()
+        routing_weights_by_expert = (
+            routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
+        )
 
         expert_out = hidden.new_zeros((num_nsp, T, H))
+        routing_weights_unsqueezed = routing_weights_by_expert.unsqueeze(-1)
         for local_slot in range(local_experts):
-            # Keep each local expert shard as a separate block instead of packing
-            # [num_nsp, local_experts, ...] and slicing on local_experts inside the
-            # decoder-layer subfunction. This avoids packed-then-sliced expert
-            # constants in ONNX subfunction export for prefill.
-            slot_start = local_slot * num_nsp
-            slot_end = slot_start + num_nsp
-            rw_slot = routing_weights_by_expert[slot_start:slot_end]
-            T2Ei = rw_slot > 0
+            T2Ei = routing_weights_by_expert[:, local_slot, :] > 0
             expert_out = _cumsum_scatter_gather_update_gptoss_expert_blocked(
                 x=hidden,
                 T2Ei=T2Ei,
-                W_g=self.experts.gate_proj[slot_start:slot_end],
-                W_u=self.experts.up_proj[slot_start:slot_end],
-                W_d=self.experts.down_proj[slot_start:slot_end],
-                b_g=self.experts.gate_proj_bias[slot_start:slot_end],
-                b_u=self.experts.up_proj_bias[slot_start:slot_end],
-                b_d=self.experts.down_proj_bias[slot_start:slot_end],
-                routing_weight=rw_slot.unsqueeze(-1),
+                W_g=self.W_g[:, local_slot],
+                W_u=self.W_u[:, local_slot],
+                W_d=self.W_d[:, local_slot],
+                b_g=self.b_g[:, local_slot],
+                b_u=self.b_u[:, local_slot],
+                b_d=self.b_d[:, local_slot],
+                routing_weight=routing_weights_unsqueezed[:, local_slot],
                 expert_out=expert_out,
                 limit=self.experts.limit,
                 alpha=self.experts.alpha,
