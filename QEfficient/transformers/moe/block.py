@@ -62,6 +62,8 @@ class QEffMoEBlockMixin:
     def moe_dispatch(self, x: torch.Tensor, routing) -> torch.Tensor:
         weights = self.get_moe_weights()
         profile = self.moe_profile
+        if callable(profile):
+            profile = profile()
 
         if self._moe_flavour is MoEFlavour.DECODE_BMM:
             dense, topk = resolve_routing(routing, weights.num_experts)
