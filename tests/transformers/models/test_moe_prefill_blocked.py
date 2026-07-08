@@ -11,6 +11,12 @@ import torch
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from QEfficient import QEFFAutoModelForCausalLM
+from QEfficient.transformers.models.pytorch_transforms import (
+    KVCacheTransform,
+    OptimizedMoEWeightsTransform,
+    PrefillOnlyChunkedTransform,
+    PrefillOnlyTransform,
+)
 
 MODEL_KWARGS = {"attn_implementation": "eager"}
 
@@ -40,15 +46,18 @@ def test_glm4_moe_blocked_prefill_forward_parity():
 
     config = AutoConfig.for_model("glm4_moe", **GLM4_MOE_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
-    block = next(module for module in model.modules() if module.__class__.__name__ == "Glm4MoeMoE")
+    qeff_model = copy.deepcopy(model)
+    KVCacheTransform.apply(qeff_model)
+    OptimizedMoEWeightsTransform.apply(qeff_model)
+    qeff_block = next(module for module in qeff_model.modules() if isinstance(module, QEffGlm4MoeMoE))
 
-    qeff_block = copy.deepcopy(block)
-    qeff_block.__class__ = QEffGlm4MoeMoE
-    qeff_block.__qeff_init__()
-
-    chunked_block = copy.deepcopy(block)
-    chunked_block.__class__ = QEffPrefillChunkedGlm4MoeMoE
-    chunked_block.__qeff_init__()
+    chunked_model = copy.deepcopy(model)
+    KVCacheTransform.apply(chunked_model)
+    PrefillOnlyChunkedTransform.apply(chunked_model)
+    OptimizedMoEWeightsTransform.apply(chunked_model)
+    chunked_block = next(
+        module for module in chunked_model.modules() if isinstance(module, QEffPrefillChunkedGlm4MoeMoE)
+    )
     chunked_block.expert_blocking_num_nsp = 2
     chunked_block.expert_blocking_packed_chunk_size = 256
 
@@ -171,7 +180,7 @@ GPTOSS_CFG = dict(
 def test_qwen3moe_blocked_forward_parity():
     from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
         QEffPrefillChunkedQwen3MoeSparseMoeBlock,
-        QEffQwen3MoeExperts,
+        QEffQwen3MoeSparseMoeBlock,
     )
 
     config = AutoConfig.for_model("qwen3_moe", **QWEN3_MOE_CFG)
@@ -184,16 +193,21 @@ def test_qwen3moe_blocked_forward_parity():
     ]
     assert blocks
 
-    block = blocks[0]
-    chunked = QEffPrefillChunkedQwen3MoeSparseMoeBlock.__new__(QEffPrefillChunkedQwen3MoeSparseMoeBlock)
-    chunked.__dict__.update(block.__dict__)
-    chunked.__class__ = QEffPrefillChunkedQwen3MoeSparseMoeBlock
-    chunked.experts.__class__ = QEffQwen3MoeExperts
-    chunked.experts.__qeff_init__()
-    chunked.__qeff_init__()
+    qeff_model = copy.deepcopy(model)
+    KVCacheTransform.apply(qeff_model)
+    OptimizedMoEWeightsTransform.apply(qeff_model)
+    qeff_block = next(module for module in qeff_model.modules() if isinstance(module, QEffQwen3MoeSparseMoeBlock))
+
+    chunked_model = copy.deepcopy(model)
+    KVCacheTransform.apply(chunked_model)
+    PrefillOnlyChunkedTransform.apply(chunked_model)
+    OptimizedMoEWeightsTransform.apply(chunked_model)
+    chunked = next(
+        module for module in chunked_model.modules() if isinstance(module, QEffPrefillChunkedQwen3MoeSparseMoeBlock)
+    )
     x = torch.randn(1, 8, config.hidden_size)
     with torch.no_grad():
-        orig, _ = chunked.orig_forward(x)
+        orig, _ = qeff_block(x)
         chunked.expert_blocking_num_nsp = 2
         chunked.expert_blocking_packed_chunk_size = 256
         blocked, _ = chunked.forward(x)
@@ -233,7 +247,14 @@ def test_qwen3moe_disagg_compile_uses_distinct_decode_and_prefill_onnx(tmp_path,
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
 
+    decode_onnx_path = qeff.export(
+        tmp_path / "decode-export",
+        prefill_only=False,
+        offload_pt_weights=False,
+        retain_full_kv=True,
+    )
     qeff.compile(
+        onnx_path=str(decode_onnx_path),
         compile_dir=tmp_path / "decode-compile",
         prefill_seq_len=1,
         ctx_len=128,
@@ -243,9 +264,18 @@ def test_qwen3moe_disagg_compile_uses_distinct_decode_and_prefill_onnx(tmp_path,
         offload_pt_weights=False,
         retain_full_kv=True,
     )
-    decode_onnx_path = qeff.onnx_path
 
+    prefill_onnx_path = qeff.export(
+        tmp_path / "prefill-export",
+        prefill_only=True,
+        prefill_seq_len=64,
+        num_cores=2,
+        moe_prefill_packed_chunk_size=32,
+        enable_chunking=True,
+        offload_pt_weights=False,
+    )
     qeff.compile(
+        onnx_path=str(prefill_onnx_path),
         compile_dir=tmp_path / "prefill-compile",
         prefill_seq_len=64,
         ctx_len=128,
@@ -257,7 +287,6 @@ def test_qwen3moe_disagg_compile_uses_distinct_decode_and_prefill_onnx(tmp_path,
         enable_chunking=True,
         offload_pt_weights=False,
     )
-    prefill_onnx_path = qeff.onnx_path
 
     compiled_onnx_args = [arg for command in compile_commands for arg in command if str(arg).startswith("-m=")]
     assert len(compiled_onnx_args) == 2
@@ -308,7 +337,10 @@ def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
     assert "CtxScatter3DInt" in used_op_types
     assert "CtxScatter3D" in used_op_types
     assert "CtxGather3D" in used_op_types
-    assert [256] in slice_starts
+    assert qeff.hash_params["moe_prefill_num_packed_chunks"] == 2
+    assert qeff.hash_params["moe_prefill_packed_chunk_size"] == 256
+    assert qeff.hash_params["moe_prefill_num_nsp"] == 2
+    assert [256] not in slice_starts
 
 
 # ── GPT-OSS ───────────────────────────────────────────────────────────────────
@@ -317,8 +349,8 @@ def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
 def test_gptoss_blocked_forward_parity():
     from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import (
         QEffPrefillOnlyChunkedGptOssMLP,
+        QEffPrefillOnlyGptOssMLP,
     )
-    from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyChunkedTransform
 
     config = AutoConfig.for_model("gpt_oss", **GPTOSS_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
@@ -331,9 +363,11 @@ def test_gptoss_blocked_forward_parity():
         orig, _ = blocks_orig[0].forward(x)
 
     qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
-    PrefillOnlyChunkedTransform.apply(qeff.model)
 
-    blocks_chunked = [m for _, m in qeff.model.named_modules() if isinstance(m, QEffPrefillOnlyChunkedGptOssMLP)]
+    chunked_model = copy.deepcopy(qeff.model)
+    PrefillOnlyChunkedTransform.apply(chunked_model)
+    OptimizedMoEWeightsTransform.apply(chunked_model)
+    blocks_chunked = [m for _, m in chunked_model.named_modules() if isinstance(m, QEffPrefillOnlyChunkedGptOssMLP)]
     assert blocks_chunked
     blocks_chunked[0].expert_blocking_num_nsp = 2
     blocks_chunked[0].expert_blocking_packed_chunk_size = 256
@@ -341,8 +375,17 @@ def test_gptoss_blocked_forward_parity():
     with torch.no_grad():
         blocked, _ = blocks_chunked[0].forward(x)
 
-    assert orig.shape == blocked.shape
-    assert (orig - blocked).abs().max().item() < 0.1, "GPT-OSS parity failed"
+    loop_model = copy.deepcopy(qeff.model)
+    PrefillOnlyTransform.apply(loop_model)
+    OptimizedMoEWeightsTransform.apply(loop_model)
+    blocks_loop = [m for _, m in loop_model.named_modules() if isinstance(m, QEffPrefillOnlyGptOssMLP)]
+    assert blocks_loop
+    with torch.no_grad():
+        looped, _ = blocks_loop[0].forward(x)
+
+    assert orig.shape == blocked.shape == looped.shape
+    assert (orig - blocked).abs().max().item() < 0.1, "GPT-OSS HF vs expert-blocked parity failed"
+    assert (orig - looped).abs().max().item() < 1e-3, "GPT-OSS HF vs simple-loop parity failed"
 
 
 def test_gptoss_decode_export(tmp_path):
@@ -394,5 +437,8 @@ def test_gptoss_prefill_chunked_export_traces_packed_chunks(tmp_path):
             if node.op_type == "Slice" and len(node.input) > 1 and node.input[1] in constants:
                 slice_starts.append(constants[node.input[1]])
 
-    assert [256] in slice_starts
+    assert qeff.hash_params["moe_prefill_num_packed_chunks"] == 2
+    assert qeff.hash_params["moe_prefill_packed_chunk_size"] == 256
+    assert qeff.hash_params["moe_prefill_num_nsp"] == 2
+    assert [256] not in slice_starts
     assert op_types.count("CtxGather3D") >= 2 * op_types.count("CtxScatter3DInt")
