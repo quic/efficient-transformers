@@ -3398,10 +3398,20 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         enable: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
         retain_full_kv: Optional[bool] = False,
+        num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
     ):
         if enable:
             self.model, tf = PrefillOnlyExternalModuleMapperTransform.apply(self.model)
             if enable_chunking:
+                # __qeff_init__ runs during module remapping; seed MoE prefill-blocking attrs
+                # on source modules before remap so strict getattr(...) in __qeff_init__ succeeds.
+                for module in self.model.modules():
+                    if hasattr(module, "experts") and hasattr(module, "router"):
+                        module.expert_blocking_num_nsp = num_cores
+                        module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
+                        module.hidden_size = self.config.hidden_size
+
                 self.model, tf = PrefillOnlyChunkedTransform.apply(self.model)
             else:
                 self.model, tf = PrefillOnlyTransform.apply(self.model)
@@ -3805,7 +3815,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     raise NotImplementedError(
                         "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
                     )
-                self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
+                self.__update_prefill_transform(
+                    enable=True,
+                    enable_chunking=enable_chunking,
+                    num_cores=num_cores,
+                    moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+                )
                 self.hash_params.pop("retain_full_kv", None)
                 if "DeepseekV3ForCausalLM" not in (getattr(self.model.config, "architectures", None) or []):
                     seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
