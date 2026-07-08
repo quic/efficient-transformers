@@ -59,21 +59,25 @@ class QEffMoEBlockMixin:
         return out
 
     # ---- orchestration (shared) ----------------------------------------------
-    def moe_dispatch(self, x: torch.Tensor, routing) -> torch.Tensor:
+    def execute_moe_flavour(self, x: torch.Tensor, routing) -> torch.Tensor:
         weights = self.get_moe_weights()
         profile = self.moe_profile
         if callable(profile):
             profile = profile()
 
-        if self._moe_flavour is MoEFlavour.DECODE_BMM:
-            dense, topk = resolve_routing(routing, weights.num_experts)
+        flavour = getattr(self, "_moe_flavour", MoEFlavour.DECODE_BMM)
+        if not isinstance(flavour, MoEFlavour):
+            flavour = MoEFlavour(flavour)
+
+        if flavour is MoEFlavour.DECODE_BMM:
+            _, topk = resolve_routing(routing, weights.num_experts)
             if topk is None:
                 raise ValueError("decode_bmm flavour requires route() to return (topk_indices, topk_weights)")
             topk_indices, topk_weights = topk
             return moe_decode_bmm(x, topk_indices, topk_weights, weights, profile, top_k=topk_indices.shape[1])
 
         dense, _ = resolve_routing(routing, weights.num_experts)
-        if self._moe_flavour is MoEFlavour.EXPERT_BLOCKED:
+        if flavour is MoEFlavour.EXPERT_BLOCKED:
             num_nsp = self.expert_blocking_num_nsp or weights.num_experts
             packed_chunk_size = self.expert_blocking_packed_chunk_size or x.shape[0]
             return moe_expert_blocked(
@@ -87,11 +91,14 @@ class QEffMoEBlockMixin:
             )
         return moe_simple_loop(x, dense, weights, profile)
 
+    def moe_dispatch(self, x: torch.Tensor, routing) -> torch.Tensor:
+        return self.execute_moe_flavour(x, routing)
+
     def forward(self, hidden_states: torch.Tensor):
         B, S, H = hidden_states.shape
         x = hidden_states.view(B * S, H)
         routing, router_logits = self.route(x)
-        out = self.moe_dispatch(x, routing)
+        out = self.execute_moe_flavour(x, routing)
         out = self.apply_shared_experts(out, x)
         out = out.view(B, S, H)
         if self._moe_return_router_logits:
