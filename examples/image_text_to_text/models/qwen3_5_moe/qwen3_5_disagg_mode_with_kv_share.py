@@ -33,7 +33,7 @@ STAGES = 4
 LAYERWISE = False
 LAYERWISE_WINDOW_SIZE = 1
 PREFILL_NUM_DEVICES = 8
-DECODE_NUM_DEVICES = 2
+DECODE_NUM_DEVICES = 4
 BS = 1
 
 # Vision-tower inputs are routed to the vision QPC; everything else feeds the lang QPCs.
@@ -107,9 +107,6 @@ def run(
         )
         vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
 
-    # split_retained_state_io=True gives distinct KV input vs. *_RetainedState output
-    # buffers — required by the DMA handoff, which wires both sides at the shared host
-    # arrays. (The baseline's split_model_io is an orthogonal VLM vision/lang split.)
     prefill_qpc_path = qeff_model.compile(
         batch_size=BS,
         prefill_seq_len=prefill_seq_len,
@@ -123,7 +120,7 @@ def run(
         retain_full_kv=True,
         split_retained_state_io=True,
         mos=1,
-        user_tiled=True,
+        # user_tiled=True, #enable only with kv blocking
         aic_enable_depth_first=False,
         mdp_num_partitions=stages,
         prefill_only=True,
@@ -258,19 +255,22 @@ def run(
     first_token = int(np.argmax(prefill_logits))
     all_outputs = [first_token]
 
-    # ---- Decode (consumer): re-point DMA descriptor at kv_caches EVERY step ----
-    # With split_retained_state_io=True the KV *input* binding (decode_buff_map) and the
-    # *_RetainedState output* (decode_rs_kv_only_buff_map) are distinct device buffers —
-    # exactly the two sides the baseline bridges with a host copy each step. Wire BOTH at
-    # kv_caches: the input for the read, the RS output for the write-back of the newly
-    # decoded position. Both maps share the same layer-sorted family order, so the two
-    # concatenated maps line up with kv_caches repeated.
     decode_kv_map = decode_session.decode_buff_map + decode_session.decode_rs_kv_only_buff_map
     image_idx = prefill_out["image_idx_output"]
-    pos = int(np.max(lang_inputs["position_ids"])) + 1
+
+    num_pos_sections = lang_inputs["position_ids"].shape[0]
+    phys_pos = int(lang_inputs["position_ids"][0].max()) + 1
+    mrope_pos = int(lang_inputs["position_ids"][1:].max()) + 1
+
+    def _decode_position_ids(next_phys, next_mrope):
+        pos = np.empty((num_pos_sections, BS, 1), dtype=np.int64)
+        pos[0] = next_phys
+        pos[1:] = next_mrope
+        return pos
+
     decode_inputs = {
         "input_ids": np.array(first_token, dtype=np.int64).reshape(1, 1),
-        "position_ids": np.array([[pos]], dtype=np.int64),
+        "position_ids": _decode_position_ids(phys_pos, mrope_pos),
         "image_idx": image_idx,
     }
     st = perf_counter()
@@ -286,10 +286,11 @@ def run(
         out = decode_session.get_outputs(index=exec_idx)
         tok = int(np.argmax(out["logits"]))
         all_outputs.append(tok)
-        pos += 1
+        phys_pos += 1
+        mrope_pos += 1
         decode_inputs = {
             "input_ids": np.array(tok, dtype=np.int64).reshape(1, 1),
-            "position_ids": np.array([[pos]], dtype=np.int64),
+            "position_ids": _decode_position_ids(phys_pos, mrope_pos),
             "image_idx": out["image_idx_output"],
         }
     ft = perf_counter()
