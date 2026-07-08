@@ -306,6 +306,7 @@ from QEfficient.base.pytorch_transforms import (
     ExternalModuleMapperTransform,
     ModuleMappingTransform,
     ModuleMutatorTransform,
+    PytorchTransform,
 )
 from QEfficient.customop import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP, PooledModel, validate_user_pooling_function
@@ -646,7 +647,14 @@ from QEfficient.utils.config_utils import (
     resolve_kv_heads,
     set_kv_head_aliases,
 )
-from QEfficient.utils.constants import ATTENTION_HEAD_CONFIG_KEYS, HIDDEN_SIZE_CONFIG_KEYS, KV_HEAD_CONFIG_KEYS
+from QEfficient.utils.constants import (
+    ATTENTION_HEAD_CONFIG_KEYS,
+    DEFAULT_AIC_NUM_CORES,
+    HIDDEN_SIZE_CONFIG_KEYS,
+    KV_HEAD_CONFIG_KEYS,
+    MOE_PREFILL_PACKED_CHUNK_SIZE,
+    ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+)
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.repeat_kv_utils import (
     duplicate_kv_projection_weights,
@@ -1308,7 +1316,7 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "forward": QEffGrok1DecoderLayer.forward,
             "__qeff_init__": QEffGrok1DecoderLayer.__qeff_init__,
         },
-        "MoeBlock": {"forward": QEffGrok1MoeBlock.forward},
+        "MoeBlock": {"forward": QEffGrok1MoeBlock.forward, "build_moe_weights": QEffGrok1MoeBlock.build_moe_weights},
         "MultiHeadAttention": {
             "forward": QEffGrok1MultiHeadAttention.forward,
         },
@@ -1327,6 +1335,7 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "DeepseekV3MoE": {
             "forward": QEffDeepseekV3MoE.forward,
             "moe": QEffDeepseekV3MoE.moe,
+            "build_moe_weights": QEffDeepseekV3MoE.build_moe_weights,
             "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
         },
         "DeepseekV3Attention": {
@@ -1351,6 +1360,7 @@ class PrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "DeepseekV3MoE": {
             "forward": QEffPrefillOnlyDeepseekV3MoE.forward,
             "moe": QEffPrefillOnlyDeepseekV3MoE.moe,
+            "build_moe_weights": QEffPrefillOnlyDeepseekV3MoE.build_moe_weights,
             "__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
         },
     }
@@ -1362,6 +1372,7 @@ class RevertPrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransfo
         "DeepseekV3MoE": {
             "forward": QEffDeepseekV3MoE.forward,
             "moe": QEffDeepseekV3MoE.moe,
+            "build_moe_weights": QEffDeepseekV3MoE.build_moe_weights,
             "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
         },
     }
@@ -1452,3 +1463,133 @@ class BlockingAttentionTransform:
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
         return model, transformed
+
+
+def _iter_optimized_moe_modules(model: nn.Module):
+    from QEfficient.transformers.moe import QEffMoEBlockMixin
+
+    for module in model.modules():
+        if isinstance(module, QEffMoEBlockMixin):
+            yield module
+
+
+def _iter_optimized_moe_weight_modules(model: nn.Module):
+    for module in model.modules():
+        if hasattr(module, "build_moe_weights"):
+            yield module
+
+
+class OptimizedMoEMapperTransform(PytorchTransform):
+    """Identify MoE blocks that participate in the shared MoE transform flow."""
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        return model, any(True for _ in _iter_optimized_moe_modules(model))
+
+
+class OptimizedMoEWeightsTransform(PytorchTransform):
+    """Canonicalize MoE expert weights for modules using shared MoE flavours."""
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        transformed = False
+        for module in _iter_optimized_moe_weight_modules(model):
+            if getattr(module, "_qeff_moe_weights_ready", False):
+                continue
+            module.build_moe_weights()
+            module._qeff_moe_weights_ready = True
+            transformed = True
+        return model, transformed
+
+
+class OptimizedMoEExportConfigTransform(PytorchTransform):
+    """Assign MoE export flavour, blocking attributes, and hash parameters."""
+
+    @classmethod
+    def apply(
+        cls,
+        model: nn.Module,
+        *,
+        prefill_only: bool = False,
+        enable_chunking: bool = False,
+        num_cores: int = DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: int = MOE_PREFILL_PACKED_CHUNK_SIZE,
+        qaic_config: Optional[dict] = None,
+        prefill_seq_len: Optional[int] = None,
+        hash_params: Optional[dict] = None,
+    ) -> Tuple[nn.Module, bool]:
+        from QEfficient.transformers.moe import MoEFlavour, select_moe_flavour
+
+        moe_config = (qaic_config or {}).get("moe_config", {}) or {}
+        model_type = getattr(getattr(model, "config", None), "model_type", "") or ""
+
+        num_nsp = int(moe_config.get("num_nsp", num_cores))
+        packed_chunk_size = int(moe_config.get("packed_chunk_size", moe_prefill_packed_chunk_size))
+        if num_nsp <= 0:
+            raise ValueError("moe num_nsp must be greater than zero")
+        if packed_chunk_size <= 0:
+            raise ValueError("moe packed_chunk_size must be greater than zero")
+        compile_seq_len = prefill_seq_len or ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        num_packed_chunks = max(1, -(-compile_seq_len // packed_chunk_size))
+
+        transformed = False
+        flavour = None
+        for module in _iter_optimized_moe_modules(model):
+            supports_blocking = getattr(module, "supports_moe_prefill_blocking", False)
+            flavour = select_moe_flavour(
+                moe_config,
+                model_type,
+                is_prefill=prefill_only,
+                supports_blocking=supports_blocking,
+                enable_chunking=enable_chunking,
+            )
+            module._moe_flavour = flavour
+            if flavour is MoEFlavour.EXPERT_BLOCKED:
+                module.expert_blocking_num_nsp = num_nsp
+                module.expert_blocking_packed_chunk_size = packed_chunk_size
+                module.expert_blocking_num_packed_chunks = num_packed_chunks
+            transformed = True
+
+        if transformed and hash_params is not None:
+            hash_params["moe_prefill_flavour"] = (flavour or MoEFlavour.DECODE_BMM).value
+            if flavour is MoEFlavour.EXPERT_BLOCKED:
+                hash_params["moe_prefill_num_nsp"] = num_nsp
+                hash_params["moe_prefill_packed_chunk_size"] = packed_chunk_size
+                hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
+            else:
+                hash_params.pop("moe_prefill_num_nsp", None)
+                hash_params.pop("moe_prefill_packed_chunk_size", None)
+                hash_params.pop("moe_prefill_num_packed_chunks", None)
+
+        return model, transformed
+
+
+class OptimizedMoETransform(PytorchTransform):
+    """Compatibility facade for MoE mapping discovery, weights, and export config."""
+
+    @classmethod
+    def apply(
+        cls,
+        model: nn.Module,
+        *,
+        prefill_only: bool = False,
+        enable_chunking: bool = False,
+        num_cores: int = DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: int = MOE_PREFILL_PACKED_CHUNK_SIZE,
+        qaic_config: Optional[dict] = None,
+        prefill_seq_len: Optional[int] = None,
+        hash_params: Optional[dict] = None,
+    ) -> Tuple[nn.Module, bool]:
+        _, mapped = OptimizedMoEMapperTransform.apply(model)
+        _, weights_ready = OptimizedMoEWeightsTransform.apply(model)
+        model, export_configured = OptimizedMoEExportConfigTransform.apply(
+            model,
+            prefill_only=prefill_only,
+            enable_chunking=enable_chunking,
+            num_cores=num_cores,
+            moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+            qaic_config=qaic_config,
+            prefill_seq_len=prefill_seq_len,
+            hash_params=hash_params,
+        )
+        return model, mapped or weights_ready or export_configured

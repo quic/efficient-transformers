@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import math
-import os
+from functools import partial
 from typing import List, Optional, Tuple, Type, Union
 
 import torch
@@ -42,11 +42,6 @@ from QEfficient.blocking.attention_blocking import (
     BlockingMode,
     generic_blocked_attention_interface,
 )
-from QEfficient.customop.ctx_scatter_gather import (
-    CtxGatherFunc3DGeneralized,
-    CtxScatterFunc3DGeneralized,
-    CtxScatterFunc3DInt,
-)
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import (
     CtxGatherFuncCB,
@@ -60,6 +55,14 @@ from QEfficient.transformers.models._layerwise import (
     is_last_layer_window,
     is_layerwise_active,
     resolve_layer_window,
+)
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    MoEProfile,
+    MoEWeights,
+    QEffMoEBlockMixin,
+    build_canonical_expert_weights,
+    silu_glu_mlp,
 )
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
@@ -438,8 +441,8 @@ def qeff_torch_causal_conv1d_update(
     pos_ids = position_ids[0]
     zeros = torch.zeros((pos_ids.shape[0], state_len), dtype=pos_ids.dtype, device=pos_ids.device)
     out = torch.cat([zeros, pos_ids], dim=1)
-    order = torch.argsort(out, dim=1)  # sorted positions per batch row
-    last_positions = order[:, -state_len:]  # (B, state_len)
+    order = torch.argsort(out, dim=1)
+    last_positions = order[:, -state_len:]
 
     # ad_on = torch.where(hidden_states.shape[2] == torch.tensor(1), torch.tensor(1), cache_position.argmax(0))
     hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
@@ -560,10 +563,10 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # Precompute all constant masks — no triu/tril with diagonal args at runtime
         # mask_causal: upper triangular including diagonal (diagonal=0)
         # = triu(ones, diagonal=0)
-        mask_causal = torch.zeros(chunk_size, chunk_size, dtype=torch.bool)
+        mask_causal = torch.ones(chunk_size, chunk_size, dtype=torch.bool)
         for i in range(chunk_size):
-            for j in range(i, chunk_size):
-                mask_causal[i, j] = True
+            for j in range(i + 1):
+                mask_causal[i, j] = False
         self.register_buffer("_mask_causal", mask_causal, persistent=False)
         # shape: (C, C), True above diagonal inclusive
 
@@ -621,7 +624,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         zeros = torch.zeros(g.shape, dtype=g.dtype, device=g.device)
 
         g = torch.where(mask, g, zeros)
-        beta = torch.where(mask, beta, zeros)
+        # beta = torch.where(mask, beta, zeros)
 
         qkv_zeros = torch.zeros(key.shape, dtype=key.dtype, device=key.device)
         key = torch.where(mask.unsqueeze(-1), key, qkv_zeros)
@@ -656,8 +659,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             x.reshape(x.shape[0], x.shape[1], -1, chunk_size, x.shape[-1]) for x in (query, key, value, k_beta, v_beta)
         ]
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
-        # mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=0)
-        mask = mask_causal
+        mask = mask_causal.to(device=query.device)
 
         #
         # chunk decay
@@ -732,8 +734,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             else initial_state.to(value)
         )
         core_attn_out = torch.zeros_like(value)
-        # mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=1)
-        mask = mask_strict
+        mask = mask_strict.to(device=query.device)
 
         # for each chunk
         for i in range(0, total_sequence_length // chunk_size):
@@ -825,13 +826,16 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
             # Continuous batching path: gather only active rows, then scatter updates back.
             if batch_index is not None:
-                conv_batch_index = batch_index.to(conv_state_all.device)
+                batch_index = batch_index.to(conv_state_all.device)
+                conv_batch_index = batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)
                 conv_ctx_indices = torch.arange(
                     conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
                 )[None, :]
                 conv_state = CtxGatherFuncCB3D.apply(conv_state_all, conv_batch_index, conv_ctx_indices)
 
-                recurrent_batch_index = batch_index.to(recurrent_state_all.device)
+                recurrent_batch_index = (batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)).to(
+                    recurrent_state_all.device
+                )
                 recurrent_ctx_indices = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, None, :]
@@ -850,7 +854,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 self.conv1d.bias,
             )
             if batch_index is not None:
-                conv_batch_index = batch_index.to(conv_state_all.device)
+                conv_batch_index = batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)
+                conv_batch_index = conv_batch_index.to(conv_state_all.device)
                 conv_position_ids = torch.arange(
                     conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
                 )[None, :]
@@ -910,7 +915,9 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             last_recurrent_state = torch.where(is_decode, recurrent_S, chunk_S)
 
             if batch_index is not None:
-                recurrent_batch_index = batch_index.to(recurrent_state_all.device)
+                recurrent_batch_index = (batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)).to(
+                    recurrent_state_all.device
+                )
                 recurrent_position_ids = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, :].expand(recurrent_batch_index.shape[0], -1)
@@ -2109,172 +2116,61 @@ class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
 
 class QEffQwen3_5MoeExperts(Qwen3_5MoeExperts):
     def __qeff_init__(self):
-        # HF 5.x keeps fused gate_up projections. Keep aliases expected by
-        # QEff MoE execution paths without changing checkpoint behavior.
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
-        gate_up_proj = self.gate_up_proj.detach()
-        down_proj = self.down_proj.detach()
-        self.gate_proj = nn.Parameter(gate_up_proj[:, : self.expert_dim, :].transpose(1, 2), requires_grad=False)
-        self.up_proj = nn.Parameter(gate_up_proj[:, self.expert_dim :, :].transpose(1, 2), requires_grad=False)
-        self.down_proj_t = nn.Parameter(down_proj.transpose(1, 2), requires_grad=False)
 
-
-class QEffQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        B, S, H = hidden_states.shape
-        T = B * S
-        x = hidden_states.view(T, H)
-        _, top_w, top_i = self.gate(hidden_states)
-        idx = top_i.reshape(-1)
-
-        gate_proj = self.experts.gate_proj[idx.flatten()]
-        up_proj = self.experts.up_proj[idx.flatten()]
-        w_dn = self.experts.down_proj_t[idx.flatten()]
-
-        xk = x.unsqueeze(1).expand(-1, self.gate.top_k, -1).contiguous()
-        xk = xk.view(-1, 1, H)
-
-        gate = torch.bmm(xk, gate_proj)
-        up = torch.bmm(xk, up_proj)
-
-        intermediate = up * self.experts.act_fn(gate)
-        experts_out = torch.bmm(intermediate, w_dn)
-        experts_out = experts_out.view(T, self.gate.top_k, H) * top_w.unsqueeze(-1)
-        experts_out = torch.einsum("bnd->bd", experts_out)
-
-        shared_expert_output = self.shared_expert(x)
-        shared_expert_output = F.sigmoid(self.shared_expert_gate(x)) * shared_expert_output
-
-        expert_output = experts_out + shared_expert_output
-        return expert_output.reshape(B, S, H)
-
-
-EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
-EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
-
-
-def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
-    """Build packed->original token index"""
-    batch_size, seq_len = T2Ei.shape
-    int32_max = torch.iinfo(torch.int32).max
-    int32_max_scalar = torch.tensor(int32_max, dtype=torch.int32, device=T2Ei.device)
-    token_idx = torch.arange(seq_len, dtype=torch.int32, device=T2Ei.device).unsqueeze(0).expand(batch_size, -1)
-    valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
-    valid_dest = valid_prefix - 1
-    scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
-    # Once the compiler fix for ConstantOfShape(INT32_MAX) is available, this
-    # can be switched back to ``torch.full_like(token_idx, int32_max)``.
-    matched_idx = int32_max_scalar.expand_as(token_idx)
-    matched_idx = CtxScatterFunc3DInt.apply(
-        matched_idx.unsqueeze(-1),
-        scatter_pos,
-        token_idx.unsqueeze(-1),
-    ).squeeze(-1)
-    return matched_idx
-
-
-def _cumsum_scatter_gather_update_expert_blocked(
-    x: torch.Tensor,
-    T2Ei: torch.Tensor,
-    W_g: torch.Tensor,
-    W_u: torch.Tensor,
-    W_d: torch.Tensor,
-    routing_weight: torch.Tensor,
-    expert_out: torch.Tensor,
-    act_fn,
-    packed_chunk_size: int,
-) -> torch.Tensor:
-    """Cumsum-scatter-gather-update expert helper for NSP-blocked dispatch.
-
-    Accumulates one local expert's contribution in-place onto ``expert_out``.
-    Uses a packed/cumsum layout so the MLP runs only over active rows, then
-    scatters the weighted output back to original token positions.
-    """
-    batch_size, seq_len = T2Ei.shape
-    packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
-
-    matched_idx = _build_matched_idx_from_cumsum(T2Ei)
-    valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
-    row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
-    x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
-    for packed_start in range(0, seq_len, packed_chunk_size):
-        packed_stop = packed_start + packed_chunk_size
-        chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
-
-        x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
-
-        gate_prime = x_chunk @ W_g
-        up_prime = x_chunk @ W_u
-        down_chunk = (up_prime * act_fn(gate_prime)) @ W_d
-
-        rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
-        down_chunk = down_chunk * rw_chunk
-
-        expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
-        updated_chunk = expert_out_chunk + down_chunk
-
-        chunk_valid_rows = torch.clamp(
-            valid_rows - packed_start,
-            min=torch.zeros_like(valid_rows),
-            max=torch.full_like(valid_rows, packed_chunk_size),
+    def build_moe_weights(self) -> MoEWeights:
+        if getattr(self, "moe_weights", None) is not None:
+            return self.moe_weights
+        self.moe_weights = build_canonical_expert_weights(
+            gate_up=self.gate_up_proj,
+            down=self.down_proj,
+            fused=True,
+            fused_split_dim=1,
+            transpose_gate_up=True,
+            transpose_down=True,
         )
-        updated_chunk = torch.where(
-            (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
-        )
-        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
-
-    return expert_out
+        self.gate_proj = nn.Parameter(self.moe_weights.gate, requires_grad=False)
+        self.up_proj = nn.Parameter(self.moe_weights.up, requires_grad=False)
+        self.down_proj_t = nn.Parameter(self.moe_weights.down, requires_grad=False)
+        return self.moe_weights
 
 
-class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):
-    supports_moe_prefill_blocking = True
-
+class QEffQwen3_5MoeSparseMoeBlock(QEffMoEBlockMixin, Qwen3_5MoeSparseMoeBlock):
     def __qeff_init__(self):
         self.top_k = getattr(self.gate, "top_k", None)
         self.norm_topk_prob = getattr(self.gate, "norm_topk_prob", False)
-        self.num_experts = getattr(self.gate, "num_experts", self.experts.gate_proj.shape[0])
+        self.num_experts = getattr(self.gate, "num_experts", getattr(self.experts, "num_experts", None))
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        B, S, H = hidden_states.shape
-        T = B * S
-        x = hidden_states.view(T, H)
-        router_logits, top_w, top_i = self.gate(x)
-        top_w = top_w.to(hidden_states.dtype)
-        routing_weights = torch.zeros_like(router_logits)
-        routing_weights.scatter_(1, top_i, top_w)
+    def build_moe_weights(self) -> MoEWeights:
+        if getattr(self.experts, "moe_weights", None) is None:
+            self.experts.build_moe_weights()
+        self.moe_weights = self.experts.moe_weights
+        return self.moe_weights
 
-        num_nsp = getattr(self, "expert_blocking_num_nsp", self.num_experts)
-        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
-        if self.num_experts % num_nsp != 0:
-            raise ValueError(
-                f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})"
-            )
+    def get_moe_weights(self) -> MoEWeights:
+        if getattr(self, "moe_weights", None) is None:
+            self.build_moe_weights()
+        return self.moe_weights
 
-        local_experts = self.num_experts // num_nsp
-        rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_u = self.experts.up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_d = self.experts.down_proj_t.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
-        expert_out = x.new_zeros((num_nsp, T, H))
-        routing_weights_unsqueezed = rw.unsqueeze(-1)
+    @property
+    def moe_profile(self) -> MoEProfile:
         act_fn = getattr(self.experts, "act_fn", F.silu)
-        for slot in range(local_experts):
-            T2Ei = rw[:, slot, :] > 0
-            expert_out = _cumsum_scatter_gather_update_expert_blocked(
-                x=x,
-                T2Ei=T2Ei,
-                W_g=W_g[:, slot],
-                W_u=W_u[:, slot],
-                W_d=W_d[:, slot],
-                routing_weight=routing_weights_unsqueezed[:, slot],
-                expert_out=expert_out,
-                act_fn=act_fn,
-                packed_chunk_size=packed_chunk_size,
-            )
-        experts_out = torch.einsum("ijk->jk", expert_out)
+        return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=act_fn))
 
-        shared_expert_output = self.shared_expert(x)
-        shared_expert_output = F.sigmoid(self.shared_expert_gate(x)) * shared_expert_output
+    def route(self, x: torch.Tensor):
+        _, top_w, top_i = self.gate(x)
+        top_w = top_w.to(x.dtype)
+        return (top_i, top_w), None
 
-        expert_output = experts_out + shared_expert_output
-        return expert_output.reshape(B, S, H)
+    def apply_shared_experts(self, out: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
+        shared = self.shared_expert(residual)
+        shared = F.sigmoid(self.shared_expert_gate(residual)) * shared
+        return out + shared
+
+
+class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(QEffQwen3_5MoeSparseMoeBlock):
+    supports_moe_prefill_blocking = True
+    # Trace a fixed packed-chunk loop count so long prefill exports keep small SL.
+    supports_static_moe_prefill_chunks = True
+    # Class implies expert-blocking; OptimizedMoETransform may override per qaic_config.
+    _moe_flavour = MoEFlavour.EXPERT_BLOCKED

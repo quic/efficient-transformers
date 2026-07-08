@@ -31,7 +31,6 @@ from transformers import (
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
-from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfoNew,
@@ -50,6 +49,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
+    OptimizedMoETransform,
     PoolingTransform,
     PrefillOnlyChunkedTransform,
     PrefillOnlyExternalModuleMapperTransform,
@@ -1209,7 +1209,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         CustomOpsTransform,
         KVCacheTransform,
         VlmKVOffloadTransform,
-        SplitGateUpWeightsTransform,
     ]
     _onnx_transforms = []
 
@@ -1299,6 +1298,19 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         else:
             self.hash_params["prefill_only"] = False
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
+
+        OptimizedMoETransform.apply(
+            self.model,
+            prefill_only=bool(prefill_only),
+            enable_chunking=enable_chunking,
+            num_cores=kwargs.get("num_cores", constants.DEFAULT_AIC_NUM_CORES),
+            moe_prefill_packed_chunk_size=kwargs.get(
+                "moe_prefill_packed_chunk_size", constants.MOE_PREFILL_PACKED_CHUNK_SIZE
+            ),
+            qaic_config=kwargs.get("qaic_config", getattr(self.model, "qaic_config", None)),
+            prefill_seq_len=prefill_seq_len,
+            hash_params=self.hash_params,
+        )
 
         if QEfficient.base.modeling_qeff.QEFFBaseModel._layerwise_active:
             return self._export_layerwise(
@@ -1628,6 +1640,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 prefill_seq_len=prefill_seq_len,
+                num_cores=kwargs.get("num_cores", constants.DEFAULT_AIC_NUM_CORES),
+                moe_prefill_packed_chunk_size=kwargs.get(
+                    "moe_prefill_packed_chunk_size", constants.MOE_PREFILL_PACKED_CHUNK_SIZE
+                ),
+                qaic_config=kwargs.get("qaic_config", getattr(self.lang_model.model, "qaic_config", None)),
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
             )
@@ -1943,6 +1960,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 "enable `continuous_batching=True` in `from_pretrained`."
             )
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
+        moe_prefill_packed_chunk_size = compiler_options.pop(
+            "moe_prefill_packed_chunk_size", constants.MOE_PREFILL_PACKED_CHUNK_SIZE
+        )
 
         # Infer kv_cache_batch_size if not provided
         kv_cache_batch_size = kv_cache_batch_size or full_batch_size or batch_size
@@ -2020,6 +2040,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 prefill_seq_len=prefill_seq_len,
+                num_cores=num_cores,
+                moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+                qaic_config=qaic_config,
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
                 offload_pt_weights=offload_pt_weights,
@@ -2544,7 +2567,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         KVCacheTransform,
         KVCacheExternalModuleMapperTransform,
         VlmNoKVOffloadTransform,
-        SplitGateUpWeightsTransform,
     ]
     _onnx_transforms = []
 
@@ -2715,6 +2737,18 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         output_names = self.model.get_output_names()
         # Prefix only the LLM KV-cache retained buffers (vision/multimodal buffers untouched).
         output_names = apply_kv_cache_prefix(output_names, validate_kv_cache_prefix(kv_cache_prefix))
+        OptimizedMoETransform.apply(
+            self.model,
+            prefill_only=bool(prefill_only),
+            enable_chunking=enable_chunking,
+            num_cores=kwargs.get("num_cores", constants.DEFAULT_AIC_NUM_CORES),
+            moe_prefill_packed_chunk_size=kwargs.get(
+                "moe_prefill_packed_chunk_size", constants.MOE_PREFILL_PACKED_CHUNK_SIZE
+            ),
+            qaic_config=kwargs.get("qaic_config", getattr(self.model, "qaic_config", None)),
+            prefill_seq_len=prefill_seq_len,
+            hash_params=self.hash_params,
+        )
         return self._export(
             inputs,
             output_names=output_names,
@@ -2876,6 +2910,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             aic_num_cores=num_cores,
             mxint8_kv_cache=mxint8_kv_cache,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            qaic_config=qaic_config,
             kv_cache_prefix=kv_cache_prefix,
             **compiler_options,
         )
@@ -3366,7 +3401,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Mxfp4GptOssExpertDequantizeTransform,
         CustomOpsTransform,
         KVCacheTransform,
-        SplitGateUpWeightsTransform,
         KVCacheExternalModuleMapperTransform,
     ]
 
@@ -3632,21 +3666,29 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
     ) -> int:
         self.hash_params["prefill_only"] = True
-        if enable_chunking:
-            self.hash_params["chunking"] = True
-            compile_seq_len = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-            num_packed_chunks = max(1, -(-compile_seq_len // moe_prefill_packed_chunk_size))
-            for module in self.model.modules():
-                if getattr(module, "supports_moe_prefill_blocking", False):
-                    module.expert_blocking_num_nsp = num_cores
-                    module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
-                    module.expert_blocking_num_packed_chunks = num_packed_chunks
+        compile_seq_len = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        num_packed_chunks = max(1, -(-compile_seq_len // moe_prefill_packed_chunk_size))
+        has_moe_prefill_blocking = False
+        for module in self.model.modules():
+            if getattr(module, "supports_moe_prefill_blocking", False):
+                module.expert_blocking_num_nsp = num_cores
+                module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
+                module.expert_blocking_num_packed_chunks = num_packed_chunks
+                has_moe_prefill_blocking = True
+
+        if has_moe_prefill_blocking:
             self.hash_params["moe_prefill_num_nsp"] = num_cores
             self.hash_params["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
             self.hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
+
+        if enable_chunking:
+            self.hash_params["chunking"] = True
             if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe"}:
                 return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
             return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+
+        if has_moe_prefill_blocking:
+            return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
 
         num_q_blocks = (
             self.hash_params["blocking_config"].num_q_blocks if self.hash_params.get("blocking_kwargs", None) else None
@@ -3827,6 +3869,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("moe_prefill_num_nsp", None)
                 self.hash_params.pop("moe_prefill_packed_chunk_size", None)
                 self.hash_params.pop("moe_prefill_num_packed_chunks", None)
+                self.hash_params.pop("moe_prefill_flavour", None)
                 self.hash_params.pop("chunking_seq_len", None)
                 if kwargs.get("retain_full_kv", False):
                     sliding_window = getattr(self.model.config, "sliding_window", None)
@@ -4015,6 +4058,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if kv_cache_prefix:
             output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
             self.hash_params["kv_cache_prefix"] = kv_cache_prefix
+
+        OptimizedMoETransform.apply(
+            self.model,
+            prefill_only=bool(prefill_only),
+            enable_chunking=enable_chunking,
+            num_cores=num_cores,
+            moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+            qaic_config=getattr(self.model, "qaic_config", None),
+            prefill_seq_len=prefill_seq_len,
+            hash_params=self.hash_params,
+        )
 
         if QEFFBaseModel._layerwise_active:
             return self._export_layerwise(

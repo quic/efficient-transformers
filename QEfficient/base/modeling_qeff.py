@@ -540,6 +540,8 @@ class QEFFBaseModel(ABC):
             kwargs["_layerwise_cache_probe"] = True
         if kv_cache_prefix:
             kwargs["kv_cache_prefix"] = kv_cache_prefix
+        if qaic_config:
+            kwargs["qaic_config"] = qaic_config
 
         if prefill_only:
             kwargs.update(

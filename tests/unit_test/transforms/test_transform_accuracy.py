@@ -22,9 +22,11 @@ All tests run on CPU only, using tiny in-memory models.
 """
 
 import copy
+from types import SimpleNamespace
 
 import pytest
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from transformers import (
     AutoConfig,
@@ -52,11 +54,17 @@ from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheTransform,
+    OptimizedMoEExportConfigTransform,
+    OptimizedMoEMapperTransform,
+    OptimizedMoETransform,
+    OptimizedMoEWeightsTransform,
     PoolingTransform,
     ReplicateKVHeadTransform,
     SamplerTransform,
     SpDTransform,
 )
+from QEfficient.transformers.moe import MoEFlavour, QEffMoEBlockMixin
+from QEfficient.transformers.moe.weights import MoEWeights
 from QEfficient.utils.config_utils import calculate_num_replicate_kv_heads
 from QEfficient.utils.repeat_kv_utils import get_attention_module, get_projection_layer, get_text_model
 
@@ -1246,6 +1254,114 @@ class TestSamplerTransformActualApply:
 
         assert QEffPhi3ForCausalLM in SamplerTransform._module_mapping
         assert QEffQwen2ForCausalLM in SamplerTransform._module_mapping
+
+
+# ---------------------------------------------------------------------------
+# Tests: split OptimizedMoETransform facade
+# ---------------------------------------------------------------------------
+
+
+class _DummyOptimizedMoEBlock(QEffMoEBlockMixin, nn.Module):
+    supports_moe_prefill_blocking = True
+
+    def __init__(self):
+        super().__init__()
+        self.build_count = 0
+
+    def build_moe_weights(self):
+        self.build_count += 1
+        tensor = torch.ones(2, 4, 8)
+        self.moe_weights = MoEWeights(gate=tensor, up=tensor, down=tensor.transpose(-1, -2).contiguous())
+        return self.moe_weights
+
+    def route(self, x):
+        topk_indices = torch.zeros((x.shape[0], 1), dtype=torch.long, device=x.device)
+        topk_weights = torch.ones((x.shape[0], 1), dtype=x.dtype, device=x.device)
+        return (topk_indices, topk_weights), None
+
+
+class _DummyOptimizedMoEModel(nn.Module):
+    def __init__(self, model_type="qwen3_moe"):
+        super().__init__()
+        self.config = SimpleNamespace(model_type=model_type)
+        self.block = _DummyOptimizedMoEBlock()
+
+
+@pytest.mark.transforms
+class TestSplitOptimizedMoETransform:
+    def test_mapper_discovers_moe_modules_without_mutating_weights(self):
+        model = _DummyOptimizedMoEModel()
+
+        _, transformed = OptimizedMoEMapperTransform.apply(model)
+
+        assert transformed
+        assert not hasattr(model.block, "moe_weights")
+        assert model.block.build_count == 0
+
+    def test_weights_transform_canonicalizes_once(self):
+        model = _DummyOptimizedMoEModel()
+
+        _, transformed = OptimizedMoEWeightsTransform.apply(model)
+        _, transformed_again = OptimizedMoEWeightsTransform.apply(model)
+
+        assert transformed
+        assert not transformed_again
+        assert model.block.build_count == 1
+        assert model.block.moe_weights.gate.shape == (2, 4, 8)
+
+    def test_export_config_transform_sets_blocking_attrs_and_hash_params(self):
+        model = _DummyOptimizedMoEModel()
+        hash_params = {}
+
+        _, transformed = OptimizedMoEExportConfigTransform.apply(
+            model,
+            prefill_only=True,
+            enable_chunking=True,
+            num_cores=4,
+            moe_prefill_packed_chunk_size=16,
+            prefill_seq_len=40,
+            hash_params=hash_params,
+        )
+
+        assert transformed
+        assert model.block._moe_flavour is MoEFlavour.EXPERT_BLOCKED
+        assert model.block.expert_blocking_num_nsp == 4
+        assert model.block.expert_blocking_packed_chunk_size == 16
+        assert model.block.expert_blocking_num_packed_chunks == 3
+        assert hash_params == {
+            "moe_prefill_flavour": "expert_blocked",
+            "moe_prefill_num_nsp": 4,
+            "moe_prefill_packed_chunk_size": 16,
+            "moe_prefill_num_packed_chunks": 3,
+        }
+
+    def test_facade_applies_weights_and_export_config(self):
+        model = _DummyOptimizedMoEModel()
+        hash_params = {}
+
+        _, transformed = OptimizedMoETransform.apply(
+            model,
+            prefill_only=True,
+            enable_chunking=True,
+            num_cores=2,
+            moe_prefill_packed_chunk_size=32,
+            prefill_seq_len=64,
+            hash_params=hash_params,
+        )
+
+        assert transformed
+        assert model.block.build_count == 1
+        assert model.block.moe_weights is not None
+        assert model.block._moe_flavour is MoEFlavour.EXPERT_BLOCKED
+        assert hash_params["moe_prefill_num_packed_chunks"] == 2
+
+    def test_split_transforms_noop_for_non_moe_models(self):
+        model = nn.Sequential(nn.Linear(4, 4))
+
+        assert not OptimizedMoEMapperTransform.apply(model)[1]
+        assert not OptimizedMoEWeightsTransform.apply(model)[1]
+        assert not OptimizedMoEExportConfigTransform.apply(model)[1]
+        assert not OptimizedMoETransform.apply(model)[1]
 
 
 # ---------------------------------------------------------------------------
