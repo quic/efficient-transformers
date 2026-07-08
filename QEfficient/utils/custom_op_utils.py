@@ -221,7 +221,7 @@ def _(
     """
     batch_size = batch_index.shape[0]
     num_heads = data.shape[1]
-    seq_len = ctx_indices.shape[1]
+    seq_len = ctx_indices.shape[-1]
 
     # Remaining feature dimensions (e.g., head_dim or more)
     feature_shape = data.shape[3:]  # could be () if 3D

@@ -529,7 +529,6 @@ class QEFFBaseModel(ABC):
                 dynamic_axes = None
                 export_kwargs = dict(export_kwargs)
                 export_kwargs.setdefault("report", True)
-                export_kwargs.setdefault("verbose", True)
                 export_kwargs.setdefault("optimize", False)
                 export_kwargs["dynamo"] = True
                 export_kwargs["custom_translation_table"] = {

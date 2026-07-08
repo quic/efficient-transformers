@@ -3852,11 +3852,18 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 if dim_name == "batch_size":
                     dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=512)
                 elif dim_name == "full_batch_size":
-                    dim_registry[dim_name] = Dim("full_batch_size", min=batch_min, max=512)
+                    # full_batch_size is the CB pool capacity and is always >= batch_size.
+                    # Using a different min prevents torch.export from collapsing it into
+                    # the batch_size symbol, which would make past_key/value dim-0 and
+                    # batch_index dim-0 share the same symbolic variable even though they
+                    # represent different quantities at runtime.
+                    dim_registry[dim_name] = Dim("full_batch_size", min=batch_min + 1, max=512)
                 elif "seq_len" in dim_name:
                     dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
                 elif "ctx_len" in dim_name:
                     dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
+                elif "comp_ctx_lengths" in dim_name:
+                    dim_registry[dim_name] = Dim("comp_ctx_lengths", min=8, max=4096)
                 elif "sliding_window" in dim_name:
                     dim_registry[dim_name] = Dim(
                         "sliding_window",
