@@ -737,6 +737,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         generation_len: int = None,
         stream: List[str] = None,
     ):
+
         exec_batch_size = self.batch_size
         max_gen_length = self._ctx_len if not generation_len else max(self._ctx_len, generation_len)
         self.initialize_decode_inputs(
