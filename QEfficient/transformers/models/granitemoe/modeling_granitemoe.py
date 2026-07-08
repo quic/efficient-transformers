@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-from functools import partial
 from typing import List, Optional, Tuple, Type, Union
 
 import torch
@@ -36,11 +35,8 @@ from QEfficient.blocking.attention_blocking import (
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.moe import (
-    MoEProfile,
-    MoEWeights,
-    build_canonical_expert_weights,
-    moe_simple_loop,
-    silu_glu_mlp,
+    QEffMoEBlockMixin,
+    bind_moe_adapter_methods,
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
@@ -514,51 +510,11 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
         return top_k_gates, expert_mask, logits, self.num_experts
 
 
-class QEffGraniteMoeMoE(GraniteMoeMoE):
-    def build_moe_weights(self) -> MoEWeights:
-        """Canonicalize fused input_linear/output_linear weights into MoEWeights.
+class QEffGraniteMoeMoE(QEffMoEBlockMixin, GraniteMoeMoE):
+    _moe_return_router_logits = True
 
-        input_linear.weight is [E, 2I, H] (gate/up concatenated); output_linear.weight
-        is [E, H, I]. Canonical target: gate/up [E,H,I], down [E,I,H].
-        """
-        if getattr(self, "moe_weights", None) is None:
-            self.moe_weights = build_canonical_expert_weights(
-                gate_up=self.input_linear.weight,
-                down=self.output_linear.weight,
-                fused=True,
-                fused_split_dim=1,
-                transpose_gate_up=True,
-                transpose_down=True,
-            )
-        return self.moe_weights
-
-    def forward(self, layer_input):
-        """
-        Forward pass of the mixture of experts layer.
-
-        Args:
-            layer_input (Tensor):
-                Input tensor.
-
-        Returns:
-            Tensor:
-                Output tensor.
-            Tensor:
-                Router logits.
-        """
-        bsz, length, emb_size = layer_input.size()
-        x = layer_input.reshape(-1, emb_size)
-        topk_gates, expert_mask, router_logits, num_experts = self.router(x)
-
-        # Build dense routing weights [T, E] from the top-k gates and expert mask.
-        # mask_weight[:, e] == einsum(topk_gates, expert_mask[e].T) for each expert.
-        routing_weights = torch.einsum("bke,bk->be", expert_mask.permute(2, 1, 0).to(topk_gates.dtype), topk_gates)
-
-        weights = self.build_moe_weights()
-        profile = MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.activation))
-        final_hidden_states = moe_simple_loop(x, routing_weights.to(x.dtype), weights, profile)
-        final_hidden_states = final_hidden_states.view(bsz, length, self.input_size)
-        return final_hidden_states, router_logits
+    def __qeff_init__(self):
+        bind_moe_adapter_methods(self)
 
 
 class QEffGraniteMoeParallelExperts(GraniteMoeParallelExperts):

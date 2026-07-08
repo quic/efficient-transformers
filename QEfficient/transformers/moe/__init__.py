@@ -13,6 +13,13 @@ the per-expert activation profiles. Model files declare their variation points a
 delegate the rest here so the math lives in one place.
 """
 
+from QEfficient.transformers.moe.adapters import (
+    MoEAdapterSpec,
+    bind_moe_adapter_methods,
+    build_moe_weights,
+    get_moe_adapter_spec,
+    register_moe_adapter,
+)
 from QEfficient.transformers.moe.block import QEffMoEBlockMixin
 from QEfficient.transformers.moe.flavours import (
     MoEFlavour,
@@ -42,6 +49,11 @@ from QEfficient.transformers.moe.weights import (
 
 __all__ = [
     "QEffMoEBlockMixin",
+    "MoEAdapterSpec",
+    "bind_moe_adapter_methods",
+    "build_moe_weights",
+    "get_moe_adapter_spec",
+    "register_moe_adapter",
     "MoEFlavour",
     "densify_topk",
     "moe_decode_bmm",

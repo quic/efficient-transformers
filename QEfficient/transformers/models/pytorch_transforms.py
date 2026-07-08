@@ -1466,21 +1466,30 @@ class BlockingAttentionTransform:
 
 
 def _iter_optimized_moe_modules(model: nn.Module):
-    from QEfficient.transformers.moe import QEffMoEBlockMixin
+    from QEfficient.transformers.moe import QEffMoEBlockMixin, bind_moe_adapter_methods, get_moe_adapter_spec
 
     for module in model.modules():
-        if isinstance(module, QEffMoEBlockMixin):
+        bind_moe_adapter_methods(module)
+        spec = get_moe_adapter_spec(module)
+        if isinstance(module, QEffMoEBlockMixin) or (
+            spec is not None and (spec.route is not None or spec.profile is not None)
+        ):
             yield module
 
 
 def _iter_optimized_moe_weight_modules(model: nn.Module):
+    from QEfficient.transformers.moe import bind_moe_adapter_methods, get_moe_adapter_spec
+
     for module in model.modules():
-        if hasattr(module, "build_moe_weights"):
+        spec = get_moe_adapter_spec(module)
+        if spec is not None:
+            bind_moe_adapter_methods(module)
+        if (spec is not None and spec.build_weights is not None) or hasattr(module, "build_moe_weights"):
             yield module
 
 
 class OptimizedMoEMapperTransform(PytorchTransform):
-    """Identify MoE blocks that participate in the shared MoE transform flow."""
+    """Bind adapter-driven MoE methods and identify shared MoE blocks."""
 
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
