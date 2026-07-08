@@ -39,13 +39,10 @@ from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.models._layerwise import is_last_layer_window, is_layerwise_active, resolve_layer_window
 from QEfficient.transformers.moe import (
-    MoEFlavour,
     MoEProfile,
     MoEWeights,
     QEffMoEBlockMixin,
     build_canonical_expert_weights,
-    moe_simple_loop,
-    resolve_routing,
     silu_glu_mlp,
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -149,6 +146,8 @@ class QEffQwen3MoeExperts(Qwen3MoeExperts):
 
 class QEffQwen3MoeSparseMoeBlock(QEffMoEBlockMixin, Qwen3MoeSparseMoeBlock):
     _moe_return_router_logits = True
+    supports_moe_prefill_blocking = True
+    supports_static_moe_prefill_chunks = True
 
     def __qeff_init__(self):
         self.top_k = getattr(self.gate, "top_k", None)
@@ -179,22 +178,7 @@ class QEffQwen3MoeSparseMoeBlock(QEffMoEBlockMixin, Qwen3MoeSparseMoeBlock):
         return (top_i, top_w), router_logits
 
 
-class QEffPrefillChunkedQwen3MoeSparseMoeBlock(QEffQwen3MoeSparseMoeBlock):
-    supports_moe_prefill_blocking = True
-    # Trace a fixed packed-chunk loop count so long prefill exports keep small SL.
-    supports_static_moe_prefill_chunks = True
-    # Class implies expert-blocking; OptimizedMoETransform may override per qaic_config.
-    _moe_flavour = MoEFlavour.EXPERT_BLOCKED
-
-    def orig_forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Reference simple-loop prefill forward (kept for parity tests)."""
-        B, S, H = hidden_states.shape
-        x = hidden_states.view(B * S, H)
-        weights = self.get_moe_weights()
-        routing, router_logits = self.route(x)
-        dense, _ = resolve_routing(routing, weights.num_experts)
-        out = moe_simple_loop(x, dense, weights, self.moe_profile)
-        return out.view(B, S, H), router_logits
+QEffPrefillChunkedQwen3MoeSparseMoeBlock = QEffQwen3MoeSparseMoeBlock
 
 
 class QEffQwen3MoeAttention(Qwen3MoeAttention):

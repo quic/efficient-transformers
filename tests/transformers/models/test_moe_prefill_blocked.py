@@ -13,6 +13,7 @@ from transformers import AutoConfig, AutoModelForCausalLM
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.transformers.models.pytorch_transforms import (
     KVCacheTransform,
+    OptimizedMoEExportConfigTransform,
     OptimizedMoEWeightsTransform,
     PrefillOnlyChunkedTransform,
     PrefillOnlyTransform,
@@ -39,10 +40,8 @@ GLM4_MOE_CFG = dict(
 
 
 def test_glm4_moe_blocked_prefill_forward_parity():
-    from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
-        QEffGlm4MoeMoE,
-        QEffPrefillChunkedGlm4MoeMoE,
-    )
+    from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeMoE
+    from QEfficient.transformers.moe import MoEFlavour
 
     config = AutoConfig.for_model("glm4_moe", **GLM4_MOE_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
@@ -55,11 +54,19 @@ def test_glm4_moe_blocked_prefill_forward_parity():
     KVCacheTransform.apply(chunked_model)
     PrefillOnlyChunkedTransform.apply(chunked_model)
     OptimizedMoEWeightsTransform.apply(chunked_model)
-    chunked_block = next(
-        module for module in chunked_model.modules() if isinstance(module, QEffPrefillChunkedGlm4MoeMoE)
+    OptimizedMoEExportConfigTransform.apply(
+        chunked_model,
+        prefill_only=True,
+        enable_chunking=True,
+        num_cores=2,
+        moe_prefill_packed_chunk_size=256,
+        prefill_seq_len=8,
     )
-    chunked_block.expert_blocking_num_nsp = 2
-    chunked_block.expert_blocking_packed_chunk_size = 256
+    chunked_block = next(module for module in chunked_model.modules() if isinstance(module, QEffGlm4MoeMoE))
+
+    assert chunked_block._moe_flavour is MoEFlavour.EXPERT_BLOCKED
+    assert chunked_block.expert_blocking_num_nsp == 2
+    assert chunked_block.expert_blocking_packed_chunk_size == 256
 
     x = torch.randn(1, 8, config.hidden_size)
     with torch.no_grad():
@@ -178,10 +185,8 @@ GPTOSS_CFG = dict(
 
 
 def test_qwen3moe_blocked_forward_parity():
-    from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
-        QEffPrefillChunkedQwen3MoeSparseMoeBlock,
-        QEffQwen3MoeSparseMoeBlock,
-    )
+    from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import QEffQwen3MoeSparseMoeBlock
+    from QEfficient.transformers.moe import MoEFlavour
 
     config = AutoConfig.for_model("qwen3_moe", **QWEN3_MOE_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
@@ -202,14 +207,23 @@ def test_qwen3moe_blocked_forward_parity():
     KVCacheTransform.apply(chunked_model)
     PrefillOnlyChunkedTransform.apply(chunked_model)
     OptimizedMoEWeightsTransform.apply(chunked_model)
-    chunked = next(
-        module for module in chunked_model.modules() if isinstance(module, QEffPrefillChunkedQwen3MoeSparseMoeBlock)
+    OptimizedMoEExportConfigTransform.apply(
+        chunked_model,
+        prefill_only=True,
+        enable_chunking=True,
+        num_cores=2,
+        moe_prefill_packed_chunk_size=256,
+        prefill_seq_len=8,
     )
+    chunked = next(module for module in chunked_model.modules() if isinstance(module, QEffQwen3MoeSparseMoeBlock))
+
+    assert chunked._moe_flavour is MoEFlavour.EXPERT_BLOCKED
+    assert chunked.expert_blocking_num_nsp == 2
+    assert chunked.expert_blocking_packed_chunk_size == 256
+
     x = torch.randn(1, 8, config.hidden_size)
     with torch.no_grad():
         orig, _ = qeff_block(x)
-        chunked.expert_blocking_num_nsp = 2
-        chunked.expert_blocking_packed_chunk_size = 256
         blocked, _ = chunked.forward(x)
 
     assert orig.shape == blocked.shape

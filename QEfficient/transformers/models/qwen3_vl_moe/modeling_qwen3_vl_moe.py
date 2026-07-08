@@ -49,7 +49,6 @@ from QEfficient.transformers.models._layerwise import (
     resolve_layer_window,
 )
 from QEfficient.transformers.moe import (
-    MoEFlavour,
     MoEProfile,
     MoEWeights,
     QEffMoEBlockMixin,
@@ -945,6 +944,17 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
 
 class QEffQwen3VLMoeTextSparseMoeBlock(QEffMoEBlockMixin, Qwen3VLMoeTextSparseMoeBlock):
     _moe_return_router_logits = True
+    supports_moe_prefill_blocking = True
+    supports_static_moe_prefill_chunks = True
+
+    def __qeff_init__(self):
+        self.top_k = getattr(self.gate, "top_k", None)
+        self.norm_topk_prob = getattr(self.gate, "norm_topk_prob", False)
+        self.num_experts = getattr(
+            self.gate,
+            "num_experts",
+            getattr(self.experts, "num_experts", None),
+        )
 
     def build_moe_weights(self) -> MoEWeights:
         if getattr(self.experts, "moe_weights", None) is None:
@@ -970,25 +980,7 @@ class QEffQwen3VLMoeTextSparseMoeBlock(QEffMoEBlockMixin, Qwen3VLMoeTextSparseMo
         return (top_i, top_w), router_logits
 
 
-class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(QEffQwen3VLMoeTextSparseMoeBlock):
-    supports_moe_prefill_blocking = True
-    # Trace a fixed packed-chunk loop count so long prefill exports keep small SL.
-    supports_static_moe_prefill_chunks = True
-    # Class implies expert-blocking; OptimizedMoETransform may override per qaic_config.
-    _moe_flavour = MoEFlavour.EXPERT_BLOCKED
-
-    def __qeff_init__(self):
-        self.top_k = getattr(self.gate, "top_k", None)
-        self.norm_topk_prob = getattr(self.gate, "norm_topk_prob", False)
-        self.num_experts = getattr(self.gate, "num_experts", getattr(self.experts, "num_experts", None))
-
-    def route(self, x: torch.Tensor):
-        # Prefill path uses the optimized gate router (softmax-then-topk + optional norm).
-        router_logits, top_w, top_i = self.gate(x)
-        if self.norm_topk_prob:
-            top_w = top_w / top_w.sum(-1, keepdim=True)
-        top_w = top_w.to(x.dtype)
-        return (top_i, top_w), router_logits
+QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock = QEffQwen3VLMoeTextSparseMoeBlock
 
 
 class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration):

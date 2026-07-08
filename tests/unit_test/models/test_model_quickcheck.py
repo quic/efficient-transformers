@@ -2224,30 +2224,35 @@ def test_qwen3_5_moe_get_specializations_strips_vision_symbols_for_comp_ctx_vari
 
 
 def test_moe_prefill_transform_does_not_require_enable_chunking():
-    from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeMoE, QEffPrefillChunkedGlm4MoeMoE
-    from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyTransform
+    from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeMoE
+    from QEfficient.transformers.models.pytorch_transforms import (
+        PrefillOnlyChunkedTransform,
+        PrefillOnlyTransform,
+        RevertPrefillKeepAttentionTransform,
+        RevertPrefillOnlyTransform,
+    )
     from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
-        QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
         QEffQwen3_5MoeSparseMoeBlock,
     )
     from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
-        QEffPrefillChunkedQwen3MoeSparseMoeBlock,
         QEffQwen3MoeSparseMoeBlock,
     )
     from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
-        QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
         QEffQwen3VLMoeTextSparseMoeBlock,
     )
 
-    assert PrefillOnlyTransform._module_mapping[QEffGlm4MoeMoE] is QEffPrefillChunkedGlm4MoeMoE
-    assert PrefillOnlyTransform._module_mapping[QEffQwen3MoeSparseMoeBlock] is QEffPrefillChunkedQwen3MoeSparseMoeBlock
-    assert (
-        PrefillOnlyTransform._module_mapping[QEffQwen3VLMoeTextSparseMoeBlock]
-        is QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock
-    )
-    assert (
-        PrefillOnlyTransform._module_mapping[QEffQwen3_5MoeSparseMoeBlock] is QEffPrefillChunkedQwen3_5MoeSparseMoeBlock
-    )
+    for moe_cls in (
+        QEffGlm4MoeMoE,
+        QEffQwen3MoeSparseMoeBlock,
+        QEffQwen3VLMoeTextSparseMoeBlock,
+        QEffQwen3_5MoeSparseMoeBlock,
+    ):
+        assert moe_cls not in PrefillOnlyTransform._module_mapping
+        assert moe_cls not in PrefillOnlyChunkedTransform._module_mapping
+        assert moe_cls not in RevertPrefillKeepAttentionTransform._module_mapping
+        assert moe_cls not in RevertPrefillOnlyTransform._module_mapping
+        assert moe_cls.supports_moe_prefill_blocking is True
+        assert moe_cls.supports_static_moe_prefill_chunks is True
 
 
 def test_layerwise_matches_default_path_for_qwen3_moe():

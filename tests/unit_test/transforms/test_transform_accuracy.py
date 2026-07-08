@@ -1335,6 +1335,84 @@ class TestSplitOptimizedMoETransform:
             "moe_prefill_num_packed_chunks": 3,
         }
 
+    @pytest.mark.parametrize(
+        ("moe_flavour", "expected"),
+        [
+            ("simple_loop", MoEFlavour.SIMPLE_LOOP),
+            ("expert_blocked", MoEFlavour.EXPERT_BLOCKED),
+            ("decode_bmm", MoEFlavour.DECODE_BMM),
+            ("auto", MoEFlavour.EXPERT_BLOCKED),
+        ],
+    )
+    def test_export_config_transform_respects_top_level_moe_flavour(self, moe_flavour, expected):
+        model = _DummyOptimizedMoEModel()
+        hash_params = {}
+
+        _, transformed = OptimizedMoEExportConfigTransform.apply(
+            model,
+            prefill_only=True,
+            enable_chunking=True,
+            num_cores=2,
+            moe_prefill_packed_chunk_size=16,
+            qaic_config={"moe_flavour": moe_flavour},
+            prefill_seq_len=32,
+            hash_params=hash_params,
+        )
+
+        assert transformed
+        assert model.block._moe_flavour is expected
+        assert hash_params["moe_prefill_flavour"] == expected.value
+        if expected is MoEFlavour.EXPERT_BLOCKED:
+            assert model.block.expert_blocking_num_nsp == 2
+            assert model.block.expert_blocking_packed_chunk_size == 16
+            assert model.block.expert_blocking_num_packed_chunks == 2
+        else:
+            assert "moe_prefill_num_nsp" not in hash_params
+            assert "moe_prefill_packed_chunk_size" not in hash_params
+            assert "moe_prefill_num_packed_chunks" not in hash_params
+
+    def test_export_config_transform_auto_decode_uses_decode_bmm(self):
+        model = _DummyOptimizedMoEModel()
+        hash_params = {}
+
+        _, transformed = OptimizedMoEExportConfigTransform.apply(
+            model,
+            prefill_only=False,
+            enable_chunking=True,
+            qaic_config={"moe_flavour": "auto"},
+            hash_params=hash_params,
+        )
+
+        assert transformed
+        assert model.block._moe_flavour is MoEFlavour.DECODE_BMM
+        assert hash_params == {"moe_prefill_flavour": "decode_bmm"}
+
+    def test_export_config_transform_rejects_invalid_top_level_moe_flavour(self):
+        model = _DummyOptimizedMoEModel()
+
+        with pytest.raises(ValueError, match=r"qaic_config\['moe_flavour'\]"):
+            OptimizedMoEExportConfigTransform.apply(
+                model,
+                prefill_only=True,
+                qaic_config={"moe_flavour": "legacy"},
+            )
+
+    def test_export_config_transform_ignores_legacy_nested_prefill_flavour(self):
+        model = _DummyOptimizedMoEModel()
+        hash_params = {}
+
+        _, transformed = OptimizedMoEExportConfigTransform.apply(
+            model,
+            prefill_only=True,
+            enable_chunking=True,
+            qaic_config={"moe_config": {"prefill_flavour": "simple_loop"}},
+            hash_params=hash_params,
+        )
+
+        assert transformed
+        assert model.block._moe_flavour is MoEFlavour.EXPERT_BLOCKED
+        assert hash_params["moe_prefill_flavour"] == "expert_blocked"
+
     def test_facade_applies_weights_and_export_config(self):
         model = _DummyOptimizedMoEModel()
         hash_params = {}

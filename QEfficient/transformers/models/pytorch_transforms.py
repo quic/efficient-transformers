@@ -381,7 +381,6 @@ from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
     QEffGlm4MoeMoE,
     QEffGlm4MoeRotaryEmbedding,
     QEffGlm4MoeTopkRouter,
-    QEffPrefillChunkedGlm4MoeMoE,
 )
 from QEfficient.transformers.models.gpt2.modeling_gpt2 import (
     QEffGPT2Attention,
@@ -568,7 +567,6 @@ from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import (
     QEffQwen3_5VisionModel,
 )
 from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
-    QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
     QEffQwen3_5MoeAttention,
     QEffQwen3_5MoeDecoderLayer,
     QEffQwen3_5MoeExperts,
@@ -584,7 +582,6 @@ from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     QEffQwen3_5MoeVisionModel,
 )
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
-    QEffPrefillChunkedQwen3MoeSparseMoeBlock,
     QEffQwen3MoeAttention,
     QEffQwen3MoeDecoderLayer,
     QEffQwen3MoeExperts,
@@ -605,7 +602,6 @@ from QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl import (
     QEffQwen3VLVisionModel,
 )
 from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
-    QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
     QEffQwen3VLMoeForConditionalGeneration,
     QEffQwen3VLMoeModel,
     QEffQwen3VLMoeTextAttention,
@@ -952,10 +948,6 @@ class PrefillOnlyTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
-        QEffGlm4MoeMoE: QEffPrefillChunkedGlm4MoeMoE,
-        QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
-        QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
-        QEffQwen3_5MoeSparseMoeBlock: QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
     }
 
 
@@ -965,14 +957,6 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
-        # Qwen3Moe
-        QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
-        # Qwen3 VL Moe
-        QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
-        # GLM4 Moe
-        QEffGlm4MoeMoE: QEffPrefillChunkedGlm4MoeMoE,
-        # Qwen3_5Moe
-        QEffQwen3_5MoeSparseMoeBlock: QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
         # Gemma4_Moe
         QEffGemma4TextExperts: QEffPrefillChunckedGemma4TextExperts,
     }
@@ -986,14 +970,6 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
         QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
-        # Qwen3Moe
-        QEffPrefillChunkedQwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
-        # GLM4 Moe
-        QEffPrefillChunkedGlm4MoeMoE: QEffGlm4MoeMoE,
-        # Qwen3 VL Moe
-        QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
-        # Qwen3_5Moe
-        QEffPrefillChunkedQwen3_5MoeSparseMoeBlock: QEffQwen3_5MoeSparseMoeBlock,
         # Gemma4_Moe
         QEffPrefillChunckedGemma4TextExperts: QEffGemma4TextExperts,
     }
@@ -1546,7 +1522,7 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
         for module in _iter_optimized_moe_modules(model):
             supports_blocking = getattr(module, "supports_moe_prefill_blocking", False)
             flavour = select_moe_flavour(
-                moe_config,
+                qaic_config,
                 model_type,
                 is_prefill=prefill_only,
                 supports_blocking=supports_blocking,

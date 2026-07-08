@@ -57,7 +57,6 @@ from QEfficient.transformers.models._layerwise import (
     resolve_layer_window,
 )
 from QEfficient.transformers.moe import (
-    MoEFlavour,
     MoEProfile,
     MoEWeights,
     QEffMoEBlockMixin,
@@ -2136,6 +2135,9 @@ class QEffQwen3_5MoeExperts(Qwen3_5MoeExperts):
 
 
 class QEffQwen3_5MoeSparseMoeBlock(QEffMoEBlockMixin, Qwen3_5MoeSparseMoeBlock):
+    supports_moe_prefill_blocking = True
+    supports_static_moe_prefill_chunks = True
+
     def __qeff_init__(self):
         self.top_k = getattr(self.gate, "top_k", None)
         self.norm_topk_prob = getattr(self.gate, "norm_topk_prob", False)
@@ -2168,9 +2170,4 @@ class QEffQwen3_5MoeSparseMoeBlock(QEffMoEBlockMixin, Qwen3_5MoeSparseMoeBlock):
         return out + shared
 
 
-class QEffPrefillChunkedQwen3_5MoeSparseMoeBlock(QEffQwen3_5MoeSparseMoeBlock):
-    supports_moe_prefill_blocking = True
-    # Trace a fixed packed-chunk loop count so long prefill exports keep small SL.
-    supports_static_moe_prefill_chunks = True
-    # Class implies expert-blocking; OptimizedMoETransform may override per qaic_config.
-    _moe_flavour = MoEFlavour.EXPERT_BLOCKED
+QEffPrefillChunkedQwen3_5MoeSparseMoeBlock = QEffQwen3_5MoeSparseMoeBlock

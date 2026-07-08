@@ -391,8 +391,8 @@ register_moe_adapter(
         route=_qwen3_route,
         profile=_qwen_profile,
         return_router_logits=True,
-        supports_prefill_blocking=False,
-        supports_static_prefill_chunks=False,
+        supports_prefill_blocking=True,
+        supports_static_prefill_chunks=True,
     )
 )
 register_moe_adapter(
@@ -413,8 +413,8 @@ register_moe_adapter(
         route=_qwen3_route,
         profile=_qwen_profile,
         return_router_logits=True,
-        supports_prefill_blocking=False,
-        supports_static_prefill_chunks=False,
+        supports_prefill_blocking=True,
+        supports_static_prefill_chunks=True,
     )
 )
 register_moe_adapter(
@@ -436,8 +436,8 @@ register_moe_adapter(
         profile=_qwen_profile,
         apply_shared_experts=_qwen35_shared_experts,
         return_router_logits=False,
-        supports_prefill_blocking=False,
-        supports_static_prefill_chunks=False,
+        supports_prefill_blocking=True,
+        supports_static_prefill_chunks=True,
     )
 )
 register_moe_adapter(
@@ -481,8 +481,8 @@ register_moe_adapter(
         route=_glm4_route,
         profile=_glm4_profile,
         apply_shared_experts=_glm4_shared_experts,
-        supports_prefill_blocking=False,
-        supports_static_prefill_chunks=False,
+        supports_prefill_blocking=True,
+        supports_static_prefill_chunks=True,
     )
 )
 register_moe_adapter(

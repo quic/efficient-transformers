@@ -35,7 +35,6 @@ from QEfficient.blocking.attention_blocking import (
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.moe import (
-    MoEFlavour,
     MoEProfile,
     MoEWeights,
     QEffMoEBlockMixin,
@@ -564,6 +563,9 @@ class QEffGlm4MoeMoE(QEffMoEBlockMixin, Glm4MoeMoE):
     MoE Block
     """
 
+    supports_moe_prefill_blocking = True
+    supports_static_moe_prefill_chunks = True
+
     def __qeff_init__(
         self,
     ):
@@ -648,12 +650,7 @@ class QEffGlm4MoeMoE(QEffMoEBlockMixin, Glm4MoeMoE):
         return final_hidden_states.type(hidden_states.dtype)
 
 
-class QEffPrefillChunkedGlm4MoeMoE(QEffGlm4MoeMoE):
-    supports_moe_prefill_blocking = True
-    # Trace a fixed packed-chunk loop count so long prefill exports keep small SL.
-    supports_static_moe_prefill_chunks = True
-    # Class implies expert-blocking; OptimizedMoETransform may override per qaic_config.
-    _moe_flavour = MoEFlavour.EXPERT_BLOCKED
+QEffPrefillChunkedGlm4MoeMoE = QEffGlm4MoeMoE
 
 
 class QEffGlm4MoeForCausalLM(Glm4MoeForCausalLM):
