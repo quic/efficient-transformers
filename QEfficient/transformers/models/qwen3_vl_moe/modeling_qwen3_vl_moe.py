@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 import math
+from functools import partial
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import torch
@@ -46,6 +47,14 @@ from QEfficient.transformers.models._layerwise import (
     is_last_layer_window,
     is_layerwise_active,
     resolve_layer_window,
+)
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    MoEProfile,
+    MoEWeights,
+    QEffMoEBlockMixin,
+    build_canonical_expert_weights,
+    silu_glu_mlp,
 )
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
@@ -670,37 +679,6 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         return hidden_states + (visual_embeds * visual_mask)
 
 
-class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
-    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        B, S, H = hidden_states.shape
-        T = B * S
-        x = hidden_states.view(T, H)
-        act = getattr(self.experts, "act_fn", F.silu)
-
-        router_logits, top_w, top_i = self.gate(x)
-        top_w = top_w.to(hidden_states.dtype)
-        num_experts = getattr(self, "num_experts", self.gate.num_experts)
-        routing_weights = torch.zeros((T, num_experts), dtype=x.dtype)
-        routing_weights.scatter_(1, top_i, top_w)
-
-        expert_out = torch.zeros_like(x, dtype=x.dtype)
-
-        for e in range(num_experts):
-            routing_weight = routing_weights[:, e].unsqueeze(-1)
-            W_g = self.experts.gate_proj[e]  # [H, I]
-            W_u = self.experts.up_proj[e]  # [H, I]
-            W_d = self.experts.down_proj_t[e]  # [I, H]
-            gate = x @ W_g
-            up = x @ W_u
-            down = (up * act(gate)) @ W_d
-            masked_down = torch.where(
-                routing_weight > 0, down * routing_weight, torch.zeros_like(expert_out, dtype=down.dtype)
-            )  # TODO: verify and remove
-            expert_out += masked_down
-        expert_out = expert_out.to(x.dtype).view(B, S, H)
-        return expert_out, router_logits
-
-
 class QEffQwen3VLMoeModel(Qwen3VLMoeModel):
     def forward(
         self,
@@ -794,14 +772,23 @@ class QEffQwen3VLMoeTextTopKRouter(Qwen3VLMoeTextTopKRouter):
 
 class QEffQwen3VLMoeTextExperts(Qwen3VLMoeTextExperts):
     def __qeff_init__(self):
-        # HF 5.x keeps fused gate_up projections. Keep backward-compatible
-        # aliases expected by QEff MoE execution paths.
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
-        gate_up_proj = self.gate_up_proj.detach()
-        down_proj = self.down_proj.detach()
-        self.gate_proj = nn.Parameter(gate_up_proj[:, : self.expert_dim, :].transpose(1, 2), requires_grad=False)
-        self.up_proj = nn.Parameter(gate_up_proj[:, self.expert_dim :, :].transpose(1, 2), requires_grad=False)
-        self.down_proj_t = nn.Parameter(down_proj.transpose(1, 2), requires_grad=False)
+
+    def build_moe_weights(self) -> MoEWeights:
+        if getattr(self, "moe_weights", None) is not None:
+            return self.moe_weights
+        self.moe_weights = build_canonical_expert_weights(
+            gate_up=self.gate_up_proj,
+            down=self.down_proj,
+            fused=True,
+            fused_split_dim=1,
+            transpose_gate_up=True,
+            transpose_down=True,
+        )
+        self.gate_proj = nn.Parameter(self.moe_weights.gate, requires_grad=False)
+        self.up_proj = nn.Parameter(self.moe_weights.up, requires_grad=False)
+        self.down_proj_t = nn.Parameter(self.moe_weights.down, requires_grad=False)
+        return self.moe_weights
 
 
 class QEffQwen3VLDecoderWrapper(nn.Module):
@@ -956,28 +943,52 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             return logits, outputs.past_key_values
 
 
-class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
-    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        B, S, H = hidden_states.shape
-        T = B * S
-        x = hidden_states.view(T, H)
-        router_logits, top_w, top_i = self.gate(x)
-        top_w = top_w.to(x.dtype)
-        idx = top_i.reshape(-1)
-        gate_proj = self.experts.gate_proj[idx.flatten()]
-        up_proj = self.experts.up_proj[idx.flatten()]
-        w_dn = self.experts.down_proj_t[idx.flatten()]
+class QEffQwen3VLMoeTextSparseMoeBlock(QEffMoEBlockMixin, Qwen3VLMoeTextSparseMoeBlock):
+    _moe_return_router_logits = True
 
-        top_k = top_i.shape[-1]
-        xk = x.unsqueeze(1).expand(-1, top_k, -1).contiguous()
-        xk = xk.view(-1, 1, H)
-        gate = torch.bmm(xk, gate_proj)
-        up = torch.bmm(xk, up_proj)
-        intermediate = up * self.experts.act_fn(gate)
-        experts_out = torch.bmm(intermediate, w_dn)
-        experts_out = experts_out.view(T, top_k, H) * top_w.unsqueeze(-1)
-        experts_out = torch.einsum("bnd->bd", experts_out)
-        return experts_out.view(B, S, H), router_logits
+    def build_moe_weights(self) -> MoEWeights:
+        if getattr(self.experts, "moe_weights", None) is None:
+            self.experts.build_moe_weights()
+        self.moe_weights = self.experts.moe_weights
+        return self.moe_weights
+
+    def get_moe_weights(self) -> MoEWeights:
+        if getattr(self, "moe_weights", None) is None:
+            self.build_moe_weights()
+        return self.moe_weights
+
+    @property
+    def moe_profile(self) -> MoEProfile:
+        act_fn = getattr(self.experts, "act_fn", F.silu)
+        return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=act_fn))
+
+    def route(self, x: torch.Tensor):
+        router_logits, top_w, top_i = self.gate(x)
+        if getattr(self, "norm_topk_prob", False):
+            top_w = top_w / top_w.sum(-1, keepdim=True)
+        top_w = top_w.to(x.dtype)
+        return (top_i, top_w), router_logits
+
+
+class QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock(QEffQwen3VLMoeTextSparseMoeBlock):
+    supports_moe_prefill_blocking = True
+    # Trace a fixed packed-chunk loop count so long prefill exports keep small SL.
+    supports_static_moe_prefill_chunks = True
+    # Class implies expert-blocking; OptimizedMoETransform may override per qaic_config.
+    _moe_flavour = MoEFlavour.EXPERT_BLOCKED
+
+    def __qeff_init__(self):
+        self.top_k = getattr(self.gate, "top_k", None)
+        self.norm_topk_prob = getattr(self.gate, "norm_topk_prob", False)
+        self.num_experts = getattr(self.gate, "num_experts", getattr(self.experts, "num_experts", None))
+
+    def route(self, x: torch.Tensor):
+        # Prefill path uses the optimized gate router (softmax-then-topk + optional norm).
+        router_logits, top_w, top_i = self.gate(x)
+        if self.norm_topk_prob:
+            top_w = top_w / top_w.sum(-1, keepdim=True)
+        top_w = top_w.to(x.dtype)
+        return (top_i, top_w), router_logits
 
 
 class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration):
