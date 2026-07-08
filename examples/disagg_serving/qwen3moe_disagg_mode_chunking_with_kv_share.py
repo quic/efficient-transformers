@@ -7,12 +7,13 @@
 
 """Disaggregated prefill/decode with chunked prefill — DMA-based KV handoff."""
 
+import argparse
 import time
 from queue import Queue
 
 import numpy as np
 import torch
-from transformers import AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -30,6 +31,15 @@ DECODE_NUM_DEVICES = 4
 PREFILL_NUM_DEVICES = 8
 
 
+def _build_config(model_id: str, num_hidden_layers: int = None):
+    """Load the model config, optionally reducing ``num_hidden_layers``."""
+    if num_hidden_layers is None:
+        return None
+    config = AutoConfig.from_pretrained(model_id)
+    config.num_hidden_layers = num_hidden_layers
+    return config
+
+
 def _compile_sessions(qeff_model, prefill_seq_len, ctx_len, stages, prefill_num_devices, decode_num_devices):
     """Compile decode/prefill QPCs (spec §5 flags) and open kv_dma_share sessions."""
     decode_qpc_path = qeff_model.compile(
@@ -45,6 +55,7 @@ def _compile_sessions(qeff_model, prefill_seq_len, ctx_len, stages, prefill_num_
         offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation
         split_retained_state_io=True,
         retain_full_kv=True,  # required for DMA slice writes into full KV
+        use_onnx_subfunctions=True,
     )
     prefill_qpc_path = qeff_model.compile(
         prefill_seq_len=prefill_seq_len,
@@ -79,15 +90,20 @@ def run(
     stages: int = STAGES,
     prefill_num_devices: int = PREFILL_NUM_DEVICES,
     decode_num_devices: int = DECODE_NUM_DEVICES,
+    num_hidden_layers: int = None,
 ):
     """Run chunked-prefill + decode with the DMA-based KV handoff.
 
-    Returns a dict with the prefill ``logits``, the ``first_token`` (argmax over
-    those logits) and the full decoded ``tokens`` list, for parity comparison.
+    ``num_hidden_layers`` (testing only) reduces the model depth for a fast compile;
+    leave it ``None`` to use the full model. Returns a dict with the prefill ``logits``,
+    the ``first_token`` (argmax over those logits) and the full decoded ``tokens`` list,
+    for parity comparison.
     """
     tokenizer = AutoTokenizer.from_pretrained(model_id)
 
-    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
+    config = _build_config(model_id, num_hidden_layers)
+    from_pretrained_kwargs = {"config": config} if config is not None else {}
+    qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, **from_pretrained_kwargs)
     prefill_session, decode_session = _compile_sessions(
         qeff_model, prefill_seq_len, ctx_len, stages, prefill_num_devices, decode_num_devices
     )
@@ -143,10 +159,6 @@ def run(
     all_outputs = [first_token]
 
     # ---- Decode (consumer): re-point DMA descriptor at kv_caches EVERY step ----
-    # The decode QPC is compiled with split_retained_state_io=True (spec §5), so the
-    # KV *input* binding (past_key.N) and the *_RetainedState output* (past_key.N_
-    # RetainedState) are distinct device buffers — exactly the two sides the baseline
-    # bridges with `inputs[past_key.N] = out[past_key.N_RetainedState]` each step.
     # Wire BOTH at kv_caches: the input for the read, the RS output for the write-back
     # of the newly-decoded position. kv_caches is allocated in decode_buff_map order,
     # and decode_rs_kv_only_buff_map is the same layer-sorted family order, so the two
@@ -185,4 +197,33 @@ def run(
 
 
 if __name__ == "__main__":
-    run()
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--model-id", default=DEFAULT_MODEL_ID, help="HF model id")
+    parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="text prompt")
+    parser.add_argument("--prefill-seq-len", type=int, default=DEFAULT_PREFILL_SEQ_LEN)
+    parser.add_argument("--ctx-len", type=int, default=DEFAULT_CTX_LEN)
+    parser.add_argument("--stages", type=int, default=STAGES, help="prefill pipeline depth (mdp_num_partitions)")
+    parser.add_argument(
+        "--prefill-num-devices", type=int, default=PREFILL_NUM_DEVICES, help="num devices for the prefill QPC"
+    )
+    parser.add_argument(
+        "--decode-num-devices", type=int, default=DECODE_NUM_DEVICES, help="num devices for the decode QPC"
+    )
+    parser.add_argument(
+        "--num-hidden-layers",
+        type=int,
+        default=None,
+        help="reduce model depth for a fast compile (testing only; outputs not meaningful)",
+    )
+    args = parser.parse_args()
+
+    run(
+        model_id=args.model_id,
+        prompt=args.prompt,
+        prefill_seq_len=args.prefill_seq_len,
+        ctx_len=args.ctx_len,
+        stages=args.stages,
+        prefill_num_devices=args.prefill_num_devices,
+        decode_num_devices=args.decode_num_devices,
+        num_hidden_layers=args.num_hidden_layers,
+    )
