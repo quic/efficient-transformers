@@ -144,14 +144,14 @@ def moe_decode_bmm(
     return torch.einsum("bnd->bd", experts_out)
 
 
-# Models whose `auto` prefill flavour is expert-blocking (matches the legacy
-# PrefillOnlyTransform / PrefillOnlyChunkedTransform mappings). GPT-OSS is handled
-# separately because its non-chunked prefill historically used the simple loop.
+# Models whose `auto` prefill flavour is expert-blocking even without chunking.
+# GPT-OSS remains class-driven for now because its non-chunked prefill path has
+# extra behavior beyond flavour selection.
 _AUTO_BLOCKED_MODEL_TYPES = {"qwen3_moe", "qwen3_5_moe", "qwen3_vl_moe", "qwen3_vl_moe_text", "glm4_moe"}
 
 
 def select_moe_flavour(
-    moe_config: Optional[dict],
+    qaic_config: Optional[dict],
     model_type: str,
     *,
     is_prefill: bool,
@@ -160,28 +160,28 @@ def select_moe_flavour(
 ) -> MoEFlavour:
     """Resolve the MoE forward flavour for a module.
 
-    Decode always uses gather+bmm. For prefill an explicit
-    ``moe_config["prefill_flavour"]`` wins; otherwise ``auto`` reproduces the legacy
-    per-model behaviour.
+    Explicit overrides are read only from top-level ``qaic_config["moe_flavour"]``.
+    ``auto`` uses gather+bmm for decode and the best supported prefill flavour for
+    prefill.
     """
-    if not is_prefill:
-        return MoEFlavour.DECODE_BMM
-
-    override = (moe_config or {}).get("prefill_flavour", "auto")
-    if override in (MoEFlavour.EXPERT_BLOCKED.value, MoEFlavour.SIMPLE_LOOP.value):
+    override = (qaic_config or {}).get("moe_flavour", "auto")
+    if isinstance(override, MoEFlavour):
+        flavour = override
+    elif override in {flavour.value for flavour in MoEFlavour}:
         flavour = MoEFlavour(override)
-    elif override not in (None, "auto"):
-        raise ValueError(f"Unsupported moe_config['prefill_flavour']={override!r}")
-    elif model_type == "gpt_oss":
-        flavour = MoEFlavour.EXPERT_BLOCKED if enable_chunking else MoEFlavour.SIMPLE_LOOP
-    elif supports_blocking and model_type in _AUTO_BLOCKED_MODEL_TYPES:
-        flavour = MoEFlavour.EXPERT_BLOCKED
+    elif override in (None, "auto"):
+        if not is_prefill:
+            flavour = MoEFlavour.DECODE_BMM
+        elif supports_blocking and (enable_chunking or model_type in _AUTO_BLOCKED_MODEL_TYPES):
+            flavour = MoEFlavour.EXPERT_BLOCKED
+        else:
+            flavour = MoEFlavour.SIMPLE_LOOP
     else:
-        flavour = MoEFlavour.SIMPLE_LOOP
+        raise ValueError(f"Unsupported qaic_config['moe_flavour']={override!r}")
 
     if flavour is MoEFlavour.EXPERT_BLOCKED and not supports_blocking:
         raise AssertionError(
-            f"moe prefill flavour 'expert_blocked' requested for model_type {model_type!r} "
+            f"moe flavour 'expert_blocked' requested for model_type {model_type!r} "
             "but the module does not set supports_moe_prefill_blocking=True"
         )
     return flavour
