@@ -1195,6 +1195,18 @@ class TestGemma4CBVariant:
         sig = inspect.signature(_QEffAutoModelForImageTextToTextDualQPC.compile)
         assert "full_batch_size" in sig.parameters
 
+    def test_gemma4_dummy_inputs_accepts_prefill_seq_len(self):
+        """
+        Gemma4 dummy-input builder must accept prefill_seq_len so VLM export stays
+        on the continuous-batching-aware code path.
+        """
+        import inspect
+
+        from QEfficient.transformers.models.gemma4.modeling_gemma4 import QEffGemma4ForConditionalGeneration
+
+        sig = inspect.signature(QEffGemma4ForConditionalGeneration.get_dummy_inputs)
+        assert "prefill_seq_len" in sig.parameters
+
 
 # ---------------------------------------------------------------------------
 # Tests: Gemma4 regular variant  (gemma4_example.py)
