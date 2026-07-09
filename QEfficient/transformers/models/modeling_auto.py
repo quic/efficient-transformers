@@ -9,7 +9,7 @@ import os
 import warnings
 from pathlib import Path
 from time import perf_counter
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import onnx
@@ -30,8 +30,17 @@ from transformers import (
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
+from QEfficient.base.onnx_transforms import (
+    FP16ClipTransform,
+    RewriteUnsupportedOpsTransform,
+    SplitTensorsTransform,
+)
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
+from QEfficient.exporter.checkpoint_transforms import (
+    DtypeConversionCheckpointTransform,
+    GptOssMxfp4ExpertDequantSplitCheckpointTransform,
+    MoEExpertStackingCheckpointTransform,
+)
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfoNew,
@@ -3371,9 +3380,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         KVCacheExternalModuleMapperTransform,
     ]
 
-    _onnx_transforms = []
+    _onnx_transforms = [RewriteUnsupportedOpsTransform]
 
-    def prefill(
+    _checkpoint_transforms = [
+        GptOssMxfp4ExpertDequantSplitCheckpointTransform,  # gpt_oss MXFP4: dequant + split fused proj
+        MoEExpertStackingCheckpointTransform,  # MoE: stacks experts + converts dtype in one pass
+        DtypeConversionCheckpointTransform,  # dense: dtype conversion only
+    ]
         self,
         enable: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
@@ -3848,6 +3861,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
         use_dynamo: bool = False,
+        use_weight_free_export: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -4162,7 +4176,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         else:
             dynamic_shapes = None
-            if use_dynamo:
+            if use_dynamo or use_weight_free_export:
                 dynamic_shapes = self.convert_dynamic_axes_to_dynamic_shapes(dynamic_axes)
 
             return self._export(
@@ -4172,6 +4186,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 export_dir=export_dir,
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
                 use_dynamo=use_dynamo,
+                use_weight_free_export=use_weight_free_export,
                 dynamic_shapes=dynamic_shapes,
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
                 prefill_only=prefill_only,
@@ -4330,6 +4345,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         retain_full_kv: Optional[bool] = None,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
+        use_dynamo: bool = False,
+        use_weight_free_export: bool = False,
         kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ) -> str:
@@ -4690,6 +4707,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             offload_pt_weights=offload_pt_weights,
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,
+            use_dynamo=use_dynamo,
+            use_weight_free_export=use_weight_free_export,
             kv_cache_prefix=kv_cache_prefix,
             **compiler_options,
         )
