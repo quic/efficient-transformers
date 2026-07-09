@@ -420,8 +420,14 @@ class QEffDynamicCompressedKVRopeLayer:
 
     def update_ckv(self, compressed_kv, cache_kwargs):
         position_ids = cache_kwargs.get("position_ids")
+        batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
 
-        self.ckv = CtxScatterFunc.apply(self.ckv, position_ids, compressed_kv)
+        if batch_index is not None:
+            invalid_scatter_index = torch.iinfo(torch.int32).max
+            scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
+            self.ckv = CtxScatterFuncCB.apply(self.ckv, batch_index, scatter_position_ids, compressed_kv)
+        else:
+            self.ckv = CtxScatterFunc.apply(self.ckv, position_ids, compressed_kv)
 
         ckv_out = self.ckv
         ctx_len = ckv_out.shape[-2]
@@ -434,14 +440,23 @@ class QEffDynamicCompressedKVRopeLayer:
             invalid_idx_value = 0
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-        ckv_out = CtxGatherFunc.apply(ckv_out, ctx_indices, ctx_len)
+        if batch_index is not None:
+            ckv_out = CtxGatherFuncCB.apply(ckv_out, batch_index, ctx_indices, ctx_len)
+        else:
+            ckv_out = CtxGatherFunc.apply(ckv_out, ctx_indices, ctx_len)
         ckv_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), ckv_out)
         return ckv_out
 
     def update_k_pe(self, k_pe_cache, cache_kwargs):
         position_ids = cache_kwargs.get("position_ids")
+        batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
 
-        self.k_pe = CtxScatterFunc.apply(self.k_pe, position_ids, k_pe_cache)
+        if batch_index is not None:
+            invalid_scatter_index = torch.iinfo(torch.int32).max
+            scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
+            self.k_pe = CtxScatterFuncCB.apply(self.k_pe, batch_index, scatter_position_ids, k_pe_cache)
+        else:
+            self.k_pe = CtxScatterFunc.apply(self.k_pe, position_ids, k_pe_cache)
 
         k_pe_out = self.k_pe
         ctx_len = k_pe_out.shape[-2]
@@ -454,7 +469,10 @@ class QEffDynamicCompressedKVRopeLayer:
             invalid_idx_value = 0
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-        k_pe_out = CtxGatherFunc.apply(k_pe_out, ctx_indices, ctx_len)
+        if batch_index is not None:
+            k_pe_out = CtxGatherFuncCB.apply(k_pe_out, batch_index, ctx_indices, ctx_len)
+        else:
+            k_pe_out = CtxGatherFunc.apply(k_pe_out, ctx_indices, ctx_len)
         k_pe_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), k_pe_out)
         return k_pe_out
 
@@ -462,6 +480,7 @@ class QEffDynamicCompressedKVRopeLayer:
         # Gather
         ckv_out = self.ckv
         position_ids = cache_kwargs.get("position_ids")
+        batch_index = cache_kwargs.get("batch_index", None)
         batch, num_kv_heads, _, _ = ckv_out.shape
         ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
@@ -474,8 +493,11 @@ class QEffDynamicCompressedKVRopeLayer:
 
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-        ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
-        ckv_out = CtxGatherFuncBlockedKV.apply(ckv_out, ctx_indices)
+        if batch_index is not None:
+            ckv_out = CtxGatherFuncBlockedKVCB.apply(ckv_out, batch_index, ctx_indices)
+        else:
+            ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
+            ckv_out = CtxGatherFuncBlockedKV.apply(ckv_out, ctx_indices)
 
         ckv_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), ckv_out)
         return ckv_out
@@ -484,6 +506,7 @@ class QEffDynamicCompressedKVRopeLayer:
         # Gather
         k_pe_out = self.k_pe
         position_ids = cache_kwargs.get("position_ids")
+        batch_index = cache_kwargs.get("batch_index", None)
         batch, num_kv_heads, _, _ = k_pe_out.shape
         ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
@@ -496,22 +519,37 @@ class QEffDynamicCompressedKVRopeLayer:
 
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-        ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
-        k_pe_out = CtxGatherFuncBlockedKV.apply(k_pe_out, ctx_indices)
+        if batch_index is not None:
+            k_pe_out = CtxGatherFuncBlockedKVCB.apply(k_pe_out, batch_index, ctx_indices)
+        else:
+            ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
+            k_pe_out = CtxGatherFuncBlockedKV.apply(k_pe_out, ctx_indices)
 
         k_pe_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), k_pe_out)
         return k_pe_out
 
     def write_only_k_pe(self, k_pe_cache, cache_kwargs):
         position_ids = cache_kwargs.get("position_ids")
+        batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
 
-        self.k_pe = CtxScatterFunc.apply(self.k_pe, position_ids, k_pe_cache)
+        if batch_index is not None:
+            invalid_scatter_index = torch.iinfo(torch.int32).max
+            scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
+            self.k_pe = CtxScatterFuncCB.apply(self.k_pe, batch_index, scatter_position_ids, k_pe_cache)
+        else:
+            self.k_pe = CtxScatterFunc.apply(self.k_pe, position_ids, k_pe_cache)
         return self.k_pe
 
     def write_only_ckv(self, compressed_kv, cache_kwargs):
         position_ids = cache_kwargs.get("position_ids")
+        batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
 
-        self.ckv = CtxScatterFunc.apply(self.ckv, position_ids, compressed_kv)
+        if batch_index is not None:
+            invalid_scatter_index = torch.iinfo(torch.int32).max
+            scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
+            self.ckv = CtxScatterFuncCB.apply(self.ckv, batch_index, scatter_position_ids, compressed_kv)
+        else:
+            self.ckv = CtxScatterFunc.apply(self.ckv, position_ids, compressed_kv)
         return self.ckv
 
 
