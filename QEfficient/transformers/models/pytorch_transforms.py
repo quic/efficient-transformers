@@ -178,6 +178,7 @@ from transformers.models.phi3.modeling_phi3 import (
     Phi3Attention,
     Phi3DecoderLayer,
     Phi3ForCausalLM,
+    Phi3MLP,
     Phi3Model,
     Phi3RMSNorm,
 )
@@ -527,6 +528,7 @@ from QEfficient.transformers.models.phi3.modeling_phi3 import (
     QEffPhi3Attention,
     QEffPhi3DecoderLayer,
     QEffPhi3ForCausalLM,
+    QEffPhi3MLP,
     QEffPhi3Model,
 )
 from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
@@ -656,6 +658,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         MistralRMSNorm: CustomRMSNormAIC,
         Mistral3RMSNorm: CustomRMSNormAIC,
         MixtralRMSNorm: CustomRMSNormAIC,
+        Phi3MLP: QEffPhi3MLP,
         Phi3RMSNorm: CustomRMSNormAIC,
         Qwen2RMSNorm: CustomRMSNormAIC,
         Qwen3RMSNorm: CustomRMSNormAIC,
@@ -1225,7 +1228,10 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "forward": QEffGrok1DecoderLayer.forward,
             "__qeff_init__": QEffGrok1DecoderLayer.__qeff_init__,
         },
-        "MoeBlock": {"forward": QEffGrok1MoeBlock.forward},
+        "MoeBlock": {
+            "forward": QEffGrok1MoeBlock.forward,
+            "__qeff_init__": QEffGrok1MoeBlock.__qeff_init__,
+        },
         "MultiHeadAttention": {
             "forward": QEffGrok1MultiHeadAttention.forward,
         },
