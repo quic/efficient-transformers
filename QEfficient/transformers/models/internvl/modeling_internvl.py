@@ -10,7 +10,6 @@ from typing import List, Optional, Type
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers.models.internvl.modeling_internvl import InternVLVisionLayer
 
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
@@ -453,9 +452,3 @@ class QEffInternVisionEmbeddings(nn.Module):
 
         embeddings = embeddings + position_embedding.to(target_dtype)
         return embeddings
-
-
-class QEffInternVLVisionLayer(InternVLVisionLayer):
-    @torch.compiler.nested_compile_region
-    def forward(self, *args, **kwargs):
-        return super().forward(*args, **kwargs)
