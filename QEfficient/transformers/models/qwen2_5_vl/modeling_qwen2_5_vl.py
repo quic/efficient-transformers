@@ -12,7 +12,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from qwen_vl_utils import smart_resize
-from torch.export import Dim
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLModel
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import (
@@ -175,7 +174,6 @@ class QEffQwen2_5_VLVisionAttention(Qwen2_5_VLVisionAttention):
 
 
 class QEffQwen2_5_VLVisionBlock(Qwen2_5_VLVisionBlock):
-    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -279,7 +277,7 @@ class QEffQwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VisionTransformerPret
 
         mask = (index_padded == -100).to(torch.int32)
 
-        if torch.jit.is_tracing() or torch._dynamo.is_compiling():
+        if torch.jit.is_tracing():
             order = torch.argsort(mask)
         else:
             order = torch.argsort(mask, stable=True)
@@ -418,11 +416,10 @@ def eager_attention_forward(
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) / math.sqrt(module.head_dim)
 
-    mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
-
     if attention_mask is not None:
-        # Apply the attention mask
-        attn_weights = torch.where(attention_mask, mask_value, attn_weights)
+        attn_weights = torch.where(
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
+        )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -515,12 +512,10 @@ class QEffQwen2_5_VLAttention(Qwen2_5_VLAttention):
         if not output_attentions:
             attn_weights = None
 
-        layer = past_key_values.layers[self.layer_idx]
-        return attn_output, attn_weights, (layer.keys.clone(), layer.values.clone())
+        return attn_output, attn_weights, past_key_values
 
 
 class QEffQwen2_5_VLDecoderLayer(Qwen2_5_VLDecoderLayer):
-    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -765,7 +760,9 @@ class QEffQwen_2_5_vl_EncoderWrapper(nn.Module):
     def forward(self, pixel_values, image_grid_thw):
         image_embeds = self.model.visual(pixel_values, grid_thw=image_grid_thw)
         bs = image_grid_thw.shape[0]
-        image_embeds = image_embeds.reshape(bs, image_embeds.size(0) // bs, image_embeds.size(1))
+        split_size = torch.floor_divide(torch.tensor(image_embeds.size(0)), bs)
+        image_embeds = image_embeds.reshape(bs, split_size, image_embeds.size(1))
+
         return image_embeds
 
 
@@ -817,7 +814,7 @@ class QEffQwen_2_5_vl_DecoderWrapper(nn.Module):
         logits = self.model.lm_head(hidden_states)
         logits = logits.float()
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-        vision_embeds = vision_embeds.detach().clone()
+
         return logits, vision_embeds, image_idx, outputs.past_key_values
 
 
@@ -1117,178 +1114,6 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
 
-    def get_onnx_dynamic_shapes(
-        self,
-        comp_ctx_lengths: Optional[List[int]] = None,
-        kv_offload: bool = False,
-        continuous_batching: bool = False,
-    ):
-        num_layers = self.config.text_config.num_hidden_layers
-
-        # Registry of Dim objects so that dims with the same name share the same Dim
-        dim_registry: Dict[str, Dim] = {}
-
-        def get_dim(dim_name: str) -> Dim:
-            if dim_name in dim_registry:
-                return dim_registry[dim_name]
-
-            if dim_name == "batch_size":
-                d = Dim(dim_name, min=1, max=1024)
-            elif dim_name == "vision_batch_size":
-                d = Dim(dim_name, min=1, max=1024)
-            elif dim_name == "full_batch_size":
-                d = Dim(dim_name, min=1, max=2048)
-            elif "seq_len" in dim_name:
-                d = Dim(dim_name, min=1, max=4096)
-            elif dim_name == "ctx_len":
-                d = Dim(dim_name, min=1, max=4096)
-            elif dim_name == "grid_height":
-                d = Dim(dim_name, min=1, max=65536)
-            elif dim_name == "grid_width":
-                d = Dim(dim_name, min=1, max=8192)
-            elif dim_name == "grid_h":
-                d = Dim(dim_name, min=1, max=1024)
-            elif dim_name == "grid_w":
-                d = Dim(dim_name, min=1, max=1024)
-            elif "vision_size" in dim_name:
-                d = Dim(dim_name, min=1, max=65536)
-            elif "comp_ctx_lengths" in dim_name:
-                d = Dim(dim_name, min=1, max=4096)
-            else:
-                # fallback
-                d = Dim(dim_name, min=1, max=4096)
-
-            dim_registry[dim_name] = d
-            return d
-
-        # kv_offload == True: separate vision/lang exports
-        if kv_offload:
-            # Vision encoder path:
-            #   pixel_values:   (grid_height, grid_width)
-            #   image_grid_thw: (batch_size, 1, grid_h, grid_w)
-            vision_dynamic_shapes: Dict[str, Dict[int, Any]] = {
-                "pixel_values": {
-                    0: get_dim("grid_height"),
-                    1: get_dim("grid_width"),
-                },
-                "image_grid_thw": {
-                    0: get_dim("batch_size"),
-                    2: get_dim("grid_h"),
-                    3: get_dim("grid_w"),
-                },
-            }
-
-            # Language decoder path:
-            #   input_ids:     (batch_size, seq_len)
-            #   position_ids:  (3, batch_size, seq_len)
-            #   vision_embeds: (vision_batch_size, vision_size, hidden_size)
-            #   image_idx:     (1, 1) --here treated as input to lang subgraph
-            lang_dynamic_shapes: Dict[str, Any] = {
-                "input_ids": {
-                    0: get_dim("batch_size"),
-                    1: get_dim("seq_len"),
-                },
-                "position_ids": {
-                    1: get_dim("batch_size"),
-                    2: get_dim("seq_len"),
-                },
-                "vision_embeds": {
-                    0: get_dim("vision_batch_size"),
-                    1: get_dim("vision_size"),
-                },
-                "image_idx": {
-                    0: Dim.STATIC,
-                    1: Dim.STATIC,
-                },
-            }
-
-            # KV cache for decoder: list of (key, value) per layer:
-            #   key/value: (batch_size or full_batch_size, num_heads, ctx_len, head_dim)
-            past_kv_shapes: List[List[Dict[int, Any], Dict[int, Any]]] = []
-            batch_dim_name = "full_batch_size" if continuous_batching else "batch_size"
-            for _ in range(num_layers):
-                past_key_shape = {
-                    0: get_dim(batch_dim_name),
-                    2: get_dim("ctx_len"),
-                }
-                past_value_shape = {
-                    0: get_dim(batch_dim_name),
-                    2: get_dim("ctx_len"),
-                }
-                past_kv_shapes.append([past_key_shape, past_value_shape])
-
-            lang_dynamic_shapes["past_key_values"] = past_kv_shapes
-
-            if continuous_batching:
-                # batch_index: often (batch_size, 1) or (batch_size,)
-                lang_dynamic_shapes["batch_index"] = {
-                    0: get_dim("batch_size"),
-                }
-
-            if comp_ctx_lengths is not None:
-                lang_dynamic_shapes["comp_ctx_lengths"] = {
-                    0: get_dim("comp_ctx_lengths"),
-                }
-
-            return {
-                "vision": vision_dynamic_shapes,
-                "lang": lang_dynamic_shapes,
-            }
-
-        # kv_offload == False: single combined export
-        dynamic_shapes: Dict[str, Any] = {}
-
-        # pixel_values: (grid_height, grid_width)
-        dynamic_shapes["pixel_values"] = {
-            0: get_dim("grid_height"),
-            1: get_dim("grid_width"),
-        }
-
-        # image_grid_thw: (batch_size, 1, grid_h, grid_w)
-        dynamic_shapes["image_grid_thw"] = {
-            0: get_dim("batch_size"),
-            2: get_dim("grid_h"),
-            3: get_dim("grid_w"),
-        }
-
-        # input_ids: (batch_size, seq_len)
-        dynamic_shapes["input_ids"] = {
-            0: get_dim("batch_size"),
-            1: get_dim("seq_len"),
-        }
-
-        # position_ids: (3, batch_size, seq_len)
-        # (dim 0 == 3 is static and omitted from dynamic spec)
-        dynamic_shapes["position_ids"] = {
-            1: get_dim("batch_size"),
-            2: get_dim("seq_len"),
-        }
-
-        # past_key_values: list[(key, value) ...] per layer,
-        # key/value: (batch_size or full_batch_size, num_heads, ctx_len, head_dim)
-        past_kv_shapes: List[List[Dict[int, Any], Dict[int, Any]]] = []
-        batch_dim_name = "full_batch_size" if continuous_batching else "batch_size"
-        for _ in range(num_layers):
-            past_key_shape = {
-                0: get_dim(batch_dim_name),
-                2: get_dim("ctx_len"),
-            }
-            past_value_shape = {
-                0: get_dim(batch_dim_name),
-                2: get_dim("ctx_len"),
-            }
-            past_kv_shapes.append([past_key_shape, past_value_shape])
-
-        dynamic_shapes["past_key_values"] = past_kv_shapes
-        dynamic_shapes["kwargs"] = {
-            "image_idx": {
-                0: Dim.STATIC,
-                1: Dim.STATIC,
-            },
-        }
-
-        return dynamic_shapes
-
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]
         lang_output_names = ["logits"]
@@ -1353,9 +1178,3 @@ class QEffQwen_2_5_vl_ForConditionalGeneration(Qwen2_5_VLForConditionalGeneratio
                 shape=("batch_size", 3, "image_size", "image_size"),
             ),
         ]
-
-
-# class QEffQwen2_5_VLVisionBlockRegion(QEffQwen2_5_VLVisionBlock):
-#     @torch.compiler.nested_compile_region
-#     def forward(self, *args, **kwargs):
-#         return super().forward(*args, **kwargs)
