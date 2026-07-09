@@ -70,7 +70,6 @@ def get_sampling_inputs_and_outputs(
     continuous_batching: bool,
     vocab_size: int,
     qaic_config: Dict,
-    dynamic_shapes: Optional[Dict] = None,
 ):
     """
     Updates the example inputs, output names, and dynamic axes to include
@@ -90,108 +89,64 @@ def get_sampling_inputs_and_outputs(
         Vocabulary size for this model.
     qaic_config : Dict
         QAIC config dictionary.
-    dynamic_shapes : Dict, optional
-        When provided (dynamo export path), updated in-place with torch.export.Dim
-        entries for each new sampler input, mirroring the dynamic_axes additions.
 
     Returns
     -------
-    Tuple[Dict[str, torch.Tensor], List[str], Dict[str, Dict[int, str]], Optional[Dict]]
-        Updated example inputs, output names, dynamic axes, and dynamic shapes
-        (None if dynamic_shapes was not provided) including sampling-related parameters.
+    Tuple[Dict[str, torch.Tensor], List[str], Dict[str, Dict[int, str]]]
+        Updated example inputs, output names, and dynamic axes including
+        sampling-related parameters.
     """
     bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
     fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
     seq_len: int = example_inputs["input_ids"].shape[-1]
 
-    # Build a registry of Dim objects so identical dim names share the same Dim instance.
-    # Seed the registry from any Dim objects already present in dynamic_shapes so that
-    # sampler axes stay consistent with the rest of the graph.
-    if dynamic_shapes is not None:
-        from torch.export import Dim
-
-        dim_registry: Dict[str, object] = {}
-        for axes_map in dynamic_shapes.values():
-            if not isinstance(axes_map, dict):
-                continue
-            for dim_obj in axes_map.values():
-                if hasattr(dim_obj, "__name__"):
-                    dim_registry.setdefault(dim_obj.__name__, dim_obj)
-
-        def _get_dim(name: str, **kwargs) -> object:
-            if name not in dim_registry:
-                dim_registry[name] = Dim(name, **kwargs)
-            return dim_registry[name]
-
-    def _add_dynamic_shape(input_name: str, axes: Dict[int, str]) -> None:
-        if dynamic_shapes is None:
-            return
-        entry = {}
-        for axis_idx, dim_name in axes.items():
-            if "seq_len" in dim_name:
-                entry[axis_idx] = _get_dim(dim_name, min=1, max=513)
-            elif dim_name == "batch_size":
-                entry[axis_idx] = _get_dim(dim_name, min=1, max=64)
-            else:
-                entry[axis_idx] = _get_dim(dim_name, min=1, max=4096)
-        dynamic_shapes[input_name] = entry
-
     example_inputs["last_accepted_output_tokens"] = torch.zeros((bs, seq_len), dtype=torch.int64)
     dynamic_axes["last_accepted_output_tokens"] = {0: "batch_size", 1: "seq_len"}
-    _add_dynamic_shape("last_accepted_output_tokens", {0: "batch_size", 1: "seq_len"})
-
-    penalty_batch_dim = "full_batch_size" if continuous_batching else "batch_size"
 
     example_inputs["past_repetition_penalty_buffer"] = torch.zeros(
         (fbs if continuous_batching else bs, vocab_size), dtype=torch.bool
     )
-    dynamic_axes["past_repetition_penalty_buffer"] = {0: penalty_batch_dim}
-    _add_dynamic_shape("past_repetition_penalty_buffer", {0: penalty_batch_dim})
+    dynamic_axes["past_repetition_penalty_buffer"] = {
+        0: "full_batch_size" if continuous_batching else "batch_size",
+    }
     output_names.append("past_repetition_penalty_buffer_RetainedState")
 
     example_inputs["repetition_penalties"] = (
         torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_REPETITION_PENALTIES
     )
     dynamic_axes["repetition_penalties"] = {0: "batch_size"}
-    _add_dynamic_shape("repetition_penalties", {0: "batch_size"})
 
     example_inputs["past_presence_penalty_buffer"] = torch.zeros(
         (fbs if continuous_batching else bs, vocab_size), dtype=torch.bool
     )
-    dynamic_axes["past_presence_penalty_buffer"] = {0: penalty_batch_dim}
-    _add_dynamic_shape("past_presence_penalty_buffer", {0: penalty_batch_dim})
+    dynamic_axes["past_presence_penalty_buffer"] = {
+        0: "full_batch_size" if continuous_batching else "batch_size",
+    }
     output_names.append("past_presence_penalty_buffer_RetainedState")
 
     example_inputs["presence_penalties"] = (
         torch.zeros((bs, 1), dtype=torch.float) + constants.ONNX_EXPORT_EXAMPLE_PRESENCE_PENALTIES
     )
     dynamic_axes["presence_penalties"] = {0: "batch_size"}
-    _add_dynamic_shape("presence_penalties", {0: "batch_size"})
 
     example_inputs["temperatures"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_TEMPERATURES
     dynamic_axes["temperatures"] = {0: "batch_size"}
-    _add_dynamic_shape("temperatures", {0: "batch_size"})
 
     max_top_k_ids = qaic_config.get("max_top_k_ids", constants.ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS)
     example_inputs["top_ks"] = torch.randint(1, max_top_k_ids, size=(bs, 1)).to(torch.int32)
     dynamic_axes["top_ks"] = {0: "batch_size"}
-    _add_dynamic_shape("top_ks", {0: "batch_size"})
 
     example_inputs["top_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_TOP_PS
     dynamic_axes["top_ps"] = {0: "batch_size"}
-    _add_dynamic_shape("top_ps", {0: "batch_size"})
 
     example_inputs["min_ps"] = torch.ones((bs, 1), dtype=torch.float) * constants.ONNX_EXPORT_EXAMPLE_MIN_PS
     dynamic_axes["min_ps"] = {0: "batch_size"}
-    _add_dynamic_shape("min_ps", {0: "batch_size"})
 
     example_inputs["random_numbers"] = torch.rand((bs, max_top_k_ids), dtype=torch.float)
     dynamic_axes["random_numbers"] = {0: "batch_size"}
-    _add_dynamic_shape("random_numbers", {0: "batch_size"})
 
     if qaic_config.get("include_guided_decoding", False):
         example_inputs["token_bitmasks"] = torch.zeros((bs, vocab_size), dtype=torch.bool)
         dynamic_axes["token_bitmasks"] = {0: "batch_size"}
-        _add_dynamic_shape("token_bitmasks", {0: "batch_size"})
 
-    return example_inputs, output_names, dynamic_axes, dynamic_shapes
+    return example_inputs, output_names, dynamic_axes
