@@ -54,9 +54,6 @@ class InputHandler:
         )
 
     def _get_layer_cache_shape(self, layer_idx):
-        if getattr(self.config, "model_type", None) == "glm_moe_dsa":
-            batch = self.full_batch_size if self.full_batch_size else self.padding_shape[0]
-            return [batch, self.config.num_attention_heads, self.ctx_len, self.config.qk_head_dim]
         if not hasattr(self.config, "layer_types") or self.config.layer_types is None:
             if hasattr(self.config, "sliding_window") and hasattr(self.config, "sliding_window_pattern"):
                 is_sliding = bool((layer_idx + 1) % self.config.sliding_window_pattern)
@@ -140,14 +137,6 @@ class InputHandler:
             past_value = torch.zeros((pad_shape), dtype=self.dtype)
             pkv = (past_key, past_value)
             past_key_values.append(pkv)
-        inputs["past_key_values"] = tuple(past_key_values)
-        if getattr(self.config, "model_type", None) == "glm_moe_dsa":
-            batch = self.full_batch_size if self.full_batch_size else batch_size
-            inputs["indexer_key_cache"] = tuple(
-                torch.zeros((batch, self.ctx_len, self.config.index_head_dim), dtype=self.dtype)
-                for _ in range(self.n_layer)
-            )
-
         return inputs
 
     def update_pytorch_inputs(self, inputs, pt_outputs):
@@ -186,8 +175,6 @@ class InputHandler:
             updated_inputs["past_key_values"] = tuple(normalized_pkv)
         else:
             updated_inputs["past_key_values"] = pkv
-        if "indexer_key_cache" in inputs:
-            updated_inputs["indexer_key_cache"] = pt_outputs.attentions
 
         return updated_inputs
 
