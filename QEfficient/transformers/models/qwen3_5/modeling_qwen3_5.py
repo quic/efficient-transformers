@@ -50,7 +50,6 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
-from QEfficient.utils.custom_op_utils import select_interface
 from QEfficient.utils.logging_utils import logger
 
 QWEN3_5_ROPE_CACHE_EXPORT_CAP = 76800
@@ -63,7 +62,7 @@ class QEffQwen3_5GatedDeltaNetCustomRMSNormAIC(nn.Module):
 
     def forward(self, hidden_states, gate):
         return (
-            select_interface(CustomRMSNormFunc.apply, torch.ops.qefficient.rms_norm)(
+            CustomRMSNormFunc.apply(
                 hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
             )
         ) * F.silu(gate.to(torch.float32))
@@ -352,11 +351,10 @@ def eager_attention_forward(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-    mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
-
     if attention_mask is not None:
-        # Apply the attention mask
-        attn_weights = torch.where(attention_mask, mask_value, attn_weights)
+        attn_weights = torch.where(
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+        )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -767,15 +765,13 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 conv_ctx_indices = torch.arange(
                     conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
                 )[None, :]
-                conv_state = select_interface(CtxGatherFuncCB3D.apply, torch.ops.qefficient.ctx_gather_cb_3d)(
-                    conv_state_all, conv_batch_index, conv_ctx_indices
-                )
+                conv_state = CtxGatherFuncCB3D.apply(conv_state_all, conv_batch_index, conv_ctx_indices)
 
                 recurrent_batch_index = batch_index.to(recurrent_state_all.device)
                 recurrent_ctx_indices = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, None, :]
-                recurrent_state = select_interface(CtxGatherFuncCB.apply, torch.ops.qefficient.ctx_gather_cb)(
+                recurrent_state = CtxGatherFuncCB.apply(
                     recurrent_state_all, recurrent_batch_index, recurrent_ctx_indices, recurrent_state_all.shape[2]
                 )
             else:
@@ -794,9 +790,9 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 conv_position_ids = torch.arange(
                     conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
                 )[None, :]
-                cache_params.conv_states[self.layer_idx] = select_interface(
-                    CtxScatterFuncCB3D.apply, torch.ops.qefficient.ctx_scatter_cb_3d
-                )(conv_state_all, conv_batch_index, conv_position_ids, new_conv_state)
+                cache_params.conv_states[self.layer_idx] = CtxScatterFuncCB3D.apply(
+                    conv_state_all, conv_batch_index, conv_position_ids, new_conv_state
+                )
             else:
                 cache_params.conv_states[self.layer_idx] = new_conv_state
         else:
@@ -854,9 +850,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 recurrent_position_ids = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, :].expand(recurrent_batch_index.shape[0], -1)
-                cache_params.recurrent_states[self.layer_idx] = select_interface(
-                    CtxScatterFuncCB.apply, torch.ops.qefficient.ctx_scatter_cb
-                )(
+                cache_params.recurrent_states[self.layer_idx] = CtxScatterFuncCB.apply(
                     recurrent_state_all,
                     recurrent_batch_index,
                     recurrent_position_ids,

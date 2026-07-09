@@ -28,7 +28,6 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeTextSparseMoeBlock,
     Qwen3VLMoeTextTopKRouter,
     Qwen3VLMoeVisionAttention,
-    Qwen3VLMoeVisionBlock,
     Qwen3VLMoeVisionModel,
     apply_rotary_pos_emb_vision,
     repeat_kv,
@@ -359,11 +358,10 @@ def eager_attention_forward(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) / math.sqrt(module.head_dim)
-    mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
-
     if attention_mask is not None:
-        # Apply the attention mask
-        attn_weights = torch.where(attention_mask, mask_value, attn_weights)
+        attn_weights = torch.where(
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
+        )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -452,7 +450,6 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
 
 
 class QEffQwen3VLMoeTextDecoderLayer(Qwen3VLMoeTextDecoderLayer):
-    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -1364,9 +1361,3 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                 shape=("batch_size", 3, "image_size", "image_size"),
             ),
         ]
-
-
-class QEffQwen3VLMoeVisionBlock(Qwen3VLMoeVisionBlock):
-    @torch.compiler.nested_compile_region
-    def forward(self, *args, **kwargs):
-        return super().forward(*args, **kwargs)
