@@ -3860,10 +3860,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     dim_registry[dim_name] = Dim("full_batch_size", min=batch_min + 1, max=512)
                 elif "seq_len" in dim_name:
                     dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
+                elif "comp_ctx_lengths" in dim_name:
+                    dim_registry[dim_name] = Dim("comp_ctx_lengths", min=4, max=max_seq_len)
                 elif "ctx_len" in dim_name:
                     dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
-                elif "comp_ctx_lengths" in dim_name:
-                    dim_registry[dim_name] = Dim("comp_ctx_lengths", min=8, max=4096)
                 elif "sliding_window" in dim_name:
                     dim_registry[dim_name] = Dim(
                         "sliding_window",
