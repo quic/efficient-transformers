@@ -56,7 +56,6 @@ if skip_vision:
         skip_vision=True,
         mos=1,
         node_precision_info=npi_file_full_path,
-        use_dynamo=True,
         use_onnx_subfunctions=True,
     )
 
@@ -95,7 +94,6 @@ else:
         mos=1,
         node_precision_info=npi_file_full_path,
         split_model_io=True,
-        use_dynamo=True,
         use_onnx_subfunctions=True,
     )
 
