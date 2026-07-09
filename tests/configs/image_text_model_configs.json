@@ -619,8 +619,8 @@
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
       "img_url_list": [
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
-        "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg"
+        "https://picsum.photos/id/237/536/354",
+        "https://picsum.photos/id/238/536/354"
       ],
       "text_prompt_list": [
         "Can you describe the image in detail?",
