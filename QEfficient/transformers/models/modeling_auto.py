@@ -3387,6 +3387,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         MoEExpertStackingCheckpointTransform,  # MoE: stacks experts + converts dtype in one pass
         DtypeConversionCheckpointTransform,  # dense: dtype conversion only
     ]
+
+    def prefill(
         self,
         enable: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
