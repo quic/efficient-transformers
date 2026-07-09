@@ -139,61 +139,60 @@ class QEffGrok1MoeBlock(nn.Module):
     Mixture of experts (MoE) block.
     """
 
+    def __qeff_init__(self):
+        """Stack per-expert weights onto self.experts so the parameter path matches
+        the checkpoint transform output (*.experts.gate_proj / up_proj / down_proj_t)."""
+        E = len(self.experts)
+        if self.experts[0].linear.weight.device.type == "meta":
+            # Weight-free export: create shape-only meta placeholders on self.experts.
+            H = self.experts[0].linear.weight.shape[1]  # hidden_dim (in_features)
+            I = self.experts[0].linear.weight.shape[0]  # ffn_dim   (out_features)
+            self.experts.register_parameter("gate_proj", nn.Parameter(torch.empty(E, H, I, device="meta")))
+            self.experts.register_parameter("up_proj", nn.Parameter(torch.empty(E, H, I, device="meta")))
+            self.experts.register_parameter("down_proj_t", nn.Parameter(torch.empty(E, I, H, device="meta")))
+        else:
+            # Normal export: stack actual weights onto self.experts.
+            self.experts.register_parameter(
+                "gate_proj", nn.Parameter(torch.stack([e.linear.weight.T for e in self.experts]))
+            )
+            self.experts.register_parameter(
+                "up_proj", nn.Parameter(torch.stack([e.linear_v.weight.T for e in self.experts]))
+            )
+            self.experts.register_parameter(
+                "down_proj_t", nn.Parameter(torch.stack([e.linear_1.weight.T for e in self.experts]))
+            )
+
     def forward(self, hidden_states: torch.Tensor):
-        """
-        Forward pass of the MoE block.
-
-        Args:
-            hidden_states (torch.Tensor): Input tensor.
-
-        Returns:
-            torch.Tensor: MoE output.
-        """
         batch_size, sequence_length, hidden_dim = hidden_states.shape
-        hidden_states = hidden_states.view(-1, hidden_dim)
+        hidden_states = hidden_states.view(-1, hidden_dim)  # [T, H]
         router_logits = self.gate(hidden_states)
 
         routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float32)
         routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
-        # Creating experts mask and routing weights masked
-        awesome_experts_mask_1 = (
-            torch.nn.functional.one_hot(selected_experts[:, 0], num_classes=self.num_experts).bool().T.unsqueeze(-1)
-        )
-        awesome_experts_mask_2 = (
-            torch.nn.functional.one_hot(selected_experts[:, 1], num_classes=self.num_experts).bool().T.unsqueeze(-1)
-        )
+        routing_weights = routing_weights.to(hidden_states.dtype)
 
-        gateupout1 = torch.zeros(hidden_states.shape[0], self.ffn_dim)  # T, hs
-        gateupout2 = torch.zeros(hidden_states.shape[0], self.ffn_dim)  # T, hs
-        for expert_idx in range(self.num_experts):
-            expert_layer = self.experts[expert_idx]
-            current_expert_output = expert_layer.act_fn(expert_layer.linear(hidden_states)) * expert_layer.linear_v(
-                hidden_states
-            )
-            gateupout1 += torch.where(
-                awesome_experts_mask_1[expert_idx], current_expert_output, torch.zeros_like(gateupout1)
-            )
-            gateupout2 += torch.where(
-                awesome_experts_mask_2[expert_idx], current_expert_output, torch.zeros_like(gateupout2)
-            )
+        # Gather weights for the top_k selected experts — no loop over all E experts.
+        router_indices = selected_experts.flatten()  # [T * top_k]
+        gate_w = self.experts.gate_proj[router_indices]  # [T*top_k, H, I]
+        up_w = self.experts.up_proj[router_indices]  # [T*top_k, H, I]
+        down_w = self.experts.down_proj_t[router_indices]  # [T*top_k, I, H]
 
-        downout1 = torch.zeros_like(hidden_states)
-        downout2 = torch.zeros_like(hidden_states)
-        concat_mask = torch.cat((awesome_experts_mask_1.unsqueeze(0), awesome_experts_mask_2.unsqueeze(0)), dim=0)
-        concat_down = torch.cat((downout1.unsqueeze(0), downout2.unsqueeze(0)), dim=0)
-        concat_gateout = torch.cat((gateupout1.unsqueeze(0), gateupout2.unsqueeze(0)), dim=0)
-        for expert_idx in range(self.num_experts):
-            expert_layer = self.experts[expert_idx]
-            concat_down += torch.where(
-                concat_mask[:, expert_idx, :], expert_layer.linear_1(concat_gateout), torch.zeros_like(concat_down)
-            )
+        # Expand each token to match its top_k expert slots.
+        T = hidden_states.shape[0]
+        expert_in = (
+            hidden_states.unsqueeze(1).expand(-1, self.top_k, -1).contiguous().view(-1, 1, hidden_dim)
+        )  # [T*top_k, 1, H]
 
-        downout1, downout2 = concat_down[0], concat_down[1]
-        hidden_states = (
-            downout1 * routing_weights[:, 0].unsqueeze(-1) + downout2 * routing_weights[:, 1].unsqueeze(-1)
-        ).reshape(batch_size, sequence_length, hidden_dim)
+        # Batched gate + up + GLU + down.
+        gate = torch.bmm(expert_in, gate_w)  # [T*top_k, 1, I]
+        up = torch.bmm(expert_in, up_w)  # [T*top_k, 1, I]
+        glu = self.experts[0].act_fn(gate) * up  # [T*top_k, 1, I]
+        down = torch.bmm(glu, down_w).view(T, self.top_k, hidden_dim)  # [T, top_k, H]
 
-        return hidden_states, router_logits
+        # Weight by routing probabilities and reduce over top_k.
+        expert_out = (down * routing_weights.unsqueeze(-1)).sum(dim=1)  # [T, H]
+
+        return expert_out.reshape(batch_size, sequence_length, hidden_dim), router_logits
 
 
 class QEffGrok1DecoderLayer(nn.Module):
@@ -477,7 +476,9 @@ class QEffGrok1ModelForCausalLM(nn.Module):
 
         # Cast to int32 to avoid ONNXRT issue
         logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_idx]
+        hidden_states = outputs[0][
+            torch.arange(position_ids.shape[0], device=position_ids.device).view(-1, 1), logit_idx
+        ]
         logits = self.lm_head(hidden_states)
         logits = logits * self.output_multiplier_scale
         logits = logits.float()

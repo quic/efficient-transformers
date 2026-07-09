@@ -19,6 +19,7 @@ from transformers.models.phi3.modeling_phi3 import (
     Phi3Config,
     Phi3DecoderLayer,
     Phi3ForCausalLM,
+    Phi3MLP,
     Phi3Model,
     Phi3RotaryEmbedding,
     repeat_kv,
@@ -66,6 +67,8 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin):
     """
 
     # Apply rotation
+    cos = cos.to(device=q.device)
+    sin = sin.to(device=q.device)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     # Cast back to original dtype
@@ -86,11 +89,8 @@ def eager_attention_forward(
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask,
-            torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
-            attn_weights,
-        )
+        masked_fill = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
+        attn_weights = torch.where(attention_mask, masked_fill, attn_weights)
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -163,6 +163,17 @@ class QEffPhi3Attention(Phi3Attention):
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
+
+
+class QEffPhi3MLP(Phi3MLP):
+    def forward(self, hidden_states: torch.FloatTensor) -> torch.FloatTensor:
+        up_states = self.gate_up_proj(hidden_states)
+        # chunk(2) traces as aten.split with a SymInt size → SplitToSequence in ONNX
+        # which QAIC does not support. Use explicit slicing instead.
+        half = up_states.shape[-1] // 2
+        gate, up_states = up_states[..., :half], up_states[..., half:]
+        up_states = up_states * self.activation_fn(gate)
+        return self.down_proj(up_states)
 
 
 class QEffPhi3DecoderLayer(Phi3DecoderLayer):

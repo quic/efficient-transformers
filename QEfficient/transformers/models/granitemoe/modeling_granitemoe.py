@@ -83,6 +83,8 @@ def qeff_apply_rotary_pos_emb(
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
     # Apply rotation
+    cos = cos.to(device=q.device)
+    sin = sin.to(device=q.device)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     # Cast back to original dtype
