@@ -21,7 +21,6 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperDecoder,
     WhisperDecoderLayer,
     WhisperEncoder,
-    WhisperEncoderLayer,
     WhisperForConditionalGeneration,
     WhisperModel,
     WhisperPositionalEmbedding,
@@ -133,9 +132,9 @@ class QEffWhisperAttention(WhisperAttention):
                 attention_mask = None
             else:
                 # updated to use torch.where, to prevent overflow in fp16 computation
-                mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
-
-                attn_weights = torch.where(attention_mask, mask_value, attn_weights)
+                attn_weights = torch.where(
+                    attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
+                )
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
 
@@ -178,7 +177,6 @@ class QEffWhisperDecoderLayer(WhisperDecoderLayer):
     - added input_features argument to pass forward to attention
     """
 
-    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -896,9 +894,3 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
         return [
             IOInfo(name="input_features", datatype=torch.float32, shape=("batch_size", "num_mel_bins", "feature_len")),
         ]
-
-
-class QEffWhisperEncoderLayerRegion(WhisperEncoderLayer):
-    @torch.compiler.nested_compile_region
-    def forward(self, *args, **kwargs):
-        return super().forward(*args, **kwargs)
