@@ -33,6 +33,7 @@ from QEfficient.utils.torch_patches import (
 )
 
 
+
 def _resolve_attr_path(root, attr_path):
     current = root
     for attr in attr_path.split("."):
@@ -169,16 +170,6 @@ def export_wrapper(func):
         use_dynamo = kwargs.get("use_dynamo", False)
         use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
 
-        # if use_dynamo:
-        #     torch_version = torch.version.__version__
-        #     major, minor = (int(x) for x in torch_version.split(".")[:2])
-        #     if (major, minor) < (2, 13):
-        #         raise RuntimeError(
-        #             f"use_dynamo=True requires PyTorch >= 2.13, but found {torch_version}. "
-        #             "Please uninstall torch 2.7.0 and install the latest PyTorch nightly:\n"
-        #             "  pip3 install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cpu"
-        #         )
-
         # Cache probe flag (used for layerwise inspection runs)
         cache_probe = kwargs.pop("_layerwise_cache_probe", False)
 
@@ -188,10 +179,21 @@ def export_wrapper(func):
 
         # 1. Setup the requested export mode
         if use_onnx_subfunctions:
-            # Handles both Path 4 (dynamo + subfunctions) and Path 2 (TorchScript + subfunctions).
-            # use_dynamo is passed explicitly so _setup_onnx_subfunctions owns the full
-            # submodule-class resolution in one place and does not need to re-read it from kwargs.
-            args, kwargs, subfunction_state = _setup_onnx_subfunctions(self, args, kwargs, use_dynamo=use_dynamo)
+            if use_dynamo:
+                # Path 4: dynamo + subfunctions.
+                # The @nested_compile_region decorator is already statically present
+                # on each decoder layer's forward() method — dynamo will naturally
+                # emit repeated_subgraph* functions without any dynamic patching.
+                # Derive target_classnames directly from get_submodules_for_export()
+                # on the model so RenameRepeatedSubgraphTransform can rename them.
+                submodule_classes = getattr(self.model, "get_submodules_for_export", lambda: set())()
+                target_classnames = sorted(cls.__name__ for cls in (submodule_classes or []))
+                args, kwargs, subfunction_state = _setup_onnx_subfunctions(
+                    self, args, kwargs, target_classnames=target_classnames
+                )
+            else:
+                # Path 2: TorchScript + subfunctions.
+                args, kwargs, subfunction_state = _setup_onnx_subfunctions(self, args, kwargs)
 
         elif use_dynamo:
             # Path 3: flat dynamo — strip any @nested_compile_region decorators that
@@ -337,13 +339,13 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     return export_hash, filtered_hash_params
 
 
-def _setup_onnx_subfunctions(qeff_model, args, kwargs, use_dynamo=False):
+def _setup_onnx_subfunctions(qeff_model, args, kwargs, target_classnames=None):
     """
     Setup ONNX subfunction export environment.
 
     This function prepares the model and environment for exporting with
     ONNX subfunctions enabled. It:
-    - Applies necessary torch patches (TorchScript path only)
+    - Applies necessary torch patches
     - Modifies output names for subfunction compatibility
     - Adds subfunction-specific ONNX transforms
     - Updates export kwargs with module classes
@@ -352,8 +354,6 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, use_dynamo=False):
         qeff_model: The QEff model instance.
         args: Positional export arguments.
         kwargs: Export keyword arguments (modified in-place).
-        use_dynamo: Whether the dynamo exporter is active. Passed explicitly by the
-            caller so this function does not need to read it from kwargs.
 
     Returns:
         Updated args/kwargs plus cleanup state used to restore the original
@@ -366,11 +366,9 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, use_dynamo=False):
     qeff_model._use_onnx_subfunctions = True
     qeff_model.hash_params["use_onnx_subfunctions"] = True
     qeff_model.hash_params["onnx_subfunction_version"] = 2
-    # TorchScript patches are only relevant for the legacy trace-based exporter.
-    # The dynamo path (dynamo=True) goes through torch/onnx/_internal/fx and never
-    # touches _setup_trace_module_map or _jit_pass_onnx_track_scope_attributes.
-    if not use_dynamo:
-        apply_torch_patches()
+    use_dynamo = kwargs.get("use_dynamo", False)
+    # Apply torch patches for subfunction support
+    apply_torch_patches()
     InvalidIndexProvider.SUBFUNC_ENABLED = True
 
     # Transform output names for subfunction compatibility (TorchScript path only).
@@ -421,10 +419,8 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, use_dynamo=False):
     decoder_layer_classes = get_decoder_layer_classes_for_export(qeff_model.model)
     if decoder_layer_classes:
         if use_dynamo:
-            # Pass target classnames to RenameRepeatedSubgraphTransform via onnx_transform_kwargs.
-            # get_decoder_layer_classes_for_export is the single resolution point; no pre-computed
-            # classnames are accepted from the caller to avoid a double-call on the same model.
-            resolved_classnames = sorted(cls.__name__ for cls in decoder_layer_classes)
+            # Pass target classnames to RenameRepeatedSubgraphTransform via onnx_transform_kwargs
+            resolved_classnames = target_classnames or sorted(cls.__name__ for cls in decoder_layer_classes)
             qeff_model._subfunction_target_classnames = resolved_classnames
             onnx_transform_kwargs = dict(kwargs.get("onnx_transform_kwargs") or {})
             onnx_transform_kwargs["target_classnames"] = resolved_classnames
@@ -433,7 +429,7 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, use_dynamo=False):
             # TorchScript path: pass class objects for export_modules_as_functions
             kwargs["export_modules_as_functions"] = decoder_layer_classes
 
-    return args, kwargs, {"onnx_transforms": original_transforms, "use_dynamo": use_dynamo}
+    return args, kwargs, {"onnx_transforms": original_transforms}
 
 
 def _cleanup_onnx_subfunctions(qeff_model, state=None):
@@ -441,7 +437,7 @@ def _cleanup_onnx_subfunctions(qeff_model, state=None):
     Cleanup ONNX subfunction export environment.
 
     Restores the model and environment to pre-subfunction state by:
-    - Undoing torch patches (TorchScript path only)
+    - Undoing torch patches
     - Resetting InvalidIndexProvider flag
     - Restoring original ONNX transforms list
 
@@ -453,9 +449,8 @@ def _cleanup_onnx_subfunctions(qeff_model, state=None):
         even if export fails. Errors during cleanup are logged but
         not re-raised to avoid masking the original exception.
     """
-    # TorchScript patches are only applied on the non-dynamo path, so only undo them there.
-    if state is None or not state.get("use_dynamo", False):
-        undo_torch_patches()
+    # Undo torch patches
+    undo_torch_patches()
     InvalidIndexProvider.SUBFUNC_ENABLED = False
     if state is not None and "onnx_transforms" in state:
         qeff_model._onnx_transforms = state["onnx_transforms"]
