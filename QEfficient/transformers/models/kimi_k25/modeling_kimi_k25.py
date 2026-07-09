@@ -461,7 +461,7 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.layers[0].__class__}
+        return {self.language_model.model.layers[0].__class__}
 
     def forward(
         self,
