@@ -12,7 +12,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils.run_utils import ApiRunner
 
-model_name = "hf-internal-testing/tiny-random-MistralForCausalLM"
+model_name = "mistralai/Mistral-7B-Instruct-v0.1"
 tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
 config.num_hidden_layers = 4
@@ -36,13 +36,13 @@ qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_name, config=config)
 pt_tokens = runner.run_kv_model_on_pytorch(qeff_model.model)
 print(pt_tokens)
 
-onnx_path = qeff_model.export(use_dynamo=True, use_onnx_subfunctions=True)
+onnx_path = qeff_model.export(use_dynamo=False, use_onnx_subfunctions=True)
 ort_inputs = runner.input_handler.prepare_ort_inputs()
 ort_tokens = runner.run_kv_model_on_ort(onnx_path)
 print(ort_tokens)
 
 qeff_model.compile(
-    prefill_seq_len=32, ctx_len=128, use_dynamo=True, use_onnx_subfunctions=True, num_devices=4, mxfp6_matmul=True
+    prefill_seq_len=32, ctx_len=128, use_dynamo=False, use_onnx_subfunctions=True, num_devices=4, mxfp6_matmul=True
 )
 print("compile done")
 print("QEff Transformed Onnx Model Outputs(AIC Backend)")
