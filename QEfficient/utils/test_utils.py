@@ -129,12 +129,15 @@ def load_hf_vlm_model(
                 config._name_or_path,
                 low_cpu_mem_usage=False,
                 config=config,
+                ignore_mismatched_sizes=True,
+                trust_remote_code=True,
             )
         except ValueError:
             model_hf = AutoModelForCausalLM.from_pretrained(
                 config._name_or_path,
                 low_cpu_mem_usage=False,
                 trust_remote_code=True,
+                ignore_mismatched_sizes=True,
                 config=config,
             )
     else:
@@ -182,6 +185,8 @@ def load_qeff_vlm_model(
                 continuous_batching=continuous_batching,
                 qaic_config=qaic_config,
                 torch_dtype=torch_dtype,
+                ignore_mismatched_sizes=True,
+                trust_remote_code=True,
             )
         except ValueError:
             qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
@@ -192,6 +197,7 @@ def load_qeff_vlm_model(
                 continuous_batching=continuous_batching,
                 qaic_config=qaic_config,
                 trust_remote_code=True,
+                ignore_mismatched_sizes=True,
                 torch_dtype=torch_dtype,
             )
     else:
@@ -203,6 +209,7 @@ def load_qeff_vlm_model(
             model_hf,
             kv_offload=kv_offload,
             continuous_batching=continuous_batching,
+            trust_remote_code=True,
             qaic_config=qaic_config,
             torch_dtype=torch_dtype,
         )
@@ -213,9 +220,7 @@ def load_qeff_vlm_model(
 def load_vlm_model(config):
     try:
         model_hf = AutoModelForImageTextToText.from_pretrained(
-            config._name_or_path,
-            low_cpu_mem_usage=False,
-            config=config,
+            config._name_or_path, low_cpu_mem_usage=False, config=config
         )
     except ValueError:
         model_hf = AutoModelForCausalLM.from_pretrained(
@@ -237,9 +242,7 @@ def load_vlm_model_from_config(config):
         )
     except ValueError:
         model_hf = AutoModelForCausalLM.from_config(
-            config,
-            attn_implementation="eager",
-            trust_remote_code=True,
+            config, attn_implementation="eager", trust_remote_code=True, ignore_mismatched_sizes=True
         )
     torch_dtype = getattr(model_hf.config, "torch_dtype", None)
     if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
@@ -488,6 +491,8 @@ class ModelConfig:
         "Qwen/Qwen3-VL-Reranker-8B",
         "Qwen/Qwen3.5-0.8B",
         "Qwen/Qwen3.5-35B-A3B",
+        "tiny-random/gemma-4-dense",
+        "tiny-random/gemma-4-moe",
     }
 
     EXTERNAL_MODELS = {
