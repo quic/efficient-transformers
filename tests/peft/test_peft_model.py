@@ -32,7 +32,7 @@ original_configs = [
 
 tiny_configs = [
     pytest.param(
-        AutoConfig.from_pretrained("trl-internal-testing/tiny-LlamaForCausalLM-3"),
+        AutoConfig.from_pretrained("hf-internal-testing/tiny-random-LlamaForCausalLM", pad_token_id=0),
         LoraConfig(target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM", lora_alpha=8),
         id="tiny-llama-model",
     ),

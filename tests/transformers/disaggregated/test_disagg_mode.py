@@ -18,8 +18,8 @@ from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.quantizers import replace_transformers_quantizers, undo_transformers_quantizers
 
-test_models_blocking_dict = {"openai/gpt-oss-20b": "tiny-random/gpt-oss-bf16"}
-test_models_chunking_dict = {"Qwen/Qwen3-30B-A3B-Instruct-2507": "hf-internal-testing/tiny-random-Qwen3MoeForCausalLM"}
+test_models_blocking_dict = {"openai/gpt-oss-20b": "optimum-intel-internal-testing/tiny-GptOssForCausalLM"}
+test_models_chunking_dict = {"Qwen/Qwen3-30B-A3B-Instruct-2507": "optimum-intel-internal-testing/tiny-random-qwen3moe"}
 
 
 if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
