@@ -166,7 +166,6 @@ def _load_kimi_k25_layer_subset_model():
         NUM_EXPERTS_PER_TOKEN,
         NUM_TEXT_LAYERS,
         NUM_VISION_LAYERS,
-        _disable_compressed_tensor_forward_pre_hooks as _example_disable_compressed_tensor_forward_pre_hooks,
         _load_layer_subset_model,
         _materialize_missing_linear_weights,
         _patch_deepseek_init_weights_compat,
@@ -174,6 +173,9 @@ def _load_kimi_k25_layer_subset_model():
         _prepare_config,
         _resolve_model_path,
         _set_deterministic,
+    )
+    from test_kimi_k25 import (
+        _disable_compressed_tensor_forward_pre_hooks as _example_disable_compressed_tensor_forward_pre_hooks,
     )
 
     _set_deterministic(1234)

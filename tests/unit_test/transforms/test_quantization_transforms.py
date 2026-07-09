@@ -93,6 +93,7 @@ class TestQuantizationTransformImportability:
             FP8DeQuantLinearToLinearTransform,
             GPTQToMatmulNbitsTransform,
             Mxfp4GptOssExpertDequantizeTransform,
+            PackQuantizedInt4ToMatMulNBitsTransform,
         )
 
         for cls in [
@@ -100,6 +101,7 @@ class TestQuantizationTransformImportability:
             GPTQToMatmulNbitsTransform,
             FP8DeQuantLinearToLinearTransform,
             Mxfp4GptOssExpertDequantizeTransform,
+            PackQuantizedInt4ToMatMulNBitsTransform,
         ]:
             assert hasattr(cls, "mutate"), f"{cls.__name__} missing mutate method"
             assert callable(cls.mutate), f"{cls.__name__}.mutate is not callable"
@@ -111,6 +113,7 @@ class TestQuantizationTransformImportability:
             FP8DeQuantLinearToLinearTransform,
             GPTQToMatmulNbitsTransform,
             Mxfp4GptOssExpertDequantizeTransform,
+            PackQuantizedInt4ToMatMulNBitsTransform,
         )
 
         for cls in [
@@ -118,6 +121,7 @@ class TestQuantizationTransformImportability:
             GPTQToMatmulNbitsTransform,
             FP8DeQuantLinearToLinearTransform,
             Mxfp4GptOssExpertDequantizeTransform,
+            PackQuantizedInt4ToMatMulNBitsTransform,
         ]:
             assert issubclass(cls, ModuleMutatorTransform), (
                 f"{cls.__name__} must be a subclass of ModuleMutatorTransform"
@@ -328,6 +332,55 @@ class TestQEFFAutoModelQuantizationIntegration:
             f"AwqToMatmulNbitsTransform (idx={awq_idx}) must come before KVCacheTransform (idx={kv_idx})"
         )
 
+    def test_image_text_wrappers_include_pack_quantized_int4_transform(self):
+        from QEfficient.transformers.models.modeling_auto import (
+            QEffCausalLMForTextImageToTextModel,
+            QEffVisionEncoderForTextImageToTextModel,
+        )
+        from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform
+        from QEfficient.transformers.quantizers.quant_transforms import PackQuantizedInt4ToMatMulNBitsTransform
+
+        for wrapper_cls in [QEffVisionEncoderForTextImageToTextModel, QEffCausalLMForTextImageToTextModel]:
+            transforms = wrapper_cls._pytorch_transforms
+            pack_idx = transforms.index(PackQuantizedInt4ToMatMulNBitsTransform)
+            custom_ops_idx = transforms.index(CustomOpsTransform)
+            assert pack_idx < custom_ops_idx
+
+    def test_pack_quantized_int4_transform_matches_compressed_linear_metadata(self, monkeypatch):
+        from types import SimpleNamespace
+        import importlib
+
+        import torch
+
+        from QEfficient.customop.matmulnbits import QuantLinearORT
+        from QEfficient.transformers.quantizers.quant_transforms import PackQuantizedInt4ToMatMulNBitsTransform
+
+        linear = torch.nn.Linear(8, 8, bias=False)
+        del linear._parameters["weight"]
+        linear.register_parameter(
+            "weight_packed", torch.nn.Parameter(torch.zeros((8, 4), dtype=torch.int32), requires_grad=False)
+        )
+        linear.register_parameter(
+            "weight_scale", torch.nn.Parameter(torch.ones((8, 2), dtype=torch.float32), requires_grad=False)
+        )
+        linear.quantization_scheme = SimpleNamespace(
+            weights=SimpleNamespace(num_bits=4, type="int", strategy="group", group_size=4)
+        )
+
+        def fake_decompress_module(module):
+            module.weight = torch.nn.Parameter(torch.zeros(module.out_features, module.in_features), requires_grad=False)
+
+        compressor_base = importlib.import_module("compressed_tensors.compressors.base")
+        monkeypatch.setattr(compressor_base, "decompress_module", fake_decompress_module)
+
+        model = torch.nn.Sequential(linear)
+        transformed_model, transformed = PackQuantizedInt4ToMatMulNBitsTransform.apply(model)
+
+        assert transformed
+        assert isinstance(transformed_model[0], QuantLinearORT)
+        assert transformed_model[0].bits == 4
+        assert transformed_model[0].group_size == 4
+
     def test_non_quantized_model_not_affected_by_quant_transforms(self):
         """Applying quantization transforms to a non-quantized model must not change it."""
         import torch
@@ -336,6 +389,7 @@ class TestQEFFAutoModelQuantizationIntegration:
         from QEfficient.transformers.quantizers.quant_transforms import (
             AwqToMatmulNbitsTransform,
             GPTQToMatmulNbitsTransform,
+            PackQuantizedInt4ToMatMulNBitsTransform,
         )
 
         cfg = GPT2Config(n_layer=1, n_head=2, n_embd=64, vocab_size=500, n_positions=32, n_ctx=32)
@@ -349,9 +403,14 @@ class TestQEFFAutoModelQuantizationIntegration:
         model_gptq, applied_gptq = GPTQToMatmulNbitsTransform.apply(model)
         assert not applied_gptq, "GPTQToMatmulNbitsTransform must not apply to non-quantized model"
 
+        model_pack, applied_pack = PackQuantizedInt4ToMatMulNBitsTransform.apply(model)
+        assert not applied_pack, "PackQuantizedInt4ToMatMulNBitsTransform must not apply to non-quantized model"
+
         # Model output must be unchanged
         input_ids = torch.randint(0, 500, (1, 8))
         with torch.no_grad():
             original_logits = model(input_ids=input_ids).logits
             awq_logits = model_awq(input_ids=input_ids).logits
+            pack_logits = model_pack(input_ids=input_ids).logits
         assert torch.allclose(original_logits, awq_logits), "AWQ transform must not change non-quantized model output"
+        assert torch.allclose(original_logits, pack_logits), "Packed-int4 transform must not change non-quantized model output"
