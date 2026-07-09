@@ -10,7 +10,6 @@ from types import MethodType
 from typing import Callable, Optional, Tuple, Union
 
 from torch import nn
-from transformers.models.clip.modeling_clip import CLIPEncoderLayer
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
     CodeGenBlock,
@@ -105,7 +104,6 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeRotaryEmbedding,
     GraniteMoeTopKGating,
 )
-from transformers.models.internvl.modeling_internvl import InternVLVisionLayer
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
     LlamaDecoderLayer,
@@ -125,7 +123,6 @@ from transformers.models.llama4.modeling_llama4 import (
     Llama4TextMoe,
     Llama4TextRMSNorm,
     Llama4VisionAttention,
-    Llama4VisionEncoderLayer,
     Llama4VisionModel,
 )
 from transformers.models.llava.modeling_llava import (
@@ -165,7 +162,6 @@ from transformers.models.mllama.modeling_mllama import (
     MllamaTextModel,
     MllamaTextRMSNorm,
     MllamaTextSelfAttention,
-    MllamaVisionEncoderLayer,
     MllamaVisionModel,
 )
 from transformers.models.mpt.modeling_mpt import MptAttention, MptBlock, MptForCausalLM, MptModel
@@ -184,7 +180,7 @@ from transformers.models.phi3.modeling_phi3 import (
     Phi3Model,
     Phi3RMSNorm,
 )
-from transformers.models.pixtral.modeling_pixtral import PixtralAttentionLayer, PixtralRMSNorm, PixtralVisionModel
+from transformers.models.pixtral.modeling_pixtral import PixtralRMSNorm, PixtralVisionModel
 from transformers.models.qwen2.modeling_qwen2 import (
     Qwen2Attention,
     Qwen2DecoderLayer,
@@ -263,7 +259,6 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import (
     Qwen3VLTextRMSNorm,
     Qwen3VLTextRotaryEmbedding,
     Qwen3VLVisionAttention,
-    Qwen3VLVisionBlock,
     Qwen3VLVisionModel,
 )
 from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
@@ -278,11 +273,9 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeTextSparseMoeBlock,
     Qwen3VLMoeTextTopKRouter,
     Qwen3VLMoeVisionAttention,
-    Qwen3VLMoeVisionBlock,
     Qwen3VLMoeVisionModel,
 )
 from transformers.models.roberta.modeling_roberta import RobertaModel
-from transformers.models.siglip.modeling_siglip import SiglipEncoderLayer
 from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2Attention,
     Starcoder2DecoderLayer,
@@ -303,7 +296,6 @@ from transformers.models.whisper.modeling_whisper import (
     WhisperDecoder,
     WhisperDecoderLayer,
     WhisperEncoder,
-    WhisperEncoderLayer,
     WhisperForConditionalGeneration,
     WhisperModel,
     WhisperPositionalEmbedding,
@@ -366,7 +358,6 @@ from QEfficient.transformers.models.gemma3.modeling_gemma3 import (
     QEffGemma3ForCausalLMModel,
     QEffGemma3ForConditionalGeneration,
     QEffGemma3TextModel,
-    QEffSiglipEncoderLayer,
 )
 from QEfficient.transformers.models.gemma4.modeling_gemma4 import (
     QEffGemma4ClippableLinear,
@@ -450,7 +441,6 @@ from QEfficient.transformers.models.internvl.modeling_internvl import (
     QEffInternDecoderWrapper,
     QEffInternVisionEmbeddings,
     QEffInternVLModel,
-    QEffInternVLVisionLayer,
 )
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
@@ -470,11 +460,9 @@ from QEfficient.transformers.models.llama4.modeling_llama4 import (
     QEffLlama4TextModel,
     QEffLlama4TextMoe,
     QEffLlama4VisionAttention,
-    QEffLlama4VisionEncoderLayer,
     QEffLlama4VisionModel,
 )
 from QEfficient.transformers.models.llava.modeling_llava import (
-    QEffCLIPEncoderLayer,
     QEFFLlavaDecoderWrapper,
     QEffLlavaForConditionalGeneration,
 )
@@ -491,7 +479,6 @@ from QEfficient.transformers.models.mistral.modeling_mistral import (
 from QEfficient.transformers.models.mistral3.modeling_mistral3 import (
     QEffMistral3ForConditionalGeneration,
     QEffMistral3Model,
-    QEffPixtralAttentionLayer,
     QEffPixtralVisionModel,
 )
 from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
@@ -512,7 +499,6 @@ from QEfficient.transformers.models.mllama.modeling_mllama import (
     QEffMllamaTextCrossAttentionTwoQPC,
     QEffMllamaTextModel,
     QEffMllamaTextSelfAttention,
-    QEffMllamaVisionEncoderLayer,
     QEffMllamaVisionModel,
 )
 from QEfficient.transformers.models.molmo.modeling_molmo import (
@@ -560,7 +546,6 @@ from QEfficient.transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     QEffQwen2_5_VLTextModel,
     QEffQwen2_5_VLVisionAttention,
     QEffQwen2_5_VLVisionBlock,
-    # QEffQwen2_5_VLVisionBlockRegion,
     QEffQwen_2_5_vl_DecoderWrapper,
     QEffQwen_2_5_vl_ForConditionalGeneration,
 )
@@ -616,7 +601,6 @@ from QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl import (
     QEffQwen3VLTextModel,
     QEffQwen3VLTextRotaryEmbedding,
     QEffQwen3VLVisionAttention,
-    QEffQwen3VLVisionBlock,
     QEffQwen3VLVisionModel,
 )
 from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
@@ -631,7 +615,6 @@ from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     QEffQwen3VLMoeTextSparseMoeBlock,
     QEffQwen3VLMoeTextTopKRouter,
     QEffQwen3VLMoeVisionAttention,
-    QEffQwen3VLMoeVisionBlock,
     QEffQwen3VLMoeVisionModel,
 )
 from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
@@ -650,7 +633,6 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperDecoder,
     QEffWhisperDecoderLayer,
     QEffWhisperEncoder,
-    QEffWhisperEncoderLayerRegion,
     QEffWhisperForConditionalGeneration,
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
@@ -949,19 +931,6 @@ class KVCacheTransform(ModuleMappingTransform):
         WhisperDecoder: QEffWhisperDecoder,
         WhisperModel: QEffWhisperModel,
         WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
-        # Vision / encoder nested-compile-region regions (dynamo subfunction grouping).
-        # Each QEff subclass below only adds @torch.compiler.nested_compile_region
-        # on forward so torch.export emits a distinct ONNX function per repeated block.
-        CLIPEncoderLayer: QEffCLIPEncoderLayer,
-        InternVLVisionLayer: QEffInternVLVisionLayer,
-        Llama4VisionEncoderLayer: QEffLlama4VisionEncoderLayer,
-        MllamaVisionEncoderLayer: QEffMllamaVisionEncoderLayer,
-        PixtralAttentionLayer: QEffPixtralAttentionLayer,
-        # Qwen2_5_VLVisionBlock: QEffQwen2_5_VLVisionBlockRegion,
-        Qwen3VLVisionBlock: QEffQwen3VLVisionBlock,
-        Qwen3VLMoeVisionBlock: QEffQwen3VLMoeVisionBlock,
-        SiglipEncoderLayer: QEffSiglipEncoderLayer,
-        WhisperEncoderLayer: QEffWhisperEncoderLayerRegion,
     }
 
     @classmethod
