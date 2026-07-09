@@ -255,9 +255,6 @@ def blocked_qkv_attention_forward(
         mask_dtype = value.dtype
     masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
     current_position = position_ids.max(dim=-1).values
-    # needed for GPT-OSS
-    if sinks is not None:
-        sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
 
     for q_block_idx in range(num_q_blocks):
         q_start = q_block_positions[q_block_idx]
@@ -340,7 +337,8 @@ def blocked_qkv_attention_forward(
 
         # If present, apply Attention Sinks, needed for GPT-OSS
         if sinks is not None:
-            _, _, output_blocks = update_running_softmax(current_max, sinks, current_denominator, output_blocks, None)
+            sinks_g = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, q_len_block, -1)
+            _, _, output_blocks = update_running_softmax(current_max, sinks_g, current_denominator, output_blocks, None)
         q_output_blocks.append(output_blocks)
         q_attn_blocks.append(attn_weights_block)
 
@@ -395,10 +393,7 @@ def blocked_hqkv_attention_forward(
         mask_dtype = value.dtype
     masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
     current_position = position_ids.max(dim=-1).values
-    # needed for GPT-OSS
-    if sinks is not None:
-        sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
-
+    
     # Process each head block independently
     for head_block_idx in range(num_head_blocks):
         h_start = head_block_idx * head_block_size
@@ -489,8 +484,9 @@ def blocked_hqkv_attention_forward(
                 )
             # If present, apply Attention Sinks, needed for GPT-OSS
             if sinks is not None:
+                sinks_g = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, q_len_block, -1)
                 _, _, output_blocks = update_running_softmax(
-                    current_max, sinks, current_denominator, output_blocks, None
+                    current_max, sinks_g, current_denominator, output_blocks, None
                 )
             q_output_blocks.append(output_blocks)
             q_attn_blocks.append(attn_weights_block)
