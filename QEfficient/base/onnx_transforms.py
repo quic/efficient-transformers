@@ -272,9 +272,29 @@ class RenameFunctionOutputsTransform(BaseOnnxTransform):
 
 
 class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
-    """Expose nested decoder cache side effects as explicit ONNX values."""
+    """Expose nested decoder cache side effects as explicit ONNX values.
 
-    _KV_INPUT_RE = re.compile(r"^past_(key|value)\.(\d+)(?:_RetainedState)?$")
+    Must run BEFORE RenameRepeatedSubgraphTransform: this transform looks up
+    functions by the dynamo-assigned name (repeated_subgraphN) via fn_by_name.
+    Renaming them first would break that lookup.
+    """
+
+    # Match past_key.N / past_value.N regardless of any suffix that follows
+    # (plain, _RetainedState, or _<prefix>_RetainedState for kv_cache_prefix).
+    _KV_INPUT_RE = re.compile(r"^past_(key|value)\.(\d+)")
+
+    # All scatter op_type names that write back a KV cache tensor.
+    # Keep in sync with CustomOpTransform._custom_ops and the dynamo
+    # custom_translation_table in base/modeling_qeff.py.
+    _SCATTER_OP_TYPES = frozenset(
+        {
+            "CtxScatter",
+            "CtxScatterCB",
+            "CtxScatter3D",
+            "CtxScatter3DInt",
+            "CtxScatterCB3D",
+        }
+    )
 
     @classmethod
     def apply(cls, model: ModelProto) -> bool:
@@ -294,12 +314,32 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             if fn is None:
                 continue
 
-            scatter_outputs = [
-                fn_node.output[0] for fn_node in fn.node if fn_node.op_type == "CtxScatter" and fn_node.output
+            # Collect scatter nodes that write back the KV cache.
+            # Sort by first-input name so the key scatter reliably precedes the
+            # value scatter: dynamo names function-body args generically (arg7_1
+            # etc.), so we sort by the scatter output name instead — dynamo
+            # preserves "key"/"value" in output tensor names even when input
+            # argument names are opaque.
+            scatter_nodes = [
+                fn_node for fn_node in fn.node if fn_node.op_type in cls._SCATTER_OP_TYPES and fn_node.output
             ]
-            if len(scatter_outputs) != 2:
+            if len(scatter_nodes) != 2:
                 continue
 
+            def _scatter_sort_key(n):
+                output_name = n.output[0] if n.output else ""
+                if "key" in output_name:
+                    return 0
+                if "value" in output_name:
+                    return 1
+                # Fall back to topological order (stable, matches execution order).
+                return 2
+
+            scatter_nodes.sort(key=_scatter_sort_key)
+            # Only the first two scatter outputs map to key / value respectively.
+            scatter_outputs = [n.output[0] for n in scatter_nodes[:2]]
+
+            # Identify layer index from KV inputs on this call node.
             layer_idx = None
             kv_inputs = {}
             for inp_name in node.input:
@@ -316,28 +356,37 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             if layer_idx is None or set(kv_inputs) != {"key", "value"}:
                 continue
 
+            desired_outputs = [
+                f"past_key.{layer_idx}_RetainedState",
+                f"past_value.{layer_idx}_RetainedState",
+            ]
+            # Skip layers whose retained-state outputs are not dangling —
+            # either the graph is already correctly wired or a previous call
+            # to this transform already fixed them.
+            if not any(name in dangling_retained_outputs for name in desired_outputs):
+                continue
+
+            # Expose the scatter outputs in the function's output list.
             for scatter_output in scatter_outputs:
                 if scatter_output not in fn.output:
                     fn.output.append(scatter_output)
                     changed = True
 
+            # Rename KV inputs: strip _RetainedState suffix so the compiler
+            # receives plain names (past_key.N) as inputs and
+            # past_key.N_RetainedState only as outputs.
+            # _rename_graph_input walks all of graph.node, so the call node's
+            # input slots are already updated — no separate per-node loop needed.
             for kind in ("key", "value"):
                 retained_input = kv_inputs[kind]
                 plain_input = f"past_{kind}.{layer_idx}"
                 if retained_input.endswith("_RetainedState"):
                     changed |= cls._rename_graph_input(graph, retained_input, plain_input)
-                    for i, name in enumerate(node.input):
-                        if name == retained_input:
-                            node.input[i] = plain_input
 
-            desired_outputs = [
-                f"past_key.{layer_idx}_RetainedState",
-                f"past_value.{layer_idx}_RetainedState",
-            ]
-            if node.output[-len(desired_outputs) :] != desired_outputs:
-                missing_outputs = [name for name in desired_outputs if name not in node.output]
-                if missing_outputs:
-                    node.output.extend(missing_outputs)
+            # Append the retained-state output names to this call node.
+            missing_outputs = [name for name in desired_outputs if name not in node.output]
+            if missing_outputs:
+                node.output.extend(missing_outputs)
                 changed = True
 
         return changed
@@ -362,9 +411,31 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
 
 
 class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
-    """Rename dynamo repeated_subgraph function names to model-specific layer class names."""
+    """Rename dynamo repeated_subgraph function names to model-specific layer class names.
 
-    _REPEATED_SUBGRAPH_RE = re.compile(r"^repeated_subgraph(\d+)$")
+    Must run AFTER PreserveNestedCacheRetainedStateTransform: that transform
+    looks up functions by the dynamo-assigned name.  Renaming them first would
+    break that lookup.
+    """
+
+    # Primary pattern emitted by torch.export repeated-subgraph canonicalization.
+    # Extended to also match alternative patterns seen across PyTorch 2.x releases
+    # so a dynamo-internal rename does not silently produce a no-op transform.
+    _REPEATED_SUBGRAPH_PATTERNS = [
+        re.compile(r"^repeated_subgraph(\d+)$"),  # torch >= 2.5 canonical name
+        re.compile(r"^subgraph_(\d+)$"),  # alternative seen in some 2.x nightlies
+        re.compile(r"^invoke_subgraph_(\d+)$"),  # earlier 2.x name
+    ]
+
+    @classmethod
+    def _iter_all_nodes(cls, nodes):
+        """Yield every NodeProto reachable from `nodes`, including nodes nested
+        inside If/Loop subgraph attributes."""
+        for node in nodes:
+            yield node
+            for attr in node.attribute:
+                if attr.HasField("g"):
+                    yield from cls._iter_all_nodes(attr.g.node)
 
     @classmethod
     def apply(cls, model: ModelProto, target_classnames: Optional[List[str]] = None, **kwargs) -> bool:
@@ -374,11 +445,18 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
 
         repeated_functions = []
         for fn in model.functions:
-            match = cls._REPEATED_SUBGRAPH_RE.match(fn.name)
-            if match:
-                repeated_functions.append((int(match.group(1)), fn))
+            for pattern in cls._REPEATED_SUBGRAPH_PATTERNS:
+                match = pattern.match(fn.name)
+                if match:
+                    repeated_functions.append((int(match.group(1)), fn))
+                    break
 
         if not repeated_functions:
+            logger.warning(
+                "RenameRepeatedSubgraphTransform: no repeated_subgraph functions found in the ONNX model. "
+                "This may indicate that dynamo changed its internal subgraph naming convention. "
+                "The transform is a no-op; function names remain as emitted by torch.export."
+            )
             return False
 
         repeated_functions.sort(key=lambda item: item[0])
@@ -386,6 +464,14 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
         used_names = {fn.name for fn in model.functions}
 
         for idx, (_, fn) in enumerate(repeated_functions):
+            if idx >= len(target_classnames):
+                logger.warning(
+                    f"RenameRepeatedSubgraphTransform: more repeated subgraph functions ({len(repeated_functions)}) "
+                    f"than target class names ({len(target_classnames)}). "
+                    f"Function '{fn.name}' (index {idx}) will be assigned the last available name "
+                    f"'{target_classnames[-1]}' with a numeric suffix — verify get_submodules_for_export() "
+                    "returns all repeated block classes for this model."
+                )
             base_name = target_classnames[min(idx, len(target_classnames) - 1)]
             candidate = base_name
             suffix = 1
@@ -403,8 +489,8 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
             if fn.name in old_to_new:
                 fn.name = old_to_new[fn.name]
 
-        def _rename_op_types(nodes: List[onnx.NodeProto]):
-            for node in nodes:
+        def _rename_op_types(nodes):
+            for node in cls._iter_all_nodes(nodes):
                 if node.op_type in old_to_new:
                     node.op_type = old_to_new[node.op_type]
 
