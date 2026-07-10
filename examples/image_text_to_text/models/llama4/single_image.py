@@ -104,6 +104,7 @@ else:
         mxint8_kv_cache=True,
         aic_enable_depth_first=True,
         mos=1,
+        split_model_io=True,
     )
 
     ## STEP 4: Prepare Image and Text Input

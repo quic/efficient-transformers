@@ -130,6 +130,7 @@ else:
         mxint8_kv_cache=False,
         aic_enable_depth_first=True,
         mos=1,
+        split_model_io=True,
         # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
     )
 

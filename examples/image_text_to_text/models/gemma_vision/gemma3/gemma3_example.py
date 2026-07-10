@@ -14,7 +14,7 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 
 # Change model_id to "google/gemma-3-27b-it" for 27B model
-model_id = "google/gemma-3-27b-it"
+model_id = "google/gemma-3-4b-it"
 
 config = AutoConfig.from_pretrained(model_id)
 
