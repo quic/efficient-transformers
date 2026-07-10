@@ -79,7 +79,7 @@ def _estimate_layer_stack_gb(
     Returns 1.0 GB as a safe fallback if the shape cannot be read.
     """
     sample = next(
-        (v for (li, ei, k), v in expert_entries.items() if li == layer_idx and k in ("gate_proj", "linear")),
+        (v for (li, ei, k), v in expert_entries.items() if li == layer_idx and k in ("gate_proj", "linear", "w1")),
         None,
     )
     if sample is None:
@@ -125,6 +125,32 @@ _SENTINEL = ".checkpoint_prepared"
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _convert_bin_to_safetensors(src: Path) -> None:
+    """Load a .bin checkpoint via transformers and re-save as safetensors in place.
+
+    Uses save_pretrained(safe_serialization=True) which correctly handles tied
+    weights and multi-shard layouts, writing model.safetensors (single file) or
+    model-NNNNN-of-MMMMM.safetensors + model.safetensors.index.json (multi-shard).
+    Idempotent — the caller already verified no safetensors files exist before calling.
+    """
+    import gc
+
+    from transformers import AutoConfig, AutoModelForCausalLM
+
+    logger.info(f"No safetensors files found in {src}. Auto-converting .bin → safetensors (one-time).")
+    config = AutoConfig.from_pretrained(str(src), trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        str(src),
+        config=config,
+        low_cpu_mem_usage=True,
+        trust_remote_code=True,
+    )
+    model.save_pretrained(str(src), safe_serialization=True)
+    del model
+    gc.collect()
+    logger.info(f"Conversion complete — safetensors files written to {src}")
 
 
 def _read_weight_map(src: Path) -> Dict[str, str]:
@@ -282,19 +308,20 @@ class _LayerStacker:
         self._down: Optional[torch.Tensor] = None
 
     def add(self, expert_idx: int, kind: str, tensor: torch.Tensor) -> None:
-        # Accept both qwen3-moe names (gate_proj/up_proj/down_proj)
-        # and grok-1 names (linear/linear_v/linear_1) — map to the same accumulators.
-        if kind in ("gate_proj", "linear"):
+        # Accept qwen3-moe names (gate_proj/up_proj/down_proj),
+        # grok-1 names (linear/linear_v/linear_1),
+        # and Mixtral names (w1=gate, w3=up, w2=down) — map to the same accumulators.
+        if kind in ("gate_proj", "linear", "w1"):
             I, H = tensor.shape
             if self._gate is None:
                 self._gate = torch.empty(self.num_experts, I, H, dtype=tensor.dtype)
             self._gate[expert_idx] = tensor
-        elif kind in ("up_proj", "linear_v"):
+        elif kind in ("up_proj", "linear_v", "w3"):
             I, H = tensor.shape
             if self._up is None:
                 self._up = torch.empty(self.num_experts, I, H, dtype=tensor.dtype)
             self._up[expert_idx] = tensor
-        else:  # down_proj / linear_1 — shape is [H, I]
+        else:  # down_proj / linear_1 / w2 — shape is [H, I]
             H, I = tensor.shape
             if self._down is None:
                 self._down = torch.empty(self.num_experts, H, I, dtype=tensor.dtype)
@@ -350,7 +377,7 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
     """
 
     EXPERT_RE = re.compile(
-        r"^(.+\.layers\.(\d+)\..+?\.experts)\.(\d+)\.(gate_proj|up_proj|down_proj|linear|linear_v|linear_1)\.weight$"
+        r"^(.+\.layers\.(\d+)\..+?\.experts)\.(\d+)\.(gate_proj|up_proj|down_proj|linear|linear_v|linear_1|w1|w2|w3)\.weight$"
     )
 
     @classmethod
@@ -761,6 +788,13 @@ class CheckpointTransformPipeline:
         **kwargs,
     ) -> Path:
         src, out = Path(src), Path(out)
+
+        # Auto-convert .bin checkpoints to safetensors on first use.
+        # Idempotent: skipped on subsequent runs once safetensors files exist.
+        has_safetensors = bool(list(src.glob("*.safetensors"))) or (src / "model.safetensors.index.json").exists()
+        if not has_safetensors and list(src.glob("*.bin")):
+            _convert_bin_to_safetensors(src)
+
         weight_map = _read_weight_map(src)
         for transform in self.transforms:
             if transform.is_applicable(weight_map):

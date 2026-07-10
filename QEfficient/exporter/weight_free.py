@@ -71,12 +71,33 @@ def _resolve_checkpoint_dir(model_id_or_path: str) -> Path:
     if candidate.exists():
         return candidate
 
+    # Try safetensors first (preferred format for weight-free export)
     snapshot_dir = snapshot_download(
         repo_id=model_id_or_path,
         allow_patterns=["*.safetensors", "*.json"],
         ignore_patterns=["*.onnx", "*.ot", "*.md", "*.txt", "*.pdf", "*.msgpack", "*.h5", "*.pth"],
         resume_download=True,
     )
+    snapshot_path = Path(snapshot_dir)
+
+    # Check if any weight files were actually downloaded (not just .json config/tokenizer files)
+    has_weights = bool(list(snapshot_path.glob("*.safetensors"))) or \
+                  (snapshot_path / "model.safetensors.index.json").exists()
+
+    if not has_weights:
+        # Model has no safetensors on Hub — fall back to .bin files.
+        # CheckpointTransformPipeline.apply() will auto-convert them to safetensors on first use.
+        snapshot_dir = snapshot_download(
+            repo_id=model_id_or_path,
+            allow_patterns=["*.bin", "*.json"],
+            ignore_patterns=[
+                "*.onnx", "*.ot", "*.md", "*.txt", "*.pdf",
+                "*.msgpack", "*.h5", "*.pth",
+                "flax_model*", "tf_model*",
+            ],
+            resume_download=True,
+        )
+
     return Path(snapshot_dir)
 
 
@@ -276,6 +297,14 @@ def _find_checkpoint_key(
         without_prefix = stripped[len(f"{prefix}.") :]
         if without_prefix in checkpoint_index:
             return without_prefix
+
+    # 5. MLP attribute rename: transformers 5.x renamed 'block_sparse_moe' → 'mlp'
+    #    for Mixtral. The original checkpoint uses 'block_sparse_moe' but the model
+    #    (and ONNX) uses 'mlp'. Try the reverse substitution.
+    if ".mlp." in stripped:
+        candidate = stripped.replace(".mlp.", ".block_sparse_moe.")
+        if candidate in checkpoint_index:
+            return candidate
 
     return None
 
