@@ -125,8 +125,8 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
 
         gate = (x_chunk @ W_g) + b_g.unsqueeze(1)
         up = (x_chunk @ W_u) + b_u.unsqueeze(1)
-        gate = torch.clamp(gate, min=torch.finfo(torch.float16).min, max=limit)
-        up = torch.clamp(up, min=-limit, max=limit)
+        gate = gate.clamp(min=torch.finfo(torch.float16).min, max=limit)
+        up = up.clamp(min=-limit, max=limit)
         glu = gate * torch.sigmoid(gate * alpha)
         intermediate = (up + 1) * glu
         down_chunk = (intermediate @ W_d) + b_d.unsqueeze(1)
@@ -251,8 +251,8 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
             up = (hidden @ W_u) + b_u  # [T, I]
 
             # Apply GptOss activation with clamping
-            gate = torch.clamp(gate, min=torch.finfo(torch.float16).min, max=self.experts.limit)
-            up = torch.clamp(up, min=-self.experts.limit, max=self.experts.limit)
+            gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
+            up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
 
             # GLU activation
             glu = gate * torch.sigmoid(gate * self.experts.alpha)
@@ -319,8 +319,8 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
                 up = (tgb @ W_u) + b_u  # [T, I]
 
                 # Apply GptOss activation with clamping
-                gate = torch.clamp(gate, min=torch.finfo(torch.float16).min, max=self.experts.limit)
-                up = torch.clamp(up, min=-self.experts.limit, max=self.experts.limit)
+                gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
+                up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
 
                 # GLU activation
                 glu = gate * torch.sigmoid(gate * self.experts.alpha)
@@ -400,8 +400,8 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
                         cur_gate = (tgb @ W_g[:, i * 128 : (i + 1) * 128]) + b_g[i * 128 : (i + 1) * 128]
                         cur_up = (tgb @ W_u[:, i * 128 : (i + 1) * 128]) + b_u[i * 128 : (i + 1) * 128]
 
-                    cur_gate = torch.clamp(cur_gate, min=torch.finfo(torch.float16).min, max=self.experts.limit)
-                    cur_up = torch.clamp(cur_up, min=-self.experts.limit, max=self.experts.limit)
+                    cur_gate = cur_gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
+                    cur_up = cur_up.clamp(min=-self.experts.limit, max=self.experts.limit)
                     cur_glu = cur_gate * torch.sigmoid(cur_gate * self.experts.alpha)
                     cur_intermediate = (cur_up + 1) * cur_glu
                     intermediates.append(cur_intermediate)
@@ -460,8 +460,8 @@ class QEffGptOssMLP(GptOssMLP):
         gate, up = gate_up[..., ::2], gate_up[..., 1::2]
 
         # Apply activation with clamping
-        gate = torch.clamp(gate, min=None, max=self.experts.limit)
-        up = torch.clamp(up, min=-self.experts.limit, max=self.experts.limit)
+        gate = gate.clamp(min=None, max=self.experts.limit)
+        up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
         glu = gate * torch.sigmoid(gate * self.experts.alpha)
         gated_output = (up + 1) * glu
 
@@ -505,8 +505,8 @@ class QEffGptOssMLP(GptOssMLP):
         up = torch.bmm(expert_in, up_proj) + up_proj_bias.unsqueeze(1)
 
         # Apply activation with clamping
-        gate = torch.clamp(gate, min=torch.finfo(torch.float16).min, max=self.experts.limit)
-        up = torch.clamp(up, min=-self.experts.limit, max=self.experts.limit)
+        gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
+        up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
 
         # GLU activation
         glu = gate * torch.sigmoid(gate * self.experts.alpha)
@@ -570,8 +570,8 @@ class QEffGptOssMLP(GptOssMLP):
             up = (hidden_states @ W_u) + b_u  # [T, I]
 
             # Apply GptOss activation with clamping
-            gate = torch.clamp(gate, min=None, max=self.experts.limit)
-            up = torch.clamp(up, min=-self.experts.limit, max=self.experts.limit)
+            gate = gate.clamp(min=None, max=self.experts.limit)
+            up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
 
             # GLU activation
             glu = gate * torch.sigmoid(gate * self.experts.alpha)
@@ -692,11 +692,13 @@ def eager_attention_forward(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-    mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
 
     if attention_mask is not None:
-        # Apply the attention mask
-        attn_weights = torch.where(attention_mask, mask_value, attn_weights)
+        attn_weights = torch.where(
+            attention_mask,
+            torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
+            attn_weights,
+        )
 
     sinks = module.sinks.reshape(1, -1, 1, 1).expand(query.shape[0], -1, query.shape[-2], -1)
     combined_logits = torch.cat([attn_weights, sinks], dim=-1)
@@ -757,7 +759,12 @@ def opt_eager_attention_forward_blocked(
             attn_mask_block = attention_mask[:, :, qi : qi + real_q_len, :]
 
         scores = torch.matmul(q_block, k_block.transpose(2, 3)) * scaling
-        curr_attn_weights = torch.where(attn_mask_block, torch.full_like(scores, MIN_MASKED_ATTENTION_VALUE), scores)
+
+        curr_attn_weights = torch.where(
+            attn_mask_block,
+            torch.full_like(scores, MIN_MASKED_ATTENTION_VALUE, dtype=scores.dtype),
+            scores,
+        )
         sinks = module.sinks.reshape(1, -1, 1, 1).expand(
             curr_attn_weights.shape[0], -1, curr_attn_weights.shape[-2], -1
         )
@@ -1235,8 +1242,8 @@ class QEffGptOssModel(GptOssModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        sin = self.sin_cached[position_ids]
-        cos = self.cos_cached[position_ids]
+        sin = self.sin_cached[position_ids].unsqueeze(1)
+        cos = self.cos_cached[position_ids].unsqueeze(1)
 
         for decoder_layer in self.layers:
             if output_hidden_states:
