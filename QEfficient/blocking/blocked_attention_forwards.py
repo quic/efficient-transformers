@@ -393,7 +393,7 @@ def blocked_hqkv_attention_forward(
         mask_dtype = value.dtype
     masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
     current_position = position_ids.max(dim=-1).values
-    
+
     # Process each head block independently
     for head_block_idx in range(num_head_blocks):
         h_start = head_block_idx * head_block_size

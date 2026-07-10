@@ -77,7 +77,6 @@ def test_full_causal_all_blocking_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manu
         num_devices=4,
     )
 
-
     # head qkv blocking
     qaic_config = dict(
         enable_blocking=True,
