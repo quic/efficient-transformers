@@ -15,7 +15,7 @@ from .check_causal_models import (
 
 causal_lm_models_pl1_dict = {
     "gpt2": "hf-internal-testing/tiny-random-GPT2LMHeadModel",
-    "openai/gpt-oss-20b": "tiny-random/gpt-oss-bf16",
+    "openai/gpt-oss-20b": "optimum-intel-internal-testing/tiny-GptOssForCausalLM",
 }
 
 if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":

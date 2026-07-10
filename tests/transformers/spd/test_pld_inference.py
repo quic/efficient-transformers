@@ -32,9 +32,13 @@ tiny_spd_config = [
     pytest.param(
         "hf-internal-testing/tiny-random-LlamaForCausalLM",
         "hf-internal-testing/tiny-random-LlamaForCausalLM",
-        id="CB llama",
+        id="CB tiny-llama",
     ),
-    pytest.param("peft-internal-testing/tiny-dummy-qwen2", "peft-internal-testing/tiny-dummy-qwen2", id="CB qwen"),
+    pytest.param(
+        "optimum-intel-internal-testing/tiny-dummy-qwen2",
+        "optimum-intel-internal-testing/tiny-dummy-qwen2",
+        id="CB tiny-qwen",
+    ),
 ]
 
 if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":

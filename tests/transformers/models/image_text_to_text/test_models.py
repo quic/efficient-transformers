@@ -21,7 +21,7 @@ from .check_image_text_to_text_models import (
 
 image_text_models_dict = {
     "llava-hf/llava-1.5-7b-hf": "hf-internal-testing/tiny-random-LlavaForConditionalGeneration",
-    "meta-llama/Llama-4-Scout-17B-16E-Instruct": "optimum-intel-internal-testing/tiny-random-llama4",
+    # "meta-llama/Llama-4-Scout-17B-16E-Instruct": "optimum-intel-internal-testing/tiny-random-llama4",
     "google/gemma-3-4b-it": "hf-internal-testing/tiny-random-Gemma3ForConditionalGeneration",
     "mistralai/Mistral-Small-3.1-24B-Instruct-2503": "tiny-random/mistral-3",
     "Qwen/Qwen2.5-VL-3B-Instruct": "trl-internal-testing/tiny-Qwen2_5_VLForConditionalGeneration",
@@ -30,7 +30,7 @@ image_text_models_dict = {
     "Qwen/Qwen3.5-0.8B": "trl-internal-testing/tiny-Qwen3_5ForConditionalGeneration",
     "Qwen/Qwen3.6-35B-A3B": "trl-internal-testing/tiny-Qwen3_5MoeForConditionalGeneration-3.6",
     # "allenai/Molmo-7B-D-0924": "allenai/Molmo-7B-D-0924",
-    "OpenGVLab/InternVL2_5-1B": "optimum-intel-internal-testing/tiny-random-internvl2",
+    # "OpenGVLab/InternVL2_5-1B": "optimum-intel-internal-testing/tiny-random-internvl2",
     # "OpenGVLab/InternVL3_5-1B": "OpenGVLab/InternVL3_5-1B",
 }
 

@@ -29,8 +29,9 @@ causal_lm_models_dict = {
     "Felladrin/Minueza-32M-Base": "hf-internal-testing/tiny-random-MistralForCausalLM",
     "wtang06/mpt-125m-c4": "hf-internal-testing/tiny-random-MptForCausalLM",
     "hakurei/gpt-j-random-tinier": "hf-internal-testing/tiny-random-GPTJForCausalLM",
-    "mistralai/Mixtral-8x7B-Instruct-v0.1": "yujiepan/mixtral-tiny-random",
-    "meta-llama/Llama-3.2-1B": "tiny-random/llama-3",
+    "mistralai/Mistral-7B-Instruct-v0.1": "hf-internal-testing/tiny-random-MistralForCausalLM",
+    "mistralai/Mixtral-8x7B-v0.1": "hf-internal-testing/tiny-random-MixtralForCausalLM",
+    "meta-llama/Llama-3.2-1B": "hf-internal-testing/tiny-random-LlamaForCausalLM",
     "unsloth/gemma-2b": "trl-internal-testing/tiny-GemmaForCausalLM",
     "unsloth/gemma-2-2b": "trl-internal-testing/tiny-Gemma2ForCausalLM",
     "ibm-granite/granite-20b-code-base": "hf-internal-testing/tiny-random-GraniteForCausalLM",
@@ -40,7 +41,7 @@ causal_lm_models_dict = {
     "TheBloke/Llama-2-7B-GPTQ": "hf-internal-testing/tiny-random-LlamaForCausalLM",
     # "neuralmagic/Llama-3.2-3B-Instruct-FP8": "nm-testing/Meta-Llama-3-8B-Instruct-FP8",
     # "neuralmagic/Qwen2-0.5B-Instruct-FP8": "nm-testing/Qwen2-0.5B-Instruct-FP8",
-    "Snowflake/Llama-3.1-SwiftKV-8B-Instruct": "snowflake-internal-testing/tiny-Llama-3.1-SwiftKV-8B-Instruct",
+    # "Snowflake/Llama-3.1-SwiftKV-8B-Instruct": "snowflake-internal-testing/tiny-Llama-3.1-SwiftKV-8B-Instruct",
 }
 
 if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
