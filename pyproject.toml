@@ -100,5 +100,6 @@ markers = [
     "qnn: marks QNN tests",
     "cli: marks CLI tests",
     "finetune: marks finetune tests",
-    "vllm: marks vLLM tests"
+    "vllm: marks vLLM tests",
+    "reproducer: marks pre-merge reported reproducer config tests"
 ]
