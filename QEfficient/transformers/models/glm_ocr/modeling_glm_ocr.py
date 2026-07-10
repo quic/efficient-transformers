@@ -57,7 +57,6 @@ from transformers.models.glm_ocr.modeling_glm_ocr import (
     apply_rotary_pos_emb,
     apply_rotary_pos_emb_vision,
     repeat_kv,
-    rotate_half,
 )
 
 from QEfficient.blocking.attention_blocking import (
@@ -75,30 +74,28 @@ from QEfficient.utils.logging_utils import logger
 
 
 # ---------------------------------------------------------------------------
-# M-RoPE helpers (identical to Qwen3-VL; duplicated to keep the module
-# self-contained and avoid a cross-model import dependency).
+# ---------------------------------------------------------------------------
+# M-RoPE helpers. GLM-OCR's text decoder uses GLM-style INTERLEAVED rotary
+# (contiguous-chunk M-RoPE section select on the half head_dim, then
+# repeat_interleave(2) + rotate-adjacent-pairs) — NOT the Qwen-style strided
+# M-RoPE + split-half rotation used by qwen3_vl. The two are numerically
+# different; copying qwen3_vl's helpers here silently produced wrong logits
+# (HF token 'A' vs QEff token ' twice' on real weights) while compiling and
+# running without error. See transformers.models.glm_ocr.modeling_glm_ocr's
+# apply_rotary_pos_emb / rotate_half_llm for the reference implementation.
 # ---------------------------------------------------------------------------
 
-def qeff_apply_interleaved_mrope(freqs: torch.Tensor, mrope_section: List[int]) -> torch.Tensor:
-    """Reorganise M-RoPE frequencies from chunked [TTT…HHH…WWW] to interleaved [THWTHW…TT].
+def qeff_apply_glm_mrope(freqs: torch.Tensor, mrope_section: List[int]) -> torch.Tensor:
+    """Select each M-RoPE section (T/H/W) from its own frequency chunk, contiguous layout.
 
     Args:
         freqs: (3, bs, seq_len, head_dim // 2)  — temporal/height/width stacked
         mrope_section: list of 3 ints [t_size, h_size, w_size] summing to head_dim//2
     Returns:
-        (bs, seq_len, head_dim // 2)  — interleaved view for a single attention head
+        (bs, seq_len, head_dim // 2)
     """
-    freqs_t = freqs[0].clone()
-    half_shape = freqs.shape[-1] // 2
-    for dim, offset in enumerate((1, 2), start=1):  # H, W
-        length = mrope_section[dim] * 3
-        idx = slice(offset, length, 3)
-        freqs_t[..., idx] = freqs[dim, ..., idx]
-        offset += half_shape
-        length += half_shape
-        idx = slice(offset, length, 3)
-        freqs_t[..., idx] = freqs[dim, ..., idx]
-    return freqs_t
+    chunks = freqs.split(mrope_section, dim=-1)
+    return torch.cat([chunk[i % 3] for i, chunk in enumerate(chunks)], dim=-1)
 
 
 def qeff_prepare_mrope_cos_sin(
@@ -107,29 +104,53 @@ def qeff_prepare_mrope_cos_sin(
     position_ids: torch.Tensor,
     mrope_section: List[int],
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Index precomputed cos/sin by M-RoPE position_ids and apply interleaved layout.
+    """Index precomputed cos/sin by M-RoPE position_ids and apply GLM's interleaved layout.
 
     Args:
         cos, sin: (max_seq_len, head_dim)  — from QEffGlmOcrTextModel.cos_cached / sin_cached
         position_ids: (3, batch, seq_len)  — temporal/height/width positions
-        mrope_section: [t, h, w] sizes
+        mrope_section: [t, h, w] sizes (each in half-head_dim units)
     Returns:
         cos, sin: (batch, 1, seq_len, head_dim)  — ready for q/k multiplication
     """
-    cos = cos[position_ids]  # (3, batch, seq_len, head_dim)
-    sin = sin[position_ids]
-    cos = qeff_apply_interleaved_mrope(cos, mrope_section).unsqueeze(1)  # (batch, 1, seq_len, head_dim)
-    sin = qeff_apply_interleaved_mrope(sin, mrope_section).unsqueeze(1)
+    half = cos.shape[-1] // 2
+    # Static gather for adjacent-pair duplication (equivalent to repeat_interleave(2, dim=-1)
+    # but on a static axis only — repeat_interleave over a dynamic-length axis exports as
+    # SplitToSequence/ConcatFromSequence which the compiler rejects, and repeat_interleave
+    # over the static-only last axis nonetheless mis-traces here into an incorrectly-shaped
+    # graph). idx = [0,0,1,1,2,2,...] length = head_dim.
+    dup_idx = torch.arange(half * 2, device=cos.device) // 2
+    cos = cos[..., :half][position_ids]           # (3, batch, seq_len, head_dim // 2)
+    sin = sin[..., :half][position_ids]
+    cos = qeff_apply_glm_mrope(cos, mrope_section)    # (batch, seq_len, head_dim // 2)
+    sin = qeff_apply_glm_mrope(sin, mrope_section)
+    cos = cos[..., dup_idx].unsqueeze(1)              # (batch, 1, seq_len, head_dim)
+    sin = sin[..., dup_idx].unsqueeze(1)
     return cos, sin
 
 
 def qeff_apply_rotary_pos_emb(
     q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Apply M-RoPE to query and key tensors."""
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed.to(q.dtype), k_embed.to(k.dtype)
+    """Apply GLM-style interleaved M-RoPE to query and key tensors.
+
+    GLM's rotate is pair-swap-with-negate: (x0,x1,x2,x3,...) -> (-x1,x0,-x3,x2,...).
+    Rather than express that with stack+flatten (which torch.jit.trace here mis-handles
+    when downstream broadcasting depends on the collapsed shape), we implement the same
+    pair-swap as a static gather + a static sign vector. Both index buffers are size
+    (head_dim,) and shape-static — no dynamic seq_len math is involved.
+    """
+    device, dtype = q.device, q.dtype
+    head_dim = q.shape[-1]
+    # swap adjacent pairs: [1,0,3,2,5,4,...]
+    swap_idx = torch.arange(head_dim, device=device).view(head_dim // 2, 2).flip(-1).flatten()
+    # signs: [-1,+1,-1,+1,...] so pair (x_{2i}, x_{2i+1}) maps to (-x_{2i+1}, x_{2i})
+    signs = torch.tensor([-1.0, 1.0], device=device, dtype=dtype).repeat(head_dim // 2)
+    q_rot = q[..., swap_idx] * signs
+    k_rot = k[..., swap_idx] * signs
+    q_embed = (q * cos) + (q_rot * sin)
+    k_embed = (k * cos) + (k_rot * sin)
+    return q_embed.to(dtype), k_embed.to(dtype)
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +177,7 @@ class QEffGlmOcrVisionAttention(GlmOcrVisionAttention):
         # QKV projection + reshape to (seq_len, n_heads, head_dim)
         q, k, v = (
             self.qkv(hidden_states)
-            .reshape(seq_length, 3, self.num_heads, -1)
+            .reshape(seq_length, 3, self.num_heads, self.head_dim)
             .permute(1, 0, 2, 3)
             .unbind(0)
         )
@@ -204,7 +225,7 @@ class QEffGlmOcrVisionAttention(GlmOcrVisionAttention):
         attn_weights = attn_weights + attention_mask   # additive mask (V5)
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
         attn_output = torch.matmul(attn_weights, v)
-        attn_output = attn_output.transpose(0, 1).reshape(seq_length, -1)
+        attn_output = attn_output.transpose(0, 1).reshape(seq_length, self.dim)
         return self.proj(attn_output)
 
 
@@ -272,8 +293,9 @@ class QEffGlmOcrVisionModel(GlmOcrVisionModel):
         hidden_states = self.post_layernorm(hidden_states)  # (h*w*t, hidden_size)
 
         # Reshape for Conv2d downsampler: (N_merged, ms, ms, C) → (N_merged, C, ms, ms)
-        hidden_states = hidden_states.view(-1, ms, ms, hidden_states.shape[-1]).permute(0, 3, 1, 2)
-        hidden_states = self.downsample(hidden_states).view(-1, self.config.out_hidden_size)
+        n_merged = seq_len // (ms * ms)
+        hidden_states = hidden_states.view(n_merged, ms, ms, hidden_states.shape[-1]).permute(0, 3, 1, 2)
+        hidden_states = self.downsample(hidden_states).view(n_merged, self.config.out_hidden_size)
 
         # Final merger projection
         image_embeds = self.merger(hidden_states)
@@ -364,12 +386,11 @@ class QEffGlmOcrTextAttention(GlmOcrTextAttention):
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
-        hidden_shape = (bsz, q_len, -1, self.head_dim)
 
         # Q, K, V projections  (no q_norm/k_norm on text attention)
-        query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        key_states = self.k_proj(hidden_states).view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
-        value_states = self.v_proj(hidden_states).view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
+        query_states = self.q_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+        key_states = self.k_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        value_states = self.v_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         # Apply precomputed M-RoPE (passed from QEffGlmOcrTextModel)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
@@ -395,7 +416,7 @@ class QEffGlmOcrTextAttention(GlmOcrTextAttention):
                 past_seen_tokens=past_seen_tokens,
             )
         else:
-            key_states, value_states, _ = past_key_value_update(
+            key_states, value_states, attention_mask, _ = past_key_value_update(
                 module=self,
                 key=key_states,
                 value=value_states,
@@ -413,7 +434,7 @@ class QEffGlmOcrTextAttention(GlmOcrTextAttention):
                 attention_mask,
             )
 
-        attn_output = attn_output.reshape(bsz, q_len, -1)
+        attn_output = attn_output.reshape(bsz, q_len, self.num_heads * self.head_dim)
         attn_output = self.o_proj(attn_output)
 
         if not output_attentions:
@@ -459,11 +480,15 @@ class QEffGlmOcrTextDecoderLayer(GlmOcrTextDecoderLayer):
             sin_cached=sin_cached,
             cos_cached=cos_cached,
         )
+        # GLM sandwich-norm: post_self_attn_layernorm before the residual add (missing here
+        # dropped ~40 units of hidden-state magnitude vs HF and broke real-weight generation)
+        hidden_states = self.post_self_attn_layernorm(hidden_states)
         hidden_states = residual + hidden_states
 
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
+        hidden_states = self.post_mlp_layernorm(hidden_states)
         hidden_states = residual + hidden_states
 
         outputs = (hidden_states,)
@@ -666,7 +691,9 @@ class QEffGlmOcrDecoderWrapper(nn.Module):
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(B, device=input_ids.device).view(-1, 1)
         # V7: clamp to avoid negative ONNX gather indices
-        image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1.clamp(min=0)]
+        image_features_expanded = vision_embeds.reshape(vision_embeds.shape[0], C).unsqueeze(0)[
+            indices0, indices1.clamp(min=0)
+        ]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         # V10: decode no-op
         inputs_embeds = torch.where(
@@ -747,7 +774,9 @@ class QEffGlmOcrForConditionalGeneration(GlmOcrForConditionalGeneration):
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(B, device=input_ids.device).view(-1, 1)
         # V7: clamp negative indices
-        image_features_expanded = image_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1.clamp(min=0)]
+        image_features_expanded = image_embeds.reshape(image_embeds.shape[0], C).unsqueeze(0)[
+            indices0, indices1.clamp(min=0)
+        ]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         # V10: decode no-op — when seq_len==1 the vision encoder output is not needed
         inputs_embeds = torch.where(
