@@ -147,6 +147,7 @@ from transformers.models.mistral3.modeling_mistral3 import (
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
     MixtralDecoderLayer,
+    MixtralExperts,
     MixtralForCausalLM,
     MixtralModel,
     MixtralRMSNorm,
@@ -482,6 +483,7 @@ from QEfficient.transformers.models.mistral3.modeling_mistral3 import (
 from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
     QEffMixtralAttention,
     QeffMixtralDecoderLayer,
+    QEffMixtralExperts,
     QEffMixtralForCausalLM,
     QEffMixtralModel,
     QEffMixtralSparseMoeBlock,
@@ -836,6 +838,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Mistral3Model: QEffMistral3Model,
         # Mixtral
         MixtralAttention: QEffMixtralAttention,
+        MixtralExperts: QEffMixtralExperts,
         MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
         MixtralDecoderLayer: QeffMixtralDecoderLayer,
         MixtralModel: QEffMixtralModel,

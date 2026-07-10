@@ -13,7 +13,6 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from transformers.cache_utils import Cache
-from transformers.integrations.moe import _batched_linear
 from transformers.modeling_outputs import (
     MoeCausalLMOutputWithPast,
     MoeModelOutputWithPast,
@@ -22,10 +21,12 @@ from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
     MixtralConfig,
     MixtralDecoderLayer,
+    MixtralExperts,
     MixtralForCausalLM,
     MixtralModel,
     MixtralRotaryEmbedding,
     MixtralSparseMoeBlock,
+    MixtralTopKRouter,
     load_balancing_loss_func,
     repeat_kv,
     rotate_half,
@@ -40,6 +41,8 @@ from QEfficient.blocking.attention_blocking import (
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+
+
 
 
 class QEffMixtralRotaryEmbedding(MixtralRotaryEmbedding):
@@ -80,6 +83,8 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin):
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
     # Apply rotation
+    cos = cos.to(device=q.device, dtype=q.dtype)
+    sin = sin.to(device=q.device, dtype=q.dtype)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     # Cast back to original dtype
@@ -96,73 +101,18 @@ def eager_attention_forward(
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
-
+    key_states = key_states.to(dtype=query.dtype)                                                                              
+    value_states = value_states.to(dtype=query.dtype)
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask,
-            torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
-            attn_weights,
+            attention_mask, torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE), attn_weights
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
     return attn_output, attn_weights
-
-
-def _qeff_batched_mm_experts_forward(
-    self: torch.nn.Module,
-    hidden_states: torch.Tensor,
-    top_k_index: torch.Tensor,
-    top_k_weights: torch.Tensor,
-) -> torch.Tensor:
-    """Like batched_mm_experts_forward but replaces masked_fill_ with torch.where
-    so ONNX Where node gets consistent f32 types on both value inputs."""
-    device = hidden_states.device
-    num_top_k = top_k_index.size(-1)
-    num_tokens = hidden_states.size(0)
-    hidden_dim = hidden_states.size(-1)
-
-    token_idx = torch.arange(num_tokens, device=device).unsqueeze(1).expand(-1, num_top_k).reshape(-1)
-    sample_weights = top_k_weights.reshape(-1)
-    expert_ids = top_k_index.reshape(-1)
-
-    invalid_mask = expert_ids >= self.num_experts
-    expert_ids = expert_ids.clamp(0, self.num_experts - 1)
-
-    selected_hidden_states = hidden_states[token_idx]
-
-    if self.has_gate:
-        selected_weights = self.gate_up_proj[expert_ids]
-        selected_biases = self.gate_up_proj_bias[expert_ids] if self.has_bias else None
-    else:
-        selected_weights = self.up_proj[expert_ids]
-        selected_biases = self.up_proj_bias[expert_ids] if self.has_bias else None
-
-    proj_out = _batched_linear(
-        selected_hidden_states, selected_weights, bias=selected_biases, is_transposed=self.is_transposed
-    )
-
-    if self.has_gate:
-        proj_out = self._apply_gate(proj_out)
-    else:
-        proj_out = self.act_fn(proj_out)
-
-    selected_weights = self.down_proj[expert_ids]
-    selected_biases = self.down_proj_bias[expert_ids] if self.has_bias else None
-
-    proj_out = _batched_linear(proj_out, selected_weights, bias=selected_biases, is_transposed=self.is_transposed)
-
-    weighted_out = proj_out * sample_weights.unsqueeze(-1)
-    # Use torch.where instead of masked_fill_ so the ONNX Where node sees
-    # consistent f32 types on both value branches (zeros_like inherits dtype).
-    weighted_out = torch.where(
-        invalid_mask.unsqueeze(-1), torch.zeros_like(weighted_out, dtype=weighted_out.dtype), weighted_out
-    )
-
-    final_hidden_states = weighted_out.view(num_tokens, num_top_k, hidden_dim).sum(dim=1)
-    return final_hidden_states.to(hidden_states.dtype)
 
 
 class QEffMixtralAttention(MixtralAttention):
@@ -247,81 +197,72 @@ MIXTRAL_ATTENTION_CLASSES = {
 }
 
 
+class QEffMixtralExperts(MixtralExperts):
+    def __qeff_init__(self):
+        intermediate_dim = self.intermediate_dim
+
+        if self.gate_up_proj.device.type == "meta":
+            # Weight-free export: register correctly-shaped placeholder parameters.
+            # Values come from the preprocessed checkpoint at QAIC compile time.
+            E = self.gate_up_proj.shape[0]
+            H = self.gate_up_proj.shape[2]
+            self.gate_proj   = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta"))
+            self.up_proj     = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta"))
+            self.down_proj_t = nn.Parameter(torch.empty(E, intermediate_dim, H, device="meta"))
+            return
+
+        # Normal export: compute derived params — values embedded in ONNX.
+        self.gate_proj = nn.Parameter(
+            self.gate_up_proj[:, :intermediate_dim, :].detach().clone().transpose(1, 2)
+        )  # (num_experts, hidden_dim, intermediate_dim)
+        self.up_proj = nn.Parameter(
+            self.gate_up_proj[:, intermediate_dim:, :].detach().clone().transpose(1, 2)
+        )  # (num_experts, hidden_dim, intermediate_dim)
+        self.down_proj_t = nn.Parameter(
+            self.down_proj.detach().clone().transpose(1, 2)
+        )  # (num_experts, intermediate_dim, hidden_dim)
+
+
+class QEffMixtralTopKRouter(MixtralTopKRouter):
+    """
+    Replaces router_top_value.sum(dim=-1, keepdim=True) with torch.einsum,
+    consistent with QEffQwen3MoeTopKRouter, to avoid ReduceSum with computed
+    (non-constant) axes in ONNX opset 17 / PyTorch 2.7 export.
+    """
+
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
+        router_logits = F.linear(hidden_states, self.weight)
+        router_logits = torch.nn.functional.softmax(router_logits.float(), dim=-1)
+        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)
+        router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
+        return router_logits, router_top_value, router_indices
+
+
 class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
-    """
-    This implementation is
-    strictly equivalent to standard MoE with full capacity (no
-    dropped tokens). It's faster since it formulates MoE operations
-    in terms of block-sparse operations to accomodate imbalanced
-    assignments of tokens to experts, whereas standard MoE either
-    (1) drop tokens at the cost of reduced performance or (2) set
-    capacity factor to number of experts and thus waste computation
-    and memory on padding.
-    """
+    def __qeff_init__(self):
+        self.top_k = getattr(self.gate, "top_k", self.top_k)
+        self.num_experts = self.experts.num_experts
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """Mixtral MoE forward compatible with both pre-v5 and v5 gate/experts APIs."""
-        batch_size, sequence_length, hidden_dim = hidden_states.shape
-        if self.training and getattr(self, "jitter_noise", 0) > 0:
-            hidden_states = hidden_states * torch.empty_like(hidden_states).uniform_(
-                1.0 - self.jitter_noise, 1.0 + self.jitter_noise
-            )
-        hidden_states = hidden_states.view(-1, hidden_dim)
-        gate_dtype = getattr(getattr(self.gate, "weight", None), "dtype", hidden_states.dtype)
-        gate_out = self.gate(hidden_states.to(gate_dtype))
-
-        if isinstance(gate_out, tuple) and len(gate_out) >= 3:
-            router_logits, routing_weights, selected_experts = gate_out[0], gate_out[1], gate_out[2]
-        else:
-            router_logits = gate_out[0] if isinstance(gate_out, tuple) else gate_out
-            routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
-            routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
-            routing_weights /= torch.einsum("bi->b", routing_weights)[:, None]
-            routing_weights = routing_weights.to(hidden_states.dtype)
-
-        # transformers>=5.3 uses MixtralExperts aggregate with call signature
-        # experts(hidden_states, top_k_index, top_k_weights)
-        if callable(self.experts) and not hasattr(self.experts, "__getitem__"):
-            experts_dtype = None
-            for param in self.experts.parameters():
-                experts_dtype = param.dtype
-                break
-            hidden_states_for_experts = hidden_states.to(experts_dtype) if experts_dtype else hidden_states
-            if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
-                # Avoid grouped-mm ONNX incompatibility (`aten::histc`) while keeping
-                # upstream experts math/parameter layout.
-                final_hidden_states = _qeff_batched_mm_experts_forward(
-                    self.experts, hidden_states_for_experts, selected_experts, routing_weights
-                )
-            else:
-                final_hidden_states = self.experts(hidden_states_for_experts, selected_experts, routing_weights)
-            final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
-            return final_hidden_states, router_logits
-
-        # Backward compatible path for older expert containers.
-        final_hidden_states = torch.zeros_like(hidden_states)
-        B, K = selected_experts.shape
-        E = int(getattr(self, "num_experts", getattr(self.experts, "num_experts", self.gate.weight.shape[0])))
-        flat = selected_experts.reshape(-1)
-        mask = torch.zeros((B * K, E), dtype=torch.int64)
-        mask[torch.arange(B * K), flat] = 1
-        expert_mask = mask.view(B, K, E).permute(2, 1, 0)
-
-        for expert_idx in range(E):
-            expert_layer = self.experts[expert_idx]
-            expert_mask_tr = expert_mask[expert_idx].transpose(0, 1)
-            scale = torch.einsum("be,be->b", routing_weights, expert_mask_tr.to(self.gate.weight.dtype))[:, None]
-            current_hidden_states = expert_layer(hidden_states) * scale
-            current_hidden_states = torch.where(
-                torch.einsum("be,be->b", routing_weights, expert_mask_tr.to(routing_weights.dtype)).to(torch.bool)[
-                    :, None
-                ],
-                current_hidden_states,
-                torch.zeros_like(current_hidden_states),
-            )
-            final_hidden_states = final_hidden_states + current_hidden_states
-        final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
-        return final_hidden_states, router_logits
+        B, S, H = hidden_states.shape
+        T = B * S
+        hidden_states = hidden_states.view(T, H)
+        router_logits, top_w, top_i = self.gate(hidden_states)
+        top_w = top_w.to(hidden_states.dtype)
+        idx = top_i.reshape(-1)
+        gate_proj = self.experts.gate_proj[idx]    # (S, H, I) — weight is 2nd BMM operand → MXFP6
+        up_proj = self.experts.up_proj[idx]        # (S, H, I)
+        down_proj = self.experts.down_proj_t[idx]  # (S, I, H)
+        expert_in = hidden_states.unsqueeze(1).expand(-1, self.top_k, -1).contiguous().view(-1, 1, H)
+        gate = torch.bmm(expert_in, gate_proj)
+        up = torch.bmm(expert_in, up_proj)
+        intermediate = up * self.experts.act_fn(gate)
+        experts_out = torch.bmm(intermediate, down_proj)
+        experts_out = experts_out.view(T, self.top_k, H)
+        experts_out = experts_out * top_w.unsqueeze(-1)
+        experts_out = torch.einsum("bnd->bd", experts_out)
+        return experts_out.view(B, S, H), router_logits
 
 
 class QeffMixtralDecoderLayer(MixtralDecoderLayer):
@@ -522,6 +463,12 @@ class QEffMixtralForCausalLM(MixtralForCausalLM):
     - add new args position idx for the cache_kwargs for kv retention
     - update the hidden_states, and fix for onnx model
     """
+
+    # Use minimal seq_len for ONNX tracing: the expert BMM gathers
+    # (S = seq_len * batch * top_k) copies of expert weight matrices, so a large
+    # tracing seq_len causes a ~15 GB gather per layer. seq_len is a dynamic axis
+    # so the compiled QPC still uses the real prefill_seq_len from compile().
+    #ONNX_EXPORT_EXAMPLE_SEQ_LEN = 2
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """

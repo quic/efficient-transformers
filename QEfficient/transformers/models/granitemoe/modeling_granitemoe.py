@@ -83,8 +83,8 @@ def qeff_apply_rotary_pos_emb(
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
     # Apply rotation
-    cos = cos.to(device=q.device)
-    sin = sin.to(device=q.device)
+    cos = cos.to(device=q.device, dtype=q.dtype)
+    sin = sin.to(device=q.device, dtype=q.dtype)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     # Cast back to original dtype
@@ -512,7 +512,7 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
         logits = self.layer(hidden_states).float()
 
         top_k_logits, top_k_indices = torch.topk(logits, self.top_k, dim=1)  # [B, K]
-        top_k_gates = torch.softmax(top_k_logits, dim=1).to(hidden_states.dtype)  # [B, K]
+        top_k_gates = torch.softmax(top_k_logits.float(), dim=1)  # [B, K] — keep float32, no Cast
 
         B, K = top_k_indices.shape
         E = int(self.num_experts)
