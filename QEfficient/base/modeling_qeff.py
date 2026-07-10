@@ -870,6 +870,7 @@ class QEFFBaseModel(ABC):
                     output_names=output_names,
                     dynamic_axes=dynamic_axes,
                     opset_version=constants.ONNX_EXPORT_OPSET,
+                    dynamo=False,
                     **export_kwargs,
                 )
             total_end = time.time()
