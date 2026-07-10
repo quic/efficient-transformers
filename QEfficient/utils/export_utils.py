@@ -104,6 +104,9 @@ def _discover_submodule_classes_for_export(model):
         ".decoder_layers",
     )
 
+    if not hasattr(model, "named_modules"):
+        return discovered
+
     for module_name, module in model.named_modules():
         if not module_name:
             continue
