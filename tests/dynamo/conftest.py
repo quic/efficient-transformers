@@ -11,6 +11,9 @@ Root conftest for the dynamo test suite.
 Responsibilities:
 * Register dynamo pytest markers.
 * Enforce the minimum PyTorch version for dynamo export.
+* Auto-tune worker count: CPU-only runs use all cores; runs that include
+  hardware-bound runtime tests cap workers to the number of QAIC devices
+  so the driver init race at worker startup is avoided.
 * Expose shared fixtures for the collision-safe workdir and QAIC device pool.
 * Capture per-test outcomes + durations, aggregate them across xdist workers,
   and emit HTML + JSON reports at session end.
@@ -19,6 +22,7 @@ Responsibilities:
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 from typing import Dict, List
 
@@ -35,6 +39,33 @@ _XDIST_DYNAMO_RESULTS: List[Dict] = []
 _REPORT_PATHS: Dict[str, Path] = {}
 
 
+def _qaic_device_count() -> int:
+    """Return the number of Ready QAIC devices, 0 if none or tool missing."""
+    try:
+        result = subprocess.run(
+            ["/opt/qti-aic/tools/qaic-util", "-q"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.stdout.count("Status:Ready")
+    except Exception:
+        return 0
+
+
+def _collection_has_runtime_tests(config) -> bool:
+    """True when the active marker filter includes hardware-bound tests."""
+    marker_expr = getattr(config.option, "markexpr", "") or ""
+    # If the user explicitly filters to export/compile only, no hw tests.
+    cpu_only_markers = {"dynamo_export", "dynamo_compile"}
+    if marker_expr and all(m in marker_expr for m in cpu_only_markers) and "dynamo_runtime" not in marker_expr:
+        return False
+    # If restricted to export or compile only (no runtime), CPU-only.
+    if marker_expr in ("dynamo_export", "dynamo_compile"):
+        return False
+    return True
+
+
 # --- Markers -----------------------------------------------------------------
 def pytest_configure(config):
     config.addinivalue_line("markers", "dynamo: mark tests that validate the dynamo exporter path")
@@ -43,6 +74,24 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "dynamo_export: mark tests that only exercise the dynamo export path")
     config.addinivalue_line("markers", "multi_device: mark dynamo tests that require more than one QAIC device")
     config.addinivalue_line("markers", "precision(name): tag a test with the numeric precision it validates")
+
+    # Auto-tune xdist worker count only when the user has not set -n explicitly.
+    # xdist sets numprocesses to None when not specified; "auto" is its sentinel.
+    if not hasattr(config.option, "numprocesses"):
+        return
+    if config.option.numprocesses not in (None, "auto"):
+        # User explicitly set -n <value>; honour it.
+        return
+
+    if _collection_has_runtime_tests(config):
+        # Cap workers to device count so the QAIC driver init race at worker
+        # startup stays within what the driver handles safely. Falls back to 4
+        # when no devices are detected (e.g. a CI agent without hardware).
+        n_devices = _qaic_device_count() or 4
+        config.option.numprocesses = n_devices
+    else:
+        # Pure CPU run — fan out to every available core.
+        config.option.numprocesses = "auto"
 
 
 # --- Version / environment guard --------------------------------------------
