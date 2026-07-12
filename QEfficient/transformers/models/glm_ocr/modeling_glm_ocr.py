@@ -4,37 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-#
-# GLM-OCR (zai-org/GLM-OCR) QEfficient modeling file.
-#
-# Architecture:
-#   Text decoder : GlmOcrTextModel  (16L, h=1536, 16Q/8KV heads, head_dim=128, M-RoPE)
-#   Vision enc   : GlmOcrVisionModel (ViT depth=24, h=1024, patch=14, spatial_merge=2)
-#   Projector    : GlmOcrVisionPatchMerger  (1024*4 → 1536, out_hidden_size)
-#   Image inject : masked_scatter in HF → replaced with torch.where (V4)
-#
-# Requires transformers 5.0.1dev0+. Import guarded in pytorch_transforms.py (U6).
-#
-# Reference: QEfficient/transformers/models/qwen3_vl/modeling_qwen3_vl.py
-#
-# Invariants applied (see onboarding-issues.md#modeling-file-invariants):
-#   U1  MIN_MASKED_ATTENTION_VALUE = -1e9 in text eager_attention_forward
-#   U2  INT32 gather index for last-token logit slice
-#   U3  No boolean indexing in image injection (cumsum + torch.where)
-#   U4  KVCacheTransform (native HF, no trust_remote_code)
-#   U6  try/except ImportError in pytorch_transforms.py
-#   V1  Vision projector FP16 clamp [-60000, 60000] after GlmOcrVisionPatchMerger
-#   V2  Vision attention: einsum replaced by permute+matmul (block mask approach)
-#   V4  masked_scatter → torch.where cumsum-based merge
-#   V5  Vision attn_mask preserved via additive masking before softmax
-#   V6  Registered to AutoModelForImageTextToText
-#   V7  Negative-gather clamp: indices1.clamp(min=0)
-#   V8  QEffDynamicCache.from_legacy_cache at QEffGlmOcrTextModel entry
-#   V9  Single-QPC: vision dims included in lang specializations
-#   V10 Decode no-op: torch.where(seq_len==1, text_embeds, merged)
-#   V11 _create_causal_mask with position_ids[0] (text 1D ids)
-#   V12 Runner calls merge_visual_inputs before generate (runner script, not here)
-# -----------------------------------------------------------------------------
 
 import math
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
@@ -44,7 +13,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast
-
 from transformers.models.glm_ocr.modeling_glm_ocr import (
     GlmOcrForConditionalGeneration,
     GlmOcrModel,
@@ -54,7 +22,6 @@ from transformers.models.glm_ocr.modeling_glm_ocr import (
     GlmOcrTextRotaryEmbedding,
     GlmOcrVisionAttention,
     GlmOcrVisionModel,
-    apply_rotary_pos_emb,
     apply_rotary_pos_emb_vision,
     repeat_kv,
 )
@@ -70,23 +37,10 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
-from QEfficient.utils.logging_utils import logger
 
-
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# M-RoPE helpers. GLM-OCR's text decoder uses GLM-style INTERLEAVED rotary
-# (contiguous-chunk M-RoPE section select on the half head_dim, then
-# repeat_interleave(2) + rotate-adjacent-pairs) — NOT the Qwen-style strided
-# M-RoPE + split-half rotation used by qwen3_vl. The two are numerically
-# different; copying qwen3_vl's helpers here silently produced wrong logits
-# (HF token 'A' vs QEff token ' twice' on real weights) while compiling and
-# running without error. See transformers.models.glm_ocr.modeling_glm_ocr's
-# apply_rotary_pos_emb / rotate_half_llm for the reference implementation.
-# ---------------------------------------------------------------------------
 
 def qeff_apply_glm_mrope(freqs: torch.Tensor, mrope_section: List[int]) -> torch.Tensor:
-    """Select each M-RoPE section (T/H/W) from its own frequency chunk, contiguous layout.
+    """Select each M-RoPE section (T/H/W) from its own frequency chunk.
 
     Args:
         freqs: (3, bs, seq_len, head_dim // 2)  — temporal/height/width stacked
@@ -114,17 +68,14 @@ def qeff_prepare_mrope_cos_sin(
         cos, sin: (batch, 1, seq_len, head_dim)  — ready for q/k multiplication
     """
     half = cos.shape[-1] // 2
-    # Static gather for adjacent-pair duplication (equivalent to repeat_interleave(2, dim=-1)
-    # but on a static axis only — repeat_interleave over a dynamic-length axis exports as
-    # SplitToSequence/ConcatFromSequence which the compiler rejects, and repeat_interleave
-    # over the static-only last axis nonetheless mis-traces here into an incorrectly-shaped
-    # graph). idx = [0,0,1,1,2,2,...] length = head_dim.
+    # Static gather for adjacent-pair duplication; repeat_interleave over this axis
+    # mis-traces under this fork's ONNX export path.
     dup_idx = torch.arange(half * 2, device=cos.device) // 2
-    cos = cos[..., :half][position_ids]           # (3, batch, seq_len, head_dim // 2)
+    cos = cos[..., :half][position_ids]
     sin = sin[..., :half][position_ids]
-    cos = qeff_apply_glm_mrope(cos, mrope_section)    # (batch, seq_len, head_dim // 2)
+    cos = qeff_apply_glm_mrope(cos, mrope_section)
     sin = qeff_apply_glm_mrope(sin, mrope_section)
-    cos = cos[..., dup_idx].unsqueeze(1)              # (batch, 1, seq_len, head_dim)
+    cos = cos[..., dup_idx].unsqueeze(1)
     sin = sin[..., dup_idx].unsqueeze(1)
     return cos, sin
 
@@ -132,19 +83,14 @@ def qeff_prepare_mrope_cos_sin(
 def qeff_apply_rotary_pos_emb(
     q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Apply GLM-style interleaved M-RoPE to query and key tensors.
+    """Apply GLM's interleaved-pair M-RoPE rotation to query and key tensors.
 
-    GLM's rotate is pair-swap-with-negate: (x0,x1,x2,x3,...) -> (-x1,x0,-x3,x2,...).
-    Rather than express that with stack+flatten (which torch.jit.trace here mis-handles
-    when downstream broadcasting depends on the collapsed shape), we implement the same
-    pair-swap as a static gather + a static sign vector. Both index buffers are size
-    (head_dim,) and shape-static — no dynamic seq_len math is involved.
+    Implemented as a static gather + sign vector rather than stack/flatten;
+    the latter mis-traces under this fork's ONNX export path.
     """
     device, dtype = q.device, q.dtype
     head_dim = q.shape[-1]
-    # swap adjacent pairs: [1,0,3,2,5,4,...]
     swap_idx = torch.arange(head_dim, device=device).view(head_dim // 2, 2).flip(-1).flatten()
-    # signs: [-1,+1,-1,+1,...] so pair (x_{2i}, x_{2i+1}) maps to (-x_{2i+1}, x_{2i})
     signs = torch.tensor([-1.0, 1.0], device=device, dtype=dtype).repeat(head_dim // 2)
     q_rot = q[..., swap_idx] * signs
     k_rot = k[..., swap_idx] * signs
@@ -153,17 +99,8 @@ def qeff_apply_rotary_pos_emb(
     return q_embed.to(dtype), k_embed.to(dtype)
 
 
-# ---------------------------------------------------------------------------
-# Vision attention  —  ONNX-safe block-diagonal mask (V2, V5)
-# ---------------------------------------------------------------------------
-
 class QEffGlmOcrVisionAttention(GlmOcrVisionAttention):
-    """Replace the dynamic cu_seqlens-split loop with a static block-diagonal mask.
-
-    HF splits hidden_states into per-image chunks and processes them in a Python
-    loop → ONNX NonZero / dynamic slice.  We build a block-diagonal boolean mask
-    from cu_seqlens instead (same approach as QEffQwen3VLVisionAttention).
-    """
+    """Replaces the dynamic cu_seqlens-split loop with a static block-diagonal mask."""
 
     def forward(
         self,
@@ -176,10 +113,7 @@ class QEffGlmOcrVisionAttention(GlmOcrVisionAttention):
 
         # QKV projection + reshape to (seq_len, n_heads, head_dim)
         q, k, v = (
-            self.qkv(hidden_states)
-            .reshape(seq_length, 3, self.num_heads, self.head_dim)
-            .permute(1, 0, 2, 3)
-            .unbind(0)
+            self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, self.head_dim).permute(1, 0, 2, 3).unbind(0)
         )
 
         # Q/K-norm (vision attention has per-head RMSNorm; text does not)
@@ -203,13 +137,13 @@ class QEffGlmOcrVisionAttention(GlmOcrVisionAttention):
             device=q.device,
             dtype=q.dtype,
         )
-        rows = torch.arange(seq_length, device=q.device).view(1, -1)   # (1, seq_len)
-        cols = torch.arange(seq_length, device=q.device).view(-1, 1)   # (seq_len, 1)
-        start = cu_seqlens[:-1].view(-1, 1, 1)   # (num_blocks, 1, 1)
+        rows = torch.arange(seq_length, device=q.device).view(1, -1)  # (1, seq_len)
+        cols = torch.arange(seq_length, device=q.device).view(-1, 1)  # (seq_len, 1)
+        start = cu_seqlens[:-1].view(-1, 1, 1)  # (num_blocks, 1, 1)
         end = cu_seqlens[1:].view(-1, 1, 1)
         row_mask = (rows >= start) & (rows < end)  # (num_blocks, 1, seq_len)
         col_mask = (cols >= start) & (cols < end)  # (num_blocks, seq_len, 1)
-        block_mask = row_mask & col_mask           # (num_blocks, seq_len, seq_len)
+        block_mask = row_mask & col_mask  # (num_blocks, seq_len, seq_len)
 
         # 0 = attend, 1 = mask; convert 1 → finfo.min
         final_mask = torch.ones((seq_length, seq_length), dtype=torch.float32, device=q.device)
@@ -218,78 +152,65 @@ class QEffGlmOcrVisionAttention(GlmOcrVisionAttention):
         attention_mask[0] = final_mask
 
         # Attention: (seq_len, n_heads, head_dim) → transpose for matmul
-        q = q.transpose(0, 1)   # (n_heads, seq_len, head_dim)
+        q = q.transpose(0, 1)  # (n_heads, seq_len, head_dim)
         k = k.transpose(0, 1)
         v = v.transpose(0, 1)
         attn_weights = torch.matmul(q, k.transpose(1, 2)) / math.sqrt(self.head_dim)
-        attn_weights = attn_weights + attention_mask   # additive mask (V5)
+        attn_weights = attn_weights + attention_mask
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
         attn_output = torch.matmul(attn_weights, v)
         attn_output = attn_output.transpose(0, 1).reshape(seq_length, self.dim)
         return self.proj(attn_output)
 
 
-# ---------------------------------------------------------------------------
-# Vision model  —  FP16 clamp (V1) and clean return type
-# ---------------------------------------------------------------------------
-
 class QEffGlmOcrVisionModel(GlmOcrVisionModel):
-    """Static-only forward to avoid Python for-loops that produce ONNX sequence ops.
-
-    HF GlmOcrVisionModel.rot_pos_emb() uses `for t, h, w in grid_thw:` with
-    list.append / torch.cat → ONNX SplitToSequence/SequenceEmpty/ConcatFromSequence,
-    rejected by QAIC.  We vectorise the same logic using .item() at trace time for
-    static Python ints, then pure tensor ops from there.
-
-    Also applies V1 (FP16 clamp) after the patch-merger output.
-    """
+    """Vectorises HF's Python-loop rot_pos_emb, which traces to ONNX sequence ops QAIC rejects."""
 
     def forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor) -> torch.Tensor:
-        # grid_thw: (num_images, 3) — each row is [temporal, height_patches, width_patches]
-        # At ONNX trace time the grid is static, so .item() gives Python constants.
+        # grid_thw: (num_images, 3) — [temporal, height_patches, width_patches].
+        # The grid is static at trace time, so .item() gives Python constants.
         h_val = grid_thw[0, 1].item()
         w_val = grid_thw[0, 2].item()
         t_val = grid_thw[0, 0].item()
-        ms = self.spatial_merge_size   # int, already a Python constant
+        ms = self.spatial_merge_size
 
         device = hidden_states.device
 
-        # ---- Patch embedding ----
         hidden_states = self.patch_embed(hidden_states)  # (h*w*t, hidden_size)
 
         # ---- Rotary position IDs (vectorised) — mirrors GlmOcrVisionModel.rot_pos_emb ----
         hpos_ids = (
             torch.arange(h_val, device=device)
-            .unsqueeze(1).expand(h_val, w_val)
+            .unsqueeze(1)
+            .expand(h_val, w_val)
             .reshape(h_val // ms, ms, w_val // ms, ms)
-            .permute(0, 2, 1, 3).flatten()
+            .permute(0, 2, 1, 3)
+            .flatten()
         )
         wpos_ids = (
             torch.arange(w_val, device=device)
-            .unsqueeze(0).expand(h_val, w_val)
+            .unsqueeze(0)
+            .expand(h_val, w_val)
             .reshape(h_val // ms, ms, w_val // ms, ms)
-            .permute(0, 2, 1, 3).flatten()
+            .permute(0, 2, 1, 3)
+            .flatten()
         )
         pos_ids = torch.stack([hpos_ids, wpos_ids], dim=-1)  # (h*w, 2)
         if t_val > 1:
             pos_ids = pos_ids.repeat(t_val, 1)
 
-        # ---- Rotary embeddings (from GlmOcrVisionRotaryEmbedding) ----
         max_grid_size = max(h_val, w_val)
-        rotary_pos_emb_full = self.rotary_pos_emb(max_grid_size)   # (max_hw, head_dim/2)
-        rotary_pos_emb = rotary_pos_emb_full[pos_ids].flatten(1)    # (h*w*t, head_dim)
+        rotary_pos_emb_full = self.rotary_pos_emb(max_grid_size)  # (max_hw, head_dim/2)
+        rotary_pos_emb = rotary_pos_emb_full[pos_ids].flatten(1)  # (h*w*t, head_dim)
         emb = torch.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
         position_embeddings = (emb.cos(), emb.sin())
 
-        # ---- cu_seqlens (static for fixed grid) ----
         seq_len = h_val * w_val * t_val
         cu_seqlens = torch.tensor([0, seq_len], dtype=torch.int32, device=device)
 
-        # ---- ViT blocks (uses QEffGlmOcrVisionAttention via KVCacheTransform) ----
         for blk in self.blocks:
             hidden_states = blk(hidden_states, cu_seqlens=cu_seqlens, position_embeddings=position_embeddings)
 
-        # ---- Post-norm + spatial merge (mirror HF GlmOcrVisionModel.forward) ----
         hidden_states = self.post_layernorm(hidden_states)  # (h*w*t, hidden_size)
 
         # Reshape for Conv2d downsampler: (N_merged, ms, ms, C) → (N_merged, C, ms, ms)
@@ -297,20 +218,15 @@ class QEffGlmOcrVisionModel(GlmOcrVisionModel):
         hidden_states = hidden_states.view(n_merged, ms, ms, hidden_states.shape[-1]).permute(0, 3, 1, 2)
         hidden_states = self.downsample(hidden_states).view(n_merged, self.config.out_hidden_size)
 
-        # Final merger projection
         image_embeds = self.merger(hidden_states)
 
-        # V1: FP16 overflow clamp
+        # FP16 overflow clamp
         image_embeds = image_embeds.clamp(-60000, 60000)
         return image_embeds
 
 
-# ---------------------------------------------------------------------------
-# Text decoder: RotaryEmbedding — precomputed sin/cos cache
-# ---------------------------------------------------------------------------
-
 class QEffGlmOcrTextRotaryEmbedding(GlmOcrTextRotaryEmbedding):
-    """Precompute sin/cos at init so torch.jit.trace sees static buffers."""
+    """Precomputes sin/cos at init so torch.jit.trace sees static buffers."""
 
     def __init__(self, config, device=None):
         super().__init__(config=config)
@@ -329,10 +245,6 @@ class QEffGlmOcrTextRotaryEmbedding(GlmOcrTextRotaryEmbedding):
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
 
-# ---------------------------------------------------------------------------
-# Text eager attention forward (U1: -1e9 not -inf)
-# ---------------------------------------------------------------------------
-
 def eager_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -349,7 +261,7 @@ def eager_attention_forward(
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) / math.sqrt(module.head_dim)
     if attention_mask is not None:
-        # U1: use -1e9, not -inf (FP16 cannot represent -inf safely)
+        # -1e9, not -inf: FP16 cannot represent -inf safely.
         attn_weights = torch.where(
             attention_mask,
             torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=query.dtype),
@@ -361,10 +273,6 @@ def eager_attention_forward(
     attn_output = attn_output.transpose(1, 2).contiguous()
     return attn_output, attn_weights
 
-
-# ---------------------------------------------------------------------------
-# Text attention
-# ---------------------------------------------------------------------------
 
 class QEffGlmOcrTextAttention(GlmOcrTextAttention):
     """KV cache + precomputed M-RoPE. No q/k-norm (text attention only has o_proj + QKV)."""
@@ -389,8 +297,12 @@ class QEffGlmOcrTextAttention(GlmOcrTextAttention):
 
         # Q, K, V projections  (no q_norm/k_norm on text attention)
         query_states = self.q_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-        key_states = self.k_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-        value_states = self.v_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        key_states = (
+            self.k_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        )
+        value_states = (
+            self.v_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        )
 
         # Apply precomputed M-RoPE (passed from QEffGlmOcrTextModel)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
@@ -442,10 +354,6 @@ class QEffGlmOcrTextAttention(GlmOcrTextAttention):
         return attn_output, attn_weights, past_key_values
 
 
-# ---------------------------------------------------------------------------
-# Text decoder layer  —  pass-through for QEff parameters
-# ---------------------------------------------------------------------------
-
 class QEffGlmOcrTextDecoderLayer(GlmOcrTextDecoderLayer):
     def forward(
         self,
@@ -480,8 +388,8 @@ class QEffGlmOcrTextDecoderLayer(GlmOcrTextDecoderLayer):
             sin_cached=sin_cached,
             cos_cached=cos_cached,
         )
-        # GLM sandwich-norm: post_self_attn_layernorm before the residual add (missing here
-        # dropped ~40 units of hidden-state magnitude vs HF and broke real-weight generation)
+        # GLM sandwich-norm: applied before the residual add, unlike the standard
+        # input/post-attention-only layernorm pair.
         hidden_states = self.post_self_attn_layernorm(hidden_states)
         hidden_states = residual + hidden_states
 
@@ -499,21 +407,13 @@ class QEffGlmOcrTextDecoderLayer(GlmOcrTextDecoderLayer):
         return outputs
 
 
-# ---------------------------------------------------------------------------
-# Text model  —  QEffDynamicCache + precomputed M-RoPE (V8, V11)
-# ---------------------------------------------------------------------------
-
 class QEffGlmOcrTextModel(GlmOcrTextModel):
     def __qeff_init__(self):
         """Called by ModuleMappingTransform after class replacement."""
         self.rotary_emb = QEffGlmOcrTextRotaryEmbedding(config=self.config)
         attention_scaling = getattr(self.rotary_emb, "attention_scaling", 1.0)
-        self.cos_cached = nn.Parameter(
-            self.rotary_emb.cos_cached * attention_scaling, requires_grad=False
-        )
-        self.sin_cached = nn.Parameter(
-            self.rotary_emb.sin_cached * attention_scaling, requires_grad=False
-        )
+        self.cos_cached = nn.Parameter(self.rotary_emb.cos_cached * attention_scaling, requires_grad=False)
+        self.sin_cached = nn.Parameter(self.rotary_emb.sin_cached * attention_scaling, requires_grad=False)
 
     def forward(
         self,
@@ -534,7 +434,6 @@ class QEffGlmOcrTextModel(GlmOcrTextModel):
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("Specify exactly one of input_ids or inputs_embeds")
 
-        # V8: legacy cache conversion at model entry
         return_legacy_cache = False
         if self.config.use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
@@ -557,16 +456,16 @@ class QEffGlmOcrTextModel(GlmOcrTextModel):
         if position_ids is None:
             position_ids = cache_position.view(1, 1, -1).expand(4, inputs_embeds.shape[0], -1)
 
-        # Extract text position IDs for causal mask (V11)
         if position_ids.ndim == 3 and position_ids.shape[0] == 4:
-            text_position_ids = position_ids[0]   # (batch, seq_len)  — 1D text positions
+            text_position_ids = position_ids[0]  # (batch, seq_len)  — 1D text positions
             mrope_position_ids = position_ids[1:]  # (3, batch, seq_len) — T/H/W M-RoPE
         else:
             text_position_ids = position_ids if position_ids.ndim == 2 else position_ids[0]
-            mrope_position_ids = position_ids[1:] if position_ids.ndim == 3 else position_ids.unsqueeze(0).expand(3, -1, -1)
+            mrope_position_ids = (
+                position_ids[1:] if position_ids.ndim == 3 else position_ids.unsqueeze(0).expand(3, -1, -1)
+            )
 
         target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
-        # V11: causal mask uses 1D text position IDs
         causal_mask = _create_causal_mask(
             position_ids=text_position_ids,
             target_length=target_length,
@@ -577,9 +476,7 @@ class QEffGlmOcrTextModel(GlmOcrTextModel):
 
         # Precomputed M-RoPE (faster than re-computing per layer)
         mrope_section = self.config.rope_parameters["mrope_section"]
-        cos, sin = qeff_prepare_mrope_cos_sin(
-            self.cos_cached, self.sin_cached, mrope_position_ids, mrope_section
-        )
+        cos, sin = qeff_prepare_mrope_cos_sin(self.cos_cached, self.sin_cached, mrope_position_ids, mrope_section)
 
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
@@ -610,7 +507,6 @@ class QEffGlmOcrTextModel(GlmOcrTextModel):
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
-        # V8: convert back to legacy cache for ONNX/JIT
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
 
@@ -622,25 +518,14 @@ class QEffGlmOcrTextModel(GlmOcrTextModel):
         )
 
 
-# ---------------------------------------------------------------------------
-# GlmOcrModel wrapper  —  thin subclass so KVCacheTransform has an entry
-# ---------------------------------------------------------------------------
-
 class QEffGlmOcrModel(GlmOcrModel):
-    """Thin wrapper; actual QEff logic is in sub-modules (TextModel, VisionModel)."""
+    """Thin wrapper; QEff logic lives in the text/vision sub-modules."""
 
-    pass
-
-
-# ---------------------------------------------------------------------------
-# Encoder wrapper  (for kv_offload=True dual-QPC)
-# ---------------------------------------------------------------------------
 
 class QEffGlmOcrEncoderWrapper(nn.Module):
     def __init__(self, model: "QEffGlmOcrForConditionalGeneration"):
         super().__init__()
         self.model = model
-        # Expose as vision_model attribute for get_submodules_for_export compatibility
         self.model.vision_model = self.model.model.visual
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
@@ -652,16 +537,11 @@ class QEffGlmOcrEncoderWrapper(nn.Module):
         image_grid_thw: torch.Tensor,
     ) -> torch.Tensor:
         image_embeds = self.model.model.visual(pixel_values, image_grid_thw)
-        # image_embeds shape: (total_merged_tokens, out_hidden_size)
         bs = image_grid_thw.shape[0]
         split_size = image_embeds.shape[0] // bs
         image_embeds = image_embeds.reshape(bs, split_size, image_embeds.shape[1])
         return image_embeds
 
-
-# ---------------------------------------------------------------------------
-# Decoder wrapper  (for kv_offload=True dual-QPC)
-# ---------------------------------------------------------------------------
 
 class QEffGlmOcrDecoderWrapper(nn.Module):
     def __init__(self, model: "QEffGlmOcrForConditionalGeneration"):
@@ -685,20 +565,17 @@ class QEffGlmOcrDecoderWrapper(nn.Module):
         inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
 
-        # V4: replace masked_scatter with static torch.where + cumsum indexing
+        # masked_scatter is ONNX-unfriendly; replace with cumsum-indexed gather.
         selected = input_ids == self.model.config.image_token_id
         indices1 = selected.to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(B, device=input_ids.device).view(-1, 1)
-        # V7: clamp to avoid negative ONNX gather indices
         image_features_expanded = vision_embeds.reshape(vision_embeds.shape[0], C).unsqueeze(0)[
             indices0, indices1.clamp(min=0)
         ]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-        # V10: decode no-op
-        inputs_embeds = torch.where(
-            input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds
-        )
+        # Decode step (seq_len == 1) has no image tokens; skip the merge.
+        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
 
         outputs = self.language_model(
             inputs_embeds=inputs_embeds,
@@ -709,28 +586,15 @@ class QEffGlmOcrDecoderWrapper(nn.Module):
             use_cache=True,
         )
 
-        # U2: INT32 logit index
         logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs.last_hidden_state[
-            torch.arange(B, device=input_ids.device).view(-1, 1), logit_index
-        ]
+        hidden_states = outputs.last_hidden_state[torch.arange(B, device=input_ids.device).view(-1, 1), logit_index]
         logits = self.model.lm_head(hidden_states)
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         return logits, vision_embeds, image_idx, outputs.past_key_values
 
 
-# ---------------------------------------------------------------------------
-# Top-level: QEffGlmOcrForConditionalGeneration
-# ---------------------------------------------------------------------------
-
-# Default dims for dummy input construction (336×336 image, patch_size=14)
-_BS = 1
-_FBS = 4
 _SEQ_LEN = 592
 _CTX_LEN = 1024
-_VISION_SIZE = 144    # (336//14)^2 // (spatial_merge_size=2)^2 = 576 // 4
-_GRID_HEIGHT = 576    # 24 * 24 patches per image
-_GRID_WIDTH = 1176    # 3 * temporal_patch_size=2 * patch_size=14 * patch_size=14
 
 
 class QEffGlmOcrForConditionalGeneration(GlmOcrForConditionalGeneration):
@@ -740,8 +604,6 @@ class QEffGlmOcrForConditionalGeneration(GlmOcrForConditionalGeneration):
     Dual-QPC  (kv_offload=True):   separate vision/language sessions via
                                     get_qeff_vision_encoder / get_qeff_language_decoder.
     """
-
-    # V6: register to AutoModelForImageTextToText (done via pytorch_transforms)
 
     def get_qeff_vision_encoder(self) -> QEffGlmOcrEncoderWrapper:
         return QEffGlmOcrEncoderWrapper(self)
@@ -760,30 +622,23 @@ class QEffGlmOcrForConditionalGeneration(GlmOcrForConditionalGeneration):
         batch_index: Optional[torch.LongTensor] = None,
         image_grid_thw: Optional[torch.LongTensor] = None,
     ):
-        # --- Vision encoding ---
-        # image_embeds shape: (total_merged_tokens, out_hidden_size=1536)
         image_embeds = self.model.visual(pixel_values, image_grid_thw)
 
-        # --- Text embedding ---
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
         B, N, C = inputs_embeds.shape
 
-        # V4: replace masked_scatter with static torch.where + cumsum merge
+        # masked_scatter is ONNX-unfriendly; replace with cumsum-indexed gather.
         selected = input_ids == self.config.image_token_id
         indices1 = selected.to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(B, device=input_ids.device).view(-1, 1)
-        # V7: clamp negative indices
         image_features_expanded = image_embeds.reshape(image_embeds.shape[0], C).unsqueeze(0)[
             indices0, indices1.clamp(min=0)
         ]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-        # V10: decode no-op — when seq_len==1 the vision encoder output is not needed
-        inputs_embeds = torch.where(
-            input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds
-        )
+        # Decode step (seq_len == 1) has no image tokens; skip the merge.
+        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
 
-        # --- Language model ---
         outputs = self.model.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
@@ -793,20 +648,15 @@ class QEffGlmOcrForConditionalGeneration(GlmOcrForConditionalGeneration):
             use_cache=True,
         )
 
-        # --- Logit extraction (U2: INT32 index) ---
         logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs.last_hidden_state[
-            torch.arange(B, device=input_ids.device).view(-1, 1), logit_index
-        ]
+        hidden_states = outputs.last_hidden_state[torch.arange(B, device=input_ids.device).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
 
         next_image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         image_idx = torch.where(image_idx < next_image_idx, next_image_idx, image_idx)
-        # Note: pixel_values is NOT returned as a retained state — the compiler DCEs the
-        # vision encoder in the decode spec (unused output), which would make
-        # pixel_values_RetainedState inconsistent between specs.  The runtime re-uploads
-        # pixel_values from host on every decode call (slightly less efficient, but correct).
+        # pixel_values is not a retained state: the compiler DCEs the vision encoder in
+        # the decode spec, so pixel_values is re-uploaded from host on every decode call.
         return logits, image_idx, outputs.past_key_values
 
     # ------------------------------------------------------------------
@@ -829,17 +679,15 @@ class QEffGlmOcrForConditionalGeneration(GlmOcrForConditionalGeneration):
         temporal_patch_size = vision_cfg.temporal_patch_size
         spatial_merge_size = vision_cfg.spatial_merge_size
         image_size = vision_cfg.image_size
-        grid_h = image_size // patch_size   # 24
-        grid_w = image_size // patch_size   # 24
-        n_patches = grid_h * grid_w          # 576
-        vision_size = n_patches // (spatial_merge_size ** 2)  # 144
+        grid_h = image_size // patch_size  # 24
+        grid_w = image_size // patch_size  # 24
+        n_patches = grid_h * grid_w  # 576
+        vision_size = n_patches // (spatial_merge_size**2)  # 144
         grid_width = 3 * temporal_patch_size * patch_size * patch_size  # 1176
 
         # Text config
         text_cfg = self.config.text_config
         num_layers = text_cfg.num_hidden_layers
-        num_kv_heads = text_cfg.num_key_value_heads
-        head_dim = text_cfg.head_dim
 
         vision_inputs = {
             "pixel_values": torch.zeros((n_patches, grid_width), dtype=torch.float32),
@@ -906,7 +754,7 @@ class QEffGlmOcrForConditionalGeneration(GlmOcrForConditionalGeneration):
         grid_h = image_size // patch_size
         grid_w = image_size // patch_size
         n_patches = grid_h * grid_w
-        vision_size = n_patches // (spatial_merge_size ** 2)
+        vision_size = n_patches // (spatial_merge_size**2)
         grid_height = n_patches * batch_size
         grid_width = 3 * temporal_patch_size * patch_size * patch_size
 
@@ -974,8 +822,8 @@ class QEffGlmOcrForConditionalGeneration(GlmOcrForConditionalGeneration):
         if kv_offload:
             return {"vision": vision, "lang": lang}, compiler_options
         else:
-            # V9: vision dims must be included in every lang spec so the
-            # compiler can resolve ONNX symbolic dims from the vision graph.
+            # Vision dims must be included in every lang spec so the compiler
+            # can resolve ONNX symbolic dims from the vision graph.
             return lang, compiler_options
 
     def get_onnx_dynamic_axes(
@@ -1035,6 +883,32 @@ class QEffGlmOcrForConditionalGeneration(GlmOcrForConditionalGeneration):
             # Single-QPC: no pixel_values_RetainedState (compiler DCE causes inconsistency)
             lang_outputs.insert(1, "image_idx_output")
             return lang_outputs
+
+    def prepare_inputs_for_generation(self, inputs, prefill_seq_len=128, batch_size=1):
+        input_ids_length = inputs["input_ids"].shape[1]
+        text_position_ids = torch.arange(input_ids_length).view(1, 1, input_ids_length).expand(-1, batch_size, -1)
+
+        mm_token_type_ids = inputs.get("mm_token_type_ids")
+        if mm_token_type_ids is None:
+            mm_token_type_ids = torch.zeros_like(inputs["input_ids"], dtype=torch.int32)
+            mm_token_type_ids = mm_token_type_ids.masked_fill(inputs["input_ids"] == self.config.image_token_id, 1)
+
+        mrope_position_ids, rope_deltas = self.model.get_rope_index(
+            input_ids=inputs["input_ids"],
+            mm_token_type_ids=mm_token_type_ids,
+            image_grid_thw=inputs.get("image_grid_thw"),
+            video_grid_thw=None,
+            attention_mask=inputs["attention_mask"],
+        )
+        self.model.rope_deltas = rope_deltas
+        inputs["position_ids"] = torch.cat((text_position_ids, mrope_position_ids), dim=0)
+
+        num_chunks = -(input_ids_length // -prefill_seq_len)
+        padded_len = num_chunks * prefill_seq_len
+        inputs["position_ids"] = F.pad(
+            inputs["position_ids"], pad=(0, padded_len - input_ids_length), mode="constant", value=-1
+        )
+        return inputs
 
     def get_inputs_info(self) -> List[IOInfo]:
         return [
