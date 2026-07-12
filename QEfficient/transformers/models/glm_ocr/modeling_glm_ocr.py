@@ -570,9 +570,9 @@ class QEffGlmOcrDecoderWrapper(nn.Module):
         indices1 = selected.to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
         indices0 = torch.arange(B, device=input_ids.device).view(-1, 1)
-        image_features_expanded = vision_embeds.reshape(vision_embeds.shape[0], C).unsqueeze(0)[
-            indices0, indices1.clamp(min=0)
-        ]
+        # vision_embeds: (vision_batch_size, vision_size, C) -> (total_tokens, C)
+        total_tokens = vision_embeds.shape[0] * vision_embeds.shape[1]
+        image_features_expanded = vision_embeds.reshape(total_tokens, C).unsqueeze(0)[indices0, indices1.clamp(min=0)]
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         # Decode step (seq_len == 1) has no image tokens; skip the merge.
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
