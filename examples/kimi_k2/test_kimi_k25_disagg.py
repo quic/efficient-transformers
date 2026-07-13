@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import copy
 from pathlib import Path
 
 import numpy as np
@@ -22,10 +23,8 @@ from export_kimi_k25_vision import (
 from test_kimi_k25 import (
     _clone_inputs,
     _decode_tokens,
-    _disable_compressed_tensor_forward_pre_hooks,
     _greedy_generate_hf,
     _has_qaic_runtime_access,
-    _materialize_missing_linear_weights,
     _prepare_inputs,
     _resolve_model_path,
     _set_deterministic,
@@ -113,8 +112,6 @@ def _load_kimi_subset_model():
         num_experts_per_tok=NUM_EXPERTS_PER_TOKEN,
         dtype=torch.float32,
     )
-    _materialize_missing_linear_weights(model.language_model)
-    _disable_compressed_tensor_forward_pre_hooks(model)
     model.vision_tower.patch_embed.pos_emb.interpolation_mode = "bilinear"
     return model.eval().to("cpu"), tokenizer, processor
 
@@ -267,7 +264,7 @@ def test_kimi_k25_disagg_qaic_vs_hf_fp32():
     model, tokenizer, processor = _load_kimi_subset_model()
     inputs = _prepare_inputs(processor)
     inputs = {name: (value.to("cpu") if torch.is_tensor(value) else value) for name, value in inputs.items()}
-    hf_tokens = _greedy_generate_hf(model, _clone_inputs(inputs), max_new_tokens=GENERATION_LEN)
+    hf_tokens = _greedy_generate_hf(copy.deepcopy(model), _clone_inputs(inputs), max_new_tokens=GENERATION_LEN)
 
     qeff_model = QEFFAutoModelForImageTextToText(
         model,
@@ -276,7 +273,6 @@ def test_kimi_k25_disagg_qaic_vs_hf_fp32():
         torch_dtype=torch.float32,
         layerwise=False,
     )
-    _disable_compressed_tensor_forward_pre_hooks(qeff_model.model)
 
     compile_dims = _get_image_compile_dims(qeff_model.model, inputs)
     vision_qpc_path, prefill_qpc_path, decode_qpc_path, compiled_onnx_paths = _compile_disagg_qpcs(

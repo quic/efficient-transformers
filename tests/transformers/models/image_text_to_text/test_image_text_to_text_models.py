@@ -437,7 +437,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             tokenize=False,
             return_tensors="pt",
         )
-        pytorch_hf_tokens = _run_kimi_k25_hf_model_on_pytorch(model_hf, processor, inputs, max_gen_len)
+        pytorch_hf_tokens = _run_kimi_k25_hf_model_on_pytorch(copy.deepcopy(model_hf), processor, inputs, max_gen_len)
         inputs = processor(
             messages=conversation,
             add_generation_prompt=True,

@@ -658,6 +658,9 @@
           "vt_num_attention_heads": 4,
           "vt_num_hidden_layers": 2
         }
+      }
+    },
+    {
       "model_name": "tiny-random/gemma-4-dense",
       "model_type": "gemma4",
       "batch_size": 1,

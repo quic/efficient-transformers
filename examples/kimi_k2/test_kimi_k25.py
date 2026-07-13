@@ -332,12 +332,12 @@ def check_kimi_k25_pytorch_vs_ai100():
     inputs = _prepare_inputs(processor)
     inputs = {k: (v.to("cpu") if torch.is_tensor(v) else v) for k, v in inputs.items()}
 
-    hf_tokens = _greedy_generate_hf(model, _clone_inputs(inputs), max_new_tokens=NEW_GENERATION_TOKENS)
+    hf_tokens = _greedy_generate_hf(copy.deepcopy(model), _clone_inputs(inputs), max_new_tokens=NEW_GENERATION_TOKENS)
     print("HF:", _decode_tokens(tokenizer, hf_tokens), "\n", hf_tokens)
 
-    qaic_config = {"mla_absorption": {"cache_compressed": True, "absorption": False, "online": False}}
+    # qaic_config = {"mla_absorption": {"cache_compressed": True, "absorption": False, "online": False}}
 
-    qeff_model = QEFFAutoModelForImageTextToText(model, qaic_config=qaic_config)
+    qeff_model = QEFFAutoModelForImageTextToText(model)  # , qaic_config=qaic_config)
 
     qeff_tokens = _greedy_generate_qeff_wrapper(
         transformed_model=qeff_model.model,
@@ -376,7 +376,7 @@ def check_kimi_k25_pytorch_vs_ai100():
         onnx_tokens = None
 
     qeff_model.compile(
-        qaic_config=qaic_config,
+        # qaic_config=qaic_config,
         num_devices=1,
         prefill_seq_len=1,
         ctx_len=CTX_LEN,
