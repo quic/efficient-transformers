@@ -151,11 +151,6 @@ def _get_kimi_k25_num_image_tokens(config, grid_thws):
     return int(grid_thws[0, 1].item() // merge_height) * int(grid_thws[0, 2].item() // merge_width)
 
 
-def _disable_compressed_tensor_forward_pre_hooks(module: torch.nn.Module):
-    if hasattr(module, "_forward_pre_hooks"):
-        module._forward_pre_hooks.clear()
-
-
 def _load_kimi_k25_layer_subset_model():
     examples_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../examples/kimi_k2"))
     if examples_dir not in sys.path:
@@ -167,15 +162,11 @@ def _load_kimi_k25_layer_subset_model():
         NUM_TEXT_LAYERS,
         NUM_VISION_LAYERS,
         _load_layer_subset_model,
-        _materialize_missing_linear_weights,
         _patch_deepseek_init_weights_compat,
         _patch_kimi_tie_weights_compat,
         _prepare_config,
         _resolve_model_path,
         _set_deterministic,
-    )
-    from test_kimi_k25 import (
-        _disable_compressed_tensor_forward_pre_hooks as _example_disable_compressed_tensor_forward_pre_hooks,
     )
 
     _set_deterministic(1234)
@@ -196,8 +187,6 @@ def _load_kimi_k25_layer_subset_model():
         num_experts_per_tok=NUM_EXPERTS_PER_TOKEN,
         dtype=torch.float32,
     )
-    _materialize_missing_linear_weights(model.language_model)
-    _example_disable_compressed_tensor_forward_pre_hooks(model)
     model.vision_tower.patch_embed.pos_emb.interpolation_mode = "bilinear"
     model = model.eval().to("cpu")
     return model, tokenizer, processor
@@ -285,7 +274,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             config=model_hf.config,
             torch_dtype=torch_dtype,
         )
-        _disable_compressed_tensor_forward_pre_hooks(qeff_model.model)
     elif config is None:
         config = AutoConfig.from_pretrained(
             model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS

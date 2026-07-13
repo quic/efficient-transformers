@@ -347,8 +347,8 @@ class TestQEFFAutoModelQuantizationIntegration:
             assert pack_idx < custom_ops_idx
 
     def test_pack_quantized_int4_transform_matches_compressed_linear_metadata(self, monkeypatch):
-        from types import SimpleNamespace
         import importlib
+        from types import SimpleNamespace
 
         import torch
 
@@ -368,7 +368,9 @@ class TestQEFFAutoModelQuantizationIntegration:
         )
 
         def fake_decompress_module(module):
-            module.weight = torch.nn.Parameter(torch.zeros(module.out_features, module.in_features), requires_grad=False)
+            module.weight = torch.nn.Parameter(
+                torch.zeros(module.out_features, module.in_features), requires_grad=False
+            )
 
         compressor_base = importlib.import_module("compressed_tensors.compressors.base")
         monkeypatch.setattr(compressor_base, "decompress_module", fake_decompress_module)
@@ -413,4 +415,6 @@ class TestQEFFAutoModelQuantizationIntegration:
             awq_logits = model_awq(input_ids=input_ids).logits
             pack_logits = model_pack(input_ids=input_ids).logits
         assert torch.allclose(original_logits, awq_logits), "AWQ transform must not change non-quantized model output"
-        assert torch.allclose(original_logits, pack_logits), "Packed-int4 transform must not change non-quantized model output"
+        assert torch.allclose(original_logits, pack_logits), (
+            "Packed-int4 transform must not change non-quantized model output"
+        )

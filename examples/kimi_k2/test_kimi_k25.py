@@ -41,29 +41,6 @@ NEW_GENERATION_TOKENS = 10
 CTX_LEN = 1024
 
 
-def _materialize_missing_linear_weights(module: torch.nn.Module):
-    """Decompress compressed linear modules that expose packed weights but no `.weight`."""
-    try:
-        from compressed_tensors.compressors.base import decompress_module as ct_decompress_module
-    except Exception:
-        return
-
-    for child in module.modules():
-        if not isinstance(child, torch.nn.Linear):
-            continue
-        if hasattr(child, "weight"):
-            continue
-        if not (hasattr(child, "weight_packed") and hasattr(child, "weight_scale")):
-            continue
-        ct_decompress_module(child)
-
-
-def _disable_compressed_tensor_forward_pre_hooks(module: torch.nn.Module):
-    """Avoid double-decompress hooks that can raise KeyError('weight_packed')."""
-    if hasattr(module, "_forward_pre_hooks"):
-        module._forward_pre_hooks.clear()
-
-
 def _has_qaic_runtime_access() -> bool:
     try:
         _ = QAICInferenceSession
@@ -231,8 +208,8 @@ def _greedy_generate_qeff_wrapper(transformed_model, inputs, max_new_tokens: int
 
 def _greedy_generate_onnx(transformed_model, onnx_paths, inputs, max_new_tokens, session_options):
     vision_onnx_path, lang_onnx_path = onnx_paths
-    vision_session = ort.InferenceSession(str(vision_onnx_path))  # , providers=["CPUExecutionProvider"])
-    lang_session = ort.InferenceSession(str(lang_onnx_path), session_options)  # providers=["CPUExecutionProvider"])
+    vision_session = ort.InferenceSession(str(vision_onnx_path))
+    lang_session = ort.InferenceSession(str(lang_onnx_path), session_options)
 
     pixel_values = inputs["pixel_values"].detach().cpu().numpy().astype(np.float32)
     grid_thws = inputs["grid_thws"].detach().cpu().numpy().astype(np.int64)
@@ -349,8 +326,6 @@ def check_kimi_k25_pytorch_vs_ai100():
         dtype=torch.float32,
     )
 
-    _materialize_missing_linear_weights(model.language_model)
-    _disable_compressed_tensor_forward_pre_hooks(model)
     model.vision_tower.patch_embed.pos_emb.interpolation_mode = "bilinear"
     model = model.eval().to("cpu")
 
@@ -360,12 +335,9 @@ def check_kimi_k25_pytorch_vs_ai100():
     hf_tokens = _greedy_generate_hf(model, _clone_inputs(inputs), max_new_tokens=NEW_GENERATION_TOKENS)
     print("HF:", _decode_tokens(tokenizer, hf_tokens), "\n", hf_tokens)
 
-    qeff_model = QEFFAutoModelForImageTextToText(
-        copy.deepcopy(model),
-        kv_offload=True,
-        torch_dtype=torch.float32,
-    )
-    _disable_compressed_tensor_forward_pre_hooks(qeff_model.model)
+    qaic_config = {"mla_absorption": {"cache_compressed": True, "absorption": False, "online": False}}
+
+    qeff_model = QEFFAutoModelForImageTextToText(model, qaic_config=qaic_config)
 
     qeff_tokens = _greedy_generate_qeff_wrapper(
         transformed_model=qeff_model.model,
@@ -404,6 +376,7 @@ def check_kimi_k25_pytorch_vs_ai100():
         onnx_tokens = None
 
     qeff_model.compile(
+        qaic_config=qaic_config,
         num_devices=1,
         prefill_seq_len=1,
         ctx_len=CTX_LEN,
@@ -417,6 +390,7 @@ def check_kimi_k25_pytorch_vs_ai100():
 
     qaic_tokens = None
     if _has_qaic_runtime_access():
+        inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
         qaic_tokens = qeff_model.generate(
             inputs=_clone_inputs(inputs), generation_len=NEW_GENERATION_TOKENS
         ).generated_ids[:, :-1]
@@ -429,6 +403,7 @@ def check_kimi_k25_pytorch_vs_ai100():
         f"vision_layers={model.config.vision_config.vt_num_hidden_layers}",
         f"text_layers={model.config.text_config.num_hidden_layers}",
     )
+
     print("Prompt:", repr(TEXT_PROMPT))
     print("HF:", _decode_tokens(tokenizer, hf_tokens))
     print("QEFF:", _decode_tokens(tokenizer, qeff_tokens))

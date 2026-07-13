@@ -673,7 +673,12 @@ class QEffDeepseekV3Attention(nn.Module):
         key_states = torch.cat((k_nope, k_pe_new), -1)
 
         if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos, "batch_index": batch_index, "position_ids": position_ids}
+            cache_kwargs = {
+                "sin": sin_cached,
+                "cos": cos_cached,
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+            }
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
