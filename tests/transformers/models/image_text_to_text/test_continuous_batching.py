@@ -71,6 +71,16 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         if hasattr(config, "model_type") and config.model_type in ["gemma3"]:
             config.text_config._sliding_window_pattern = 2
             config.text_config.layer_types = ["sliding_attention", "full_attention"]
+        if hasattr(config, "model_type") and config.model_type in ["gemma4"]:
+            config.text_config.num_kv_shared_layers = 0
+            config.text_config.layer_types = ["sliding_attention"]
+        if hasattr(config, "model_type") and config.model_type in ["qwen3_5"]:
+            config.text_config.layer_types = [
+                "linear_attention",
+                "linear_attention",
+                "linear_attention",
+                "full_attention",
+            ]
         if hasattr(config, "model_type") and config.model_type in [
             "qwen3_vl",
             "qwen3_vl_moe",
@@ -103,7 +113,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
             config=model_hf.config,
             continuous_batching=True,
         )
-
     compile_kwargs = {
         "num_cores": 16,
         "num_devices": num_devices,
@@ -112,14 +121,9 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         "batch_size": batch_size,
         "full_batch_size": full_batch_size,
         "mxfp6_matmul": False,
+        "split-model-io": True,
     }
-    if model_name in [
-        "qwen2_5_vl",
-        "qwen3_vl",
-        "qwen3_vl_moe",
-        "qwen3_5",
-        "qwen3_5_moe",
-    ]:
+    if model_name in ["qwen2_5_vl", "qwen3_vl", "qwen3_vl_moe", "qwen3_5", "qwen3_5_moe", "gemma4"]:
         compile_kwargs["use_onnx_subfunctions"] = True
 
     images = []

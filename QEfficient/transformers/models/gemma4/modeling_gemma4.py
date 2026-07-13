@@ -469,7 +469,11 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
                 if token_key_states is not None and token_value_states is not None:
                     past_key_values.shared_layers_token[self.layer_idx] = token_key_states, token_value_states
 
-        if mm_token_type_ids is not None and hidden_states.shape[1] != 1:
+        if (
+            mm_token_type_ids is not None
+            and hidden_states.shape[1] != 1
+            and getattr(self.config, "use_bidirectional_attention", None) == "vision"
+        ):
             attention_mask = _build_bidirectional_vision_attention_mask(
                 position_ids=position_ids,
                 mm_token_type_ids=mm_token_type_ids,
@@ -1072,7 +1076,11 @@ class QEffGemma4EncoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.model.vision_model = self.model.model.vision_tower
-        self.mm_tokens_per_image = getattr(self.model.config, "mm_tokens_per_image", 256)
+        self.mm_tokens_per_image = getattr(
+            self.model.config,
+            "mm_tokens_per_image",
+            getattr(self.model.config.vision_config, "default_output_length", 280),
+        )
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {self.model.model.vision_tower.encoder.layers[0].__class__}
@@ -1083,7 +1091,13 @@ class QEffGemma4EncoderWrapper(nn.Module):
         inputs_embeds = vision_tower.patch_embedder(pixel_values, image_position_ids, padding_positions)
 
         valid_tokens = ~padding_positions
-        vision_attention_mask = (~valid_tokens).unsqueeze(1).unsqueeze(2).to(dtype=inputs_embeds.dtype)
+
+        vision_attention_mask = torch.where(
+            valid_tokens.unsqueeze(1).unsqueeze(2),
+            torch.zeros((), dtype=inputs_embeds.dtype, device=inputs_embeds.device),
+            _attention_mask_min(inputs_embeds.dtype, inputs_embeds.device),
+        )
+
         vision_attention_mask = vision_attention_mask.expand(-1, 1, inputs_embeds.shape[1], -1)
 
         hidden_states = inputs_embeds
@@ -1115,8 +1129,9 @@ class QEffGemma4EncoderWrapper(nn.Module):
             vision_embeds = vision_embeds.unsqueeze(0)
 
         # Keep the encoder output fixed-shape for dual-QPC export/compile.
-        # Gemma4's processor reserves 256 image placeholders, while the vision
-        # pooler may emit extra padded bins for the max-patch canvas.
+        # Gemma4 uses vision_config.default_output_length/image_seq_length
+        # image placeholders (280), while the vision pooler may emit extra
+        # padded bins for the max-patch canvas.
         del pooler_mask
         return vision_embeds[:, : self.mm_tokens_per_image, :]
 
@@ -1135,7 +1150,9 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         return default_output_length * pooling_kernel_size * pooling_kernel_size
 
     def _get_mm_tokens_per_image(self) -> int:
-        return getattr(self.config, "mm_tokens_per_image", 256)
+        return getattr(
+            self.config, "mm_tokens_per_image", getattr(self.config.vision_config, "default_output_length", 280)
+        )
 
     def get_qeff_vision_encoder(self):
         return QEffGemma4EncoderWrapper(self)

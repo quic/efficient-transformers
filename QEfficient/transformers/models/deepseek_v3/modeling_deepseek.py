@@ -1309,9 +1309,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             packed_chunk_size = seq_len // num_q_ffn_blocks
         else:
             num_q_ffn_blocks = seq_len // packed_chunk_size
-        import ipdb
 
-        ipdb.set_trace()
         matched_idx = _build_matched_idx_from_cumsum(T2Ei)
         valid_rows = torch.einsum("bi->b", T2Ei.to(torch.int32)).unsqueeze(1)
         row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
