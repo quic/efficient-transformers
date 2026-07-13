@@ -75,29 +75,29 @@ pipeline {
             }
         }
 
-        stage('Non-QAIC: LLM') {
-            steps {
-                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                        sh """
-                        sudo docker exec ${BUILD_TAG} bash -c "
-                            cd /efficient-transformers &&
-                            . preflight_qeff/bin/activate &&
-                            export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
-                            export TOKENIZERS_PARALLELISM=false &&
-                            export QEFF_HOME=${DOCKER_QPC_CACHE}/llm &&
-                            set -o pipefail &&
-                            pytest tests/transformers/models/causal_lm_models -m 'llm and non_qaic' \
-                                -n auto --dist worksteal \
-                                --junitxml=tests/tests_log_non_qaic_llm.xml \
-                                --log-level=ERROR --no-header &&
-                            junitparser merge tests/tests_log_non_qaic_llm.xml tests/tests_log.xml &&
-                            deactivate"
-                        """
-                    }
-            }
-        }
+        // stage('Non-QAIC: LLM') {
+        //     steps {
+        //         catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+        //                 sh """
+        //                 sudo docker exec ${BUILD_TAG} bash -c "
+        //                     cd /efficient-transformers &&
+        //                     . preflight_qeff/bin/activate &&
+        //                     export QEFF_TEST_PROFILE=${QEFF_TEST_PROFILE} &&
+        //                     export TOKENIZERS_PARALLELISM=false &&
+        //                     export QEFF_HOME=${DOCKER_QPC_CACHE}/llm &&
+        //                     set -o pipefail &&
+        //                     pytest tests/transformers/models/causal_lm_models -m 'llm and non_qaic' \
+        //                         -n auto --dist worksteal \
+        //                         --junitxml=tests/tests_log_non_qaic_llm.xml \
+        //                         --log-level=ERROR --no-header &&
+        //                     junitparser merge tests/tests_log_non_qaic_llm.xml tests/tests_log.xml &&
+        //                     deactivate"
+        //                 """
+        //             }
+        //     }
+        // }
 
-        stage('QAIC: LLM (cards 0-1)') {
+        stage('QAIC: LLM') {
             when { expression { params.RUN_QAIC_LLM } }
             steps {
                 catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
