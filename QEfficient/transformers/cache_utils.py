@@ -844,12 +844,13 @@ class QEffHybridCache(HybridCache):
             invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
             ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-            all_indices = torch.arange(ctx_len) + kv_position_ids.max() + 1
+            all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
             rolling_indices = torch.where(
                 all_indices > layer_ctx_len - 1,
                 _remainder_with_symbolic_divisor(all_indices, layer_ctx_len),
                 all_indices,
             )
+            rolling_indices = rolling_indices[:ctx_len]
             final_indices = torch.where(
                 (is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1))), rolling_indices, ctx_indices
             )
@@ -967,12 +968,13 @@ class QEffHybridChunkedCache(HybridChunkedCache):
             ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
             # Rolling indices for sliding window
-            all_indices = torch.arange(ctx_len) + kv_position_ids.max() + 1
+            all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
             rolling_indices = torch.where(
                 all_indices > layer_ctx_len - 1,
                 _remainder_with_symbolic_divisor(all_indices, layer_ctx_len),
                 all_indices,
             )
+            rolling_indices = rolling_indices[:ctx_len]
             final_indices = torch.where(
                 (is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1))), rolling_indices, ctx_indices
             )

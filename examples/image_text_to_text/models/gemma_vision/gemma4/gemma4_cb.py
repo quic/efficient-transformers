@@ -135,7 +135,7 @@ def main():
         mos=1,
         split_model_io=True,
         node_precision_info=NODE_PRECISION_INFO,
-        use_onnx_subfunctions=False,
+        use_onnx_subfunctions=True,
     )
 
     # ------------------------------------------------------------------
