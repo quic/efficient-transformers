@@ -181,8 +181,8 @@ def eager_attention_forward(
         # Apply the attention mask
         attn_weights = torch.where(attention_mask, mask_value, attn_weights)
 
-    # upcast attention to fp32
-    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+    # upcast attention to fp32; stay in fp32 — .to(query.dtype) emits SoftMax→Cast in subfunction
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32)
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
     return attn_output, attn_weights
@@ -512,7 +512,13 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
         logits = self.layer(hidden_states).float()
 
         top_k_logits, top_k_indices = torch.topk(logits, self.top_k, dim=1)  # [B, K]
-        top_k_gates = torch.softmax(top_k_logits.float(), dim=1)  # [B, K] — keep float32, no Cast
+        # Manual stable softmax to avoid ONNX Softmax op.
+        # optimizeSoftmax in the QAIC compiler asserts when a Softmax node has
+        # more than one consumer (top_k_gates is used once per expert = num_local_experts times).
+        _lg = top_k_logits.float()
+        _lg = _lg - _lg.amax(dim=1, keepdim=True)
+        _exp = torch.exp(_lg)
+        top_k_gates = _exp / _exp.sum(dim=1, keepdim=True)  # [B, K]
 
         B, K = top_k_indices.shape
         E = int(self.num_experts)
