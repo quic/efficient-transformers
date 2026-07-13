@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 
 import os
-import time
 
 import numpy as np
 import pytest
@@ -17,16 +16,17 @@ from transformers.cache_utils import DynamicCache
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.quantizers import replace_transformers_quantizers, undo_transformers_quantizers
+
 from .utils import (
-      _make_model,
-      _prepare_inputs,
-      _default_compile_kwargs,
-      _run_hf_prefill,
-      _run_qeff_prefill,
-      _run_qpc_prefill,
-      _prefix_caching_inference,
-      _rotate_sliding_kv,
-  )
+    _default_compile_kwargs,
+    _make_model,
+    _prefix_caching_inference,
+    _prepare_inputs,
+    _rotate_sliding_kv,
+    _run_hf_prefill,
+    _run_qeff_prefill,
+    _run_qpc_prefill,
+)
 
 test_models_blocking_dict = {"openai/gpt-oss-20b": "tiny-random/gpt-oss-bf16"}
 test_models_chunking_dict = {"Qwen/Qwen3-30B-A3B-Instruct-2507": "hf-internal-testing/tiny-random-Qwen3MoeForCausalLM"}
@@ -51,7 +51,8 @@ prompt1 = "Once upon a time"
 prompts = [prompt1, prompt2]
 
 TORCH_ATOL = 1e-4
-QAIC_ATOL  = 5e-2
+QAIC_ATOL = 5e-2
+
 
 @pytest.mark.qaic
 @pytest.mark.llm  # FIXME split into llm and vllm later
@@ -64,7 +65,7 @@ def test_disagg_mode_prefill(model_id, prompt):
 
     # HF run
     model, config, out = _run_hf_prefill(model_id, hf_inputs)
-    
+
     # QEff PyTorch run
     qeff_model, config, qeff_out = _run_qeff_prefill(model, qeff_inputs, PREFILL_SEQ_LEN, CTX_LEN, sliding_window=True)
     assert (qeff_out.logits - out.logits[:, -1, :]).abs().max() < TORCH_ATOL
@@ -88,7 +89,9 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
     model, config, out = _run_hf_prefill(model_id, hf_inputs)
 
     # QEff PyTorch run (chunked)
-    qeff_model, config, qeff_out = _run_qeff_prefill(model, qeff_inputs, PREFILL_SEQ_LEN, CTX_LEN, sliding_window=False, enable_chunking=True, num_chunks=num_chunks)
+    qeff_model, config, qeff_out = _run_qeff_prefill(
+        model, qeff_inputs, PREFILL_SEQ_LEN, CTX_LEN, sliding_window=False, enable_chunking=True, num_chunks=num_chunks
+    )
     assert (qeff_out.logits - out.logits[:, -1, :]).abs().max() < TORCH_ATOL
 
     # QPC run on QAIC (chunked)
@@ -101,7 +104,15 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
             enable_chunking=True,
         )
     )
-    qpc_out, _ = _run_qpc_prefill(qeff_inputs, prefill_qpc_path, config, PREFILL_SEQ_LEN, enable_chunking=True, num_chunks=num_chunks, skip_past_buffers=True)
+    qpc_out, _ = _run_qpc_prefill(
+        qeff_inputs,
+        prefill_qpc_path,
+        config,
+        PREFILL_SEQ_LEN,
+        enable_chunking=True,
+        num_chunks=num_chunks,
+        skip_past_buffers=True,
+    )
     assert (torch.from_numpy(qpc_out["logits"]) - qeff_out.logits).abs().max() < QAIC_ATOL
 
 
@@ -138,7 +149,9 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
     undo_transformers_quantizers()
 
     # QEff PyTorch prefill
-    prefill_qeff_model, config, prefill_qeff_out = _run_qeff_prefill(model, qeff_inputs, PREFILL_SEQ_LEN, CTX_LEN, sliding_window=True)
+    prefill_qeff_model, config, prefill_qeff_out = _run_qeff_prefill(
+        model, qeff_inputs, PREFILL_SEQ_LEN, CTX_LEN, sliding_window=True
+    )
     assert (prefill_qeff_out.logits - orig_out.logits[:, -1, :]).abs().max() < TORCH_ATOL
 
     # QEff PyTorch decode loop
@@ -170,7 +183,9 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
             offload_pt_weights=False,  # weights must stay in memory for prefill compile
         )
     )
-    prefill_qpc_path = prefill_qeff_model.compile(**_default_compile_kwargs(PREFILL_SEQ_LEN, CTX_LEN, 16, prefill_only=True))
+    prefill_qpc_path = prefill_qeff_model.compile(
+        **_default_compile_kwargs(PREFILL_SEQ_LEN, CTX_LEN, 16, prefill_only=True)
+    )
 
     # QPC prefill run on QAIC
     qpc_out, qeff_inputs_np = _run_qpc_prefill(qeff_inputs, prefill_qpc_path, config, PREFILL_SEQ_LEN)
@@ -213,9 +228,7 @@ def test_disagg_mode_prefix_caching(model_id, prompt):
     config = AutoConfig.from_pretrained(model_id)
 
     # QPC prefill compile
-    prefill_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-        model_id, continuous_batching=True
-    )
+    prefill_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, continuous_batching=True)
     prefill_qeff_model.prefill(enable=True, enable_chunking=True)
     prefill_qpc_path = prefill_qeff_model.compile(
         **_default_compile_kwargs(
@@ -230,9 +243,7 @@ def test_disagg_mode_prefix_caching(model_id, prompt):
     )
 
     # QPC decode compile
-    decode_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-        model_id, continuous_batching=True
-    )
+    decode_qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, continuous_batching=True)
     decode_qeff_model.prefill(enable=False)
     decode_qpc_path = decode_qeff_model.compile(
         **_default_compile_kwargs(
@@ -247,8 +258,22 @@ def test_disagg_mode_prefix_caching(model_id, prompt):
     )
 
     # QPC runs on QAIC for two different batch slots with the same prompt
-    kv_out_batch0, _ = _prefix_caching_inference(model_id, config, prefill_qpc_path, decode_qpc_path, prompt, decode_batch_id=0, prefill_seq_len=PREFILL_SEQ_LEN)
-    kv_out_batch1, _ = _prefix_caching_inference(model_id, config, prefill_qpc_path, decode_qpc_path, prompt, decode_batch_id=1, prefill_seq_len=PREFILL_SEQ_LEN)
+    kv_out_batch0, _ = _prefix_caching_inference(
+        model_id, config, prefill_qpc_path, decode_qpc_path, prompt, decode_batch_id=0, prefill_seq_len=PREFILL_SEQ_LEN
+    )
+    kv_out_batch1, _ = _prefix_caching_inference(
+        model_id, config, prefill_qpc_path, decode_qpc_path, prompt, decode_batch_id=1, prefill_seq_len=PREFILL_SEQ_LEN
+    )
     for i in range(config.num_hidden_layers):
-        assert np.abs(kv_out_batch0[f"past_key.{i}_RetainedState"][0] - kv_out_batch1[f"past_key.{i}_RetainedState"][1]).max() < QAIC_ATOL
-        assert np.abs(kv_out_batch0[f"past_value.{i}_RetainedState"][0] - kv_out_batch1[f"past_value.{i}_RetainedState"][1]).max() < QAIC_ATOL
+        assert (
+            np.abs(
+                kv_out_batch0[f"past_key.{i}_RetainedState"][0] - kv_out_batch1[f"past_key.{i}_RetainedState"][1]
+            ).max()
+            < QAIC_ATOL
+        )
+        assert (
+            np.abs(
+                kv_out_batch0[f"past_value.{i}_RetainedState"][0] - kv_out_batch1[f"past_value.{i}_RetainedState"][1]
+            ).max()
+            < QAIC_ATOL
+        )
