@@ -367,8 +367,9 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, target_classnames=None):
     qeff_model.hash_params["use_onnx_subfunctions"] = True
     qeff_model.hash_params["onnx_subfunction_version"] = 2
     use_dynamo = kwargs.get("use_dynamo", False)
-    # Apply torch patches for subfunction support
-    apply_torch_patches()
+    # TorchScript patches are only relevant for the legacy trace-based exporter.
+    if not use_dynamo:
+        apply_torch_patches()
     InvalidIndexProvider.SUBFUNC_ENABLED = True
 
     # Transform output names for subfunction compatibility (TorchScript path only).
@@ -429,7 +430,7 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, target_classnames=None):
             # TorchScript path: pass class objects for export_modules_as_functions
             kwargs["export_modules_as_functions"] = decoder_layer_classes
 
-    return args, kwargs, {"onnx_transforms": original_transforms}
+    return args, kwargs, {"onnx_transforms": original_transforms, "use_dynamo": use_dynamo}
 
 
 def _cleanup_onnx_subfunctions(qeff_model, state=None):
@@ -449,8 +450,9 @@ def _cleanup_onnx_subfunctions(qeff_model, state=None):
         even if export fails. Errors during cleanup are logged but
         not re-raised to avoid masking the original exception.
     """
-    # Undo torch patches
-    undo_torch_patches()
+    # Undo torch patches (TorchScript path only)
+    if state is None or not state.get("use_dynamo", False):
+        undo_torch_patches()
     InvalidIndexProvider.SUBFUNC_ENABLED = False
     if state is not None and "onnx_transforms" in state:
         qeff_model._onnx_transforms = state["onnx_transforms"]
