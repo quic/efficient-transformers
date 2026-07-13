@@ -15,16 +15,15 @@ pytest tests/reproducer_configs/test_reported_reproducer_configs.py -q -rs
 Run one scenario by its `RegressionScenario.name`:
 
 ```bash
-pytest tests/reproducer_configs/test_reported_reproducer_configs.py \
-  --qeff-reproducer-scenario hf-transfer-import-order -q
+QEFF_REPRODUCER_SCENARIO=hf-transfer-import-order \
+pytest tests/reproducer_configs/test_reported_reproducer_configs.py -q
 ```
 
-Run multiple scenarios with repeated or comma-separated values:
+Run multiple scenarios with comma-separated values:
 
 ```bash
-pytest tests/reproducer_configs/test_reported_reproducer_configs.py \
-  --qeff-reproducer-scenario hf-transfer-import-order \
-  --qeff-reproducer-scenario ccl-default-enabled,embedding-model-compile -q
+QEFF_REPRODUCER_SCENARIO=hf-transfer-import-order,ccl-default-enabled,embedding-model-compile \
+pytest tests/reproducer_configs/test_reported_reproducer_configs.py -q
 ```
 
 List available scenario names without running them:
@@ -40,16 +39,16 @@ card are gated and must be enabled explicitly:
 
 ```bash
 QEFF_REPRODUCER_RUN_FULL_MODELS=1 \
-pytest tests/reproducer_configs/test_reported_reproducer_configs.py \
-  --qeff-reproducer-scenario <scenario-name> -q
+QEFF_REPRODUCER_SCENARIO=<scenario-name> \
+pytest tests/reproducer_configs/test_reported_reproducer_configs.py -q
 ```
 
 Use official model cards instead of tiny reductions where both are present:
 
 ```bash
 QEFF_REPRODUCER_USE_OFFICIAL_MODELS=1 QEFF_REPRODUCER_RUN_FULL_MODELS=1 \
-pytest tests/reproducer_configs/test_reported_reproducer_configs.py \
-  --qeff-reproducer-scenario <scenario-name> -q
+QEFF_REPRODUCER_SCENARIO=<scenario-name> \
+pytest tests/reproducer_configs/test_reported_reproducer_configs.py -q
 ```
 
 ## Runtime report
@@ -62,8 +61,8 @@ needed:
 
 ```bash
 QEFF_REPRODUCER_REPORT_MD=/tmp/qeff_reproducer_results.md \
-pytest tests/reproducer_configs/test_reported_reproducer_configs.py \
-  --qeff-reproducer-scenario <scenario-name> -q
+QEFF_REPRODUCER_SCENARIO=<scenario-name> \
+pytest tests/reproducer_configs/test_reported_reproducer_configs.py -q
 ```
 
 `--collect-only` does not create or update the verdict report.
@@ -76,5 +75,5 @@ pytest tests/reproducer_configs/test_reported_reproducer_configs.py \
 3. Use a tiny or 2/4-layer model when it faithfully reproduces the issue.
 4. Keep the official model card and gate it with `QEFF_REPRODUCER_RUN_FULL_MODELS=1`
    when a reduction is not faithful.
-5. Run only the new scenario with `--qeff-reproducer-scenario <scenario-name>`
+5. Run only the new scenario with `QEFF_REPRODUCER_SCENARIO=<scenario-name>`
    before running the broader matrix.
