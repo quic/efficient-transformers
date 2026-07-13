@@ -14,6 +14,7 @@ Run with: pytest tests/unit_test/base/ -n auto -v
 import pytest
 from transformers import GPT2Config, GPT2LMHeadModel, LlamaConfig, LlamaForCausalLM
 
+from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
 VOCAB_SIZE = 500
@@ -37,6 +38,26 @@ def make_tiny_llama():
         max_position_embeddings=CTX_LEN,
     )
     return LlamaForCausalLM(cfg).eval(), cfg
+
+
+class DummyCompileModel(QEFFBaseModel):
+    _pytorch_transforms = []
+    _onnx_transforms = []
+
+    def __init__(self):
+        self.onnx_path = None
+        self.qpc_path = None
+        self.hash_params = {}
+
+    @property
+    def get_model_config(self):
+        return {}
+
+    def export(self, *args, **kwargs):
+        return None
+
+    def compile(self, *args, **kwargs):
+        return None
 
 
 @pytest.mark.cpu_only
@@ -116,6 +137,27 @@ class TestQEFFBaseModelProperties:
         qeff = QEFFAutoModelForCausalLM(model)
         # GPT2 config has architectures attribute
         assert qeff.model_architecture is not None or qeff.model_architecture is None
+
+    def test_compile_ignores_deprecated_compile_only_flags(self, tmp_path, monkeypatch):
+        """_compile must not forward deprecated compile_only flags to qaic-compile."""
+        onnx_path = tmp_path / "model.onnx"
+        onnx_path.write_bytes(b"fake")
+        commands = []
+
+        def fake_run(command, capture_output, check):
+            commands.append(command)
+
+        monkeypatch.setattr("QEfficient.base.modeling_qeff.subprocess.run", fake_run)
+
+        DummyCompileModel()._compile(
+            onnx_path=str(onnx_path),
+            compile_dir=str(tmp_path),
+            specializations=[{"batch_size": "1"}],
+            **{"compile_only": True, "compile-only": True},
+        )
+
+        assert commands
+        assert "-compile-only" not in commands[0]
 
 
 @pytest.mark.cpu_only

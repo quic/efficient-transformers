@@ -570,6 +570,11 @@ class QEFFBaseModel(ABC):
             + [f"-m={onnx_path}"]
         )
 
+        for removed_option in ("compile_only", "compile-only"):
+            if removed_option in compiler_options:
+                logger.warning(f"'{removed_option}' is deprecated and is ignored; removing it from compiler options.")
+                compiler_options.pop(removed_option, None)
+
         # MDP partition config: prioritize dump over load
         mdp_dump_json_path = compiler_options.pop("mdp_dump_partition_config", None)
         mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)

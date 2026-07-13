@@ -1225,3 +1225,67 @@ class TestDiffusersNamedSpecializations:
         result = to_named_specializations(flat)
         assert result[0]["name"] == "Prefill"
         assert result[1]["name"] == "Decode"
+
+
+@pytest.mark.parametrize(
+    "model_path",
+    [
+        "QEfficient.transformers.models.qwen3_vl.modeling_qwen3_vl",
+        "QEfficient.transformers.models.qwen2_5_vl.modeling_qwen2_5_vl",
+        "QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe",
+    ],
+)
+def test_qwenvl_get_specializations_supports_multi_resolution(model_path):
+    """Qwen VL models must accept list-valued height/width (multi-resolution) without raising.
+
+    Regression for QRANIUMSW-61896: vLLM passes height/width as single-element lists
+    (e.g. height=[512], width=[910]); a scalar-only get_specializations raised
+    ``TypeError: unsupported operand type(s) for /: 'list' and 'list'`` inside smart_resize.
+    """
+    import importlib
+    from types import SimpleNamespace
+
+    module = importlib.import_module(model_path)
+    model_cls = next(
+        getattr(module, name)
+        for name in dir(module)
+        if name.startswith("QEff") and name.endswith("ForConditionalGeneration")
+    )
+
+    model = model_cls.__new__(model_cls)
+    model.config = SimpleNamespace(
+        vision_config=SimpleNamespace(patch_size=16, temporal_patch_size=1, deepstack_visual_indexes=[0, 1, 2])
+    )
+
+    # Single-element lists, exactly as the vLLM caller supplies them.
+    specs, _ = model.get_specializations(
+        batch_size=1,
+        prefill_seq_len=64,
+        ctx_len=14336,
+        img_size=None,
+        height=[512],
+        width=[910],
+        num_frames=[1],
+        kv_offload=True,
+    )
+    assert len(specs["vision"]) == 1
+    single_vision_size = specs["vision"][0]["vision_size"]
+    assert all(spec["vision_size"] == single_vision_size for spec in specs["lang"])
+
+    # Multi-resolution (multiple distinct image sizes): one vision spec per resolution,
+    # and the language side reuses one of the computed vision sizes.
+    specs, _ = model.get_specializations(
+        batch_size=1,
+        prefill_seq_len=64,
+        ctx_len=14336,
+        img_size=None,
+        height=[512, 448],
+        width=[910, 448],
+        num_frames=[1, 1],
+        kv_offload=True,
+    )
+    vision_specs = specs["vision"]
+    lang_specs = specs["lang"]
+    assert len(vision_specs) == 2
+    computed_vision_sizes = {spec["vision_size"] for spec in vision_specs}
+    assert all(spec["vision_size"] in computed_vision_sizes for spec in lang_specs)
