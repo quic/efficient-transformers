@@ -28,7 +28,6 @@ Patches removed (upstreamed to PyTorch):
 
 import inspect
 from contextlib import contextmanager
-import inspect
 
 import torch
 import torch.onnx.utils as onnx_utils
@@ -342,7 +341,6 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
     @nested_compile_region boundaries statically present on decoder layer
     forward() methods do not create unwanted subgraph splits during tracing.
     """
-
 
     target_classes = tuple(target_classes) if target_classes else None
     patched_modules = []

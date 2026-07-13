@@ -545,7 +545,6 @@ class AdapterWeightsToInputsTransform(BaseOnnxTransform):
         return model, transformed
 
 
-
 # class SplitMultiInputMaxMinTransform(BaseOnnxTransform):
 #     """Split Max/Min nodes with >2 inputs into binary chains for QAIC compatibility.
 

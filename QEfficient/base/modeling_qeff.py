@@ -15,7 +15,7 @@ import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, Any, List, Optional, OrderedDict, Type,Union
+from typing import Dict, List, Optional, OrderedDict, Type, Union
 
 import onnx
 import torch
@@ -87,7 +87,8 @@ def _prune_unused_fake_initializers(onnx_program) -> None:
         raw_value = getattr(const_value, "raw", None)
         if isinstance(raw_value, FakeTensor) and name not in used_names:
             del initializers[name]
-            
+
+
 def _upsert_metadata_prop(model, key: str, value: str) -> None:
     for entry in model.metadata_props:
         if entry.key == key:

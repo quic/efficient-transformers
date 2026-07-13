@@ -144,7 +144,7 @@ def main():
     )
 
     t_compile = time.perf_counter() - t_start
-    print(f"\nCompile time : {t_compile:.1f}s  ({t_compile/60:.1f} min)")
+    print(f"\nCompile time : {t_compile:.1f}s  ({t_compile / 60:.1f} min)")
     print(f"QPC path     : {qpc_path}")
 
     # ── Verify specializations.json ───────────────────────────────────────────
@@ -158,7 +158,7 @@ def main():
         print("\nWARNING: specializations.json not found")
 
     # ── Inference ─────────────────────────────────────────────────────────────
-    print(f"\n--- Inference ---")
+    print("\n--- Inference ---")
     prompts = Constants.INPUT_STR if isinstance(Constants.INPUT_STR, list) else [Constants.INPUT_STR]
 
     try:
@@ -181,12 +181,12 @@ def main():
         raise  # propagate so run_ccl_verification.py sees failure
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"CCL PASS: {args.model_name}")
     print(f"  ctx_len    : {args.ctx_len}")
     print(f"  CCL values : {ccl_list}")
     print(f"  Compile    : {t_compile:.1f}s")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
 
 if __name__ == "__main__":

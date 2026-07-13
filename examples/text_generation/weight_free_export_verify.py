@@ -146,11 +146,11 @@ def main():
     )
 
     t_compile = time.perf_counter() - t_start
-    print(f"\nCompile time : {t_compile:.1f} sec  ({t_compile/60:.1f} min)")
+    print(f"\nCompile time : {t_compile:.1f} sec  ({t_compile / 60:.1f} min)")
     print(f"QPC path     : {qpc_path}")
 
     # ── QPC inference ─────────────────────────────────────────────────────────
-    print(f"\n--- QPC inference ---")
+    print("\n--- QPC inference ---")
     print(f"Prompt: {args.prompt!r}")
 
     try:
@@ -165,6 +165,7 @@ def main():
 
         # exec_info.generated_ids[0] is shape (batch, tokens) — flatten to get token list
         import numpy as np
+
         generated_ids_array = np.asarray(exec_info.generated_ids[0]).flatten()
         generated_text = tokenizer.decode(generated_ids_array.tolist(), skip_special_tokens=True)
 

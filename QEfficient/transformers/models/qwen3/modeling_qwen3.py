@@ -65,7 +65,7 @@ class QEffQwen3RotaryEmbedding(Qwen3RotaryEmbedding):
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
 
-def qeff_apply_rotary_pos_emb(q, k, cos, sin,position_ids=None, unsqueeze_dim=1):
+def qeff_apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
     """Applies Rotary Position Embedding with Multimodal Sections to the query and key tensors (https://qwenlm.github.io/blog/qwen2-vl/).
 
     Explanation:
@@ -90,7 +90,6 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin,position_ids=None, unsqueeze_dim=1)
         sin = sin[position_ids].unsqueeze(unsqueeze_dim)
     cos = cos.to(device=q.device)
     sin = sin.to(device=q.device)
-    
 
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
@@ -111,8 +110,6 @@ def eager_attention_forward(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-    mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
-
     if attention_mask is not None:
         masked_fill = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
         attn_weights = torch.where(attention_mask, masked_fill, attn_weights)

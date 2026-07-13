@@ -43,8 +43,6 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
-
-
 class QEffMixtralRotaryEmbedding(MixtralRotaryEmbedding):
     """
     Copied from MixtralForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
@@ -101,7 +99,7 @@ def eager_attention_forward(
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
-    key_states = key_states.to(dtype=query.dtype)                                                                              
+    key_states = key_states.to(dtype=query.dtype)
     value_states = value_states.to(dtype=query.dtype)
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
@@ -206,8 +204,8 @@ class QEffMixtralExperts(MixtralExperts):
             # Values come from the preprocessed checkpoint at QAIC compile time.
             E = self.gate_up_proj.shape[0]
             H = self.gate_up_proj.shape[2]
-            self.gate_proj   = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta"))
-            self.up_proj     = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta"))
+            self.gate_proj = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta"))
+            self.up_proj = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta"))
             self.down_proj_t = nn.Parameter(torch.empty(E, intermediate_dim, H, device="meta"))
             return
 
@@ -251,8 +249,8 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
         router_logits, top_w, top_i = self.gate(hidden_states)
         top_w = top_w.to(hidden_states.dtype)
         idx = top_i.reshape(-1)
-        gate_proj = self.experts.gate_proj[idx]    # (S, H, I) — weight is 2nd BMM operand → MXFP6
-        up_proj = self.experts.up_proj[idx]        # (S, H, I)
+        gate_proj = self.experts.gate_proj[idx]  # (S, H, I) — weight is 2nd BMM operand → MXFP6
+        up_proj = self.experts.up_proj[idx]  # (S, H, I)
         down_proj = self.experts.down_proj_t[idx]  # (S, I, H)
         expert_in = hidden_states.unsqueeze(1).expand(-1, self.top_k, -1).contiguous().view(-1, 1, H)
         gate = torch.bmm(expert_in, gate_proj)
@@ -468,7 +466,7 @@ class QEffMixtralForCausalLM(MixtralForCausalLM):
     # (S = seq_len * batch * top_k) copies of expert weight matrices, so a large
     # tracing seq_len causes a ~15 GB gather per layer. seq_len is a dynamic axis
     # so the compiled QPC still uses the real prefill_seq_len from compile().
-    #ONNX_EXPORT_EXAMPLE_SEQ_LEN = 2
+    # ONNX_EXPORT_EXAMPLE_SEQ_LEN = 2
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """

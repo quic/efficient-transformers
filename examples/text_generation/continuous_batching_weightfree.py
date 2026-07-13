@@ -35,14 +35,12 @@ python examples/text_generation/continuous_batching_weightfree.py \\
 
 import argparse
 import time
-from pathlib import Path
 
 import torch
 from accelerate import init_empty_weights
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
-
 
 DEFAULT_PROMPTS = [
     "What is the capital of France?",
@@ -136,9 +134,8 @@ def main():
         )
 
     # ── Compile ───────────────────────────────────────────────────────────────
-    print(f"\nCompiling (export + QAIC compile) ...")
-    print(f"  prefill_seq_len={args.prefill_seq_len}, ctx_len={args.ctx_len}, "
-          f"full_batch_size={args.full_batch_size}")
+    print("\nCompiling (export + QAIC compile) ...")
+    print(f"  prefill_seq_len={args.prefill_seq_len}, ctx_len={args.ctx_len}, full_batch_size={args.full_batch_size}")
 
     t_start = time.perf_counter()
 
@@ -157,13 +154,13 @@ def main():
     )
 
     t_compile = time.perf_counter() - t_start
-    print(f"\nCompile time : {t_compile:.1f} sec  ({t_compile/60:.1f} min)")
+    print(f"\nCompile time : {t_compile:.1f} sec  ({t_compile / 60:.1f} min)")
     print(f"QPC path     : {qpc_path}")
 
     # ── Continuous batching inference ─────────────────────────────────────────
     print(f"\n--- Continuous batching inference ({len(prompts)} prompts) ---")
     for i, p in enumerate(prompts):
-        print(f"  Prompt {i+1}: {p!r}")
+        print(f"  Prompt {i + 1}: {p!r}")
 
     try:
         t_gen = time.perf_counter()
@@ -178,7 +175,7 @@ def main():
         print(f"\nGeneration time: {t_gen:.2f} sec")
         print("\n" + "=" * 70)
         for i, (prompt, generated) in enumerate(zip(prompts, exec_info.generated_texts)):
-            print(f"\nPrompt {i+1}: {prompt}")
+            print(f"\nPrompt {i + 1}: {prompt}")
             print(f"Output  : {generated}")
             print("-" * 70)
 

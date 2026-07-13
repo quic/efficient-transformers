@@ -98,8 +98,8 @@ def eager_attention_forward(
     key_states = repeat_kv(key, module.num_key_value_groups)
 
     value_states = repeat_kv(value, module.num_key_value_groups)
-    key_states = key_states.to(dtype=query.dtype)                                                                              
-    value_states = value_states.to(dtype=query.dtype)                                                                          
+    key_states = key_states.to(dtype=query.dtype)
+    value_states = value_states.to(dtype=query.dtype)
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
 
@@ -215,14 +215,14 @@ class QEffQwen3MoeExperts(Qwen3MoeExperts):
             # at QAIC compile time via weight_spec.json.
             E = self.gate_up_proj.shape[0]
             H = self.gate_up_proj.shape[2]
-            self.gate_proj   = nn.Parameter(torch.empty(E, H, self.expert_dim, device="meta"))
-            self.up_proj     = nn.Parameter(torch.empty(E, H, self.expert_dim, device="meta"))
+            self.gate_proj = nn.Parameter(torch.empty(E, H, self.expert_dim, device="meta"))
+            self.up_proj = nn.Parameter(torch.empty(E, H, self.expert_dim, device="meta"))
             self.down_proj_t = nn.Parameter(torch.empty(E, self.expert_dim, H, device="meta"))
             return
 
         # Normal export: compute derived params — values embedded in ONNX.
-        self.gate_proj   = nn.Parameter(self.gate_up_proj[:, : self.expert_dim, :].detach().clone().transpose(1, 2))
-        self.up_proj     = nn.Parameter(self.gate_up_proj[:, self.expert_dim :, :].detach().clone().transpose(1, 2))
+        self.gate_proj = nn.Parameter(self.gate_up_proj[:, : self.expert_dim, :].detach().clone().transpose(1, 2))
+        self.up_proj = nn.Parameter(self.gate_up_proj[:, self.expert_dim :, :].detach().clone().transpose(1, 2))
         self.down_proj_t = nn.Parameter(self.down_proj.detach().clone().transpose(1, 2))
 
 
@@ -308,7 +308,7 @@ class QEffQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
         top_w = top_w.to(hidden_states.dtype)
         idx = top_i.reshape(-1)
         gate_proj = self.experts.gate_proj[idx.flatten()]
-        up_proj   = self.experts.up_proj[idx.flatten()]
+        up_proj = self.experts.up_proj[idx.flatten()]
         down_proj = self.experts.down_proj_t[idx.flatten()]
         expert_in = hidden_states.unsqueeze(1).expand(-1, self.top_k, -1).contiguous().view(-1, 1, H)
         gate = torch.bmm(expert_in, gate_proj)

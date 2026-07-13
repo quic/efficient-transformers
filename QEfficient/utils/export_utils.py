@@ -33,7 +33,6 @@ from QEfficient.utils.torch_patches import (
 )
 
 
-
 def _resolve_attr_path(root, attr_path):
     current = root
     for attr in attr_path.split("."):

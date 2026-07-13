@@ -27,7 +27,6 @@ python -m QEfficient.utils.prepare_checkpoint_local \\
 
 import argparse
 import json
-import os
 import re
 import shutil
 import time
@@ -36,7 +35,6 @@ from pathlib import Path
 import torch
 from safetensors import safe_open
 from safetensors.torch import save_file
-
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -53,14 +51,13 @@ AUX_FILES = [
 ]
 
 # Matches: model.layers.{L}.mlp.experts.{E}.{gate_proj|up_proj|down_proj}.weight
-EXPERT_RE = re.compile(
-    r"^(model\.layers\.(\d+)\.mlp\.experts)\.(\d+)\.(gate_proj|up_proj|down_proj)\.weight$"
-)
+EXPERT_RE = re.compile(r"^(model\.layers\.(\d+)\.mlp\.experts)\.(\d+)\.(gate_proj|up_proj|down_proj)\.weight$")
 
 LAYER_RE = re.compile(r"^model\.layers\.(\d+)\.")
 
 
 # ── LayerStacker ──────────────────────────────────────────────────────────────
+
 
 class LayerStacker:
     """
@@ -77,26 +74,26 @@ class LayerStacker:
         self.prefix = prefix
         self.num_experts = num_experts
         self._gate: torch.Tensor | None = None
-        self._up:   torch.Tensor | None = None
+        self._up: torch.Tensor | None = None
         self._down: torch.Tensor | None = None
         self.filled = 0
 
     def add(self, expert_idx: int, kind: str, t: torch.Tensor) -> None:
         t = t.to(torch.float16)
         if kind == "gate_proj":
-            I, H = t.shape
+            ffn_dim, hidden_dim = t.shape
             if self._gate is None:
-                self._gate = torch.empty(self.num_experts, I, H, dtype=torch.float16)
+                self._gate = torch.empty(self.num_experts, ffn_dim, hidden_dim, dtype=torch.float16)
             self._gate[expert_idx] = t
         elif kind == "up_proj":
-            I, H = t.shape
+            ffn_dim, hidden_dim = t.shape
             if self._up is None:
-                self._up = torch.empty(self.num_experts, I, H, dtype=torch.float16)
+                self._up = torch.empty(self.num_experts, ffn_dim, hidden_dim, dtype=torch.float16)
             self._up[expert_idx] = t
-        else:  # down_proj: [H, I]
-            H, I = t.shape
+        else:  # down_proj: [hidden_dim, ffn_dim]
+            hidden_dim, ffn_dim = t.shape
             if self._down is None:
-                self._down = torch.empty(self.num_experts, H, I, dtype=torch.float16)
+                self._down = torch.empty(self.num_experts, hidden_dim, ffn_dim, dtype=torch.float16)
             self._down[expert_idx] = t
         self.filled += 1
 
@@ -108,12 +105,13 @@ class LayerStacker:
         # gate_up_proj: [E, 2I, H]  — matches HF Qwen3MoeExperts layout
         gate_up = torch.cat([self._gate, self._up], dim=1).contiguous()
         return {
-            f"{self.prefix}.gate_up_proj": gate_up,          # [E, 2I, H]
-            f"{self.prefix}.down_proj":    self._down.contiguous(),  # [E, H, I]
+            f"{self.prefix}.gate_up_proj": gate_up,  # [E, 2I, H]
+            f"{self.prefix}.down_proj": self._down.contiguous(),  # [E, H, I]
         }
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _atomic_save(tensors: dict, dst: Path) -> None:
     tmp = dst.with_suffix(dst.suffix + ".tmp")
@@ -133,21 +131,27 @@ def _register_expert_keys(weight_map: dict, prefix: str, layer_idx: int) -> None
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument(
-        "--src", required=True, type=Path,
+        "--src",
+        required=True,
+        type=Path,
         help="Path to the local model snapshot directory (contains config.json and *.safetensors)",
     )
     ap.add_argument(
-        "--out", required=True, type=Path,
+        "--out",
+        required=True,
+        type=Path,
         help="Output directory for the prepared checkpoint",
     )
     ap.add_argument(
-        "--no-stack", action="store_true",
+        "--no-stack",
+        action="store_true",
         help="Skip stacking; only convert BF16→FP32 (keeps per-expert layout)",
     )
     args = ap.parse_args()
@@ -173,12 +177,8 @@ def main() -> None:
 
     # ── Step 2: Read config ────────────────────────────────────────────────────
     config = json.loads((out / "config.json").read_text())
-    num_layers  = int(config["num_hidden_layers"])
-    num_experts = int(
-        config.get("num_experts")
-        or config.get("n_routed_experts")
-        or config.get("num_local_experts")
-    )
+    num_layers = int(config["num_hidden_layers"])
+    num_experts = int(config.get("num_experts") or config.get("n_routed_experts") or config.get("num_local_experts"))
     print(f"[config] num_hidden_layers={num_layers}  num_experts={num_experts}")
 
     # ── Step 3: Read shard index ───────────────────────────────────────────────
@@ -209,7 +209,7 @@ def main() -> None:
 
         # ── Resume: already processed ─────────────────────────────────────────
         if sentinel.exists():
-            print(f"[{si+1}/{len(shard_names)}] {shard_name}  (already done, skipping)")
+            print(f"[{si + 1}/{len(shard_names)}] {shard_name}  (already done, skipping)")
             for key, v in weight_map.items():
                 if v != shard_name:
                     continue
@@ -223,7 +223,7 @@ def main() -> None:
         # ── Process shard ─────────────────────────────────────────────────────
         proc_start = time.perf_counter()
         shard_size_mb = shard_path.stat().st_size / 1e6
-        print(f"[{si+1}/{len(shard_names)}] reading {shard_name}  ({shard_size_mb:.0f} MB)")
+        print(f"[{si + 1}/{len(shard_names)}] reading {shard_name}  ({shard_size_mb:.0f} MB)")
 
         base_tensors: dict[str, torch.Tensor] = {}
         layers_stacked_this_shard = 0
@@ -282,8 +282,7 @@ def main() -> None:
     # ── Step 5: Sanity check ──────────────────────────────────────────────────
     if stackers:
         raise RuntimeError(
-            f"Incomplete expert layers after all shards: {sorted(stackers.keys())} "
-            f"— some expert weights are missing."
+            f"Incomplete expert layers after all shards: {sorted(stackers.keys())} — some expert weights are missing."
         )
 
     # ── Step 6: Update config dtype ───────────────────────────────────────────
@@ -302,7 +301,7 @@ def main() -> None:
     (out / "model.safetensors.index.json").write_text(json.dumps(index, indent=2))
 
     total_elapsed = time.perf_counter() - total_start
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"[SUMMARY] Source         : {src}")
     print(f"[SUMMARY] Output         : {out}")
     print(f"[SUMMARY] Layers stacked : {total_layers_stacked}")
@@ -310,9 +309,8 @@ def main() -> None:
     print(f"[SUMMARY] Total size     : {total_size / 1e9:.2f} GB")
     print(f"[SUMMARY] Total time     : {total_elapsed:.1f}s  ({total_elapsed / 60:.1f} min)")
     print(f'[SUMMARY] Use as         : model_name_or_path = "{out}"')
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
 
 if __name__ == "__main__":
     main()
-

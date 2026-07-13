@@ -96,11 +96,13 @@ def _estimate_layer_stack_gb(
 
     src_bytes = {"F32": 4, "F16": 2, "BF16": 2, "I8": 1}.get(dtype_str, 2)
     tgt_bytes = {torch.float32: 4, torch.float16: 2, torch.bfloat16: 2}.get(target_dtype, 4)
-    I, H = shape
+    ffn_dim, hidden_dim = shape
 
     # Three input accumulators in source dtype + two output tensors in target dtype
-    input_elements = num_experts * (I * H + I * H + H * I)  # gate + up + down
-    output_elements = num_experts * (2 * I * H + H * I)  # gate_up + down_out
+    input_elements = num_experts * (
+        ffn_dim * hidden_dim + ffn_dim * hidden_dim + hidden_dim * ffn_dim
+    )  # gate + up + down
+    output_elements = num_experts * (2 * ffn_dim * hidden_dim + hidden_dim * ffn_dim)  # gate_up + down_out
     return (input_elements * src_bytes + output_elements * tgt_bytes) / 1024**3
 
 
@@ -312,19 +314,19 @@ class _LayerStacker:
         # grok-1 names (linear/linear_v/linear_1),
         # and Mixtral names (w1=gate, w3=up, w2=down) — map to the same accumulators.
         if kind in ("gate_proj", "linear", "w1"):
-            I, H = tensor.shape
+            ffn_dim, hidden_dim = tensor.shape
             if self._gate is None:
-                self._gate = torch.empty(self.num_experts, I, H, dtype=tensor.dtype)
+                self._gate = torch.empty(self.num_experts, ffn_dim, hidden_dim, dtype=tensor.dtype)
             self._gate[expert_idx] = tensor
         elif kind in ("up_proj", "linear_v", "w3"):
-            I, H = tensor.shape
+            ffn_dim, hidden_dim = tensor.shape
             if self._up is None:
-                self._up = torch.empty(self.num_experts, I, H, dtype=tensor.dtype)
+                self._up = torch.empty(self.num_experts, ffn_dim, hidden_dim, dtype=tensor.dtype)
             self._up[expert_idx] = tensor
-        else:  # down_proj / linear_1 / w2 — shape is [H, I]
-            H, I = tensor.shape
+        else:  # down_proj / linear_1 / w2 — shape is [hidden_dim, ffn_dim]
+            hidden_dim, ffn_dim = tensor.shape
             if self._down is None:
-                self._down = torch.empty(self.num_experts, H, I, dtype=tensor.dtype)
+                self._down = torch.empty(self.num_experts, hidden_dim, ffn_dim, dtype=tensor.dtype)
             self._down[expert_idx] = tensor
 
     def stack(self, target_dtype: torch.dtype) -> Dict[str, torch.Tensor]:

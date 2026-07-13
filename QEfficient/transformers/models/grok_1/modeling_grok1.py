@@ -145,11 +145,15 @@ class QEffGrok1MoeBlock(nn.Module):
         E = len(self.experts)
         if self.experts[0].linear.weight.device.type == "meta":
             # Weight-free export: create shape-only meta placeholders on self.experts.
-            H = self.experts[0].linear.weight.shape[1]  # hidden_dim (in_features)
-            I = self.experts[0].linear.weight.shape[0]  # ffn_dim   (out_features)
-            self.experts.register_parameter("gate_proj", nn.Parameter(torch.empty(E, H, I, device="meta")))
-            self.experts.register_parameter("up_proj", nn.Parameter(torch.empty(E, H, I, device="meta")))
-            self.experts.register_parameter("down_proj_t", nn.Parameter(torch.empty(E, I, H, device="meta")))
+            hidden_dim = self.experts[0].linear.weight.shape[1]  # hidden_dim (in_features)
+            ffn_dim = self.experts[0].linear.weight.shape[0]  # ffn_dim   (out_features)
+            self.experts.register_parameter(
+                "gate_proj", nn.Parameter(torch.empty(E, hidden_dim, ffn_dim, device="meta"))
+            )
+            self.experts.register_parameter("up_proj", nn.Parameter(torch.empty(E, hidden_dim, ffn_dim, device="meta")))
+            self.experts.register_parameter(
+                "down_proj_t", nn.Parameter(torch.empty(E, ffn_dim, hidden_dim, device="meta"))
+            )
         else:
             # Normal export: stack actual weights onto self.experts.
             self.experts.register_parameter(

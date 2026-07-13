@@ -652,16 +652,16 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
         self,
     ):
         E = self.experts.gate_up_proj.shape[0]
-        I = self.experts.gate_up_proj.shape[1] // 2
-        H = self.experts.gate_up_proj.shape[2]
+        ffn_dim = self.experts.gate_up_proj.shape[1] // 2
+        hidden_dim = self.experts.gate_up_proj.shape[2]
 
         if self.experts.gate_up_proj.device.type == "meta":
             # Weight-free export: register shape-only placeholders on self.experts so
             # ONNX param names are model.layers.L.mlp.experts.gate_proj etc.,
             # matching the preprocessed checkpoint keys exactly.
-            self.experts.gate_proj = nn.Parameter(torch.empty(E, H, I, device="meta"))
-            self.experts.up_proj = nn.Parameter(torch.empty(E, H, I, device="meta"))
-            self.experts.down_proj_t = nn.Parameter(torch.empty(E, I, H, device="meta"))
+            self.experts.gate_proj = nn.Parameter(torch.empty(E, hidden_dim, ffn_dim, device="meta"))
+            self.experts.up_proj = nn.Parameter(torch.empty(E, hidden_dim, ffn_dim, device="meta"))
+            self.experts.down_proj_t = nn.Parameter(torch.empty(E, ffn_dim, hidden_dim, device="meta"))
             self.act_fn = self.experts.act_fn
             self.num_experts = self.experts.num_experts
             return

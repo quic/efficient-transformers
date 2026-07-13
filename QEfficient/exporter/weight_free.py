@@ -81,8 +81,9 @@ def _resolve_checkpoint_dir(model_id_or_path: str) -> Path:
     snapshot_path = Path(snapshot_dir)
 
     # Check if any weight files were actually downloaded (not just .json config/tokenizer files)
-    has_weights = bool(list(snapshot_path.glob("*.safetensors"))) or \
-                  (snapshot_path / "model.safetensors.index.json").exists()
+    has_weights = (
+        bool(list(snapshot_path.glob("*.safetensors"))) or (snapshot_path / "model.safetensors.index.json").exists()
+    )
 
     if not has_weights:
         # Model has no safetensors on Hub — fall back to .bin files.
@@ -91,9 +92,16 @@ def _resolve_checkpoint_dir(model_id_or_path: str) -> Path:
             repo_id=model_id_or_path,
             allow_patterns=["*.bin", "*.json"],
             ignore_patterns=[
-                "*.onnx", "*.ot", "*.md", "*.txt", "*.pdf",
-                "*.msgpack", "*.h5", "*.pth",
-                "flax_model*", "tf_model*",
+                "*.onnx",
+                "*.ot",
+                "*.md",
+                "*.txt",
+                "*.pdf",
+                "*.msgpack",
+                "*.h5",
+                "*.pth",
+                "flax_model*",
+                "tf_model*",
             ],
             resume_download=True,
         )
