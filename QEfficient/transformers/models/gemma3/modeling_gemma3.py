@@ -26,29 +26,13 @@ from transformers.models.gemma3.modeling_gemma3 import (
     rotate_half,
 )
 
-from QEfficient.customop.rms_norm import CustomRMSNorm
+from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffSlidingWindowCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
-
-
-class GemmaRMSNormFunc(torch.autograd.Function):
-    @staticmethod
-    def forward(hidden_states: torch.Tensor, weight: torch.Tensor, epsilon: float):
-        div_first = hidden_states * torch.rsqrt(torch.tensor(hidden_states.shape[-1], dtype=hidden_states.dtype))
-        variance = div_first.pow(2).sum(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + epsilon)
-        return weight * hidden_states
-
-    @staticmethod
-    def setup_context(ctx, inputs, outputs):
-        pass
-
-    @staticmethod
-    def symbolic(g: torch.Graph, hidden_states: torch.Value, weight: torch.Value, epsilon: torch.Value) -> torch.Value:
-        return g.onnxscript_op(CustomRMSNorm, hidden_states, weight, epsilon_f=epsilon).setTypeAs(hidden_states)
+from QEfficient.utils.custom_op_utils import select_interface
 
 
 class QEffGemma3CustomRMSNormAIC(nn.Module):
@@ -57,7 +41,7 @@ class QEffGemma3CustomRMSNormAIC(nn.Module):
     """
 
     def forward(self, hidden_states):
-        out = GemmaRMSNormFunc.apply(
+        out = select_interface(CustomRMSNormFunc.apply, torch.ops.qefficient.rms_norm)(
             hidden_states,
             (self.weight).to(hidden_states.dtype) + 1.0,
             self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps,
@@ -162,9 +146,8 @@ def eager_attention_forward(
         attn_weights = attn_weights * softcap
 
     if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
-        )
+        mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
+        attn_weights = torch.where(attention_mask, mask_value, attn_weights)
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -257,9 +240,10 @@ class QEffGemma3Attention(Gemma3Attention):
             attn_weights = attn_weights * self.config.attn_logit_softcapping
 
         if attention_mask is not None:  # no matter the length, we just slice it
+            mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
             attn_weights = torch.where(
                 attention_mask.bool(),
-                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=self.config.torch_dtype),
+                mask_value,
                 attn_weights,
             )
 
@@ -282,6 +266,7 @@ class QEffGemma3Attention(Gemma3Attention):
 
 
 class QEffGemma3DecoderLayer(Gemma3DecoderLayer):
+    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -508,6 +493,9 @@ class QEffGemma3TextModel(Gemma3TextModel):
 
 
 class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        return {QEffGemma3DecoderLayer}
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
