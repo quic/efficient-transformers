@@ -763,6 +763,108 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
 # ---------------------------------------------------------------------------
 
 
+class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
+    """Split already-stacked MoE expert weights into the derived layout.
+
+    Some MoE checkpoints (e.g. Mixtral transformers >= 5.x) store experts
+    as per-layer fused tensors rather than per-expert individual weights:
+
+        *.experts.gate_up_proj  [E, 2*I, H]   (gate and up concatenated)
+        *.experts.down_proj     [E, H, I]
+
+    The QEff model wrappers create derived parameters that the ONNX
+    initializer names refer to:
+
+        *.experts.gate_proj     [E, H, I]  = gate_up_proj[:, :ffn_dim, :].T(1,2)
+        *.experts.up_proj       [E, H, I]  = gate_up_proj[:, ffn_dim:, :].T(1,2)
+        *.experts.down_proj_t   [E, I, H]  = down_proj.T(1,2)
+
+    is_applicable returns True only when the fused format is detected.
+    Old-format checkpoints with per-expert keys (e.g. experts.0.gate_proj.weight)
+    are handled by MoEExpertStackingCheckpointTransform instead.
+    Also handles dtype conversion in the same pass.
+    """
+
+    _FUSED_GATE_UP_RE = re.compile(
+        r"^(.+\.experts)\.gate_up_proj$"
+    )
+    _FUSED_DOWN_RE = re.compile(
+        r"^(.+\.experts)\.down_proj$"
+    )
+
+    @classmethod
+    def is_applicable(cls, weight_map: Dict[str, str]) -> bool:
+        return any(cls._FUSED_GATE_UP_RE.match(k) for k in weight_map)
+
+    @classmethod
+    def apply(
+        cls,
+        src: Path,
+        out: Path,
+        target_dtype: torch.dtype = torch.float32,
+        **kwargs,
+    ) -> bool:
+        index_path = src / "model.safetensors.index.json"
+        if index_path.exists():
+            weight_map: Dict[str, str] = json.loads(index_path.read_text())["weight_map"]
+        else:
+            shards = sorted(src.glob("*.safetensors"))
+            if not shards:
+                return False
+            weight_map = {}
+            for shard in shards:
+                with safe_open(str(shard), framework="pt") as f:
+                    for k in f.keys():
+                        weight_map[k] = shard.name
+
+        if not cls.is_applicable(weight_map):
+            return False
+
+        out.mkdir(parents=True, exist_ok=True)
+
+        new_weight_map: Dict[str, str] = {}
+        for shard_name in sorted(set(weight_map.values())):
+            shard_src = src / shard_name
+            if not shard_src.exists():
+                continue
+
+            out_tensors: Dict[str, torch.Tensor] = {}
+            with safe_open(str(shard_src), framework="pt") as f:
+                for key in f.keys():
+                    tensor = f.get_tensor(key).to(target_dtype)
+                    gate_up_m = cls._FUSED_GATE_UP_RE.match(key)
+                    down_m = cls._FUSED_DOWN_RE.match(key)
+
+                    if gate_up_m:
+                        prefix = gate_up_m.group(1)
+                        ffn_dim = tensor.shape[1] // 2
+                        # Split fused [E,2I,H] → gate/up each [E,H,I]
+                        out_tensors[f"{prefix}.gate_proj"] = tensor[:, :ffn_dim, :].transpose(1, 2).contiguous()
+                        out_tensors[f"{prefix}.up_proj"] = tensor[:, ffn_dim:, :].transpose(1, 2).contiguous()
+                        new_weight_map[f"{prefix}.gate_proj"] = shard_name
+                        new_weight_map[f"{prefix}.up_proj"] = shard_name
+                        # Keep original for completeness
+                        out_tensors[key] = tensor
+                        new_weight_map[key] = shard_name
+                    elif down_m:
+                        prefix = down_m.group(1)
+                        # Transpose [E,H,I] → [E,I,H]
+                        out_tensors[f"{prefix}.down_proj_t"] = tensor.transpose(1, 2).contiguous()
+                        new_weight_map[f"{prefix}.down_proj_t"] = shard_name
+                        out_tensors[key] = tensor
+                        new_weight_map[key] = shard_name
+                    else:
+                        out_tensors[key] = tensor
+                        new_weight_map[key] = shard_name
+
+            save_file({k: v.contiguous() for k, v in out_tensors.items()}, str(out / shard_name))
+
+        (out / "model.safetensors.index.json").write_text(
+            json.dumps({"metadata": {}, "weight_map": new_weight_map}, indent=2)
+        )
+        return True
+
+
 class CheckpointTransformPipeline:
     """Selects and runs the first applicable checkpoint transform.
 

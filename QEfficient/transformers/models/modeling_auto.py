@@ -36,10 +36,11 @@ from QEfficient.base.onnx_transforms import (
     SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
-from QEfficient.exporter.checkpoint_transforms import (
+from QEfficient.exporter.weight_free.transforms import (
     DtypeConversionCheckpointTransform,
     GptOssMxfp4ExpertDequantSplitCheckpointTransform,
     MoEExpertStackingCheckpointTransform,
+    MoEFusedExpertSplitCheckpointTransform,
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
@@ -3384,7 +3385,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     _checkpoint_transforms = [
         GptOssMxfp4ExpertDequantSplitCheckpointTransform,  # gpt_oss MXFP4: dequant + split fused proj
-        MoEExpertStackingCheckpointTransform,  # MoE: stacks experts + converts dtype in one pass
+        MoEExpertStackingCheckpointTransform,  # MoE old format: per-expert keys → stacked
+        MoEFusedExpertSplitCheckpointTransform,  # MoE new format: fused gate_up_proj → split/rearrange
         DtypeConversionCheckpointTransform,  # dense: dtype conversion only
     ]
 

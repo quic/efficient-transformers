@@ -52,11 +52,6 @@ class CtxScatterFunc(torch.autograd.Function):
         pass
 
     @staticmethod
-    def backward(ctx, grad_output):
-        # Not needed for inference/export
-        return None, None, None
-
-    @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxScatter, data, position_ids, updates).setTypeAs(data)
 
@@ -97,11 +92,6 @@ class CtxScatterFunc3D(torch.autograd.Function):
         pass
 
     @staticmethod
-    def backward(ctx, grad_output):
-        # Not needed for inference/export
-        return None, None, None
-
-    @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxScatter3D, data, position_ids, updates).setTypeAs(data)
 
@@ -126,11 +116,6 @@ class CtxScatterFunc3DGeneralized(torch.autograd.Function):
     @staticmethod
     def setup_context(ctx, inputs, outputs):
         pass
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        # Not needed for inference/export
-        return None, None, None
 
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
@@ -175,11 +160,6 @@ class CtxScatterFunc3DInt(torch.autograd.Function):
         pass
 
     @staticmethod
-    def backward(ctx, grad_output):
-        # Not needed for inference/export
-        return None, None, None
-
-    @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxScatter3DInt, data, position_ids, updates).setTypeAs(data)
 
@@ -206,11 +186,6 @@ class CtxGatherFunc3D(torch.autograd.Function):
         pass
 
     @staticmethod
-    def backward(ctx, grad_output):
-        # Not needed for inference/export
-        return None, None
-
-    @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxGather3D, data, ctx_indices).setTypeAs(data)
 
@@ -234,11 +209,6 @@ class CtxGatherFunc3DGeneralized(torch.autograd.Function):
     @staticmethod
     def setup_context(ctx, inputs, outputs):
         pass
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        # Not needed for inference/export
-        return None, None
 
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
@@ -275,11 +245,6 @@ class CtxGatherFunc(torch.autograd.Function):
         pass
 
     @staticmethod
-    def backward(ctx, grad_output):
-        # Not needed for inference/export
-        return None, None, None
-
-    @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value, comp_ctx_len: int) -> torch.Value:
         return g.onnxscript_op(CtxGather, data, ctx_indices, comp_ctx_len).setTypeAs(data)
 
@@ -305,11 +270,6 @@ class CtxGatherFuncBlockedKV(torch.autograd.Function):
     @staticmethod
     def setup_context(ctx, inputs, outputs):
         pass
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        # Not needed for inference/export
-        return None, None
 
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:

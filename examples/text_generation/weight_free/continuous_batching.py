@@ -16,18 +16,18 @@ End-to-end smoke-test for weight-free dynamo export with continuous batching (CB
 Usage
 -----
 # Weight-free + continuous batching (default):
-python examples/text_generation/continuous_batching_weightfree.py \\
+python examples/text_generation/weight_free/continuous_batching.py \\
     --model_name Qwen/Qwen2-1.5B-Instruct \\
     --full_batch_size 4
 
 # Smaller test (fewer layers):
-python examples/text_generation/continuous_batching_weightfree.py \\
+python examples/text_generation/weight_free/continuous_batching.py \\
     --model_name Qwen/Qwen2-1.5B-Instruct \\
     --layers 4 \\
     --full_batch_size 4
 
 # Regular dynamo (load real weights) + continuous batching:
-python examples/text_generation/continuous_batching_weightfree.py \\
+python examples/text_generation/weight_free/continuous_batching.py \\
     --model_name Qwen/Qwen2-1.5B-Instruct \\
     --no_weight_free \\
     --full_batch_size 4

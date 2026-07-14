@@ -21,13 +21,13 @@ ORT and PyTorch baseline are intentionally omitted (use compare.py for parity ch
 Usage
 -----
 # Weight-free export (default)
-python examples/text_generation/weight_free_export_verify.py \\
+python examples/text_generation/weight_free/export_compile_infer.py \\
     --model_name meta-llama/Meta-Llama-3.1-8B-Instruct \\
     --layers 2 \\
     --output_dir llama_test
 
 # Regular dynamo export (loads real weights)
-python examples/text_generation/weight_free_export_verify.py \\
+python examples/text_generation/weight_free/export_compile_infer.py \\
     --model_name meta-llama/Meta-Llama-3.1-8B-Instruct \\
     --no_weight_free \\
     --layers 2 \\

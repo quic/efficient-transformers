@@ -18,17 +18,6 @@ from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from torch import nn
 
-from QEfficient.exporter.checkpoint_transforms import CheckpointTransformPipeline
-from QEfficient.exporter.weight_spec import (
-    ExternalDataFile,
-    TiedWeightAlias,
-    WeightSpec,
-    WeightSpecInput,
-    WeightSpecLocation,
-    load_weight_spec,
-    resolve_weight_spec_path,
-    save_weight_spec,
-)
 from QEfficient.transformers.embeddings.embedding_utils import PooledModel
 from QEfficient.transformers.models.pytorch_transforms import PoolingTransform
 from QEfficient.utils.export_utils import (
@@ -42,9 +31,21 @@ from QEfficient.utils.torch_patches import (
     temporarily_enable_nested_compile_regions,
 )
 
+from .spec import (
+    ExternalDataFile,
+    TiedWeightAlias,
+    WeightSpec,
+    WeightSpecInput,
+    WeightSpecLocation,
+    load_weight_spec,
+    resolve_weight_spec_path,
+    save_weight_spec,
+)
+from .transforms import CheckpointTransformPipeline
+
 # Memory profiler from scripts/memory_profiling — optional, degrades gracefully
 # if the scripts directory is not on the path or matplotlib is missing.
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "scripts"))
 try:
     from memory_profiling import QEffMemoryProfiler as _QEffMemoryProfiler
 

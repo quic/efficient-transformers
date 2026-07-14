@@ -53,8 +53,8 @@ from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxScatterCB3D,
 )
 from QEfficient.customop.rms_norm import CustomRMSNorm
-from QEfficient.exporter.checkpoint_transforms import BaseCheckpointTransform, DtypeConversionCheckpointTransform
-from QEfficient.exporter.weight_spec import resolve_weight_spec_path
+from QEfficient.exporter.weight_free.spec import resolve_weight_spec_path
+from QEfficient.exporter.weight_free.transforms import BaseCheckpointTransform, DtypeConversionCheckpointTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
@@ -532,7 +532,7 @@ class QEFFBaseModel(ABC):
             export_kwargs = {} if export_kwargs is None else export_kwargs
 
             if use_weight_free_export:
-                from QEfficient.exporter.weight_free import export_weight_free_onnx, log_weight_free_export
+                from QEfficient.exporter.weight_free.core import export_weight_free_onnx, log_weight_free_export
 
                 dynamic_axes = None
                 export_kwargs = dict(export_kwargs)
@@ -691,7 +691,7 @@ class QEFFBaseModel(ABC):
         self.onnx_path = onnx_path
 
         if use_weight_free_export and self.weight_spec_path is not None:
-            from QEfficient.exporter.weight_spec import load_weight_spec
+            from QEfficient.exporter.weight_free.spec import load_weight_spec
 
             spec = load_weight_spec(self.weight_spec_path)
             prepared_out = Path(spec.model_id)
