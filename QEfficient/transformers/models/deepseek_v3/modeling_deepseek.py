@@ -33,23 +33,6 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MAX_POSITION_EMBEDDINGS, MIN_MASKED_ATTENTION_VALUE
 
 
-def _get_linear_weight(linear_module: nn.Module) -> torch.Tensor:
-    """Return a linear layer weight, decompressing compressed-tensors modules if needed."""
-    weight = getattr(linear_module, "weight", None)
-    if weight is not None:
-        return weight
-
-    if hasattr(linear_module, "weight_packed") and hasattr(linear_module, "weight_scale"):
-        from compressed_tensors.compressors.base import decompress_module as ct_decompress_module
-
-        ct_decompress_module(linear_module)
-        weight = getattr(linear_module, "weight", None)
-        if weight is not None:
-            return weight
-
-    raise AttributeError(f"{linear_module.__class__.__name__!s} object has no attribute 'weight'")
-
-
 def rotate_half(x):
     """Rotates half the hidden dims of the input."""
     x1 = x[..., : x.shape[-1] // 2]
@@ -140,17 +123,6 @@ class DeepseekV3RotaryEmbedding(nn.Module):
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
 
-#    def forward(self, x, seq_len=None):
-#        # x: [bs, num_attention_heads, seq_len, head_size]
-#        if self.max_seq_len_cached is None or seq_len > self.max_seq_len_cached:
-#            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-#
-#        return (
-#            self.cos_cached[:seq_len].to(dtype=x.dtype),
-#            self.sin_cached[:seq_len].to(dtype=x.dtype),
-#        )
-
-
 class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
     def __init__(
         self,
@@ -230,8 +202,6 @@ def orig_apply_rotary_pos_emb(q, k, cos, sin):  # , position_ids, unsqueeze_dim=
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    #    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
-    #    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
 
     b, h, s, d = q.shape
     q = q.view(b, h, s, d // 2, 2).transpose(4, 3).reshape(b, h, s, d)
@@ -731,9 +701,7 @@ class QEffDeepseekV3Attention(nn.Module):
 
         kv = (
             self.kv_b_proj(self.kv_a_layernorm(kva))
-            .view(
-                bsz, q_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim
-            )  # TODO : split this matmul #with k_up and v_up
+            .view(bsz, q_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim)
             .transpose(1, 2)
         )
 
@@ -814,7 +782,7 @@ class QEffDeepseekV3Attention(nn.Module):
             )
 
 
-EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "4"))
+EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
 EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
 
 
@@ -1090,7 +1058,6 @@ class QEffDeepseekV3MoE(nn.Module):
         tokens_per_expert = cnts.sum(dim=0)
         idxs = topk_ids.view(-1).argsort()
         sorted_tokens = x[idxs // topk_ids.shape[1]]
-        # sorted_tokens_shape = sorted_tokens.shape
         tokens_per_expert = tokens_per_expert.cpu().numpy()
 
         outputs = []
@@ -1668,8 +1635,7 @@ class QEffDeepseekV3Model(nn.Module):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        # ctx_len = compressed_kvs.layers[0].ckv.shape[-2]
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_len)  # ctx_len)
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_len)
         hidden_states = inputs_embeds
         position_embeddings = None
 

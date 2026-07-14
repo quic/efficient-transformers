@@ -34,10 +34,10 @@ from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-PREFILL_SEQ_LEN = 32
-CTX_LEN = 1024
+PREFILL_SEQ_LEN = 512
+CTX_LEN = 2048
 BATCH_SIZE = 1
-GENERATION_LEN = 4
+GENERATION_LEN = 10
 NUM_VISION_LAYERS = 2
 NUM_TEXT_LAYERS = 2
 
@@ -153,9 +153,9 @@ def _compile_disagg_qpcs(qeff_model: QEFFAutoModelForImageTextToText, compile_di
 
     prefill_qpc_path = qeff_model.compile(
         prefill_seq_len=PREFILL_SEQ_LEN,
-        retain_full_kv=True,
+        #retain_full_kv=True,
         prefill_only=True,
-        enable_chunking=True,
+        #enable_chunking=True,
         skip_vision=True,
         skip_lang=False,
         **common_compile_kwargs,

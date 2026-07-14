@@ -1089,3 +1089,179 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
             lang[0].pop("vision_size")
             lang[1].pop("vision_size")
             return lang, compiler_options
+
+    def get_specializations_multi_res(
+        self,
+        batch_size: int,
+        prefill_seq_len: int,
+        ctx_len: int,
+        img_size: None,
+        h: int | List[int] = None,
+        w: int | List[int] = None,
+        num_frames: int | List[int] = 1,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
+        **compiler_options,
+    ):
+        comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
+        comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+        num_patches = compiler_options.pop("num_patches", None)
+        h = compiler_options.pop("h", None)
+        w = compiler_options.pop("w", None)
+        num_image_tokens = compiler_options.pop("num_image_tokens", None)
+
+        height = [h] if isinstance(h, int) else h
+        width = [w] if isinstance(w, int) else w
+        num_frames = [num_frames] * len(h) if isinstance(num_frames, int) else num_frames
+
+        prefill_seq_len = prefill_seq_len if prefill_seq_len else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        ctx_len = ctx_len if ctx_len else constants.ONNX_EXPORT_CTX_LEN
+
+        channel = 3
+        patch_size = self.config.vision_config.patch_size
+        #temporal_patch_size = self.config.vision_config.temporal_patch_size
+
+        IMAGE_FACTOR = constants.IMAGE_FACTOR_QWEN_2_5
+        IMAGE_MIN_TOKEN_NUM = constants.IMAGE_MIN_TOKEN_NUM
+        IMAGE_MAX_TOKEN_NUM = constants.IMAGE_MAX_TOKEN_NUM
+        min_pixels = IMAGE_MIN_TOKEN_NUM * IMAGE_FACTOR**2
+        max_pixels = IMAGE_MAX_TOKEN_NUM * IMAGE_FACTOR**2
+        breakpoint()
+        mm_processor_kwargs = compiler_options.pop("mm_processor_kwargs", None)
+        if mm_processor_kwargs:
+            min_pixels = mm_processor_kwargs.get("min_pixels", min_pixels)
+            max_pixels = mm_processor_kwargs.get("max_pixels", max_pixels)
+
+        vision = []
+        max_vision_size = 0
+        user_vision_size = compiler_options.pop("vision_size", None)
+        if user_vision_size:
+            assert user_vision_size < ctx_len, "vision_size must be less than ctx_len"
+            max_vision_size = user_vision_size
+
+        for h, w, f in zip(height, width, num_frames):
+            resized_height, resized_width = smart_resize(
+                height=h, width=w, factor=IMAGE_FACTOR, min_pixels=min_pixels, max_pixels=max_pixels
+            )
+            grid_h, grid_w = resized_height // patch_size, resized_width // patch_size
+            grid_height = grid_h * grid_w
+            grid_width = patch_size * patch_size * temporal_patch_size * channel
+            vision_size = grid_height // 4
+            grid_height = grid_height * batch_size
+            if not user_vision_size:
+                max_vision_size = max(max_vision_size, vision_size * f)
+                assert max_vision_size < ctx_len, (
+                    f"Computed vision_size of {vision_size * f} tokens "
+                    f"(vision_size={vision_size}, num_frames={f}) for image resolution "
+                    f"(width={w}, height={h}) must be less than ctx_len. Please adjust the image "
+                    "resolution."
+                )
+            else:
+                if vision_size * f > user_vision_size:
+                    logger.warning_once(
+                        f"Computed vision_size of {vision_size * f} tokens "
+                        f"(vision_size={vision_size}, num_frames={f}) for image resolution "
+                        f"(width={w}, height={h}) exceeds the provided "
+                        f"vision_size={user_vision_size}. "
+                        f"Vision embedding needs to be chunked during prefill."
+                    )
+
+            vision.append(
+                {
+                    "batch_size": batch_size,
+                    "vision_size": vision_size,
+                    "grid_height": grid_height,
+                    "grid_width": grid_width,
+                    "grid_h": grid_h,
+                    "grid_w": grid_w,
+                }
+            )
+
+        num_patches = num_patches if num_patches is not None else constants.KIMI_NUM_PATCHES
+        h = h if h is not None else constants.KIMI_IMAGE_HEIGHT
+        w = w if w is not None else constants.KIMI_IMAGE_WIDTH
+        num_image_tokens = num_image_tokens if num_image_tokens is not None else constants.KIMI_NUM_IMAGE_TOKENS
+
+        vision = [
+            {
+                "num_patches": num_patches,
+                "h": h,
+                "w": w,
+                "num_image_tokens": num_image_tokens,
+            }
+        ]
+
+        if comp_ctx_lengths_prefill is not None:
+            lang = []
+
+            for i in range(0, len(comp_ctx_lengths_prefill)):
+                lang_prefill = {
+                    "batch_size": 1 if continuous_batching else batch_size,
+                    "seq_len": prefill_seq_len,
+                    "ctx_len": ctx_len,
+                    "num_image_tokens": num_image_tokens,
+                }
+                if continuous_batching:
+                    lang_prefill["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_prefill["batch_size"] = kv_cache_batch_size
+                if full_batch_size:
+                    lang_prefill["full_batch_exec_size"] = full_batch_size
+
+                lang.append(lang_prefill)
+
+            for i in range(0, len(comp_ctx_lengths_decode)):
+                lang_decode = {
+                    "batch_size": full_batch_size if continuous_batching else batch_size,
+                    "seq_len": "1",
+                    "ctx_len": ctx_len,
+                    "num_image_tokens": num_image_tokens,
+                }
+
+                if continuous_batching:
+                    lang_decode["full_batch_size"] = kv_cache_batch_size
+                else:
+                    lang_decode["batch_size"] = kv_cache_batch_size
+
+                lang.append(lang_decode)
+
+        else:
+            lang_prefill = {
+                "batch_size": 1 if continuous_batching else batch_size,
+                "seq_len": prefill_seq_len,
+                "ctx_len": ctx_len,
+                "num_image_tokens": num_image_tokens,
+            }
+            if continuous_batching:
+                lang_prefill["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_prefill["batch_size"] = kv_cache_batch_size
+            if full_batch_size:
+                lang_prefill["full_batch_exec_size"] = full_batch_size
+
+            lang_decode = {
+                "batch_size": full_batch_size if continuous_batching else batch_size,
+                "seq_len": 1,
+                "ctx_len": ctx_len,
+                "num_image_tokens": num_image_tokens,
+            }
+
+            if continuous_batching:
+                lang_decode["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_decode["batch_size"] = kv_cache_batch_size
+
+            lang = [lang_prefill, lang_decode]
+
+        specializations = {}
+
+        if kv_offload:
+            specializations["vision"] = vision
+            specializations["lang"] = lang
+            return specializations, compiler_options
+        else:
+            lang[0].pop("vision_size")
+            lang[1].pop("vision_size")
+            return lang, compiler_options

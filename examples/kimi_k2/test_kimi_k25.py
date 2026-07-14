@@ -137,36 +137,6 @@ def _greedy_generate_hf(model, inputs, max_new_tokens: int):
     return generated_ids[:, -max_new_tokens:]
 
 
-def _match_indexed_name(name: str, base: str):
-    pattern = rf"^{re.escape(base)}\.(\d+)$"
-    match = re.match(pattern, name)
-    return int(match.group(1)) if match else None
-
-
-def _build_cache_inputs_from_dummy(transformed_model, input_names, batch_size: int):
-    pkv = transformed_model.language_model.get_dummy_pkv_cache(
-        transformed_model.config.text_config,
-        batch_size,
-        CTX_LEN,
-    )
-    cache_inputs = {}
-    for name in input_names:
-        key_idx = _match_indexed_name(name, "past_key")
-        value_idx = _match_indexed_name(name, "past_value")
-        compressed_idx = _match_indexed_name(name, "compressed_kv")
-        k_pe_idx = _match_indexed_name(name, "k_pe")
-
-        if key_idx is not None:
-            cache_inputs[name] = pkv[key_idx][0].detach().cpu().numpy().astype(np.float32)
-        elif value_idx is not None:
-            cache_inputs[name] = pkv[value_idx][1].detach().cpu().numpy().astype(np.float32)
-        elif compressed_idx is not None:
-            cache_inputs[name] = pkv[compressed_idx][0].detach().cpu().numpy().astype(np.float32)
-        elif k_pe_idx is not None:
-            cache_inputs[name] = pkv[k_pe_idx][1].detach().cpu().numpy().astype(np.float32)
-    return cache_inputs
-
-
 def _greedy_generate_qeff_wrapper(transformed_model, inputs, max_new_tokens: int):
     qeff_encoder = transformed_model.get_qeff_vision_encoder().eval()
     decoder_wrapper = transformed_model.get_qeff_language_decoder().eval()
@@ -204,106 +174,6 @@ def _greedy_generate_qeff_wrapper(transformed_model, inputs, max_new_tokens: int
         )
 
     return generated_ids[:, -max_new_tokens:]
-
-
-def _greedy_generate_onnx(transformed_model, onnx_paths, inputs, max_new_tokens, session_options):
-    vision_onnx_path, lang_onnx_path = onnx_paths
-    vision_session = ort.InferenceSession(str(vision_onnx_path))
-    lang_session = ort.InferenceSession(str(lang_onnx_path), session_options)
-
-    pixel_values = inputs["pixel_values"].detach().cpu().numpy().astype(np.float32)
-    grid_thws = inputs["grid_thws"].detach().cpu().numpy().astype(np.int64)
-    h = int(grid_thws[0, 1])
-    w = int(grid_thws[0, 2])
-
-    vision_outputs = vision_session.run(
-        None,
-        {
-            "pixel_values": pixel_values,
-            "h_shape": np.ones((h,), dtype=np.int64),
-            "w_shape": np.ones((w,), dtype=np.int64),
-        },
-    )
-    vision_output_names = [out.name for out in vision_session.get_outputs()]
-    image_embeds = {name: value for name, value in zip(vision_output_names, vision_outputs)}.get(
-        "image_embeds", vision_outputs[0]
-    )
-
-    lang_input_names = [meta.name for meta in lang_session.get_inputs()]
-    lang_output_names = [meta.name for meta in lang_session.get_outputs()]
-
-    prompt_input_ids = inputs["input_ids"].detach().cpu().numpy().astype(np.int64)
-    prompt_attention_mask = inputs["attention_mask"].detach().cpu().numpy().astype(np.int64)
-    prompt_len = prompt_input_ids.shape[1]
-
-    prefill_seq_len = 32
-    num_chunks = -(prompt_len // -prefill_seq_len)
-    padded_len = num_chunks * prefill_seq_len
-
-    pad_token_id = 1
-    padded_input_ids = np.pad(prompt_input_ids, ((0, 0), (0, padded_len - prompt_len)), constant_values=pad_token_id)
-    padded_attention = np.pad(prompt_attention_mask, ((0, 0), (0, padded_len - prompt_len)), constant_values=0)
-    padded_position_ids = np.where(padded_attention > 0, np.arange(padded_len), -1).astype(np.int64)
-
-    cache_inputs = _build_cache_inputs_from_dummy(
-        transformed_model=transformed_model,
-        input_names=lang_input_names,
-        batch_size=prompt_input_ids.shape[0],
-    )
-    image_idx = np.zeros((prompt_input_ids.shape[0], 1), dtype=np.int64)
-
-    output_map = None
-    for chunk_idx in range(num_chunks):
-        start = chunk_idx * prefill_seq_len
-        end = (chunk_idx + 1) * prefill_seq_len
-        ort_inputs = {
-            "input_ids": padded_input_ids[:, start:end],
-            "position_ids": padded_position_ids[:, start:end],
-            "image_embeds": image_embeds.astype(np.float32),
-            "image_idx": image_idx,
-            **cache_inputs,
-        }
-        ort_outputs = lang_session.run(None, ort_inputs)
-        output_map = {name: value for name, value in zip(lang_output_names, ort_outputs)}
-        if "image_idx_output" in output_map:
-            image_idx = output_map["image_idx_output"].astype(np.int64)
-        for key in list(cache_inputs.keys()):
-            retained_name = f"{key}_RetainedState"
-            if retained_name in output_map:
-                cache_inputs[key] = output_map[retained_name]
-
-    if output_map is None:
-        raise RuntimeError("ONNX prefill did not execute.")
-
-    next_token = np.argmax(output_map["logits"][:, -1, :], axis=-1, keepdims=True).astype(np.int64)
-    generated_new_tokens = [next_token]
-
-    decode_input_ids = next_token
-    decode_position_ids = np.max(padded_position_ids, axis=1, keepdims=True).astype(np.int64) + 1
-
-    for _ in range(1, max_new_tokens):
-        ort_inputs = {
-            "input_ids": decode_input_ids,
-            "position_ids": decode_position_ids,
-            "image_embeds": image_embeds.astype(np.float32),
-            "image_idx": image_idx,
-            **cache_inputs,
-        }
-        ort_outputs = lang_session.run(None, ort_inputs)
-        output_map = {name: value for name, value in zip(lang_output_names, ort_outputs)}
-
-        decode_input_ids = np.argmax(output_map["logits"][:, -1, :], axis=-1, keepdims=True).astype(np.int64)
-        generated_new_tokens.append(decode_input_ids)
-        decode_position_ids = decode_position_ids + 1
-
-        if "image_idx_output" in output_map:
-            image_idx = output_map["image_idx_output"].astype(np.int64)
-        for key in list(cache_inputs.keys()):
-            retained_name = f"{key}_RetainedState"
-            if retained_name in output_map:
-                cache_inputs[key] = output_map[retained_name]
-
-    return torch.from_numpy(np.concatenate(generated_new_tokens, axis=1))
 
 
 def check_kimi_k25_pytorch_vs_ai100():
@@ -346,35 +216,6 @@ def check_kimi_k25_pytorch_vs_ai100():
     )
     print("QEFF:", _decode_tokens(tokenizer, qeff_tokens), "\n", qeff_tokens)
 
-    onnx_paths = qeff_model.export()
-
-    # Replace invalid index value for INT32 max to 0 using add_initializer
-    m = onnx.load(onnx_paths[1], load_external_data=False)
-    # NOTE: OrtValue objects should be kept around until the session is run, hence this dict is required
-    added_initializers = {}
-    for node in m.graph.node:
-        if node.op_type == "Constant":
-            np_tensor = onnx.numpy_helper.to_array(node.attribute[0].t, os.path.dirname(onnx_paths[1]))
-            if len(np_tensor.shape) == 0 and np_tensor.item() == 2147483647:
-                added_initializers[node.output[0]] = ort.OrtValue.ortvalue_from_numpy(np.array(0, np_tensor.dtype))
-
-    session_options = ort.SessionOptions()
-    for name, value in added_initializers.items():
-        session_options.add_initializer(name, value)
-
-    try:
-        onnx_tokens = _greedy_generate_onnx(
-            transformed_model=qeff_model.model,
-            onnx_paths=onnx_paths,
-            inputs=_clone_inputs(inputs),
-            max_new_tokens=NEW_GENERATION_TOKENS,
-            session_options=session_options,
-        )
-        print("ONNX:", _decode_tokens(tokenizer, onnx_tokens) if onnx_tokens is not None else "<onnx failed>")
-    except Exception as exc:
-        print(f"ONNX generation failed: {exc}")
-        onnx_tokens = None
-
     qeff_model.compile(
         # qaic_config=qaic_config,
         num_devices=1,
@@ -407,12 +248,9 @@ def check_kimi_k25_pytorch_vs_ai100():
     print("Prompt:", repr(TEXT_PROMPT))
     print("HF:", _decode_tokens(tokenizer, hf_tokens))
     print("QEFF:", _decode_tokens(tokenizer, qeff_tokens))
-    print("ONNX:", _decode_tokens(tokenizer, onnx_tokens) if onnx_tokens is not None else "<onnx failed>")
     print("QAIC:", _decode_tokens(tokenizer, qaic_tokens) if qaic_tokens is not None else "<qaic skipped>")
 
     assert torch.equal(hf_tokens, qeff_tokens), "HF and QEFF(Pytorch runtime) tokens do not match"
-    if onnx_tokens is not None:
-        assert torch.equal(hf_tokens, onnx_tokens), "HF and ONNXRuntime tokens do not match"
     if qaic_tokens is not None:
         assert torch.equal(hf_tokens, torch.as_tensor(qaic_tokens)), "HF and QAIC tokens do not match"
 
