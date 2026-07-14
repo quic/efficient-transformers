@@ -13,16 +13,11 @@ the per-expert activation profiles. Model files declare their variation points a
 delegate the rest here so the math lives in one place.
 """
 
-from QEfficient.transformers.moe.adapters import (
-    MoEAdapterSpec,
-    bind_moe_adapter_methods,
-    build_moe_weights,
-    get_moe_adapter_spec,
-    register_moe_adapter,
-)
 from QEfficient.transformers.moe.block import QEffMoEBlockMixin
 from QEfficient.transformers.moe.flavours import (
     MoEFlavour,
+    build_matched_idx_from_cumsum,
+    cumsum_scatter_gather_update_expert_blocked,
     densify_topk,
     moe_decode_bmm,
     moe_expert_blocked,
@@ -30,10 +25,6 @@ from QEfficient.transformers.moe.flavours import (
     moe_simple_loop,
     resolve_routing,
     select_moe_flavour,
-)
-from QEfficient.transformers.moe.kernels import (
-    build_matched_idx_from_cumsum,
-    cumsum_scatter_gather_update_expert_blocked,
 )
 from QEfficient.transformers.moe.profiles import (
     SILU_GLU_PROFILE,
@@ -50,11 +41,6 @@ from QEfficient.transformers.moe.weights import (
 
 __all__ = [
     "QEffMoEBlockMixin",
-    "MoEAdapterSpec",
-    "bind_moe_adapter_methods",
-    "build_moe_weights",
-    "get_moe_adapter_spec",
-    "register_moe_adapter",
     "MoEFlavour",
     "densify_topk",
     "moe_decode_bmm",
