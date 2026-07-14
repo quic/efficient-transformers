@@ -283,6 +283,18 @@ from transformers.models.starcoder2.modeling_starcoder2 import (
     Starcoder2ForCausalLM,
     Starcoder2Model,
 )
+
+from transformers.models.glm_ocr.modeling_glm_ocr import (
+    GlmOcrForConditionalGeneration,
+    GlmOcrModel,
+    GlmOcrRMSNorm,
+    GlmOcrTextAttention,
+    GlmOcrTextDecoderLayer,
+    GlmOcrTextModel,
+    GlmOcrTextRotaryEmbedding,
+    GlmOcrVisionAttention,
+    GlmOcrVisionModel,
+)
 from transformers.models.t5.modeling_t5 import (
     T5Attention,
     T5LayerNorm,
@@ -619,6 +631,17 @@ from QEfficient.transformers.models.starcoder2.modeling_starcoder2 import (
     QEFFStarcoder2DecoderLayer,
     QEffStarcoder2ForCausalLM,
     QEffStarcoder2Model,
+)
+
+from QEfficient.transformers.models.glm_ocr.modeling_glm_ocr import (
+    QEffGlmOcrForConditionalGeneration,
+    QEffGlmOcrModel,
+    QEffGlmOcrTextAttention,
+    QEffGlmOcrTextDecoderLayer,
+    QEffGlmOcrTextModel,
+    QEffGlmOcrTextRotaryEmbedding,
+    QEffGlmOcrVisionAttention,
+    QEffGlmOcrVisionModel,
 )
 from QEfficient.transformers.models.t5.modeling_t5 import (
     QEffT5Attention,
@@ -1318,6 +1341,29 @@ class PoolingTransform:
         model = PooledModel(model, pooling_method)
         warnings.warn("Pooling is applied to the model.")
         return model, transformed
+
+
+# ---------------------------------------------------------------------------
+# GLM-OCR registration
+# ---------------------------------------------------------------------------
+KVCacheTransform._module_mapping.update(
+    {
+        # GlmOcr
+        GlmOcrForConditionalGeneration: QEffGlmOcrForConditionalGeneration,
+        GlmOcrModel: QEffGlmOcrModel,
+        GlmOcrTextAttention: QEffGlmOcrTextAttention,
+        GlmOcrTextDecoderLayer: QEffGlmOcrTextDecoderLayer,
+        GlmOcrVisionAttention: QEffGlmOcrVisionAttention,
+        GlmOcrVisionModel: QEffGlmOcrVisionModel,
+        GlmOcrTextModel: QEffGlmOcrTextModel,
+        GlmOcrTextRotaryEmbedding: QEffGlmOcrTextRotaryEmbedding,
+    }
+)
+CustomOpsTransform._module_mapping.update(
+    {
+        GlmOcrRMSNorm: CustomRMSNormAIC,
+    }
+)
 
 
 def get_decoder_layer_classes_for_export(model: nn.Module) -> set:

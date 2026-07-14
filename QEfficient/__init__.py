@@ -49,7 +49,11 @@ from QEfficient.base import (
 from QEfficient.compile.compile_helper import compile
 from QEfficient.exporter.export_hf_to_cloud_ai_100 import qualcomm_efficient_converter
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
-from QEfficient.peft import QEffAutoPeftModelForCausalLM
+
+try:
+    from QEfficient.peft import QEffAutoPeftModelForCausalLM
+except Exception:  # peft has incompatible transformers dependency in some versions
+    QEffAutoPeftModelForCausalLM = None
 from QEfficient.transformers.transform import transform
 from QEfficient.utils import custom_format_warning
 from QEfficient.utils.logging_utils import logger
