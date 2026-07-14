@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 import math
 import os
+from functools import partial
 from typing import Callable, Optional, Type, Union
 
 import torch
@@ -39,8 +40,11 @@ from QEfficient.blocking.attention_blocking import (
 from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.moe import (
+    MoEProfile,
     MoEWeights,
+    QEffMoEBlockMixin,
     build_canonical_expert_weights,
+    gptoss_clamped_glu_mlp,
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
@@ -240,10 +244,37 @@ class _QEffGptOssLegacyBlockedMixin:
         return expert_out.view(B, S, H), router_logits
 
 
-class QEffGptOssMLP(_QEffGptOssLegacyBlockedMixin, GptOssMLP):
+class QEffGptOssMLP(_QEffGptOssLegacyBlockedMixin, QEffMoEBlockMixin, GptOssMLP):
+    _moe_return_router_logits = True
+    supports_moe_prefill_blocking = True
+    supports_static_moe_prefill_chunks = True
+
     def _ensure_moe_weights(self):
+        self.build_moe_weights()
+
+    def build_moe_weights(self) -> MoEWeights:
         if getattr(self.experts, "moe_weights", None) is None:
             self.experts.build_moe_weights()
+        self.moe_weights = self.experts.moe_weights
+        return self.moe_weights
+
+    def get_moe_weights(self) -> MoEWeights:
+        if getattr(self, "moe_weights", None) is None:
+            self.build_moe_weights()
+        return self.moe_weights
+
+    @property
+    def moe_profile(self) -> MoEProfile:
+        return MoEProfile(
+            expert_mlp=partial(gptoss_clamped_glu_mlp, limit=self.experts.limit, alpha=self.experts.alpha),
+            has_bias=True,
+        )
+
+    def route(self, x: torch.Tensor):
+        router_logits = F.linear(x, self.router.weight, self.router.bias)
+        top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)
+        top_w = F.softmax(top_w, dim=1, dtype=top_w.dtype)
+        return (top_i, top_w), router_logits
 
     # ------------------- Gather based, weights as activation approach ---------------
     def forward_weights_as_activation(self, hidden_states):
@@ -290,53 +321,10 @@ class QEffGptOssMLP(_QEffGptOssLegacyBlockedMixin, GptOssMLP):
 
         return experts_out, router_logits
 
-    # ------------------- Gather based, weights as activation approach, With Seperate Gate, up Projections ---------------
     def forward(self, hidden_states):
-        self._ensure_moe_weights()
-        bs, seq_len, _ = hidden_states.shape
-        hidden_states = hidden_states.view(bs * seq_len, self.experts.hidden_size)
-
-        # Router computation
-        router_logits = F.linear(hidden_states, self.router.weight, self.router.bias)
-        router_top_value, router_indices = torch.topk(router_logits, self.router.top_k, dim=-1)
-        router_top_value = torch.nn.functional.softmax(router_top_value, dim=1, dtype=router_top_value.dtype)
-
-        # GATHER - collect weights for selected experts (separate gate and up projections)
-        gate_proj = self.experts.gate_proj[router_indices.flatten()]
-        gate_proj_bias = self.experts.gate_proj_bias[router_indices.flatten()]
-        up_proj = self.experts.up_proj[router_indices.flatten()]
-        up_proj_bias = self.experts.up_proj_bias[router_indices.flatten()]
-        down_proj = self.experts.down_proj[router_indices.flatten()]
-        down_proj_bias = self.experts.down_proj_bias[router_indices.flatten()]
-
-        # Reshape for bmm: (bs*seq_len*top_k, 1, hidden_size)
-        expert_in = (
-            hidden_states.unsqueeze(1)
-            .expand(-1, self.router.top_k, -1)
-            .contiguous()
-            .view(-1, 1, self.experts.hidden_size)
-        )
-
-        # Apply gate and up projections separately using bmm
-        gate = torch.bmm(expert_in, gate_proj) + gate_proj_bias.unsqueeze(1)
-        up = torch.bmm(expert_in, up_proj) + up_proj_bias.unsqueeze(1)
-
-        # Apply activation with clamping
-        gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
-        up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
-
-        # GLU activation
-        glu = gate * torch.sigmoid(gate * self.experts.alpha)
-        gated_output = (up + 1) * glu
-
-        # Down projection
-        experts_out = torch.bmm(gated_output, down_proj) + down_proj_bias.unsqueeze(1)
-        experts_out = experts_out.view(bs * seq_len, self.router.top_k, self.experts.hidden_size)
-
-        # Apply routing weights AFTER expert computation
-        experts_out = experts_out * router_top_value.unsqueeze(-1)
-        experts_out_sum = torch.einsum("bnd->bd", experts_out)
-        return experts_out_sum, router_logits
+        if os.environ.get("NUM_FFN_BLOCKS", None) is not None:
+            return self.blocked_ffn_forward(hidden_states)
+        return QEffMoEBlockMixin.forward(self, hidden_states)
 
     def optimized_moe_forward(self, hidden_states: torch.Tensor):
         self._ensure_moe_weights()
