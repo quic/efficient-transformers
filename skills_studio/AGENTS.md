@@ -73,8 +73,11 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
 ## Local agent setup
 - Skills live under `skills_studio/skills/`. Each skill is a `SKILL.md` plus optional
   `references/` and `scripts/`.
+- Subagents live under `skills_studio/agents/`. Each subagent is an `AGENT.md`
+  (definition + frontmatter) plus a `README.md` (overview, when to use it).
 - Local OpenAI Codex agents: run `make codex` after cloning to wire skills under `.agents/skills`.
-- Local Claude Code agents: run `make claude` after cloning to wire skills under `.claude/skills`.
+- Local Claude Code agents: run `make claude` after cloning to wire skills under `.claude/skills`
+  and subagents under `.claude/agents`.
 - Remove the generated links with `make clean-ai`. The `.agents/` and `.claude/`
   directories are gitignored; only `skills_studio/` is tracked.
 
@@ -91,3 +94,11 @@ Use a skill when the task matches its description. Open the `SKILL.md` for the f
   including module mappers, external method mappers, mutators, bespoke transforms,
   registration, and transform tests.
   (`skills_studio/skills/qeff-transform-authoring/SKILL.md`)
+
+## Available agents
+Use a subagent when the task matches its description. Open the `AGENT.md` for the full workflow.
+- `qeff-bug-fix` — Take a JIRA ticket, bug report, or reproducer and produce a
+  minimal, tested fix: reproduce, diagnose via symptom-first hypothesis
+  generation, apply the fix, add a regression test, and verify — without
+  committing, pushing, or opening a PR.
+  (`skills_studio/agents/qeff-bug-fix/AGENT.md`)
