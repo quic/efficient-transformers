@@ -12,13 +12,13 @@ and asks for a bug fix. Trigger phrases: "fix this JIRA", "fetch JIRA ...",
 
 ## What it does
 
-1. Ingests the bug report (Qualcomm JIRA DC via REST API, public tracker via
+1. Ingests the bug report (JIRA Data Center via REST API, public tracker via
    `WebFetch`, or pasted text).
 2. Builds a mental model of the affected code path and generates at least two
    hypothesis families from the symptom before picking one to pursue.
-3. Writes a standalone reproduction script into `/home/rishinr/e2e_stack/`
-   (modeled on `examples/`) so the failure can be re-run by the agent or the
-   user.
+3. Writes a standalone reproduction script into a dedicated repro directory
+   (default `./repro/`, modeled on `examples/`) so the failure can be re-run by
+   the agent or the user.
 4. Designs and applies a minimal fix, adds or updates a regression test, and
    iterates a bounded verify-loop (reproduce → fix → re-verify → check for
    collateral damage → lint) until the evidence ladder is green — or reports
