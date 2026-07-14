@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 import math
 import os
-from functools import partial
 from typing import Callable, Optional, Type, Union
 
 import torch
@@ -40,12 +39,8 @@ from QEfficient.blocking.attention_blocking import (
 from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.moe import (
-    MoEFlavour,
-    MoEProfile,
     MoEWeights,
-    QEffMoEBlockMixin,
     build_canonical_expert_weights,
-    gptoss_clamped_glu_mlp,
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
@@ -76,53 +71,14 @@ class QEffGptOssExperts(GptOssExperts):
         return self.moe_weights
 
 
-class QEffGptOssMoEMixin(QEffMoEBlockMixin):
-    """Shared MoE orchestration for GPT-OSS prefill blocks (clamped-GLU + biases)."""
-
-    _moe_return_router_logits = True
-
-    def build_moe_weights(self) -> MoEWeights:
-        if getattr(self.experts, "moe_weights", None) is None:
-            self.experts.build_moe_weights()
-        self.moe_weights = self.experts.moe_weights
-        return self.moe_weights
-
-    def get_moe_weights(self) -> MoEWeights:
-        if getattr(self, "moe_weights", None) is None:
-            self.build_moe_weights()
-        return self.moe_weights
-
-    @property
-    def moe_profile(self) -> MoEProfile:
-        return MoEProfile(
-            expert_mlp=partial(gptoss_clamped_glu_mlp, limit=self.experts.limit, alpha=self.experts.alpha),
-            has_bias=True,
-        )
-
-    def route(self, x: torch.Tensor):
-        router_logits = F.linear(x, self.router.weight, self.router.bias)
-        top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)
-        top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
-        return (top_i, top_w), router_logits
-
-
-class QEffPrefillOnlyChunkedGptOssMLP(QEffGptOssMoEMixin, GptOssMLP):
-    supports_moe_prefill_blocking = True
-    # Trace a fixed packed-chunk loop count so long prefill exports keep small SL.
-    supports_static_moe_prefill_chunks = True
-    # Class implies expert-blocking; OptimizedMoETransform may override per qaic_config.
-    _moe_flavour = MoEFlavour.EXPERT_BLOCKED
-
-
-class QEffPrefillOnlyGptOssMLP(QEffGptOssMoEMixin, GptOssMLP):
-    _moe_flavour = MoEFlavour.SIMPLE_LOOP
-
+class _QEffGptOssLegacyBlockedMixin:
     def forward(self, hidden: torch.Tensor):
         if os.environ.get("NUM_FFN_BLOCKS", None) is not None:
             return self.blocked_ffn_forward(hidden)
         return super().forward(hidden)
 
     def blocked_ffn_forward(self, hidden: torch.Tensor):
+        self._ensure_moe_weights()
         B, S, H = hidden.shape
         T = B * S
         hidden = hidden.view(T, H)
@@ -195,6 +151,7 @@ class QEffPrefillOnlyGptOssMLP(QEffGptOssMoEMixin, GptOssMLP):
         return expert_out.view(B, S, H), router_logits
 
     def blocked_ffn_forward_block_weights(self, hidden: torch.Tensor):
+        self._ensure_moe_weights()
         B, S, H = hidden.shape
         T = B * S
         hidden = hidden.view(T, H)
@@ -283,7 +240,7 @@ class QEffPrefillOnlyGptOssMLP(QEffGptOssMoEMixin, GptOssMLP):
         return expert_out.view(B, S, H), router_logits
 
 
-class QEffGptOssMLP(GptOssMLP):
+class QEffGptOssMLP(_QEffGptOssLegacyBlockedMixin, GptOssMLP):
     def _ensure_moe_weights(self):
         if getattr(self.experts, "moe_weights", None) is None:
             self.experts.build_moe_weights()
