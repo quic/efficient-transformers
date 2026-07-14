@@ -49,7 +49,6 @@ from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheExternalModuleMapperTransform,
     KVCacheTransform,
-    OptimizedMoETransform,
     PoolingTransform,
     PrefillOnlyChunkedTransform,
     PrefillOnlyExternalModuleMapperTransform,
@@ -1299,19 +1298,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             self.hash_params["prefill_only"] = False
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
-        OptimizedMoETransform.apply(
-            self.model,
-            prefill_only=bool(prefill_only),
-            enable_chunking=enable_chunking,
-            num_cores=kwargs.get("num_cores", constants.DEFAULT_AIC_NUM_CORES),
-            moe_prefill_packed_chunk_size=kwargs.get(
-                "moe_prefill_packed_chunk_size", constants.MOE_PREFILL_PACKED_CHUNK_SIZE
-            ),
-            qaic_config=kwargs.get("qaic_config", getattr(self.model, "qaic_config", None)),
-            prefill_seq_len=prefill_seq_len,
-            hash_params=self.hash_params,
-        )
-
         if QEfficient.base.modeling_qeff.QEFFBaseModel._layerwise_active:
             return self._export_layerwise(
                 inputs,
@@ -1323,6 +1309,13 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
                 _layerwise_cache_probe=kwargs.get("_layerwise_cache_probe", False),
                 kv_cache_prefix=kv_cache_prefix,
                 prefill_only=prefill_only,
+                enable_chunking=enable_chunking,
+                num_cores=kwargs.get("num_cores", constants.DEFAULT_AIC_NUM_CORES),
+                moe_prefill_packed_chunk_size=kwargs.get(
+                    "moe_prefill_packed_chunk_size", constants.MOE_PREFILL_PACKED_CHUNK_SIZE
+                ),
+                qaic_config=kwargs.get("qaic_config", getattr(self.model, "qaic_config", None)),
+                prefill_seq_len=prefill_seq_len,
             )
         else:
             return self._export(
@@ -1332,6 +1325,14 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
                 export_dir=export_dir,
                 offload_pt_weights=offload_pt_weights,
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+                prefill_only=prefill_only,
+                enable_chunking=enable_chunking,
+                num_cores=kwargs.get("num_cores", constants.DEFAULT_AIC_NUM_CORES),
+                moe_prefill_packed_chunk_size=kwargs.get(
+                    "moe_prefill_packed_chunk_size", constants.MOE_PREFILL_PACKED_CHUNK_SIZE
+                ),
+                qaic_config=kwargs.get("qaic_config", getattr(self.model, "qaic_config", None)),
+                prefill_seq_len=prefill_seq_len,
             )
 
     def compile(
@@ -2737,9 +2738,13 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         output_names = self.model.get_output_names()
         # Prefix only the LLM KV-cache retained buffers (vision/multimodal buffers untouched).
         output_names = apply_kv_cache_prefix(output_names, validate_kv_cache_prefix(kv_cache_prefix))
-        OptimizedMoETransform.apply(
-            self.model,
-            prefill_only=bool(prefill_only),
+        return self._export(
+            inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            use_onnx_subfunctions=use_onnx_subfunctions,
+            prefill_only=prefill_only,
             enable_chunking=enable_chunking,
             num_cores=kwargs.get("num_cores", constants.DEFAULT_AIC_NUM_CORES),
             moe_prefill_packed_chunk_size=kwargs.get(
@@ -2747,14 +2752,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             ),
             qaic_config=kwargs.get("qaic_config", getattr(self.model, "qaic_config", None)),
             prefill_seq_len=prefill_seq_len,
-            hash_params=self.hash_params,
-        )
-        return self._export(
-            inputs,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
-            export_dir=export_dir,
-            use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
     def compile(
@@ -4048,17 +4045,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
             self.hash_params["kv_cache_prefix"] = kv_cache_prefix
 
-        OptimizedMoETransform.apply(
-            self.model,
-            prefill_only=bool(prefill_only),
-            enable_chunking=enable_chunking,
-            num_cores=num_cores,
-            moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
-            qaic_config=getattr(self.model, "qaic_config", None),
-            prefill_seq_len=prefill_seq_len,
-            hash_params=self.hash_params,
-        )
-
         if QEFFBaseModel._layerwise_active:
             return self._export_layerwise(
                 example_inputs,
@@ -4068,6 +4054,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
                 prefill_only=prefill_only,
+                enable_chunking=enable_chunking,
+                num_cores=num_cores,
+                moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+                qaic_config=getattr(self.model, "qaic_config", None),
+                prefill_seq_len=prefill_seq_len,
                 kv_cache_prefix=kv_cache_prefix,
                 _layerwise_cache_probe=kwargs.get("_layerwise_cache_probe", False),
             )
@@ -4080,6 +4071,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
                 prefill_only=prefill_only,
+                enable_chunking=enable_chunking,
+                num_cores=num_cores,
+                moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+                qaic_config=getattr(self.model, "qaic_config", None),
+                prefill_seq_len=prefill_seq_len,
             )
 
     def build_prefill_specialization(

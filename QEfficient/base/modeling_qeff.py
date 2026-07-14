@@ -344,6 +344,38 @@ class QEFFBaseModel(ABC):
             :str: Path of the compiled ``qpc`` package.
         """
 
+    def _apply_pre_export_pytorch_transforms(
+        self,
+        *,
+        prefill_only: Optional[bool] = False,
+        enable_chunking: Optional[bool] = False,
+        num_cores: Optional[int] = constants.DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: Optional[int] = None,
+        qaic_config: Optional[dict] = None,
+        prefill_seq_len: Optional[int] = None,
+        **_,
+    ) -> bool:
+        """Apply mode-dependent PyTorch transforms before export hashing and ONNX tracing."""
+        from QEfficient.transformers.models.pytorch_transforms import OptimizedMoETransform
+
+        if num_cores is None:
+            num_cores = constants.DEFAULT_AIC_NUM_CORES
+        if moe_prefill_packed_chunk_size is None:
+            moe_prefill_packed_chunk_size = constants.MOE_PREFILL_PACKED_CHUNK_SIZE
+        qaic_config = qaic_config if qaic_config is not None else getattr(self.model, "qaic_config", None)
+
+        self.model, transformed = OptimizedMoETransform.apply(
+            self.model,
+            prefill_only=bool(prefill_only),
+            enable_chunking=bool(enable_chunking),
+            num_cores=num_cores,
+            moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+            qaic_config=qaic_config,
+            prefill_seq_len=prefill_seq_len,
+            hash_params=self.hash_params,
+        )
+        return transformed
+
     @export_wrapper
     def _export(
         self,
@@ -354,6 +386,11 @@ class QEFFBaseModel(ABC):
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
+        enable_chunking: Optional[bool] = False,
+        num_cores: Optional[int] = constants.DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: Optional[int] = None,
+        qaic_config: Optional[dict] = None,
+        prefill_seq_len: Optional[int] = None,
         **export_kwargs,
     ) -> str:
         """
@@ -590,6 +627,11 @@ class QEFFBaseModel(ABC):
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
+        enable_chunking: Optional[bool] = False,
+        num_cores: Optional[int] = constants.DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: Optional[int] = None,
+        qaic_config: Optional[dict] = None,
+        prefill_seq_len: Optional[int] = None,
         kv_cache_prefix: Optional[str] = None,
         **export_kwargs,
     ) -> str:

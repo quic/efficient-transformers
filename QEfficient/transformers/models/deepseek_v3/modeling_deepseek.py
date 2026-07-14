@@ -8,7 +8,7 @@
 import math
 import os
 from functools import partial
-from typing import Dict, List, Optional, Tuple, Type, Union
+from typing import Callable, Dict, List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn.functional as F
@@ -28,6 +28,7 @@ from QEfficient.transformers.moe import (
     MoEProfile,
     MoEWeights,
     QEffMoEBlockMixin,
+    build_canonical_expert_weights,
     moe_decode_bmm,
     moe_simple_loop,
     silu_glu_mlp,
@@ -780,20 +781,45 @@ def _deepseek_expert_weight(proj: nn.Module) -> torch.Tensor:
     return proj.weight
 
 
+def _deepseek_act_fn(experts: nn.Module) -> Callable:
+    if hasattr(experts, "act_fn"):
+        return experts.act_fn
+    return experts[0].act_fn
+
+
+def _deepseek_route_tokens(module: nn.Module, hidden_states: torch.Tensor):
+    router_output = module.gate(hidden_states)
+    if isinstance(router_output, tuple):
+        topk_indices, topk_weights = router_output
+        return topk_indices, topk_weights, None
+    topk_indices, topk_weights = module.route_tokens_to_experts(router_output)
+    return topk_indices, topk_weights, router_output
+
+
 class QEffDeepseekV3MoE(QEffMoEBlockMixin, nn.Module):
     def __qeff_init__(
         self,
     ):
-        self.act_fn = self.experts[0].act_fn
+        self.act_fn = _deepseek_act_fn(self.experts)
 
     def build_moe_weights(self) -> MoEWeights:
         if getattr(self, "moe_weights", None) is not None:
             return self.moe_weights
-        self.moe_weights = MoEWeights(
-            gate=stack_expert_linears(self.experts, lambda e: _deepseek_expert_weight(e.gate_proj)),
-            up=stack_expert_linears(self.experts, lambda e: _deepseek_expert_weight(e.up_proj)),
-            down=stack_expert_linears(self.experts, lambda e: _deepseek_expert_weight(e.down_proj)),
-        )
+        if hasattr(self.experts, "gate_up_proj"):
+            self.moe_weights = build_canonical_expert_weights(
+                gate_up=self.experts.gate_up_proj,
+                down=self.experts.down_proj,
+                fused=True,
+                fused_split_dim=1,
+                transpose_gate_up=True,
+                transpose_down=True,
+            )
+        else:
+            self.moe_weights = MoEWeights(
+                gate=stack_expert_linears(self.experts, lambda e: _deepseek_expert_weight(e.gate_proj)),
+                up=stack_expert_linears(self.experts, lambda e: _deepseek_expert_weight(e.up_proj)),
+                down=stack_expert_linears(self.experts, lambda e: _deepseek_expert_weight(e.down_proj)),
+            )
         self.all_gate_proj = torch.nn.Parameter(self.moe_weights.gate, requires_grad=False)
         self.all_up_proj = torch.nn.Parameter(self.moe_weights.up, requires_grad=False)
         self.all_down_proj = torch.nn.Parameter(self.moe_weights.down, requires_grad=False)
@@ -808,8 +834,8 @@ class QEffDeepseekV3MoE(QEffMoEBlockMixin, nn.Module):
         return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.act_fn))
 
     def route(self, x: torch.Tensor):
-        topk_indices, topk_weights = self.gate(x)
-        return (topk_indices, topk_weights.to(x.dtype)), None
+        topk_indices, topk_weights, router_logits = _deepseek_route_tokens(self, x)
+        return (topk_indices, topk_weights.to(x.dtype)), router_logits
 
     def apply_shared_experts(self, out: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
         return out + self.shared_experts(residual)
@@ -841,7 +867,7 @@ class QEffPrefillOnlyDeepseekV3MoE(QEffDeepseekV3MoE):
     def __qeff_init__(
         self,
     ):
-        self.act_fn = self.experts[0].act_fn
+        self.act_fn = _deepseek_act_fn(self.experts)
 
     def build_moe_weights(self) -> MoEWeights:
         return QEffDeepseekV3MoE.build_moe_weights(self)
@@ -883,7 +909,7 @@ class QEffPrefillOnlyDeepseekV3MoE(QEffDeepseekV3MoE):
         """
         residuals = hidden_states
         orig_shape = hidden_states.shape
-        topk_indices, topk_weights = self.gate(hidden_states)
+        topk_indices, topk_weights, _ = _deepseek_route_tokens(self, hidden_states)
         # orig_out = self.orig_moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
 
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])

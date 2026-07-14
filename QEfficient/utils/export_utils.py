@@ -49,8 +49,12 @@ def export_wrapper(func):
         # 2. Prepare export directory
         export_dir = _prepare_export_directory(self, kwargs)
 
+        bound_export_args = _bind_export_arguments(args, kwargs, func)
+        if hasattr(self, "_apply_pre_export_pytorch_transforms"):
+            self._apply_pre_export_pytorch_transforms(**bound_export_args)
+
         # 3. Generate hash and finalize export directory path
-        export_hash, filtered_hash_params = _generate_export_hash(self, args, kwargs, func)
+        export_hash, filtered_hash_params = _generate_export_hash(self, args, kwargs, func, bound_export_args)
         export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
         kwargs["export_dir"] = export_dir
         self.export_hash = export_hash
@@ -74,6 +78,15 @@ def export_wrapper(func):
     return wrapper
 
 
+def _bind_export_arguments(args, kwargs, func):
+    original_sig = inspect.signature(func)
+    params = list(original_sig.parameters.values())[1:]  # Skip 'self'
+    new_sig = inspect.Signature(params)
+    bound_args = new_sig.bind(*args, **kwargs)
+    bound_args.apply_defaults()
+    return bound_args.arguments
+
+
 def _prepare_export_directory(qeff_model, kwargs) -> Path:
     """
     Prepare and return the base export directory path.
@@ -90,7 +103,7 @@ def _prepare_export_directory(qeff_model, kwargs) -> Path:
     return Path(export_dir or (QEFF_HOME / parent_dir / qeff_model.model_name))
 
 
-def _generate_export_hash(qeff_model, args, kwargs, func):
+def _generate_export_hash(qeff_model, args, kwargs, func, bound_export_args=None):
     """
     Generate export hash from model parameters and export arguments.
 
@@ -106,14 +119,7 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     Returns:
         Tuple of (export_hash: str, filtered_hash_params: dict)
     """
-    # Extract function signature
-    original_sig = inspect.signature(func)
-    params = list(original_sig.parameters.values())[1:]  # Skip 'self'
-    new_sig = inspect.Signature(params)
-    # Bind all arguments
-    bound_args = new_sig.bind(*args, **kwargs)
-    bound_args.apply_defaults()
-    all_args = bound_args.arguments
+    all_args = bound_export_args or _bind_export_arguments(args, kwargs, func)
     if func.__name__ == "_export_layerwise":
         export_kwargs = dict(all_args.get("export_kwargs") or {})
         export_kwargs["_qeff_layerwise_export"] = True

@@ -20,7 +20,11 @@ All tests run on CPU only, using tiny in-memory models.
 import pytest
 import torch
 
-from QEfficient.transformers.models.pytorch_transforms import CustomOpsTransform, KVCacheTransform
+from QEfficient.transformers.models.pytorch_transforms import (
+    CustomOpsTransform,
+    KVCacheTransform,
+    OptimizedMoETransform,
+)
 
 VOCAB_SIZE = 500
 SEQ_LEN = 8
@@ -508,7 +512,7 @@ class TestQwen3Accuracy:
 @pytest.mark.transforms
 @pytest.mark.accuracy
 class TestQwen3MoEAccuracy:
-    """Qwen3-MoE: KVCacheTransform must replace attention and MoE block."""
+    """Qwen3-MoE: KVCacheTransform replaces attention; OptimizedMoETransform replaces MoE blocks."""
 
     def test_qwen3_moe_kv_transform_replaces_attention(self):
         from transformers.models.qwen3_moe.modeling_qwen3_moe import Qwen3MoeAttention
@@ -528,17 +532,20 @@ class TestQwen3MoEAccuracy:
         transformed, _ = KVCacheTransform.apply(model)
         assert isinstance(transformed, QEffQwen3MoeForCausalLM)
 
-    def test_qwen3_moe_kv_transform_replaces_sparse_moe_block(self):
+    def test_qwen3_moe_optimized_moe_transform_replaces_sparse_moe_block(self):
         from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import QEffQwen3MoeSparseMoeBlock
 
         model, cfg = make_tiny_qwen3_moe()
         transformed, _ = KVCacheTransform.apply(model)
+        transformed, applied = OptimizedMoETransform.apply(transformed)
+        assert applied
         assert any(isinstance(m, QEffQwen3MoeSparseMoeBlock) for m in transformed.modules())
 
     def test_qwen3_moe_combined_transforms_produce_finite_outputs(self):
         model, cfg = make_tiny_qwen3_moe()
         model, _ = CustomOpsTransform.apply(model)
         model, _ = KVCacheTransform.apply(model)
+        model, _ = OptimizedMoETransform.apply(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, SEQ_LEN))
         qeff_inputs = _make_qeff_inputs(input_ids, cfg)
         with torch.no_grad():
@@ -602,7 +609,7 @@ class TestQwen3_5Accuracy:
 @pytest.mark.transforms
 @pytest.mark.accuracy
 class TestQwen3_5MoEAccuracy:
-    """Qwen3.5-MoE: KVCacheTransform must replace attention and sparse MoE block."""
+    """Qwen3.5-MoE: KVCacheTransform replaces attention; OptimizedMoETransform replaces MoE blocks."""
 
     def test_qwen3_5_moe_kv_transform_replaces_attention(self):
         from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeAttention
@@ -622,11 +629,13 @@ class TestQwen3_5MoEAccuracy:
         transformed, _ = KVCacheTransform.apply(model)
         assert isinstance(transformed, QEffQwen3_5MoeForCausalLM)
 
-    def test_qwen3_5_moe_kv_transform_replaces_sparse_moe_block(self):
+    def test_qwen3_5_moe_optimized_moe_transform_replaces_sparse_moe_block(self):
         from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeSparseMoeBlock
 
         model, _ = make_tiny_qwen3_5_moe()
         transformed, _ = KVCacheTransform.apply(model)
+        transformed, applied = OptimizedMoETransform.apply(transformed)
+        assert applied
         assert any(isinstance(m, QEffQwen3_5MoeSparseMoeBlock) for m in transformed.modules())
 
     # FIXME: Skipping this test for now, need to be debugged
@@ -651,6 +660,7 @@ class TestQwen3_5MoEAccuracy:
         model, _ = make_tiny_qwen3_5_moe()
         model, _ = CustomOpsTransform.apply(model)
         model, _ = KVCacheTransform.apply(model)
+        model, _ = OptimizedMoETransform.apply(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, SEQ_LEN))
         qeff_inputs = _make_qwen3_5_hybrid_qeff_inputs(model, input_ids)
         with torch.no_grad():
@@ -799,7 +809,7 @@ class TestGraniteAccuracy:
 @pytest.mark.transforms
 @pytest.mark.accuracy
 class TestGraniteMoEAccuracy:
-    """GraniteMoE: KVCacheTransform must replace attention and MoE block."""
+    """GraniteMoE: KVCacheTransform replaces attention; OptimizedMoETransform configures MoE blocks."""
 
     def test_granitemoe_kv_transform_replaces_attention(self):
         from transformers.models.granitemoe.modeling_granitemoe import GraniteMoeAttention
@@ -823,6 +833,7 @@ class TestGraniteMoEAccuracy:
         model, cfg = make_tiny_granitemoe()
         model, _ = CustomOpsTransform.apply(model)
         model, _ = KVCacheTransform.apply(model)
+        model, _ = OptimizedMoETransform.apply(model)
         input_ids = torch.randint(0, VOCAB_SIZE, (1, SEQ_LEN))
         qeff_inputs = _make_qeff_inputs(input_ids, cfg)
         with torch.no_grad():
@@ -1060,21 +1071,16 @@ class TestGrok1TransformStructure:
 
         assert "DecoderLayer" in KVCacheExternalModuleMapperTransform._match_string_replace_method
 
-    def test_grok1_moe_block_in_external_mapper_transform(self):
-        from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
-        from QEfficient.transformers.moe import MoEFlavour, QEffMoEBlockMixin
+    def test_grok1_moe_block_not_in_external_mapper_transform(self):
+        from QEfficient.transformers.models.pytorch_transforms import (
+            ExternalOptimizedMoEMapperTransform,
+            KVCacheExternalModuleMapperTransform,
+        )
 
         mapping = KVCacheExternalModuleMapperTransform._match_string_replace_method
 
-        assert "MoeBlock" in mapping
-        moe_mapping = mapping["MoeBlock"]
-        assert moe_mapping["forward"] is QEffMoEBlockMixin.forward
-        assert "route" in moe_mapping
-        assert "moe_profile" in moe_mapping
-        assert "build_moe_weights" in moe_mapping
-        assert "get_moe_weights" in moe_mapping
-        assert moe_mapping["_moe_return_router_logits"] is True
-        assert moe_mapping["_moe_flavour"] is MoEFlavour.DECODE_BMM
+        assert "MoeBlock" not in mapping
+        assert "MoeBlock" in ExternalOptimizedMoEMapperTransform._match_string_replace_method
 
     def test_grok1_attention_in_external_mapper_transform(self):
         from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform

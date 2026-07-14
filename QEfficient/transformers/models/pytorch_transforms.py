@@ -402,9 +402,7 @@ from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import (
     QEffGptOssMLP,
     QEffGptOssModel,
     QEffPrefillOnlyChunkedGptOssAttention,
-    QEffPrefillOnlyChunkedGptOssMLP,
     QEffPrefillOnlyGptOssAttention,
-    QEffPrefillOnlyGptOssMLP,
     QEffPrefillOnlyGptOssModel,
 )
 from QEfficient.transformers.models.gptj.modeling_gptj import (
@@ -711,8 +709,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Glm4MoeAttention: QEffGlm4MoeAttention,
         Glm4MoeDecoderLayer: QEffGlm4MoeDecoderLayer,
         Glm4MoeRotaryEmbedding: QEffGlm4MoeRotaryEmbedding,
-        Glm4MoeMoE: QEffGlm4MoeMoE,
-        Glm4MoeTopkRouter: QEffGlm4MoeTopkRouter,
         # CodeGen
         CodeGenAttention: QEffCodeGenAttention,
         CodeGenBlock: QEffCodeGenBlock,
@@ -744,12 +740,9 @@ class KVCacheTransform(ModuleMappingTransform):
         Llama4ForCausalLM: QEffLlama4ForCausalLM,
         Llama4TextDecoderLayer: QEffLlama4TextDecoderLayer,
         Llama4TextModel: QEffLlama4TextModel,
-        Llama4TextMoe: QEffLlama4TextMoe,
         Llama4ForConditionalGeneration: QEffLlama4ForConditionalGeneration,
         Llama4VisionAttention: QEffLlama4VisionAttention,
         Llama4VisionModel: QEffLlama4VisionModel,
-        Llama4TextExperts: QEffLlama4TextExperts,
-        Llama4Router: QEffLlama4Router,
         # Llava
         LlavaForConditionalGeneration: QEffLlavaForConditionalGeneration,
         # Llava Next
@@ -765,9 +758,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3MoeDecoderLayer: QEffQwen3MoeDecoderLayer,
         Qwen3MoeAttention: QEffQwen3MoeAttention,
         Qwen3MoeRotaryEmbedding: QEffQwen3MoeRotaryEmbedding,
-        Qwen3MoeExperts: QEffQwen3MoeExperts,
-        Qwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
-        Qwen3MoeTopKRouter: QEffQwen3MoeTopKRouter,
         # Qwen3VLMoe
         Qwen3VLMoeForConditionalGeneration: QEffQwen3VLMoeForConditionalGeneration,
         Qwen3VLMoeModel: QEffQwen3VLMoeModel,
@@ -776,10 +766,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3VLMoeVisionAttention: QEffQwen3VLMoeVisionAttention,
         Qwen3VLMoeVisionModel: QEffQwen3VLMoeVisionModel,
         Qwen3VLMoeTextModel: QEffQwen3VLMoeTextModel,
-        Qwen3VLMoeTextExperts: QEffQwen3VLMoeTextExperts,
-        Qwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
         Qwen3VLMoeTextRotaryEmbedding: QEffQwen3VLMoeTextRotaryEmbedding,
-        Qwen3VLMoeTextTopKRouter: QEffQwen3VLMoeTextTopKRouter,
         # Qwen3vl
         Qwen3VLForConditionalGeneration: QEffQwen3VLForConditionalGeneration,
         Qwen3VLModel: QEffQwen3VLModel,
@@ -805,8 +792,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Gemma4TextModel: QEffGemma4TextModel,
         Gemma4ForCausalLM: QEffGemma4ForCausalLM,
         Gemma4ForConditionalGeneration: QEffGemma4ForConditionalGeneration,
-        Gemma4TextExperts: QEffGemma4TextExperts,
-        Gemma4TextRouter: QEffGemma4TextRouter,
         Gemma4VisionAttention: QEffGemma4VisionAttention,
         Gemma4ClippableLinear: QEffGemma4ClippableLinear,
         # GPT_OSS
@@ -814,8 +799,6 @@ class KVCacheTransform(ModuleMappingTransform):
         GptOssDecoderLayer: QEffGptOssDecoderLayer,
         GptOssModel: QEffGptOssModel,
         GptOssForCausalLM: QEffGptOssForCausalLM,
-        GptOssMLP: QEffGptOssMLP,
-        GptOssExperts: QEffGptOssExperts,
         # Granite
         GraniteModel: QEffGraniteModel,
         GraniteForCausalLM: QEffGraniteForCausalLM,
@@ -826,9 +809,6 @@ class KVCacheTransform(ModuleMappingTransform):
         GraniteMoeForCausalLM: QEffGraniteMoeForCausalLM,
         GraniteMoeAttention: QEffGraniteMoeAttention,
         GraniteMoeRotaryEmbedding: QEffGraniteMoeRotaryEmbedding,
-        GraniteMoeParallelExperts: QEffGraniteMoeParallelExperts,
-        GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
-        GraniteMoeMoE: QEffGraniteMoeMoE,
         GraniteMoeDecoderLayer: QEffGraniteMoeDecoderLayer,
         # mllama
         MllamaTextRMSNorm: CustomRMSNormAIC,
@@ -851,7 +831,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Mistral3Model: QEffMistral3Model,
         # Mixtral
         MixtralAttention: QEffMixtralAttention,
-        MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
         MixtralDecoderLayer: QeffMixtralDecoderLayer,
         MixtralModel: QEffMixtralModel,
         MixtralForCausalLM: QEffMixtralForCausalLM,
@@ -899,11 +878,8 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3_5MoeForConditionalGeneration: QEffQwen3_5MoeForConditionalGeneration,
         Qwen3_5MoeForCausalLM: QEffQwen3_5MoeForCausalLM,
         Qwen3_5MoeAttention: QEffQwen3_5MoeAttention,
-        Qwen3_5MoeExperts: QEffQwen3_5MoeExperts,
-        Qwen3_5MoeSparseMoeBlock: QEffQwen3_5MoeSparseMoeBlock,
         Qwen3_5MoeVisionAttention: QEffQwen3_5MoeVisionAttention,
         Qwen3_5MoeVisionModel: QEffQwen3_5MoeVisionModel,
-        Qwen3_5MoeTopKRouter: QEffQwen3_5MoeTopKRouter,
         # Qwen2.5 VL
         Qwen2_5_VLForConditionalGeneration: QEffQwen_2_5_vl_ForConditionalGeneration,
         Qwen2_5_VLModel: QEffQwen2_5_VLModel,
@@ -948,7 +924,6 @@ class PrefillOnlyTransform(ModuleMappingTransform):
     _module_mapping = {
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
-        QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
     }
 
 
@@ -957,7 +932,6 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         # GPT_OSS
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
-        QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
         # Gemma4_Moe
         QEffGemma4TextExperts: QEffPrefillChunckedGemma4TextExperts,
     }
@@ -969,8 +943,6 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffPrefillOnlyGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
-        QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
-        QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
         # Gemma4_Moe
         QEffPrefillChunckedGemma4TextExperts: QEffGemma4TextExperts,
     }
@@ -1293,20 +1265,6 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "forward": QEffGrok1DecoderLayer.forward,
             "__qeff_init__": QEffGrok1DecoderLayer.__qeff_init__,
         },
-        "MoeBlock": {
-            "forward": QEffMoEBlockMixin.forward,
-            "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
-            "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
-            "build_moe_weights": QEffGrok1MoeBlock.build_moe_weights,
-            "get_moe_weights": QEffGrok1MoeBlock.get_moe_weights,
-            "route": QEffGrok1MoeBlock.route,
-            "moe_profile": QEffGrok1MoeBlock.moe_profile,
-            "_moe_return_router_logits": True,
-            "_moe_flavour": MoEFlavour.DECODE_BMM,
-            "supports_moe_prefill_blocking": False,
-            "supports_static_moe_prefill_chunks": False,
-            "supports_moe_decode_bmm": True,
-        },
         "MultiHeadAttention": {
             "forward": QEffGrok1MultiHeadAttention.forward,
         },
@@ -1321,22 +1279,6 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "DeepseekV3Model": {"forward": QEffDeepseekV3Model.forward, "__qeff_init__": QEffDeepseekV3Model.__qeff_init__},
         "DeepseekV3DecoderLayer": {
             "forward": QEffDeepseekV3DecoderLayer.forward,
-        },
-        "DeepseekV3MoE": {
-            "forward": QEffMoEBlockMixin.forward,
-            "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
-            "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
-            "build_moe_weights": QEffDeepseekV3MoE.build_moe_weights,
-            "get_moe_weights": QEffDeepseekV3MoE.get_moe_weights,
-            "route": QEffDeepseekV3MoE.route,
-            "moe_profile": QEffDeepseekV3MoE.moe_profile,
-            "apply_shared_experts": QEffDeepseekV3MoE.apply_shared_experts,
-            "_moe_return_router_logits": False,
-            "_moe_flavour": MoEFlavour.DECODE_BMM,
-            "supports_moe_prefill_blocking": False,
-            "supports_static_moe_prefill_chunks": False,
-            "supports_moe_decode_bmm": True,
-            "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
         },
         "DeepseekV3Attention": {
             "forward": QEffDeepseekV3Attention.forward,
@@ -1356,48 +1298,12 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
 
 class PrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_class_replace_method = {}
-    _match_string_replace_method = {
-        "DeepseekV3MoE": {
-            "forward": QEffPrefillOnlyDeepseekV3MoE.forward,
-            "legacy_forward": QEffPrefillOnlyDeepseekV3MoE.legacy_forward,
-            "moe": QEffPrefillOnlyDeepseekV3MoE.moe,
-            "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
-            "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
-            "build_moe_weights": QEffPrefillOnlyDeepseekV3MoE.build_moe_weights,
-            "get_moe_weights": QEffPrefillOnlyDeepseekV3MoE.get_moe_weights,
-            "route": QEffPrefillOnlyDeepseekV3MoE.route,
-            "moe_profile": QEffPrefillOnlyDeepseekV3MoE.moe_profile,
-            "apply_shared_experts": QEffPrefillOnlyDeepseekV3MoE.apply_shared_experts,
-            "_moe_return_router_logits": False,
-            "_moe_flavour": MoEFlavour.SIMPLE_LOOP,
-            "supports_moe_prefill_blocking": False,
-            "supports_static_moe_prefill_chunks": False,
-            "supports_moe_decode_bmm": True,
-            "__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
-        },
-    }
+    _match_string_replace_method = {}
 
 
 class RevertPrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_class_replace_method = {}
-    _match_string_replace_method = {
-        "DeepseekV3MoE": {
-            "forward": QEffMoEBlockMixin.forward,
-            "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
-            "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
-            "build_moe_weights": QEffDeepseekV3MoE.build_moe_weights,
-            "get_moe_weights": QEffDeepseekV3MoE.get_moe_weights,
-            "route": QEffDeepseekV3MoE.route,
-            "moe_profile": QEffDeepseekV3MoE.moe_profile,
-            "apply_shared_experts": QEffDeepseekV3MoE.apply_shared_experts,
-            "_moe_return_router_logits": False,
-            "_moe_flavour": MoEFlavour.DECODE_BMM,
-            "supports_moe_prefill_blocking": False,
-            "supports_static_moe_prefill_chunks": False,
-            "supports_moe_decode_bmm": True,
-            "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
-        },
-    }
+    _match_string_replace_method = {}
 
 
 class T5ModelTransform(ModuleMappingTransform):
@@ -1518,12 +1424,88 @@ def _iter_optimized_moe_weight_modules(model: nn.Module):
             yield module
 
 
-class OptimizedMoEMapperTransform(PytorchTransform):
-    """Bind adapter-driven MoE methods and identify shared MoE blocks."""
+class OptimizedMoEMapperTransform(ModuleMappingTransform):
+    """Replace MoE components, then bind adapter-driven MoE methods."""
+
+    _module_mapping = {
+        # GLM4-MoE
+        Glm4MoeMoE: QEffGlm4MoeMoE,
+        Glm4MoeTopkRouter: QEffGlm4MoeTopkRouter,
+        # Llama4
+        Llama4TextMoe: QEffLlama4TextMoe,
+        Llama4TextExperts: QEffLlama4TextExperts,
+        Llama4Router: QEffLlama4Router,
+        # Qwen3-MoE
+        Qwen3MoeExperts: QEffQwen3MoeExperts,
+        Qwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
+        Qwen3MoeTopKRouter: QEffQwen3MoeTopKRouter,
+        # Qwen3-VL-MoE
+        Qwen3VLMoeTextExperts: QEffQwen3VLMoeTextExperts,
+        Qwen3VLMoeTextSparseMoeBlock: QEffQwen3VLMoeTextSparseMoeBlock,
+        Qwen3VLMoeTextTopKRouter: QEffQwen3VLMoeTextTopKRouter,
+        # Qwen3.5-MoE
+        Qwen3_5MoeExperts: QEffQwen3_5MoeExperts,
+        Qwen3_5MoeSparseMoeBlock: QEffQwen3_5MoeSparseMoeBlock,
+        Qwen3_5MoeTopKRouter: QEffQwen3_5MoeTopKRouter,
+        # Gemma4
+        Gemma4TextExperts: QEffGemma4TextExperts,
+        Gemma4TextRouter: QEffGemma4TextRouter,
+        # GPT-OSS
+        GptOssMLP: QEffGptOssMLP,
+        GptOssExperts: QEffGptOssExperts,
+        # GraniteMoE
+        GraniteMoeMoE: QEffGraniteMoeMoE,
+        GraniteMoeParallelExperts: QEffGraniteMoeParallelExperts,
+        GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
+        # Mixtral
+        MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
+    }
 
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
-        return model, any(True for _ in _iter_optimized_moe_modules(model))
+        model, mapped = super().apply(model)
+        return model, mapped or any(True for _ in _iter_optimized_moe_modules(model))
+
+
+class ExternalOptimizedMoEMapperTransform(ExternalModuleMapperTransform):
+    """Bind optimized MoE methods for external model code."""
+
+    _match_class_replace_method = {}
+    _match_string_replace_method = {
+        "MoeBlock": {
+            "forward": QEffGrok1MoeBlock.forward,
+            "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
+            "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
+            "build_moe_weights": QEffGrok1MoeBlock.build_moe_weights,
+            "get_moe_weights": QEffGrok1MoeBlock.get_moe_weights,
+            "route": QEffGrok1MoeBlock.route,
+            "moe_profile": QEffGrok1MoeBlock.moe_profile,
+            "apply_shared_experts": QEffMoEBlockMixin.apply_shared_experts,
+            "_moe_return_router_logits": True,
+            "_moe_flavour": MoEFlavour.DECODE_BMM,
+            "supports_moe_prefill_blocking": False,
+            "supports_static_moe_prefill_chunks": False,
+            "supports_moe_decode_bmm": True,
+        },
+        "DeepseekV3MoE": {
+            "forward": QEffPrefillOnlyDeepseekV3MoE.forward,
+            "legacy_forward": QEffPrefillOnlyDeepseekV3MoE.legacy_forward,
+            "moe": QEffPrefillOnlyDeepseekV3MoE.moe,
+            "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
+            "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
+            "build_moe_weights": QEffDeepseekV3MoE.build_moe_weights,
+            "get_moe_weights": QEffDeepseekV3MoE.get_moe_weights,
+            "route": QEffDeepseekV3MoE.route,
+            "moe_profile": QEffDeepseekV3MoE.moe_profile,
+            "apply_shared_experts": QEffDeepseekV3MoE.apply_shared_experts,
+            "_moe_return_router_logits": False,
+            "_moe_flavour": MoEFlavour.DECODE_BMM,
+            "supports_moe_prefill_blocking": False,
+            "supports_static_moe_prefill_chunks": False,
+            "supports_moe_decode_bmm": True,
+            "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
+        },
+    }
 
 
 class OptimizedMoEWeightsTransform(PytorchTransform):
@@ -1584,7 +1566,11 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
                 supports_decode_bmm=getattr(module, "supports_moe_decode_bmm", True),
             )
             module._moe_flavour = flavour
-            if flavour is MoEFlavour.EXPERT_BLOCKED:
+            if flavour is MoEFlavour.EXPERT_PARALLEL:
+                module.expert_parallel_num_nsp = num_nsp
+                module.expert_parallel_packed_chunk_size = packed_chunk_size
+                module.expert_parallel_num_packed_chunks = num_packed_chunks
+                # Backward-compatible attribute names for one transition period.
                 module.expert_blocking_num_nsp = num_nsp
                 module.expert_blocking_packed_chunk_size = packed_chunk_size
                 module.expert_blocking_num_packed_chunks = num_packed_chunks
@@ -1592,7 +1578,7 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
 
         if transformed and hash_params is not None:
             hash_params["moe_prefill_flavour"] = (flavour or MoEFlavour.DECODE_BMM).value
-            if flavour is MoEFlavour.EXPERT_BLOCKED:
+            if flavour is MoEFlavour.EXPERT_PARALLEL:
                 hash_params["moe_prefill_num_nsp"] = num_nsp
                 hash_params["moe_prefill_packed_chunk_size"] = packed_chunk_size
                 hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
@@ -1621,6 +1607,7 @@ class OptimizedMoETransform(PytorchTransform):
         hash_params: Optional[dict] = None,
     ) -> Tuple[nn.Module, bool]:
         _, mapped = OptimizedMoEMapperTransform.apply(model)
+        _, external_mapped = ExternalOptimizedMoEMapperTransform.apply(model)
         _, weights_ready = OptimizedMoEWeightsTransform.apply(model)
         model, export_configured = OptimizedMoEExportConfigTransform.apply(
             model,
@@ -1632,4 +1619,4 @@ class OptimizedMoETransform(PytorchTransform):
             prefill_seq_len=prefill_seq_len,
             hash_params=hash_params,
         )
-        return model, mapped or weights_ready or export_configured
+        return model, mapped or external_mapped or weights_ready or export_configured
