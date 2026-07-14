@@ -149,9 +149,9 @@ class ExternalModuleMapperTransform(PytorchTransform):
                             mapped_method = MethodType(mapped_method, module)
                         setattr(module, orig_method_name, mapped_method)
 
-                    if hasattr(module, "__qeff_init__"):
-                        module.__qeff_init__()
+                if hasattr(module, "__qeff_init__"):
+                    module.__qeff_init__()
 
-                    transformed = True
+                transformed = True
 
         return model, transformed
