@@ -7,13 +7,19 @@
 import copy
 from collections import Counter
 
+import pytest
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.transformers.models.pytorch_transforms import (
+    ExternalOptimizedMoEMapperTransform,
     KVCacheTransform,
     OptimizedMoEExportConfigTransform,
+    OptimizedMoEMapperTransform,
+    OptimizedMoETransform,
     OptimizedMoEWeightsTransform,
     PrefillOnlyChunkedTransform,
     PrefillOnlyTransform,
@@ -39,6 +45,347 @@ GLM4_MOE_CFG = dict(
 )
 
 
+MOE_BLOCK_SEQ_LEN = 8
+MOE_BLOCK_HIDDEN_SIZE = 32
+MOE_BLOCK_INTERMEDIATE_SIZE = 64
+MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE = 16
+MOE_BLOCK_NUM_EXPERTS = 4
+MOE_BLOCK_TOP_K = 2
+
+MOE_BLOCK_BASE_CFG = dict(
+    max_position_embeddings=64,
+    num_hidden_layers=1,
+    num_attention_heads=2,
+    hidden_size=MOE_BLOCK_HIDDEN_SIZE,
+    intermediate_size=MOE_BLOCK_INTERMEDIATE_SIZE,
+    vocab_size=127,
+    num_key_value_heads=2,
+)
+
+
+def _first_module_by_class_name(model: nn.Module, class_name: str) -> nn.Module:
+    return next(module for module in model.modules() if module.__class__.__name__ == class_name)
+
+
+def _first_tensor(output):
+    return output[0] if isinstance(output, tuple) else output
+
+
+def _match_expected_shape(actual: torch.Tensor, expected: torch.Tensor) -> torch.Tensor:
+    if actual.shape == expected.shape:
+        return actual
+    assert actual.numel() == expected.numel()
+    return actual.view_as(expected)
+
+
+def _make_tiny_causal_lm(model_type: str, **config_kwargs):
+    config = AutoConfig.for_model(model_type, **{**MOE_BLOCK_BASE_CFG, **config_kwargs})
+    return AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
+
+
+def _make_tiny_qwen3_5_moe_text_model():
+    from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeTextModel
+
+    text_config = AutoConfig.for_model(
+        "qwen3_5_moe",
+        text_config={
+            **MOE_BLOCK_BASE_CFG,
+            "moe_intermediate_size": MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE,
+            "num_experts": MOE_BLOCK_NUM_EXPERTS,
+            "num_experts_per_tok": MOE_BLOCK_TOP_K,
+            "pad_token_id": 0,
+            "shared_expert_intermediate_size": MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE,
+            "linear_key_head_dim": 8,
+            "linear_value_head_dim": 8,
+            "linear_num_key_heads": 2,
+            "linear_num_value_heads": 2,
+            "partial_rotary_factor": 0.25,
+            "layer_types": ["full_attention"],
+        },
+    ).text_config
+    return Qwen3_5MoeTextModel._from_config(text_config, **MODEL_KWARGS)
+
+
+def _make_tiny_qwen3_vl_moe_text_model():
+    from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextModel
+
+    text_config = AutoConfig.for_model(
+        "qwen3_vl_moe",
+        text_config={
+            **MOE_BLOCK_BASE_CFG,
+            "moe_intermediate_size": MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE,
+            "num_local_experts": MOE_BLOCK_NUM_EXPERTS,
+            "num_experts_per_tok": MOE_BLOCK_TOP_K,
+            "pad_token_id": 0,
+            "head_dim": 16,
+        },
+    ).text_config
+    return Qwen3VLMoeTextModel._from_config(text_config, **MODEL_KWARGS)
+
+
+def _make_tiny_llama4_text_model():
+    from transformers.models.llama4.modeling_llama4 import Llama4TextModel
+
+    text_config = AutoConfig.for_model(
+        "llama4",
+        text_config={
+            **MOE_BLOCK_BASE_CFG,
+            "intermediate_size_mlp": MOE_BLOCK_INTERMEDIATE_SIZE,
+            "num_local_experts": MOE_BLOCK_NUM_EXPERTS,
+            "num_experts_per_tok": MOE_BLOCK_TOP_K,
+            "head_dim": 16,
+            "pad_token_id": 0,
+            "attn_scale": 0.1,
+            "attn_temperature_tuning": True,
+            "floor_scale": 8192,
+            "attention_chunk_size": 8192,
+            "interleave_moe_layer_step": 1,
+            "moe_layers": [0],
+            "no_rope_layers": [0],
+            "layer_types": ["full_attention"],
+            "use_qk_norm": False,
+        },
+    ).text_config
+    return Llama4TextModel._from_config(text_config, **MODEL_KWARGS)
+
+
+MOE_BLOCK_PARITY_CASES = (
+    pytest.param(
+        "qwen3_moe",
+        lambda: _make_tiny_causal_lm(
+            "qwen3_moe",
+            moe_intermediate_size=MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE,
+            num_experts=MOE_BLOCK_NUM_EXPERTS,
+            num_experts_per_tok=MOE_BLOCK_TOP_K,
+        ),
+        "Qwen3MoeSparseMoeBlock",
+        ("decode_bmm", "simple_loop", "expert_parallel"),
+        {},
+        id="qwen3_moe",
+    ),
+    pytest.param(
+        "qwen3_vl_moe",
+        _make_tiny_qwen3_vl_moe_text_model,
+        "Qwen3VLMoeTextSparseMoeBlock",
+        ("decode_bmm", "simple_loop", "expert_parallel"),
+        {},
+        id="qwen3_vl_moe",
+    ),
+    pytest.param(
+        "qwen3_5_moe",
+        _make_tiny_qwen3_5_moe_text_model,
+        "Qwen3_5MoeSparseMoeBlock",
+        ("decode_bmm", "simple_loop", "expert_parallel"),
+        {},
+        id="qwen3_5_moe",
+    ),
+    pytest.param(
+        "glm4_moe",
+        lambda: _make_tiny_causal_lm(
+            "glm4_moe",
+            moe_intermediate_size=MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE,
+            n_routed_experts=MOE_BLOCK_NUM_EXPERTS,
+            num_experts_per_tok=MOE_BLOCK_TOP_K,
+            first_k_dense_replace=0,
+            n_group=1,
+            topk_group=1,
+            head_dim=16,
+        ),
+        "Glm4MoeMoE",
+        ("decode_bmm", "simple_loop", "expert_parallel"),
+        {},
+        id="glm4_moe",
+    ),
+    pytest.param(
+        "gpt_oss",
+        lambda: _make_tiny_causal_lm(
+            "gpt_oss",
+            num_local_experts=MOE_BLOCK_NUM_EXPERTS,
+            num_experts_per_tok=MOE_BLOCK_TOP_K,
+        ),
+        "GptOssMLP",
+        ("simple_loop", "expert_parallel"),
+        {"gpt_oss_prefill": True},
+        id="gpt_oss",
+    ),
+    pytest.param(
+        "mixtral",
+        lambda: _make_tiny_causal_lm(
+            "mixtral",
+            num_local_experts=MOE_BLOCK_NUM_EXPERTS,
+            num_experts_per_tok=MOE_BLOCK_TOP_K,
+        ),
+        "MixtralSparseMoeBlock",
+        ("decode_bmm", "simple_loop"),
+        {},
+        id="mixtral",
+    ),
+    pytest.param(
+        "granitemoe",
+        lambda: _make_tiny_causal_lm(
+            "granitemoe",
+            num_local_experts=MOE_BLOCK_NUM_EXPERTS,
+            num_experts_per_tok=MOE_BLOCK_TOP_K,
+        ),
+        "GraniteMoeMoE",
+        ("simple_loop",),
+        {},
+        id="granitemoe",
+    ),
+    pytest.param(
+        "llama4",
+        _make_tiny_llama4_text_model,
+        "Llama4TextMoe",
+        ("simple_loop",),
+        {},
+        id="llama4",
+    ),
+    pytest.param(
+        "deepseek_v3",
+        lambda: _make_tiny_causal_lm(
+            "deepseek_v3",
+            moe_intermediate_size=MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE,
+            n_routed_experts=MOE_BLOCK_NUM_EXPERTS,
+            num_local_experts=MOE_BLOCK_NUM_EXPERTS,
+            num_experts_per_tok=MOE_BLOCK_TOP_K,
+            first_k_dense_replace=0,
+            n_group=1,
+            topk_group=1,
+            q_lora_rank=None,
+            kv_lora_rank=8,
+            qk_rope_head_dim=8,
+            v_head_dim=16,
+            qk_nope_head_dim=8,
+        ),
+        "DeepseekV3MoE",
+        ("decode_bmm", "simple_loop"),
+        {"external_mapper": True},
+        id="deepseek_v3",
+    ),
+)
+
+
+def _make_qeff_moe_block(original_block: nn.Module, flavour_name: str, options: dict) -> nn.Module:
+    from QEfficient.transformers.moe import MoEFlavour
+
+    qeff_block = copy.deepcopy(original_block).eval()
+    if options.get("external_mapper"):
+        _, transformed = ExternalOptimizedMoEMapperTransform.apply(qeff_block)
+    else:
+        _, transformed = OptimizedMoEMapperTransform.apply(qeff_block)
+    assert transformed
+
+    flavour = MoEFlavour(flavour_name)
+    OptimizedMoEWeightsTransform.apply(qeff_block)
+    qeff_block._moe_flavour = flavour
+    if flavour is MoEFlavour.EXPERT_PARALLEL:
+        qeff_block.expert_parallel_num_nsp = 2
+        qeff_block.expert_parallel_packed_chunk_size = 4
+        qeff_block.expert_parallel_num_packed_chunks = 2
+    return qeff_block
+
+
+@pytest.mark.parametrize(("model_family", "factory", "block_class_name", "flavours", "options"), MOE_BLOCK_PARITY_CASES)
+def test_moe_block_flavour_forward_parity(model_family, factory, block_class_name, flavours, options):
+    torch.manual_seed(17)
+    model = factory().eval()
+    original_block = _first_module_by_class_name(model, block_class_name)
+
+    for flavour_name in flavours:
+        seq_len = 1 if flavour_name == "decode_bmm" else MOE_BLOCK_SEQ_LEN
+        hidden_states = torch.randn(1, seq_len, MOE_BLOCK_HIDDEN_SIZE)
+        with torch.no_grad():
+            expected = _first_tensor(original_block(hidden_states))
+
+        qeff_block = _make_qeff_moe_block(original_block, flavour_name, options)
+        if flavour_name == "expert_parallel":
+            assert qeff_block.expert_parallel_packed_chunk_size == 4
+            assert qeff_block.expert_parallel_num_packed_chunks == 2
+        with torch.no_grad():
+            actual = _first_tensor(qeff_block(hidden_states))
+        actual = _match_expected_shape(actual, expected)
+
+        torch.testing.assert_close(
+            actual,
+            expected,
+            atol=1e-4,
+            rtol=1e-4,
+            msg=f"{model_family} {flavour_name} block parity failed",
+        )
+
+
+class _Grok1DummyExpert(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(MOE_BLOCK_HIDDEN_SIZE, MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE, bias=False)
+        self.linear_v = nn.Linear(MOE_BLOCK_HIDDEN_SIZE, MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE, bias=False)
+        self.linear_1 = nn.Linear(MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE, MOE_BLOCK_HIDDEN_SIZE, bias=False)
+        self.act_fn = F.silu
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        return self.linear_1(self.act_fn(self.linear(hidden_states)) * self.linear_v(hidden_states))
+
+
+class MoeBlock(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.gate = nn.Linear(MOE_BLOCK_HIDDEN_SIZE, MOE_BLOCK_NUM_EXPERTS, bias=False)
+        self.top_k = MOE_BLOCK_TOP_K
+        self.experts = nn.ModuleList(_Grok1DummyExpert() for _ in range(MOE_BLOCK_NUM_EXPERTS))
+
+    def forward(self, hidden_states: torch.Tensor):
+        orig_shape = hidden_states.shape
+        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
+        router_logits = self.gate(hidden_states)
+        routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float32)
+        topk_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
+        final_hidden_states = torch.zeros_like(hidden_states)
+
+        for expert_idx, expert in enumerate(self.experts):
+            token_indices, weight_indices = torch.where(selected_experts == expert_idx)
+            if token_indices.numel() == 0:
+                continue
+            expert_output = expert(hidden_states[token_indices])
+            expert_output = expert_output * topk_weights[token_indices, weight_indices].to(
+                hidden_states.dtype
+            ).unsqueeze(-1)
+            final_hidden_states.index_add_(0, token_indices, expert_output)
+
+        return final_hidden_states.view(orig_shape), router_logits
+
+
+@pytest.mark.parametrize("flavour_name", ("decode_bmm", "simple_loop"))
+def test_grok1_external_moe_block_flavour_forward_parity(flavour_name):
+    torch.manual_seed(19)
+    original_block = MoeBlock().eval()
+    qeff_block = _make_qeff_moe_block(original_block, flavour_name, {"external_mapper": True})
+    hidden_states = torch.randn(1, MOE_BLOCK_SEQ_LEN, MOE_BLOCK_HIDDEN_SIZE)
+
+    with torch.no_grad():
+        expected = _first_tensor(original_block(hidden_states))
+        actual = _first_tensor(qeff_block(hidden_states))
+    actual = _match_expected_shape(actual, expected)
+
+    torch.testing.assert_close(actual, expected, atol=1e-4, rtol=1e-4)
+
+
+def test_grok1_external_moe_block_does_not_advertise_expert_parallel():
+    original_block = MoeBlock().eval()
+    qeff_block = copy.deepcopy(original_block)
+
+    _, transformed = ExternalOptimizedMoEMapperTransform.apply(qeff_block)
+
+    assert transformed
+    assert not qeff_block.supports_moe_prefill_blocking
+    with pytest.raises(AssertionError, match="expert_parallel"):
+        OptimizedMoEExportConfigTransform.apply(
+            qeff_block,
+            prefill_only=True,
+            enable_chunking=True,
+            qaic_config={"moe_flavour": "expert_parallel"},
+        )
+
+
 def test_glm4_moe_blocked_prefill_forward_parity():
     from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeMoE
     from QEfficient.transformers.moe import MoEFlavour
@@ -47,11 +394,13 @@ def test_glm4_moe_blocked_prefill_forward_parity():
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     qeff_model = copy.deepcopy(model)
     KVCacheTransform.apply(qeff_model)
+    OptimizedMoEMapperTransform.apply(qeff_model)
     OptimizedMoEWeightsTransform.apply(qeff_model)
     qeff_block = next(module for module in qeff_model.modules() if isinstance(module, QEffGlm4MoeMoE))
 
     chunked_model = copy.deepcopy(model)
     KVCacheTransform.apply(chunked_model)
+    OptimizedMoEMapperTransform.apply(chunked_model)
     PrefillOnlyChunkedTransform.apply(chunked_model)
     OptimizedMoEWeightsTransform.apply(chunked_model)
     OptimizedMoEExportConfigTransform.apply(
@@ -64,9 +413,9 @@ def test_glm4_moe_blocked_prefill_forward_parity():
     )
     chunked_block = next(module for module in chunked_model.modules() if isinstance(module, QEffGlm4MoeMoE))
 
-    assert chunked_block._moe_flavour is MoEFlavour.EXPERT_BLOCKED
-    assert chunked_block.expert_blocking_num_nsp == 2
-    assert chunked_block.expert_blocking_packed_chunk_size == 256
+    assert chunked_block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+    assert chunked_block.expert_parallel_num_nsp == 2
+    assert chunked_block.expert_parallel_packed_chunk_size == 256
 
     x = torch.randn(1, 8, config.hidden_size)
     with torch.no_grad():
@@ -200,11 +549,13 @@ def test_qwen3moe_blocked_forward_parity():
 
     qeff_model = copy.deepcopy(model)
     KVCacheTransform.apply(qeff_model)
+    OptimizedMoEMapperTransform.apply(qeff_model)
     OptimizedMoEWeightsTransform.apply(qeff_model)
     qeff_block = next(module for module in qeff_model.modules() if isinstance(module, QEffQwen3MoeSparseMoeBlock))
 
     chunked_model = copy.deepcopy(model)
     KVCacheTransform.apply(chunked_model)
+    OptimizedMoEMapperTransform.apply(chunked_model)
     PrefillOnlyChunkedTransform.apply(chunked_model)
     OptimizedMoEWeightsTransform.apply(chunked_model)
     OptimizedMoEExportConfigTransform.apply(
@@ -217,9 +568,9 @@ def test_qwen3moe_blocked_forward_parity():
     )
     chunked = next(module for module in chunked_model.modules() if isinstance(module, QEffQwen3MoeSparseMoeBlock))
 
-    assert chunked._moe_flavour is MoEFlavour.EXPERT_BLOCKED
-    assert chunked.expert_blocking_num_nsp == 2
-    assert chunked.expert_blocking_packed_chunk_size == 256
+    assert chunked._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+    assert chunked.expert_parallel_num_nsp == 2
+    assert chunked.expert_parallel_packed_chunk_size == 256
 
     x = torch.randn(1, 8, config.hidden_size)
     with torch.no_grad():
@@ -361,10 +712,8 @@ def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
 
 
 def test_gptoss_blocked_forward_parity():
-    from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import (
-        QEffPrefillOnlyChunkedGptOssMLP,
-        QEffPrefillOnlyGptOssMLP,
-    )
+    from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import QEffGptOssMLP
+    from QEfficient.transformers.moe import MoEFlavour
 
     config = AutoConfig.for_model("gpt_oss", **GPTOSS_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
@@ -380,25 +729,35 @@ def test_gptoss_blocked_forward_parity():
 
     chunked_model = copy.deepcopy(qeff.model)
     PrefillOnlyChunkedTransform.apply(chunked_model)
-    OptimizedMoEWeightsTransform.apply(chunked_model)
-    blocks_chunked = [m for _, m in chunked_model.named_modules() if isinstance(m, QEffPrefillOnlyChunkedGptOssMLP)]
+    OptimizedMoETransform.apply(
+        chunked_model,
+        prefill_only=True,
+        enable_chunking=True,
+        num_cores=2,
+        moe_prefill_packed_chunk_size=256,
+        prefill_seq_len=8,
+        qaic_config={"moe_flavour": "expert_parallel"},
+    )
+    blocks_chunked = [m for _, m in chunked_model.named_modules() if isinstance(m, QEffGptOssMLP)]
     assert blocks_chunked
-    blocks_chunked[0].expert_blocking_num_nsp = 2
-    blocks_chunked[0].expert_blocking_packed_chunk_size = 256
+    assert blocks_chunked[0]._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+    assert blocks_chunked[0].expert_parallel_num_nsp == 2
+    assert blocks_chunked[0].expert_parallel_packed_chunk_size == 256
 
     with torch.no_grad():
         blocked, _ = blocks_chunked[0].forward(x)
 
     loop_model = copy.deepcopy(qeff.model)
     PrefillOnlyTransform.apply(loop_model)
-    OptimizedMoEWeightsTransform.apply(loop_model)
-    blocks_loop = [m for _, m in loop_model.named_modules() if isinstance(m, QEffPrefillOnlyGptOssMLP)]
+    OptimizedMoETransform.apply(loop_model, prefill_only=True, qaic_config={"moe_flavour": "simple_loop"})
+    blocks_loop = [m for _, m in loop_model.named_modules() if isinstance(m, QEffGptOssMLP)]
     assert blocks_loop
+    assert blocks_loop[0]._moe_flavour is MoEFlavour.SIMPLE_LOOP
     with torch.no_grad():
         looped, _ = blocks_loop[0].forward(x)
 
     assert orig.shape == blocked.shape == looped.shape
-    assert (orig - blocked).abs().max().item() < 0.1, "GPT-OSS HF vs expert-blocked parity failed"
+    assert (orig - blocked).abs().max().item() < 0.1, "GPT-OSS HF vs expert-parallel parity failed"
     assert (orig - looped).abs().max().item() < 1e-3, "GPT-OSS HF vs simple-loop parity failed"
 
 

@@ -18,7 +18,7 @@ override only the variation points:
 * ``apply_shared_experts``   -> add a shared-expert term (default: no-op).
 
 The flavour is assigned at export time by ``OptimizedMoETransform`` via
-``self._moe_flavour`` and the ``expert_blocking_*`` attributes.
+``self._moe_flavour`` and the ``expert_parallel_*`` attributes.
 """
 
 from typing import Optional
@@ -28,7 +28,7 @@ import torch
 from QEfficient.transformers.moe.flavours import (
     MoEFlavour,
     moe_decode_bmm,
-    moe_expert_blocked,
+    moe_expert_parallel,
     moe_simple_loop,
     resolve_routing,
 )
@@ -43,10 +43,34 @@ class QEffMoEBlockMixin:
     _moe_flavour: MoEFlavour = MoEFlavour.DECODE_BMM
     # Whether forward returns (out, router_logits) to match the HF MoE convention.
     _moe_return_router_logits: bool = False
-    # Expert-blocking knobs, set by OptimizedMoETransform when flavour is EXPERT_BLOCKED.
-    expert_blocking_num_nsp: Optional[int] = None
-    expert_blocking_packed_chunk_size: Optional[int] = None
-    expert_blocking_num_packed_chunks: int = 1
+    # Expert-parallel knobs, set by OptimizedMoETransform when flavour is EXPERT_PARALLEL.
+    expert_parallel_num_nsp: Optional[int] = None
+    expert_parallel_packed_chunk_size: Optional[int] = None
+    expert_parallel_num_packed_chunks: int = 1
+
+    @property
+    def expert_blocking_num_nsp(self) -> Optional[int]:
+        return self.expert_parallel_num_nsp
+
+    @expert_blocking_num_nsp.setter
+    def expert_blocking_num_nsp(self, value: Optional[int]) -> None:
+        self.expert_parallel_num_nsp = value
+
+    @property
+    def expert_blocking_packed_chunk_size(self) -> Optional[int]:
+        return self.expert_parallel_packed_chunk_size
+
+    @expert_blocking_packed_chunk_size.setter
+    def expert_blocking_packed_chunk_size(self, value: Optional[int]) -> None:
+        self.expert_parallel_packed_chunk_size = value
+
+    @property
+    def expert_blocking_num_packed_chunks(self) -> int:
+        return self.expert_parallel_num_packed_chunks
+
+    @expert_blocking_num_packed_chunks.setter
+    def expert_blocking_num_packed_chunks(self, value: int) -> None:
+        self.expert_parallel_num_packed_chunks = value
 
     # ---- variation points (override per model) --------------------------------
     def route(self, x: torch.Tensor):
@@ -77,17 +101,26 @@ class QEffMoEBlockMixin:
             return moe_decode_bmm(x, topk_indices, topk_weights, weights, profile, top_k=topk_indices.shape[1])
 
         dense, _ = resolve_routing(routing, weights.num_experts)
-        if flavour is MoEFlavour.EXPERT_BLOCKED:
-            num_nsp = self.expert_blocking_num_nsp or weights.num_experts
-            packed_chunk_size = self.expert_blocking_packed_chunk_size or x.shape[0]
-            return moe_expert_blocked(
+        if flavour is MoEFlavour.EXPERT_PARALLEL:
+            num_nsp = getattr(self, "expert_parallel_num_nsp", None)
+            if num_nsp is None:
+                num_nsp = getattr(self, "expert_blocking_num_nsp", None) or weights.num_experts
+            packed_chunk_size = getattr(self, "expert_parallel_packed_chunk_size", None)
+            if packed_chunk_size is None:
+                packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", None) or x.shape[0]
+            num_packed_chunks = getattr(
+                self,
+                "expert_parallel_num_packed_chunks",
+                getattr(self, "expert_blocking_num_packed_chunks", 1),
+            )
+            return moe_expert_parallel(
                 x,
                 dense,
                 weights,
                 profile,
                 num_nsp=num_nsp,
                 packed_chunk_size=packed_chunk_size,
-                num_packed_chunks=getattr(self, "expert_blocking_num_packed_chunks", 1),
+                num_packed_chunks=num_packed_chunks,
             )
         return moe_simple_loop(x, dense, weights, profile, prescale=profile.scale_mode == "pre")
 

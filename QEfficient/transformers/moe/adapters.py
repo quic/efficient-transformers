@@ -9,7 +9,7 @@
 
 The shared MoE kernels need a small amount of model-specific knowledge: where the
 expert weights live, how routing is computed, whether router logits are returned,
-and whether blocked prefill is supported. Keeping that contract here lets the
+and whether expert-parallel prefill is supported. Keeping that contract here lets the
 transform pipeline own canonical weight conversion without growing one-off logic
 inside each model file.
 """
@@ -31,6 +31,8 @@ WeightBuilder = Callable[[nn.Module], MoEWeights]
 RouteFn = Callable[[nn.Module, torch.Tensor], tuple]
 ProfileFn = Callable[[nn.Module], MoEProfile]
 SharedExpertFn = Callable[[nn.Module, torch.Tensor, torch.Tensor], torch.Tensor]
+ForwardFn = Callable[[nn.Module, torch.Tensor], torch.Tensor]
+InitFn = Callable[[nn.Module], None]
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,8 @@ class MoEAdapterSpec:
     route: Optional[RouteFn] = None
     profile: Optional[ProfileFn] = None
     apply_shared_experts: Optional[SharedExpertFn] = None
+    forward: Optional[ForwardFn] = None
+    init: Optional[InitFn] = None
     return_router_logits: Optional[bool] = None
     default_flavour: Optional[MoEFlavour] = None
     supports_prefill_blocking: Optional[bool] = None
@@ -96,6 +100,20 @@ def _adapter_apply_shared_experts(self: nn.Module, out: torch.Tensor, residual: 
     return spec.apply_shared_experts(self, out, residual)
 
 
+def _adapter_forward(self: nn.Module, hidden_states: torch.Tensor):
+    spec = get_moe_adapter_spec(self)
+    if spec is not None and spec.forward is not None:
+        return spec.forward(self, hidden_states)
+
+    from QEfficient.transformers.moe.block import QEffMoEBlockMixin
+
+    return QEffMoEBlockMixin.forward(self, hidden_states)
+
+
+def _adapter_moe_dispatch(self: nn.Module, x: torch.Tensor, routing) -> torch.Tensor:
+    return self.execute_moe_flavour(x, routing)
+
+
 def bind_moe_adapter_methods(module: nn.Module) -> bool:
     """Bind registered adapter methods to ``module`` in-place."""
 
@@ -106,22 +124,46 @@ def bind_moe_adapter_methods(module: nn.Module) -> bool:
     if spec.build_weights is not None:
         module.build_moe_weights = MethodType(_adapter_build_moe_weights, module)
         module.get_moe_weights = MethodType(_adapter_get_moe_weights, module)
-    if spec.route is not None:
-        module.route = MethodType(_adapter_route, module)
-    if spec.profile is not None and not isinstance(getattr(type(module), "moe_profile", None), property):
-        module.moe_profile = MethodType(_adapter_moe_profile, module)
-    if spec.apply_shared_experts is not None:
-        module.apply_shared_experts = MethodType(_adapter_apply_shared_experts, module)
-    if spec.return_router_logits is not None:
-        module._moe_return_router_logits = spec.return_router_logits
-    if spec.default_flavour is not None:
-        module._moe_flavour = spec.default_flavour
-    if spec.supports_prefill_blocking is not None:
-        module.supports_moe_prefill_blocking = spec.supports_prefill_blocking
-    if spec.supports_static_prefill_chunks is not None:
-        module.supports_static_moe_prefill_chunks = spec.supports_static_prefill_chunks
-    if spec.supports_decode_bmm is not None:
-        module.supports_moe_decode_bmm = spec.supports_decode_bmm
+
+    is_block_adapter = any(
+        value is not None
+        for value in (
+            spec.route,
+            spec.profile,
+            spec.apply_shared_experts,
+            spec.forward,
+            spec.return_router_logits,
+            spec.default_flavour,
+            spec.supports_prefill_blocking,
+            spec.supports_static_prefill_chunks,
+            spec.supports_decode_bmm,
+        )
+    )
+    if is_block_adapter:
+        from QEfficient.transformers.moe.block import QEffMoEBlockMixin
+
+        module.forward = MethodType(_adapter_forward, module)
+        module.execute_moe_flavour = MethodType(QEffMoEBlockMixin.execute_moe_flavour, module)
+        module.moe_dispatch = MethodType(_adapter_moe_dispatch, module)
+        if spec.apply_shared_experts is not None or "apply_shared_experts" not in module.__class__.__dict__:
+            module.apply_shared_experts = MethodType(_adapter_apply_shared_experts, module)
+        if spec.route is not None:
+            module.route = MethodType(_adapter_route, module)
+        if spec.profile is not None and not isinstance(getattr(type(module), "moe_profile", None), property):
+            module.moe_profile = MethodType(_adapter_moe_profile, module)
+        if spec.return_router_logits is not None:
+            module._moe_return_router_logits = spec.return_router_logits
+        if spec.default_flavour is not None:
+            module._moe_flavour = spec.default_flavour
+        if spec.supports_prefill_blocking is not None:
+            module.supports_moe_prefill_blocking = spec.supports_prefill_blocking
+        if spec.supports_static_prefill_chunks is not None:
+            module.supports_static_moe_prefill_chunks = spec.supports_static_prefill_chunks
+        if spec.supports_decode_bmm is not None:
+            module.supports_moe_decode_bmm = spec.supports_decode_bmm
+    if spec.init is not None and not getattr(module, "_qeff_moe_adapter_initialized", False):
+        spec.init(module)
+        module._qeff_moe_adapter_initialized = True
     return True
 
 
@@ -365,7 +407,6 @@ def _llama4_profile(module: nn.Module) -> MoEProfile:
 _PREFILL_QWEN3_CLASSES = ("QEffPrefillChunkedQwen3MoeSparseMoeBlock",)
 _PREFILL_QWEN3_VL_CLASSES = ("QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock",)
 _PREFILL_QWEN35_CLASSES = ("QEffPrefillChunkedQwen3_5MoeSparseMoeBlock",)
-_PREFILL_GPT_OSS_CLASSES = ("QEffPrefillOnlyChunkedGptOssMLP",)
 _PREFILL_GLM4_CLASSES = ("QEffPrefillChunkedGlm4MoeMoE",)
 
 
@@ -457,18 +498,7 @@ register_moe_adapter(
 )
 register_moe_adapter(
     MoEAdapterSpec(
-        class_names=("QEffPrefillOnlyGptOssMLP", *_PREFILL_GPT_OSS_CLASSES),
-        build_weights=_weights_from_experts,
-        route=_gpt_oss_route,
-        profile=_gpt_oss_profile,
-        return_router_logits=True,
-        supports_prefill_blocking=False,
-        supports_static_prefill_chunks=False,
-    )
-)
-register_moe_adapter(
-    MoEAdapterSpec(
-        class_names=_PREFILL_GPT_OSS_CLASSES,
+        class_names=("QEffGptOssMLP",),
         build_weights=_weights_from_experts,
         route=_gpt_oss_route,
         profile=_gpt_oss_profile,
@@ -526,5 +556,6 @@ register_moe_adapter(
         profile=_granite_profile,
         return_router_logits=True,
         default_flavour=MoEFlavour.SIMPLE_LOOP,
+        supports_decode_bmm=False,
     )
 )
