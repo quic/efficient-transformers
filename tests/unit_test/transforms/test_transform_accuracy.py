@@ -1531,6 +1531,43 @@ class TestSplitOptimizedMoETransform:
         assert model.block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
         assert hash_params["moe_prefill_num_packed_chunks"] == 2
 
+    def test_facade_can_reapply_with_different_moe_flavours(self):
+        model = _DummyOptimizedMoEModel()
+        first_hash_params = {}
+        second_hash_params = {}
+
+        _, first_transformed = OptimizedMoETransform.apply(
+            model,
+            prefill_only=True,
+            qaic_config={"moe_flavour": "simple_loop"},
+            hash_params=first_hash_params,
+        )
+        _, second_transformed = OptimizedMoETransform.apply(
+            model,
+            prefill_only=True,
+            enable_chunking=True,
+            num_cores=2,
+            moe_prefill_packed_chunk_size=16,
+            qaic_config={"moe_flavour": "expert_parallel"},
+            prefill_seq_len=32,
+            hash_params=second_hash_params,
+        )
+
+        assert first_transformed
+        assert second_transformed
+        assert model.block.build_count == 1
+        assert model.block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+        assert model.block.expert_parallel_num_nsp == 2
+        assert model.block.expert_parallel_packed_chunk_size == 16
+        assert model.block.expert_parallel_num_packed_chunks == 2
+        assert first_hash_params == {"moe_prefill_flavour": "simple_loop"}
+        assert second_hash_params == {
+            "moe_prefill_flavour": "expert_parallel",
+            "moe_prefill_num_nsp": 2,
+            "moe_prefill_packed_chunk_size": 16,
+            "moe_prefill_num_packed_chunks": 2,
+        }
+
     def test_split_transforms_noop_for_non_moe_models(self):
         model = nn.Sequential(nn.Linear(4, 4))
 

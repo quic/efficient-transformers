@@ -1394,38 +1394,27 @@ class BlockingAttentionTransform:
 
 
 def _iter_optimized_moe_modules(model: nn.Module):
-    from QEfficient.transformers.moe import QEffMoEBlockMixin, bind_moe_adapter_methods, get_moe_adapter_spec
+    from QEfficient.transformers.moe import QEffMoEBlockMixin
 
     for module in model.modules():
-        bind_moe_adapter_methods(module)
-        spec = get_moe_adapter_spec(module)
         has_structural_contract = callable(getattr(module, "route", None)) and (
             callable(getattr(module, "get_moe_weights", None)) or callable(getattr(module, "build_moe_weights", None))
         )
-        if (
-            isinstance(module, QEffMoEBlockMixin)
-            or (spec is not None and (spec.route is not None or spec.profile is not None))
-            or has_structural_contract
-        ):
+        if isinstance(module, QEffMoEBlockMixin) or has_structural_contract:
             yield module
 
 
 def _iter_optimized_moe_weight_modules(model: nn.Module):
-    from QEfficient.transformers.moe import bind_moe_adapter_methods, get_moe_adapter_spec
-
     for module in model.modules():
-        spec = get_moe_adapter_spec(module)
-        if spec is not None:
-            bind_moe_adapter_methods(module)
         has_structural_contract = callable(getattr(module, "route", None)) and callable(
             getattr(module, "build_moe_weights", None)
         )
-        if (spec is not None and spec.build_weights is not None) or has_structural_contract:
+        if has_structural_contract:
             yield module
 
 
 class OptimizedMoEMapperTransform(ModuleMappingTransform):
-    """Replace MoE components, then bind adapter-driven MoE methods."""
+    """Replace in-tree MoE components with QEff implementations."""
 
     _module_mapping = {
         # GLM4-MoE

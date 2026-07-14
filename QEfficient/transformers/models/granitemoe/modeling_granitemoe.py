@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+from functools import partial
 from typing import List, Optional, Tuple, Type, Union
 
 import torch
@@ -35,8 +36,12 @@ from QEfficient.blocking.attention_blocking import (
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.moe import (
+    MoEFlavour,
+    MoEProfile,
+    MoEWeights,
     QEffMoEBlockMixin,
-    bind_moe_adapter_methods,
+    build_canonical_expert_weights,
+    silu_glu_mlp,
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
@@ -512,9 +517,35 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
 
 class QEffGraniteMoeMoE(QEffMoEBlockMixin, GraniteMoeMoE):
     _moe_return_router_logits = True
+    _moe_flavour = MoEFlavour.SIMPLE_LOOP
+    supports_moe_decode_bmm = False
 
-    def __qeff_init__(self):
-        bind_moe_adapter_methods(self)
+    def build_moe_weights(self) -> MoEWeights:
+        if getattr(self, "moe_weights", None) is not None:
+            return self.moe_weights
+        self.moe_weights = build_canonical_expert_weights(
+            gate_up=self.input_linear.weight,
+            down=self.output_linear.weight,
+            fused=True,
+            fused_split_dim=1,
+            transpose_gate_up=True,
+            transpose_down=True,
+        )
+        return self.moe_weights
+
+    def get_moe_weights(self) -> MoEWeights:
+        if getattr(self, "moe_weights", None) is None:
+            self.build_moe_weights()
+        return self.moe_weights
+
+    @property
+    def moe_profile(self) -> MoEProfile:
+        return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.activation))
+
+    def route(self, x: torch.Tensor):
+        topk_gates, expert_mask, router_logits, _ = self.router(x)
+        routing_weights = torch.einsum("bke,bk->be", expert_mask.permute(2, 1, 0).to(topk_gates.dtype), topk_gates)
+        return routing_weights.to(x.dtype), router_logits
 
 
 class QEffGraniteMoeParallelExperts(GraniteMoeParallelExperts):
