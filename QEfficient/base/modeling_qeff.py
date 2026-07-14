@@ -53,6 +53,7 @@ from QEfficient.utils import (
     to_named_specializations,
 )
 from QEfficient.utils.export_utils import export_wrapper
+from QEfficient.utils.library_dump import dump_qeff_library_once
 from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,14 @@ class QEFFBaseModel(ABC):
         self.is_transformed: bool = False
 
         self._normalize_torch_dtype()
+
+        # Capture library/environment manifest before any transforms run so
+        # the file survives transform or export failures.
+        try:
+            dump_qeff_library_once(self.model_architecture, self.model_name)
+        except Exception as _dump_exc:  # non-fatal
+            logger.warning("dump_qeff_library_once failed (non-fatal): %s", _dump_exc)
+
         # Apply the transformations
         any_transformed = False
         for transform in self._pytorch_transforms:
