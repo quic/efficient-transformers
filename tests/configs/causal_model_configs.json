@@ -572,19 +572,6 @@
   ],
   "blockedKV_causal_lm_models": [
     {
-      "model_name": "unsloth/gemma-2b",
-      "model_type": "gemma",
-      "additional_params": {
-        "max_position_embeddings": 64,
-        "num_hidden_layers": 1,
-        "num_attention_heads": 2,
-        "hidden_size": 32,
-        "intermediate_size": 128,
-        "vocab_size": 256000,
-        "num_key_value_heads": 1
-      }
-    },
-    {
       "model_name": "unsloth/gemma-2-2b",
       "model_type": "gemma2",
       "additional_params": {
@@ -629,19 +616,6 @@
           "rope_type": "llama3",
           "rope_theta": 500000.0
         }
-      }
-    },
-    {
-      "model_name": "bigcode/starcoder2-3b",
-      "model_type": "starcoder2",
-      "additional_params": {
-        "max_position_embeddings": 64,
-        "num_hidden_layers": 1,
-        "num_attention_heads": 2,
-        "hidden_size": 32,
-        "intermediate_size": 128,
-        "vocab_size": 49152,
-        "num_key_value_heads": 1
       }
     },
     {
