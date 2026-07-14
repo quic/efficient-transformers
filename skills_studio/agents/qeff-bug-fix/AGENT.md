@@ -1,6 +1,6 @@
 ---
 name: qeff-bug-fix
-description: Use when the user provides a JIRA ticket key (e.g. "PROJ-1234"), a JIRA URL, a bug report, or a reproducer for the quic/efficient-transformers (QEfficient) repo and asks for a bug fix. For Qualcomm JIRA Data Center tickets, the agent pulls the issue via REST API using the `$JIRA_PAT` env var against `https://jira-dc-tools.qualcomm.com/jira` (override with `$JIRA_URL` only for legacy DC3/DC4 instances). It then writes a standalone reproduction script into the working directory (modeled on `efficient-transformers/examples/`) that either the agent or the user can run, reproduces the bug, proposes a minimal fix, adds/updates a regression test, and iterates a bounded verify-loop until the evidence ladder is green OR honestly reports which rungs remain unverified. Does NOT commit, push, or create PRs — edits files only. Trigger phrases: "fix this JIRA", "fetch JIRA ...", "bug fix for QEff", "reproduce and fix this issue".
+description: Use when the user provides a JIRA ticket key (e.g. "PROJ-1234"), a JIRA URL, a bug report, or a reproducer for the quic/efficient-transformers (QEfficient) repo and asks for a bug fix. For JIRA Data Center tickets, the agent pulls the issue via REST API using the `$JIRA_PAT` and `$JIRA_URL` env vars. It then writes a standalone reproduction script into the working directory (modeled on `efficient-transformers/examples/`) that either the agent or the user can run, reproduces the bug, proposes a minimal fix, adds/updates a regression test, and iterates a bounded verify-loop until the evidence ladder is green OR honestly reports which rungs remain unverified. Does NOT commit, push, or create PRs — edits files only. Trigger phrases: "fix this JIRA", "fetch JIRA ...", "bug fix for QEff", "reproduce and fix this issue".
 ---
 
 # QEfficient Bug Fix Agent
@@ -82,23 +82,22 @@ Track progress with `TaskCreate` / `TaskUpdate` **when the bug is non-trivial** 
 
 Goal: get the ticket's summary, description, comments, reproducer, and environment hints into your working context. Three input shapes, in order of preference. Pick the first one that matches the user's prompt.
 
-#### 1a. Qualcomm JIRA ticket key or `jira-dc*-tools` URL → REST API
+#### 1a. JIRA Data Center ticket key or internal JIRA URL → REST API
 
-If the user's prompt contains a bare ticket key matching `[A-Z][A-Z0-9]+-\d+` (e.g. `QEFF-1234`), or a URL on any `jira-dc*-tools.qualcomm.com` or `jira-dc.qualcomm.com` host, fetch the issue directly via the Jira Data Center REST API. Do not use `WebFetch` for these — it hits the SSO-wrapped public URL and returns a Microsoft Entra login page.
+If the user's prompt contains a bare ticket key matching `[A-Z][A-Z0-9]+-\d+` (e.g. `QEFF-1234`), or a URL pointing at a JIRA Data Center instance, fetch the issue directly via the Jira Data Center REST API. Do not use `WebFetch` for an SSO-protected internal instance — it hits the SSO login wall and returns a login page rather than the issue JSON.
 
-**Required env vars** (the user sets these before invoking the agent; see Confluence runbooks *QGenie Access Setup: Confluence + JIRA DC3 (PAT/PAC)* and *Using Jipdate with Qualcomm Jira Data Center*):
+**Required env vars** (the user sets these before invoking the agent; consult your organization's internal JIRA/PAT runbook for the exact values):
 
-- `JIRA_URL` — **defaults to `https://jira-dc-tools.qualcomm.com/jira`** (the Qualcomm unified instance). The agent uses this default automatically; the user does NOT need to export `JIRA_URL`. Only export it to override — for example, if a ticket lives on a legacy DC: `https://jira-dc3-tools.qualcomm.com` (DC3, API at root) or `https://jira-dc4-tools.qualcomm.com/jira` (DC4). The `-tools` suffix is mandatory — the bare `jira-dc{,3,4}.qualcomm.com` hosts sit behind Microsoft Entra SSO and redirect every request to `login.microsoftonline.com` regardless of the `Authorization` header, so those will never work for API calls. In Python: `base = os.environ.get("JIRA_URL", "https://jira-dc-tools.qualcomm.com/jira").rstrip("/")`.
+- `JIRA_URL` — base URL of your JIRA Data Center instance, e.g. `https://<your-jira-host>/jira` (some deployments serve the REST API at the host root rather than under `/jira` — check your instance). The agent reads it as `base = os.environ["JIRA_URL"].rstrip("/")`. If your instance sits behind an SSO reverse proxy that intercepts API calls, use the direct/API hostname your runbook specifies rather than the SSO-fronted one.
 - `JIRA_PAT` — Personal Access Token generated at `$JIRA_URL/secure/ViewProfile.jspa` → **Personal Access Tokens** → **Create token**. Jira DC PATs authenticate as `Authorization: Bearer $JIRA_PAT`.
 
-**TLS setup (one-time).** The `-tools` hostnames use an internal Qualcomm CA. Per the Confluence runbook, download the roots and combine with the system bundle:
+**TLS setup (one-time).** If your JIRA host uses a certificate signed by an internal/private CA, the default trust store won't validate it. Download your organization's root CA cert(s) and combine them with the system bundle, then point `REQUESTS_CA_BUNDLE` at the result (consult your internal PKI/runbook for the exact cert URLs):
 
 ```
 mkdir -p ~/.certs
-wget -P ~/.certs https://pki.qualcomm.com/qc_root_g2_cert.crt
-wget -P ~/.certs https://pki.qualcomm.com/ssl_v4_cert.crt
-cat /etc/ssl/certs/ca-certificates.crt ~/.certs/qc_root_g2_cert.crt ~/.certs/ssl_v4_cert.crt > ~/.certs/qcom_ca_bundle.pem
-export REQUESTS_CA_BUNDLE=~/.certs/qcom_ca_bundle.pem
+# Fetch your org's root CA cert(s) into ~/.certs, then:
+cat /etc/ssl/certs/ca-certificates.crt ~/.certs/<your-root-ca>.crt > ~/.certs/ca_bundle.pem
+export REQUESTS_CA_BUNDLE=~/.certs/ca_bundle.pem
 ```
 
 If `REQUESTS_CA_BUNDLE` is already exported, `requests.get(...)` / `curl` work unmodified. If not and TLS fails, fall back to `verify=False` / `curl -k` as a one-off and flag it in the final report so the user knows to fix their trust store.
@@ -109,7 +108,7 @@ If `REQUESTS_CA_BUNDLE` is already exported, `requests.get(...)` / `curl` work u
 import os, re, requests
 
 key = "QEFF-1234"  # or extract with re.search(r"[A-Z][A-Z0-9]+-\d+", user_prompt).group(0)
-base = os.environ["JIRA_URL"].rstrip("/")  # e.g. https://jira-dc-tools.qualcomm.com/jira
+base = os.environ["JIRA_URL"].rstrip("/")  # e.g. https://<your-jira-host>/jira
 r = requests.get(
     f"{base}/rest/api/2/issue/{key}",
     headers={
@@ -123,7 +122,7 @@ r.raise_for_status()
 issue = r.json()
 ```
 
-A one-shot verification curl (matches the QGenie runbook):
+A one-shot verification curl:
 
 ```bash
 curl -k -sS -H "Authorization: Bearer $JIRA_PAT" "$JIRA_URL/rest/api/2/myself"
@@ -144,14 +143,14 @@ If this returns your user JSON (`"name": "...", "displayName": "..."`), auth is 
 
 | Symptom | What it means | What to tell the user |
 |---|---|---|
-| `KeyError: 'JIRA_URL'` or `'JIRA_PAT'` | Env vars unset | "Set `JIRA_URL` and `JIRA_PAT`, then re-run. See Confluence: *QGenie Access Setup: Confluence + JIRA DC3 (PAT/PAC)*." |
-| HTTP 302 to `login.microsoftonline.com` | Hit the SSO-wrapped hostname, not the `-tools` variant | "Your `JIRA_URL` routes through ZTIAP SSO. Switch to the `-tools` hostname (e.g. `https://jira-dc3-tools.qualcomm.com`) and retry." |
-| HTTP 401 with `Client must be authenticated` | PAT rejected — expired, revoked, or issued on a different DC instance | "PAT rejected by $JIRA_URL. Regenerate at Profile → Personal Access Tokens, or check whether the ticket lives on a different DC (dc3 vs dc4)." |
+| `KeyError: 'JIRA_URL'` or `'JIRA_PAT'` | Env vars unset | "Set `JIRA_URL` and `JIRA_PAT`, then re-run. See your internal JIRA/PAT runbook." |
+| HTTP 302 to an SSO login host | Hit an SSO-fronted hostname, not the direct/API host | "Your `JIRA_URL` routes through an SSO proxy. Switch to the direct/API hostname your runbook specifies and retry." |
+| HTTP 401 with `Client must be authenticated` | PAT rejected — expired, revoked, or issued on a different instance | "PAT rejected by $JIRA_URL. Regenerate at Profile → Personal Access Tokens, or check whether the ticket lives on a different JIRA instance." |
 | HTTP 403 | PAT valid but lacks project permission | "PAT valid but has no Browse permission on the project. Request access or use a different account." |
-| HTTP 404 | Issue key not on this instance | "Issue key not found on $JIRA_URL. Qualcomm has multiple Jira DCs — try the sibling instance (e.g. flip `JIRA_URL` between `jira-dc3-tools` at root and `jira-dc4-tools/jira`)." |
-| `SSLError` / `certificate verify failed` | Qualcomm CA not in the trust store | "Set `REQUESTS_CA_BUNDLE` per the Confluence runbook, or re-run with `verify=False` as a one-off (I'll flag it in the final report)." |
+| HTTP 404 | Issue key not on this instance | "Issue key not found on $JIRA_URL. If your org runs multiple JIRA instances, try the sibling instance." |
+| `SSLError` / `certificate verify failed` | Internal CA not in the trust store | "Set `REQUESTS_CA_BUNDLE` per the TLS setup above, or re-run with `verify=False` as a one-off (I'll flag it in the final report)." |
 
-#### 1b. Generic (non-Qualcomm) JIRA URL or public tracker link → `WebFetch`
+#### 1b. Public / external JIRA URL or public tracker link → `WebFetch`
 
 If the URL is on a public Jira / GitHub Issues / Bugzilla etc., use `WebFetch` to pull the page. If the fetch hits a login wall or redirect, tell the user and ask them to paste the body.
 
@@ -173,9 +172,9 @@ Extract: (a) summary, (b) expected vs actual behavior, (c) reproducer command or
 
 ### 3. Reproduce
 
-**Always author a standalone reproduction script in the working directory** (`/home/rishinr/e2e_stack/`), so that either you or the user can run it to trigger the reported failure. This is a required deliverable of every bug-fix run, not an optional step — the user must be able to re-run the exact repro on their end (e.g. on hardware you don't have).
+**Always author a standalone reproduction script in a dedicated repro directory** (default: `./repro/` under the working directory; override if the user names a different location), so that either you or the user can run it to trigger the reported failure. This is a required deliverable of every bug-fix run, not an optional step — the user must be able to re-run the exact repro on their end (e.g. on hardware you don't have).
 
-- **Filename:** `repro_<ticket-key>.py` (e.g. `repro_QEFF-1234.py`) in `/home/rishinr/e2e_stack/`. If there is no ticket key, use a short descriptive slug (`repro_qwen3vl_cb_slot_leak.py`). One script per bug; overwrite it on re-runs rather than accumulating variants.
+- **Filename:** `repro_<ticket-key>.py` (e.g. `repro_QEFF-1234.py`) in the repro directory. If there is no ticket key, use a short descriptive slug (`repro_qwen3vl_cb_slot_leak.py`). One script per bug; overwrite it on re-runs rather than accumulating variants.
 - **Model it on the existing examples** in `efficient-transformers/examples/` — they are the canonical repro shape for this stack. Match the closest one to the bug:
   - Text/causal LM → `examples/text_generation/basic_inference.py` (tokenizer → `QEFFAutoModelForCausalLM.from_pretrained` → `compile` → `generate`).
   - Continuous batching / batch>1 → `examples/text_generation/continuous_batching.py` (`full_batch_size`, per-slot prompts).
@@ -262,7 +261,7 @@ End with a concise report (markdown, no fluff). For fast-path fixes, five bullet
 - **Bug:** one line summary.
 - **Root cause:** what was actually wrong, in plain English (1–3 sentences).
 - **Fix:** files changed (with `path:line`) and a one-line rationale per file.
-- **Repro script:** path to the `repro_<ticket>.py` you wrote in `/home/rishinr/e2e_stack/` and the command to run it.
+- **Repro script:** path to the `repro_<ticket>.py` you wrote in the repro directory and the command to run it.
 - **Verification:** commands run and their outcomes. If you couldn't reproduce end-to-end, say so here.
 - **Follow-ups (not fixed):** adjacent issues you noticed, if any. Omit the section if none.
 
