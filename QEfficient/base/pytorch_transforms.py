@@ -134,12 +134,14 @@ class ExternalModuleMapperTransform(PytorchTransform):
             if (repl_method_map := cls._match_class_replace_method.get(type(module))) or (
                 repl_method_map := cls._match_string_replace_method.get(module.__class__.__name__)
             ):
-                for orig_method_name, mapped_method in repl_method_map.items():
-                    setattr(module, orig_method_name, MethodType(mapped_method, module))
+                for orig_method_name, mapped_value in repl_method_map.items():
+                    if callable(mapped_value):
+                        mapped_value = MethodType(mapped_value, module)
+                    setattr(module, orig_method_name, mapped_value)
 
-                    if hasattr(module, "__qeff_init__"):
-                        module.__qeff_init__()
+                if hasattr(module, "__qeff_init__"):
+                    module.__qeff_init__()
 
-                    transformed = True
+                transformed = True
 
         return model, transformed

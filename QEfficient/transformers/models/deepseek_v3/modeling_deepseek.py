@@ -27,6 +27,7 @@ from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.moe import (
     MoEProfile,
     MoEWeights,
+    QEffMoEBlockMixin,
     moe_decode_bmm,
     moe_simple_loop,
     silu_glu_mlp,
@@ -779,7 +780,7 @@ def _deepseek_expert_weight(proj: nn.Module) -> torch.Tensor:
     return proj.weight
 
 
-class QEffDeepseekV3MoE(nn.Module):
+class QEffDeepseekV3MoE(QEffMoEBlockMixin, nn.Module):
     def __qeff_init__(
         self,
     ):
@@ -797,6 +798,21 @@ class QEffDeepseekV3MoE(nn.Module):
         self.all_up_proj = torch.nn.Parameter(self.moe_weights.up, requires_grad=False)
         self.all_down_proj = torch.nn.Parameter(self.moe_weights.down, requires_grad=False)
         return self.moe_weights
+
+    def get_moe_weights(self) -> MoEWeights:
+        if getattr(self, "moe_weights", None) is None:
+            self.build_moe_weights()
+        return self.moe_weights
+
+    def moe_profile(self) -> MoEProfile:
+        return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.act_fn))
+
+    def route(self, x: torch.Tensor):
+        topk_indices, topk_weights = self.gate(x)
+        return (topk_indices, topk_weights.to(x.dtype)), None
+
+    def apply_shared_experts(self, out: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
+        return out + self.shared_experts(residual)
 
     def moe(
         self,
@@ -818,16 +834,10 @@ class QEffDeepseekV3MoE(nn.Module):
         return final_hidden_states.type(hidden_states.dtype)
 
     def forward(self, hidden_states):
-        residuals = hidden_states
-        orig_shape = hidden_states.shape
-        topk_indices, topk_weights = self.gate(hidden_states)
-        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        hidden_states = self.moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
-        hidden_states = hidden_states + self.shared_experts(residuals)
-        return hidden_states
+        return QEffMoEBlockMixin.forward(self, hidden_states)
 
 
-class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
+class QEffPrefillOnlyDeepseekV3MoE(QEffDeepseekV3MoE):
     def __qeff_init__(
         self,
     ):
@@ -867,9 +877,9 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         # and all expert are "local" meaning we shard but we don't gather
         return final_hidden_states.type(hidden_states.dtype)
 
-    def forward(self, hidden_states):
+    def legacy_forward(self, hidden_states):
         """
-        Forward pass of MoE block.
+        Legacy blocked prefill path controlled by NUM_FFN_BLOCKS/FFN_W_BLOCK_SIZE.
         """
         residuals = hidden_states
         orig_shape = hidden_states.shape
@@ -877,7 +887,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         # orig_out = self.orig_moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
 
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        mask = torch.zeros(hidden_states.shape[0], self.config.n_routed_experts)
+        mask = hidden_states.new_zeros(hidden_states.shape[0], self.config.n_routed_experts)
         mask.scatter_(1, topk_indices, topk_weights)
         if os.environ.get("NUM_FFN_BLOCKS", None) is not None and os.environ.get("FFN_W_BLOCK_SIZE", None) is not None:
             hidden_states = self.moe_blocked_weights_forward(
@@ -892,6 +902,11 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
 
         hidden_states = hidden_states + self.shared_experts(residuals)
         return hidden_states
+
+    def forward(self, hidden_states):
+        if os.environ.get("NUM_FFN_BLOCKS", None) is not None:
+            return self.legacy_forward(hidden_states)
+        return QEffMoEBlockMixin.forward(self, hidden_states)
 
 
 class QEffDeepseekV3DecoderLayer(nn.Module):

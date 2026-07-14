@@ -24,7 +24,7 @@ from QEfficient.transformers.models.llama.modeling_llama import qeff_apply_rotar
 from QEfficient.transformers.moe import (
     MoEProfile,
     MoEWeights,
-    moe_decode_bmm,
+    QEffMoEBlockMixin,
     silu_glu_mlp,
     stack_expert_linears,
 )
@@ -140,10 +140,12 @@ class QEffGrok1MultiHeadAttention(nn.Module):
         return attn_output, attn_weights, past_key_value
 
 
-class QEffGrok1MoeBlock(nn.Module):
+class QEffGrok1MoeBlock(QEffMoEBlockMixin, nn.Module):
     """
     Mixture of experts (MoE) block.
     """
+
+    _moe_return_router_logits = True
 
     def build_moe_weights(self) -> MoEWeights:
         """Stack per-expert Linear weights into canonical MoEWeights.
@@ -160,30 +162,24 @@ class QEffGrok1MoeBlock(nn.Module):
             self.act_fn = self.experts[0].act_fn
         return self.moe_weights
 
-    def forward(self, hidden_states: torch.Tensor):
-        """
-        Forward pass of the MoE block.
+    def get_moe_weights(self) -> MoEWeights:
+        if getattr(self, "moe_weights", None) is None:
+            self.build_moe_weights()
+        return self.moe_weights
 
-        Args:
-            hidden_states (torch.Tensor): Input tensor.
+    def moe_profile(self) -> MoEProfile:
+        return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.act_fn))
 
-        Returns:
-            torch.Tensor: MoE output.
-        """
-        batch_size, sequence_length, hidden_dim = hidden_states.shape
-        x = hidden_states.view(-1, hidden_dim)
+    def route(self, x: torch.Tensor):
         router_logits = self.gate(x)
 
         routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float32)
         topk_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
         topk_weights = topk_weights.to(x.dtype)
+        return (selected_experts, topk_weights), router_logits
 
-        weights = self.build_moe_weights()
-        profile = MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.act_fn))
-        out = moe_decode_bmm(x, selected_experts, topk_weights, weights, profile, top_k=self.top_k)
-        out = out.reshape(batch_size, sequence_length, hidden_dim)
-
-        return out, router_logits
+    def forward(self, hidden_states: torch.Tensor):
+        return QEffMoEBlockMixin.forward(self, hidden_states)
 
 
 class QEffGrok1DecoderLayer(nn.Module):

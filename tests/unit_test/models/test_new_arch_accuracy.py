@@ -1062,8 +1062,19 @@ class TestGrok1TransformStructure:
 
     def test_grok1_moe_block_in_external_mapper_transform(self):
         from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
+        from QEfficient.transformers.moe import MoEFlavour, QEffMoEBlockMixin
 
-        assert "MoeBlock" in KVCacheExternalModuleMapperTransform._match_string_replace_method
+        mapping = KVCacheExternalModuleMapperTransform._match_string_replace_method
+
+        assert "MoeBlock" in mapping
+        moe_mapping = mapping["MoeBlock"]
+        assert moe_mapping["forward"] is QEffMoEBlockMixin.forward
+        assert "route" in moe_mapping
+        assert "moe_profile" in moe_mapping
+        assert "build_moe_weights" in moe_mapping
+        assert "get_moe_weights" in moe_mapping
+        assert moe_mapping["_moe_return_router_logits"] is True
+        assert moe_mapping["_moe_flavour"] is MoEFlavour.DECODE_BMM
 
     def test_grok1_attention_in_external_mapper_transform(self):
         from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
@@ -1119,6 +1130,14 @@ class TestLlama4TextAccuracy:
         from transformers.models.llama4.modeling_llama4 import Llama4TextAttention
 
         assert Llama4TextAttention in KVCacheTransform._module_mapping
+
+    def test_llama4_text_moe_uses_mixin_forward_without_decode_bmm(self):
+        from QEfficient.transformers.models.llama4.modeling_llama4 import QEffLlama4TextMoe
+        from QEfficient.transformers.moe import MoEFlavour, QEffMoEBlockMixin
+
+        assert QEffLlama4TextMoe.forward is QEffMoEBlockMixin.forward
+        assert QEffLlama4TextMoe._moe_flavour is MoEFlavour.SIMPLE_LOOP
+        assert QEffLlama4TextMoe.supports_moe_decode_bmm is False
 
     def test_llama4_kv_transform_replaces_attention(self):
         """KVCacheTransform must replace Llama4TextAttention with QEffLlama4TextAttention."""

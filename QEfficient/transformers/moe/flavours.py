@@ -96,14 +96,17 @@ def moe_simple_loop(
     routing_weights: torch.Tensor,
     weights: MoEWeights,
     profile: MoEProfile,
+    *,
+    prescale: bool = False,
 ) -> torch.Tensor:
     """Prefill simple-loop flavour: one masked pass per expert."""
     T, H = x.shape
     expert_out = x.new_zeros((T, H))
     for e in range(weights.num_experts):
         routing_weight = routing_weights[:, e].unsqueeze(-1)
+        expert_input = x * routing_weight if prescale else x
         down = profile.expert_mlp(
-            x,
+            expert_input,
             weights.gate[e],
             weights.up[e],
             weights.down[e],
@@ -111,7 +114,7 @@ def moe_simple_loop(
             weights.up_bias[e] if weights.up_bias is not None else None,
             weights.down_bias[e] if weights.down_bias is not None else None,
         )
-        if profile.scale_mode == "pre":
+        if prescale or profile.scale_mode == "pre":
             expert_out = expert_out + torch.where(routing_weight > 0, down, torch.zeros_like(down))
         else:
             expert_out = expert_out + down * routing_weight
@@ -157,6 +160,7 @@ def select_moe_flavour(
     is_prefill: bool,
     supports_blocking: bool,
     enable_chunking: bool,
+    supports_decode_bmm: bool = True,
 ) -> MoEFlavour:
     """Resolve the MoE forward flavour for a module.
 
@@ -171,7 +175,7 @@ def select_moe_flavour(
         flavour = MoEFlavour(override)
     elif override in (None, "auto"):
         if not is_prefill:
-            flavour = MoEFlavour.DECODE_BMM
+            flavour = MoEFlavour.DECODE_BMM if supports_decode_bmm else MoEFlavour.SIMPLE_LOOP
         elif supports_blocking and (enable_chunking or model_type in _AUTO_BLOCKED_MODEL_TYPES):
             flavour = MoEFlavour.EXPERT_BLOCKED
         else:
@@ -183,6 +187,11 @@ def select_moe_flavour(
         raise AssertionError(
             f"moe flavour 'expert_blocked' requested for model_type {model_type!r} "
             "but the module does not set supports_moe_prefill_blocking=True"
+        )
+    if flavour is MoEFlavour.DECODE_BMM and not supports_decode_bmm:
+        raise AssertionError(
+            f"moe flavour 'decode_bmm' requested for model_type {model_type!r} "
+            "but the module sets supports_moe_decode_bmm=False"
         )
     return flavour
 

@@ -89,7 +89,7 @@ class QEffMoEBlockMixin:
                 packed_chunk_size=packed_chunk_size,
                 num_packed_chunks=getattr(self, "expert_blocking_num_packed_chunks", 1),
             )
-        return moe_simple_loop(x, dense, weights, profile)
+        return moe_simple_loop(x, dense, weights, profile, prescale=profile.scale_mode == "pre")
 
     def moe_dispatch(self, x: torch.Tensor, routing) -> torch.Tensor:
         return self.execute_moe_flavour(x, routing)

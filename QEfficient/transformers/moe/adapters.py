@@ -46,6 +46,7 @@ class MoEAdapterSpec:
     default_flavour: Optional[MoEFlavour] = None
     supports_prefill_blocking: Optional[bool] = None
     supports_static_prefill_chunks: Optional[bool] = None
+    supports_decode_bmm: Optional[bool] = None
 
 
 _REGISTRY: dict[str, MoEAdapterSpec] = {}
@@ -119,6 +120,8 @@ def bind_moe_adapter_methods(module: nn.Module) -> bool:
         module.supports_moe_prefill_blocking = spec.supports_prefill_blocking
     if spec.supports_static_prefill_chunks is not None:
         module.supports_static_moe_prefill_chunks = spec.supports_static_prefill_chunks
+    if spec.supports_decode_bmm is not None:
+        module.supports_moe_decode_bmm = spec.supports_decode_bmm
     return True
 
 
@@ -355,7 +358,7 @@ def _granite_route(module: nn.Module, x: torch.Tensor):
 
 
 def _llama4_profile(module: nn.Module) -> MoEProfile:
-    # Llama4's forward pre-scales expert inputs by sigmoid(top_w), so it remains bespoke.
+    # Llama4 pre-scales expert inputs by sigmoid(top_w) before each expert MLP.
     return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=module.experts.act_fn), scale_mode="pre")
 
 
@@ -502,6 +505,8 @@ register_moe_adapter(
         build_weights=_weights_from_experts,
         profile=_llama4_profile,
         return_router_logits=True,
+        default_flavour=MoEFlavour.SIMPLE_LOOP,
+        supports_decode_bmm=False,
     )
 )
 register_moe_adapter(

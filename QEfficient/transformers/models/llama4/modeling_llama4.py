@@ -37,11 +37,11 @@ from transformers.models.llama4.modeling_llama4 import (
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.moe import (
+    MoEFlavour,
     MoEProfile,
     MoEWeights,
     QEffMoEBlockMixin,
     build_canonical_expert_weights,
-    moe_simple_loop,
     silu_glu_mlp,
 )
 from QEfficient.utils import constants
@@ -436,6 +436,8 @@ class QEffLlama4Router(Llama4Router):
 
 class QEffLlama4TextMoe(QEffMoEBlockMixin, Llama4TextMoe):
     _moe_return_router_logits = True
+    _moe_flavour = MoEFlavour.SIMPLE_LOOP
+    supports_moe_decode_bmm = False
 
     def build_moe_weights(self) -> MoEWeights:
         if getattr(self.experts, "moe_weights", None) is None:
@@ -448,29 +450,21 @@ class QEffLlama4TextMoe(QEffMoEBlockMixin, Llama4TextMoe):
             self.build_moe_weights()
         return self.moe_weights
 
-    @property
     def moe_profile(self) -> MoEProfile:
         # llama4 pre-scales the expert input by sigmoid(top_w); routing is a boolean mask.
         return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.experts.act_fn), scale_mode="pre")
 
-    def forward(self, hidden: torch.Tensor):
-        B, S, H = hidden.shape
-        x = hidden.view(B * S, H)
+    def route(self, x: torch.Tensor):
         router_logits = self.router(x)
         top_w, top_i = torch.topk(router_logits, self.top_k, dim=-1)
         masked_logits = torch.full_like(router_logits, float("-inf"))
         masked_logits.scatter_(1, top_i, top_w)
 
-        # Pre-scale the expert input by the (top-k) routing scores, as in Llama4.
-        scaled_x = x * torch.sigmoid(top_w.float()).to(x.dtype)
-        # Dense boolean routing mask (sigmoid over masked logits is >0 only for selected experts).
-        routing_weights = torch.sigmoid(masked_logits.to(hidden.dtype)).to(hidden.dtype)
+        routing_weights = torch.sigmoid(masked_logits.to(x.dtype)).to(x.dtype)
+        return routing_weights, router_logits
 
-        expert_out = moe_simple_loop(scaled_x, routing_weights, self.get_moe_weights(), self.moe_profile)
-
-        shared_out = self.shared_expert(x)
-        final = shared_out + expert_out
-        return final.view(B, S, H), router_logits
+    def apply_shared_experts(self, out: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
+        return self.shared_expert(residual) + out
 
 
 class QEffLlama4TextAttention(Llama4TextAttention):

@@ -634,6 +634,7 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
 )
+from QEfficient.transformers.moe import MoEFlavour, QEffMoEBlockMixin
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
 from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
@@ -1292,7 +1293,20 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "forward": QEffGrok1DecoderLayer.forward,
             "__qeff_init__": QEffGrok1DecoderLayer.__qeff_init__,
         },
-        "MoeBlock": {"forward": QEffGrok1MoeBlock.forward, "build_moe_weights": QEffGrok1MoeBlock.build_moe_weights},
+        "MoeBlock": {
+            "forward": QEffMoEBlockMixin.forward,
+            "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
+            "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
+            "build_moe_weights": QEffGrok1MoeBlock.build_moe_weights,
+            "get_moe_weights": QEffGrok1MoeBlock.get_moe_weights,
+            "route": QEffGrok1MoeBlock.route,
+            "moe_profile": QEffGrok1MoeBlock.moe_profile,
+            "_moe_return_router_logits": True,
+            "_moe_flavour": MoEFlavour.DECODE_BMM,
+            "supports_moe_prefill_blocking": False,
+            "supports_static_moe_prefill_chunks": False,
+            "supports_moe_decode_bmm": True,
+        },
         "MultiHeadAttention": {
             "forward": QEffGrok1MultiHeadAttention.forward,
         },
@@ -1309,9 +1323,19 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "forward": QEffDeepseekV3DecoderLayer.forward,
         },
         "DeepseekV3MoE": {
-            "forward": QEffDeepseekV3MoE.forward,
-            "moe": QEffDeepseekV3MoE.moe,
+            "forward": QEffMoEBlockMixin.forward,
+            "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
+            "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
             "build_moe_weights": QEffDeepseekV3MoE.build_moe_weights,
+            "get_moe_weights": QEffDeepseekV3MoE.get_moe_weights,
+            "route": QEffDeepseekV3MoE.route,
+            "moe_profile": QEffDeepseekV3MoE.moe_profile,
+            "apply_shared_experts": QEffDeepseekV3MoE.apply_shared_experts,
+            "_moe_return_router_logits": False,
+            "_moe_flavour": MoEFlavour.DECODE_BMM,
+            "supports_moe_prefill_blocking": False,
+            "supports_static_moe_prefill_chunks": False,
+            "supports_moe_decode_bmm": True,
             "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
         },
         "DeepseekV3Attention": {
@@ -1335,8 +1359,20 @@ class PrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_string_replace_method = {
         "DeepseekV3MoE": {
             "forward": QEffPrefillOnlyDeepseekV3MoE.forward,
+            "legacy_forward": QEffPrefillOnlyDeepseekV3MoE.legacy_forward,
             "moe": QEffPrefillOnlyDeepseekV3MoE.moe,
+            "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
+            "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
             "build_moe_weights": QEffPrefillOnlyDeepseekV3MoE.build_moe_weights,
+            "get_moe_weights": QEffPrefillOnlyDeepseekV3MoE.get_moe_weights,
+            "route": QEffPrefillOnlyDeepseekV3MoE.route,
+            "moe_profile": QEffPrefillOnlyDeepseekV3MoE.moe_profile,
+            "apply_shared_experts": QEffPrefillOnlyDeepseekV3MoE.apply_shared_experts,
+            "_moe_return_router_logits": False,
+            "_moe_flavour": MoEFlavour.SIMPLE_LOOP,
+            "supports_moe_prefill_blocking": False,
+            "supports_static_moe_prefill_chunks": False,
+            "supports_moe_decode_bmm": True,
             "__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
         },
     }
@@ -1346,9 +1382,19 @@ class RevertPrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransfo
     _match_class_replace_method = {}
     _match_string_replace_method = {
         "DeepseekV3MoE": {
-            "forward": QEffDeepseekV3MoE.forward,
-            "moe": QEffDeepseekV3MoE.moe,
+            "forward": QEffMoEBlockMixin.forward,
+            "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
+            "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
             "build_moe_weights": QEffDeepseekV3MoE.build_moe_weights,
+            "get_moe_weights": QEffDeepseekV3MoE.get_moe_weights,
+            "route": QEffDeepseekV3MoE.route,
+            "moe_profile": QEffDeepseekV3MoE.moe_profile,
+            "apply_shared_experts": QEffDeepseekV3MoE.apply_shared_experts,
+            "_moe_return_router_logits": False,
+            "_moe_flavour": MoEFlavour.DECODE_BMM,
+            "supports_moe_prefill_blocking": False,
+            "supports_static_moe_prefill_chunks": False,
+            "supports_moe_decode_bmm": True,
             "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
         },
     }
@@ -1447,8 +1493,13 @@ def _iter_optimized_moe_modules(model: nn.Module):
     for module in model.modules():
         bind_moe_adapter_methods(module)
         spec = get_moe_adapter_spec(module)
-        if isinstance(module, QEffMoEBlockMixin) or (
-            spec is not None and (spec.route is not None or spec.profile is not None)
+        has_structural_contract = callable(getattr(module, "route", None)) and (
+            callable(getattr(module, "get_moe_weights", None)) or callable(getattr(module, "build_moe_weights", None))
+        )
+        if (
+            isinstance(module, QEffMoEBlockMixin)
+            or (spec is not None and (spec.route is not None or spec.profile is not None))
+            or has_structural_contract
         ):
             yield module
 
@@ -1460,7 +1511,10 @@ def _iter_optimized_moe_weight_modules(model: nn.Module):
         spec = get_moe_adapter_spec(module)
         if spec is not None:
             bind_moe_adapter_methods(module)
-        if (spec is not None and spec.build_weights is not None) or hasattr(module, "build_moe_weights"):
+        has_structural_contract = callable(getattr(module, "route", None)) and callable(
+            getattr(module, "build_moe_weights", None)
+        )
+        if (spec is not None and spec.build_weights is not None) or has_structural_contract:
             yield module
 
 
@@ -1527,6 +1581,7 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
                 is_prefill=prefill_only,
                 supports_blocking=supports_blocking,
                 enable_chunking=enable_chunking,
+                supports_decode_bmm=getattr(module, "supports_moe_decode_bmm", True),
             )
             module._moe_flavour = flavour
             if flavour is MoEFlavour.EXPERT_BLOCKED:

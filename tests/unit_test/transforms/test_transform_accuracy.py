@@ -22,7 +22,7 @@ All tests run on CPU only, using tiny in-memory models.
 """
 
 import copy
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
 import torch
@@ -63,7 +63,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     SamplerTransform,
     SpDTransform,
 )
-from QEfficient.transformers.moe import MoEFlavour, QEffMoEBlockMixin
+from QEfficient.transformers.moe import MoEFlavour, MoEProfile, QEffMoEBlockMixin, moe_simple_loop
 from QEfficient.transformers.moe.weights import MoEWeights
 from QEfficient.utils.config_utils import calculate_num_replicate_kv_heads
 from QEfficient.utils.repeat_kv_utils import get_attention_module, get_projection_layer, get_text_model
@@ -1287,6 +1287,31 @@ class _DummyOptimizedMoEModel(nn.Module):
         self.block = _DummyOptimizedMoEBlock()
 
 
+def test_moe_simple_loop_prescale_matches_manual_expert_input_scaling():
+    x = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+    routing_weights = torch.tensor([[0.25, 0.0, 0.5], [0.0, 0.75, 0.0]])
+    dummy = torch.ones(3, 2, 2)
+    weights = MoEWeights(gate=dummy, up=dummy, down=dummy)
+
+    def double_input(expert_input, *_):
+        return expert_input * 2
+
+    actual = moe_simple_loop(
+        x,
+        routing_weights,
+        weights,
+        MoEProfile(expert_mlp=double_input),
+        prescale=True,
+    )
+
+    expected = torch.zeros_like(x)
+    for expert_idx in range(routing_weights.shape[1]):
+        routing_weight = routing_weights[:, expert_idx].unsqueeze(-1)
+        expected = expected + torch.where(routing_weight > 0, x * routing_weight * 2, torch.zeros_like(x))
+
+    torch.testing.assert_close(actual, expected)
+
+
 @pytest.mark.transforms
 class TestSplitOptimizedMoETransform:
     def test_mapper_discovers_moe_modules_without_mutating_weights(self):
@@ -1387,6 +1412,22 @@ class TestSplitOptimizedMoETransform:
         assert model.block._moe_flavour is MoEFlavour.DECODE_BMM
         assert hash_params == {"moe_prefill_flavour": "decode_bmm"}
 
+    def test_export_config_transform_auto_decode_uses_simple_loop_when_decode_bmm_unsupported(self):
+        model = _DummyOptimizedMoEModel(model_type="llama4")
+        model.block.supports_moe_decode_bmm = False
+        hash_params = {}
+
+        _, transformed = OptimizedMoEExportConfigTransform.apply(
+            model,
+            prefill_only=False,
+            qaic_config={"moe_flavour": "auto"},
+            hash_params=hash_params,
+        )
+
+        assert transformed
+        assert model.block._moe_flavour is MoEFlavour.SIMPLE_LOOP
+        assert hash_params == {"moe_prefill_flavour": "simple_loop"}
+
     def test_export_config_transform_rejects_invalid_top_level_moe_flavour(self):
         model = _DummyOptimizedMoEModel()
 
@@ -1440,6 +1481,20 @@ class TestSplitOptimizedMoETransform:
         assert not OptimizedMoEWeightsTransform.apply(model)[1]
         assert not OptimizedMoEExportConfigTransform.apply(model)[1]
         assert not OptimizedMoETransform.apply(model)[1]
+
+    def test_mapper_discovers_structurally_bound_external_moe_modules(self):
+        class StructuralMoE(nn.Module):
+            def route(self, x):
+                return x, None
+
+            def build_moe_weights(self):
+                return None
+
+        model = nn.Sequential(StructuralMoE())
+
+        _, transformed = OptimizedMoEMapperTransform.apply(model)
+
+        assert transformed
 
 
 # ---------------------------------------------------------------------------
@@ -1906,6 +1961,39 @@ class TestVlmNoKVOffloadTransform:
 # ---------------------------------------------------------------------------
 
 
+class _DeepseekDummyExpert(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.act_fn = F.silu
+
+
+class _DeepseekDummyGate(nn.Module):
+    top_k = 1
+
+    def forward(self, hidden_states):
+        num_tokens = hidden_states.numel() // hidden_states.shape[-1]
+        topk_indices = torch.zeros((num_tokens, 1), dtype=torch.long, device=hidden_states.device)
+        topk_weights = torch.ones((num_tokens, 1), dtype=hidden_states.dtype, device=hidden_states.device)
+        return topk_indices, topk_weights
+
+
+class _DeepseekDummySharedExperts(nn.Module):
+    def forward(self, hidden_states):
+        return torch.zeros_like(hidden_states)
+
+
+def _make_deepseek_external_moe():
+    class DeepseekV3MoE(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.config = SimpleNamespace(n_routed_experts=2)
+            self.experts = nn.ModuleList([_DeepseekDummyExpert(), _DeepseekDummyExpert()])
+            self.gate = _DeepseekDummyGate()
+            self.shared_experts = _DeepseekDummySharedExperts()
+
+    return DeepseekV3MoE()
+
+
 @pytest.mark.transforms
 class TestKVCacheExternalModuleMapperTransform:
     """KVCacheExternalModuleMapperTransform must have correct string-based mappings."""
@@ -1978,3 +2066,116 @@ class TestKVCacheExternalModuleMapperTransform:
         assert "RMSLayerNorm" in KVCacheExternalModuleMapperTransform._match_string_replace_method
         rms_mapping = KVCacheExternalModuleMapperTransform._match_string_replace_method["RMSLayerNorm"]
         assert rms_mapping["forward"] is CustomRMSNormAIC.forward
+
+    def test_external_mapper_assigns_non_callable_attrs(self):
+        from QEfficient.base.pytorch_transforms import ExternalModuleMapperTransform
+
+        class DummyExternal(nn.Module):
+            pass
+
+        def mapped_method(self):
+            return self.flag
+
+        class DummyExternalMapper(ExternalModuleMapperTransform):
+            _match_class_replace_method = {}
+            _match_string_replace_method = {
+                "DummyExternal": {
+                    "flag": True,
+                    "label": "mapped",
+                    "mapped_method": mapped_method,
+                }
+            }
+
+        model = DummyExternal()
+
+        _, transformed = DummyExternalMapper.apply(model)
+
+        assert transformed
+        assert model.flag is True
+        assert model.label == "mapped"
+        assert model.mapped_method() is True
+
+    def test_external_mapper_deepseek_default_binds_mixin_forward_and_contract(self):
+        from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
+        from QEfficient.transformers.moe import QEffMoEBlockMixin
+
+        model = _make_deepseek_external_moe()
+
+        _, transformed = KVCacheExternalModuleMapperTransform.apply(model)
+
+        assert transformed
+        assert model.forward.__func__ is QEffMoEBlockMixin.forward
+        assert callable(model.route)
+        assert callable(model.get_moe_weights)
+        assert callable(model.build_moe_weights)
+        assert callable(model.moe_profile)
+        assert model._moe_flavour is MoEFlavour.DECODE_BMM
+
+    def test_prefill_deepseek_default_path_uses_mixin_when_num_ffn_blocks_unset(self, monkeypatch):
+        from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyExternalModuleMapperTransform
+
+        monkeypatch.delenv("NUM_FFN_BLOCKS", raising=False)
+        monkeypatch.delenv("FFN_W_BLOCK_SIZE", raising=False)
+        model = _make_deepseek_external_moe()
+        _, transformed = PrefillOnlyExternalModuleMapperTransform.apply(model)
+        calls = []
+
+        def fake_execute(self, x, routing):
+            calls.append(routing)
+            return x
+
+        def fail_legacy(self, hidden_states):
+            raise AssertionError("legacy path should not run without NUM_FFN_BLOCKS")
+
+        model.execute_moe_flavour = MethodType(fake_execute, model)
+        model.legacy_forward = MethodType(fail_legacy, model)
+
+        out = model(torch.ones(1, 2, 4))
+
+        assert transformed
+        assert calls
+        assert torch.isfinite(out).all()
+
+    def test_prefill_deepseek_legacy_path_runs_when_num_ffn_blocks_set(self, monkeypatch):
+        from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyExternalModuleMapperTransform
+
+        monkeypatch.setenv("NUM_FFN_BLOCKS", "2")
+        monkeypatch.delenv("FFN_W_BLOCK_SIZE", raising=False)
+        model = _make_deepseek_external_moe()
+        PrefillOnlyExternalModuleMapperTransform.apply(model)
+        calls = []
+
+        def fake_legacy(self, hidden_states):
+            calls.append(hidden_states)
+            return hidden_states + 1
+
+        model.legacy_forward = MethodType(fake_legacy, model)
+
+        out = model(torch.zeros(1, 2, 4))
+
+        assert calls
+        torch.testing.assert_close(out, torch.ones(1, 2, 4))
+
+    def test_prefill_deepseek_legacy_ffn_weight_block_size_selects_weight_blocking(self, monkeypatch):
+        from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyExternalModuleMapperTransform
+
+        monkeypatch.setenv("NUM_FFN_BLOCKS", "2")
+        monkeypatch.setenv("FFN_W_BLOCK_SIZE", "16")
+        model = _make_deepseek_external_moe()
+        PrefillOnlyExternalModuleMapperTransform.apply(model)
+        calls = []
+
+        def fake_weight_blocked(self, hidden_states, topk_weights, mask, num_experts):
+            calls.append("weights")
+            return hidden_states + 2
+
+        def fail_blocked(self, hidden_states, topk_weights, mask, num_experts):
+            raise AssertionError("weight-blocked path should run when FFN_W_BLOCK_SIZE is set")
+
+        model.moe_blocked_weights_forward = MethodType(fake_weight_blocked, model)
+        model.moe_blocked_forward = MethodType(fail_blocked, model)
+
+        out = model(torch.zeros(1, 2, 4))
+
+        assert calls == ["weights"]
+        torch.testing.assert_close(out, torch.full((1, 2, 4), 2.0))
