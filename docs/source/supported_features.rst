@@ -25,7 +25,7 @@ Supported Features
    * - `Disaggregated serving <https://github.com/quic/efficient-transformers/pull/365>`_
      - It support for separate prefill and decode compilation for encoder (vision) and language models.
    * - `GGUF model execution <https://github.com/quic/efficient-transformers/pull/368>`_
-     - Supported GGUF model execution (without quantized weights). Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/gguf_models.py>`_ for more **details**.
+     - Supported GGUF model execution (without quantized weights). Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/basic_inference.py>`_ (use the ``--gguf-file`` flag) for more **details**.
    * - Replication of KV
      - Enabled FP8 model support on `replicate_kv_heads script <https://github.com/quic/efficient-transformers/tree/main/scripts/replicate_kv_head>`_.
    * - `gradient checkpointing <https://github.com/quic/efficient-transformers/pull/338>`_
