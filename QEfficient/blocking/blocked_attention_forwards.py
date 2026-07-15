@@ -214,6 +214,120 @@ def blocked_kv_attention_forward(
     return attn_output, attn_weights
 
 
+def blocked_kv_attention_forward_decode_headpar_batch(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    scaling: float,
+    num_kv_blocks: int,
+    cache_kwargs: Dict[str, Any],
+    layer_idx: int,
+    past_key_value: Cache,
+    ctx_len: int,
+    *,
+    use_causal_mask: bool = False,
+    sliding_window: Optional[int] = None,
+    skip_kv: bool = False,
+    position_bias: Optional[torch.Tensor] = None,
+    sinks: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """Batch-folded decode: k_cache/v_cache [1, BH, T, D] where BH=B*num_kv_heads is static.
+    Used when B > 1 (decode, non-chunk_kv) — one core/device per (batch, kv-head)
+    pair, so no inner `split` dimension is needed (unlike blocked_kv_attention_forward_headpar_offline).
+    query: [B, NQH, 1, D], k_cache/v_cache: [1, BH, T, D], position_ids: [B, 1]
+    """
+    print("\n\nEntering decode headpar Batch\n\n")
+    batch_size, num_heads, seq_len, head_dim = query.shape
+    assert seq_len == 1, "blocked_kv_attention_forward_decode_headpar_batch is decode-only (seq_len must be 1)."
+    num_kv_groups = getattr(module, "num_key_value_groups", None)
+    num_kv_heads = num_heads // num_kv_groups
+    BH = batch_size * num_kv_heads  # static at compile time
+    position_ids = cache_kwargs.get("position_ids")
+    num_kv_blocks = max(1, num_kv_blocks)
+    kv_block_size = -(-ctx_len // num_kv_blocks)
+    current_position = position_ids.max(dim=-1).values
+
+    # Reshape query: [B, NQH, 1, D] -> [1, BH, num_kv_groups, D]
+    query_flat = query.reshape(batch_size, num_kv_heads, num_kv_groups, seq_len, head_dim).reshape(
+        1, BH, num_kv_groups * seq_len, head_dim
+    )
+
+    max_blocks: list = []
+    sum_blocks: list = []
+    out_blocks: list = []
+
+    for j in range(num_kv_blocks):
+        start_index = j * kv_block_size
+        kv_len_block = (ctx_len - start_index) if j == num_kv_blocks - 1 else kv_block_size
+        end_index = start_index + kv_len_block
+
+        skip_future = None
+        if skip_kv:
+            skip_future = (torch.tensor(start_index, device=query.device) > current_position).all()
+            if not torch.onnx.is_in_onnx_export() and not torch.jit.is_tracing():
+                if skip_future.item():
+                    break
+
+        # Read K: [B, num_kv_heads, T_block, D] -> [1, BH, T_block, D]
+        k_block = past_key_value.read_only_blocked_K(start_index, end_index, layer_idx, cache_kwargs).reshape(
+            1, BH, kv_len_block, head_dim
+        )
+
+        attn_weights_block = torch.matmul(query_flat, k_block.transpose(-1, -2)) * scaling
+
+        # Causal mask: [B, 1, T_block] -> [B, num_kv_heads, 1, T_block] -> [1, BH, 1, T_block]
+        causal_mask = (
+            torch.arange(kv_len_block, device=query.device).view(1, 1, kv_len_block)
+            > (position_ids - start_index)[:, :, None]
+        )
+        # [B, 1, T_block] -> [B, num_kv_heads, seq_len, T_block] -> [1, BH, seq_len, T_block]
+        causal_mask = (
+            causal_mask.unsqueeze(1)
+            .expand(batch_size, num_kv_heads, seq_len, kv_len_block)
+            .reshape(1, BH, seq_len, kv_len_block)
+        )
+        # [1, BH, seq_len, T_block] -> [1, BH, num_kv_groups*seq_len, T_block]
+        # (tile, not interleave — query_flat's m-axis is rep-major/seq-minor: m = r*seq_len + q_pos)
+        causal_mask = causal_mask.repeat(1, 1, num_kv_groups, 1)
+        attn_weights_block = attn_weights_block.masked_fill(causal_mask, float(MIN_MASKED_ATTENTION_VALUE))
+
+        max_block = attn_weights_block.max(dim=-1).values
+        exp_block = torch.exp(attn_weights_block - max_block.unsqueeze(-1))
+        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+            max_block = torch.where(
+                skip_future, torch.full_like(max_block, float(MIN_MASKED_ATTENTION_VALUE)), max_block
+            )
+            exp_block = torch.where(skip_future, torch.zeros_like(exp_block), exp_block)
+
+        # Read V: [B, num_kv_heads, T_block, D] -> [1, BH, T_block, D]
+        v_block = past_key_value.read_only_blocked_V(start_index, end_index, layer_idx, cache_kwargs).reshape(
+            1, BH, kv_len_block, head_dim
+        )
+        sum_block = exp_block.sum(dim=-1)
+        out_block = torch.matmul(exp_block, v_block)
+        if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+            sum_block = torch.where(skip_future, torch.zeros_like(sum_block), sum_block)
+            out_block = torch.where(skip_future, torch.zeros_like(out_block), out_block)
+        max_blocks.append(max_block)
+        sum_blocks.append(sum_block)
+        out_blocks.append(out_block)
+
+    max_stacked = torch.stack(max_blocks)
+    sum_stacked = torch.stack(sum_blocks)
+    out_stacked = torch.stack(out_blocks)
+    block_max = max_stacked.max(dim=0).values
+    block_weight = torch.exp(max_stacked - block_max.unsqueeze(0))
+    block_sum = (block_weight * sum_stacked).sum(dim=0)
+    block_out = (block_weight.unsqueeze(-1) * out_stacked).sum(dim=0)
+    output = block_out / block_sum.unsqueeze(-1)  # [1, BH, num_kv_groups*seq_len, D]
+    return output.reshape(batch_size, num_kv_heads, num_kv_groups, seq_len, head_dim).reshape(
+        batch_size, num_heads, seq_len, head_dim
+    ), None
+
+
 def blocked_kv_attention_forward_headpar_offline(
     module: nn.Module,
     query: torch.Tensor,
@@ -486,7 +600,7 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
             K_4d = key_5d.reshape(batch_size, num_kv_heads * split, split_block_len, head_dim)
             V_4d = value_5d.reshape(batch_size, num_kv_heads * split, split_block_len, head_dim)
 
-            off = kv_offsets if split_block_len == T_h_nom else kv_offsets[:, :split_block_len]
+            # off = kv_offsets if split_block_len == T_h_nom else kv_offsets[:, :split_block_len]
             split_causal_masks = []
             for s in range(split):
                 s_start = start_index + s * split_block_len
