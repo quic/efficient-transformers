@@ -565,7 +565,7 @@ def _tiny_qwen3_vl_config() -> Qwen3VLConfig:
     )
 
 
-def _tiny_qwen3_vl_moe_config() -> Qwen3VLMoeConfig:
+def _tiny_qwen3_vl_moe_config(num_experts: int = 2) -> Qwen3VLMoeConfig:
     text_config = Qwen3VLMoeTextConfig(
         vocab_size=64,
         hidden_size=16,
@@ -576,7 +576,7 @@ def _tiny_qwen3_vl_moe_config() -> Qwen3VLMoeConfig:
         num_key_value_heads=1,
         head_dim=8,
         max_position_embeddings=32,
-        num_experts=2,
+        num_experts=num_experts,
         num_experts_per_tok=1,
         decoder_sparse_step=1,
         mlp_only_layers=[],
@@ -2189,12 +2189,12 @@ def test_moe_prefill_transform_does_not_require_enable_chunking():
     )
 
 
-def _tiny_qwen3_vl_moe_sparse_block_pair():
+def _tiny_qwen3_vl_moe_sparse_block_pair(num_experts: int = 2):
     from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextSparseMoeBlock
 
     from QEfficient.transformers.models.pytorch_transforms import KVCacheTransform
 
-    config = _tiny_qwen3_vl_moe_config().text_config
+    config = _tiny_qwen3_vl_moe_config(num_experts=num_experts).text_config
     torch.manual_seed(0)
     hf_block = Qwen3VLMoeTextSparseMoeBlock(config).eval()
     with torch.no_grad():
@@ -2220,15 +2220,42 @@ def test_qwen3_vl_moe_sparse_gather_bmm_matches_hf():
     torch.testing.assert_close(qeff_output, hf_output, atol=1e-6, rtol=1e-6)
 
 
-def test_qwen3_vl_moe_sparse_expert_parallel_dispatch_and_parity(monkeypatch):
+@pytest.mark.parametrize(
+    (
+        "num_experts",
+        "num_devices",
+        "num_cores",
+        "cores_per_expert",
+        "tree_reduce",
+        "expected_experts_per_soc",
+    ),
+    [
+        pytest.param(2, 1, 2, 1, False, None, id="default-einsum"),
+        pytest.param(4, 2, 2, 1, False, 2, id="cross-soc-flat"),
+        pytest.param(4, 2, 2, 1, True, 2, id="cross-soc-tree"),
+        pytest.param(4, 2, 2, 2, False, 1, id="cores-per-expert-2"),
+    ],
+)
+def test_qwen3_vl_moe_sparse_expert_parallel_dispatch_and_parity(
+    monkeypatch,
+    num_experts,
+    num_devices,
+    num_cores,
+    cores_per_expert,
+    tree_reduce,
+    expected_experts_per_soc,
+):
     from QEfficient.transformers.models.modeling_auto import _configure_vlm_moe_expert_parallel
 
-    hf_block, qeff_block, config = _tiny_qwen3_vl_moe_sparse_block_pair()
+    hf_block, qeff_block, config = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=num_experts)
     _configure_vlm_moe_expert_parallel(
         qeff_block,
         {},
         expert_parallel=True,
-        num_cores=2,
+        num_devices=num_devices,
+        num_cores=num_cores,
+        cores_per_expert=cores_per_expert,
+        tree_reduce=tree_reduce,
         moe_prefill_packed_chunk_size=2,
     )
     hidden_states = torch.randn(1, 4, config.hidden_size)
@@ -2246,6 +2273,10 @@ def test_qwen3_vl_moe_sparse_expert_parallel_dispatch_and_parity(monkeypatch):
         qeff_output, _ = qeff_block(hidden_states)
 
     assert called["expert_parallel"]
+    assert qeff_block.total_avl_cores == num_devices * num_cores
+    assert qeff_block.cores_per_expert == cores_per_expert
+    assert qeff_block.experts_per_soc == expected_experts_per_soc
+    assert qeff_block.tree_reduce is tree_reduce
     assert qeff_output.shape == hidden_states.shape
     torch.testing.assert_close(qeff_output, hf_output, atol=1e-6, rtol=1e-6)
 
@@ -2253,13 +2284,16 @@ def test_qwen3_vl_moe_sparse_expert_parallel_dispatch_and_parity(monkeypatch):
 def test_qwen3_vl_moe_sparse_configurator_sets_and_clears_dispatch(monkeypatch):
     from QEfficient.transformers.models.modeling_auto import _configure_vlm_moe_expert_parallel
 
-    _, qeff_block, config = _tiny_qwen3_vl_moe_sparse_block_pair()
+    _, qeff_block, config = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=4)
     hash_params = {}
     _configure_vlm_moe_expert_parallel(
         qeff_block,
         hash_params,
         expert_parallel=True,
+        num_devices=2,
         num_cores=2,
+        cores_per_expert=2,
+        tree_reduce=True,
         moe_prefill_packed_chunk_size=3,
     )
 
@@ -2267,24 +2301,52 @@ def test_qwen3_vl_moe_sparse_configurator_sets_and_clears_dispatch(monkeypatch):
     assert qeff_block.expert_blocking_num_nsp == 2
     assert qeff_block.expert_blocking_packed_chunk_size == 3
     assert qeff_block.num_nsp == 2
-    assert qeff_block.local_experts == 1
+    assert qeff_block.local_experts == 2
+    assert qeff_block.num_devices == 2
+    assert qeff_block.cores_per_expert == 2
+    assert qeff_block.total_avl_cores == 4
+    assert qeff_block.num_pipeline_stages == 2
+    assert qeff_block.num_parallelized_experts == 2
+    assert qeff_block.experts_per_soc == 1
+    assert qeff_block.tree_reduce is True
     assert hash_params["expert_parallel"] is True
-    assert hash_params["moe_prefill_num_nsp"] == 2
+    assert "moe_prefill_num_nsp" not in hash_params
+    assert hash_params["moe_prefill_total_avl_cores"] == 4
+    assert hash_params["moe_prefill_cores_per_expert"] == 2
+    assert hash_params["moe_prefill_tree_reduce"] is True
     assert hash_params["moe_prefill_packed_chunk_size"] == 3
 
     _configure_vlm_moe_expert_parallel(
         qeff_block,
         hash_params,
         expert_parallel=False,
+        num_devices=2,
         num_cores=2,
+        cores_per_expert=2,
+        tree_reduce=True,
         moe_prefill_packed_chunk_size=3,
     )
 
     assert qeff_block.expert_parallel is False
     assert "expert_parallel" not in hash_params
     assert "moe_prefill_num_nsp" not in hash_params
+    assert "moe_prefill_total_avl_cores" not in hash_params
+    assert "moe_prefill_cores_per_expert" not in hash_params
+    assert "moe_prefill_tree_reduce" not in hash_params
     assert "moe_prefill_packed_chunk_size" not in hash_params
-    for attr_name in ("expert_blocking_num_nsp", "expert_blocking_packed_chunk_size", "num_nsp", "local_experts"):
+    for attr_name in (
+        "expert_blocking_num_nsp",
+        "expert_blocking_packed_chunk_size",
+        "num_nsp",
+        "local_experts",
+        "num_devices",
+        "cores_per_expert",
+        "total_avl_cores",
+        "num_pipeline_stages",
+        "num_parallelized_experts",
+        "experts_per_soc",
+        "tree_reduce",
+    ):
         assert not hasattr(qeff_block, attr_name)
 
     called = {"gather": False, "expert_parallel": False}
@@ -2305,6 +2367,35 @@ def test_qwen3_vl_moe_sparse_configurator_sets_and_clears_dispatch(monkeypatch):
 
     assert called["gather"]
     assert not called["expert_parallel"]
+
+
+def test_qwen3_vl_moe_sparse_configurator_rejects_invalid_core_layout():
+    from QEfficient.transformers.models.modeling_auto import _configure_vlm_moe_expert_parallel
+
+    _, qeff_block, _ = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=4)
+    with pytest.raises(ValueError, match="total_avl_cores"):
+        _configure_vlm_moe_expert_parallel(
+            qeff_block,
+            {},
+            expert_parallel=True,
+            num_devices=3,
+            num_cores=2,
+            cores_per_expert=1,
+            tree_reduce=False,
+            moe_prefill_packed_chunk_size=2,
+        )
+
+    with pytest.raises(TypeError, match="tree_reduce"):
+        _configure_vlm_moe_expert_parallel(
+            qeff_block,
+            {},
+            expert_parallel=True,
+            num_devices=1,
+            num_cores=2,
+            cores_per_expert=1,
+            tree_reduce="true",
+            moe_prefill_packed_chunk_size=2,
+        )
 
 
 def test_qwen3_vl_moe_sparse_expert_parallel_resolver_prefill_wins():
@@ -2328,8 +2419,16 @@ def test_qwen3_vl_moe_sparse_vlm_compile_signatures_expose_expert_parallel_args(
         params = inspect.signature(wrapper_cls.compile).parameters
         assert params["expert_parallel"].kind is inspect.Parameter.KEYWORD_ONLY
         assert params["expert_parallel"].default is None
+        assert params["cores_per_expert"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert params["cores_per_expert"].default == 1
+        assert params["tree_reduce"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert params["tree_reduce"].default is False
         assert params["moe_prefill_packed_chunk_size"].kind is inspect.Parameter.KEYWORD_ONLY
         assert params["moe_prefill_packed_chunk_size"].default == constants.MOE_PREFILL_PACKED_CHUNK_SIZE
+
+        export_params = inspect.signature(wrapper_cls.export).parameters
+        assert export_params["cores_per_expert"].default == 1
+        assert export_params["tree_reduce"].default is False
 
 
 def test_layerwise_matches_default_path_for_qwen3_moe():

@@ -120,19 +120,34 @@ def _configure_vlm_moe_expert_parallel(
     hash_params: dict,
     *,
     expert_parallel: bool,
+    num_devices: int,
     num_cores: int,
+    cores_per_expert: int,
+    tree_reduce: bool,
     moe_prefill_packed_chunk_size: int,
 ) -> None:
+    if num_devices <= 0:
+        raise ValueError("`num_devices` must be greater than 0 when configuring MoE expert parallelism.")
     if num_cores <= 0:
         raise ValueError("`num_cores` must be greater than 0 when configuring MoE expert parallelism.")
+    if cores_per_expert <= 0:
+        raise ValueError("`cores_per_expert` must be greater than 0 when configuring MoE expert parallelism.")
+    if not isinstance(tree_reduce, bool):
+        raise TypeError("`tree_reduce` must be a boolean.")
 
+    total_avl_cores = num_devices * num_cores
     if expert_parallel:
         hash_params["expert_parallel"] = True
-        hash_params["moe_prefill_num_nsp"] = num_cores
+        hash_params["moe_prefill_total_avl_cores"] = total_avl_cores
+        hash_params["moe_prefill_cores_per_expert"] = cores_per_expert
+        hash_params["moe_prefill_tree_reduce"] = tree_reduce
         hash_params["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
     else:
         hash_params.pop("expert_parallel", None)
         hash_params.pop("moe_prefill_num_nsp", None)
+        hash_params.pop("moe_prefill_total_avl_cores", None)
+        hash_params.pop("moe_prefill_cores_per_expert", None)
+        hash_params.pop("moe_prefill_tree_reduce", None)
         hash_params.pop("moe_prefill_packed_chunk_size", None)
 
     for module in model.modules():
@@ -146,6 +161,13 @@ def _configure_vlm_moe_expert_parallel(
                 "expert_blocking_num_packed_chunks",
                 "num_nsp",
                 "local_experts",
+                "num_devices",
+                "cores_per_expert",
+                "total_avl_cores",
+                "num_pipeline_stages",
+                "num_parallelized_experts",
+                "experts_per_soc",
+                "tree_reduce",
             ):
                 if hasattr(module, attr_name):
                     delattr(module, attr_name)
@@ -153,13 +175,38 @@ def _configure_vlm_moe_expert_parallel(
         num_experts = _get_moe_num_experts(module)
         if num_experts is None:
             raise AttributeError("MoE expert-parallel module does not expose num_experts.")
-        if num_experts % num_cores != 0:
-            raise ValueError(f"num_experts ({num_experts}) must be divisible by expert_blocking_num_nsp ({num_cores})")
+        if (num_experts * cores_per_expert) % total_avl_cores != 0:
+            raise ValueError(
+                "num_experts * cores_per_expert "
+                f"({num_experts * cores_per_expert}) must be divisible by total_avl_cores ({total_avl_cores})."
+            )
+        num_pipeline_stages = (num_experts * cores_per_expert) // total_avl_cores
+        if num_pipeline_stages <= 0:
+            raise ValueError("`num_pipeline_stages` must be greater than 0 for MoE expert parallelism.")
+        if num_experts % num_pipeline_stages != 0:
+            raise ValueError(
+                f"num_experts ({num_experts}) must be divisible by num_pipeline_stages ({num_pipeline_stages})."
+            )
+        num_parallelized_experts = num_experts // num_pipeline_stages
+        if num_parallelized_experts % num_devices != 0:
+            raise ValueError(
+                f"num_parallelized_experts ({num_parallelized_experts}) must be divisible by num_devices "
+                f"({num_devices})."
+            )
+        if num_devices > 1 and num_cores % cores_per_expert != 0:
+            raise ValueError(f"num_cores ({num_cores}) must be divisible by cores_per_expert ({cores_per_expert}).")
         module.num_experts = num_experts
-        module.expert_blocking_num_nsp = num_cores
+        module.num_devices = num_devices
+        module.cores_per_expert = cores_per_expert
+        module.total_avl_cores = total_avl_cores
+        module.num_pipeline_stages = num_pipeline_stages
+        module.num_parallelized_experts = num_parallelized_experts
+        module.experts_per_soc = num_cores // cores_per_expert if num_devices > 1 else None
+        module.tree_reduce = tree_reduce
+        module.expert_blocking_num_nsp = num_parallelized_experts
         module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
-        module.num_nsp = num_cores
-        module.local_experts = num_experts // num_cores
+        module.num_nsp = num_parallelized_experts
+        module.local_experts = num_pipeline_stages
 
 
 def _resolve_torch_dtype(kwargs: dict) -> None:
@@ -1329,7 +1376,10 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         prefill_only: bool = False,
         enable_chunking: bool = False,
         expert_parallel: Optional[bool] = None,
+        num_devices: int = 1,
         num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
+        cores_per_expert: int = 1,
+        tree_reduce: bool = False,
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         kv_cache_prefix: Optional[str] = None,
         **kwargs,
@@ -1373,7 +1423,10 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             self.model,
             self.hash_params,
             expert_parallel=resolved_expert_parallel,
+            num_devices=num_devices,
             num_cores=num_cores,
+            cores_per_expert=cores_per_expert,
+            tree_reduce=tree_reduce,
             moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
         )
 
@@ -1590,7 +1643,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         prefill_only: bool = False,
         enable_chunking: bool = False,
         expert_parallel: Optional[bool] = None,
+        num_devices: int = 1,
         num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
+        cores_per_expert: int = 1,
+        tree_reduce: bool = False,
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
@@ -1629,7 +1685,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 expert_parallel=expert_parallel,
+                num_devices=num_devices,
                 num_cores=num_cores,
+                cores_per_expert=cores_per_expert,
+                tree_reduce=tree_reduce,
                 moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                 layerwise_window_size=layerwise_window_size,
                 kv_cache_prefix=kv_cache_prefix,
@@ -1712,7 +1771,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 expert_parallel=expert_parallel,
+                num_devices=num_devices,
                 num_cores=num_cores,
+                cores_per_expert=cores_per_expert,
+                tree_reduce=tree_reduce,
                 moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                 prefill_seq_len=prefill_seq_len,
                 _layerwise_cache_probe=layerwise_cache_probe,
@@ -1898,6 +1960,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         offload_pt_weights: Optional[bool] = None,
         enable_chunking=False,
         expert_parallel: Optional[bool] = None,
+        cores_per_expert: int = 1,
+        tree_reduce: bool = False,
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         qaic_config: Optional[dict] = None,
         layerwise: bool = False,
@@ -1990,6 +2054,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     offload_pt_weights=offload_pt_weights,
                     enable_chunking=enable_chunking,
                     expert_parallel=resolved_expert_parallel,
+                    cores_per_expert=cores_per_expert,
+                    tree_reduce=tree_reduce,
                     moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                     qaic_config=qaic_config,
                     kv_cache_prefix=kv_cache_prefix,
@@ -2022,6 +2088,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 offload_pt_weights=offload_pt_weights,
                 enable_chunking=enable_chunking,
                 expert_parallel=resolved_expert_parallel,
+                cores_per_expert=cores_per_expert,
+                tree_reduce=tree_reduce,
                 moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                 qaic_config=qaic_config,
                 layerwise_window_size=layerwise_window_size,
@@ -2115,7 +2183,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 expert_parallel=resolved_expert_parallel,
+                num_devices=num_devices,
                 num_cores=num_cores,
+                cores_per_expert=cores_per_expert,
+                tree_reduce=tree_reduce,
                 moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                 prefill_seq_len=prefill_seq_len,
                 _layerwise_cache_probe=layerwise_cache_probe,
@@ -2208,6 +2279,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 expert_parallel=resolved_expert_parallel,
                 moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+                cores_per_expert=cores_per_expert,
+                tree_reduce=tree_reduce,
                 **compiler_options,
             )
             self.qpc_paths.update({qpc_key: lang_qpc_path})
@@ -2781,7 +2854,10 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         prefill_only: bool = False,
         enable_chunking: bool = False,
         expert_parallel: Optional[bool] = None,
+        num_devices: int = 1,
         num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
+        cores_per_expert: int = 1,
+        tree_reduce: bool = False,
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         kv_cache_prefix: Optional[str] = None,
         **kwargs,
@@ -2817,7 +2893,10 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             self.model,
             self.hash_params,
             expert_parallel=resolved_expert_parallel,
+            num_devices=num_devices,
             num_cores=num_cores,
+            cores_per_expert=cores_per_expert,
+            tree_reduce=tree_reduce,
             moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
         )
 
@@ -2855,6 +2934,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         prefill_only: Optional[bool] = False,
         enable_chunking: bool = False,
         expert_parallel: Optional[bool] = None,
+        cores_per_expert: int = 1,
+        tree_reduce: bool = False,
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         use_onnx_subfunctions: bool = False,
         qaic_config: Optional[dict] = None,
@@ -2997,6 +3078,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             enable_chunking=enable_chunking,
             expert_parallel=resolved_expert_parallel,
             moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+            cores_per_expert=cores_per_expert,
+            tree_reduce=tree_reduce,
             kv_cache_prefix=kv_cache_prefix,
             **compiler_options,
         )

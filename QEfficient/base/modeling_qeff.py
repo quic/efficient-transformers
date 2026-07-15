@@ -500,6 +500,9 @@ class QEFFBaseModel(ABC):
         moe_prefill_packed_chunk_size: Optional[int] = None,
         kv_cache_prefix: Optional[str] = None,
         expert_parallel: Optional[bool] = None,
+        num_devices: int = 1,
+        cores_per_expert: Optional[int] = None,
+        tree_reduce: Optional[bool] = None,
         **compiler_options,
     ):
         kwargs = {
@@ -515,7 +518,10 @@ class QEFFBaseModel(ABC):
 
         if expert_parallel is not None:
             kwargs["expert_parallel"] = expert_parallel
+            kwargs["num_devices"] = num_devices
             kwargs["num_cores"] = compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
+            kwargs["cores_per_expert"] = 1 if cores_per_expert is None else cores_per_expert
+            kwargs["tree_reduce"] = False if tree_reduce is None else tree_reduce
             kwargs["moe_prefill_packed_chunk_size"] = (
                 constants.MOE_PREFILL_PACKED_CHUNK_SIZE
                 if moe_prefill_packed_chunk_size is None
@@ -552,6 +558,7 @@ class QEFFBaseModel(ABC):
             ctx_len=ctx_len,
             seq_len=seq_len,
             bs=bs,
+            num_devices=num_devices,
             qaic_config=qaic_config,
             **compiler_options,
         )
@@ -888,6 +895,8 @@ class QEFFBaseModel(ABC):
 
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
         moe_prefill_packed_chunk_size = compiler_options.pop("moe_prefill_packed_chunk_size", None)
+        cores_per_expert = compiler_options.pop("cores_per_expert", None)
+        tree_reduce = compiler_options.pop("tree_reduce", None)
 
         for removed_option in ("compile_only", "compile-only"):
             if removed_option in compiler_options:
@@ -917,6 +926,8 @@ class QEFFBaseModel(ABC):
                     qaic_config=qaic_config,
                     moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                     expert_parallel=expert_parallel,
+                    cores_per_expert=cores_per_expert,
+                    tree_reduce=tree_reduce,
                     _layerwise_cache_probe=layerwise_cache_probe,
                     kv_cache_prefix=kv_cache_prefix,
                     **compiler_options,
@@ -1052,6 +1063,8 @@ class QEFFBaseModel(ABC):
             "prefill_only": prefill_only,
             "expert_parallel": expert_parallel,
             "moe_prefill_packed_chunk_size": moe_prefill_packed_chunk_size,
+            "cores_per_expert": cores_per_expert,
+            "tree_reduce": tree_reduce,
         }
         compile_hash = hash_dict_params(compile_hash_params)
 
