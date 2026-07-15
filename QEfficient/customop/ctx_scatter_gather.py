@@ -274,3 +274,108 @@ class CtxGatherFuncBlockedKV(torch.autograd.Function):
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxGatherBlockedKV, data, ctx_indices).setTypeAs(data)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Batch-folded variants — cache laid out as [1, B*NKVH, T, D] (BH static at
+# compile time) so batch and KV-head are pre-flattened onto one axis that
+# matches a B*Hkv physical core/device layout 1:1.
+# ─────────────────────────────────────────────────────────────────────────────
+@onnxscript.script(onnxscript.values.Opset("com.qti.aisw.onnx", 1))
+def CtxChunkScatterBatch(
+    data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT
+) -> onnxscript.FLOAT:
+    # Batch version: data [1, B*NKVH, T, D], updates [B, NKVH, QL, D], position_ids [B, QL]
+    batch_size = ops.Gather(ops.Shape(updates), [0])
+    num_heads = ops.Gather(ops.Shape(updates), [1])
+    seq_len = ops.Gather(ops.Shape(updates), [2])
+
+    zero = ops.Constant(value_ints=[0])
+    one = ops.Constant(value_ints=[1])
+
+    # Create batch and head indices [B, NKVH, QL]
+    batch_idx = ops.Range(zero, batch_size, one)  # [B]
+    head_idx = ops.Range(zero, num_heads, one)  # [NKVH]
+
+    # Expand to [B, NKVH, QL]
+    batch_idx = ops.Expand(
+        ops.Unsqueeze(ops.Unsqueeze(batch_idx, [1]), [2]), ops.Concat(batch_size, num_heads, seq_len, axis=0)
+    )
+    head_idx = ops.Expand(
+        ops.Unsqueeze(ops.Unsqueeze(head_idx, [0]), [2]), ops.Concat(batch_size, num_heads, seq_len, axis=0)
+    )
+
+    # Compute flat head index: batch_idx * num_heads + head_idx
+    head_flat_idx = ops.Add(ops.Mul(batch_idx, num_heads), head_idx)  # [B, NKVH, QL]
+
+    # Expand position_ids from [B, QL] to [B, NKVH, QL]
+    pos_expanded = ops.Expand(ops.Unsqueeze(position_ids, [1]), ops.Concat(batch_size, num_heads, seq_len, axis=0))
+
+    # Create indices for ScatterND: [B, NKVH, QL, 3] where last dim is [batch=0, head_flat, pos]
+    # ops.Zeros is not supported by QAIC compiler; use head_flat_idx * 0 to get int64 zeros.
+    batch_zero = ops.Unsqueeze(ops.Mul(ops.Cast(head_flat_idx, to=7), ops.Constant(value_ints=[0])), [3])
+    head_flat_idx_exp = ops.Unsqueeze(ops.Cast(head_flat_idx, to=7), [3])
+    pos_exp = ops.Unsqueeze(ops.Cast(pos_expanded, to=7), [3])
+
+    indices = ops.Concat(batch_zero, head_flat_idx_exp, pos_exp, axis=3)  # [B, NKVH, QL, 3]
+
+    return ops.ScatterND(data, indices, updates)
+
+
+class CtxChunkScatterBatchFunc(torch.autograd.Function):
+    """Batch version: data [1, BH, T, D], updates [B, NKVH, QL, D], position_ids [B, QL].
+    BH = B*NKVH static at compile time. head_flat = b*NKVH + h matches the
+    reshape([B,NKVH,...] -> [1, B*NKVH, ...]) convention used everywhere else.
+    """
+
+    @staticmethod
+    def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+        B, NKVH, QL, D = updates.shape
+        pos = position_ids.long()
+        batch_idx = torch.arange(B, device=data.device).view(B, 1, 1).expand(B, NKVH, QL)
+        head_idx = torch.arange(NKVH, device=data.device).view(1, NKVH, 1).expand(B, NKVH, QL)
+        head_flat_idx = batch_idx * NKVH + head_idx
+        p_idx = pos.unsqueeze(1).expand(B, NKVH, QL)
+        out = data.clone()
+        out[0, head_flat_idx, p_idx] = updates
+        return out
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
+        return g.onnxscript_op(CtxChunkScatterBatch, data, position_ids, updates).setTypeAs(data)
+
+
+@onnxscript.script(onnxscript.values.Opset("com.qti.aisw.onnx", 1))
+def CtxGatherBlockedKVBatch(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
+    # data [1, BH, T, D], ctx_indices [1, BH, T_block]  (BH = B*NKVH, static at compile time)
+    # batch_dims=2: checks data.shape[0]==indices.shape[0] (1==1) and
+    #               data.shape[1]==indices.shape[1] (BH==BH) — both static
+    ctx_indices = ops.Unsqueeze(ctx_indices, [-1])  # [1, BH, T_block, 1]
+    return ops.GatherND(data, ctx_indices, batch_dims=2)
+
+
+class CtxGatherFuncBlockedKVBatch(torch.autograd.Function):
+    """Batch version: data [1, BH, T, D], ctx_indices [1, BH, T_block].
+    BH = B*NKVH is static (compile-time fixed). Returns [1, BH, T_block, D].
+    """
+
+    @staticmethod
+    def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
+        # data [1, BH, T, D], ctx_indices [1, BH, T_block]
+        BH = data.shape[1]
+        ctx_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
+        head_idx = torch.arange(BH, device=data.device).view(BH, 1)  # [BH, 1]
+        # data[0, head_idx, ctx_indices[0]]: [BH, T_block, D] -> unsqueeze -> [1, BH, T_block, D]
+        return data[0, head_idx, ctx_indices[0]].unsqueeze(0)
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
+        return g.onnxscript_op(CtxGatherBlockedKVBatch, data, ctx_indices).setTypeAs(data)

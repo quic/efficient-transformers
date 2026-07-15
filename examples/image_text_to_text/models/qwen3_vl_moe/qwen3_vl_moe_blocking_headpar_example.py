@@ -61,11 +61,10 @@ PROMPT = "Tell me about yourself."
 
 def _decode_qaic_config() -> dict:
     return {
-        "blocking_mode": "hqkv",
+        "blocking_mode": "kv",
         "num_kv_blocks": NUM_KV_BLOCKS,
-        "num_q_blocks": NUM_Q_BLOCKS,
-        "head_block_size": HEAD_BLOCK_SIZE,
-        "kv_blocking_headpar_split": 0,  # 0 → resolved to num_cores at compile time
+        "batch_fold": True,
+        # "kv_blocking_headpar_split": 0,
         "ctx_len": CTX_LEN,
     }
 
@@ -80,11 +79,11 @@ def _prefill_qaic_config(prefill_mode: str) -> dict:
 # ── Dummy model builder ────────────────────────────────────────────────────────
 
 
-def build_dummy_config() -> AutoConfig:
-    """Shrink the Qwen3-VL-MoE config to 1 text layer for fast testing."""
+def build_dummy_config(num_layers) -> AutoConfig:
+    """Shrink the Qwen3-VL-MoE config to 2 text layer for fast testing."""
     config = AutoConfig.from_pretrained(MODEL_ID, trust_remote_code=True)
     config.vision_config.depth = 9
-    config.text_config.num_hidden_layers = 1
+    config.text_config.num_hidden_layers = num_layers
     config.vision_config.deepstack_visual_indexes = [8]
     return config
 
@@ -117,7 +116,7 @@ def _base_compile_kwargs(num_cores: int, num_devices: int) -> dict:
         split_model_io=True,  # required for disagg KV transfer via VLLM
         user_tiled=True,
         skip_vision=True,
-        use_onnx_subfunctions=True,
+        use_onnx_subfunctions=False,
         layerwise=False,
     )
 
@@ -342,6 +341,9 @@ def parse_args():
         help="Blocking configuration to test (default: all)",
     )
     parser.add_argument("--gen-len", type=int, default=GEN_LEN, help="Number of tokens to generate")
+    parser.add_argument(
+        "--num-layers", type=int, default=1, help="Number of layers to export/compile for, defaults to 1"
+    )
     parser.add_argument("--num-cores", type=int, default=DEFAULT_NUM_CORES, help="Number of AIC cores")
     parser.add_argument("--num-devices", type=int, default=DEFAULT_NUM_DEVICES, help="Number of AIC devices")
     parser.add_argument("--prompt", type=str, default=PROMPT, help="Text prompt for inference")
@@ -353,6 +355,7 @@ def main():
 
     num_cores = args.num_cores
     num_devices = args.num_devices
+    num_layers = args.num_layers
 
     modes_to_run = ["decode", "prefill_par", "prefill_online"] if args.blocking_mode == "all" else [args.blocking_mode]
 
@@ -362,8 +365,8 @@ def main():
     print(f"Devices  : {num_devices} x {num_cores} cores\n")
 
     # ── Build shared dummy model + processor ──────────────────────────────────
-    print("Building dummy 1-layer model (from_config, random weights)...")
-    config = build_dummy_config()
+    print(f"Building dummy {num_layers}-layer model (from_config, random weights)...")
+    config = build_dummy_config(num_layers)
     model_hf = build_hf_model(config)
     processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
 

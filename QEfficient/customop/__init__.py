@@ -6,10 +6,12 @@
 # -----------------------------------------------------------------------------
 
 from QEfficient.customop.ctx_scatter_gather import (
+    CtxChunkScatterBatchFunc,
     CtxGatherFunc,
     CtxGatherFunc3D,
     CtxGatherFunc3DGeneralized,
     CtxGatherFuncBlockedKV,
+    CtxGatherFuncBlockedKVBatch,
     CtxScatterFunc,
     CtxScatterFunc3D,
     CtxScatterFunc3DGeneralized,
@@ -25,6 +27,8 @@ from QEfficient.customop.ctx_scatter_gather_cb import (
 from QEfficient.customop.rms_norm import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 
 __all__ = [
+    "CtxChunkScatterBatchFunc",
+    "CtxGatherFuncBlockedKVBatch",
     "CtxGatherFunc",
     "CtxGatherFuncBlockedKV",
     "CtxScatterFunc",
