@@ -7,6 +7,10 @@
 """
 CPU-only tests that ensure library dumps are written for key API entry points
 (even when failures happen) and deduplication holds for multi-module pipelines.
+
+These tests live under ``tests/transformers`` because they rely on real model
+weights/configs (CausalLM, VLM, and Flux diffusers) rather than pure unit-level
+stubs.
 """
 
 import json
@@ -20,11 +24,20 @@ from transformers import GPT2Config, GPT2LMHeadModel
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils.test_utils import load_vlm_model_from_config
 
-CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "image_text_model_configs.json"
+CONFIG_PATH = Path(__file__).resolve().parents[1] / "configs" / "image_text_model_configs.json"
 
 
 def _read_manifest_paths(root: Path):
     return list(root.rglob("qeff_library-*.json"))
+
+
+@pytest.fixture(autouse=True)
+def _reset_written_registry():
+    import QEfficient.utils.library_dump as ld
+
+    ld._written.clear()
+    yield
+    ld._written.clear()
 
 
 def _load_qwen3_0_6b_custom_vlm_config():
@@ -86,8 +99,14 @@ class TestDiffusersDumpDedup:
 
         from tests.diffusers.test_flux import _build_flux_pipeline
 
-        with patch("QEfficient.utils.library_dump.QEFF_HOME", tmp_path):
-            pipeline, _ = _build_flux_pipeline(enable_first_block_cache=False)
+        # Build the Flux pipeline. If the base Flux configs or weights are
+        # unavailable in this environment (no internet / model not installed),
+        # gracefully skip instead of failing the entire suite.
+        try:
+            with patch("QEfficient.utils.library_dump.QEFF_HOME", tmp_path):
+                pipeline, _ = _build_flux_pipeline(enable_first_block_cache=False)
+        except OSError:
+            pytest.skip("Flux base model/configs not available; skipping dump dedup test.")
 
         # Stub export calls to keep the test fast while exercising pipeline iteration.
         def _noop_export(*args, **kwargs):
