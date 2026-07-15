@@ -1609,3 +1609,16 @@ class OptimizedMoETransform(PytorchTransform):
             hash_params=hash_params,
         )
         return model, mapped or external_mapped or weights_ready or export_configured
+
+
+class SimpleDecodeMoeTransform(OptimizedMoETransform):
+    """Constructor-time MoE transform that uses legacy decode defaults."""
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        return OptimizedMoETransform.apply(
+            model,
+            prefill_only=False,
+            enable_chunking=False,
+            qaic_config={"moe_flavour": "auto"},
+        )

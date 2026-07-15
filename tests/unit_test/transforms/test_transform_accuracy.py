@@ -62,6 +62,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     PoolingTransform,
     ReplicateKVHeadTransform,
     SamplerTransform,
+    SimpleDecodeMoeTransform,
     SpDTransform,
 )
 from QEfficient.transformers.moe import MoEFlavour, MoEProfile, QEffMoEBlockMixin, moe_simple_loop
@@ -1315,6 +1316,49 @@ def test_moe_simple_loop_prescale_matches_manual_expert_input_scaling():
 
 @pytest.mark.transforms
 class TestSplitOptimizedMoETransform:
+    def test_simple_decode_moe_transform_is_optimized_moe_transform_subclass(self):
+        assert issubclass(SimpleDecodeMoeTransform, OptimizedMoETransform)
+
+    def test_simple_decode_moe_transform_builds_weights_and_selects_decode_bmm(self):
+        model = _DummyOptimizedMoEModel()
+
+        _, transformed = SimpleDecodeMoeTransform.apply(model)
+
+        assert transformed
+        assert model.block.build_count == 1
+        assert model.block.moe_weights is not None
+        assert model.block._qeff_moe_weights_ready is True
+        assert model.block._moe_flavour is MoEFlavour.DECODE_BMM
+
+    def test_simple_decode_moe_transform_falls_back_when_decode_bmm_unsupported(self):
+        model = _DummyOptimizedMoEModel(model_type="llama4")
+        model.block.supports_moe_decode_bmm = False
+
+        _, transformed = SimpleDecodeMoeTransform.apply(model)
+
+        assert transformed
+        assert model.block.build_count == 1
+        assert model.block._moe_flavour is MoEFlavour.SIMPLE_LOOP
+
+    def test_simple_decode_moe_transform_is_registered_after_cache_transforms(self):
+        from QEfficient.transformers.models.modeling_auto import (
+            QEFFAutoModelForCausalLM,
+            QEffCausalLMForTextImageToTextModel,
+            _QEFFAutoModelForImageTextToTextSingleQPC,
+        )
+
+        assert QEFFAutoModelForCausalLM._pytorch_transforms[-1] is SimpleDecodeMoeTransform
+        assert QEffCausalLMForTextImageToTextModel._pytorch_transforms[-1] is SimpleDecodeMoeTransform
+        assert _QEFFAutoModelForImageTextToTextSingleQPC._pytorch_transforms[-1] is SimpleDecodeMoeTransform
+
+        for wrapper in (
+            QEFFAutoModelForCausalLM,
+            QEffCausalLMForTextImageToTextModel,
+            _QEFFAutoModelForImageTextToTextSingleQPC,
+        ):
+            transforms = wrapper._pytorch_transforms
+            assert transforms.index(KVCacheTransform) < transforms.index(SimpleDecodeMoeTransform)
+
     def test_moe_component_mappings_owned_by_optimized_mapper(self):
         from transformers.models.gemma4.modeling_gemma4 import Gemma4TextExperts, Gemma4TextRouter
         from transformers.models.glm4_moe.modeling_glm4_moe import Glm4MoeMoE, Glm4MoeTopkRouter
