@@ -579,6 +579,7 @@ class QEFFBaseModel(ABC):
             kwargs["kv_cache_prefix"] = kv_cache_prefix
         if qaic_config:
             kwargs["qaic_config"] = qaic_config
+        kwargs["_skip_pre_export_pytorch_transforms"] = True
 
         if prefill_only:
             kwargs.update(
@@ -611,6 +612,10 @@ class QEFFBaseModel(ABC):
             seq_len=seq_len,
             bs=bs,
             qaic_config=qaic_config,
+            prefill_only=prefill_only,
+            enable_chunking=enable_chunking,
+            num_cores=kwargs.get("num_cores", compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)),
+            moe_prefill_packed_chunk_size=kwargs.get("moe_prefill_packed_chunk_size"),
             **compiler_options,
         )
 
@@ -861,6 +866,8 @@ class QEFFBaseModel(ABC):
         **compiler_options,
     ):
         # Apply the transformations that are dependent on compilation parameters
+        from QEfficient.transformers.models.pytorch_transforms import OptimizedMoETransform
+
         qaic_config = qaic_config if qaic_config else getattr(self.model, "qaic_config", None)
 
         model_config = getattr(self.model, "config", None) or getattr(
@@ -891,6 +898,20 @@ class QEFFBaseModel(ABC):
         if qaic_config is not None:
             self.hash_params["qaic_config"] = qaic_config
         self.hash_params["num_replicate_kv_heads"] = effective_num_replicate_kv_heads
+
+        moe_prefill_packed_chunk_size = compiler_options.get("moe_prefill_packed_chunk_size")
+        if moe_prefill_packed_chunk_size is None:
+            moe_prefill_packed_chunk_size = constants.MOE_PREFILL_PACKED_CHUNK_SIZE
+        self.model, _ = OptimizedMoETransform.apply(
+            self.model,
+            prefill_only=bool(compiler_options.get("prefill_only", False)),
+            enable_chunking=bool(compiler_options.get("enable_chunking", False)),
+            num_cores=compiler_options.get("num_cores", constants.DEFAULT_AIC_NUM_CORES),
+            moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+            qaic_config=qaic_config,
+            prefill_seq_len=seq_len,
+            hash_params=self.hash_params,
+        )
 
     @dump_qconfig
     def _compile(
