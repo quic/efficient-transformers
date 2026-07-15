@@ -76,13 +76,14 @@ def update_running_softmax(
     if v_block is not None:
         output_updated = ((prev_denominator / current_denominator_updated).unsqueeze(-1)) * prev_output * torch.exp(
             delta_max.unsqueeze(-1)
-        ) + torch.matmul(prob, v_block)
+        ) + torch.matmul(prob.to(v_block.dtype), v_block)
     else:
         output_updated = (
             ((prev_denominator / current_denominator_updated).unsqueeze(-1))
             * prev_output
             * torch.exp(delta_max.unsqueeze(-1))
         )
+    output_updated = output_updated.to(prev_output.dtype)
 
     if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
         current_max = torch.where(skip_future, prev_max, current_max_updated)
@@ -111,6 +112,7 @@ def blocked_kv_attention_forward(
     use_causal_mask: bool = False,
     sliding_window: Optional[int] = None,
     skip_kv: bool = False,
+    ctx_len: Optional[int] = None,
     position_bias: Optional[torch.Tensor] = None,
     sinks: Optional[torch.Tensor] = None,
     **kwargs,
@@ -133,13 +135,14 @@ def blocked_kv_attention_forward(
     )
     current_denominator = torch.zeros(batch_size, num_heads, seq_len, device=query.device)
 
-    past_seen_tokens = cache_kwargs.get("past_seen_tokens")
     if torch.onnx.is_in_onnx_export():
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
+    if ctx_len is None:
+        raise ValueError("`ctx_len` is required for blocked KV attention.")
     num_kv_blocks = max(1, num_kv_blocks)
-    kv_block_size = -(-past_seen_tokens // num_kv_blocks)
+    kv_block_size = -(-ctx_len // num_kv_blocks)
     if hasattr(module, "config"):
         mask_dtype = module.config.torch_dtype
     else:
@@ -153,7 +156,7 @@ def blocked_kv_attention_forward(
     for j in range(num_kv_blocks):
         start_index = j * kv_block_size
         if j == num_kv_blocks - 1:
-            kv_len_block = past_seen_tokens - start_index
+            kv_len_block = ctx_len - start_index
         else:
             kv_len_block = kv_block_size
         end_index = start_index + kv_len_block
@@ -182,8 +185,8 @@ def blocked_kv_attention_forward(
 
         if use_causal_mask or mask_block is None:
             target_length = torch.where(
-                torch.tensor(past_seen_tokens, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
-                past_seen_tokens,
+                torch.tensor(ctx_len, dtype=torch.int) < torch.tensor(end_index, dtype=torch.int),
+                ctx_len,
                 end_index,
             )
             causal_mask_block = _create_causal_mask(
@@ -600,7 +603,6 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
             K_4d = key_5d.reshape(batch_size, num_kv_heads * split, split_block_len, head_dim)
             V_4d = value_5d.reshape(batch_size, num_kv_heads * split, split_block_len, head_dim)
 
-            off = kv_offsets if split_block_len == T_h_nom else kv_offsets[:, :split_block_len]
             split_causal_masks = []
             for s in range(split):
                 s_start = start_index + s * split_block_len
