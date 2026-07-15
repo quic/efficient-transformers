@@ -246,6 +246,7 @@ def export_wrapper(func):
 
         # Cache probe flag (used for layerwise inspection runs)
         cache_probe = kwargs.pop("_layerwise_cache_probe", False)
+        skip_pre_export_pytorch_transforms = kwargs.pop("_skip_pre_export_pytorch_transforms", False)
 
         # Default context managers and state trackers
         export_context = nullcontext()
@@ -264,7 +265,7 @@ def export_wrapper(func):
         export_dir = _prepare_export_directory(self, kwargs)
 
         bound_export_args = _bind_export_arguments(args, kwargs, func)
-        if hasattr(self, "_apply_pre_export_pytorch_transforms"):
+        if not skip_pre_export_pytorch_transforms and hasattr(self, "_apply_pre_export_pytorch_transforms"):
             self._apply_pre_export_pytorch_transforms(**bound_export_args)
 
         # 3. Generate hash and finalize export directory path
