@@ -20,6 +20,7 @@ from QEfficient.blocking.blocked_attention_forwards import (
     blocked_h_mla_attention_forward,
     blocked_hqkv_attention_forward,
     blocked_kv_attention_forward,
+    blocked_kv_attention_forward_decode_headpar_batch,
     blocked_kv_attention_forward_headpar_offline,
     blocked_kv_attention_forward_prefill_headpar_offline,
     blocked_kv_mla_attention_forward,
@@ -62,6 +63,7 @@ class AttentionBlockingConfig:
     skip_kv: Optional[bool] = True
     num_batch_blocks: Optional[int] = None
     kv_blocking_headpar_split: Optional[int] = None
+    batch_fold: Optional[bool] = False
     prefill_block_chunks: Optional[int] = None
     prefill_blocking_mode: Optional[str] = None  # "q", "kv", "qkv" or "online"
     ctx_len: Optional[int] = None
@@ -86,6 +88,12 @@ _STRATEGIES: Dict[BlockingMode, Callable] = {
 _STRATEGIES_HEADPAR: Dict[BlockingMode, Callable] = {
     **_STRATEGIES,
     BlockingMode.KV: blocked_kv_attention_forward_headpar_offline,
+}
+
+# replace just the KV blocking strategy with headpar batch version
+_STRATEGIES_BATCH: Dict[BlockingMode, Callable] = {
+    **_STRATEGIES,
+    BlockingMode.KV: blocked_kv_attention_forward_decode_headpar_batch,
 }
 
 _STRATEGIES_MLA: Dict[BlockingMode, Callable] = {
@@ -155,7 +163,14 @@ def generic_blocked_attention_interface(
     )
 
     if past_key_value is not None:
-        if use_kv_blocked and sliding_window is None:
+        if blocking_config.batch_fold:
+            cache_kwargs = {
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+                "past_seen_tokens": past_seen_tokens,
+            }
+            past_key_value.write_only_batch(key, value, module.layer_idx, cache_kwargs)
+        elif use_kv_blocked and sliding_window is None:
             cache_kwargs = {
                 "batch_index": batch_index,
                 "position_ids": position_ids,
@@ -184,6 +199,8 @@ def generic_blocked_attention_interface(
 
     if blocking_config.kv_blocking_headpar_split is not None:
         strategy = _STRATEGIES_HEADPAR.get(blocking_config.mode)
+    elif blocking_config.batch_fold:
+        strategy = _STRATEGIES_BATCH.get(blocking_config.mode)
     else:
         strategy = _STRATEGIES.get(blocking_config.mode)
     attn_output, attn_weights = strategy(
