@@ -6,12 +6,7 @@
 # ----------------------------------------------------------------------------
 
 """Token-level parity test for the Qwen3-VL-MoE disaggregated prefill/decode DMA path.
-
-This exercises the DMA-based KV handoff (``kv_dma_share=True`` +
-``set_data_for_kv_handoff``/``np_run_pipeline``) added on the ``disagg_kv_handoff`` branch,
-and asserts the generated tokens match Hugging Face PyTorch fp32
-``model.generate(do_sample=False)``. Mirrors the disagg example at
-``examples/image_text_to_text/models/qwen3_vl_moe/qwen3_vl_disagg_mode_with_kv_share.py``.
+pytest -m "on_qaic and multimodal" tests/transformers/disaggregated/test_qwen3_vl_moe_disagg_kv_share_w_hf_fp32.py
 """
 
 import copy
@@ -26,9 +21,10 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageText
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-MODEL_NAME = "tiny-random/qwen3-vl-moe"
+# MODEL_NAME = "tiny-random/qwen3-vl-moe"
+MODEL_NAME = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 PREFILL_SEQ_LEN = 64
-CTX_LEN = 512
+CTX_LEN = 2048
 BATCH_SIZE = 1
 GENERATION_LEN = 25
 IMAGE_SIZE = (536, 354)
@@ -125,7 +121,12 @@ def _run_hf_torch_fp32(model, processor: AutoProcessor, messages: list) -> np.nd
     }
 
     with torch.inference_mode():
-        outputs = model.generate(**inputs, max_new_tokens=GENERATION_LEN, do_sample=False)
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=GENERATION_LEN,
+            min_new_tokens=GENERATION_LEN,
+            do_sample=False,
+        )
 
     prompt_len = inputs["input_ids"].shape[-1]
     return outputs[:, prompt_len:].detach().cpu().numpy()
@@ -220,17 +221,20 @@ def _run_disagg_kv_share_qaic_generation(
     prefill_out = prefill_session.get_outputs(index=exec_idx)
     generated_ids = [_get_next_token_ids(prefill_out["logits"])]
 
-    # ---- Decode : re-point DMA descriptor at kv_caches EVERY step ----
-    # With split_retained_state_io=True the KV *input* binding (decode_buff_map) and the
-    # *_RetainedState output* (decode_rs_kv_only_buff_map) are distinct device buffers. Wire
-    # BOTH at kv_caches: the input for the read, the RS output for the write-back of the newly
-    # decoded position. Both maps share the same layer-sorted family order, so the two
-    # concatenated maps line up with kv_caches repeated.
     decode_kv_map = decode_session.decode_buff_map + decode_session.decode_rs_kv_only_buff_map
-    position_ids = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
+    num_pos_sections = lang_inputs["position_ids"].shape[0]
+    phys_pos = int(lang_inputs["position_ids"][0].max()) + 1
+    mrope_pos = int(lang_inputs["position_ids"][1:].max()) + 1
+
+    def _decode_position_ids(next_phys: int, next_mrope: int) -> np.ndarray:
+        pos = np.empty((num_pos_sections, BATCH_SIZE, 1), dtype=np.int64)
+        pos[0] = next_phys
+        pos[1:] = next_mrope
+        return pos
+
     decode_inputs = {
         "input_ids": generated_ids[-1].reshape(BATCH_SIZE, 1),
-        "position_ids": position_ids,
+        "position_ids": _decode_position_ids(phys_pos, mrope_pos),
     }
     if decode_has_image_idx:
         decode_inputs["image_idx"] = prefill_out["image_idx_output"]
@@ -246,10 +250,11 @@ def _run_disagg_kv_share_qaic_generation(
         decode_session.complete_inf(exec_idx, is_prefill=False)
         decode_outputs = decode_session.get_outputs(index=exec_idx)
         generated_ids.append(_get_next_token_ids(decode_outputs["logits"]))
-        position_ids = position_ids + 1
+        phys_pos += 1
+        mrope_pos += 1
         decode_inputs = {
             "input_ids": generated_ids[-1].reshape(BATCH_SIZE, 1),
-            "position_ids": position_ids,
+            "position_ids": _decode_position_ids(phys_pos, mrope_pos),
         }
         if decode_has_image_idx:
             decode_inputs["image_idx"] = decode_outputs["image_idx_output"]
@@ -292,7 +297,7 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
             height=image.height,
             width=image.width,
             num_cores=16,
-            num_devices=1,
+            num_devices=2,
             mos=1,
             aic_enable_depth_first=True,
             skip_vision=False,
@@ -311,7 +316,7 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
             height=image.height,
             width=image.width,
             num_cores=16,
-            num_devices=1,
+            num_devices=2,
             retain_full_kv=True,
             split_retained_state_io=True,
             mos=1,
@@ -331,12 +336,12 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
             height=image.height,
             width=image.width,
             num_cores=16,
-            num_devices=2,
+            num_devices=8,
             retain_full_kv=True,
             split_retained_state_io=True,
             mos=1,
             aic_enable_depth_first=True,
-            mdp_num_partitions=2,
+            mdp_num_partitions=4,
             prefill_only=True,
             enable_chunking=True,
             skip_vision=True,
