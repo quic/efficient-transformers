@@ -6,12 +6,12 @@
 # ----------------------------------------------------------------------------
 
 """Token-level parity test for the Qwen3.5-MoE disaggregated prefill/decode DMA path.
-
 pytest -m "on_qaic and multimodal" tests/transformers/disaggregated/test_qwen3_5_disagg_kv_share_w_hf_fp32.py
 """
 
 import copy
 import os
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -24,8 +24,20 @@ from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 MODEL_NAME = "Qwen/Qwen3.6-35B-A3B"
-NUM_HIDDEN_LAYERS = 4
-VISION_DEPTH = 2
+# MODEL_NAME = 'tiny-random/qwen3.5-moe'
+
+
+def _optional_int_env(name: str, default: int | None) -> int | None:
+    """Read an optional int from the environment; empty / unset -> ``default``."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return int(raw)
+
+
+# Optional depth truncation: set to an int to run a shallow model
+NUM_HIDDEN_LAYERS = _optional_int_env("QEFF_QWEN35_NUM_HIDDEN_LAYERS", default=None)
+VISION_DEPTH = _optional_int_env("QEFF_QWEN35_VISION_DEPTH", default=None)
 PREFILL_SEQ_LEN = 64
 CTX_LEN = 1024
 BATCH_SIZE = 1
@@ -33,8 +45,6 @@ GENERATION_LEN = 50
 IMAGE_SIZE = (536, 354)
 TEXT_PROMPT = "Describe all the colors seen in the image."
 
-# Vision-tower inputs are routed to the vision QPC; everything else feeds the lang QPCs.
-# The Qwen3.5-MoE vision encoder forward binds exactly (pixel_values, image_grid_thw).
 VISION_INPUT_KEYS = {
     "pixel_values",
     "image_masks",
@@ -81,29 +91,51 @@ def _load_hf_model_from_pretrained(config):
     return model
 
 
+def _apply_reduced_layer_config(config, num_lang_layers: int | None, num_vision_layers: int | None):
+    """prefer a ``num_lang_layers`` that already spans a
+    full attention layer (e.g. a multiple of ``full_attention_interval``).
+    """
+    text_config = config.text_config if hasattr(config, "text_config") else config
+
+    if num_lang_layers is not None:
+        text_config.num_hidden_layers = num_lang_layers
+        if getattr(text_config, "layer_types", None):
+            layer_types = list(text_config.layer_types[:num_lang_layers])
+            if "full_attention" not in layer_types:
+                warnings.warn(
+                    f"Truncating qwen3.5-moe to {num_lang_layers} layers yields a layer_types "
+                    f"slice with no full_attention layer: {layer_types}. Forcing the last layer "
+                    "to full_attention so the DMA KV-share handoff has a full-KV family to slice "
+                    "into. This slice is NOT representative of the original model -- choose a "
+                    f"num_lang_layers that spans a full_attention layer (a multiple of "
+                    f"full_attention_interval={getattr(text_config, 'full_attention_interval', '?')}) "
+                    "to keep the reduced model faithful.",
+                    stacklevel=2,
+                )
+                layer_types[-1] = "full_attention"
+            text_config.layer_types = layer_types
+
+    if num_vision_layers is not None and hasattr(config, "vision_config"):
+        config.vision_config.depth = num_vision_layers
+
+    return config
+
+
 def _build_config(dtype: str = "float16"):
-    """Load the real (full-depth) config; keep the pretrained layer_types / vision depth."""
+    """Load the real config; optionally truncate depth (see ``_apply_reduced_layer_config``)."""
     config = AutoConfig.from_pretrained(MODEL_NAME, trust_remote_code=True)
     config.dtype = dtype
     config.torch_dtype = getattr(torch, dtype)
 
+    config = _apply_reduced_layer_config(
+        config,
+        num_lang_layers=NUM_HIDDEN_LAYERS,
+        num_vision_layers=VISION_DEPTH,
+    )
+
     text_config = config.text_config if hasattr(config, "text_config") else config
-    # --- Config truncation: run a shallow model so the compile/run stays cheap. ---
-    text_config.num_hidden_layers = NUM_HIDDEN_LAYERS
-    # Pin the interval to the depth so both sources of truth agree for any
-    # NUM_HIDDEN_LAYERS: one full_attention layer at the end (a full-KV slice for the DMA
-    # handoff), all others linear.
-    interval = NUM_HIDDEN_LAYERS
-    text_config.full_attention_interval = interval
-    text_config.layer_types = [
-        "full_attention" if (i + 1) % interval == 0 else "linear_attention" for i in range(NUM_HIDDEN_LAYERS)
-    ]
     text_config.dtype = dtype
     text_config.torch_dtype = getattr(torch, dtype)
-
-    # Reduce the vision tower depth too so the vision QPC compile stays cheap.
-    if hasattr(config, "vision_config"):
-        config.vision_config.depth = VISION_DEPTH
     return config
 
 
@@ -149,9 +181,14 @@ def _run_hf_torch_fp32(model, processor: AutoProcessor, messages: list, collect_
     }
 
     with torch.inference_mode():
+        # min_new_tokens == max_new_tokens forces exactly GENERATION_LEN tokens: HF would
+        # otherwise stop early at an EOS token (max_new_tokens is only an upper bound), while
+        # the QAIC decode loop always runs a fixed GENERATION_LEN with no EOS check -- the
+        # length mismatch would break the token-for-token shape/parity comparison.
         outputs = model.generate(
             **inputs,
             max_new_tokens=GENERATION_LEN,
+            min_new_tokens=GENERATION_LEN,
             do_sample=False,
             output_logits=collect_logits,
             return_dict_in_generate=collect_logits,
@@ -169,6 +206,37 @@ def _run_hf_torch_fp32(model, processor: AutoProcessor, messages: list, collect_
     return outputs[:, prompt_len:].detach().cpu().numpy()
 
 
+def _full_ctx_axis(shape, ctx_len: int) -> int:
+    """Axis of a 4-D full-attention KV buffer that indexes the context (== ctx_len).
+
+    Prefer axis 2 (the conventional [B, heads, ctx, head_dim] layout) when it matches,
+    else the first axis whose dim equals ctx_len.
+    """
+    candidates = [ax for ax, dim in enumerate(shape) if dim == ctx_len]
+    if not candidates:
+        raise ValueError(f"no axis == ctx_len={ctx_len} in KV shape {shape}")
+    return 2 if 2 in candidates else candidates[0]
+
+
+def _kv_written_slots(before: list, after: list, ctx_len: int) -> list:
+    """Context slots the decode step wrote, per full-attention (4-D) KV buffer.
+
+    Reduces |after-before| over every axis except the context axis and takes the argmax,
+    i.e. the single ctx position that changed most this step. Linear (3-D conv-state)
+    buffers are skipped — they have no per-position context slot.
+    """
+    slots = []
+    for buf_before, buf_after in zip(before, after):
+        if buf_after.ndim != 4:
+            continue
+        ctx_axis = _full_ctx_axis(buf_after.shape, ctx_len)
+        delta = np.abs(buf_after.astype(np.float64) - buf_before.astype(np.float64))
+        reduce_axes = tuple(ax for ax in range(delta.ndim) if ax != ctx_axis)
+        per_slot = delta.sum(axis=reduce_axes)
+        slots.append(int(np.argmax(per_slot)) if per_slot.max() > 0 else -1)
+    return slots
+
+
 def _run_disagg_kv_share_qaic_generation(
     qeff_model: QEFFAutoModelForImageTextToText,
     processor: AutoProcessor,
@@ -177,6 +245,7 @@ def _run_disagg_kv_share_qaic_generation(
     prefill_session: QAICInferenceSession,
     decode_session: QAICInferenceSession,
     collect_logits: bool = False,
+    trace_out: list = None,
 ):
     inputs = {
         name: value.clone() if isinstance(value, torch.Tensor) else copy.deepcopy(value)
@@ -326,12 +395,6 @@ def _wrap_qeff_model(hf_model) -> QEFFAutoModelForImageTextToText:
 
 
 def _compile_disagg_sessions(qeff_model, image, sessions: list, compiled_onnx_paths: dict):
-    """Compile the vision/decode/prefill QPCs (fp32, no quantization) and open pooled sessions.
-
-    Appends the opened sessions to ``sessions`` and records ONNX paths in
-    ``compiled_onnx_paths`` so the caller's ``finally`` can deactivate + clean up. Returns
-    ``(vision_session, prefill_session, decode_session)``.
-    """
     vision_qpc_path = qeff_model.compile(
         batch_size=BATCH_SIZE,
         prefill_seq_len=PREFILL_SEQ_LEN,
