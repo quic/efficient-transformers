@@ -600,7 +600,7 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
             K_4d = key_5d.reshape(batch_size, num_kv_heads * split, split_block_len, head_dim)
             V_4d = value_5d.reshape(batch_size, num_kv_heads * split, split_block_len, head_dim)
 
-            # off = kv_offsets if split_block_len == T_h_nom else kv_offsets[:, :split_block_len]
+            off = kv_offsets if split_block_len == T_h_nom else kv_offsets[:, :split_block_len]
             split_causal_masks = []
             for s in range(split):
                 s_start = start_index + s * split_block_len
