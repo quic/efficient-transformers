@@ -17,6 +17,8 @@ import torch
 from onnx import ModelProto, TensorProto, external_data_helper, numpy_helper
 
 from QEfficient.customop.ctx_scatter_gather import (
+    CtxChunkScatterBatch,
+    CtxChunkScatterBatchFunc,
     CtxGather,
     CtxGather3D,
     CtxGatherBlockedKV,
@@ -112,6 +114,7 @@ class CustomOpTransform(BaseOnnxTransform):
         "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
         "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
         "CastToUInt4": (CastToUInt4Func, CastToUInt4),
+        "CtxChunkScatterBatchFunc": (CtxChunkScatterBatchFunc, CtxChunkScatterBatch),
     }
 
     @classmethod
