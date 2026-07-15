@@ -1590,7 +1590,7 @@ class TestSplitOptimizedMoETransform:
 
         assert transformed
 
-    def test_pre_export_wrapper_runs_optimized_moe_hook_before_hashing(self, tmp_path):
+    def test_export_wrapper_does_not_run_pre_export_pytorch_hook(self, tmp_path):
         from QEfficient.utils.export_utils import export_wrapper
 
         class DummyInner(nn.Module):
@@ -1604,8 +1604,7 @@ class TestSplitOptimizedMoETransform:
             _onnx_transforms = []
 
             def _apply_pre_export_pytorch_transforms(self, **kwargs):
-                self.hook_kwargs = kwargs
-                self.hash_params["optimized_moe_hook"] = kwargs["prefill_only"]
+                raise AssertionError("export_wrapper should not run PyTorch transforms")
 
             @export_wrapper
             def export(
@@ -1618,8 +1617,14 @@ class TestSplitOptimizedMoETransform:
                 prefill_seq_len=None,
                 **kwargs,
             ):
-                assert self.hash_params["optimized_moe_hook"] is True
                 export_dir.mkdir(parents=True, exist_ok=True)
+                self.export_kwargs = {
+                    "prefill_only": prefill_only,
+                    "enable_chunking": enable_chunking,
+                    "num_cores": num_cores,
+                    "moe_prefill_packed_chunk_size": moe_prefill_packed_chunk_size,
+                    "prefill_seq_len": prefill_seq_len,
+                }
                 return export_dir / "DummyQEff.onnx"
 
         qeff = DummyQEff()
@@ -1633,9 +1638,9 @@ class TestSplitOptimizedMoETransform:
         )
 
         assert onnx_path.parent.is_dir()
-        assert qeff.hook_kwargs["enable_chunking"] is True
-        assert qeff.hook_kwargs["num_cores"] == 2
-        assert qeff.hook_kwargs["prefill_seq_len"] == 32
+        assert qeff.export_kwargs["enable_chunking"] is True
+        assert qeff.export_kwargs["num_cores"] == 2
+        assert qeff.export_kwargs["prefill_seq_len"] == 32
 
     def test_get_onnx_path_runs_optimized_moe_hook_before_export(self, monkeypatch, tmp_path):
         from QEfficient.base.modeling_qeff import QEFFBaseModel

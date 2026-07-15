@@ -1240,6 +1240,16 @@ def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, confi
     model_hf = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     model_hf.eval()
     qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=False)
+    qeff_model.transform(
+        ctx_len=64,
+        seq_len=64,
+        bs=1,
+        prefill_only=True,
+        enable_chunking=True,
+        num_cores=2,
+        moe_prefill_packed_chunk_size=32,
+        prefill_seq_len=64,
+    )
 
     onnx_path = _exported_onnx_path(
         qeff_model.export(

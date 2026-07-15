@@ -83,6 +83,41 @@ def _make_tiny_causal_lm(model_type: str, **config_kwargs):
     return AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
 
 
+def _apply_prefill_compile_transforms(
+    qeff,
+    *,
+    prefill_seq_len: int,
+    ctx_len: int,
+    num_cores: int = 2,
+    enable_chunking: bool = True,
+    moe_prefill_packed_chunk_size=None,
+    qaic_config=None,
+):
+    qeff.transform(
+        ctx_len=ctx_len,
+        seq_len=prefill_seq_len,
+        bs=1,
+        qaic_config=qaic_config,
+        prefill_only=True,
+        enable_chunking=enable_chunking,
+        num_cores=num_cores,
+        moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+        prefill_seq_len=prefill_seq_len,
+    )
+
+
+def _apply_decode_compile_transforms(qeff, *, seq_len: int, ctx_len: int, num_cores: int = 2, qaic_config=None):
+    qeff.transform(
+        ctx_len=ctx_len,
+        seq_len=seq_len,
+        bs=1,
+        qaic_config=qaic_config,
+        prefill_only=False,
+        enable_chunking=False,
+        num_cores=num_cores,
+    )
+
+
 def _make_tiny_qwen3_5_moe_text_model():
     from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeTextModel
 
@@ -440,6 +475,13 @@ def test_glm4_moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
     config = AutoConfig.for_model("glm4_moe", **GLM4_MOE_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
+    _apply_prefill_compile_transforms(
+        qeff,
+        prefill_seq_len=512,
+        ctx_len=512,
+        num_cores=2,
+        moe_prefill_packed_chunk_size=256,
+    )
     onnx_path = qeff.export(
         tmp_path / "prefill-subfunction",
         prefill_only=True,
@@ -593,6 +635,7 @@ def test_qwen3moe_prefill_chunked_export(tmp_path):
     config = AutoConfig.for_model("qwen3_moe", **QWEN3_MOE_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
+    _apply_prefill_compile_transforms(qeff, prefill_seq_len=32, ctx_len=32, num_cores=2)
     qeff.export(tmp_path / "prefill", prefill_only=True, enable_chunking=True, num_cores=2)
     assert qeff.onnx_path.is_file()
 
@@ -612,6 +655,7 @@ def test_qwen3moe_disagg_compile_uses_distinct_decode_and_prefill_onnx(tmp_path,
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
 
+    _apply_decode_compile_transforms(qeff, seq_len=1, ctx_len=128, num_cores=2)
     decode_onnx_path = qeff.export(
         tmp_path / "decode-export",
         prefill_only=False,
@@ -630,6 +674,13 @@ def test_qwen3moe_disagg_compile_uses_distinct_decode_and_prefill_onnx(tmp_path,
         retain_full_kv=True,
     )
 
+    _apply_prefill_compile_transforms(
+        qeff,
+        prefill_seq_len=64,
+        ctx_len=128,
+        num_cores=2,
+        moe_prefill_packed_chunk_size=32,
+    )
     prefill_onnx_path = qeff.export(
         tmp_path / "prefill-export",
         prefill_only=True,
@@ -669,6 +720,13 @@ def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
     config = AutoConfig.for_model("qwen3_moe", **{**QWEN3_MOE_CFG, "max_position_embeddings": 1024})
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
+    _apply_prefill_compile_transforms(
+        qeff,
+        prefill_seq_len=512,
+        ctx_len=512,
+        num_cores=2,
+        moe_prefill_packed_chunk_size=256,
+    )
     onnx_path = qeff.export(
         tmp_path / "prefill-subfunction",
         prefill_only=True,
@@ -773,6 +831,7 @@ def test_gptoss_prefill_chunked_export(tmp_path):
     config = AutoConfig.for_model("gpt_oss", **GPTOSS_CFG)
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     qeff = QEFFAutoModelForCausalLM(model, continuous_batching=False)
+    _apply_prefill_compile_transforms(qeff, prefill_seq_len=32, ctx_len=32, num_cores=2)
     qeff.export(tmp_path / "prefill", prefill_only=True, enable_chunking=True, num_cores=2)
     assert qeff.onnx_path.is_file()
 
@@ -784,6 +843,13 @@ def test_gptoss_prefill_chunked_export_traces_packed_chunks(tmp_path):
     config = AutoConfig.for_model("gpt_oss", **{**GPTOSS_CFG, "max_position_embeddings": 1024})
     model = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
+    _apply_prefill_compile_transforms(
+        qeff,
+        prefill_seq_len=512,
+        ctx_len=512,
+        num_cores=2,
+        moe_prefill_packed_chunk_size=256,
+    )
     onnx_path = qeff.export(
         tmp_path / "prefill-subfunction-512",
         prefill_only=True,

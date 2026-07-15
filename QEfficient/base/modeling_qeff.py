@@ -344,38 +344,6 @@ class QEFFBaseModel(ABC):
             :str: Path of the compiled ``qpc`` package.
         """
 
-    def _apply_pre_export_pytorch_transforms(
-        self,
-        *,
-        prefill_only: Optional[bool] = False,
-        enable_chunking: Optional[bool] = False,
-        num_cores: Optional[int] = constants.DEFAULT_AIC_NUM_CORES,
-        moe_prefill_packed_chunk_size: Optional[int] = None,
-        qaic_config: Optional[dict] = None,
-        prefill_seq_len: Optional[int] = None,
-        **_,
-    ) -> bool:
-        """Apply mode-dependent PyTorch transforms before export hashing and ONNX tracing."""
-        from QEfficient.transformers.models.pytorch_transforms import OptimizedMoETransform
-
-        if num_cores is None:
-            num_cores = constants.DEFAULT_AIC_NUM_CORES
-        if moe_prefill_packed_chunk_size is None:
-            moe_prefill_packed_chunk_size = constants.MOE_PREFILL_PACKED_CHUNK_SIZE
-        qaic_config = qaic_config if qaic_config is not None else getattr(self.model, "qaic_config", None)
-
-        self.model, transformed = OptimizedMoETransform.apply(
-            self.model,
-            prefill_only=bool(prefill_only),
-            enable_chunking=bool(enable_chunking),
-            num_cores=num_cores,
-            moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
-            qaic_config=qaic_config,
-            prefill_seq_len=prefill_seq_len,
-            hash_params=self.hash_params,
-        )
-        return transformed
-
     @export_wrapper
     def _export(
         self,
@@ -577,9 +545,8 @@ class QEFFBaseModel(ABC):
             kwargs["_layerwise_cache_probe"] = True
         if kv_cache_prefix:
             kwargs["kv_cache_prefix"] = kv_cache_prefix
-        if qaic_config:
+        if qaic_config is not None:
             kwargs["qaic_config"] = qaic_config
-        kwargs["_skip_pre_export_pytorch_transforms"] = True
 
         if prefill_only:
             kwargs.update(
@@ -595,9 +562,8 @@ class QEFFBaseModel(ABC):
             )
 
         # Transform before export
-        qaic_config = (
-            qaic_config if qaic_config else getattr(self.model, "qaic_config", None) if hasattr(self, "model") else None
-        )
+        if qaic_config is None and hasattr(self, "model"):
+            qaic_config = getattr(self.model, "qaic_config", None)
         if specializations is not None:
             bs = require_value(get_attr_or_key(specializations[0], ("batch_size", "batch")), "batch size")
             seq_len = get_attr_or_key(specializations[0], ("cl", "seq_len", "sequence_length"))
@@ -616,6 +582,7 @@ class QEFFBaseModel(ABC):
             enable_chunking=enable_chunking,
             num_cores=kwargs.get("num_cores", compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)),
             moe_prefill_packed_chunk_size=kwargs.get("moe_prefill_packed_chunk_size"),
+            prefill_seq_len=kwargs.get("prefill_seq_len"),
             **compiler_options,
         )
 
@@ -868,7 +835,7 @@ class QEFFBaseModel(ABC):
         # Apply the transformations that are dependent on compilation parameters
         from QEfficient.transformers.models.pytorch_transforms import OptimizedMoETransform
 
-        qaic_config = qaic_config if qaic_config else getattr(self.model, "qaic_config", None)
+        qaic_config = qaic_config if qaic_config is not None else getattr(self.model, "qaic_config", None)
 
         model_config = getattr(self.model, "config", None) or getattr(
             getattr(self.model, "model", None), "config", None
@@ -902,14 +869,18 @@ class QEFFBaseModel(ABC):
         moe_prefill_packed_chunk_size = compiler_options.get("moe_prefill_packed_chunk_size")
         if moe_prefill_packed_chunk_size is None:
             moe_prefill_packed_chunk_size = constants.MOE_PREFILL_PACKED_CHUNK_SIZE
+        num_cores = compiler_options.get("num_cores", compiler_options.get("aic_num_cores"))
+        if num_cores is None:
+            num_cores = constants.DEFAULT_AIC_NUM_CORES
+        prefill_seq_len = compiler_options.get("prefill_seq_len", seq_len)
         self.model, _ = OptimizedMoETransform.apply(
             self.model,
             prefill_only=bool(compiler_options.get("prefill_only", False)),
             enable_chunking=bool(compiler_options.get("enable_chunking", False)),
-            num_cores=compiler_options.get("num_cores", constants.DEFAULT_AIC_NUM_CORES),
+            num_cores=num_cores,
             moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
             qaic_config=qaic_config,
-            prefill_seq_len=seq_len,
+            prefill_seq_len=prefill_seq_len,
             hash_params=self.hash_params,
         )
 

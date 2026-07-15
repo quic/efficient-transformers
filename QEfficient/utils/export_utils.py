@@ -41,7 +41,6 @@ def export_wrapper(func):
 
     def wrapper(self, *args, **kwargs):
         cache_probe = kwargs.pop("_layerwise_cache_probe", False)
-        skip_pre_export_pytorch_transforms = kwargs.pop("_skip_pre_export_pytorch_transforms", False)
         subfunction_state = None
         # 1. Setup ONNX subfunctions if requested
         if use_onnx_subfunctions := kwargs.pop("use_onnx_subfunctions", False):
@@ -51,8 +50,6 @@ def export_wrapper(func):
         export_dir = _prepare_export_directory(self, kwargs)
 
         bound_export_args = _bind_export_arguments(args, kwargs, func)
-        if not skip_pre_export_pytorch_transforms and hasattr(self, "_apply_pre_export_pytorch_transforms"):
-            self._apply_pre_export_pytorch_transforms(**bound_export_args)
 
         # 3. Generate hash and finalize export directory path
         export_hash, filtered_hash_params = _generate_export_hash(self, args, kwargs, func, bound_export_args)
