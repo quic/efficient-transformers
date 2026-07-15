@@ -26,9 +26,8 @@ DEFAULT_PROMPT = "Tell me about yourself."
 DEFAULT_IMAGE_PROMPT = "Describe all the colors seen in the image."
 DEFAULT_IMAGE_URL = "https://picsum.photos/id/237/536/354"
 DEFAULT_PREFILL_SEQ_LEN = 128
-DEFAULT_CTX_LEN = 4096
-DEFAULT_GENERATION_LEN = 256
-
+DEFAULT_CTX_LEN = 2048
+DEFAULT_GENERATION_LEN = 100
 STAGES = 4
 PREFILL_NUM_DEVICES = 8
 DECODE_NUM_DEVICES = 4
@@ -44,7 +43,6 @@ VISION_INPUT_KEYS = {
     "aspect_ratio_mask",
 }
 VISION_FP16_KEYS = {"pixel_values", "image_masks"}
-# Constant vision-tower outputs threaded into every lang forward (persistent inputs).
 VISION_OUTPUT_KEYS = ("vision_embeds", "deepstack_features")
 
 
@@ -97,7 +95,7 @@ def run(
             height=354,
             width=536,
             num_cores=16,
-            num_devices=1,
+            num_devices=2,
             mos=1,
             mxfp6_matmul=True,
             aic_enable_depth_first=True,
@@ -110,11 +108,6 @@ def run(
         )
         vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
 
-    # split_retained_state_io=True gives distinct KV input vs. *_RetainedState output
-    # buffers — required by the DMA handoff, which wires both sides at the shared host
-    # arrays. (The baseline's split_model_io is an orthogonal VLM vision/lang split.)
-    # decode is compiled before prefill so the last lang compile (prefill) can offload
-    # the torch weights while decode export still has them in memory.
     decode_qpc_path = qeff_model.compile(
         batch_size=BS,
         prefill_seq_len=1,
@@ -149,7 +142,6 @@ def run(
         retain_full_kv=True,
         split_retained_state_io=True,
         mos=1,
-        user_tiled=True,
         aic_enable_depth_first=False,
         mdp_num_partitions=stages,
         prefill_only=True,
@@ -162,10 +154,6 @@ def run(
     prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"), kv_dma_share=True)
     decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"), kv_dma_share=True)
 
-    # image_idx must be a compiled prefill input binding; the KV-share path silently
-    # drops unknown input names (warn + skip), so assert it up front. The decode QPC may
-    # not bind it (the baseline decode does not thread image_idx), so treat it as optional
-    # there and only wire it when present.
     assert "image_idx" in prefill_session.binding_index_map, "image_idx not a compiled prefill input binding"
     decode_has_image_idx = "image_idx" in decode_session.binding_index_map
 
@@ -228,24 +216,15 @@ def run(
     lang_inputs["image_idx"] = np.array([[0]])
     if not skip_vision:
         # vision_embeds and deepstack_features are constant across every prefill chunk and
-        # decode step, so register them once as persistent inputs instead of re-supplying
-        # them in each step's dict (a large per-step host->device copy). The lang forward
-        # binds them on every step; set_persistent_inputs appends them to each enqueue's
-        # tuple list automatically (warning+skipping any name a session does not bind).
+        # decode step, so register them once as persistent inputs
         vision_persist = {k: vision_outputs[k] for k in VISION_OUTPUT_KEYS if k in vision_outputs}
         prefill_session.set_persistent_inputs(vision_persist)
         decode_session.set_persistent_inputs(
             {k: v for k, v in vision_persist.items() if k in decode_session.binding_index_map}
         )
 
-    # Shared host KV arrays, allocated once in decode-map order (per-slot shape[0] == 1).
-    # Uniform cache: kv_cache_info carries a single 4-D full-attention shape family.
     kv_caches = [np.zeros(shape, dtype=dtype) for (shape, dtype) in decode_session.kv_cache_info]
 
-    # ---- Prefill (producer, SERIAL): image_idx threads chunk-to-chunk ----
-    # Only the LAST chunk wires the DMA handoff into kv_caches (earlier chunks just
-    # accumulate KV on-device). np_run_pipeline selects the uniform kv_only_buff_map
-    # internally for the non-hybrid cache.
     prefill_start = perf_counter()
     chunk_inputs = dict(lang_inputs)
     exec_idx = None
@@ -268,17 +247,20 @@ def run(
     all_outputs = [first_token]
 
     # ---- Decode (consumer): re-point DMA descriptor at kv_caches EVERY step ----
-    # With split_retained_state_io=True the KV *input* binding (decode_buff_map) and the
-    # *_RetainedState output* (decode_rs_kv_only_buff_map) are distinct device buffers —
-    # exactly the two sides the baseline bridges with a host copy each step. Wire BOTH at
-    # kv_caches: the input for the read, the RS output for the write-back of the newly
-    # decoded position. Both maps share the same layer-sorted family order, so the two
-    # concatenated maps line up with kv_caches repeated.
     decode_kv_map = decode_session.decode_buff_map + decode_session.decode_rs_kv_only_buff_map
-    pos = int(np.max(lang_inputs["position_ids"])) + 1
+    num_pos_sections = lang_inputs["position_ids"].shape[0]
+    phys_pos = int(lang_inputs["position_ids"][0].max()) + 1
+    mrope_pos = int(lang_inputs["position_ids"][1:].max()) + 1
+
+    def _decode_position_ids(next_phys: int, next_mrope: int) -> np.ndarray:
+        pos = np.empty((num_pos_sections, BS, 1), dtype=np.int64)
+        pos[0] = next_phys
+        pos[1:] = next_mrope
+        return pos
+
     decode_inputs = {
         "input_ids": np.array(first_token, dtype=np.int64).reshape(1, 1),
-        "position_ids": np.array([[pos]], dtype=np.int64),
+        "position_ids": _decode_position_ids(phys_pos, mrope_pos),
     }
     if decode_has_image_idx:
         decode_inputs["image_idx"] = prefill_out["image_idx_output"]
@@ -295,10 +277,11 @@ def run(
         out = decode_session.get_outputs(index=exec_idx)
         tok = int(np.argmax(out["logits"]))
         all_outputs.append(tok)
-        pos += 1
+        phys_pos += 1
+        mrope_pos += 1
         decode_inputs = {
             "input_ids": np.array(tok, dtype=np.int64).reshape(1, 1),
-            "position_ids": np.array([[pos]], dtype=np.int64),
+            "position_ids": _decode_position_ids(phys_pos, mrope_pos),
         }
         if decode_has_image_idx:
             decode_inputs["image_idx"] = out["image_idx_output"]
