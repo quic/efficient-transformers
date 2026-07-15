@@ -255,7 +255,7 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
 - **Qwen3-MOE (Mixture of Experts)**
   - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
   - Efficient expert routing
-  - [Qwen3-MOE Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/moe_inference.py)
+  - [Qwen3-MOE Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/basic_inference.py) — combine `--use-onnx-subfunctions --enable-chunking` for expert-blocked prefill.
 
 - **Wav2Vec2 (Audio)**
   - Executable via [`QEFFAutoModelForCTC`](#QEFFAutoModelForCTC)
@@ -350,7 +350,7 @@ Welcome to the official release of **Efficient Transformer Library v1.20.0**! Th
 - **GGUF Models**
   - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
   - Execution support (non-quantized)
-  - [Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/gguf_models.py)
+  - [Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/basic_inference.py) — pass `--gguf-file <name>.gguf` alongside the HF model id.
 
 - **FP8 Compressed Quantization**
   - Support for [`Llama-3.3-70B-Instruct-FP8-Dynamic`](https://huggingface.co/Infermatic/Llama-3.3-70B-Instruct-FP8-Dynamic)
