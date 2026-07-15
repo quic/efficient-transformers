@@ -58,6 +58,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     RevertPrefillOnlyExternalModuleMapperTransform,
     RevertPrefillOnlyTransform,
     SamplerTransform,
+    SimpleDecodeMoeTransform,
     SpDTransform,
     TextClassificationTransform,
     VlmKVOffloadTransform,
@@ -1212,6 +1213,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         CustomOpsTransform,
         KVCacheTransform,
         VlmKVOffloadTransform,
+        SimpleDecodeMoeTransform,
     ]
     _onnx_transforms = []
 
@@ -2644,6 +2646,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         KVCacheTransform,
         KVCacheExternalModuleMapperTransform,
         VlmNoKVOffloadTransform,
+        SimpleDecodeMoeTransform,
     ]
     _onnx_transforms = []
 
@@ -3476,6 +3479,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         CustomOpsTransform,
         KVCacheTransform,
         KVCacheExternalModuleMapperTransform,
+        SimpleDecodeMoeTransform,
     ]
 
     _onnx_transforms = []
