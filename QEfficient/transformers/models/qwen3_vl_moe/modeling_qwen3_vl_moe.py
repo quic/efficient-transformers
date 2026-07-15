@@ -1058,9 +1058,34 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
 
         B, S, H = x.shape
         T = B * S
-        num_nsp = getattr(self, "expert_blocking_num_nsp", self.num_experts)
-        local_experts = self.num_experts // num_nsp
-        N, L = self.num_nsp, local_experts
+        cores_per_expert = getattr(self, "cores_per_expert", 1)
+        total_avl_cores = getattr(
+            self,
+            "total_avl_cores",
+            getattr(self, "expert_blocking_num_nsp", self.num_experts) * cores_per_expert,
+        )
+        if cores_per_expert <= 0:
+            raise ValueError(f"cores_per_expert ({cores_per_expert}) must be greater than 0")
+        if total_avl_cores <= 0:
+            raise ValueError(f"total_avl_cores ({total_avl_cores}) must be greater than 0")
+        if (self.num_experts * cores_per_expert) % total_avl_cores != 0:
+            raise ValueError(
+                "num_experts * cores_per_expert "
+                f"({self.num_experts * cores_per_expert}) must be divisible by total_avl_cores "
+                f"({total_avl_cores})"
+            )
+        num_pipeline_stages = (self.num_experts * cores_per_expert) // total_avl_cores
+        if num_pipeline_stages <= 0:
+            raise ValueError(f"num_pipeline_stages ({num_pipeline_stages}) must be greater than 0")
+        if self.num_experts % num_pipeline_stages != 0:
+            raise ValueError(
+                f"num_experts ({self.num_experts}) must be divisible by num_pipeline_stages ({num_pipeline_stages})"
+            )
+        num_parallelized_experts = self.num_experts // num_pipeline_stages
+        N, L = num_parallelized_experts, num_pipeline_stages
+        logger.warning(
+            f"Expert parallel execution: {N} experts per pipeline stage, {L} pipeline stages, {cores_per_expert} cores per expert, {total_avl_cores} total available cores"
+        )
         x_flat = x.view(T, H)
 
         # expert_ids[n, le] = le * N + n  — matches the prior
@@ -1082,17 +1107,21 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         expert_out = torch.zeros(N, T, H, dtype=x_flat.dtype, device=x_flat.device)
 
         packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
-        if self.num_experts % num_nsp != 0:
-            raise ValueError(
-                f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})"
-            )
+        W_g = (
+            self.experts.gate_proj.view(num_pipeline_stages, num_parallelized_experts, H, -1)
+            .transpose(0, 1)
+            .contiguous()
+        )
+        W_u = (
+            self.experts.up_proj.view(num_pipeline_stages, num_parallelized_experts, H, -1).transpose(0, 1).contiguous()
+        )
+        W_d = (
+            self.experts.down_proj_t.view(num_pipeline_stages, num_parallelized_experts, -1, H)
+            .transpose(0, 1)
+            .contiguous()
+        )
 
-        rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_u = self.experts.up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_d = self.experts.down_proj_t.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
-
-        for local_expert in range(local_experts):
+        for local_expert in range(num_pipeline_stages):
             rw = routing_weights[:, local_expert]
             expert_out = cumsum_scatter_gather_update_one_local_expert(
                 x=x_flat,
@@ -1105,7 +1134,38 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
                 router_weights=rw,
                 act_fn=self.experts.act_fn,
             )
-        expert_out_sum = torch.einsum("nth->th", expert_out)
+
+        def reduce_nsp_tree(values: torch.Tensor, num_lanes: int) -> torch.Tensor:
+            logger.warning(f"Reducing {values.shape} across {num_lanes} lanes using tree reduction")
+            current = values
+            width = num_lanes
+            while width > 1:
+                pair_count = width // 2
+                reduced = current[0 : 2 * pair_count : 2] + current[1 : 2 * pair_count : 2]
+                if width % 2 == 1:
+                    reduced = torch.cat((reduced, current[width - 1 : width]), dim=0)
+                current = reduced
+                width = pair_count + (width % 2)
+            return current[0]
+
+        experts_per_soc = getattr(self, "experts_per_soc", None)
+        if experts_per_soc is not None:
+            num_devices = getattr(self, "num_devices", 1)
+            if num_devices <= 0:
+                raise ValueError(f"num_devices ({num_devices}) must be greater than 0")
+            if num_parallelized_experts % num_devices != 0:
+                raise ValueError(
+                    f"num_parallelized_experts ({num_parallelized_experts}) must be divisible by num_devices "
+                    f"({num_devices})"
+                )
+            parallelized_experts_per_soc = num_parallelized_experts // num_devices
+            expert_out = torch.einsum("dpth->dth", expert_out.view(num_devices, parallelized_experts_per_soc, T, H))
+            if getattr(self, "tree_reduce", False):
+                expert_out_sum = reduce_nsp_tree(expert_out, self.num_devices)
+            else:
+                expert_out_sum = torch.einsum("dth->th", expert_out)
+        else:
+            expert_out_sum = torch.einsum("nth->th", expert_out)
         return expert_out_sum.view(B, S, H), router_logits
 
 

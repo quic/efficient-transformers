@@ -18,16 +18,16 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-# model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-model_id = "tiny-random/qwen3-vl-moe"
+model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+# model_id = "tiny-random/qwen3-vl-moe"
 config = AutoConfig.from_pretrained(model_id)
 config.dtype = "float16"
 config.torch_dtype = torch.float16
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
-# config.vision_config.depth = 9
-# config.text_config.num_hidden_layers = 6
-# config.vision_config.deepstack_visual_indexes = [8]
+config.vision_config.depth = 9
+config.text_config.num_hidden_layers = 2
+config.vision_config.deepstack_visual_indexes = [8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     model_id, attn_implementation="eager", kv_offload=True, config=config, dtype=torch.float16, layerwise=False
@@ -64,8 +64,7 @@ def _qaic_config() -> dict:
     cfg["prefill_blocking_mode"] = PREFILL_MODE
     return cfg
 
-
-skip_vision = False
+skip_vision = True
 if not skip_vision:
     vision_qpc_path = qeff_model.compile(
         batch_size=BS,
@@ -92,7 +91,9 @@ decode_qpc_path = qeff_model.compile(
     height=354,
     width=536,
     num_cores=16,
-    num_devices=1,
+    num_devices=8,
+    tree_reduce=True,
+    cores_per_expert=1,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     split_model_io=True,  # This should be used for disagg serving via VLLM
