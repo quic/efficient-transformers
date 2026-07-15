@@ -6,10 +6,12 @@
 # -----------------------------------------------------------------------------
 
 from QEfficient.customop.ctx_scatter_gather import (
+    CtxChunkScatterBatchFunc,
     CtxGatherFunc,
     CtxGatherFunc3D,
     CtxGatherFunc3DGeneralized,
     CtxGatherFuncBlockedKV,
+    CtxGatherFuncBlockedKVBatch,
     CtxScatterFunc,
     CtxScatterFunc3D,
     CtxScatterFunc3DGeneralized,
@@ -40,6 +42,8 @@ from QEfficient.customop.utils import (
 )
 
 __all__ = [
+    "CtxChunkScatterBatchFunc",
+    "CtxGatherFuncBlockedKVBatch",
     "CustomRMSNormAIC",
     "GemmaCustomRMSNormAIC",
     # Func classes (for ONNX export symbolic registration and direct use)
