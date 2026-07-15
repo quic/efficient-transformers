@@ -108,7 +108,12 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             config._attn_implementation = "eager"
             model_hf = load_vlm_model(config)
             qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
-                model_name, kv_offload=kv_offload, config=config, torch_dtype=torch_dtype, ignore_mismatched_sizes=True
+                model_name,
+                kv_offload=kv_offload,
+                config=config,
+                qaic_config=qaic_config,
+                torch_dtype=torch_dtype,
+                ignore_mismatched_sizes=True,
             )
         else:
             model_hf = load_vlm_model(config)
