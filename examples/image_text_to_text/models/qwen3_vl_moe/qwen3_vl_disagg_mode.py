@@ -42,8 +42,15 @@ BS = 1
 NUM_KV_BLOCKS = 2
 NUM_Q_BLOCKS = 2
 HEAD_BLOCK_SIZE = 8
-PREFILL_BLOCK_CHUNKS = 2
-PREFILL_MODE = "online"  # None, "online" or "qkv" depending on whether we want online prefill or headparallel prefill
+PREFILL_BLOCK_CHUNKS = None
+PREFILL_MODE = None  # None, "online" or "qkv" depending on whether we want online prefill or headparallel prefill
+
+
+###############
+# Decode modes:
+# - standard attention - pass enable_blocking and blocking_mode
+# - head parallel blocking - pass  enable_blocking, blocking_mode: “kv” and kv_block_headpar_split: 0
+# - batch fold head parallel - pass enable_blocking, blocking_mode: “kv” and batch_fold: True
 
 
 def _decode_qaic_config() -> dict:
@@ -64,6 +71,7 @@ def _qaic_config() -> dict:
     cfg["prefill_blocking_mode"] = PREFILL_MODE
     return cfg
 
+
 skip_vision = True
 if not skip_vision:
     vision_qpc_path = qeff_model.compile(
@@ -83,7 +91,8 @@ if not skip_vision:
         use_onnx_subfunctions=True,
         layerwise=False,
     )
-
+decode_qaic_config = _qaic_config()
+print("decode", decode_qaic_config)
 decode_qpc_path = qeff_model.compile(
     batch_size=BS,
     prefill_seq_len=1,
@@ -92,21 +101,31 @@ decode_qpc_path = qeff_model.compile(
     width=536,
     num_cores=16,
     num_devices=8,
-    tree_reduce=True,
-    cores_per_expert=1,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     split_model_io=True,  # This should be used for disagg serving via VLLM
     mos=1,
     user_tiled=True,
     prefill_only=False,
-    expert_parallel=True,
+    expert_parallel=True,  # This forces the model to use expert parallelism for the MoE layers
+    tree_reduce=True,  # This enables tree reduction for the MoE layers, which can improve performance when using multiple devices
+    cores_per_expert=1,  # number_of_parallelized_experts_per_device = total_experts * cores_per_expert / total_cores , total_cores = num_devices * num_cores, number_of_pipline_stages = total_experts / number_of_parallelized_experts_per_device
     skip_vision=True,
     use_onnx_subfunctions=False,
     layerwise=False,
     offload_pt_weights=False,
-    qaic_config=_qaic_config(),
+    qaic_config=decode_qaic_config,
 )
+
+################
+# Prefill modes:
+# - follow decode attention - pass nothing extra
+# - head parallel offline prefill - pass prefill_blocking_mode: “qkv”, prefill_block_chunks: 2
+# - online prefill - pass prefill_blocking_mode: “online”, prefill_block_chunks: 2
+PREFILL_MODE = "online"
+PREFILL_BLOCK_CHUNKS = 2
+prefill_qaic_config = _qaic_config()
+print("prefill", prefill_qaic_config)
 
 
 prefill_qpc_path = qeff_model.compile(
@@ -129,11 +148,12 @@ prefill_qpc_path = qeff_model.compile(
     use_onnx_subfunctions=False,
     layerwise=False,
     offload_pt_weights=True,
-    qaic_config=_qaic_config(),
+    qaic_config=prefill_qaic_config,
 )
 
 print(f"Prefill qpc path {prefill_qpc_path}")
 print(f"Decode qpc path {decode_qpc_path}")
+
 lang_prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"))
 lang_decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"))
 
