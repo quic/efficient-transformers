@@ -148,11 +148,8 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
             pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
         else:
             pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
+
     _ = qeff_model.export(**export_params)
-    # if pytorch_hf_tokens is not None and pytorch_kv_tokens is not None:
-    #     assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
-    #         "Tokens don't match for HF PyTorch model output and KV PyTorch model output."
-    #     )
 
     compiler_options = {}
     if continuous_batching and prompt_len == 1:
@@ -194,10 +191,6 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
     # Generate
     exec_info = qeff_model.generate(tokenizer, prompts=prompts)
-
-    # print(f"Generated tokens: {exec_info.generated_ids}\n {exec_info.generated_ids[0].shape}")
-    # print(f"pytorch_hf_tokens: {pytorch_hf_tokens} \n {pytorch_hf_tokens.shape}")
-    # print(f"pytorch_kv_tokens: {pytorch_kv_tokens} \n {pytorch_kv_tokens.shape}")
 
     # if pytorch_hf_tokens is not None and pytorch_kv_tokens is not None:
     #     assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
