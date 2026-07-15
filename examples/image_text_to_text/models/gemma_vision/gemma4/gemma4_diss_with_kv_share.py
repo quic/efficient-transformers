@@ -5,24 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-"""Disaggregated prefill/decode for Gemma4 — DMA-based KV handoff.
-
-Gemma4 uses a **hybrid** KV cache (``layer_types`` mixes ``sliding_attention`` and
-``full_attention``), so ``decode_session.kv_cache_info`` carries more than one 4-D shape
-family and the session auto-selects the full (per-binding) slicing spec — no example-level
-branching is needed. The lang forward also threads a per-chunk ``mm_token_type_ids`` (sliced
-alongside ``input_ids``/``position_ids``) and a constant ``vision_embeds``; the latter is
-registered once via ``set_persistent_inputs`` rather than re-supplied every step. ``image_idx``
-threads serially from each step's ``image_idx_output`` into the next step's input, so prefill
-runs as a simple serial loop; only the last chunk wires the DMA handoff into the shared host
-arrays, after all KV has accumulated on-device.
-
-Supports both text-only (``skip_vision=True``) and image+text (``skip_vision=False``, the
-default) inputs; the latter compiles a vision QPC and runs it once.
-
-The body is exposed as ``run(...)`` returning the prefill ``logits``, the ``first_token``
-and the full decoded ``tokens`` list.
-"""
+"""Disaggregated prefill/decode for Gemma4 — DMA-based KV handoff."""
 
 import argparse
 from time import perf_counter
@@ -119,13 +102,7 @@ def run(
     prefill_num_devices: int = PREFILL_NUM_DEVICES,
     decode_num_devices: int = DECODE_NUM_DEVICES,
 ):
-    """Run chunked-prefill + decode with the DMA-based KV handoff.
-
-    ``skip_vision=False`` (default) fetches ``image_url`` and runs an image+text prompt
-    through the vision QPC; ``skip_vision=True`` runs a text-only prompt. Returns a dict
-    with the prefill ``logits``, the ``first_token`` (argmax over those logits) and the
-    full decoded ``tokens`` list, for parity comparison.
-    """
+    """Run chunked-prefill + decode with the DMA-based KV handoff."""
     config = _build_config(model_id)
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -143,9 +120,8 @@ def run(
             prefill_seq_len=prefill_seq_len,
             ctx_len=ctx_len,
             num_cores=16,
-            num_devices=1,
+            num_devices=2,
             mos=1,
-            mxfp6_matmul=True,
             aic_enable_depth_first=True,
             skip_vision=False,
             split_model_io=True,
@@ -154,9 +130,6 @@ def run(
         )
         vision_session = QAICInferenceSession(_resolve_vision_qpc_path(vision_qpc_path))
 
-    # split_retained_state_io=True gives distinct KV input vs. *_RetainedState output
-    # buffers — required by the DMA handoff, which wires both sides at the shared host
-    # arrays. (The baseline's split_model_io is an orthogonal VLM vision/lang split.)
     prefill_qpc_path = qeff_model.compile(
         batch_size=BS,
         prefill_seq_len=prefill_seq_len,
@@ -202,9 +175,6 @@ def run(
         _resolve_lang_qpc_path(decode_qpc_path, ("lang_decode_qpc_path", "lang_qpc_path")), kv_dma_share=True
     )
 
-    # image_idx must be a compiled prefill input binding; the KV-share path silently
-    # drops unknown input names (warn + skip), so assert it up front. The decode QPC may
-    # not bind it, so treat it as optional there and only wire it when present.
     assert "image_idx" in prefill_session.binding_index_map, "image_idx not a compiled prefill input binding"
     decode_has_image_idx = "image_idx" in decode_session.binding_index_map
 
@@ -271,15 +241,10 @@ def run(
 
     lang_inputs["image_idx"] = np.array([[0]])
     # vision_embeds is constant across every prefill chunk and decode step, so register it
-    # once as a persistent input instead of re-supplying it in each step's dict (a large
-    # per-step host->device copy). set_persistent_inputs appends it to each enqueue's tuple
-    # list automatically (warning+skipping any name a session does not bind).
+    # once as a persistent input
     if not skip_vision:
         prefill_session.set_persistent_inputs({"vision_embeds": vision_embeds})
 
-    # The decode QPC binds mm_token_type_ids (seq_len=1 ignores its value, but the pooled
-    # np_run path wires only the bindings it is handed), so register a constant zeros to
-    # satisfy it; register vision_embeds on decode too when present.
     decode_persist = {"mm_token_type_ids": np.zeros((BS, 1), dtype=np.int64)}
     if not skip_vision:
         decode_persist["vision_embeds"] = vision_embeds
@@ -287,14 +252,9 @@ def run(
         {k: v for k, v in decode_persist.items() if k in decode_session.binding_index_map}
     )
 
-    # Shared host KV arrays, allocated once in decode-map order (per-slot shape[0] == 1).
-    # Hybrid: kv_cache_info carries mixed sliding-window and full-attention 4-D shapes.
     kv_caches = [np.zeros(shape, dtype=dtype) for (shape, dtype) in decode_session.kv_cache_info]
 
     # ---- Prefill (producer, SERIAL): image_idx threads chunk-to-chunk ----
-    # Only the LAST chunk wires the DMA handoff into kv_caches (earlier chunks just
-    # accumulate KV on-device). np_run_pipeline selects decode_rs_full_buff_map
-    # internally for the hybrid cache.
     prefill_start = perf_counter()
     chunk_inputs = dict(lang_inputs)
     exec_idx = None
@@ -320,12 +280,6 @@ def run(
     all_outputs = [first_token]
 
     # ---- Decode (consumer): re-point DMA descriptor at kv_caches EVERY step ----
-    # With split_retained_state_io=True the KV *input* binding (decode_buff_map) and the
-    # *_RetainedState output* (decode_rs_kv_only_buff_map) are distinct device buffers —
-    # exactly the two sides the baseline bridges with a host copy each step. Wire BOTH at
-    # kv_caches: the input for the read, the RS output for the write-back of the newly
-    # decoded position. Both maps share the same layer-sorted family order, so the two
-    # concatenated maps line up with kv_caches repeated.
     decode_kv_map = decode_session.decode_buff_map + decode_session.decode_rs_kv_only_buff_map
     pos = int(np.max(lang_inputs["position_ids"])) + 1
     decode_inputs = {
