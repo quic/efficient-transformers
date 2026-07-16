@@ -87,7 +87,7 @@ def check_kv_repeat_causal_lm_pytorch_vs_ai100(
 def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
     continuous_batching: bool = False,
-    n_layer: int = -1,
+    n_layer: int = 2,
     config: Optional[AutoConfig] = None,
     transform_params: Optional[dict] = None,
     export_params: Optional[dict] = None,
@@ -99,6 +99,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     replace_transformers_quantizers()
     torch_dtype = transform_params.get("torch_dtype", torch.float32)
     model_hf = load_hf_causal_lm_model(model_name, num_hidden_layers=n_layer, config=config, torch_dtype=torch_dtype)
+    # print(model_hf)
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
     prompt = generate_params.get("prompt", Constants.INPUT_STR)

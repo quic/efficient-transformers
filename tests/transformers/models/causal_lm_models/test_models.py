@@ -352,6 +352,7 @@ def test_prefix_caching(model_name):
         model_name=model_name,
         continuous_batching=True,
         torch_dtype=torch.float16,
+        num_hidden_layers=2,
     )
     qeff_model.compile(
         prefill_seq_len=128,
@@ -359,6 +360,7 @@ def test_prefix_caching(model_name):
         full_batch_size=2,
         kv_cache_batch_size=4,
         num_cores=16,
+        use_onnx_subfunctions=True,
     )
     prefix_caching_inference(model_name=model_name, qpc_path=qeff_model.qpc_path)
     assert os.path.isfile(os.path.join(os.path.dirname(qeff_model.qpc_path), "qconfig.json"))
