@@ -7,7 +7,9 @@
 
 import copy
 import inspect
+import platform
 import re
+import sys
 import warnings
 from contextlib import nullcontext
 from pathlib import Path
@@ -15,6 +17,7 @@ from typing import Any, Dict
 
 import torch
 import torch.nn as nn
+from torch.export import Dim
 
 from QEfficient.base.onnx_transforms import (
     CustomOpTransform,
@@ -61,15 +64,6 @@ def convert_dynamic_axes_to_dynamic_shapes(
         torch.export dynamic_shapes dict with Dim objects, suitable for
         torch.onnx.export(dynamic_shapes=...).
     """
-    from torch.export import Dim
-
-    _NESTED_KV_PREFIXES = (
-        "past_key.",
-        "past_value.",
-        "compressed_kv.",
-        "k_pe.",
-    )
-
     max_seq_len = getattr(model_config, "max_position_embeddings", 1024)
     model_type = getattr(model_config, "model_type", None)
     batch_min = 1 if model_type == "gpt_oss" else 2
@@ -100,22 +94,23 @@ def convert_dynamic_axes_to_dynamic_shapes(
         return dim_registry[dim_name]
 
     dynamic_shapes: Dict[str, Any] = {}
-
-    # Pass 1: regular inputs (not flat per-layer cache keys)
-    for input_name, axes_map in dynamic_axes.items():
-        if not any(input_name.startswith(prefix) for prefix in _NESTED_KV_PREFIXES):
-            dynamic_shapes[input_name] = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
-
-    # Pass 2: past_key_values reconstruction
     past_keys: Dict[int, Any] = {}
     past_values: Dict[int, Any] = {}
+    compressed_kv_layers: Dict[int, Any] = {}
+    k_pe_layers: Dict[int, Any] = {}
+
     for input_name, axes_map in dynamic_axes.items():
+        resolved = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
         if input_name.startswith("past_key."):
-            layer_idx = int(input_name.split(".")[1])
-            past_keys[layer_idx] = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
+            past_keys[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("past_value."):
-            layer_idx = int(input_name.split(".")[1])
-            past_values[layer_idx] = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
+            past_values[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("compressed_kv."):
+            compressed_kv_layers[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("k_pe."):
+            k_pe_layers[int(input_name.split(".")[1])] = resolved
+        else:
+            dynamic_shapes[input_name] = resolved
 
     if past_keys or past_values:
         max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
@@ -123,24 +118,11 @@ def convert_dynamic_axes_to_dynamic_shapes(
             [past_keys.get(i, {}), past_values.get(i, {})] for i in range(max_layer + 1)
         ]
 
-    # Pass 3: compressed_kvs reconstruction (deepseek_v3 only)
-    if model_type in {"deepseek_v3"}:
-        compressed_kv_layers: Dict[int, Any] = {}
-        k_pe_layers: Dict[int, Any] = {}
-        for input_name, axes_map in dynamic_axes.items():
-            if input_name.startswith("compressed_kv."):
-                layer_idx = int(input_name.split(".")[1])
-                compressed_kv_layers[layer_idx] = {
-                    axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()
-                }
-            elif input_name.startswith("k_pe."):
-                layer_idx = int(input_name.split(".")[1])
-                k_pe_layers[layer_idx] = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
-        if compressed_kv_layers or k_pe_layers:
-            max_layer = max(list(compressed_kv_layers.keys()) + list(k_pe_layers.keys()))
-            dynamic_shapes["compressed_kvs"] = [
-                (compressed_kv_layers.get(i, {}), k_pe_layers.get(i, {})) for i in range(max_layer + 1)
-            ]
+    if compressed_kv_layers or k_pe_layers:
+        max_layer = max(list(compressed_kv_layers.keys()) + list(k_pe_layers.keys()))
+        dynamic_shapes["compressed_kvs"] = [
+            (compressed_kv_layers.get(i, {}), k_pe_layers.get(i, {})) for i in range(max_layer + 1)
+        ]
 
     return dynamic_shapes
 
@@ -286,10 +268,16 @@ def export_wrapper(func):
             torch_version = torch.__version__
             major, minor = (int(x) for x in torch_version.split("+")[0].split(".")[:2])
             if (major, minor) < (2, 13):
+                py = f"cp{sys.version_info.major}{sys.version_info.minor}"
+                arch = "aarch64" if platform.machine() == "aarch64" else "x86_64"
                 raise AssertionError(
                     f"dynamo=True requires PyTorch >= 2.13, but found {torch_version}. "
-                    "Install the dynamo extra to get the required PyTorch version:\n"
-                    "  pip install -e '.[dynamo]'"
+                    "Please install the required dependencies:\n"
+                    f"  pip install "
+                    f"'torch@https://download.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-{py}-{py}-manylinux_2_28_{arch}.whl' "
+                    f"'torchvision@https://download.pytorch.org/whl/cpu/torchvision-0.28.0%2Bcpu-{py}-{py}-manylinux_2_28_{arch}.whl' "
+                    "'compressed-tensors==0.17.0' "
+                    "'onnxscript==0.6.2'"
                 )
             # Resolve dynamic_shapes from dynamic_axes before the hash so the hash captures
             # the actual shape constraints.

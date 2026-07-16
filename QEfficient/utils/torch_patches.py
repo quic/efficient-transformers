@@ -50,7 +50,6 @@ _original_ts_get_module_attributes = getattr(ts_utils, "_get_module_attributes",
 
 _PATCHES_ACTIVE = False
 _MISSING_INSTANCE_ATTR = object()
-
 _safe_export_patch_depth = 0
 _safe_export_original_passes = {}
 _SAFE_EXPORT_REQUIRED_PASSES = {
@@ -351,7 +350,6 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
     @nested_compile_region boundaries statically present on decoder layer
     forward() methods do not create unwanted subgraph splits during tracing.
     """
-
     target_classes = tuple(target_classes) if target_classes else None
     patched_modules = []
 
@@ -365,11 +363,9 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
                 continue
 
             wrapped_forward = getattr(bound_forward, "__func__", bound_forward)
-            # Only unwrap methods that are actually nested_compile_region-wrapped
             if getattr(wrapped_forward, "__qualname__", "") != "mark_compile_region.<locals>.wrap.<locals>.inner":
                 continue
 
-            # Extract the original forward from the closure
             closure = getattr(wrapped_forward, "__closure__", None) or ()
             original_forward = next(
                 (cell.cell_contents for cell in closure if inspect.isfunction(cell.cell_contents)),

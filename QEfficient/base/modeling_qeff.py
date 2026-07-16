@@ -14,7 +14,7 @@ import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, OrderedDict, Union
+from typing import Any, Dict, List, Optional, Union
 
 import onnx
 import torch
@@ -386,6 +386,26 @@ class QEFFBaseModel(ABC):
         export_kwargs: Dict,
     ) -> None:
         """Export via torch.export (dynamo=True) with custom op translation."""
+        # Reorder example_inputs and dynamic_shapes to match model.forward signature order,
+        # which torch.export requires for dynamic_shapes to bind correctly.
+        sig = inspect.signature(self.model.forward)
+        ordered_example_inputs = {}
+        ordered_dynamic_shapes = {} if dynamic_shapes is not None else None
+        for name in sig.parameters:
+            if name in example_inputs:
+                ordered_example_inputs[name] = example_inputs[name]
+            if dynamic_shapes is not None and name in dynamic_shapes:
+                ordered_dynamic_shapes[name] = dynamic_shapes[name]
+        for name, value in example_inputs.items():
+            if name not in ordered_example_inputs:
+                ordered_example_inputs[name] = value
+        if dynamic_shapes is not None:
+            for name, value in dynamic_shapes.items():
+                if name not in ordered_dynamic_shapes:
+                    ordered_dynamic_shapes[name] = value
+        example_inputs = ordered_example_inputs
+        dynamic_shapes = ordered_dynamic_shapes
+
         export_kwargs = dict(export_kwargs)
         export_kwargs.setdefault("report", False)
         export_kwargs.setdefault("optimize", False)
@@ -540,33 +560,6 @@ class QEFFBaseModel(ABC):
             rename_map = {old: new for old, new in zip(input_names, aligned_input_names) if old != new}
             dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
             input_names = aligned_input_names
-
-        # Rearrange example_inputs and dynamic_shapes to follow model.forward signature
-        sig = inspect.signature(self.model.forward)
-
-        ordered_example_inputs = OrderedDict()
-        ordered_dynamic_shapes = {} if dynamic_shapes is not None else None
-
-        # First, add keys that are in the forward signature (in that order)
-        for name, param in sig.parameters.items():
-            if name in example_inputs:
-                ordered_example_inputs[name] = example_inputs[name]
-
-            if dynamic_shapes is not None and name in dynamic_shapes:
-                ordered_dynamic_shapes[name] = dynamic_shapes[name]
-
-        # Optionally, append any extra keys not in the forward signature
-        for name, value in example_inputs.items():
-            if name not in ordered_example_inputs:
-                ordered_example_inputs[name] = value
-
-        if dynamic_shapes is not None:
-            for name, value in dynamic_shapes.items():
-                if name not in ordered_dynamic_shapes:
-                    ordered_dynamic_shapes[name] = value
-
-        example_inputs = ordered_example_inputs
-        dynamic_shapes = ordered_dynamic_shapes
 
         try:
             if dynamo:
@@ -1227,7 +1220,6 @@ class QEFFBaseModel(ABC):
                 command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
         command.append(f"-aic-binary-dir={qpc_path}")
-        print(command)
         logger.info(f"Running compiler: {' '.join(command)}")
 
         try:

@@ -371,28 +371,22 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             if not any(name in dangling_retained_outputs for name in desired_outputs):
                 continue
 
-            # Expose the scatter outputs in the function's output list.
-            for scatter_output in scatter_outputs:
+            # Expose scatter outputs in the function's output list, rename KV
+            # inputs and append retained-state output names to the call node —
+            # all in one pass over the two key/value pairs.
+            for kind, scatter_output, desired_output in zip(("key", "value"), scatter_outputs, desired_outputs):
                 if scatter_output not in fn.output:
                     fn.output.append(scatter_output)
                     changed = True
 
-            # Rename KV inputs: strip _RetainedState suffix so the compiler
-            # receives plain names (past_key.N) as inputs and
-            # past_key.N_RetainedState only as outputs.
-            # _rename_graph_input walks all of graph.node, so the call node's
-            # input slots are already updated — no separate per-node loop needed.
-            for kind in ("key", "value"):
                 retained_input = kv_inputs[kind]
                 plain_input = f"past_{kind}.{layer_idx}"
                 if retained_input.endswith("_RetainedState"):
                     changed |= cls._rename_graph_input(graph, retained_input, plain_input)
 
-            # Append the retained-state output names to this call node.
-            missing_outputs = [name for name in desired_outputs if name not in node.output]
-            if missing_outputs:
-                node.output.extend(missing_outputs)
-                changed = True
+                if desired_output not in node.output:
+                    node.output.append(desired_output)
+                    changed = True
 
         return changed
 
