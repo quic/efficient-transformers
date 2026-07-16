@@ -432,7 +432,6 @@ class QEffGlm4MoeAttention(Glm4MoeAttention):
 
 
 class QEffGlm4MoeDecoderLayer(Glm4MoeDecoderLayer):
-    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

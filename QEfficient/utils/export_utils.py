@@ -28,7 +28,7 @@ from QEfficient.utils.hash_utils import create_export_hash
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.torch_patches import (
     apply_torch_patches,
-    temporarily_disable_nested_compile_regions,
+    temporarily_enable_nested_compile_regions,
     undo_torch_patches,
 )
 
@@ -282,6 +282,18 @@ def export_wrapper(func):
         use_dynamo = kwargs.get("use_dynamo", False)
         use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
 
+        if use_dynamo:
+            torch_version = torch.__version__
+            major, minor = (int(x) for x in torch_version.split("+")[0].split(".")[:2])
+            if (major, minor) < (2, 13):
+                raise AssertionError(
+                    f"use_dynamo=True requires PyTorch >= 2.13, but found {torch_version}. "
+                    "Please install torch 2.13+cpu, torchvision 0.28.0+cpu, and compatible compressed-tensors:\n"
+                    "  pip install 'torch@https://download.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl' "
+                    "'torchvision@https://download.pytorch.org/whl/cpu/torchvision-0.28.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl' "
+                    "compressed-tensors==0.17.0"
+                )
+
         # Cache probe flag (used for layerwise inspection runs)
         cache_probe = kwargs.pop("_layerwise_cache_probe", False)
 
@@ -292,17 +304,11 @@ def export_wrapper(func):
         # 1. Setup the requested export mode
         if use_onnx_subfunctions:
             # Handles both Path 4 (dynamo + subfunctions) and Path 2 (TorchScript + subfunctions).
-            # use_dynamo is passed explicitly so _setup_onnx_subfunctions owns the full
-            # submodule-class resolution in one place and does not need to re-read it from kwargs.
             args, kwargs, subfunction_state = _setup_onnx_subfunctions(self, args, kwargs, use_dynamo=use_dynamo)
-
-        elif use_dynamo:
-            # Path 3: flat dynamo — strip any @nested_compile_region decorators that
-            # are statically present on decoder layer forward() methods so they don't
-            # create subgraph boundaries during tracing.
-            # target_classes=None: the function identifies wrapped methods by qualname,
-            # no class filter needed.
-            export_context = temporarily_disable_nested_compile_regions(self.model, target_classes=None)
+            if use_dynamo:
+                # Wrap only decoder layers (not top-level model) — wrapping top-level breaks dynamic_shapes validation.
+                target_classes = subfunction_state.get("decoder_layer_classes") or None
+                export_context = temporarily_enable_nested_compile_regions(self.model, target_classes=target_classes)
 
         # 2. Prepare export directory
         export_dir = _prepare_export_directory(self, kwargs)
@@ -536,6 +542,7 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, use_dynamo=False):
             "use_onnx_subfunctions": orig_use_onnx_subfunctions,
             "hash_use_subfunctions": orig_hash_use_subfunctions,
             "hash_subfunction_version": orig_hash_subfunction_version,
+            "decoder_layer_classes": decoder_layer_classes if use_dynamo else None,
         },
     )
 

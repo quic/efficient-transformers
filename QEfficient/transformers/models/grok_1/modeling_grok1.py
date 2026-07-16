@@ -207,7 +207,6 @@ class QEffGrok1DecoderLayer(nn.Module):
         """
         self.moe_block.ffn_dim = self.config.intermediate_size
 
-    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

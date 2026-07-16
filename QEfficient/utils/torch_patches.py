@@ -304,6 +304,44 @@ def undo_torch_patches():
 
 
 @contextmanager
+def temporarily_enable_nested_compile_regions(model, target_classes=None):
+    """
+    Wrap selected module ``forward`` methods with ``nested_compile_region``
+    during export so repeated block functions are materialized by dynamo.
+
+    Used when use_dynamo=True and use_onnx_subfunctions=True. Requires torch >= 2.13.
+    """
+    target_classes = tuple(target_classes) if target_classes else None
+    patched_modules = []
+
+    try:
+        for module in model.modules():
+            if target_classes and not isinstance(module, target_classes):
+                continue
+
+            bound_forward = getattr(module, "forward", None)
+            if bound_forward is None:
+                continue
+
+            wrapped_forward = getattr(bound_forward, "__func__", bound_forward)
+            if getattr(wrapped_forward, "__qualname__", "") == "mark_compile_region.<locals>.wrap.<locals>.inner":
+                continue
+
+            previous_forward = module.__dict__.get("forward", _MISSING_INSTANCE_ATTR)
+            nested_forward = torch.compiler.nested_compile_region(wrapped_forward)
+            setattr(module, "forward", nested_forward.__get__(module, type(module)))
+            patched_modules.append((module, previous_forward))
+
+        yield
+    finally:
+        for module, previous_forward in reversed(patched_modules):
+            if previous_forward is _MISSING_INSTANCE_ATTR:
+                delattr(module, "forward")
+            else:
+                setattr(module, "forward", previous_forward)
+
+
+@contextmanager
 def temporarily_disable_nested_compile_regions(model, target_classes=None):
     """
     Replace nested_compile_region-wrapped ``forward`` methods with their original

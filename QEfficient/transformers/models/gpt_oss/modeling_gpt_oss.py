@@ -1016,7 +1016,6 @@ class QEffGptOssAttention(GptOssAttention):
 
 
 class QEffGptOssDecoderLayer(GptOssDecoderLayer):
-    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,
