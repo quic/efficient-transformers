@@ -1702,11 +1702,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 continuous_batching=self.continuous_batching,
                 comp_ctx_lengths=self.comp_ctx_lengths_decode,
                 prefill_seq_len=prefill_seq_len,
+                batch_fold=self.lang_model.hash_params.get("blocking_kwargs", None) and getattr(self.lang_model.hash_params["blocking_kwargs"], "batch_fold", False),
             )
             dynamic_axes = self.model.get_onnx_dynamic_axes(
                 kv_offload=True,
                 continuous_batching=self.continuous_batching,
                 comp_ctx_lengths=self.comp_ctx_lengths_decode,
+                batch_fold=self.lang_model.hash_params.get("blocking_kwargs", None) and getattr(self.lang_model.hash_params["blocking_kwargs"], "batch_fold", False),
             )
         except TypeError:
             inputs = self.model.get_dummy_inputs(
