@@ -7,13 +7,10 @@
 
 import copy
 import os
-import re
 from io import BytesIO
 from pathlib import Path
 
 import numpy as np
-import onnx
-import onnxruntime as ort
 import requests
 import torch
 from export_kimi_k25_vision import (
@@ -57,8 +54,6 @@ def _has_qaic_runtime_access() -> bool:
 
 def _set_deterministic(seed: int):
     import random
-
-    import numpy as np
 
     random.seed(seed)
     np.random.seed(seed)

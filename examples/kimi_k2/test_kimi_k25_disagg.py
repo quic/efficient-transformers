@@ -153,9 +153,9 @@ def _compile_disagg_qpcs(qeff_model: QEFFAutoModelForImageTextToText, compile_di
 
     prefill_qpc_path = qeff_model.compile(
         prefill_seq_len=PREFILL_SEQ_LEN,
-        #retain_full_kv=True,
+        # retain_full_kv=True,
         prefill_only=True,
-        #enable_chunking=True,
+        # enable_chunking=True,
         skip_vision=True,
         skip_lang=False,
         **common_compile_kwargs,

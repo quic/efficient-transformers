@@ -989,7 +989,12 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 if "image_idx" in getattr(self._session, "binding_index_map", {}):
                     idx = self._session.binding_index_map["image_idx"]
                     dims = tuple(self._session.bindings[idx].dims)
-                    decode_inputs["image_idx"] = np.zeros(dims, dtype=np.int64)
+                    if dims == tuple(self.decode_image_idx.shape):
+                        decode_inputs["image_idx"] = self.decode_image_idx
+                    elif dims[0] == 1:
+                        decode_inputs["image_idx"] = self.decode_image_idx[:1]
+                    else:
+                        decode_inputs["image_idx"] = np.broadcast_to(self.decode_image_idx[:1], dims).copy()
                 else:
                     decode_inputs["image_idx"] = np.array([[0]], dtype=np.int64)
             except Exception:

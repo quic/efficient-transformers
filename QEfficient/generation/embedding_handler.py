@@ -235,18 +235,23 @@ class VisionHandler:
                     image = image.resize(
                         (constants.GRANITEVISION_IMG_SIZE_HEIGHT, constants.GRANITEVISION_IMG_SIZE_WIDTH)
                     )
+            model_type = getattr(getattr(self._qeff_model, "model", None).config, "model_type", "")
+
             # Gemma4 expects the processor-rendered prompt with the image placeholder ahead of user text.
             is_gemma4 = (
                 hasattr(self._qeff_model.model.config, "model_type")
                 and self._qeff_model.model.config.model_type == "gemma4"
             )
+            is_kimi_k25 = model_type == "kimi_k25"
 
             # Prepare conversation format
             conversation = [
                 {
                     "role": "user",
                     "content": (
-                        [{"type": "image"}, {"type": "text", "text": query}]
+                        [{"type": "image_url", "image_url": image}, {"type": "text", "text": query}]
+                        if is_kimi_k25
+                        else [{"type": "image"}, {"type": "text", "text": query}]
                         if is_gemma4
                         else [{"type": "text", "text": query}, {"type": "image"}]
                     ),
@@ -254,22 +259,29 @@ class VisionHandler:
             ]
 
             # Apply chat template
-            if is_gemma4:
+            if is_kimi_k25:
+                inputs = self._processor(
+                    messages=conversation,
+                    add_generation_prompt=True,
+                    tokenize=False,
+                    return_tensors="pt",
+                )
+            elif is_gemma4:
                 prompt = self._processor.apply_chat_template(
                     conversation,
                     tokenize=False,
                     add_generation_prompt=True,
                     enable_thinking=False,
                 )
+                inputs = self._processor(images=image, text=prompt, return_tensors="pt")
             else:
                 prompt = self._processor.apply_chat_template(
                     conversation,
                     tokenize=False,
                     add_generation_prompt=True,
                 )
-            # Process image and text
-            inputs = self._processor(images=image, text=prompt, return_tensors="pt")
-            model_type = getattr(getattr(self._qeff_model, "model", None).config, "model_type", "")
+                inputs = self._processor(images=image, text=prompt, return_tensors="pt")
+
             if model_type in {
                 "qwen2_5_vl",
                 "qwen3_vl_moe",
@@ -298,6 +310,13 @@ class VisionHandler:
                     "aspect_ratio_mask",
                 }:
                     vision_inputs[k] = np.array(v)
+
+            if is_kimi_k25:
+                grid_thws = inputs.get("grid_thws")
+                if grid_thws is None:
+                    raise ValueError("Kimi-K2.5 processor output must include grid_thws for vision export.")
+                vision_inputs["h_shape"] = np.ones(int(grid_thws[0, 1].item()), dtype=np.int64)
+                vision_inputs["w_shape"] = np.ones(int(grid_thws[0, 2].item()), dtype=np.int64)
 
             # Convert specific inputs to float16
             vision_inputs_fp16 = {"pixel_values", "image_masks"}
@@ -432,7 +451,11 @@ class VisionHandler:
             buffers = {}
             for output_name, shape in shapes.items():
                 # Create placeholder with appropriate dtype
-                if "vision_embeds" in output_name or "deepstack_features" in output_name:
+                if (
+                    "vision_embeds" in output_name
+                    or "image_embeds" in output_name
+                    or "deepstack_features" in output_name
+                ):
                     buffers[output_name] = np.zeros(shape, dtype=np.float16)
                 else:
                     buffers[output_name] = np.zeros(shape, dtype=np.float32)
