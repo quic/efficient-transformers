@@ -21,7 +21,7 @@ pipeline {
                description: 'Jenkins agent/node label to run this pipeline on')
 
         choice(name: 'TEST_PROFILE',
-               choices: ['tiny_model', 'full_model'],
+               choices: ['few_layers', 'tiny_model', 'full_model'],
                description: 'CI test profile: tiny_model (fast, random-weight tinies) or full_model (real weights, nightly)')
         
         booleanParam(name: 'RUN_NON_QAIC_LLM',       defaultValue: true,
