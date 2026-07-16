@@ -79,7 +79,6 @@ from QEfficient.utils import (
     validate_kv_cache_prefix,
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
-from QEfficient.utils.export_utils import convert_dynamic_axes_to_dynamic_shapes
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
@@ -3732,7 +3731,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
-        use_dynamo: bool = False,
+        dynamo: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -3749,7 +3748,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If not provided, the default export directory is used.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
-        use_dynamo: bool, optional
+        dynamo: bool, optional
             whether to enable dynamo during export.
         Returns
         -------
@@ -3787,10 +3786,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
-        if use_dynamo:
+        if dynamo:
             seq_len = max(2, seq_len)
             fbs = max(2, fbs)
             if getattr(self.model.config, "model_type", None) == "gpt_oss" and not self.continuous_batching:
+                # gpt_oss non-CB specializations use batch_size=1; dynamic_shapes sets batch Dim(min=1).
+                # torch.export requires example inputs to satisfy the declared min, so bs must stay 1.
                 bs = 1
             else:
                 bs = max(2, bs)
@@ -4046,18 +4047,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 _layerwise_cache_probe=kwargs.get("_layerwise_cache_probe", False),
             )
         else:
-            dynamic_shapes = None
-            if use_dynamo:
-                dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes(dynamic_axes, self.model.config)
-
             return self._export(
                 example_inputs,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
                 export_dir=export_dir,
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
-                use_dynamo=use_dynamo,
-                dynamic_shapes=dynamic_shapes,
+                dynamo=dynamo,
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
                 prefill_only=prefill_only,
             )

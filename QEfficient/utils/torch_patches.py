@@ -10,7 +10,7 @@
 Patches kept here:
   - TorchScript ONNX exporter (_setup_trace_module_map, _get_module_attributes,
     _jit_pass_onnx_track_scope_attributes): fix attribute-type mismatches in the
-    legacy trace-based exporter (use_dynamo=False path).
+    legacy trace-based exporter (dynamo=False path).
   - Layerwise safe export pass patches: disable expensive ONNX exporter passes
     for layerwise prefill export (TorchScript path).
   - temporarily_enable_nested_compile_regions / temporarily_disable_nested_compile_regions:
@@ -309,7 +309,7 @@ def temporarily_enable_nested_compile_regions(model, target_classes=None):
     Wrap selected module ``forward`` methods with ``nested_compile_region``
     during export so repeated block functions are materialized by dynamo.
 
-    Used when use_dynamo=True and use_onnx_subfunctions=True. Requires torch >= 2.13.
+    Used when dynamo=True and use_onnx_subfunctions=True. Requires torch >= 2.13.
     """
     target_classes = tuple(target_classes) if target_classes else None
     patched_modules = []
@@ -347,7 +347,7 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
     Replace nested_compile_region-wrapped ``forward`` methods with their original
     underlying functions for the duration of plain dynamo export (Path 3).
 
-    Used when use_dynamo=True and use_onnx_subfunctions=False so that
+    Used when dynamo=True and use_onnx_subfunctions=False so that
     @nested_compile_region boundaries statically present on decoder layer
     forward() methods do not create unwanted subgraph splits during tracing.
     """

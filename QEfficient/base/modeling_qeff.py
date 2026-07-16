@@ -430,12 +430,13 @@ class QEFFBaseModel(ABC):
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
-        use_dynamo: bool = False,
+        dynamo: bool = False,
         dynamic_shapes: Optional[Dict[str, Dict[int, Any]]] = None,
         **export_kwargs,
     ) -> str:
         """
         Export the PyTorch model to ONNX and apply ONNX transforms
+
 
         This method:
         1. Exports PyTorch model to ONNX using torch.onnx.export
@@ -568,7 +569,7 @@ class QEFFBaseModel(ABC):
         dynamic_shapes = ordered_dynamic_shapes
 
         try:
-            if use_dynamo:
+            if dynamo:
                 self._export_via_dynamo(
                     onnx_path,
                     example_inputs,
@@ -596,7 +597,7 @@ class QEFFBaseModel(ABC):
             transform_kwargs = {
                 "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
                 "model_name": self.model_name,
-                "dynamic_axes": None if use_dynamo else dynamic_axes,  # dynamo uses dynamic_shapes, not axes
+                "dynamic_axes": None if dynamo else dynamic_axes,  # dynamo uses dynamic_shapes, not axes
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
@@ -636,7 +637,7 @@ class QEFFBaseModel(ABC):
         specializations: Optional[List[Dict[str, int]]] = None,
         offload_pt_weights: Optional[bool] = True,
         use_onnx_subfunctions: Optional[bool] = False,
-        use_dynamo: Optional[bool] = False,
+        dynamo: Optional[bool] = False,
         retain_full_kv: Optional[bool] = False,
         qaic_config: Optional[dict] = None,
         moe_prefill_packed_chunk_size: Optional[int] = None,
@@ -646,7 +647,7 @@ class QEFFBaseModel(ABC):
         kwargs = {
             "offload_pt_weights": offload_pt_weights,
             "use_onnx_subfunctions": use_onnx_subfunctions,
-            "use_dynamo": use_dynamo,
+            "dynamo": dynamo,
             "retain_full_kv": retain_full_kv,
         }
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
@@ -981,7 +982,7 @@ class QEFFBaseModel(ABC):
         enable_qnn: Optional[bool] = False,
         qnn_config: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
-        use_dynamo: bool = False,
+        dynamo: bool = False,
         prefill_only: Optional[str] = None,
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
@@ -1046,7 +1047,7 @@ class QEFFBaseModel(ABC):
                     specializations,
                     offload_pt_weights,
                     use_onnx_subfunctions,
-                    use_dynamo,
+                    dynamo,
                     retain_full_kv,
                     num_devices=mdp_ts_num_devices,
                     qaic_config=qaic_config,

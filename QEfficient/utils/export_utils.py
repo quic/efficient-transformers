@@ -279,20 +279,24 @@ def export_wrapper(func):
 
     def wrapper(self, *args, **kwargs):
         # Extract flags
-        use_dynamo = kwargs.get("use_dynamo", False)
+        dynamo = kwargs.get("dynamo", False)
         use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
 
-        if use_dynamo:
+        if dynamo:
             torch_version = torch.__version__
             major, minor = (int(x) for x in torch_version.split("+")[0].split(".")[:2])
             if (major, minor) < (2, 13):
                 raise AssertionError(
-                    f"use_dynamo=True requires PyTorch >= 2.13, but found {torch_version}. "
-                    "Please install torch 2.13+cpu, torchvision 0.28.0+cpu, and compatible compressed-tensors:\n"
-                    "  pip install 'torch@https://download.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl' "
-                    "'torchvision@https://download.pytorch.org/whl/cpu/torchvision-0.28.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl' "
-                    "compressed-tensors==0.17.0"
+                    f"dynamo=True requires PyTorch >= 2.13, but found {torch_version}. "
+                    "Install the dynamo extra to get the required PyTorch version:\n"
+                    "  pip install -e '.[dynamo]'"
                 )
+            # Resolve dynamic_shapes from dynamic_axes before the hash so the hash captures
+            # the actual shape constraints.
+            dynamic_axes = kwargs.get("dynamic_axes")
+            if dynamic_axes is not None:
+                model_config = getattr(self.model, "config", None)
+                kwargs["dynamic_shapes"] = convert_dynamic_axes_to_dynamic_shapes(dynamic_axes, model_config)
 
         # Cache probe flag (used for layerwise inspection runs)
         cache_probe = kwargs.pop("_layerwise_cache_probe", False)
@@ -304,8 +308,8 @@ def export_wrapper(func):
         # 1. Setup the requested export mode
         if use_onnx_subfunctions:
             # Handles both Path 4 (dynamo + subfunctions) and Path 2 (TorchScript + subfunctions).
-            args, kwargs, subfunction_state = _setup_onnx_subfunctions(self, args, kwargs, use_dynamo=use_dynamo)
-            if use_dynamo:
+            args, kwargs, subfunction_state = _setup_onnx_subfunctions(self, args, kwargs, dynamo=dynamo)
+            if dynamo:
                 # Wrap only decoder layers (not top-level model) — wrapping top-level breaks dynamic_shapes validation.
                 target_classes = subfunction_state.get("decoder_layer_classes") or None
                 export_context = temporarily_enable_nested_compile_regions(self.model, target_classes=target_classes)
@@ -329,7 +333,7 @@ def export_wrapper(func):
             # would inline single-use layers before ONNX translation, losing _RetainedState wiring.
             dynamo_patch = (
                 torch._dynamo.config.patch(inline_single_use_invoke_subgraph=False)
-                if use_onnx_subfunctions and use_dynamo
+                if use_onnx_subfunctions and dynamo
                 else nullcontext()
             )
             try:
@@ -337,9 +341,9 @@ def export_wrapper(func):
                     with dynamo_patch:
                         onnx_path = func(self, *args, **kwargs)
             except Exception as export_exc:
-                if use_onnx_subfunctions and use_dynamo:
+                if use_onnx_subfunctions and dynamo:
                     raise RuntimeError(
-                        "Export failed with use_dynamo=True and use_onnx_subfunctions=True "
+                        "Export failed with dynamo=True and use_onnx_subfunctions=True "
                         "while nested compile regions were enabled for repeated-subgraph "
                         f"extraction ({type(export_exc).__name__}: {export_exc}). "
                         "Retry export with use_onnx_subfunctions=False for this model/runtime."
@@ -421,7 +425,7 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
             "config": config_val,
             "use_onnx_subfunctions": getattr(qeff_model, "_use_onnx_subfunctions", False),
             "onnx_transform_version": 1,
-            "use_dynamo": all_args.get("use_dynamo", False),
+            "dynamo": all_args.get("dynamo", False),
         }
     )
     if getattr(qeff_model, "_use_onnx_subfunctions", False):
@@ -440,7 +444,7 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     return export_hash, filtered_hash_params
 
 
-def _setup_onnx_subfunctions(qeff_model, args, kwargs, use_dynamo=False):
+def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
     """
     Setup ONNX subfunction export environment.
 
@@ -455,7 +459,7 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, use_dynamo=False):
         qeff_model: The QEff model instance.
         args: Positional export arguments.
         kwargs: Export keyword arguments (modified in-place).
-        use_dynamo: Whether the dynamo exporter is active. Passed explicitly by the
+        dynamo: Whether the dynamo exporter is active. Passed explicitly by the
             caller so this function does not need to read it from kwargs.
 
     Returns:
@@ -473,12 +477,12 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, use_dynamo=False):
     qeff_model.hash_params["use_onnx_subfunctions"] = True
     qeff_model.hash_params["onnx_subfunction_version"] = 2
     # TorchScript patches are irrelevant on the dynamo path.
-    if not use_dynamo:
+    if not dynamo:
         apply_torch_patches()
     InvalidIndexProvider.SUBFUNC_ENABLED = True
 
     # TorchScript renames _RetainedState → _InternalRetainedState; dynamo keeps _RetainedState for PreserveNestedCacheRetainedStateTransform.
-    if not use_dynamo:
+    if not dynamo:
         if "output_names" in kwargs:
             kwargs["output_names"] = [
                 re.sub("_RetainedState", "_InternalRetainedState", name)
@@ -506,7 +510,7 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, use_dynamo=False):
     qeff_model._onnx_transforms = list(original_transforms)
 
     # Add subfunction-specific ONNX transforms based on export path
-    if use_dynamo:
+    if dynamo:
         # Dynamo: PreserveNestedCacheRetainedStateTransform + RenameRepeatedSubgraphTransform.
         if PreserveNestedCacheRetainedStateTransform not in qeff_model._onnx_transforms:
             qeff_model._onnx_transforms.append(PreserveNestedCacheRetainedStateTransform)
@@ -522,7 +526,7 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, use_dynamo=False):
     # TODO: Handle this in the modelling class QEFFTransformersBase, remove from here.
     decoder_layer_classes = get_decoder_layer_classes_for_export(qeff_model.model)
     if decoder_layer_classes:
-        if use_dynamo:
+        if dynamo:
             # Pass resolved classnames to RenameRepeatedSubgraphTransform; single resolution point to avoid double-call.
             resolved_classnames = sorted(cls.__name__ for cls in decoder_layer_classes)
             qeff_model._subfunction_target_classnames = resolved_classnames
@@ -538,11 +542,11 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, use_dynamo=False):
         kwargs,
         {
             "onnx_transforms": original_transforms,
-            "use_dynamo": use_dynamo,
+            "dynamo": dynamo,
             "use_onnx_subfunctions": orig_use_onnx_subfunctions,
             "hash_use_subfunctions": orig_hash_use_subfunctions,
             "hash_subfunction_version": orig_hash_subfunction_version,
-            "decoder_layer_classes": decoder_layer_classes if use_dynamo else None,
+            "decoder_layer_classes": decoder_layer_classes if dynamo else None,
         },
     )
 
@@ -565,7 +569,7 @@ def _cleanup_onnx_subfunctions(qeff_model, state=None):
         not re-raised to avoid masking the original exception.
     """
     # TorchScript patches are only applied on the non-dynamo path, so only undo them there.
-    if state is None or not state.get("use_dynamo", False):
+    if state is None or not state.get("dynamo", False):
         undo_torch_patches()
     InvalidIndexProvider.SUBFUNC_ENABLED = False
     if state is not None and "onnx_transforms" in state:
