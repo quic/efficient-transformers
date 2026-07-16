@@ -1244,8 +1244,8 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
-        batch_fold = kwargs.pop("batch_fold")
- 
+        batch_fold = kwargs.pop("batch_fold", False)
+
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
             batch_size=fbs if continuous_batching else bs,
@@ -1253,7 +1253,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         )
 
         if batch_fold:
-           kv_cache_shape = [1, kv_cache_shape[0] * kv_cache_shape[1], *kv_cache_shape[2:]]
+            kv_cache_shape = [1, kv_cache_shape[0] * kv_cache_shape[1], *kv_cache_shape[2:]]
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         for i in range(self.model.config.text_config.num_hidden_layers):
@@ -1395,7 +1395,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             for i in range(0, len(comp_ctx_lengths_decode)):
                 lang_decode = {
                     "batch_size": full_batch_size if continuous_batching else batch_size,
-                    "BH": batch_size * self.config.text_config.num_attention_heads,
+                    "BH": batch_size * self.config.text_config.num_key_value_heads,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
                     "vision_size": vision_size,
@@ -1429,7 +1429,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
 
             lang_decode = {
                 "batch_size": full_batch_size if continuous_batching else batch_size,
-                "BH": batch_size * self.config.text_config.num_attention_heads,
+                "BH": batch_size * self.config.text_config.num_key_value_heads,
                 "seq_len": 1,
                 "ctx_len": ctx_len,
                 "vision_size": vision_size,

@@ -129,7 +129,7 @@ print("prefill", prefill_qaic_config)
 
 
 prefill_qpc_path = qeff_model.compile(
-    batch_size=BS,
+    batch_size=1,
     prefill_seq_len=PREFILL_SEQ_LEN,
     ctx_len=CTX_LEN,
     height=354,
