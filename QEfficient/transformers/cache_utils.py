@@ -379,7 +379,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
         ctx_indices = ctx_indices.expand(1, BH, T_block)
-        v_out = CtxGatherFuncBlockedKV.apply(v_out, ctx_indices)
+        v_out = CtxGatherFuncBlockedKVBatch.apply(v_out, ctx_indices)
 
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
         return v_out
@@ -478,10 +478,13 @@ class QEffDynamicLayer(CacheLayerMixin):
         """
         # Update the cache
         if self.keys is None:
-            self.keys = key_states
-            self.values = value_states
+            self.keys = key_states.reshape(key_states.shape[0] * key_states.shape[1], key_states.shape[2], key_states.shape[3]).unsqueeze(0)
+            self.values = value_states.reshape(value_states.shape[0] * value_states.shape[1], value_states.shape[2], value_states.shape[3]).unsqueeze(0)
             self._mark_initialized(self.keys)
         else:
+            if self.keys.shape[0] != 1:
+                self.keys = self.keys.reshape(self.keys.shape[0] * self.keys.shape[1], self.keys.shape[2], self.keys.shape[3]).unsqueeze(0)
+                self.values = self.values.reshape(self.values.shape[0] * self.values.shape[1], self.values.shape[2], self.values.shape[3]).unsqueeze(0)
             self._mark_initialized(self.keys)
             position_ids = cache_kwargs.get("position_ids")
 

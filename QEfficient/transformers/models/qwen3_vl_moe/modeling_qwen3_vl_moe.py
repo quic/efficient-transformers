@@ -1244,11 +1244,16 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
+        batch_fold = kwargs.pop("batch_fold")
+ 
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
             batch_size=fbs if continuous_batching else bs,
             seq_len=prefill_seq_len,
         )
+
+        if batch_fold:
+           kv_cache_shape = [1, kv_cache_shape[0] * kv_cache_shape[1], *kv_cache_shape[2:]]
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         for i in range(self.model.config.text_config.num_hidden_layers):
@@ -1390,6 +1395,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             for i in range(0, len(comp_ctx_lengths_decode)):
                 lang_decode = {
                     "batch_size": full_batch_size if continuous_batching else batch_size,
+                    "BH": batch_size * self.config.text_config.num_attention_heads,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
                     "vision_size": vision_size,
@@ -1423,6 +1429,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
 
             lang_decode = {
                 "batch_size": full_batch_size if continuous_batching else batch_size,
+                "BH": batch_size * self.config.text_config.num_attention_heads,
                 "seq_len": 1,
                 "ctx_len": ctx_len,
                 "vision_size": vision_size,
@@ -1449,7 +1456,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             return lang, compiler_options
 
     def get_onnx_dynamic_axes(
-        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False, batch_fold: bool = False,
     ):
         # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
@@ -1466,15 +1473,26 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             "deepstack_features": {0: "num_feature_layers", 1: "vision_batch_size", 2: "vision_size"},
         }
 
-        for i in range(num_layers):
-            lang_dynamic_axes[f"past_key.{i}"] = {
-                0: "full_batch_size" if continuous_batching else "batch_size",
-                2: "ctx_len",
-            }
-            lang_dynamic_axes[f"past_value.{i}"] = {
-                0: "full_batch_size" if continuous_batching else "batch_size",
-                2: "ctx_len",
-            }
+        if batch_fold: # Cache layout is 1 x BH x ctx_len x head_dim
+            for i in range(num_layers):
+                lang_dynamic_axes[f"past_key.{i}"] = {
+                    1: "BH",
+                    2: "ctx_len",
+                }
+                lang_dynamic_axes[f"past_value.{i}"] = {
+                    1: "BH",
+                    2: "ctx_len",
+                }
+        else: 
+            for i in range(num_layers):
+                lang_dynamic_axes[f"past_key.{i}"] = {
+                    0: "full_batch_size" if continuous_batching else "batch_size",
+                    2: "ctx_len",
+                }
+                lang_dynamic_axes[f"past_value.{i}"] = {
+                    0: "full_batch_size" if continuous_batching else "batch_size",
+                    2: "ctx_len",
+                }
 
         if continuous_batching:
             lang_dynamic_axes["batch_index"] = {0: "batch_size"}
