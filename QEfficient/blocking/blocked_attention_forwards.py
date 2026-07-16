@@ -242,7 +242,6 @@ def blocked_kv_attention_forward_decode_headpar_batch(
     pair, so no inner `split` dimension is needed (unlike blocked_kv_attention_forward_headpar_offline).
     query: [B, NQH, 1, D], k_cache/v_cache: [1, BH, T, D], position_ids: [B, 1]
     """
-    print("\n\nEntering decode headpar Batch\n\n")
     batch_size, num_heads, seq_len, head_dim = query.shape
     assert seq_len == 1, "blocked_kv_attention_forward_decode_headpar_batch is decode-only (seq_len must be 1)."
     num_kv_groups = getattr(module, "num_key_value_groups", None)
@@ -275,11 +274,9 @@ def blocked_kv_attention_forward_decode_headpar_batch(
                     break
 
         # Read K: [B, num_kv_heads, T_block, D] -> [1, BH, T_block, D]
-        k_block = past_key_value.read_only_blocked_K(start_index, end_index, layer_idx, cache_kwargs).reshape(
-            1, BH, kv_len_block, head_dim
-        )
+        k_block = past_key_value.read_only_blocked_K_batch(start_index, end_index, layer_idx, cache_kwargs)
 
-        attn_weights_block = torch.matmul(query_flat, k_block.transpose(-1, -2)) * scaling
+        attn_weights_block = torch.matmul(query_flat, k_block.transpose(3, 2)) * scaling
 
         # Causal mask: [B, 1, T_block] -> [B, num_kv_heads, 1, T_block] -> [1, BH, 1, T_block]
         causal_mask = (
@@ -306,10 +303,9 @@ def blocked_kv_attention_forward_decode_headpar_batch(
             exp_block = torch.where(skip_future, torch.zeros_like(exp_block), exp_block)
 
         # Read V: [B, num_kv_heads, T_block, D] -> [1, BH, T_block, D]
-        v_block = past_key_value.read_only_blocked_V(start_index, end_index, layer_idx, cache_kwargs).reshape(
-            1, BH, kv_len_block, head_dim
-        )
+        v_block = past_key_value.read_only_blocked_V_batch(start_index, end_index, layer_idx, cache_kwargs)
         sum_block = exp_block.sum(dim=-1)
+        # sum_block = torch.einsum("btdn->btd", exp_block)
         out_block = torch.matmul(exp_block, v_block)
         if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
             sum_block = torch.where(skip_future, torch.zeros_like(sum_block), sum_block)
