@@ -844,6 +844,8 @@ class QEFFBaseModel(ABC):
         if blocking_config is not None:
             self.model, _ = BlockingAttentionTransform.apply(self.model, attn_blocking_config=blocking_config)
             self.hash_params["blocking_kwargs"] = blocking_config
+        if qaic_config is not None:
+            self.hash_params["qaic_config"] = qaic_config
         self.hash_params["num_replicate_kv_heads"] = effective_num_replicate_kv_heads
 
     @dump_qconfig
