@@ -80,7 +80,6 @@ namespaces = false
 attr = "QEfficient.__version__"
 
 [tool.ruff]
-ignore = ["E731"]
 line-length = 120
 # Enable the isort rules.
 lint.extend-select = ["I"]

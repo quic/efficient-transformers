@@ -3785,24 +3785,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
-        if dynamo:
-            seq_len = max(2, seq_len)
-            fbs = max(2, fbs)
-            if getattr(self.model.config, "model_type", None) == "gpt_oss" and not self.continuous_batching:
-                # gpt_oss non-CB specializations use batch_size=1; dynamic_shapes sets batch Dim(min=1).
-                # torch.export requires example inputs to satisfy the declared min, so bs must stay 1.
-                bs = 1
-            else:
-                bs = max(2, bs)
+        if dynamo and not (
+            getattr(self.model.config, "model_type", None) == "gpt_oss" and not self.continuous_batching
+        ):
+            # torch.export requires example inputs to satisfy dynamic_shapes min=2; gpt_oss non-CB keeps bs=1.
+            bs = max(2, bs)
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
-        if len(kv_cache_shape) == 3:
+        if dynamo:
             kv_cache_shape = list(kv_cache_shape)
-            kv_cache_shape[1] = max(2, kv_cache_shape[1])
-        else:
-            kv_cache_shape = list(kv_cache_shape)
-            kv_cache_shape[2] = max(2, kv_cache_shape[2])
+            kv_cache_shape[1 if len(kv_cache_shape) == 3 else 2] = max(
+                2, kv_cache_shape[1 if len(kv_cache_shape) == 3 else 2]
+            )
         enable_chunking = kwargs.get("enable_chunking", False)
         if (
             kwargs.get("retain_full_kv", False)

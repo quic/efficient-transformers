@@ -42,6 +42,9 @@ pipeline {
         booleanParam(name: 'RUN_QAIC_DIFFUSION', defaultValue: true)
         booleanParam(name: 'RUN_CLI', defaultValue: true)
         booleanParam(name: 'RUN_FINETUNE', defaultValue: false)
+        booleanParam(name: 'RUN_DYNAMO', defaultValue: true, description: 'Run dynamo CPU export/parity/transform tests (torch 2.13)')
+        booleanParam(name: 'RUN_DYNAMO_QAIC', defaultValue: true, description: 'Run dynamo on-QAIC compile/generate tests (torch 2.13)')
+        booleanParam(name: 'RUN_DYNAMO_NIGHTLY', defaultValue: false, description: 'Run dynamo nightly full-model export+compile+generate (torch 2.13, long-running)')
     }
 
     environment {
@@ -203,6 +206,84 @@ pipeline {
                     export QEFF_HOME=$PWD/cli &&
                     pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log3.xml --durations=10 &&
                     junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
+                }
+            }
+        }
+
+        stage('Install Torch 2.13') {
+            when { expression { params.RUN_DYNAMO || params.RUN_DYNAMO_QAIC || params.RUN_DYNAMO_NIGHTLY || params.TEST_PROFILE == 'full_layers_model' } }
+            steps {
+                timeout(time: 15, unit: 'MINUTES') {
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    py=\\$(python3 -c \\"import sys; print('cp'+str(sys.version_info.major)+str(sys.version_info.minor))\\") &&
+                    arch=\\$(uname -m) &&
+                    pip install \\
+                        \\"torch@https://download.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-\\${py}-\\${py}-manylinux_2_28_\\${arch}.whl\\" \\
+                        \\"torchvision@https://download.pytorch.org/whl/cpu/torchvision-0.28.0%2Bcpu-\\${py}-\\${py}-manylinux_2_28_\\${arch}.whl\\" \\
+                        'compressed-tensors==0.17.0' \\
+                        'onnxscript==0.6.2' &&
+                    deactivate"
+                    '''
+                }
+            }
+        }
+
+        stage('Dynamo CPU Tests') {
+            when { expression { params.RUN_DYNAMO } }
+            steps {
+                timeout(time: 120, unit: 'MINUTES') {
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    mkdir -p \\$PWD/dynamo_qeff &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=\\$PWD/dynamo_qeff &&
+                    pytest tests/dynamo -m '(dynamo) and (not dynamo_on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly -n 4 --junitxml=tests/tests_log_dynamo.xml --durations=10 &&
+                    junitparser merge tests/tests_log_dynamo.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
+                }
+            }
+        }
+
+        stage('Dynamo QAIC Tests') {
+            when { expression { params.RUN_DYNAMO_QAIC } }
+            steps {
+                timeout(time: 240, unit: 'MINUTES') {
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    mkdir -p \\$PWD/dynamo_qeff_qaic &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=\\$PWD/dynamo_qeff_qaic &&
+                    pytest tests/dynamo -m '(dynamo_on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly --junitxml=tests/tests_log_dynamo_qaic.xml --durations=10 &&
+                    junitparser merge tests/tests_log_dynamo_qaic.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
+                }
+            }
+        }
+
+        stage('Dynamo Nightly Tests') {
+            when { expression { params.RUN_DYNAMO_NIGHTLY || params.TEST_PROFILE == 'full_layers_model' } }
+            steps {
+                timeout(time: 0, unit: 'HOURS') {
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    mkdir -p \\$PWD/dynamo_nightly &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=\\$PWD/dynamo_nightly &&
+                    pytest tests/dynamo/nightly -m 'nightly and ${TEST_FILTER}' --junitxml=tests/tests_log_dynamo_nightly.xml --durations=10 &&
+                    junitparser merge tests/tests_log_dynamo_nightly.xml tests/tests_log.xml &&
                     deactivate"
                     '''
                 }
