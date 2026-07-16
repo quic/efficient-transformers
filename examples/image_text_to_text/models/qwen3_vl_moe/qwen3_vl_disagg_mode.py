@@ -18,7 +18,7 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+model_id = "Qwen/Qwen3-VL-235B-A22B-Instruct"
 # model_id = "tiny-random/qwen3-vl-moe"
 config = AutoConfig.from_pretrained(model_id)
 config.dtype = "float16"
@@ -36,8 +36,8 @@ tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
 PREFILL_SEQ_LEN = 128
-CTX_LEN = 4096
-BS = 1
+CTX_LEN = 4096 * 1
+BS = 2
 
 NUM_KV_BLOCKS = 2
 NUM_Q_BLOCKS = 2
