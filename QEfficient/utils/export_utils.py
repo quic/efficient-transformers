@@ -169,16 +169,6 @@ def export_wrapper(func):
         use_dynamo = kwargs.get("use_dynamo", False)
         use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
 
-        # if use_dynamo:
-        #     torch_version = torch.version.__version__
-        #     major, minor = (int(x) for x in torch_version.split(".")[:2])
-        #     if (major, minor) < (2, 13):
-        #         raise RuntimeError(
-        #             f"use_dynamo=True requires PyTorch >= 2.13, but found {torch_version}. "
-        #             "Please uninstall torch 2.7.0 and install the latest PyTorch nightly:\n"
-        #             "  pip3 install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cpu"
-        #         )
-
         # Cache probe flag (used for layerwise inspection runs)
         cache_probe = kwargs.pop("_layerwise_cache_probe", False)
 
