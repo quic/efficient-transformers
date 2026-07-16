@@ -17,11 +17,11 @@ from transformers.modeling_outputs import (
 from transformers.models.llama.modeling_llama import repeat_kv
 
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
+from QEfficient.customop.utils import select_interface
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.models.llama.modeling_llama import qeff_apply_rotary_pos_emb
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
-from QEfficient.utils.custom_op_utils import select_interface
 
 
 class QEFFGrok1CustomRMSNormAIC(nn.Module):

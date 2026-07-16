@@ -32,14 +32,21 @@ from contextlib import contextmanager
 import torch
 import torch.onnx.utils as onnx_utils
 from torch import _C
-from torch.onnx._internal.torchscript_exporter import utils as ts_utils
+
+try:
+    from torch.onnx._internal.torchscript_exporter import utils as ts_utils
+
+    _ts_utils_available = True
+except ModuleNotFoundError:
+    ts_utils = None
+    _ts_utils_available = False
 
 # Store original references before patching
 _original_setup_trace_module_map = onnx_utils._setup_trace_module_map
 _original_get_module_attributes = getattr(onnx_utils, "_get_module_attributes", None)
 _original_track_scope_attrs = getattr(_C, "_jit_pass_onnx_track_scope_attributes", None)
-_original_ts_setup_trace_module_map = ts_utils._setup_trace_module_map
-_original_ts_get_module_attributes = getattr(ts_utils, "_get_module_attributes", None)
+_original_ts_setup_trace_module_map = ts_utils._setup_trace_module_map if _ts_utils_available else None
+_original_ts_get_module_attributes = getattr(ts_utils, "_get_module_attributes", None) if _ts_utils_available else None
 
 _PATCHES_ACTIVE = False
 _MISSING_INSTANCE_ATTR = object()
@@ -262,10 +269,11 @@ def apply_torch_patches():
     if hasattr(onnx_utils, "_get_module_attributes"):
         onnx_utils._get_module_attributes = _get_module_attributes
 
-    # Patch ts_utils (TorchScript-specific exporter utilities)
-    ts_utils._setup_trace_module_map = _setup_trace_module_map_patched
-    if hasattr(ts_utils, "_get_module_attributes"):
-        ts_utils._get_module_attributes = _get_module_attributes
+    # Patch ts_utils (TorchScript-specific exporter utilities, torch >= 2.13 only)
+    if _ts_utils_available:
+        ts_utils._setup_trace_module_map = _setup_trace_module_map_patched
+        if hasattr(ts_utils, "_get_module_attributes"):
+            ts_utils._get_module_attributes = _get_module_attributes
 
     # Patch _C scope-attribute tracker to filter out IValue-incompatible types
     if _original_track_scope_attrs is not None:
@@ -284,9 +292,10 @@ def undo_torch_patches():
     if _original_get_module_attributes:
         onnx_utils._get_module_attributes = _original_get_module_attributes
 
-    ts_utils._setup_trace_module_map = _original_ts_setup_trace_module_map
-    if _original_ts_get_module_attributes:
-        ts_utils._get_module_attributes = _original_ts_get_module_attributes
+    if _ts_utils_available:
+        ts_utils._setup_trace_module_map = _original_ts_setup_trace_module_map
+        if _original_ts_get_module_attributes:
+            ts_utils._get_module_attributes = _original_ts_get_module_attributes
 
     if _original_track_scope_attrs is not None:
         _C._jit_pass_onnx_track_scope_attributes = _original_track_scope_attrs

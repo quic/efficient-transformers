@@ -14,17 +14,18 @@ import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional, OrderedDict, Union
+from typing import Any, Dict, List, Optional, OrderedDict, Union
 
 import onnx
 import torch
-from torch._subclasses.fake_tensor import FakeTensor
 
+import QEfficient.customop.dynamo_ops  # noqa: F401 — registers torch.ops.qefficient.* at import time
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
     CustomOpTransform,
     FP16ClipTransform,
     OnnxTransformPipeline,
+    PruneFakeInitializersTransform,
     RenameFunctionOutputsTransform,
     SplitTensorsTransform,
 )
@@ -73,19 +74,6 @@ from QEfficient.utils import (
 from QEfficient.utils.export_utils import export_wrapper
 from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
-
-def _prune_unused_fake_initializers(onnx_program) -> None:
-    initializers = onnx_program.model.graph.initializers
-    used_names = {name for node in onnx_program.model.graph for name in node.inputs}
-    used_names.update(output.name for output in onnx_program.model.graph.outputs)
-
-    for name in list(initializers):
-        const_value = getattr(initializers[name], "const_value", None)
-        raw_value = getattr(const_value, "raw", None)
-        if isinstance(raw_value, FakeTensor) and name not in used_names:
-            del initializers[name]
-
-
 logger = logging.getLogger(__name__)
 
 
@@ -126,6 +114,24 @@ def _restore_output_names_exact(model: onnx.ModelProto, output_names: List[str])
             break
         current_name = model.graph.output[output_idx].name
         _rename_graph_value(model.graph, current_name, expected_name)
+
+
+_DYNAMO_CUSTOM_OP_TABLE: Dict = {
+    torch.ops.qefficient.rms_norm.default: CustomRMSNorm,
+    torch.ops.qefficient.ctx_scatter.default: CtxScatter,
+    torch.ops.qefficient.ctx_scatter_3d.default: CtxScatter3D,
+    torch.ops.qefficient.ctx_scatter_cb.default: CtxScatterCB,
+    torch.ops.qefficient.ctx_scatter_cb_3d.default: CtxScatterCB3D,
+    torch.ops.qefficient.ctx_scatter_3d_int.default: CtxScatter3DInt,
+    torch.ops.qefficient.ctx_scatter_3d_generalized.default: CtxScatter3D,
+    torch.ops.qefficient.ctx_gather.default: CtxGather,
+    torch.ops.qefficient.ctx_gather_3d.default: CtxGather3D,
+    torch.ops.qefficient.ctx_gather_cb.default: CtxGatherCB,
+    torch.ops.qefficient.ctx_gather_cb_3d.default: CtxGatherCB3D,
+    torch.ops.qefficient.ctx_gather_blocked_kv.default: CtxGatherBlockedKV,
+    torch.ops.qefficient.ctx_gather_blocked_kv_cb.default: CtxGatherBlockedKVCB,
+    torch.ops.qefficient.ctx_gather_3d_generalized.default: CtxGather3D,
+}
 
 
 class QEFFBaseModel(ABC):
@@ -346,18 +352,86 @@ class QEFFBaseModel(ABC):
             :str: Path of the compiled ``qpc`` package.
         """
 
+    def _export_via_legacy(
+        self,
+        onnx_path: Path,
+        example_inputs: Dict[str, torch.Tensor],
+        input_names: List[str],
+        output_names: List[str],
+        dynamic_axes: Dict,
+        export_kwargs: Dict,
+    ) -> None:
+        """Export via TorchScript symbolic tracing (dynamo=False)."""
+        with layerwise_safe_onnx_export_patches():
+            torch.onnx.export(
+                self.model,
+                (),
+                str(onnx_path),
+                kwargs=example_inputs,
+                input_names=input_names,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                dynamo=False,
+                opset_version=constants.ONNX_EXPORT_OPSET,
+                **export_kwargs,
+            )
+
+    def _export_via_dynamo(
+        self,
+        onnx_path: Path,
+        example_inputs: Dict[str, torch.Tensor],
+        input_names: List[str],
+        output_names: List[str],
+        dynamic_shapes: Optional[Dict],
+        export_kwargs: Dict,
+    ) -> None:
+        """Export via torch.export (dynamo=True) with custom op translation."""
+        export_kwargs = dict(export_kwargs)
+        export_kwargs.setdefault("report", False)
+        export_kwargs.setdefault("optimize", False)
+        export_kwargs["dynamo"] = True
+        export_kwargs["custom_translation_table"] = {
+            **(export_kwargs.pop("custom_translation_table", None) or {}),
+            **_DYNAMO_CUSTOM_OP_TABLE,
+        }
+
+        prev_invoke_fallback = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
+        os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = "1"
+        try:
+            onnx_program = torch.onnx.export(
+                self.model,
+                args=(),
+                f=None,
+                kwargs=example_inputs,
+                input_names=input_names,
+                output_names=output_names,
+                dynamic_axes=None,
+                dynamic_shapes=dynamic_shapes,
+                opset_version=constants.ONNX_EXPORT_OPSET,
+                **export_kwargs,
+            )
+            if onnx_program is None:
+                raise RuntimeError("torch.onnx.export returned None for dynamo export")
+            PruneFakeInitializersTransform.apply(onnx_program)
+            onnx_program.save(str(onnx_path))
+        finally:
+            if prev_invoke_fallback is None:
+                os.environ.pop("TORCH_INVOKE_ALLOW_CREATE_FALLBACK", None)
+            else:
+                os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = prev_invoke_fallback
+
     @export_wrapper
     def _export(
         self,
         example_inputs: Dict[str, torch.Tensor],
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
-        onnx_transform_kwargs: Optional[Dict[str, any]] = None,
+        onnx_transform_kwargs: Optional[Dict[str, Any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
         use_dynamo: bool = False,
-        dynamic_shapes: Optional[Dict[str, Dict[int, any]]] = None,
+        dynamic_shapes: Optional[Dict[str, Dict[int, Any]]] = None,
         **export_kwargs,
     ) -> str:
         """
@@ -494,72 +568,26 @@ class QEFFBaseModel(ABC):
         dynamic_shapes = ordered_dynamic_shapes
 
         try:
-            export_kwargs = {} if export_kwargs is None else export_kwargs
-
             if use_dynamo:
-                dynamic_axes = None
-                export_kwargs = dict(export_kwargs)
-                export_kwargs.setdefault("report", False)
-                export_kwargs.setdefault("optimize", False)
-                export_kwargs["dynamo"] = True
-                export_kwargs["custom_translation_table"] = {
-                    **(export_kwargs.pop("custom_translation_table", None) or {}),
-                    torch.ops.qefficient.rms_norm.default: CustomRMSNorm,
-                    torch.ops.qefficient.ctx_scatter.default: CtxScatter,
-                    torch.ops.qefficient.ctx_scatter_3d.default: CtxScatter3D,
-                    torch.ops.qefficient.ctx_scatter_cb.default: CtxScatterCB,
-                    torch.ops.qefficient.ctx_scatter_cb_3d.default: CtxScatterCB3D,
-                    torch.ops.qefficient.ctx_scatter_3d_int.default: CtxScatter3DInt,
-                    torch.ops.qefficient.ctx_scatter_3d_generalized.default: CtxScatter3D,
-                    torch.ops.qefficient.ctx_gather.default: CtxGather,
-                    torch.ops.qefficient.ctx_gather_3d.default: CtxGather3D,
-                    torch.ops.qefficient.ctx_gather_cb.default: CtxGatherCB,
-                    torch.ops.qefficient.ctx_gather_cb_3d.default: CtxGatherCB3D,
-                    torch.ops.qefficient.ctx_gather_blocked_kv.default: CtxGatherBlockedKV,
-                    torch.ops.qefficient.ctx_gather_blocked_kv_cb.default: CtxGatherBlockedKVCB,
-                    torch.ops.qefficient.ctx_gather_3d_generalized.default: CtxGather3D,
-                }
-
-                prev_invoke_fallback = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
-                os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = "1"
-                try:
-                    onnx_program = torch.onnx.export(
-                        self.model,
-                        args=(),
-                        f=None,
-                        kwargs=example_inputs,
-                        input_names=input_names,
-                        output_names=output_names,
-                        dynamic_axes=dynamic_axes,
-                        dynamic_shapes=dynamic_shapes,
-                        opset_version=constants.ONNX_EXPORT_OPSET,
-                        **export_kwargs,
-                    )
-                    if onnx_program is None:
-                        raise RuntimeError("torch.onnx.export returned None for dynamo export")
-                    _prune_unused_fake_initializers(onnx_program)
-                    onnx_program.save(str(onnx_path))
-                finally:
-                    if prev_invoke_fallback is None:
-                        os.environ.pop("TORCH_INVOKE_ALLOW_CREATE_FALLBACK", None)
-                    else:
-                        os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = prev_invoke_fallback
+                self._export_via_dynamo(
+                    onnx_path,
+                    example_inputs,
+                    input_names,
+                    output_names,
+                    dynamic_shapes,
+                    export_kwargs,
+                )
             else:
-                with layerwise_safe_onnx_export_patches():
-                    torch.onnx.export(
-                        self.model,
-                        (),
-                        str(onnx_path),
-                        kwargs=example_inputs,
-                        input_names=input_names,
-                        output_names=output_names,
-                        dynamic_axes=dynamic_axes,
-                        dynamo=False,
-                        opset_version=constants.ONNX_EXPORT_OPSET,
-                        **export_kwargs,
-                    )
+                self._export_via_legacy(
+                    onnx_path,
+                    example_inputs,
+                    input_names,
+                    output_names,
+                    dynamic_axes,
+                    export_kwargs,
+                )
             logger.info("PyTorch export successful")
-            _ = self._offload_model_weights(offload_pt_weights)
+            self._offload_model_weights(offload_pt_weights)
             model = onnx.load(onnx_path, load_external_data=False)
 
             needs_external_tensor_data = any(
@@ -568,7 +596,7 @@ class QEFFBaseModel(ABC):
             transform_kwargs = {
                 "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
                 "model_name": self.model_name,
-                "dynamic_axes": dynamic_axes,
+                "dynamic_axes": None if use_dynamo else dynamic_axes,  # dynamo uses dynamic_shapes, not axes
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)

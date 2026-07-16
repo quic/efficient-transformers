@@ -6,6 +6,7 @@
 ---
 
 *Latest news* :fire: <br>
+- [07/2026] Added `use_dynamo` flag to `QEFFAutoModelForCausalLM.export()` to support `torch.onnx.export` dynamo-based ONNX export for CausalLM models
 - [04/2026] Added WAN non-unified execution support in `QEffWanPipeline` with separate `transformer_high` and `transformer_low` modules
 - [04/2026] Added first-block-cache support for WAN non-unified mode and FLUX (`QEffWanPipeline`, `QEffFluxPipeline`)
 - [12/2025] Enabled [disaggregated serving](examples/disagg_serving) for GPT-OSS model

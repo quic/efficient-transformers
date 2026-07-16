@@ -9,7 +9,7 @@ import os
 import warnings
 from pathlib import Path
 from time import perf_counter
-from typing import Dict, List, Optional, Union
+from typing import List, Optional, Union
 
 import numpy as np
 import onnx
@@ -79,6 +79,7 @@ from QEfficient.utils import (
     validate_kv_cache_prefix,
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
+from QEfficient.utils.export_utils import convert_dynamic_axes_to_dynamic_shapes
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
@@ -3721,122 +3722,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             final_compile=final_compile,
         )
 
-    def convert_dynamic_axes_to_dynamic_shapes(self, dynamic_axes: Dict[str, Dict[int, str]]) -> Dict[str, any]:
-        """
-        Convert ONNX dynamic_axes format to torch.export dynamic_shapes format
-
-        Args:
-            dynamic_axes: ONNX format like {"input_ids": {0: "batch_size", 1: "seq_len"}}
-
-        Returns:
-            dynamic_shapes: torch.export format with Dim objects matching model forward args
-        """
-        from torch.export import Dim
-
-        # All prefixes that represent flat per-layer cache keys
-        # and will be reconstructed into nested structures later
-        _NESTED_KV_PREFIXES = (
-            "past_key.",
-            "past_value.",
-            "compressed_kv.",
-            "k_pe.",
-        )
-
-        # Create dimension registry to reuse Dim objects with same names
-        dim_registry = {}
-        dynamic_shapes = {}
-
-        max_seq_len = getattr(self.model.config, "max_position_embeddings", 1024)
-        batch_min = 1 if getattr(self.model.config, "model_type", None) == "gpt_oss" else 2
-        model_type = getattr(self.model.config, "model_type", None)
-
-        def resolve_dim(dim_name):
-            """Create or reuse a Dim object for the given dimension name."""
-            if dim_name not in dim_registry:
-                if dim_name == "batch_size":
-                    dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=512)
-                elif dim_name == "full_batch_size":
-                    # full_batch_size is the CB pool capacity and is always >= batch_size.
-                    # Using a different min prevents torch.export from collapsing it into
-                    # the batch_size symbol, which would make past_key/value dim-0 and
-                    # batch_index dim-0 share the same symbolic variable even though they
-                    # represent different quantities at runtime.
-                    dim_registry[dim_name] = Dim("full_batch_size", min=batch_min + 1, max=512)
-                elif "seq_len" in dim_name:
-                    dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
-                elif "comp_ctx_lengths" in dim_name:
-                    dim_registry[dim_name] = Dim("comp_ctx_lengths", min=4, max=max_seq_len)
-                elif "ctx_len" in dim_name:
-                    dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
-                elif "sliding_window" in dim_name:
-                    dim_registry[dim_name] = Dim(
-                        "sliding_window",
-                        min=2,
-                        max=getattr(self.model.config, "sliding_window", max_seq_len),
-                    )
-                else:
-                    dim_registry[dim_name] = Dim.DYNAMIC
-            return dim_registry[dim_name]
-
-        # Handle regular model inputs (not any flat per-layer cache keys)
-        # These match the QEffLlamaForCausalLM forward signature:
-        # input_ids, attention_mask, position_ids, past_key_values, batch_index, etc.
-        for input_name, axes_map in dynamic_axes.items():
-            if not any(input_name.startswith(prefix) for prefix in _NESTED_KV_PREFIXES):
-                input_dynamic_shapes = {}
-                for axis_idx, dim_name in axes_map.items():
-                    input_dynamic_shapes[axis_idx] = resolve_dim(dim_name)
-                dynamic_shapes[input_name] = input_dynamic_shapes
-
-        # Handle past_key_values specially - collect all past_key.X and past_value.X
-        past_keys = {}
-        past_values = {}
-
-        for input_name, axes_map in dynamic_axes.items():
-            if input_name.startswith("past_key."):
-                layer_idx = int(input_name.split(".")[1])
-                past_keys[layer_idx] = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
-
-            elif input_name.startswith("past_value."):
-                layer_idx = int(input_name.split(".")[1])
-                past_values[layer_idx] = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
-
-        # Reconstruct past_key_values as nested structure if we have past keys/values
-        if past_keys or past_values:
-            max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
-            dynamic_shapes["past_key_values"] = [
-                [past_keys.get(i, {}), past_values.get(i, {})] for i in range(max_layer + 1)
-            ]
-
-        # compressed_kvs applies to models that use MLA compressed cache:
-        # DeepseekV3.
-        # Reconstruct per-layer (ckv_shape, k_pe_shape) pairs from flat
-        # compressed_kv.{i} / k_pe.{i} dynamic_axes keys.
-        if model_type in {"deepseek_v3"}:
-            compressed_kv_layers: dict = {}
-            k_pe_layers: dict = {}
-
-            for input_name, axes_map in dynamic_axes.items():
-                if input_name.startswith("compressed_kv."):
-                    layer_idx = int(input_name.split(".")[1])
-                    compressed_kv_layers[layer_idx] = {
-                        axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()
-                    }
-
-                elif input_name.startswith("k_pe."):
-                    layer_idx = int(input_name.split(".")[1])
-                    k_pe_layers[layer_idx] = {
-                        axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()
-                    }
-
-            if compressed_kv_layers or k_pe_layers:
-                max_layer = max(list(compressed_kv_layers.keys()) + list(k_pe_layers.keys()))
-                dynamic_shapes["compressed_kvs"] = [
-                    (compressed_kv_layers.get(i, {}), k_pe_layers.get(i, {})) for i in range(max_layer + 1)
-                ]
-
-        return dynamic_shapes
-
     def export(
         self,
         export_dir: Optional[str] = None,
@@ -4163,7 +4048,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         else:
             dynamic_shapes = None
             if use_dynamo:
-                dynamic_shapes = self.convert_dynamic_axes_to_dynamic_shapes(dynamic_axes)
+                dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes(dynamic_axes, self.model.config)
 
             return self._export(
                 example_inputs,

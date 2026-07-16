@@ -21,10 +21,10 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_mla_attention_interface,
 )
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
+from QEfficient.customop.utils import select_interface
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MAX_POSITION_EMBEDDINGS, MIN_MASKED_ATTENTION_VALUE
-from QEfficient.utils.custom_op_utils import select_interface
 
 
 def rotate_half(x):
