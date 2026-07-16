@@ -1746,7 +1746,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     )
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
-        onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": bs}
+
+        batch_fold = (
+            not prefill_only
+            and self.lang_model.hash_params.get("blocking_kwargs", None)
+            and getattr(self.lang_model.hash_params["blocking_kwargs"], "batch_fold", False)
+        )
+
+        onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": bs, "batch_fold": batch_fold}
+
         # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
         try:
             inputs = self.model.get_dummy_inputs(
@@ -1759,7 +1767,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 kv_offload=True,
                 continuous_batching=self.continuous_batching,
                 comp_ctx_lengths=self.comp_ctx_lengths_decode,
-                batch_fold=self.lang_model.hash_params.get("blocking_kwargs", None) and getattr(self.lang_model.hash_params["blocking_kwargs"], "batch_fold", False),
+                batch_fold=batch_fold,
             )
         except TypeError:
             inputs = self.model.get_dummy_inputs(
