@@ -53,6 +53,12 @@ try:
 except ImportError:
     _HAS_PROFILER = False
 
+# Last checkpoint-prep profiler stats — written after every export call so
+# _runner.py can read them without text-parsing stdout.
+_last_prep_peak_rss_mb: float = 0.0
+_last_prep_duration_seconds: float = 0.0
+_checkpoint_prep_ran: bool = False
+
 
 def _to_meta(value: Any) -> Any:
     if isinstance(value, torch.Tensor):
@@ -315,6 +321,18 @@ def _find_checkpoint_key(
         if candidate in checkpoint_index:
             return candidate
 
+    # 6. MoE router attribute rename: QEff wrappers may call the router 'gate'
+    #    while the checkpoint stores it as 'router' (e.g. Qwen3-MoE).
+    if stripped.endswith(".mlp.gate.weight"):
+        candidate = stripped[: -len(".gate.weight")] + ".router.weight"
+        if candidate in checkpoint_index:
+            return candidate
+    # Reverse: checkpoint calls it 'gate', ONNX uses 'router'
+    if stripped.endswith(".mlp.router.weight"):
+        candidate = stripped[: -len(".router.weight")] + ".gate.weight"
+        if candidate in checkpoint_index:
+            return candidate
+
     return None
 
 
@@ -446,6 +464,13 @@ def export_weight_free_onnx(
         _prep_profiler.stop_monitoring()
         print(_prep_profiler.get_memory_report())
         logger.info(_prep_profiler.get_memory_report())
+
+        # Expose prep stats as module-level variables so external runners
+        # (e.g. compare_weightfree._runner.py) can read them without parsing stdout.
+        import QEfficient.exporter.weight_free.core as _self_module
+        _self_module._last_prep_peak_rss_mb = _prep_profiler.peak_rss
+        _self_module._last_prep_duration_seconds = _prep_profiler.operation_durations.get("Checkpoint Prep", 0.0)
+        _self_module._checkpoint_prep_ran = True
 
         spec = _promote_initializers_and_build_spec(
             onnx_program=onnx_program,
