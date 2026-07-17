@@ -29,8 +29,7 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
 - **Kimi-K2.5 (Vision Language)**
   - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
   - Supports `moonshotai/Kimi-K2.5` with `KimiK25ForConditionalGeneration`
-  - Supports single-QPC and dual-QPC (`kv_offload=True`) vision-language compilation
-  - Uses Kimi-specific image-grid specializations: `num_patches`, `h`, `w`, and `num_image_tokens`
+  - Supports dual-QPC (`kv_offload=True`) vision-language compilation
   - [Kimi-K2.5 Vision Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/kimi_k2/export_kimi_k25_vision.py)
 
 
