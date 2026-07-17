@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import os
 
 import numpy as np
 import pytest
@@ -32,12 +31,12 @@ test_models_blocking_dict = {"openai/gpt-oss-20b": "tiny-random/gpt-oss-bf16"}
 test_models_chunking_dict = {"Qwen/Qwen3-30B-A3B-Instruct-2507": "hf-internal-testing/tiny-random-Qwen3MoeForCausalLM"}
 
 
-if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
-    model_id_blocking = list(test_models_blocking_dict.values())
-    model_id_chunking = list(test_models_chunking_dict.values())
-else:
-    model_id_blocking = list(test_models_blocking_dict.keys())
-    model_id_chunking = list(test_models_chunking_dict.keys())
+# if os.environ.get("QEFF_TEST_PROFILE", "").strip().lower() == "tiny_model":
+model_id_blocking = list(test_models_blocking_dict.values())
+model_id_chunking = list(test_models_chunking_dict.values())
+# else:
+#     model_id_blocking = list(test_models_blocking_dict.keys())
+#     model_id_chunking = list(test_models_chunking_dict.keys())
 
 
 prompt2 = """
