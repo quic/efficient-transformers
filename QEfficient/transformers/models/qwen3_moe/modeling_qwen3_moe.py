@@ -79,6 +79,8 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin):
     """
 
     # Apply rotation
+    cos = cos.to(device=q.device, dtype=q.dtype)
+    sin = sin.to(device=q.device, dtype=q.dtype)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     # Cast back to original dtype
@@ -96,6 +98,8 @@ def eager_attention_forward(
     key_states = repeat_kv(key, module.num_key_value_groups)
 
     value_states = repeat_kv(value, module.num_key_value_groups)
+    key_states = key_states.to(dtype=query.dtype)
+    value_states = value_states.to(dtype=query.dtype)
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
 
@@ -204,11 +208,22 @@ class QEffQwen3MoeTopKRouter(Qwen3MoeTopKRouter):
 class QEffQwen3MoeExperts(Qwen3MoeExperts):
     def __qeff_init__(self):
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
-        gate_up_proj = self.gate_up_proj.detach()
-        down_proj = self.down_proj.detach()
-        self.gate_proj = nn.Parameter(gate_up_proj[:, : self.expert_dim, :].transpose(1, 2), requires_grad=False)
-        self.up_proj = nn.Parameter(gate_up_proj[:, self.expert_dim :, :].transpose(1, 2), requires_grad=False)
-        self.down_proj_t = nn.Parameter(down_proj.transpose(1, 2), requires_grad=False)
+
+        if self.gate_up_proj.device.type == "meta":
+            # Weight-free export: register correctly-shaped placeholder parameters.
+            # No computation needed — values come from the preprocessed checkpoint
+            # at QAIC compile time via weight_spec.json.
+            E = self.gate_up_proj.shape[0]
+            H = self.gate_up_proj.shape[2]
+            self.gate_proj = nn.Parameter(torch.empty(E, H, self.expert_dim, device="meta"))
+            self.up_proj = nn.Parameter(torch.empty(E, H, self.expert_dim, device="meta"))
+            self.down_proj_t = nn.Parameter(torch.empty(E, self.expert_dim, H, device="meta"))
+            return
+
+        # Normal export: compute derived params — values embedded in ONNX.
+        self.gate_proj = nn.Parameter(self.gate_up_proj[:, : self.expert_dim, :].detach().clone().transpose(1, 2))
+        self.up_proj = nn.Parameter(self.gate_up_proj[:, self.expert_dim :, :].detach().clone().transpose(1, 2))
+        self.down_proj_t = nn.Parameter(self.down_proj.detach().clone().transpose(1, 2))
 
 
 class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
