@@ -237,7 +237,7 @@ MOE_BLOCK_PARITY_CASES = (
             num_experts_per_tok=MOE_BLOCK_TOP_K,
         ),
         "GptOssMLP",
-        ("simple_loop", "expert_parallel"),
+        ("decode_bmm", "simple_loop", "expert_parallel"),
         {"gpt_oss_prefill": True},
         id="gpt_oss",
     ),
@@ -345,6 +345,27 @@ def test_moe_block_flavour_forward_parity(model_family, factory, block_class_nam
             rtol=1e-4,
             msg=f"{model_family} {flavour_name} block parity failed",
         )
+
+
+@pytest.mark.parametrize(("model_family", "factory", "block_class_name", "flavours", "options"), MOE_BLOCK_PARITY_CASES)
+def test_exact_mapped_moe_block_parity_cases_match_advertised_flavours(
+    model_family, factory, block_class_name, flavours, options
+):
+    if options.get("external_mapper"):
+        pytest.skip("External MoE modules bind supported flavours through ExternalOptimizedMoEMapperTransform")
+
+    from QEfficient.transformers.moe import MoEFlavour
+
+    model = factory().eval()
+    original_block = _first_module_by_class_name(model, block_class_name)
+    qeff_block = _make_qeff_moe_block(original_block, flavours[0], options)
+    advertised_flavours = {flavour.value for flavour in qeff_block.get_supported_moe_flavours()}
+
+    assert "supported_moe_flavours" in type(qeff_block).__dict__, (
+        f"{type(qeff_block).__name__} must explicitly advertise supported_moe_flavours"
+    )
+    assert advertised_flavours == set(flavours), f"{model_family} parity cases must cover every advertised flavour"
+    assert all(MoEFlavour(flavour_name) in qeff_block.get_supported_moe_flavours() for flavour_name in flavours)
 
 
 class _Grok1DummyExpert(nn.Module):
@@ -817,6 +838,43 @@ def test_gptoss_blocked_forward_parity():
     assert orig.shape == blocked.shape == looped.shape
     assert (orig - blocked).abs().max().item() < 0.1, "GPT-OSS HF vs expert-parallel parity failed"
     assert (orig - looped).abs().max().item() < 1e-3, "GPT-OSS HF vs simple-loop parity failed"
+
+
+def test_gemma4_text_experts_forward_parity():
+    from transformers.models.gemma4.configuration_gemma4 import Gemma4TextConfig
+    from transformers.models.gemma4.modeling_gemma4 import Gemma4TextExperts
+
+    from QEfficient.transformers.models.gemma4.modeling_gemma4 import QEffGemma4TextExperts
+
+    torch.manual_seed(23)
+    config = Gemma4TextConfig(
+        hidden_size=MOE_BLOCK_HIDDEN_SIZE,
+        intermediate_size=MOE_BLOCK_INTERMEDIATE_SIZE,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        num_experts=MOE_BLOCK_NUM_EXPERTS,
+        top_k_experts=MOE_BLOCK_TOP_K,
+        moe_intermediate_size=MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE,
+        enable_moe_block=True,
+    )
+    original_experts = Gemma4TextExperts(config).eval()
+    with torch.no_grad():
+        original_experts.gate_up_proj.normal_(mean=0.0, std=0.02)
+        original_experts.down_proj.normal_(mean=0.0, std=0.02)
+
+    qeff_experts = copy.deepcopy(original_experts).eval()
+    qeff_experts.__class__ = QEffGemma4TextExperts
+
+    hidden_states = torch.randn(MOE_BLOCK_SEQ_LEN, MOE_BLOCK_HIDDEN_SIZE)
+    top_k_index = torch.randint(0, MOE_BLOCK_NUM_EXPERTS, (MOE_BLOCK_SEQ_LEN, MOE_BLOCK_TOP_K))
+    top_k_weights = torch.softmax(torch.randn(MOE_BLOCK_SEQ_LEN, MOE_BLOCK_TOP_K), dim=-1)
+
+    with torch.no_grad():
+        expected = original_experts(hidden_states, top_k_index, top_k_weights)
+        actual = qeff_experts(hidden_states, top_k_index, top_k_weights)
+
+    torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
 
 
 def test_gptoss_decode_export(tmp_path):

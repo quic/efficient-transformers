@@ -40,6 +40,7 @@ from QEfficient.blocking.attention_blocking import (
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.moe import (
+    MoEFlavour,
     MoEProfile,
     MoEWeights,
     QEffMoEBlockMixin,
@@ -212,6 +213,7 @@ class QEffMixtralSparseMoeBlock(QEffMoEBlockMixin, MixtralSparseMoeBlock):
     """
 
     _moe_return_router_logits = True
+    supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM)
 
     def __qeff_init__(self):
         if hasattr(self.experts, "act_fn"):
