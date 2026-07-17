@@ -25,6 +25,7 @@ from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.moe import (
+    MoEFlavour,
     MoEProfile,
     MoEWeights,
     QEffMoEBlockMixin,
@@ -797,6 +798,11 @@ def _deepseek_route_tokens(module: nn.Module, hidden_states: torch.Tensor):
 
 
 class QEffDeepseekV3MoE(QEffMoEBlockMixin, nn.Module):
+    supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM)
+    supports_moe_prefill_blocking = False
+    supports_static_moe_prefill_chunks = False
+    supports_moe_decode_bmm = True
+
     def __qeff_init__(
         self,
     ):
@@ -843,39 +849,26 @@ class QEffDeepseekV3MoE(QEffMoEBlockMixin, nn.Module):
     def moe(
         self,
         hidden_states: torch.Tensor,
-        topk_indices: torch.Tensor,
-        topk_weights: torch.Tensor,
+        *args,
     ):
-        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
         weights = self.build_moe_weights()
         profile = MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.act_fn))
-        final_hidden_states = moe_decode_bmm(
-            hidden_states,
-            topk_indices,
-            topk_weights,
-            weights,
-            profile,
-            top_k=self.gate.top_k,
-        )
-        return final_hidden_states.type(hidden_states.dtype)
-
-    def forward(self, hidden_states):
-        return QEffMoEBlockMixin.forward(self, hidden_states)
-
-
-class QEffPrefillOnlyDeepseekV3MoE(QEffDeepseekV3MoE):
-    def __qeff_init__(
-        self,
-    ):
-        self.act_fn = _deepseek_act_fn(self.experts)
-
-    def build_moe_weights(self) -> MoEWeights:
-        return QEffDeepseekV3MoE.build_moe_weights(self)
-
-    def moe(self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int):
-        weights = self.build_moe_weights()
-        profile = MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.act_fn))
-        return moe_simple_loop(hidden_states, expert_mask, weights, profile).type(hidden_states.dtype)
+        if len(args) == 2:
+            topk_indices, topk_weights = args
+            hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
+            final_hidden_states = moe_decode_bmm(
+                hidden_states,
+                topk_indices,
+                topk_weights,
+                weights,
+                profile,
+                top_k=self.gate.top_k,
+            )
+            return final_hidden_states.type(hidden_states.dtype)
+        if len(args) == 3:
+            _, expert_mask, _ = args
+            return moe_simple_loop(hidden_states, expert_mask, weights, profile).type(hidden_states.dtype)
+        raise TypeError("QEffDeepseekV3MoE.moe expects either topk indices/weights or legacy expert mask inputs")
 
     def orig_moe(self, hidden_states: torch.Tensor, topk_indices: torch.Tensor, topk_weights: torch.Tensor):
         r"""
@@ -902,6 +895,16 @@ class QEffPrefillOnlyDeepseekV3MoE(QEffDeepseekV3MoE):
         # thus the moe module is itelsf an IsolatedParallel module
         # and all expert are "local" meaning we shard but we don't gather
         return final_hidden_states.type(hidden_states.dtype)
+
+    def moe_blocked_forward(
+        self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int
+    ):
+        return self.moe(hidden_states, topk_weights, expert_mask, num_experts)
+
+    def moe_blocked_weights_forward(
+        self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int
+    ):
+        return self.moe(hidden_states, topk_weights, expert_mask, num_experts)
 
     def legacy_forward(self, hidden_states):
         """

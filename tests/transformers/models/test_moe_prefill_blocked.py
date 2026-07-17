@@ -352,7 +352,16 @@ def test_exact_mapped_moe_block_parity_cases_match_advertised_flavours(
     model_family, factory, block_class_name, flavours, options
 ):
     if options.get("external_mapper"):
-        pytest.skip("External MoE modules bind supported flavours through ExternalOptimizedMoEMapperTransform")
+        from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import QEffDeepseekV3MoE
+        from QEfficient.transformers.moe import MoEFlavour
+
+        assert "supported_moe_flavours" in QEffDeepseekV3MoE.__dict__
+        assert {flavour.value for flavour in QEffDeepseekV3MoE.supported_moe_flavours} == set(flavours)
+
+        original_block = _first_module_by_class_name(factory().eval(), block_class_name)
+        qeff_block = _make_qeff_moe_block(original_block, flavours[0], options)
+        assert all(MoEFlavour(flavour_name) in qeff_block.get_supported_moe_flavours() for flavour_name in flavours)
+        return
 
     from QEfficient.transformers.moe import MoEFlavour
 
@@ -424,6 +433,10 @@ def test_grok1_external_moe_block_flavour_forward_parity(flavour_name):
 
 
 def test_grok1_external_moe_block_does_not_advertise_expert_parallel():
+    from QEfficient.transformers.models.grok_1.modeling_grok1 import QEffGrok1MoeBlock
+
+    assert "supported_moe_flavours" in QEffGrok1MoeBlock.__dict__
+
     original_block = MoeBlock().eval()
     qeff_block = copy.deepcopy(original_block)
 
@@ -873,6 +886,50 @@ def test_gemma4_text_experts_forward_parity():
     with torch.no_grad():
         expected = original_experts(hidden_states, top_k_index, top_k_weights)
         actual = qeff_experts(hidden_states, top_k_index, top_k_weights)
+
+    torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
+
+
+@pytest.mark.parametrize("flavour", ("decode_bmm", "simple_loop"))
+def test_gemma4_text_moe_block_forward_parity(flavour):
+    from transformers.models.gemma4.configuration_gemma4 import Gemma4TextConfig
+    from transformers.models.gemma4.modeling_gemma4 import Gemma4RMSNorm, Gemma4TextExperts, Gemma4TextRouter
+
+    from QEfficient.transformers.models.gemma4.modeling_gemma4 import QEffGemma4TextMoeBlock
+    from QEfficient.transformers.moe import MoEFlavour
+
+    torch.manual_seed(29)
+    config = Gemma4TextConfig(
+        hidden_size=MOE_BLOCK_HIDDEN_SIZE,
+        intermediate_size=MOE_BLOCK_INTERMEDIATE_SIZE,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        num_experts=MOE_BLOCK_NUM_EXPERTS,
+        top_k_experts=MOE_BLOCK_TOP_K,
+        moe_intermediate_size=MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE,
+        enable_moe_block=True,
+    )
+    router = Gemma4TextRouter(config).eval()
+    experts = Gemma4TextExperts(config).eval()
+    pre_norm = Gemma4RMSNorm(config.hidden_size, eps=config.rms_norm_eps).eval()
+    post_norm = Gemma4RMSNorm(config.hidden_size, eps=config.rms_norm_eps).eval()
+    qeff_block = QEffGemma4TextMoeBlock(
+        copy.deepcopy(router),
+        copy.deepcopy(experts),
+        copy.deepcopy(pre_norm),
+        copy.deepcopy(post_norm),
+    ).eval()
+    qeff_block._moe_flavour = MoEFlavour(flavour)
+
+    hidden_states = torch.randn(1, MOE_BLOCK_SEQ_LEN, MOE_BLOCK_HIDDEN_SIZE)
+    with torch.no_grad():
+        flat = hidden_states.reshape(-1, hidden_states.shape[-1])
+        _, top_k_weights, top_k_index = router(flat)
+        expected = pre_norm(flat)
+        expected = experts(expected, top_k_index, top_k_weights).reshape(hidden_states.shape)
+        expected = post_norm(expected)
+        actual = qeff_block(hidden_states)
 
     torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
 

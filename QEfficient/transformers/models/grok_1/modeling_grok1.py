@@ -22,6 +22,7 @@ from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.models.llama.modeling_llama import qeff_apply_rotary_pos_emb
 from QEfficient.transformers.moe import (
+    MoEFlavour,
     MoEProfile,
     MoEWeights,
     QEffMoEBlockMixin,
@@ -146,6 +147,10 @@ class QEffGrok1MoeBlock(QEffMoEBlockMixin, nn.Module):
     """
 
     _moe_return_router_logits = True
+    supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM)
+    supports_moe_prefill_blocking = False
+    supports_static_moe_prefill_chunks = False
+    supports_moe_decode_bmm = True
 
     def build_moe_weights(self) -> MoEWeights:
         """Stack per-expert Linear weights into canonical MoEWeights.

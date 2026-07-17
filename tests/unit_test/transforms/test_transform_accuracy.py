@@ -1324,6 +1324,12 @@ def test_moe_simple_loop_prescale_matches_manual_expert_input_scaling():
 
 @pytest.mark.transforms
 class TestSplitOptimizedMoETransform:
+    def test_moe_block_mixin_requires_explicit_supported_flavours(self):
+        with pytest.raises(TypeError, match="supported_moe_flavours"):
+
+            class _MissingSupportedMoEFlavours(QEffMoEBlockMixin, nn.Module):
+                pass
+
     def test_simple_decode_moe_transform_is_optimized_moe_transform_subclass(self):
         assert issubclass(SimpleDecodeMoeTransform, OptimizedMoETransform)
 
@@ -2511,6 +2517,8 @@ class TestKVCacheExternalModuleMapperTransform:
         assert callable(model.get_moe_weights)
         assert callable(model.build_moe_weights)
         assert callable(model.moe_profile)
+        assert callable(model.moe_blocked_forward)
+        assert callable(model.moe_blocked_weights_forward)
         assert model._moe_flavour is MoEFlavour.DECODE_BMM
 
     def test_prefill_deepseek_default_path_uses_mixin_when_num_ffn_blocks_unset(self, monkeypatch):
@@ -2555,6 +2563,16 @@ class TestKVCacheExternalModuleMapperTransform:
         assert calls[0][0] == "blocked"
         assert calls[0][3] == 2
         torch.testing.assert_close(out, torch.ones(1, 2, 4))
+
+    def test_prefill_deepseek_legacy_path_has_default_blocked_fallback(self, monkeypatch):
+        monkeypatch.setenv("NUM_FFN_BLOCKS", "2")
+        monkeypatch.delenv("FFN_W_BLOCK_SIZE", raising=False)
+        model = _make_deepseek_external_moe()
+        OptimizedMoETransform.apply(model, prefill_only=True)
+
+        out = model(torch.zeros(1, 2, 4))
+
+        assert torch.isfinite(out).all()
 
     def test_prefill_deepseek_legacy_ffn_weight_block_size_selects_weight_blocking(self, monkeypatch):
         monkeypatch.setenv("NUM_FFN_BLOCKS", "2")

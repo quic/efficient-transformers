@@ -331,7 +331,6 @@ from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
     QEffDeepseekV3ForCausalLM,
     QEffDeepseekV3Model,
     QEffDeepseekV3MoE,
-    QEffPrefillOnlyDeepseekV3MoE,
 )
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
@@ -371,7 +370,6 @@ from QEfficient.transformers.models.gemma4.modeling_gemma4 import (
     QEffGemma4TextModel,
     QEffGemma4TextRouter,
     QEffGemma4VisionAttention,
-    QEffPrefillChunckedGemma4TextExperts,
 )
 from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import (
     QEffGlm4MoeAttention,
@@ -932,8 +930,6 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         # GPT_OSS
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
-        # Gemma4_Moe
-        QEffGemma4TextExperts: QEffPrefillChunckedGemma4TextExperts,
     }
 
 
@@ -943,8 +939,6 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffPrefillOnlyGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
-        # Gemma4_Moe
-        QEffPrefillChunckedGemma4TextExperts: QEffGemma4TextExperts,
     }
 
 
@@ -1473,15 +1467,17 @@ class ExternalOptimizedMoEMapperTransform(ExternalModuleMapperTransform):
             "apply_shared_experts": QEffMoEBlockMixin.apply_shared_experts,
             "_moe_return_router_logits": True,
             "_moe_flavour": MoEFlavour.DECODE_BMM,
-            "supported_moe_flavours": (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM),
-            "supports_moe_prefill_blocking": False,
-            "supports_static_moe_prefill_chunks": False,
-            "supports_moe_decode_bmm": True,
+            "supported_moe_flavours": QEffGrok1MoeBlock.supported_moe_flavours,
+            "supports_moe_prefill_blocking": QEffGrok1MoeBlock.supports_moe_prefill_blocking,
+            "supports_static_moe_prefill_chunks": QEffGrok1MoeBlock.supports_static_moe_prefill_chunks,
+            "supports_moe_decode_bmm": QEffGrok1MoeBlock.supports_moe_decode_bmm,
         },
         "DeepseekV3MoE": {
-            "forward": QEffPrefillOnlyDeepseekV3MoE.forward,
-            "legacy_forward": QEffPrefillOnlyDeepseekV3MoE.legacy_forward,
-            "moe": QEffPrefillOnlyDeepseekV3MoE.moe,
+            "forward": QEffDeepseekV3MoE.forward,
+            "legacy_forward": QEffDeepseekV3MoE.legacy_forward,
+            "moe": QEffDeepseekV3MoE.moe,
+            "moe_blocked_forward": QEffDeepseekV3MoE.moe_blocked_forward,
+            "moe_blocked_weights_forward": QEffDeepseekV3MoE.moe_blocked_weights_forward,
             "get_supported_moe_flavours": QEffMoEBlockMixin.get_supported_moe_flavours,
             "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
             "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
@@ -1492,10 +1488,10 @@ class ExternalOptimizedMoEMapperTransform(ExternalModuleMapperTransform):
             "apply_shared_experts": QEffDeepseekV3MoE.apply_shared_experts,
             "_moe_return_router_logits": False,
             "_moe_flavour": MoEFlavour.DECODE_BMM,
-            "supported_moe_flavours": (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM),
-            "supports_moe_prefill_blocking": False,
-            "supports_static_moe_prefill_chunks": False,
-            "supports_moe_decode_bmm": True,
+            "supported_moe_flavours": QEffDeepseekV3MoE.supported_moe_flavours,
+            "supports_moe_prefill_blocking": QEffDeepseekV3MoE.supports_moe_prefill_blocking,
+            "supports_static_moe_prefill_chunks": QEffDeepseekV3MoE.supports_static_moe_prefill_chunks,
+            "supports_moe_decode_bmm": QEffDeepseekV3MoE.supports_moe_decode_bmm,
             "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
         },
     }
