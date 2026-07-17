@@ -15,7 +15,7 @@ return the routed expert output ``[T, H]``:
 """
 
 from enum import Enum
-from typing import Callable, Optional, Tuple
+from typing import Callable, Iterable, Optional, Tuple, Union
 
 import torch
 
@@ -234,58 +234,37 @@ def moe_decode_bmm(
     return torch.einsum("bnd->bd", experts_out)
 
 
-# Models whose `auto` prefill flavour is expert-parallel even without chunking.
-# GPT-OSS remains class-driven for now because its non-chunked prefill path has
-# extra behavior beyond flavour selection.
-_AUTO_EXPERT_PARALLEL_MODEL_TYPES = {
-    "qwen3_moe",
-    "qwen3_5_moe",
-    "qwen3_vl_moe",
-    "qwen3_vl_moe_text",
-    "glm4_moe",
-}
-
-
 def select_moe_flavour(
-    qaic_config: Optional[dict],
-    model_type: str,
     *,
+    supported_flavours: Iterable[MoEFlavour],
     is_prefill: bool,
-    supports_blocking: bool,
-    enable_chunking: bool,
-    supports_decode_bmm: bool = True,
+    requested_flavour: Optional[Union[MoEFlavour, str]] = None,
 ) -> MoEFlavour:
     """Resolve the MoE forward flavour for a module.
 
-    Explicit overrides are read only from top-level ``qaic_config["moe_flavour"]``.
-    ``auto`` uses gather+bmm for decode and the best supported prefill flavour for
-    prefill.
+    Explicit overrides are parsed as :class:`MoEFlavour`. When no override is
+    requested, prefill prefers expert-parallel where the module supports it, and
+    decode prefers gather+bmm where available.
     """
-    override = (qaic_config or {}).get("moe_flavour", "auto")
-    if isinstance(override, MoEFlavour):
-        flavour = override
-    elif override in (None, "auto"):
-        if not is_prefill:
-            flavour = MoEFlavour.DECODE_BMM if supports_decode_bmm else MoEFlavour.SIMPLE_LOOP
-        elif supports_blocking and (enable_chunking or model_type in _AUTO_EXPERT_PARALLEL_MODEL_TYPES):
-            flavour = MoEFlavour.EXPERT_PARALLEL
-        else:
-            flavour = MoEFlavour.SIMPLE_LOOP
+    supported_flavours = tuple(MoEFlavour(flavour) for flavour in supported_flavours)
+    if requested_flavour is None:
+        preferred = MoEFlavour.EXPERT_PARALLEL if is_prefill else MoEFlavour.DECODE_BMM
+        if preferred in supported_flavours:
+            return preferred
+        return MoEFlavour.SIMPLE_LOOP
+
+    if isinstance(requested_flavour, MoEFlavour):
+        flavour = requested_flavour
     else:
         try:
-            flavour = MoEFlavour(override)
+            flavour = MoEFlavour(requested_flavour)
         except ValueError as exc:
-            raise ValueError(f"Unsupported qaic_config['moe_flavour']={override!r}") from exc
+            raise ValueError(f"Unsupported qaic_config['moe_config']['flavour']={requested_flavour!r}") from exc
 
-    if flavour is MoEFlavour.EXPERT_PARALLEL and not supports_blocking:
-        raise AssertionError(
-            f"moe flavour 'expert_parallel' requested for model_type {model_type!r} "
-            "but the module does not set supports_moe_prefill_blocking=True"
-        )
-    if flavour is MoEFlavour.DECODE_BMM and not supports_decode_bmm:
-        raise AssertionError(
-            f"moe flavour 'decode_bmm' requested for model_type {model_type!r} "
-            "but the module sets supports_moe_decode_bmm=False"
+    if flavour not in supported_flavours:
+        supported = ", ".join(sorted({supported_flavour.value for supported_flavour in supported_flavours}))
+        raise NotImplementedError(
+            f"moe flavour {flavour.value!r} is not implemented by this module; supported flavours: {supported}"
         )
     return flavour
 
