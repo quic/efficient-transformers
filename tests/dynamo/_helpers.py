@@ -62,7 +62,8 @@ DYNAMO_CAUSAL_LM_MODEL_IDS = {
 }
 
 # Architectures where use_onnx_subfunctions=True fails under dynamo (TorchExportError)
-# DYNAMO_NO_SUBFUNCTION_ARCHS = {"gpt_oss", "falcon", "glm4_moe", "qwen3_moe"}
+# gpt_oss has heterogeneous layer structure (mixed dense/MoE) causing invoke_subgraph
+# schema mismatch — tracked for follow-up.
 DYNAMO_NO_SUBFUNCTION_ARCHS = {}
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from QEfficient.customop import CtxGatherFuncCB
+from QEfficient.customop import ctx_gather_cb
 
 
 class LinearMultiLoRA(nn.Linear):
@@ -41,15 +41,15 @@ class LinearMultiLoRA(nn.Linear):
 
         # multilora implementation: lora_ids <batch_size, 1>
         other_indices_a = torch.arange(self.lora_a_weights.shape[2]).view(1, 1, -1)
-        selected_lora_a_weights = CtxGatherFuncCB.apply(
+        selected_lora_a_weights = ctx_gather_cb(
             self.lora_a_weights, lora_ids, other_indices_a, self.lora_a_weights.shape[2]
         )  # <num_loras, 1, feature, r>
         other_indices_b = torch.arange(self.lora_b_weights.shape[2]).view(1, 1, -1)
-        selected_lora_b_weights = CtxGatherFuncCB.apply(
+        selected_lora_b_weights = ctx_gather_cb(
             self.lora_b_weights, lora_ids, other_indices_b, self.lora_b_weights.shape[2]
         )  # <num_loras, 1, r, feature>
         other_indices_s = torch.arange(self.lora_scalings.shape[2]).view(1, 1, -1)
-        selected_lora_scalings = CtxGatherFuncCB.apply(
+        selected_lora_scalings = ctx_gather_cb(
             self.lora_scalings, lora_ids, other_indices_s, self.lora_scalings.shape[2]
         )  # <num_loras, 1, 1, 1>
 

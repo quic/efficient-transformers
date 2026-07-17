@@ -317,6 +317,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
 
         fn_by_name = {fn.name: fn for fn in model.functions}
         changed = False
+        kv_rename_map: Dict[str, str] = {}
 
         for node in graph.node:
             fn = fn_by_name.get(node.op_type)
@@ -382,30 +383,34 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
                 retained_input = kv_inputs[kind]
                 plain_input = f"past_{kind}.{layer_idx}"
                 if retained_input.endswith("_RetainedState"):
-                    changed |= cls._rename_graph_input(graph, retained_input, plain_input)
+                    kv_rename_map[retained_input] = plain_input
 
                 if desired_output not in node.output:
                     node.output.append(desired_output)
                     changed = True
 
+        if kv_rename_map:
+            changed |= cls._rename_graph_inputs_bulk(graph, kv_rename_map)
         return changed
 
     @staticmethod
-    def _rename_graph_input(graph: onnx.GraphProto, old_name: str, new_name: str) -> bool:
+    def _rename_graph_inputs_bulk(graph: onnx.GraphProto, rename_map: Dict[str, str]) -> bool:
+        if not rename_map:
+            return False
         changed = False
         for value in graph.input:
-            if value.name == old_name:
-                value.name = new_name
+            if value.name in rename_map:
+                value.name = rename_map[value.name]
                 changed = True
         for value in graph.value_info:
-            if value.name == old_name:
-                value.name = new_name
+            if value.name in rename_map:
+                value.name = rename_map[value.name]
                 changed = True
         for node in graph.node:
-            for i, name in enumerate(node.input):
-                if name == old_name:
-                    node.input[i] = new_name
-                    changed = True
+            new_inputs = [rename_map.get(n, n) for n in node.input]
+            if new_inputs != list(node.input):
+                node.input[:] = new_inputs
+                changed = True
         return changed
 
 

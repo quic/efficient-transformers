@@ -389,22 +389,16 @@ class QEFFBaseModel(ABC):
         # Reorder example_inputs and dynamic_shapes to match model.forward signature order,
         # which torch.export requires for dynamic_shapes to bind correctly.
         sig = inspect.signature(self.model.forward)
-        ordered_example_inputs = {}
-        ordered_dynamic_shapes = {} if dynamic_shapes is not None else None
-        for name in sig.parameters:
-            if name in example_inputs:
-                ordered_example_inputs[name] = example_inputs[name]
-            if dynamic_shapes is not None and name in dynamic_shapes:
-                ordered_dynamic_shapes[name] = dynamic_shapes[name]
-        for name, value in example_inputs.items():
-            if name not in ordered_example_inputs:
-                ordered_example_inputs[name] = value
+        sig_keys = sig.parameters.keys()
+        example_inputs = {
+            **{k: example_inputs[k] for k in sig_keys if k in example_inputs},
+            **{k: v for k, v in example_inputs.items() if k not in sig_keys},
+        }
         if dynamic_shapes is not None:
-            for name, value in dynamic_shapes.items():
-                if name not in ordered_dynamic_shapes:
-                    ordered_dynamic_shapes[name] = value
-        example_inputs = ordered_example_inputs
-        dynamic_shapes = ordered_dynamic_shapes
+            dynamic_shapes = {
+                **{k: dynamic_shapes[k] for k in sig_keys if k in dynamic_shapes},
+                **{k: v for k, v in dynamic_shapes.items() if k not in sig_keys},
+            }
 
         export_kwargs = dict(export_kwargs)
         export_kwargs.setdefault("report", False)

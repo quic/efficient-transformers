@@ -244,7 +244,7 @@ pipeline {
                     mkdir -p \\$PWD/dynamo_qeff &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=\\$PWD/dynamo_qeff &&
-                    pytest tests/dynamo -m '(dynamo) and (not dynamo_on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly -n 4 --junitxml=tests/tests_log_dynamo.xml --durations=10 &&
+                    pytest tests/dynamo -m '(dynamo) and (not dynamo_on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly -n 4 --dist loadgroup --junitxml=tests/tests_log_dynamo.xml --durations=10 &&
                     junitparser merge tests/tests_log_dynamo.xml tests/tests_log.xml &&
                     deactivate"
                     '''
@@ -263,7 +263,7 @@ pipeline {
                     mkdir -p \\$PWD/dynamo_qeff_qaic &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=\\$PWD/dynamo_qeff_qaic &&
-                    pytest tests/dynamo -m '(dynamo_on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly --junitxml=tests/tests_log_dynamo_qaic.xml --durations=10 &&
+                    pytest tests/dynamo -m '(dynamo_on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly --dist loadgroup -n auto --junitxml=tests/tests_log_dynamo_qaic.xml --durations=10 &&
                     junitparser merge tests/tests_log_dynamo_qaic.xml tests/tests_log.xml &&
                     deactivate"
                     '''
