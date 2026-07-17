@@ -49,6 +49,7 @@ from QEfficient.transformers.models._layerwise import (
     resolve_layer_window,
 )
 from QEfficient.transformers.moe import (
+    MoEFlavour,
     MoEProfile,
     MoEWeights,
     QEffMoEBlockMixin,
@@ -944,6 +945,11 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
 
 class QEffQwen3VLMoeTextSparseMoeBlock(QEffMoEBlockMixin, Qwen3VLMoeTextSparseMoeBlock):
     _moe_return_router_logits = True
+    supported_moe_flavours = (
+        MoEFlavour.SIMPLE_LOOP,
+        MoEFlavour.DECODE_BMM,
+        MoEFlavour.EXPERT_PARALLEL,
+    )
     supports_moe_prefill_blocking = True
     supports_static_moe_prefill_chunks = True
 

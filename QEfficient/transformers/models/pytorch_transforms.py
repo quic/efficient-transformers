@@ -1463,6 +1463,7 @@ class ExternalOptimizedMoEMapperTransform(ExternalModuleMapperTransform):
     _match_string_replace_method = {
         "MoeBlock": {
             "forward": QEffGrok1MoeBlock.forward,
+            "get_supported_moe_flavours": QEffMoEBlockMixin.get_supported_moe_flavours,
             "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
             "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
             "build_moe_weights": QEffGrok1MoeBlock.build_moe_weights,
@@ -1472,6 +1473,7 @@ class ExternalOptimizedMoEMapperTransform(ExternalModuleMapperTransform):
             "apply_shared_experts": QEffMoEBlockMixin.apply_shared_experts,
             "_moe_return_router_logits": True,
             "_moe_flavour": MoEFlavour.DECODE_BMM,
+            "supported_moe_flavours": (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM),
             "supports_moe_prefill_blocking": False,
             "supports_static_moe_prefill_chunks": False,
             "supports_moe_decode_bmm": True,
@@ -1480,6 +1482,7 @@ class ExternalOptimizedMoEMapperTransform(ExternalModuleMapperTransform):
             "forward": QEffPrefillOnlyDeepseekV3MoE.forward,
             "legacy_forward": QEffPrefillOnlyDeepseekV3MoE.legacy_forward,
             "moe": QEffPrefillOnlyDeepseekV3MoE.moe,
+            "get_supported_moe_flavours": QEffMoEBlockMixin.get_supported_moe_flavours,
             "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
             "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
             "build_moe_weights": QEffDeepseekV3MoE.build_moe_weights,
@@ -1489,6 +1492,7 @@ class ExternalOptimizedMoEMapperTransform(ExternalModuleMapperTransform):
             "apply_shared_experts": QEffDeepseekV3MoE.apply_shared_experts,
             "_moe_return_router_logits": False,
             "_moe_flavour": MoEFlavour.DECODE_BMM,
+            "supported_moe_flavours": (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM),
             "supports_moe_prefill_blocking": False,
             "supports_static_moe_prefill_chunks": False,
             "supports_moe_decode_bmm": True,
@@ -1521,9 +1525,7 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
         model: nn.Module,
         *,
         prefill_only: bool = False,
-        enable_chunking: bool = False,
         num_cores: int = DEFAULT_AIC_NUM_CORES,
-        moe_prefill_packed_chunk_size: int = MOE_PREFILL_PACKED_CHUNK_SIZE,
         qaic_config: Optional[dict] = None,
         prefill_seq_len: Optional[int] = None,
         hash_params: Optional[dict] = None,
@@ -1531,10 +1533,16 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
         from QEfficient.transformers.moe import MoEFlavour, select_moe_flavour
 
         moe_config = (qaic_config or {}).get("moe_config", {}) or {}
-        model_type = getattr(getattr(model, "config", None), "model_type", "") or ""
+        requested_flavour = moe_config.get("flavour")
 
         num_nsp = int(moe_config.get("num_nsp", num_cores))
-        packed_chunk_size = int(moe_config.get("packed_chunk_size", moe_prefill_packed_chunk_size))
+        packed_chunk_size_requested = (
+            "packed_chunk_size" in moe_config and moe_config.get("packed_chunk_size") is not None
+        )
+        packed_chunk_size = moe_config.get("packed_chunk_size", MOE_PREFILL_PACKED_CHUNK_SIZE)
+        if packed_chunk_size is None:
+            packed_chunk_size = MOE_PREFILL_PACKED_CHUNK_SIZE
+        packed_chunk_size = int(packed_chunk_size)
         if num_nsp <= 0:
             raise ValueError("moe num_nsp must be greater than zero")
         if packed_chunk_size <= 0:
@@ -1544,18 +1552,21 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
 
         transformed = False
         flavour = None
+        uses_expert_parallel = False
         for module in _iter_optimized_moe_modules(model):
-            supports_blocking = getattr(module, "supports_moe_prefill_blocking", False)
+            get_supported_moe_flavours = getattr(module, "get_supported_moe_flavours", None)
+            if callable(get_supported_moe_flavours):
+                supported_flavours = get_supported_moe_flavours()
+            else:
+                supported_flavours = QEffMoEBlockMixin.get_supported_moe_flavours(module)
             flavour = select_moe_flavour(
-                qaic_config,
-                model_type,
+                supported_flavours=supported_flavours,
                 is_prefill=prefill_only,
-                supports_blocking=supports_blocking,
-                enable_chunking=enable_chunking,
-                supports_decode_bmm=getattr(module, "supports_moe_decode_bmm", True),
+                requested_flavour=requested_flavour,
             )
             module._moe_flavour = flavour
             if flavour is MoEFlavour.EXPERT_PARALLEL:
+                uses_expert_parallel = True
                 module.expert_parallel_num_nsp = num_nsp
                 module.expert_parallel_packed_chunk_size = packed_chunk_size
                 module.expert_parallel_num_packed_chunks = num_packed_chunks
@@ -1564,6 +1575,12 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
                 module.expert_blocking_packed_chunk_size = packed_chunk_size
                 module.expert_blocking_num_packed_chunks = num_packed_chunks
             transformed = True
+
+        if transformed and packed_chunk_size_requested and not uses_expert_parallel:
+            logger.warning(
+                "qaic_config['moe_config']['packed_chunk_size'] is only used for "
+                "moe flavour 'expert_parallel'; the provided value will be ignored."
+            )
 
         if transformed and hash_params is not None:
             hash_params["moe_prefill_flavour"] = (flavour or MoEFlavour.DECODE_BMM).value
@@ -1588,9 +1605,7 @@ class OptimizedMoETransform(PytorchTransform):
         model: nn.Module,
         *,
         prefill_only: bool = False,
-        enable_chunking: bool = False,
         num_cores: int = DEFAULT_AIC_NUM_CORES,
-        moe_prefill_packed_chunk_size: int = MOE_PREFILL_PACKED_CHUNK_SIZE,
         qaic_config: Optional[dict] = None,
         prefill_seq_len: Optional[int] = None,
         hash_params: Optional[dict] = None,
@@ -1601,9 +1616,7 @@ class OptimizedMoETransform(PytorchTransform):
         model, export_configured = OptimizedMoEExportConfigTransform.apply(
             model,
             prefill_only=prefill_only,
-            enable_chunking=enable_chunking,
             num_cores=num_cores,
-            moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
             qaic_config=qaic_config,
             prefill_seq_len=prefill_seq_len,
             hash_params=hash_params,
@@ -1619,6 +1632,4 @@ class SimpleDecodeMoeTransform(OptimizedMoETransform):
         return OptimizedMoETransform.apply(
             model,
             prefill_only=False,
-            enable_chunking=False,
-            qaic_config={"moe_flavour": "auto"},
         )

@@ -21,7 +21,7 @@ The flavour is assigned at export time by ``OptimizedMoETransform`` via
 ``self._moe_flavour`` and the ``expert_parallel_*`` attributes.
 """
 
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 
@@ -39,6 +39,7 @@ from QEfficient.transformers.moe.weights import MoEWeights
 class QEffMoEBlockMixin:
     # Default profile; models with non-standard activations override this.
     moe_profile: MoEProfile = SILU_GLU_PROFILE
+    supported_moe_flavours: Tuple[MoEFlavour, ...] = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM)
     # Set by OptimizedMoETransform at export time; decode is the safe default.
     _moe_flavour: MoEFlavour = MoEFlavour.DECODE_BMM
     # Whether forward returns (out, router_logits) to match the HF MoE convention.
@@ -81,6 +82,9 @@ class QEffMoEBlockMixin:
 
     def apply_shared_experts(self, out: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
         return out
+
+    def get_supported_moe_flavours(self) -> Tuple[MoEFlavour, ...]:
+        return tuple(getattr(self, "supported_moe_flavours", QEffMoEBlockMixin.supported_moe_flavours))
 
     # ---- orchestration (shared) ----------------------------------------------
     def execute_moe_flavour(self, x: torch.Tensor, routing) -> torch.Tensor:

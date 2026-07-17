@@ -57,6 +57,7 @@ from QEfficient.transformers.models._layerwise import (
     resolve_layer_window,
 )
 from QEfficient.transformers.moe import (
+    MoEFlavour,
     MoEProfile,
     MoEWeights,
     QEffMoEBlockMixin,
@@ -2135,6 +2136,11 @@ class QEffQwen3_5MoeExperts(Qwen3_5MoeExperts):
 
 
 class QEffQwen3_5MoeSparseMoeBlock(QEffMoEBlockMixin, Qwen3_5MoeSparseMoeBlock):
+    supported_moe_flavours = (
+        MoEFlavour.SIMPLE_LOOP,
+        MoEFlavour.DECODE_BMM,
+        MoEFlavour.EXPERT_PARALLEL,
+    )
     supports_moe_prefill_blocking = True
     supports_static_moe_prefill_chunks = True
 

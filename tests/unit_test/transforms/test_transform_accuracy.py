@@ -22,6 +22,7 @@ All tests run on CPU only, using tiny in-memory models.
 """
 
 import copy
+import logging
 from types import MethodType, SimpleNamespace
 
 import pytest
@@ -68,6 +69,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
 from QEfficient.transformers.moe import MoEFlavour, MoEProfile, QEffMoEBlockMixin, moe_simple_loop
 from QEfficient.transformers.moe.weights import MoEWeights
 from QEfficient.utils.config_utils import calculate_num_replicate_kv_heads
+from QEfficient.utils.constants import MOE_PREFILL_PACKED_CHUNK_SIZE
 from QEfficient.utils.repeat_kv_utils import get_attention_module, get_projection_layer, get_text_model
 
 VOCAB_SIZE = 500
@@ -1264,6 +1266,11 @@ class TestSamplerTransformActualApply:
 
 
 class _DummyOptimizedMoEBlock(QEffMoEBlockMixin, nn.Module):
+    supported_moe_flavours = (
+        MoEFlavour.SIMPLE_LOOP,
+        MoEFlavour.DECODE_BMM,
+        MoEFlavour.EXPERT_PARALLEL,
+    )
     supports_moe_prefill_blocking = True
 
     def __init__(self):
@@ -1332,7 +1339,7 @@ class TestSplitOptimizedMoETransform:
 
     def test_simple_decode_moe_transform_falls_back_when_decode_bmm_unsupported(self):
         model = _DummyOptimizedMoEModel(model_type="llama4")
-        model.block.supports_moe_decode_bmm = False
+        model.block.supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP,)
 
         _, transformed = SimpleDecodeMoeTransform.apply(model)
 
@@ -1441,9 +1448,8 @@ class TestSplitOptimizedMoETransform:
         _, transformed = OptimizedMoEExportConfigTransform.apply(
             model,
             prefill_only=True,
-            enable_chunking=True,
             num_cores=4,
-            moe_prefill_packed_chunk_size=16,
+            qaic_config={"moe_config": {"packed_chunk_size": 16}},
             prefill_seq_len=40,
             hash_params=hash_params,
         )
@@ -1467,20 +1473,20 @@ class TestSplitOptimizedMoETransform:
             ("expert_parallel", MoEFlavour.EXPERT_PARALLEL),
             ("expert_blocked", MoEFlavour.EXPERT_PARALLEL),
             ("decode_bmm", MoEFlavour.DECODE_BMM),
-            ("auto", MoEFlavour.EXPERT_PARALLEL),
         ],
     )
-    def test_export_config_transform_respects_top_level_moe_flavour(self, moe_flavour, expected):
+    def test_export_config_transform_respects_nested_moe_flavour(self, moe_flavour, expected):
         model = _DummyOptimizedMoEModel()
         hash_params = {}
+        moe_config = {"flavour": moe_flavour}
+        if expected is MoEFlavour.EXPERT_PARALLEL:
+            moe_config["packed_chunk_size"] = 16
 
         _, transformed = OptimizedMoEExportConfigTransform.apply(
             model,
             prefill_only=True,
-            enable_chunking=True,
             num_cores=2,
-            moe_prefill_packed_chunk_size=16,
-            qaic_config={"moe_flavour": moe_flavour},
+            qaic_config={"moe_config": moe_config},
             prefill_seq_len=32,
             hash_params=hash_params,
         )
@@ -1504,8 +1510,6 @@ class TestSplitOptimizedMoETransform:
         _, transformed = OptimizedMoEExportConfigTransform.apply(
             model,
             prefill_only=False,
-            enable_chunking=True,
-            qaic_config={"moe_flavour": "auto"},
             hash_params=hash_params,
         )
 
@@ -1515,13 +1519,12 @@ class TestSplitOptimizedMoETransform:
 
     def test_export_config_transform_auto_decode_uses_simple_loop_when_decode_bmm_unsupported(self):
         model = _DummyOptimizedMoEModel(model_type="llama4")
-        model.block.supports_moe_decode_bmm = False
+        model.block.supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP,)
         hash_params = {}
 
         _, transformed = OptimizedMoEExportConfigTransform.apply(
             model,
             prefill_only=False,
-            qaic_config={"moe_flavour": "auto"},
             hash_params=hash_params,
         )
 
@@ -1529,14 +1532,25 @@ class TestSplitOptimizedMoETransform:
         assert model.block._moe_flavour is MoEFlavour.SIMPLE_LOOP
         assert hash_params == {"moe_prefill_flavour": "simple_loop"}
 
-    def test_export_config_transform_rejects_invalid_top_level_moe_flavour(self):
+    def test_export_config_transform_rejects_invalid_nested_moe_flavour(self):
         model = _DummyOptimizedMoEModel()
 
-        with pytest.raises(ValueError, match=r"qaic_config\['moe_flavour'\]"):
+        with pytest.raises(ValueError, match=r"qaic_config\['moe_config'\]\['flavour'\]"):
             OptimizedMoEExportConfigTransform.apply(
                 model,
                 prefill_only=True,
-                qaic_config={"moe_flavour": "legacy"},
+                qaic_config={"moe_config": {"flavour": "legacy"}},
+            )
+
+    def test_export_config_transform_rejects_unsupported_valid_moe_flavour(self):
+        model = _DummyOptimizedMoEModel(model_type="llama4")
+        model.block.supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP,)
+
+        with pytest.raises(NotImplementedError, match="expert_parallel"):
+            OptimizedMoEExportConfigTransform.apply(
+                model,
+                prefill_only=True,
+                qaic_config={"moe_config": {"flavour": "expert_parallel"}},
             )
 
     def test_export_config_transform_ignores_legacy_nested_prefill_flavour(self):
@@ -1546,7 +1560,6 @@ class TestSplitOptimizedMoETransform:
         _, transformed = OptimizedMoEExportConfigTransform.apply(
             model,
             prefill_only=True,
-            enable_chunking=True,
             qaic_config={"moe_config": {"prefill_flavour": "simple_loop"}},
             hash_params=hash_params,
         )
@@ -1555,6 +1568,40 @@ class TestSplitOptimizedMoETransform:
         assert model.block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
         assert hash_params["moe_prefill_flavour"] == "expert_parallel"
 
+    def test_export_config_transform_ignores_top_level_moe_flavour(self):
+        model = _DummyOptimizedMoEModel()
+        hash_params = {}
+
+        _, transformed = OptimizedMoEExportConfigTransform.apply(
+            model,
+            prefill_only=True,
+            qaic_config={"moe_flavour": "simple_loop"},
+            hash_params=hash_params,
+        )
+
+        assert transformed
+        assert model.block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+        assert hash_params["moe_prefill_flavour"] == "expert_parallel"
+
+    def test_export_config_transform_warns_when_packed_chunk_size_is_unused(self, caplog):
+        model = _DummyOptimizedMoEModel()
+        hash_params = {}
+
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+        _, transformed = OptimizedMoEExportConfigTransform.apply(
+            model,
+            prefill_only=True,
+            qaic_config={"moe_config": {"flavour": "simple_loop", "packed_chunk_size": 16}},
+            hash_params=hash_params,
+        )
+
+        assert transformed
+        assert model.block._moe_flavour is MoEFlavour.SIMPLE_LOOP
+        assert hash_params == {"moe_prefill_flavour": "simple_loop"}
+        assert "qaic_config['moe_config']['packed_chunk_size']" in caplog.text
+        assert "expert_parallel" in caplog.text
+        assert "ignored" in caplog.text
+
     def test_facade_applies_weights_and_export_config(self):
         model = _DummyOptimizedMoEModel()
         hash_params = {}
@@ -1562,9 +1609,8 @@ class TestSplitOptimizedMoETransform:
         _, transformed = OptimizedMoETransform.apply(
             model,
             prefill_only=True,
-            enable_chunking=True,
             num_cores=2,
-            moe_prefill_packed_chunk_size=32,
+            qaic_config={"moe_config": {"packed_chunk_size": 32}},
             prefill_seq_len=64,
             hash_params=hash_params,
         )
@@ -1575,6 +1621,57 @@ class TestSplitOptimizedMoETransform:
         assert model.block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
         assert hash_params["moe_prefill_num_packed_chunks"] == 2
 
+    @pytest.mark.parametrize("qaic_config", [None, {"moe_config": {}}, {"moe_config": {"packed_chunk_size": None}}])
+    def test_missing_packed_chunk_size_uses_default_constant(self, qaic_config):
+        model = _DummyOptimizedMoEModel()
+        hash_params = {}
+
+        _, transformed = OptimizedMoETransform.apply(
+            model,
+            prefill_only=True,
+            num_cores=2,
+            qaic_config=qaic_config,
+            prefill_seq_len=MOE_PREFILL_PACKED_CHUNK_SIZE * 2,
+            hash_params=hash_params,
+        )
+
+        assert transformed
+        assert model.block.expert_parallel_packed_chunk_size == MOE_PREFILL_PACKED_CHUNK_SIZE
+        assert hash_params["moe_prefill_packed_chunk_size"] == MOE_PREFILL_PACKED_CHUNK_SIZE
+        assert hash_params["moe_prefill_num_packed_chunks"] == 2
+
+    def test_export_config_transform_rejects_non_positive_packed_chunk_size(self):
+        model = _DummyOptimizedMoEModel()
+
+        with pytest.raises(ValueError, match="packed_chunk_size"):
+            OptimizedMoETransform.apply(
+                model,
+                prefill_only=True,
+                qaic_config={"moe_config": {"packed_chunk_size": 0}},
+                hash_params={},
+            )
+
+    def test_facade_no_longer_forwards_removed_export_config_kwargs(self, monkeypatch):
+        model = _DummyOptimizedMoEModel()
+        seen_kwargs = {}
+
+        def spy_apply(model, **kwargs):
+            seen_kwargs.update(kwargs)
+            return model, True
+
+        monkeypatch.setattr(OptimizedMoEExportConfigTransform, "apply", spy_apply)
+
+        _, transformed = OptimizedMoETransform.apply(
+            model,
+            prefill_only=True,
+            qaic_config={"moe_config": {"packed_chunk_size": 16}},
+            hash_params={},
+        )
+
+        assert transformed
+        assert "enable_chunking" not in seen_kwargs
+        assert "moe_prefill_packed_chunk_size" not in seen_kwargs
+
     def test_facade_can_reapply_with_different_moe_flavours(self):
         model = _DummyOptimizedMoEModel()
         first_hash_params = {}
@@ -1583,16 +1680,14 @@ class TestSplitOptimizedMoETransform:
         _, first_transformed = OptimizedMoETransform.apply(
             model,
             prefill_only=True,
-            qaic_config={"moe_flavour": "simple_loop"},
+            qaic_config={"moe_config": {"flavour": "simple_loop"}},
             hash_params=first_hash_params,
         )
         _, second_transformed = OptimizedMoETransform.apply(
             model,
             prefill_only=True,
-            enable_chunking=True,
             num_cores=2,
-            moe_prefill_packed_chunk_size=16,
-            qaic_config={"moe_flavour": "expert_parallel"},
+            qaic_config={"moe_config": {"flavour": "expert_parallel", "packed_chunk_size": 16}},
             prefill_seq_len=32,
             hash_params=second_hash_params,
         )
@@ -1657,7 +1752,6 @@ class TestSplitOptimizedMoETransform:
                 prefill_only=False,
                 enable_chunking=False,
                 num_cores=1,
-                moe_prefill_packed_chunk_size=None,
                 prefill_seq_len=None,
                 **kwargs,
             ):
@@ -1666,7 +1760,6 @@ class TestSplitOptimizedMoETransform:
                     "prefill_only": prefill_only,
                     "enable_chunking": enable_chunking,
                     "num_cores": num_cores,
-                    "moe_prefill_packed_chunk_size": moe_prefill_packed_chunk_size,
                     "prefill_seq_len": prefill_seq_len,
                 }
                 return export_dir / "DummyQEff.onnx"
@@ -1677,7 +1770,6 @@ class TestSplitOptimizedMoETransform:
             prefill_only=True,
             enable_chunking=True,
             num_cores=2,
-            moe_prefill_packed_chunk_size=16,
             prefill_seq_len=32,
         )
 
@@ -1716,7 +1808,6 @@ class TestSplitOptimizedMoETransform:
                 prefill_only=False,
                 enable_chunking=False,
                 num_cores=1,
-                moe_prefill_packed_chunk_size=None,
                 qaic_config=None,
                 prefill_seq_len=None,
                 **kwargs,
@@ -1742,16 +1833,50 @@ class TestSplitOptimizedMoETransform:
             enable_chunking=True,
             specializations=[{"batch_size": 1, "seq_len": 32, "ctx_len": 64}],
             offload_pt_weights=False,
-            qaic_config={"moe_flavour": "simple_loop"},
-            moe_prefill_packed_chunk_size=16,
+            qaic_config={"moe_config": {"flavour": "simple_loop"}},
             export_dir=tmp_path,
             aic_num_cores=2,
         )
 
         assert onnx_path.parent.is_dir()
         assert events[0][0] == "optimized_moe"
+        assert "enable_chunking" not in events[0][1]
+        assert "moe_prefill_packed_chunk_size" not in events[0][1]
+        assert events[0][1]["qaic_config"] == {"moe_config": {"flavour": "simple_loop"}}
         assert events[1] == ("export", True, True, 2, 32)
         assert qeff.hash_params["optimized_moe_hook"] is True
+
+    def test_get_onnx_path_rejects_legacy_packed_chunk_size(self, tmp_path):
+        from QEfficient.base.modeling_qeff import QEFFBaseModel
+
+        class DummyInner(nn.Module):
+            config = SimpleNamespace(architectures=[], torch_dtype=torch.float32)
+
+        class DummyQEff(QEFFBaseModel):
+            _pytorch_transforms = []
+            _onnx_transforms = []
+
+            @property
+            def get_model_config(self):
+                return {}
+
+            def export(self, *args, **kwargs):
+                raise AssertionError("legacy argument should be rejected before export")
+
+            def compile(self, *args, **kwargs):
+                raise NotImplementedError
+
+        qeff = DummyQEff(DummyInner())
+        with pytest.raises(TypeError, match=r"qaic_config\['moe_config'\]\['packed_chunk_size'\]"):
+            qeff.get_onnx_path(
+                prefill_only=True,
+                enable_chunking=True,
+                specializations=[{"batch_size": 1, "seq_len": 32, "ctx_len": 64}],
+                offload_pt_weights=False,
+                moe_prefill_packed_chunk_size=16,
+                export_dir=tmp_path,
+                aic_num_cores=2,
+            )
 
 
 # ---------------------------------------------------------------------------

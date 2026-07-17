@@ -39,6 +39,7 @@ from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.models._layerwise import is_last_layer_window, is_layerwise_active, resolve_layer_window
 from QEfficient.transformers.moe import (
+    MoEFlavour,
     MoEProfile,
     MoEWeights,
     QEffMoEBlockMixin,
@@ -146,6 +147,11 @@ class QEffQwen3MoeExperts(Qwen3MoeExperts):
 
 class QEffQwen3MoeSparseMoeBlock(QEffMoEBlockMixin, Qwen3MoeSparseMoeBlock):
     _moe_return_router_logits = True
+    supported_moe_flavours = (
+        MoEFlavour.SIMPLE_LOOP,
+        MoEFlavour.DECODE_BMM,
+        MoEFlavour.EXPERT_PARALLEL,
+    )
     supports_moe_prefill_blocking = True
     supports_static_moe_prefill_chunks = True
 

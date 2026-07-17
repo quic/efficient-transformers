@@ -1247,7 +1247,7 @@ def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, confi
         prefill_only=True,
         enable_chunking=True,
         num_cores=2,
-        moe_prefill_packed_chunk_size=32,
+        qaic_config={"moe_config": {"packed_chunk_size": 32}},
         prefill_seq_len=64,
     )
 
@@ -1258,7 +1258,7 @@ def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, confi
             enable_chunking=True,
             prefill_seq_len=64,
             num_cores=2,
-            moe_prefill_packed_chunk_size=32,
+            qaic_config={"moe_config": {"packed_chunk_size": 32}},
             use_onnx_subfunctions=True,
             offload_pt_weights=False,
         )
@@ -3358,7 +3358,6 @@ def test_causal_compile_custom_io_carries_prefix(tmp_path, monkeypatch):
         "mxfp6_matmul",
         # compile-time args added by causal compile():
         "aic_num_cores",
-        "moe_prefill_packed_chunk_size",
     }
     implicit_compiler_options = {k: v for k, v in captured.items() if k not in _known_explicit_params}
     assert "kv_cache_prefix" not in implicit_compiler_options, (

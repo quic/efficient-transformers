@@ -90,7 +90,6 @@ def _apply_prefill_compile_transforms(
     ctx_len: int,
     num_cores: int = 2,
     enable_chunking: bool = True,
-    moe_prefill_packed_chunk_size=None,
     qaic_config=None,
 ):
     qeff.transform(
@@ -101,7 +100,6 @@ def _apply_prefill_compile_transforms(
         prefill_only=True,
         enable_chunking=enable_chunking,
         num_cores=num_cores,
-        moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
         prefill_seq_len=prefill_seq_len,
     )
 
@@ -412,12 +410,11 @@ def test_grok1_external_moe_block_does_not_advertise_expert_parallel():
 
     assert transformed
     assert not qeff_block.supports_moe_prefill_blocking
-    with pytest.raises(AssertionError, match="expert_parallel"):
+    with pytest.raises(NotImplementedError, match="expert_parallel"):
         OptimizedMoEExportConfigTransform.apply(
             qeff_block,
             prefill_only=True,
-            enable_chunking=True,
-            qaic_config={"moe_flavour": "expert_parallel"},
+            qaic_config={"moe_config": {"flavour": "expert_parallel"}},
         )
 
 
@@ -441,9 +438,8 @@ def test_glm4_moe_blocked_prefill_forward_parity():
     OptimizedMoEExportConfigTransform.apply(
         chunked_model,
         prefill_only=True,
-        enable_chunking=True,
         num_cores=2,
-        moe_prefill_packed_chunk_size=256,
+        qaic_config={"moe_config": {"packed_chunk_size": 256}},
         prefill_seq_len=8,
     )
     chunked_block = next(module for module in chunked_model.modules() if isinstance(module, QEffGlm4MoeMoE))
@@ -480,7 +476,7 @@ def test_glm4_moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
         prefill_seq_len=512,
         ctx_len=512,
         num_cores=2,
-        moe_prefill_packed_chunk_size=256,
+        qaic_config={"moe_config": {"packed_chunk_size": 256}},
     )
     onnx_path = qeff.export(
         tmp_path / "prefill-subfunction",
@@ -488,7 +484,7 @@ def test_glm4_moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
         prefill_seq_len=512,
         enable_chunking=True,
         num_cores=2,
-        moe_prefill_packed_chunk_size=256,
+        qaic_config={"moe_config": {"packed_chunk_size": 256}},
         use_onnx_subfunctions=True,
         offload_pt_weights=False,
     )
@@ -538,12 +534,15 @@ def test_glm4_moe_kv_blocking_transform_and_prefill_export(tmp_path):
         enable_chunking=True,
         use_onnx_subfunctions=True,
         num_cores=2,
-        moe_prefill_packed_chunk_size=256,
+        qaic_config={"moe_config": {"packed_chunk_size": 256}},
         offload_pt_weights=False,
     )
     onnx_model = onnx.load(str(onnx_path), load_external_data=False)
     decoder_functions = [func for func in onnx_model.functions if func.name.startswith("QEffGlm4MoeDecoderLayer")]
-    assert len(decoder_functions) == config.num_hidden_layers
+    assert decoder_functions
+    assert (
+        Counter(node.op_type for node in onnx_model.graph.node)["QEffGlm4MoeDecoderLayer"] == config.num_hidden_layers
+    )
     for function_proto in decoder_functions:
         op_counts = Counter(node.op_type for node in function_proto.node)
         assert op_counts["CtxGatherBlockedKV"] == 4
@@ -603,9 +602,8 @@ def test_qwen3moe_blocked_forward_parity():
     OptimizedMoEExportConfigTransform.apply(
         chunked_model,
         prefill_only=True,
-        enable_chunking=True,
         num_cores=2,
-        moe_prefill_packed_chunk_size=256,
+        qaic_config={"moe_config": {"packed_chunk_size": 256}},
         prefill_seq_len=8,
     )
     chunked = next(module for module in chunked_model.modules() if isinstance(module, QEffQwen3MoeSparseMoeBlock))
@@ -679,14 +677,14 @@ def test_qwen3moe_disagg_compile_uses_distinct_decode_and_prefill_onnx(tmp_path,
         prefill_seq_len=64,
         ctx_len=128,
         num_cores=2,
-        moe_prefill_packed_chunk_size=32,
+        qaic_config={"moe_config": {"packed_chunk_size": 32}},
     )
     prefill_onnx_path = qeff.export(
         tmp_path / "prefill-export",
         prefill_only=True,
         prefill_seq_len=64,
         num_cores=2,
-        moe_prefill_packed_chunk_size=32,
+        qaic_config={"moe_config": {"packed_chunk_size": 32}},
         enable_chunking=True,
         offload_pt_weights=False,
     )
@@ -696,7 +694,7 @@ def test_qwen3moe_disagg_compile_uses_distinct_decode_and_prefill_onnx(tmp_path,
         prefill_seq_len=64,
         ctx_len=128,
         num_cores=2,
-        moe_prefill_packed_chunk_size=32,
+        qaic_config={"moe_config": {"packed_chunk_size": 32}},
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
         prefill_only=True,
@@ -725,7 +723,7 @@ def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
         prefill_seq_len=512,
         ctx_len=512,
         num_cores=2,
-        moe_prefill_packed_chunk_size=256,
+        qaic_config={"moe_config": {"packed_chunk_size": 256}},
     )
     onnx_path = qeff.export(
         tmp_path / "prefill-subfunction",
@@ -733,7 +731,7 @@ def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
         enable_chunking=True,
         prefill_seq_len=512,
         num_cores=2,
-        moe_prefill_packed_chunk_size=256,
+        qaic_config={"moe_config": {"packed_chunk_size": 256}},
         use_onnx_subfunctions=True,
         offload_pt_weights=False,
     )
@@ -790,11 +788,9 @@ def test_gptoss_blocked_forward_parity():
     OptimizedMoETransform.apply(
         chunked_model,
         prefill_only=True,
-        enable_chunking=True,
         num_cores=2,
-        moe_prefill_packed_chunk_size=256,
         prefill_seq_len=8,
-        qaic_config={"moe_flavour": "expert_parallel"},
+        qaic_config={"moe_config": {"flavour": "expert_parallel", "packed_chunk_size": 256}},
     )
     blocks_chunked = [m for _, m in chunked_model.named_modules() if isinstance(m, QEffGptOssMLP)]
     assert blocks_chunked
@@ -807,7 +803,11 @@ def test_gptoss_blocked_forward_parity():
 
     loop_model = copy.deepcopy(qeff.model)
     PrefillOnlyTransform.apply(loop_model)
-    OptimizedMoETransform.apply(loop_model, prefill_only=True, qaic_config={"moe_flavour": "simple_loop"})
+    OptimizedMoETransform.apply(
+        loop_model,
+        prefill_only=True,
+        qaic_config={"moe_config": {"flavour": "simple_loop"}},
+    )
     blocks_loop = [m for _, m in loop_model.named_modules() if isinstance(m, QEffGptOssMLP)]
     assert blocks_loop
     assert blocks_loop[0]._moe_flavour is MoEFlavour.SIMPLE_LOOP
@@ -848,7 +848,7 @@ def test_gptoss_prefill_chunked_export_traces_packed_chunks(tmp_path):
         prefill_seq_len=512,
         ctx_len=512,
         num_cores=2,
-        moe_prefill_packed_chunk_size=256,
+        qaic_config={"moe_config": {"packed_chunk_size": 256}},
     )
     onnx_path = qeff.export(
         tmp_path / "prefill-subfunction-512",
@@ -856,7 +856,7 @@ def test_gptoss_prefill_chunked_export_traces_packed_chunks(tmp_path):
         enable_chunking=True,
         prefill_seq_len=512,
         num_cores=2,
-        moe_prefill_packed_chunk_size=256,
+        qaic_config={"moe_config": {"packed_chunk_size": 256}},
         use_onnx_subfunctions=True,
         offload_pt_weights=False,
     )

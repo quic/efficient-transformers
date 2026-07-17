@@ -518,6 +518,7 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
 class QEffGraniteMoeMoE(QEffMoEBlockMixin, GraniteMoeMoE):
     _moe_return_router_logits = True
     _moe_flavour = MoEFlavour.SIMPLE_LOOP
+    supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP,)
     supports_moe_decode_bmm = False
 
     def build_moe_weights(self) -> MoEWeights:
