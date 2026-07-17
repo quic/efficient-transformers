@@ -11,15 +11,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-from export_kimi_k25_vision import (
-    LOADED_EXPERT_IDS,
-    NUM_EXPERTS_PER_TOKEN,
-    _ensure_torch_fx_import_compatibility,
-    _load_layer_subset_model,
-    _patch_deepseek_init_weights_compat,
-    _patch_kimi_tie_weights_compat,
-    _prepare_config,
-)
 from test_kimi_k25 import (
     _clone_inputs,
     _decode_tokens,
@@ -29,10 +20,23 @@ from test_kimi_k25 import (
     _resolve_model_path,
     _set_deterministic,
 )
-from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.utils.load_kimi_utils import (
+    LOADED_EXPERT_IDS,
+    NUM_EXPERTS_PER_TOKEN,
+    load_kimi_k25_class,
+)
+from QEfficient.utils.load_kimi_utils import (
+    ensure_torch_fx_import_compatibility as _ensure_torch_fx_import_compatibility,
+)
+from QEfficient.utils.load_kimi_utils import (
+    load_layer_subset_model as _load_layer_subset_model,
+)
+from QEfficient.utils.load_kimi_utils import (
+    prepare_config as _prepare_config,
+)
 
 PREFILL_SEQ_LEN = 512
 CTX_LEN = 2048
@@ -98,9 +102,7 @@ def _load_kimi_subset_model():
     _ensure_torch_fx_import_compatibility()
     model_path = _resolve_model_path()
     config = _prepare_config(model_path)
-    kimi_cls = get_class_from_dynamic_module("modeling_kimi_k25.KimiK25ForConditionalGeneration", str(model_path))
-    _patch_kimi_tie_weights_compat(kimi_cls)
-    _patch_deepseek_init_weights_compat(kimi_cls)
+    kimi_cls = load_kimi_k25_class(model_path)
 
     model, tokenizer, processor = _load_layer_subset_model(
         model_path=model_path,

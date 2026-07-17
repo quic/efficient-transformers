@@ -6,10 +6,8 @@
 # ----------------------------------------------------------------------------
 
 import copy
-import inspect
 import json
 import os
-import sys
 from io import BytesIO
 from typing import List, Optional
 
@@ -24,12 +22,25 @@ from transformers import (
     GenerationConfig,
     TextStreamer,
 )
-from transformers.dynamic_module_utils import get_class_from_dynamic_module
-from transformers.utils import import_utils as hf_import_utils
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import QnnConstants
+from QEfficient.utils.load_kimi_utils import (
+    get_kimi_k25_num_image_tokens as _get_kimi_k25_num_image_tokens,
+)
+from QEfficient.utils.load_kimi_utils import (
+    get_kimi_k25_test_config,
+)
+from QEfficient.utils.load_kimi_utils import (
+    is_kimi_k25 as _is_kimi_k25,
+)
+from QEfficient.utils.load_kimi_utils import (
+    load_kimi_k25_layer_subset_model as _load_kimi_k25_layer_subset_model,
+)
+from QEfficient.utils.load_kimi_utils import (
+    run_kimi_k25_hf_model_on_pytorch as _run_kimi_k25_hf_model_on_pytorch,
+)
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
 from QEfficient.utils.test_utils import (
     InternProcessor,
@@ -50,190 +61,10 @@ model_config_dict = {model["model_name"]: model for model in multimodal_models}
 test_mm_moe_models = [model["model_name"] for model in multimodal_models if "moe" in model.get("model_type", "")]
 
 NEW_GENERATION_TOKENS = 10
-KIMI_K25_MODEL_NAME = "moonshotai/Kimi-K2.5"
-
-
-def _is_kimi_k25(model_name: str) -> bool:
-    return model_name == KIMI_K25_MODEL_NAME
-
-
-def _ensure_torch_fx_import_compatibility():
-    if hasattr(hf_import_utils, "is_torch_fx_available"):
-        return
-
-    def _is_torch_fx_available() -> bool:
-        if not hf_import_utils.is_torch_available():
-            return False
-        try:
-            import torch.fx  # noqa: F401
-
-            return True
-        except Exception:
-            return False
-
-    hf_import_utils.is_torch_fx_available = _is_torch_fx_available
-
-
-def _patch_kimi_k25_tie_weights_compat(kimi_cls):
-    tie_signature = inspect.signature(kimi_cls.tie_weights)
-    if tuple(tie_signature.parameters) != ("self",):
-        return
-
-    def _tie_weights_compat(self, missing_keys=None, recompute_mapping=True):
-        lm_tie_weights = getattr(self.language_model, "tie_weights")
-        try:
-            return lm_tie_weights(missing_keys=missing_keys, recompute_mapping=recompute_mapping)
-        except TypeError:
-            return lm_tie_weights()
-
-    kimi_cls.tie_weights = _tie_weights_compat
-
-
-def _patch_kimi_k25_deepseek_init_weights_compat(kimi_cls):
-    module_prefix, _ = kimi_cls.__module__.rsplit(".", maxsplit=1)
-    deepseek_module = sys.modules.get(f"{module_prefix}.modeling_deepseek")
-    if deepseek_module is None or not hasattr(deepseek_module, "DeepseekV3PreTrainedModel"):
-        return
-
-    deepseek_cls = deepseek_module.DeepseekV3PreTrainedModel
-    if getattr(deepseek_cls, "_qeff_test_init_weights_patched", False):
-        return
-
-    def _init_weights_compat(self, module):
-        std = self.config.initializer_range
-        if isinstance(module, torch.nn.Linear):
-            if hasattr(module, "weight") and module.weight is not None:
-                module.weight.data.normal_(mean=0.0, std=std)
-            if hasattr(module, "bias") and module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, torch.nn.Embedding):
-            if hasattr(module, "weight") and module.weight is not None:
-                module.weight.data.normal_(mean=0.0, std=std)
-                if module.padding_idx is not None:
-                    module.weight.data[module.padding_idx].zero_()
-
-    deepseek_cls._init_weights = _init_weights_compat
-    deepseek_cls._qeff_test_init_weights_patched = True
-
-
-def _patch_kimi_k25_remote_code_compat(config):
-    _ensure_torch_fx_import_compatibility()
-    kimi_cls = get_class_from_dynamic_module("modeling_kimi_k25.KimiK25ForConditionalGeneration", config._name_or_path)
-    _patch_kimi_k25_tie_weights_compat(kimi_cls)
-    _patch_kimi_k25_deepseek_init_weights_compat(kimi_cls)
 
 
 def _get_kimi_k25_test_config(model_name: str):
-    config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
-    config._attn_implementation = "eager"
-    config.torch_dtype = torch.float32
-    config.dtype = torch.float32
-    additional_params = model_config_dict[model_name]["additional_params"]
-
-    for attr, value in additional_params["text_config"].items():
-        setattr(config.text_config, attr, value)
-    config.text_config._attn_implementation = "eager"
-    config.text_config.torch_dtype = torch.float32
-    config.text_config.dtype = torch.float32
-
-    for attr, value in additional_params["vision_config"].items():
-        setattr(config.vision_config, attr, value)
-    config.vision_config._attn_implementation = "eager"
-    config.vision_config.torch_dtype = torch.float32
-    config.vision_config.dtype = torch.float32
-
-    _patch_kimi_k25_remote_code_compat(config)
-    return config
-
-
-def _get_kimi_k25_num_image_tokens(config, grid_thws):
-    merge_height, merge_width = config.vision_config.merge_kernel_size
-    return int(grid_thws[0, 1].item() // merge_height) * int(grid_thws[0, 2].item() // merge_width)
-
-
-def _load_kimi_k25_layer_subset_model():
-    examples_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../examples/kimi_k2"))
-    if examples_dir not in sys.path:
-        sys.path.insert(0, examples_dir)
-
-    from test_kimi_k25 import (  # noqa: PLC0415
-        LOADED_EXPERT_IDS,
-        NUM_EXPERTS_PER_TOKEN,
-        NUM_TEXT_LAYERS,
-        NUM_VISION_LAYERS,
-        _load_layer_subset_model,
-        _patch_deepseek_init_weights_compat,
-        _patch_kimi_tie_weights_compat,
-        _prepare_config,
-        _resolve_model_path,
-        _set_deterministic,
-    )
-
-    _set_deterministic(1234)
-    _ensure_torch_fx_import_compatibility()
-    model_path = _resolve_model_path()
-    config = _prepare_config(model_path)
-    kimi_cls = get_class_from_dynamic_module("modeling_kimi_k25.KimiK25ForConditionalGeneration", str(model_path))
-    _patch_kimi_tie_weights_compat(kimi_cls)
-    _patch_deepseek_init_weights_compat(kimi_cls)
-
-    model, tokenizer, processor = _load_layer_subset_model(
-        model_path=model_path,
-        kimi_cls=kimi_cls,
-        config=config,
-        num_vision_layers=NUM_VISION_LAYERS,
-        num_text_layers=NUM_TEXT_LAYERS,
-        loaded_expert_ids=LOADED_EXPERT_IDS,
-        num_experts_per_tok=NUM_EXPERTS_PER_TOKEN,
-        dtype=torch.float32,
-    )
-    model.vision_tower.patch_embed.pos_emb.interpolation_mode = "bilinear"
-    model = model.eval().to("cpu")
-    return model, tokenizer, processor
-
-
-@torch.no_grad()
-def _run_kimi_k25_hf_model_on_pytorch(model, processor, inputs, max_gen_len):
-    generated_ids = inputs["input_ids"]
-    attention_mask = inputs["attention_mask"]
-    pixel_values = inputs["pixel_values"]
-    grid_thws = inputs["grid_thws"]
-    new_tokens = []
-
-    eos_token_id = getattr(model.config, "eos_token_id", None)
-    if eos_token_id is None and hasattr(model.config, "text_config"):
-        eos_token_id = getattr(model.config.text_config, "eos_token_id", None)
-
-    for _ in range(max_gen_len):
-        outputs = model(
-            input_ids=generated_ids,
-            attention_mask=attention_mask,
-            pixel_values=pixel_values,
-            grid_thws=grid_thws,
-            use_cache=False,
-            return_dict=True,
-        )
-        logits = outputs[0] if isinstance(outputs, tuple) else outputs.logits
-        next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
-        new_tokens.append(next_token)
-
-        generated_ids = torch.cat([generated_ids, next_token], dim=1)
-        attention_mask = torch.cat(
-            [
-                attention_mask,
-                torch.ones((attention_mask.shape[0], 1), dtype=attention_mask.dtype, device=attention_mask.device),
-            ],
-            dim=1,
-        )
-
-        if eos_token_id is not None and torch.all(next_token == eos_token_id):
-            break
-
-    output_tokens = torch.cat(new_tokens, dim=1).squeeze(0)
-    py_output = processor.tokenizer.decode(output_tokens.tolist()).strip()
-    print("Original HF Model Outputs (Torch CPU):")
-    print("Completion:", repr(py_output))
-    return output_tokens
+    return get_kimi_k25_test_config(model_name, model_config_dict)
 
 
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(

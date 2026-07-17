@@ -6,30 +6,37 @@
 # -----------------------------------------------------------------------------
 
 import copy
-import os
 from io import BytesIO
-from pathlib import Path
 
-import numpy as np
 import requests
 import torch
-from export_kimi_k25_vision import (
-    LOADED_EXPERT_IDS,
-    NUM_EXPERTS_PER_TOKEN,
-    _ensure_torch_fx_import_compatibility,
-    _load_layer_subset_model,
-    _patch_deepseek_init_weights_compat,
-    _patch_kimi_tie_weights_compat,
-    _prepare_config,
-)
-from huggingface_hub import snapshot_download
 from PIL import Image
-from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.utils.load_kimi_utils import (
+    KIMI_K25_MODEL_NAME,
+    LOADED_EXPERT_IDS,
+    NUM_EXPERTS_PER_TOKEN,
+    load_kimi_k25_class,
+)
+from QEfficient.utils.load_kimi_utils import (
+    ensure_torch_fx_import_compatibility as _ensure_torch_fx_import_compatibility,
+)
+from QEfficient.utils.load_kimi_utils import (
+    load_layer_subset_model as _load_layer_subset_model,
+)
+from QEfficient.utils.load_kimi_utils import (
+    prepare_config as _prepare_config,
+)
+from QEfficient.utils.load_kimi_utils import (
+    resolve_model_path as _resolve_model_path,
+)
+from QEfficient.utils.load_kimi_utils import (
+    set_deterministic as _set_deterministic,
+)
 
-MODEL_NAME = "moonshotai/Kimi-K2.5"
+MODEL_NAME = KIMI_K25_MODEL_NAME
 IMAGE_URL = "https://huggingface.co/moonshotai/Kimi-K2.5/resolve/main/figures/kimi-logo.png"
 TEXT_PROMPT = "Describe this image."
 NUM_VISION_LAYERS = 2
@@ -50,21 +57,6 @@ def _has_qaic_runtime_access() -> bool:
         return True
     except Exception:
         return False
-
-
-def _set_deterministic(seed: int):
-    import random
-
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    torch.use_deterministic_algorithms(True)
-
-
-def _resolve_model_path() -> Path:
-    return Path(snapshot_download(repo_id=MODEL_NAME, cache_dir=os.environ.get("HF_HUB_CACHE")))
 
 
 def _prepare_inputs(processor):
@@ -176,9 +168,7 @@ def check_kimi_k25_pytorch_vs_ai100():
     _ensure_torch_fx_import_compatibility()
     model_path = _resolve_model_path()
     config = _prepare_config(model_path)
-    kimi_cls = get_class_from_dynamic_module("modeling_kimi_k25.KimiK25ForConditionalGeneration", str(model_path))
-    _patch_kimi_tie_weights_compat(kimi_cls)
-    _patch_deepseek_init_weights_compat(kimi_cls)
+    kimi_cls = load_kimi_k25_class(model_path)
 
     model, tokenizer, processor = _load_layer_subset_model(
         model_path=model_path,
