@@ -1268,6 +1268,8 @@ class QEffQwen3_5MoeModel(Qwen3_5MoeModel):
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: Cache | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
         inputs_embeds: torch.FloatTensor | None = None,
         pixel_values: torch.Tensor | None = None,
         pixel_values_videos: torch.FloatTensor | None = None,
@@ -1316,6 +1318,8 @@ class QEffQwen3_5MoeModel(Qwen3_5MoeModel):
             position_ids=position_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             cache_position=cache_position,
             **kwargs,
@@ -1677,6 +1681,8 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: Cache | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
         inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         pixel_values: torch.Tensor | None = None,
@@ -1746,6 +1752,8 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             position_ids=position_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             cache_position=cache_position,
             mm_token_type_ids=mm_token_type_ids,
@@ -1876,8 +1884,8 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             return spec
 
         lang = []
-        if comp_ctx_lengths_prefill is not None:
-            for comp_ctx in comp_ctx_lengths_prefill:
+        if comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
+            for comp_ctx in comp_ctx_lengths_prefill or []:
                 lang.append(_build_lang_spec(prefill_seq_len, comp_ctx_len=comp_ctx))
             for comp_ctx in comp_ctx_lengths_decode or []:
                 lang.append(_build_lang_spec(1, comp_ctx_len=comp_ctx))
@@ -2021,7 +2029,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
         if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int64)
 
         inputs = {}
         if kv_offload:
