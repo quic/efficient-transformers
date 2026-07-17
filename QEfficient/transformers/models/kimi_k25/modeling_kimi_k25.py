@@ -997,27 +997,115 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
     ):
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
         comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+        compiler_options.pop("img_size", None)
         num_patches = compiler_options.pop("num_patches", None)
+        height = compiler_options.pop("height", None)
+        width = compiler_options.pop("width", None)
         h = compiler_options.pop("h", None)
         w = compiler_options.pop("w", None)
+        num_frames = compiler_options.pop("num_frames", 1)
         num_image_tokens = compiler_options.pop("num_image_tokens", None)
+        mm_processor_kwargs = compiler_options.pop("mm_processor_kwargs", None) or {}
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         ctx_len = ctx_len if ctx_len else constants.ONNX_EXPORT_CTX_LEN
 
-        num_patches = num_patches if num_patches is not None else constants.KIMI_NUM_PATCHES
-        h = h if h is not None else constants.KIMI_IMAGE_HEIGHT
-        w = w if w is not None else constants.KIMI_IMAGE_WIDTH
-        num_image_tokens = num_image_tokens if num_image_tokens is not None else constants.KIMI_NUM_IMAGE_TOKENS
+        def normalize_list(value, default):
+            if value is None:
+                return [default]
+            if isinstance(value, int):
+                return [value]
+            return list(value)
 
-        vision = [
-            {
-                "num_patches": num_patches,
-                "h": h,
-                "w": w,
-                "num_image_tokens": num_image_tokens,
-            }
-        ]
+        def normalize_sized_list(value, count, name):
+            if value is None:
+                return None
+            if isinstance(value, int):
+                return [value] * count
+            value = list(value)
+            if len(value) != count:
+                raise ValueError(f"Expected {name} to contain {count} entries, got {len(value)}.")
+            return value
+
+        def validate_dimension_lists(heights, widths, height_name, width_name):
+            if len(heights) != len(widths):
+                raise ValueError(
+                    f"Expected {height_name} and {width_name} to contain the same number of entries, "
+                    f"got {len(heights)} and {len(widths)}."
+                )
+
+        patch_size = getattr(self.config.vision_config, "patch_size", constants.KIMI_PATCH_SIZE)
+        merge_kernel_size = getattr(self.config.vision_config, "merge_kernel_size", (2, 2))
+        if isinstance(merge_kernel_size, int):
+            kernel_height = kernel_width = merge_kernel_size
+            merge_kernel_size = (merge_kernel_size, merge_kernel_size)
+        else:
+            kernel_height, kernel_width = merge_kernel_size
+
+        if h is not None or w is not None:
+            heights = normalize_list(h, constants.KIMI_IMAGE_HEIGHT)
+            widths = normalize_list(w, constants.KIMI_IMAGE_WIDTH)
+            validate_dimension_lists(heights, widths, "h", "w")
+        elif height is not None or width is not None:
+            pixel_heights = normalize_list(height, constants.KIMI_IMAGE_HEIGHT * patch_size)
+            pixel_widths = normalize_list(width, constants.KIMI_IMAGE_WIDTH * patch_size)
+            validate_dimension_lists(pixel_heights, pixel_widths, "height", "width")
+
+            in_patch_limit = mm_processor_kwargs.get("in_patch_limit", 16384)
+            patch_limit_on_one_side = mm_processor_kwargs.get("patch_limit_on_one_side", 512)
+            factor_height = kernel_height * patch_size
+            factor_width = kernel_width * patch_size
+            heights = []
+            widths = []
+            for pixel_height, pixel_width in zip(pixel_heights, pixel_widths):
+                scale = min(
+                    1.0,
+                    math.sqrt(
+                        in_patch_limit / (max(1.0, pixel_width // patch_size) * max(1.0, pixel_height // patch_size))
+                    ),
+                    patch_limit_on_one_side * patch_size / pixel_width,
+                    patch_limit_on_one_side * patch_size / pixel_height,
+                )
+                resized_height = min(max(1, int(pixel_height * scale)), patch_limit_on_one_side * patch_size)
+                resized_width = min(max(1, int(pixel_width * scale)), patch_limit_on_one_side * patch_size)
+                pad_height = (factor_height - resized_height % factor_height) % factor_height
+                pad_width = (factor_width - resized_width % factor_width) % factor_width
+                heights.append((resized_height + pad_height) // patch_size)
+                widths.append((resized_width + pad_width) // patch_size)
+        else:
+            heights = [constants.KIMI_IMAGE_HEIGHT]
+            widths = [constants.KIMI_IMAGE_WIDTH]
+
+        num_frames = normalize_sized_list(1 if num_frames is None else num_frames, len(heights), "num_frames")
+        explicit_num_patches = normalize_sized_list(num_patches, len(heights), "num_patches")
+        explicit_num_image_tokens = normalize_sized_list(num_image_tokens, len(heights), "num_image_tokens")
+
+        vision = []
+        max_num_image_tokens = 0
+        for index, (height, width, frames) in enumerate(zip(heights, widths, num_frames)):
+            if height % kernel_height != 0 or width % kernel_width != 0:
+                raise ValueError(
+                    f"Kimi image grid h={height}, w={width} must be divisible by merge_kernel_size={merge_kernel_size}."
+                )
+
+            computed_num_patches = height * width * frames
+            computed_num_image_tokens = (height // kernel_height) * (width // kernel_width) * frames
+            resolved_num_patches = (
+                explicit_num_patches[index] if explicit_num_patches is not None else computed_num_patches
+            )
+            resolved_num_image_tokens = (
+                explicit_num_image_tokens[index] if explicit_num_image_tokens is not None else computed_num_image_tokens
+            )
+            max_num_image_tokens = max(max_num_image_tokens, resolved_num_image_tokens)
+
+            vision.append(
+                {
+                    "num_patches": resolved_num_patches,
+                    "h": height,
+                    "w": width,
+                    "num_image_tokens": resolved_num_image_tokens,
+                }
+            )
 
         if comp_ctx_lengths_prefill is not None:
             lang = []
@@ -1027,7 +1115,7 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
                     "batch_size": 1 if continuous_batching else batch_size,
                     "seq_len": prefill_seq_len,
                     "ctx_len": ctx_len,
-                    "num_image_tokens": num_image_tokens,
+                    "num_image_tokens": max_num_image_tokens,
                 }
                 if continuous_batching:
                     lang_prefill["full_batch_size"] = kv_cache_batch_size
@@ -1043,7 +1131,7 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
                     "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
-                    "num_image_tokens": num_image_tokens,
+                    "num_image_tokens": max_num_image_tokens,
                 }
 
                 if continuous_batching:
@@ -1054,23 +1142,11 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
                 lang.append(lang_decode)
 
         else:
-            lang_decode = {
-                "batch_size": full_batch_size if continuous_batching else batch_size,
-                "seq_len": 1,
-                "ctx_len": ctx_len,
-                "num_image_tokens": num_image_tokens,
-            }
-
-            if continuous_batching:
-                lang_decode["full_batch_size"] = kv_cache_batch_size
-            else:
-                lang_decode["batch_size"] = kv_cache_batch_size
-
             lang_prefill = {
                 "batch_size": 1 if continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
-                "num_image_tokens": num_image_tokens,
+                "num_image_tokens": max_num_image_tokens,
             }
             if continuous_batching:
                 lang_prefill["full_batch_size"] = kv_cache_batch_size
@@ -1078,6 +1154,18 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
                 lang_prefill["batch_size"] = kv_cache_batch_size
             if full_batch_size:
                 lang_prefill["full_batch_exec_size"] = full_batch_size
+
+            lang_decode = {
+                "batch_size": full_batch_size if continuous_batching else batch_size,
+                "seq_len": 1,
+                "ctx_len": ctx_len,
+                "num_image_tokens": max_num_image_tokens,
+            }
+
+            if continuous_batching:
+                lang_decode["full_batch_size"] = kv_cache_batch_size
+            else:
+                lang_decode["batch_size"] = kv_cache_batch_size
 
             lang = [lang_prefill, lang_decode]
 
@@ -1088,6 +1176,4 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
             specializations["lang"] = lang
             return specializations, compiler_options
         else:
-            lang[0].pop("vision_size")
-            lang[1].pop("vision_size")
-            return lang, compiler_options
+            return [{**vision_spec, **lang_spec} for vision_spec in vision for lang_spec in lang], compiler_options
