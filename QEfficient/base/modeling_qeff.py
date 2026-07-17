@@ -40,6 +40,7 @@ from QEfficient.customop.dynamo_ops import DYNAMO_CUSTOM_OP_TABLE
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
+    OptimizedMoETransform,
     ReplicateKVHeadTransform,
 )
 from QEfficient.utils import (
@@ -492,7 +493,6 @@ class QEFFBaseModel(ABC):
         prefill_seq_len: Optional[int] = None,
         **export_kwargs,
     ) -> str:
-        reject_legacy_moe_prefill_packed_chunk_size(export_kwargs)
         """
         Export the PyTorch model to ONNX and apply ONNX transforms
 
@@ -679,7 +679,6 @@ class QEFFBaseModel(ABC):
         kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ):
-        reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
         kwargs = {
             "offload_pt_weights": offload_pt_weights,
             "use_onnx_subfunctions": use_onnx_subfunctions,
@@ -749,7 +748,6 @@ class QEFFBaseModel(ABC):
         kv_cache_prefix: Optional[str] = None,
         **export_kwargs,
     ) -> str:
-        reject_legacy_moe_prefill_packed_chunk_size(export_kwargs)
         cache_probe = export_kwargs.pop("_layerwise_cache_probe", False)
         idx = int(QEFFBaseModel._start)
         end_idx = int(getattr(QEFFBaseModel, "_end", idx + 1))
@@ -977,9 +975,6 @@ class QEFFBaseModel(ABC):
         **compiler_options,
     ):
         # Apply the transformations that are dependent on compilation parameters
-        from QEfficient.transformers.models.pytorch_transforms import OptimizedMoETransform
-
-        reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
         qaic_config = qaic_config if qaic_config is not None else getattr(self.model, "qaic_config", None)
 
         model_config = getattr(self.model, "config", None) or getattr(
@@ -1015,6 +1010,7 @@ class QEFFBaseModel(ABC):
         if num_cores is None:
             num_cores = constants.DEFAULT_AIC_NUM_CORES
         prefill_seq_len = compiler_options.get("prefill_seq_len", seq_len)
+        reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
         self.model, _ = OptimizedMoETransform.apply(
             self.model,
             prefill_only=bool(compiler_options.get("prefill_only", False)),
@@ -1079,7 +1075,6 @@ class QEFFBaseModel(ABC):
         """
 
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
-        reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
         if qaic_config is None and hasattr(self, "model"):
             qaic_config = getattr(self.model, "qaic_config", None)
 
