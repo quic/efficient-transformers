@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 from collections import defaultdict
+from functools import partial
 from pathlib import Path
 from typing import List, Optional, Tuple, Type, Union
 
@@ -38,6 +39,14 @@ from QEfficient.customop.ctx_scatter_gather import (
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    MoEProfile,
+    MoEWeights,
+    QEffMoEBlockMixin,
+    build_canonical_expert_weights,
+    silu_glu_mlp,
+)
 from QEfficient.utils import constants
 
 _FP16_CLAMP_MIN = -65504.0
@@ -427,95 +436,62 @@ def _cumsum_scatter_gather_update_expert_blocked(
     return expert_out
 
 
-class QEffPrefillChunkedGemma4TextExperts(Gemma4TextExperts):
-    supports_moe_prefill_blocking = True
+class QEffGemma4TextMoeBlock(QEffMoEBlockMixin, nn.Module):
+    supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM)
+    supports_moe_prefill_blocking = False
+    supports_static_moe_prefill_chunks = False
+    supports_moe_decode_bmm = True
 
-    def __qeff_init__(self):
-        H = self.hidden_dim
-        # Derive gather-friendly split projections from the checkpoint's fused
-        # gate_up_proj/down_proj, without changing on-disk checkpoint format.
-        gate_up_proj = self.gate_up_proj.detach()
-        down_proj = self.down_proj.detach()
-        self.gate_proj_t = gate_up_proj[:, : self.intermediate_dim, :].transpose(1, 2)
-        self.up_proj_t = gate_up_proj[:, self.intermediate_dim :, :].transpose(1, 2)
-        self.num_nsp = getattr(self, "expert_blocking_num_nsp", self.num_experts)
-        if self.num_experts % self.num_nsp != 0:
-            raise ValueError(
-                f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({self.num_nsp})"
-            )
-        self.local_experts = self.num_experts // self.num_nsp
-        self.W_g = nn.Parameter(
-            self.gate_proj_t.view(self.local_experts, self.num_nsp, H, -1).transpose(0, 1).contiguous().clone(),
-            requires_grad=False,
-        )
-        self.W_u = nn.Parameter(
-            self.up_proj_t.view(self.local_experts, self.num_nsp, H, -1).transpose(0, 1).contiguous().clone(),
-            requires_grad=False,
-        )
-        self.W_d = nn.Parameter(
-            down_proj.transpose(1, 2)
-            .view(self.local_experts, self.num_nsp, -1, H)
-            .transpose(0, 1)
-            .contiguous()
-            .clone(),
-            requires_grad=False,
-        )
-
-    def forward(
+    def __init__(
         self,
-        hidden_states: torch.Tensor,
-        top_k_index: torch.Tensor,
-        top_k_weights: torch.Tensor,
-    ) -> torch.Tensor:
-        # Supports [T, H] or [B, S, H]
-        if hidden_states.dim() == 3:
-            B, S, H = hidden_states.shape
-            x = hidden_states.view(B * S, H)
-            reshape_back = True
-        else:
-            T, H = hidden_states.shape
-            x = hidden_states
-            reshape_back = False
+        router: nn.Module,
+        experts: nn.Module,
+        pre_feedforward_layernorm: nn.Module,
+        post_feedforward_layernorm: nn.Module,
+    ) -> None:
+        super().__init__()
+        self.router = router
+        self.experts = experts
+        self.pre_feedforward_layernorm = pre_feedforward_layernorm
+        self.post_feedforward_layernorm = post_feedforward_layernorm
 
-        T = x.shape[0]
-
-        num_packed_chunks = getattr(self, "expert_blocking_packed_chunk_size", T)
-
-        # Build dense routing weights [T, E] from top-k indices/weights
-        expert_weights = torch.zeros(
-            T,
-            self.num_experts,
-            dtype=top_k_weights.dtype,
-            device=top_k_weights.device,
+    def build_moe_weights(self) -> MoEWeights:
+        if getattr(self, "moe_weights", None) is not None:
+            return self.moe_weights
+        self.moe_weights = build_canonical_expert_weights(
+            gate_up=self.experts.gate_up_proj,
+            down=self.experts.down_proj,
+            fused=True,
+            fused_split_dim=1,
+            transpose_gate_up=True,
+            transpose_down=True,
         )
-        expert_weights.scatter_add_(1, top_k_index, top_k_weights)
-        expert_weights = expert_weights.to(x.dtype)
-        expert_out = x.new_zeros((self.num_nsp, T, H))
-        rw = (
-            expert_weights.transpose(0, 1)
-            .contiguous()
-            .view(self.local_experts, self.num_nsp, T)
-            .transpose(0, 1)
-            .contiguous()
-        )
-        routing_weights_unsqueezed = rw.unsqueeze(-1)
-        for slot in range(self.local_experts):
-            T2Ei = rw[:, slot, :] > 0
-            expert_out = _cumsum_scatter_gather_update_expert_blocked(
-                x=x,
-                T2Ei=T2Ei,
-                W_g=self.W_g[:, slot],
-                W_u=self.W_u[:, slot],
-                W_d=self.W_d[:, slot],
-                routing_weight=routing_weights_unsqueezed[:, slot],
-                expert_out=expert_out,
-                act_fn=self.act_fn,
-                num_packed_chunks=num_packed_chunks,
-            )
-        expert_output = torch.einsum("ijk->jk", expert_out)
-        if reshape_back:
-            return expert_output.view(B, S, H)
-        return expert_output
+        self.all_gate_proj = nn.Parameter(self.moe_weights.gate, requires_grad=False)
+        self.all_up_proj = nn.Parameter(self.moe_weights.up, requires_grad=False)
+        self.all_down_proj = nn.Parameter(self.moe_weights.down, requires_grad=False)
+        return self.moe_weights
+
+    def get_moe_weights(self) -> MoEWeights:
+        if getattr(self, "moe_weights", None) is None:
+            self.build_moe_weights()
+        return self.moe_weights
+
+    @property
+    def moe_profile(self) -> MoEProfile:
+        return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.experts.act_fn))
+
+    def route(self, x: torch.Tensor):
+        router_probabilities, top_k_weights, top_k_index = self.router(x)
+        return (top_k_index, top_k_weights.to(x.dtype)), router_probabilities
+
+    def forward(self, hidden_states: torch.Tensor):
+        B, S, H = hidden_states.shape
+        x = hidden_states.reshape(B * S, H)
+        routing, _ = self.route(x)
+        x = self.pre_feedforward_layernorm(x)
+        out = self.execute_moe_flavour(x, routing)
+        out = out.reshape(B, S, H)
+        return self.post_feedforward_layernorm(out)
 
 
 class QEffGemma4VisionAttention(Gemma4VisionAttention):
@@ -676,6 +652,15 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
 
 
 class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
+    def __qeff_init__(self):
+        if not getattr(self, "enable_moe_block", False) or hasattr(self, "moe_block"):
+            return
+        router = self._modules.pop("router")
+        experts = self._modules.pop("experts")
+        pre_norm = self._modules.pop("pre_feedforward_layernorm_2")
+        post_norm = self._modules.pop("post_feedforward_layernorm_2")
+        self.moe_block = QEffGemma4TextMoeBlock(router, experts, pre_norm, post_norm)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -708,14 +693,10 @@ class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
         hidden_states = self.mlp(hidden_states)
 
         if self.enable_moe_block:
+            if not hasattr(self, "moe_block"):
+                self.__qeff_init__()
             hidden_states_1 = self.post_feedforward_layernorm_1(hidden_states)
-
-            hidden_states_flat = residual.reshape(-1, residual.shape[-1])
-            _, top_k_weights, top_k_index = self.router(hidden_states_flat)
-            hidden_states_2 = self.pre_feedforward_layernorm_2(hidden_states_flat)
-            hidden_states_2 = self.experts(hidden_states_2, top_k_index, top_k_weights)
-            hidden_states_2 = hidden_states_2.reshape(residual.shape)
-            hidden_states_2 = self.post_feedforward_layernorm_2(hidden_states_2)
+            hidden_states_2 = self.moe_block(residual)
             hidden_states = hidden_states_1 + hidden_states_2
 
         hidden_states = self.post_feedforward_layernorm(hidden_states)

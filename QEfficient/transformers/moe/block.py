@@ -39,7 +39,6 @@ from QEfficient.transformers.moe.weights import MoEWeights
 class QEffMoEBlockMixin:
     # Default profile; models with non-standard activations override this.
     moe_profile: MoEProfile = SILU_GLU_PROFILE
-    supported_moe_flavours: Tuple[MoEFlavour, ...] = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM)
     # Set by OptimizedMoETransform at export time; decode is the safe default.
     _moe_flavour: MoEFlavour = MoEFlavour.DECODE_BMM
     # Whether forward returns (out, router_logits) to match the HF MoE convention.
@@ -48,6 +47,15 @@ class QEffMoEBlockMixin:
     expert_parallel_num_nsp: Optional[int] = None
     expert_parallel_packed_chunk_size: Optional[int] = None
     expert_parallel_num_packed_chunks: int = 1
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if "supported_moe_flavours" not in cls.__dict__:
+            raise TypeError(f"{cls.__name__} must explicitly define supported_moe_flavours")
+        supported_moe_flavours = tuple(MoEFlavour(flavour) for flavour in cls.supported_moe_flavours)
+        if not supported_moe_flavours:
+            raise TypeError(f"{cls.__name__}.supported_moe_flavours must not be empty")
+        cls.supported_moe_flavours = supported_moe_flavours
 
     @property
     def expert_blocking_num_nsp(self) -> Optional[int]:
@@ -84,7 +92,9 @@ class QEffMoEBlockMixin:
         return out
 
     def get_supported_moe_flavours(self) -> Tuple[MoEFlavour, ...]:
-        return tuple(getattr(self, "supported_moe_flavours", QEffMoEBlockMixin.supported_moe_flavours))
+        if not hasattr(self, "supported_moe_flavours"):
+            raise TypeError(f"{type(self).__name__} must explicitly define supported_moe_flavours")
+        return tuple(self.supported_moe_flavours)
 
     # ---- orchestration (shared) ----------------------------------------------
     def execute_moe_flavour(self, x: torch.Tensor, routing) -> torch.Tensor:
