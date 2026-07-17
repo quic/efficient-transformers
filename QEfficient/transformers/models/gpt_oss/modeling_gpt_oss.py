@@ -150,12 +150,29 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
 class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
     supports_moe_prefill_blocking = True
 
+    def _ensure_blocked_expert_weights(self, num_nsp: int) -> None:
+        """Rebuild blocked expert tensors when NSP partitioning changes."""
+        num_experts = self.experts.num_experts
+        local_experts = num_experts // num_nsp
+        expected_wg_shape = (num_nsp, local_experts)
+
+        has_blocked_weights = all(hasattr(self, name) for name in ("W_g", "W_u", "W_d", "b_g", "b_u", "b_d"))
+        if has_blocked_weights and self.W_g.shape[:2] == expected_wg_shape:
+            return
+
+        # Ensure split gate/up aliases exist before blocked views are materialized.
+        if not hasattr(self.experts, "gate_proj") and hasattr(self.experts, "__qeff_init__"):
+            self.experts.__qeff_init__()
+        self.expert_blocking_num_nsp = num_nsp
+        self.__qeff_init__()
+
     def __qeff_init__(self):
         num_experts = self.experts.num_experts
         num_nsp = getattr(self, "expert_blocking_num_nsp", num_experts)
         local_experts = num_experts // num_nsp
         expert_dim = self.experts.expert_dim
-        hidden_size = self.hidden_size
+        hidden_size = getattr(self, "hidden_size", self.experts.hidden_size)
+        self.hidden_size = hidden_size
 
         self.W_g = nn.Parameter(
             self.experts.gate_proj.view(local_experts, num_nsp, hidden_size, expert_dim)
@@ -218,6 +235,7 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         if num_experts % num_nsp != 0:
             raise ValueError(f"num_experts ({num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})")
 
+        self._ensure_blocked_expert_weights(num_nsp)
         local_experts = num_experts // num_nsp
         routing_weights_by_expert = (
             routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()

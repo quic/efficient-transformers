@@ -325,8 +325,6 @@ def test_gptoss_blocked_forward_parity():
 
     blocks_orig = [m for _, m in model.named_modules() if m.__class__.__name__ == "GptOssMLP"]
     assert blocks_orig
-    for block in blocks_orig:
-        block.hidden_size = block.experts.hidden_size
 
     x = torch.randn(1, 8, config.hidden_size)
     with torch.no_grad():
@@ -339,7 +337,6 @@ def test_gptoss_blocked_forward_parity():
     assert blocks_chunked
     blocks_chunked[0].expert_blocking_num_nsp = 2
     blocks_chunked[0].expert_blocking_packed_chunk_size = 256
-    blocks_chunked[0].__qeff_init__()
 
     with torch.no_grad():
         blocked, _ = blocks_chunked[0].forward(x)
