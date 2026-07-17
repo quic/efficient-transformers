@@ -1324,11 +1324,6 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
                 export_dir=export_dir,
                 offload_pt_weights=offload_pt_weights,
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
-                prefill_only=prefill_only,
-                enable_chunking=enable_chunking,
-                num_cores=kwargs.get("num_cores", constants.DEFAULT_AIC_NUM_CORES),
-                qaic_config=qaic_config,
-                prefill_seq_len=prefill_seq_len,
             )
 
     def compile(
@@ -2732,18 +2727,12 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         output_names = self.model.get_output_names()
         # Prefix only the LLM KV-cache retained buffers (vision/multimodal buffers untouched).
         output_names = apply_kv_cache_prefix(output_names, validate_kv_cache_prefix(kv_cache_prefix))
-        qaic_config = kwargs.pop("qaic_config", getattr(self.model, "qaic_config", None))
         return self._export(
             inputs,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=use_onnx_subfunctions,
-            prefill_only=prefill_only,
-            enable_chunking=enable_chunking,
-            num_cores=kwargs.get("num_cores", constants.DEFAULT_AIC_NUM_CORES),
-            qaic_config=qaic_config,
-            prefill_seq_len=prefill_seq_len,
         )
 
     def compile(
@@ -4061,11 +4050,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 export_dir=export_dir,
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
-                prefill_only=prefill_only,
-                enable_chunking=enable_chunking,
-                num_cores=num_cores,
-                qaic_config=qaic_config,
-                prefill_seq_len=prefill_seq_len,
             )
 
     def build_prefill_specialization(

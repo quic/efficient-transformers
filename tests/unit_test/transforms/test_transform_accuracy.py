@@ -22,6 +22,7 @@ All tests run on CPU only, using tiny in-memory models.
 """
 
 import copy
+import inspect
 import logging
 from types import MethodType, SimpleNamespace
 
@@ -1777,6 +1778,14 @@ class TestSplitOptimizedMoETransform:
         assert qeff.export_kwargs["enable_chunking"] is True
         assert qeff.export_kwargs["num_cores"] == 2
         assert qeff.export_kwargs["prefill_seq_len"] == 32
+
+    def test_base_export_signature_does_not_expose_transform_compile_kwargs(self):
+        from QEfficient.base.modeling_qeff import QEFFBaseModel
+
+        signature = inspect.signature(QEFFBaseModel._export)
+        removed_kwargs = {"prefill_only", "enable_chunking", "num_cores", "qaic_config", "prefill_seq_len"}
+
+        assert removed_kwargs.isdisjoint(signature.parameters)
 
     def test_get_onnx_path_runs_optimized_moe_hook_before_export(self, monkeypatch, tmp_path):
         from QEfficient.base.modeling_qeff import QEFFBaseModel

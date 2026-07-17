@@ -363,11 +363,6 @@ class QEFFBaseModel(ABC):
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
-        prefill_only: Optional[bool] = False,
-        enable_chunking: Optional[bool] = False,
-        num_cores: Optional[int] = constants.DEFAULT_AIC_NUM_CORES,
-        qaic_config: Optional[dict] = None,
-        prefill_seq_len: Optional[int] = None,
         **export_kwargs,
     ) -> str:
         reject_legacy_moe_prefill_packed_chunk_size(export_kwargs)
