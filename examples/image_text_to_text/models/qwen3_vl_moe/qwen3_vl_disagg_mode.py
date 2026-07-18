@@ -35,11 +35,11 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
-PREFILL_SEQ_LEN = 128
-CTX_LEN = 4096 * 1
-BS = 2
+PREFILL_SEQ_LEN = 1024
+CTX_LEN = 2048 * 8
+BS = 256
 
-NUM_KV_BLOCKS = 2
+NUM_KV_BLOCKS = 4
 NUM_Q_BLOCKS = 2
 HEAD_BLOCK_SIZE = 8
 PREFILL_BLOCK_CHUNKS = None
@@ -69,6 +69,7 @@ def _qaic_config() -> dict:
         return cfg
     cfg["prefill_block_chunks"] = PREFILL_BLOCK_CHUNKS
     cfg["prefill_blocking_mode"] = PREFILL_MODE
+    cfg["prefill_n_rep_chunk"] = PREFILL_N_REP_CHUNK
     return cfg
 
 
@@ -123,7 +124,10 @@ decode_qpc_path = qeff_model.compile(
 # - head parallel offline prefill - pass prefill_blocking_mode: “qkv”, prefill_block_chunks: 2
 # - online prefill - pass prefill_blocking_mode: “online”, prefill_block_chunks: 2
 PREFILL_MODE = "online"
-PREFILL_BLOCK_CHUNKS = 2
+PREFILL_QL_CHUNK = 128
+PREFILL_BLOCK_CHUNKS = -(-PREFILL_SEQ_LEN // PREFILL_QL_CHUNK)
+PREFILL_N_REP_CHUNK = 4
+MOE_PREFILL_PACKED_CHUNK_SIZE = 256
 prefill_qaic_config = _qaic_config()
 print("prefill", prefill_qaic_config)
 
@@ -132,6 +136,7 @@ prefill_qpc_path = qeff_model.compile(
     batch_size=1,
     prefill_seq_len=PREFILL_SEQ_LEN,
     ctx_len=CTX_LEN,
+    moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
     height=354,
     width=536,
     num_cores=16,
@@ -251,14 +256,14 @@ if not skip_vision:
     lang_inputs["vision_embeds"] = vision_outputs["vision_embeds"]
     lang_inputs["deepstack_features"] = vision_outputs["deepstack_features"]
 
-# RUN prefill
+# RUN prefill (batch_size=1; inputs are sliced to first batch item since all are identical)
 lang_start = perf_counter()
 lang_prefill_session.set_buffers(vision_outputs)
 all_outputs = []
 chunk_inputs = lang_inputs.copy()
 for i in range(num_chunks):
-    chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
-    chunk_inputs["position_ids"] = lang_inputs["position_ids"][..., i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
+    chunk_inputs["input_ids"] = lang_inputs["input_ids"][0:1, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
+    chunk_inputs["position_ids"] = lang_inputs["position_ids"][:, 0:1, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
     outputs = lang_prefill_session.run(chunk_inputs)
     for i in range(config.text_config.num_hidden_layers):
         chunk_inputs[f"past_key.{i}"] = outputs[f"past_key.{i}_RetainedState"]
@@ -267,24 +272,35 @@ for i in range(num_chunks):
 prefill_time = perf_counter() - lang_start + vision_end - vision_start
 print(f"Prefill time : {prefill_time:.2f} secs")
 
-all_outputs.append(np.argmax(outputs["logits"]))
+# Next token from batch=1 prefill; position for all BS decode requests
+next_token_id = np.argmax(outputs["logits"])  # scalar
+all_outputs.append(next_token_id)
+next_pos = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
+
+# Tile KV from prefill [1, num_kv_heads, ctx_len, head_dim]
+# → batch-fold decode layout [1, BS*num_kv_heads, ctx_len, head_dim]
 decode_inputs = {
-    "input_ids": np.argmax(outputs["logits"]).reshape(1, 1),
-    "position_ids": np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1,
+    "input_ids": np.full((BS, 1), next_token_id, dtype=lang_inputs["input_ids"].dtype),
+    "position_ids": next_pos,
 }
 
-for i in range(config.text_config.num_hidden_layers):
-    decode_inputs[f"past_key.{i}"] = outputs[f"past_key.{i}_RetainedState"]
-    decode_inputs[f"past_value.{i}"] = outputs[f"past_value.{i}_RetainedState"]
+for layer_idx in range(config.text_config.num_hidden_layers):
+    b, h, c, d = outputs[f"past_key.{layer_idx}_RetainedState"].shape
+    decode_inputs[f"past_key.{layer_idx}"] = outputs[f"past_key.{layer_idx}_RetainedState"].reshape(1, b * h, c, d)
+    decode_inputs[f"past_value.{layer_idx}"] = outputs[f"past_value.{layer_idx}_RetainedState"].reshape(1, b * h, c, d)
+
+# import ipdb; ipdb.set_trace()
 
 st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
 print(f"time for first run of decode with KV as input = {perf_counter() - st} sec\n")
 
-all_outputs.append(np.argmax(decode_out["logits"]))
-pos_id = np.max(decode_inputs["position_ids"], axis=-1, keepdims=True) + 1
+exit(0)
+
+all_outputs.append(np.argmax(decode_out["logits"][0]))  # track batch 0
+pos_id = decode_inputs["position_ids"] + 1  # [BS, 1]
 loop_decode_inputs = {
-    "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
+    "input_ids": np.argmax(decode_out["logits"], axis=-1),  # [BS, 1]
     "position_ids": pos_id,
 }
 
@@ -296,7 +312,7 @@ for i in range(config.text_config.num_hidden_layers):
 st = perf_counter()
 for i in range(generation_len - 2):
     decode_out = lang_decode_session.run(loop_decode_inputs)
-    all_outputs.append(np.argmax(decode_out["logits"]))
+    all_outputs.append(np.argmax(decode_out["logits"][0]))
     pos_id += 1
     for j in range(config.text_config.num_hidden_layers):
         loop_decode_inputs[f"past_key.{j}"] = decode_out[f"past_key.{j}_RetainedState"]
