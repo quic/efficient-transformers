@@ -66,6 +66,7 @@ class AttentionBlockingConfig:
     batch_fold: Optional[bool] = False
     prefill_block_chunks: Optional[int] = None
     prefill_blocking_mode: Optional[str] = None  # "q", "kv", "qkv" or "online"
+    prefill_n_rep_chunk: Optional[int] = None
     ctx_len: Optional[int] = None
 
 
@@ -337,6 +338,7 @@ def prefill_blocked_attention_interface(
         sliding_window=sliding_window,
         sinks=sinks,
         configured_split=blocking_config.kv_blocking_headpar_split,
+        n_rep_chunk=blocking_config.prefill_n_rep_chunk,
         ctx_len=blocking_config.ctx_len,
         **kwargs,
     )
