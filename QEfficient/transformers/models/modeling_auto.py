@@ -1709,6 +1709,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 comp_ctx_lengths=self.comp_ctx_lengths_decode,
                 prefill_seq_len=prefill_seq_len,
                 batch_fold=batch_fold,
+                batch_size=kwargs.get("batch_size", None),
             )
             dynamic_axes = self.model.get_onnx_dynamic_axes(
                 kv_offload=True,
@@ -2200,6 +2201,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
                 offload_pt_weights=offload_pt_weights,
+                batch_size=batch_size,
             )
             if layerwise_cache_probe:
                 return self.lang_model.onnx_path

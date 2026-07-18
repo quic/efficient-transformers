@@ -1187,31 +1187,33 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         continuous_batching: bool = False,
         **kwargs,
     ):
+        bs = kwargs.get("batch_size", constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE)
+
         prefill_seq_len = kwargs.get("prefill_seq_len")
         if prefill_seq_len is None:
             prefill_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         prefill_seq_len = int(prefill_seq_len)
         inputs_shapes = {}
-        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, prefill_seq_len)
+        inputs_shapes["input_ids"] = (bs, prefill_seq_len)
         # vision_size = 1024
         vision_size = 187
         inputs_shapes["vision_embeds"] = (
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             vision_size,
             self.model.config.vision_config.out_hidden_size,
         )
         inputs_shapes["image_grid_thw"] = (1, 1, 22, 34)
         inputs_shapes["position_ids"] = (
             3,
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             prefill_seq_len,
         )
         inputs_shapes["pixel_values"] = (748, 1536)
         inputs_shapes["image_idx"] = (1, 1)
-        inputs_shapes["image_sizes"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 2)
+        inputs_shapes["image_sizes"] = (bs, 2)
         inputs_shapes["deepstack_features"] = (
             len(self.config.vision_config.deepstack_visual_indexes),
-            constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+            bs,
             vision_size,
             self.model.config.vision_config.out_hidden_size,
         )
@@ -1230,7 +1232,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             (
                 torch.arange(prefill_seq_len, dtype=torch.int64)
                 .view(1, prefill_seq_len)
-                .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
+                .repeat(bs, 1)
             )
             .unsqueeze(0)
             .repeat(4, 1, 1)
@@ -1241,7 +1243,6 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         )
         # Add data for KV
 
-        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         batch_fold = kwargs.pop("batch_fold", False)
