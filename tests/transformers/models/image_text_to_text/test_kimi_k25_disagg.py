@@ -6,20 +6,14 @@
 # ----------------------------------------------------------------------------
 
 import copy
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np
 import pytest
+import requests
 import torch
-from test_kimi_k25 import (
-    _clone_inputs,
-    _decode_tokens,
-    _greedy_generate_hf,
-    _has_qaic_runtime_access,
-    _prepare_inputs,
-    _resolve_model_path,
-    _set_deterministic,
-)
+from PIL import Image
 
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -37,6 +31,12 @@ from QEfficient.utils.load_kimi_utils import (
 from QEfficient.utils.load_kimi_utils import (
     prepare_config as _prepare_config,
 )
+from QEfficient.utils.load_kimi_utils import (
+    resolve_model_path as _resolve_model_path,
+)
+from QEfficient.utils.load_kimi_utils import (
+    set_deterministic as _set_deterministic,
+)
 
 PREFILL_SEQ_LEN = 512
 CTX_LEN = 2048
@@ -44,6 +44,87 @@ BATCH_SIZE = 1
 GENERATION_LEN = 10
 NUM_VISION_LAYERS = 2
 NUM_TEXT_LAYERS = 2
+IMAGE_URL = "https://huggingface.co/moonshotai/Kimi-K2.5/resolve/main/figures/kimi-logo.png"
+TEXT_PROMPT = "Describe this image."
+
+
+def _has_qaic_runtime_access() -> bool:
+    try:
+        _ = QAICInferenceSession
+    except Exception:
+        return False
+    try:
+        import qaicrt
+
+        _ctx = qaicrt.Context()
+        return True
+    except Exception:
+        return False
+
+
+def _prepare_inputs(processor):
+    image = Image.open(BytesIO(requests.get(IMAGE_URL, timeout=30).content)).convert("RGB")
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": image},
+                {"type": "text", "text": TEXT_PROMPT},
+            ],
+        }
+    ]
+    return processor(
+        messages=messages,
+        add_generation_prompt=True,
+        tokenize=False,
+        return_tensors="pt",
+    )
+
+
+def _decode_tokens(tokenizer, token_ids: torch.Tensor) -> str:
+    decoded = tokenizer.batch_decode(token_ids, skip_special_tokens=True)
+    return decoded[0] if decoded else ""
+
+
+def _clone_inputs(inputs):
+    return {k: (v.clone() if torch.is_tensor(v) else copy.deepcopy(v)) for k, v in inputs.items()}
+
+
+def _greedy_generate_hf(model, inputs, max_new_tokens: int):
+    generated_ids = inputs["input_ids"]
+    attention_mask = inputs["attention_mask"]
+    pixel_values = inputs["pixel_values"]
+    grid_thws = inputs["grid_thws"]
+
+    eos_token_id = getattr(model.config, "eos_token_id", None)
+    if eos_token_id is None and hasattr(model.config, "text_config"):
+        eos_token_id = getattr(model.config.text_config, "eos_token_id", None)
+
+    for _ in range(max_new_tokens):
+        outputs = model(
+            input_ids=generated_ids,
+            attention_mask=attention_mask,
+            pixel_values=pixel_values,
+            grid_thws=grid_thws,
+            use_cache=False,
+            return_dict=True,
+        )
+        logits = outputs[0] if isinstance(outputs, tuple) else outputs.logits
+        next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+
+        generated_ids = torch.cat([generated_ids, next_token], dim=1)
+        attention_mask = torch.cat(
+            [
+                attention_mask,
+                torch.ones((attention_mask.shape[0], 1), dtype=attention_mask.dtype, device=attention_mask.device),
+            ],
+            dim=1,
+        )
+
+        if eos_token_id is not None and torch.all(next_token == eos_token_id):
+            break
+
+    return generated_ids[:, -max_new_tokens:]
 
 
 def _assert_onnx_path(onnx_path, label: str) -> Path:
@@ -210,13 +291,13 @@ def _run_disagg_qaic_generation(
     vision_outputs = vision_session.run(_filter_session_inputs(vision_session, vision_inputs))
     vision_session.deactivate()
 
-    image_embeds = vision_outputs.get("image_embeds")
-    assert image_embeds is not None, f"Vision QPC did not return image_embeds. Outputs: {vision_outputs.keys()}"
+    vision_embeds = vision_outputs.get("vision_embeds")
+    assert vision_embeds is not None, f"Vision QPC did not return vision_embeds. Outputs: {vision_outputs.keys()}"
 
     lang_inputs = {
         "input_ids": inputs["input_ids"].astype(np.int64),
         "position_ids": np.where(inputs["attention_mask"] > 0, np.arange(padded_len), -1).astype(np.int64),
-        "image_embeds": image_embeds,
+        "vision_embeds": vision_embeds,
         "image_idx": np.zeros((BATCH_SIZE, 1), dtype=np.int64),
     }
 
@@ -240,7 +321,7 @@ def _run_disagg_qaic_generation(
     decode_inputs = {
         "input_ids": generated_ids[-1],
         "position_ids": np.max(lang_inputs["position_ids"], axis=-1, keepdims=True).astype(np.int64) + 1,
-        "image_embeds": chunk_inputs.get("image_embeds", image_embeds),
+        "vision_embeds": chunk_inputs.get("vision_embeds", vision_embeds),
         "image_idx": chunk_inputs.get("image_idx", np.zeros((BATCH_SIZE, 1), dtype=np.int64)),
     }
     _update_retained_states(decode_inputs, prefill_outputs)

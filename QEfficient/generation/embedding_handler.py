@@ -451,11 +451,7 @@ class VisionHandler:
             buffers = {}
             for output_name, shape in shapes.items():
                 # Create placeholder with appropriate dtype
-                if (
-                    "vision_embeds" in output_name
-                    or "image_embeds" in output_name
-                    or "deepstack_features" in output_name
-                ):
+                if "vision_embeds" in output_name or "deepstack_features" in output_name:
                     buffers[output_name] = np.zeros(shape, dtype=np.float16)
                 else:
                     buffers[output_name] = np.zeros(shape, dtype=np.float32)

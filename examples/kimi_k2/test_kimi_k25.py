@@ -131,7 +131,7 @@ def _greedy_generate_qeff_wrapper(transformed_model, inputs, max_new_tokens: int
     grid_thws = inputs["grid_thws"].to(torch.long)
     h_shape = torch.ones(int(grid_thws[0, 1].item()), dtype=torch.int64)
     w_shape = torch.ones(int(grid_thws[0, 2].item()), dtype=torch.int64)
-    image_embeds = qeff_encoder(inputs["pixel_values"].to(torch.float32), h_shape, w_shape).detach()
+    vision_embeds = qeff_encoder(inputs["pixel_values"].to(torch.float32), h_shape, w_shape).detach()
 
     generated_ids = inputs["input_ids"].to(torch.long)
     attention_mask = inputs["attention_mask"].to(torch.long)
@@ -147,7 +147,7 @@ def _greedy_generate_qeff_wrapper(transformed_model, inputs, max_new_tokens: int
             input_ids=generated_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            image_embeds=image_embeds,
+            vision_embeds=vision_embeds,
             image_idx=torch.zeros((generated_ids.shape[0], 1), dtype=torch.int64),
             past_key_values=past_key_values,
             use_cache=True,
@@ -201,16 +201,28 @@ def check_kimi_k25_pytorch_vs_ai100():
     )
     print("QEFF:", _decode_tokens(tokenizer, qeff_tokens), "\n", qeff_tokens)
 
+    merge_kernel_size = getattr(model.config.vision_config, "merge_kernel_size", (2, 2))
+    if isinstance(merge_kernel_size, int):
+        kernel_height = kernel_width = merge_kernel_size
+        merge_kernel_size = (merge_kernel_size, merge_kernel_size)
+    else:
+        kernel_height, kernel_width = merge_kernel_size
+
+    num_patches = int(inputs["pixel_values"].shape[0])
+    h = int(inputs["grid_thws"][0, 1].item())
+    w = int(inputs["grid_thws"][0, 2].item())
+    num_image_tokens = int(inputs["pixel_values"].shape[0] // (kernel_height * kernel_width))
+
     qeff_model.compile(
         # qaic_config=qaic_config,
         num_devices=1,
         prefill_seq_len=1,
         ctx_len=CTX_LEN,
         mxfp6=False,
-        num_patches=int(inputs["pixel_values"].shape[0]),
-        h=int(inputs["grid_thws"][0, 1].item()),
-        w=int(inputs["grid_thws"][0, 2].item()),
-        num_image_tokens=600,
+        num_patches=num_patches,
+        h=h,
+        w=w,
+        num_image_tokens=num_image_tokens,
         num_cores=16,
     )
 

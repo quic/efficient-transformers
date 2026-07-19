@@ -109,8 +109,23 @@ def main():
     if skip_vision:
         ## TEXT-ONLY MODE ##
 
-        ## STEP 3: Compile Model for Text-Only Execution
-        # Set skip_vision=True to bypass image processing
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": args.prompt},
+                ],
+            },
+        ]
+
+        inputs = processor.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        )
+
         qeff_model.compile(
             qaic_config=qaic_config,
             prefill_seq_len=1,
@@ -123,30 +138,9 @@ def main():
             skip_vision=True,  # Skip vision encoder for text-only inference
             mos=1,
         )
-        ## STEP 4: Prepare Text-Only Input
-        # Create a text-only message without any image
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": args.prompt},
-                ],
-            },
-        ]
 
-        ## STEP 5: Process Input with Chat Template
-        inputs = processor.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-        )
-
-        ## STEP 6: Run Text-Only Inference
         output = qeff_model.generate(inputs=inputs, device_ids=[0], generation_len=10)
 
-        ## STEP 7: Display Results
         print(output.generated_ids)
         print(tokenizer.batch_decode(output.generated_ids))
         print(output)
@@ -154,30 +148,8 @@ def main():
     else:
         ## VISION + TEXT MODE ##
 
-        ## STEP 3: Compile Model for Vision+Text Execution
-        # Do not set skip_vision (defaults to False) to enable image processing
-        qeff_model.compile(
-            qaic_config=qaic_config,
-            prefill_seq_len=1,
-            ctx_len=1024,
-            num_cores=16,
-            num_devices=1,
-            mxfp6_matmul=False,
-            mxint8_kv_cache=False,
-            aic_enable_depth_first=False,
-            mos=1,
-            num_patches=2400,
-            h=30,
-            w=80,
-            # Keep language-side image embedding specialization tightly bounded to
-            # actual single-image token count to avoid oversized dynamic VA mapping.
-            num_image_tokens=600,
-        )
-
-        ## STEP 4: Prepare Image and Text Input
         image = Image.open(BytesIO(requests.get(args.image_url).content)).convert("RGB")
 
-        # Create a message with both image and text
         messages = [
             {
                 "role": "user",
@@ -188,20 +160,45 @@ def main():
             },
         ]
 
-        ## STEP 5: Process Input
         inputs = processor(
             messages=messages,
             add_generation_prompt=True,
             tokenize=False,
             return_tensors="pt",
         )
-        # Convert pixel values to float32 for processing
+
         inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
 
-        ## STEP 6: Run Vision+Text Inference
+        merge_kernel_size = getattr(model.config.vision_config, "merge_kernel_size", (2, 2))
+        if isinstance(merge_kernel_size, int):
+            kernel_height = kernel_width = merge_kernel_size
+            merge_kernel_size = (merge_kernel_size, merge_kernel_size)
+        else:
+            kernel_height, kernel_width = merge_kernel_size
+
+        num_patches = int(inputs["pixel_values"].shape[0])
+        h = int(inputs["grid_thws"][0, 1].item())
+        w = int(inputs["grid_thws"][0, 2].item())
+        num_image_tokens = int(inputs["pixel_values"].shape[0] // (kernel_height * kernel_width))
+
+        qeff_model.compile(
+            qaic_config=qaic_config,
+            prefill_seq_len=1,
+            ctx_len=1024,
+            num_cores=16,
+            num_devices=1,
+            mxfp6_matmul=False,
+            mxint8_kv_cache=False,
+            aic_enable_depth_first=False,
+            mos=1,
+            num_patches=num_patches,
+            h=h,
+            w=w,
+            num_image_tokens=num_image_tokens,
+        )
+
         output = qeff_model.generate(inputs=inputs, generation_len=10)
 
-        ## STEP 7: Display Results
         print(output.generated_ids)
         print(tokenizer.batch_decode(output.generated_ids))
         print(output)

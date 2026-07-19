@@ -1242,6 +1242,7 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         },
         "KimiK25ForConditionalGeneration": {
             "_merge_input_ids_with_image_features": QEffKimiK25ForConditionalGeneration._qeff_merge_input_ids_with_image_features,
+            "_qeff_merge_single_image_symbolic": QEffKimiK25ForConditionalGeneration._qeff_merge_single_image_symbolic,
             "get_qeff_vision_encoder": QEffKimiK25ForConditionalGeneration.get_qeff_vision_encoder,
             "get_qeff_language_decoder": QEffKimiK25ForConditionalGeneration.get_qeff_language_decoder,
             "get_specializations": QEffKimiK25ForConditionalGeneration.get_specializations,

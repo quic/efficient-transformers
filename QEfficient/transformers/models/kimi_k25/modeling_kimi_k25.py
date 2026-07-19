@@ -373,7 +373,7 @@ class QEffKimiK25EncoderWrapper(nn.Module):
             w_shape: int64 ones tensor of shape (w,) encoding number of patch columns.
 
         Returns:
-            image_embeds: Projected image embeddings as a single tensor. For multiple
+            vision_embeds: Projected image embeddings as a single tensor. For multiple
                 same-sized images, embeddings are concatenated in input order.
         """
 
@@ -442,8 +442,8 @@ class QEffKimiK25EncoderWrapper(nn.Module):
 
         pre_norm_dtype = self.model.mm_projector.pre_norm.weight.dtype
         merged = merged.to(pre_norm_dtype)
-        image_embeds = self.model.mm_projector.proj(self.model.mm_projector.pre_norm(merged).view(merged.shape[0], -1))
-        return image_embeds
+        vision_embeds = self.model.mm_projector.proj(self.model.mm_projector.pre_norm(merged).view(merged.shape[0], -1))
+        return vision_embeds
 
 
 class QEffKimiK25DecoderWrapper(nn.Module):
@@ -467,7 +467,7 @@ class QEffKimiK25DecoderWrapper(nn.Module):
         self,
         input_ids: torch.LongTensor = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
-        image_embeds: Optional[torch.FloatTensor] = None,
+        vision_embeds: Optional[torch.FloatTensor] = None,
         image_idx: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -479,18 +479,20 @@ class QEffKimiK25DecoderWrapper(nn.Module):
         **kwargs,
     ) -> Tuple:
         inputs_embeds = self.model.get_input_embeddings()(input_ids)
-        image_embeds_for_state = None
-        if image_embeds is not None:
-            if image_embeds.dim() == 3:
-                if image_embeds.shape[0] != 1:
-                    raise ValueError(f"Expected image_embeds batch dim to be 1, got shape {tuple(image_embeds.shape)}")
-                image_embeds_for_state = image_embeds[0].to(device=inputs_embeds.device, dtype=inputs_embeds.dtype)
-            elif image_embeds.dim() == 2:
-                image_embeds_for_state = image_embeds.to(device=inputs_embeds.device, dtype=inputs_embeds.dtype)
+        vision_embeds_for_state = None
+        if vision_embeds is not None:
+            if vision_embeds.dim() == 3:
+                if vision_embeds.shape[0] != 1:
+                    raise ValueError(
+                        f"Expected vision_embeds batch dim to be 1, got shape {tuple(vision_embeds.shape)}"
+                    )
+                vision_embeds_for_state = vision_embeds[0].to(device=inputs_embeds.device, dtype=inputs_embeds.dtype)
+            elif vision_embeds.dim() == 2:
+                vision_embeds_for_state = vision_embeds.to(device=inputs_embeds.device, dtype=inputs_embeds.dtype)
             else:
-                raise ValueError(f"Expected image_embeds rank 2 or 3, got {image_embeds.dim()}.")
+                raise ValueError(f"Expected vision_embeds rank 2 or 3, got {vision_embeds.dim()}.")
 
-        if image_embeds_for_state is not None and input_ids is not None:
+        if vision_embeds_for_state is not None and input_ids is not None:
             if attention_mask is None:
                 if position_ids is None:
                     attention_mask = torch.ones_like(input_ids, dtype=torch.long, device=input_ids.device)
@@ -501,17 +503,11 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             selected = input_ids == self.config.media_placeholder_token_id
             selected_any = selected.any(dim=1, keepdim=True)
             selected_image_tokens = selected.to(torch.int64).sum(dim=1, keepdim=True)
-
-            num_selected_images = int(selected_image_tokens.max().item())
-            if num_selected_images > 0 and image_embeds_for_state.shape[0] % num_selected_images == 0:
-                image_features = list(torch.chunk(image_embeds_for_state, num_selected_images, dim=0))
-            else:
-                image_features = [image_embeds_for_state]
-            inputs_embeds = inputs_embeds.to(image_embeds_for_state.dtype)
+            inputs_embeds = inputs_embeds.to(vision_embeds_for_state.dtype)
 
             merged_inputs_embeds, merged_attention_mask, _, merged_position_ids = (
-                self.model._merge_input_ids_with_image_features(
-                    image_features=image_features,
+                self.model._qeff_merge_single_image_symbolic(
+                    image_features=vision_embeds_for_state,
                     inputs_embeds=inputs_embeds,
                     input_ids=input_ids,
                     attention_mask=attention_mask,
@@ -536,10 +532,10 @@ class QEffKimiK25DecoderWrapper(nn.Module):
                     torch.full_like(merged_position_ids, -1),
                 )
 
-            merged_image_tokens = torch.tensor(
-                [[sum(feature.shape[0] for feature in image_features)]],
-                dtype=torch.int64,
-                device=image_idx.device,
+            merged_image_tokens = (
+                torch._shape_as_tensor(vision_embeds_for_state)[:1]
+                .view(1, 1)
+                .to(device=image_idx.device, dtype=torch.int64)
             )
             image_position_delta = torch.clamp(merged_image_tokens - selected_image_tokens, min=0)
             image_idx = image_idx + selected_any.to(torch.int64) * image_position_delta
@@ -572,7 +568,7 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             output_kvs = getattr(outputs, "compressed_kvs", None)
         else:
             output_kvs = getattr(outputs, "past_key_values", None)
-        return logits, image_embeds_for_state, image_idx, output_kvs
+        return logits, vision_embeds_for_state, image_idx, output_kvs
 
 
 # ref https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/llava/modeling_llava.py#L240
@@ -677,6 +673,77 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
 
         position_ids = torch.cumsum(final_attention_mask, dim=1) - 1
         position_ids = torch.where(final_attention_mask == 0, torch.ones_like(position_ids), position_ids)
+
+        pad_token_mask = input_ids == pad_token_id
+        pad_position_one_hot = torch.logical_and(
+            merged_positions == new_token_positions.unsqueeze(-1), pad_token_mask.unsqueeze(-1)
+        )
+        pad_positions_mask = pad_position_one_hot.any(dim=1)
+        final_embedding = torch.where(
+            pad_positions_mask.unsqueeze(-1), torch.zeros_like(final_embedding), final_embedding
+        )
+
+        return final_embedding, final_attention_mask, labels, position_ids
+
+    def _qeff_merge_single_image_symbolic(
+        self,
+        image_features: torch.Tensor,
+        inputs_embeds: torch.Tensor,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        labels: torch.Tensor | None = None,
+    ):
+        image_token_index: int = self.config.media_placeholder_token_id
+        pad_token_id: int = self.config.pad_token_id
+
+        target_device = inputs_embeds.device
+        image_features = image_features.to(target_device)
+        image_shape = torch._shape_as_tensor(image_features).to(device=input_ids.device, dtype=input_ids.dtype)
+        num_image_tokens = image_shape[0]
+
+        image_token_mask = input_ids == image_token_index
+        non_image_mask = ~image_token_mask
+        image_token_count = image_token_mask.to(input_ids.dtype).sum(dim=1, keepdim=True)
+        has_image = image_token_count > 0
+
+        token_occupation = torch.where(
+            image_token_mask,
+            num_image_tokens.view(1, 1).expand_as(input_ids),
+            torch.ones_like(input_ids),
+        )
+        new_token_positions = torch.cumsum(token_occupation, dim=1) - 1
+
+        final_seq_len = input_ids.shape[1] + image_features.shape[0] - 1
+        merged_positions = torch.arange(final_seq_len, device=input_ids.device, dtype=input_ids.dtype).view(1, 1, -1)
+        text_position_one_hot = merged_positions == new_token_positions.unsqueeze(-1)
+        text_position_one_hot = torch.logical_and(text_position_one_hot, non_image_mask.unsqueeze(-1))
+
+        final_embedding = (
+            text_position_one_hot.to(inputs_embeds.dtype).unsqueeze(-1) * inputs_embeds.unsqueeze(2)
+        ).sum(dim=1)
+        final_attention_mask = (text_position_one_hot.to(attention_mask.dtype) * attention_mask.unsqueeze(-1)).sum(
+            dim=1
+        )
+
+        image_start_positions = torch.where(
+            image_token_mask,
+            new_token_positions - num_image_tokens.view(1, 1) + 1,
+            torch.zeros_like(new_token_positions),
+        )
+        image_start = image_start_positions.max(dim=1, keepdim=True).values
+        image_positions = merged_positions.squeeze(1) - image_start
+        max_image_index = num_image_tokens.view(1, 1) - 1
+        safe_image_positions = torch.minimum(torch.clamp(image_positions, min=0), max_image_index)
+        image_slots = torch.logical_and(image_positions >= 0, image_positions < num_image_tokens.view(1, 1))
+        image_slots = torch.logical_and(image_slots, has_image)
+        image_slots = torch.logical_and(image_slots, torch.logical_not(text_position_one_hot.any(dim=1)))
+
+        gathered_image_embeddings = image_features[safe_image_positions.to(torch.long)]
+        final_embedding = torch.where(image_slots.unsqueeze(-1), gathered_image_embeddings, final_embedding)
+        final_attention_mask = torch.logical_or(final_attention_mask.bool(), image_slots).to(final_attention_mask.dtype)
+
+        position_ids = torch.cumsum(final_attention_mask, dim=1) - 1
+        position_ids = torch.where(final_attention_mask == 0, torch.full_like(position_ids, -1), position_ids)
 
         pad_token_mask = input_ids == pad_token_id
         pad_position_one_hot = torch.logical_and(
@@ -815,7 +882,7 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
         )
 
     def get_output_names(self, kv_offload: bool = False):
-        vision_output_names = ["image_embeds"]
+        vision_output_names = ["vision_embeds"]
         lang_output_names = ["logits"]
 
         mla_absorption = getattr(self.language_model, "mla_absorption", None)
@@ -835,7 +902,7 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
 
         output_names = {}
         if kv_offload:
-            lang_output_names.insert(1, "image_embeds_RetainedState")
+            lang_output_names.insert(1, "vision_embeds_RetainedState")
             lang_output_names.insert(2, "image_idx_output")
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
@@ -866,7 +933,7 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
             constants.KIMI_PATCH_SIZE,
             constants.KIMI_PATCH_SIZE,
         )
-        inputs_shapes["image_embeds"] = (
+        inputs_shapes["vision_embeds"] = (
             constants.KIMI_NUM_IMAGE_TOKENS,
             self.language_model.config.hidden_size,
         )
@@ -919,8 +986,8 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
                     torch.zeros(pkv_cache[0][1].shape, dtype=self.language_model.config.torch_dtype)
                 )
 
-        lang_inputs["image_embeds"] = torch.zeros(
-            inputs_shapes["image_embeds"],
+        lang_inputs["vision_embeds"] = torch.zeros(
+            inputs_shapes["vision_embeds"],
             dtype=self.language_model.config.torch_dtype,
         )
         lang_inputs["image_idx"] = torch.zeros(inputs_shapes["image_idx"], dtype=torch.int64)
@@ -933,7 +1000,7 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
             inputs["vision"] = vision_inputs
             inputs["lang"] = lang_inputs
         else:
-            lang_inputs.pop("image_embeds")
+            lang_inputs.pop("vision_embeds")
             inputs = {**vision_inputs, **lang_inputs}
 
         return inputs
@@ -945,14 +1012,14 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
         lang_dynamic_axes = {}
         lang_dynamic_axes["input_ids"] = {0: "batch_size", 1: "seq_len"}
         lang_dynamic_axes["position_ids"] = {0: "batch_size", 1: "seq_len"}
-        lang_dynamic_axes["image_embeds"] = {0: "num_image_tokens"}
+        lang_dynamic_axes["vision_embeds"] = {0: "num_image_tokens"}
         if continuous_batching:
             lang_dynamic_axes["batch_index"] = {0: "batch_size"}
         vision_dynamic_axes = {
             "pixel_values": {0: "num_patches"},
             "h_shape": {0: "h"},
             "w_shape": {0: "w"},
-            "image_embeds": {0: "num_image_tokens"},
+            "vision_embeds": {0: "num_image_tokens"},
         }
 
         mla_absorption = getattr(self.language_model, "mla_absorption", None)
@@ -980,7 +1047,7 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
             dynamic_axes["vision"] = vision_dynamic_axes
             dynamic_axes["lang"] = lang_dynamic_axes
         else:
-            lang_dynamic_axes.pop("image_embeds")
+            lang_dynamic_axes.pop("vision_embeds")
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
 
