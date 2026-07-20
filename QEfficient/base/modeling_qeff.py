@@ -19,7 +19,6 @@ from typing import Any, Dict, List, Optional, Union
 import onnx
 import torch
 
-import QEfficient.customop.dynamo_ops  # noqa: F401 — registers torch.ops.qefficient.* at import time
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
     CustomOpTransform,
@@ -37,22 +36,7 @@ from QEfficient.compile.mdp_generator import (
     generate_mdp_partition_config,
 )
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
-from QEfficient.customop.ctx_scatter_gather import (
-    CtxGather,
-    CtxGather3D,
-    CtxGatherBlockedKV,
-    CtxScatter,
-    CtxScatter3D,
-    CtxScatter3DInt,
-)
-from QEfficient.customop.ctx_scatter_gather_cb import (
-    CtxGatherBlockedKVCB,
-    CtxGatherCB,
-    CtxGatherCB3D,
-    CtxScatterCB,
-    CtxScatterCB3D,
-)
-from QEfficient.customop.rms_norm import CustomRMSNorm
+from QEfficient.customop.dynamo_ops import DYNAMO_CUSTOM_OP_TABLE
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
@@ -115,24 +99,6 @@ def _restore_output_names_exact(model: onnx.ModelProto, output_names: List[str])
             break
         current_name = model.graph.output[output_idx].name
         _rename_graph_value(model.graph, current_name, expected_name)
-
-
-_DYNAMO_CUSTOM_OP_TABLE: Dict = {
-    torch.ops.qefficient.rms_norm.default: CustomRMSNorm,
-    torch.ops.qefficient.ctx_scatter.default: CtxScatter,
-    torch.ops.qefficient.ctx_scatter_3d.default: CtxScatter3D,
-    torch.ops.qefficient.ctx_scatter_cb.default: CtxScatterCB,
-    torch.ops.qefficient.ctx_scatter_cb_3d.default: CtxScatterCB3D,
-    torch.ops.qefficient.ctx_scatter_3d_int.default: CtxScatter3DInt,
-    torch.ops.qefficient.ctx_scatter_3d_generalized.default: CtxScatter3D,
-    torch.ops.qefficient.ctx_gather.default: CtxGather,
-    torch.ops.qefficient.ctx_gather_3d.default: CtxGather3D,
-    torch.ops.qefficient.ctx_gather_cb.default: CtxGatherCB,
-    torch.ops.qefficient.ctx_gather_cb_3d.default: CtxGatherCB3D,
-    torch.ops.qefficient.ctx_gather_blocked_kv.default: CtxGatherBlockedKV,
-    torch.ops.qefficient.ctx_gather_blocked_kv_cb.default: CtxGatherBlockedKVCB,
-    torch.ops.qefficient.ctx_gather_3d_generalized.default: CtxGather3D,
-}
 
 
 class QEFFBaseModel(ABC):
@@ -435,7 +401,7 @@ class QEFFBaseModel(ABC):
         export_kwargs["dynamo"] = True
         export_kwargs["custom_translation_table"] = {
             **(export_kwargs.pop("custom_translation_table", None) or {}),
-            **_DYNAMO_CUSTOM_OP_TABLE,
+            **DYNAMO_CUSTOM_OP_TABLE,
         }
 
         prev_invoke_fallback = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
