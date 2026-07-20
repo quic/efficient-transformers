@@ -141,7 +141,6 @@ class QEffMptBlock(MptBlock):
     - add new args cache idx for the kv retention
     """
 
-    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

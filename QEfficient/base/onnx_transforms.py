@@ -9,7 +9,7 @@ import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import numpy as np
 import onnx
@@ -59,7 +59,7 @@ class BaseOnnxTransform:
         raise TypeError("Transform classes are not to be instantiated. Use the `apply` method directly.")
 
     @classmethod
-    def apply(cls, model: ModelProto, **kwargs) -> Tuple[ModelProto, bool]:
+    def apply(cls, model: ModelProto, **kwargs) -> bool:
         raise NotImplementedError("Use subclasses for ONNX transform")
 
 
@@ -141,7 +141,7 @@ class CustomOpTransform(BaseOnnxTransform):
         return op_applied
 
     @staticmethod
-    def _ensure_opset_imports(container, domain: str, version: int) -> None:
+    def _ensure_opset_imports(container: Union[ModelProto, onnx.FunctionProto], domain: str, version: int) -> None:
         if any(opset.domain == domain for opset in container.opset_import):
             return
         container.opset_import.append(onnx.helper.make_opsetid(domain, version))
@@ -296,6 +296,15 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
         }
     )
 
+    @staticmethod
+    def _scatter_sort_key(n) -> int:
+        output_name = n.output[0] if n.output else ""
+        if "key" in output_name:
+            return 0
+        if "value" in output_name:
+            return 1
+        return 2
+
     @classmethod
     def apply(cls, model: ModelProto) -> bool:
         graph = model.graph
@@ -308,6 +317,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
 
         fn_by_name = {fn.name: fn for fn in model.functions}
         changed = False
+        kv_rename_map: Dict[str, str] = {}
 
         for node in graph.node:
             fn = fn_by_name.get(node.op_type)
@@ -324,18 +334,14 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
                 fn_node for fn_node in fn.node if fn_node.op_type in cls._SCATTER_OP_TYPES and fn_node.output
             ]
             if len(scatter_nodes) != 2:
+                logger.debug(
+                    "PreserveNestedCacheRetainedStateTransform: function '%s' has %d scatter node(s), expected 2 — skipping.",
+                    node.op_type,
+                    len(scatter_nodes),
+                )
                 continue
 
-            def _scatter_sort_key(n):
-                output_name = n.output[0] if n.output else ""
-                if "key" in output_name:
-                    return 0
-                if "value" in output_name:
-                    return 1
-                # Fall back to topological order (stable, matches execution order).
-                return 2
-
-            scatter_nodes.sort(key=_scatter_sort_key)
+            scatter_nodes.sort(key=cls._scatter_sort_key)
             # Only the first two scatter outputs map to key / value respectively.
             scatter_outputs = [n.output[0] for n in scatter_nodes[:2]]
 
@@ -366,47 +372,45 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
             if not any(name in dangling_retained_outputs for name in desired_outputs):
                 continue
 
-            # Expose the scatter outputs in the function's output list.
-            for scatter_output in scatter_outputs:
+            # Expose scatter outputs in the function's output list, rename KV
+            # inputs and append retained-state output names to the call node —
+            # all in one pass over the two key/value pairs.
+            for kind, scatter_output, desired_output in zip(("key", "value"), scatter_outputs, desired_outputs):
                 if scatter_output not in fn.output:
                     fn.output.append(scatter_output)
                     changed = True
 
-            # Rename KV inputs: strip _RetainedState suffix so the compiler
-            # receives plain names (past_key.N) as inputs and
-            # past_key.N_RetainedState only as outputs.
-            # _rename_graph_input walks all of graph.node, so the call node's
-            # input slots are already updated — no separate per-node loop needed.
-            for kind in ("key", "value"):
                 retained_input = kv_inputs[kind]
                 plain_input = f"past_{kind}.{layer_idx}"
                 if retained_input.endswith("_RetainedState"):
-                    changed |= cls._rename_graph_input(graph, retained_input, plain_input)
+                    kv_rename_map[retained_input] = plain_input
 
-            # Append the retained-state output names to this call node.
-            missing_outputs = [name for name in desired_outputs if name not in node.output]
-            if missing_outputs:
-                node.output.extend(missing_outputs)
-                changed = True
+                if desired_output not in node.output:
+                    node.output.append(desired_output)
+                    changed = True
 
+        if kv_rename_map:
+            changed |= cls._rename_graph_inputs_bulk(graph, kv_rename_map)
         return changed
 
     @staticmethod
-    def _rename_graph_input(graph: onnx.GraphProto, old_name: str, new_name: str) -> bool:
+    def _rename_graph_inputs_bulk(graph: onnx.GraphProto, rename_map: Dict[str, str]) -> bool:
+        if not rename_map:
+            return False
         changed = False
         for value in graph.input:
-            if value.name == old_name:
-                value.name = new_name
+            if value.name in rename_map:
+                value.name = rename_map[value.name]
                 changed = True
         for value in graph.value_info:
-            if value.name == old_name:
-                value.name = new_name
+            if value.name in rename_map:
+                value.name = rename_map[value.name]
                 changed = True
         for node in graph.node:
-            for i, name in enumerate(node.input):
-                if name == old_name:
-                    node.input[i] = new_name
-                    changed = True
+            new_inputs = [rename_map.get(n, n) for n in node.input]
+            if new_inputs != list(node.input):
+                node.input[:] = new_inputs
+                changed = True
         return changed
 
 
@@ -437,10 +441,20 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
                 if attr.HasField("g"):
                     yield from cls._iter_all_nodes(attr.g.node)
 
+    @staticmethod
+    def _rename_op_types(nodes, old_to_new: Dict[str, str]) -> None:
+        for node in RenameRepeatedSubgraphTransform._iter_all_nodes(nodes):
+            if node.op_type in old_to_new:
+                node.op_type = old_to_new[node.op_type]
+
     @classmethod
     def apply(cls, model: ModelProto, target_classnames: Optional[List[str]] = None, **kwargs) -> bool:
         target_classnames = [name for name in (target_classnames or []) if name]
         if not target_classnames:
+            logger.warning(
+                "RenameRepeatedSubgraphTransform: target_classnames is empty — transform is a no-op. "
+                "Check that get_submodules_for_export() returns the decoder layer classes."
+            )
             return False
 
         repeated_functions = []
@@ -489,14 +503,9 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
             if fn.name in old_to_new:
                 fn.name = old_to_new[fn.name]
 
-        def _rename_op_types(nodes):
-            for node in cls._iter_all_nodes(nodes):
-                if node.op_type in old_to_new:
-                    node.op_type = old_to_new[node.op_type]
-
-        _rename_op_types(model.graph.node)
+        cls._rename_op_types(model.graph.node, old_to_new)
         for fn in model.functions:
-            _rename_op_types(fn.node)
+            cls._rename_op_types(fn.node, old_to_new)
 
         return True
 
@@ -543,6 +552,31 @@ class AdapterWeightsToInputsTransform(BaseOnnxTransform):
                 model.graph.initializer.pop(i)
 
         return model, transformed
+
+
+class PruneFakeInitializersTransform(BaseOnnxTransform):
+    """Remove initializers backed by FakeTensors from a dynamo onnx_program before serialisation.
+
+    Operates on the torch.onnx.ONNXProgram object returned by dynamo export, not on a
+    ModelProto, because FakeTensors cannot survive onnx.load round-trips.
+    """
+
+    @classmethod
+    def apply(cls, onnx_program) -> bool:
+        from torch._subclasses.fake_tensor import FakeTensor
+
+        initializers = onnx_program.model.graph.initializers
+        used_names = {name for node in onnx_program.model.graph for name in node.inputs}
+        used_names.update(output.name for output in onnx_program.model.graph.outputs)
+
+        pruned = False
+        for name in list(initializers):
+            const_value = getattr(initializers[name], "const_value", None)
+            raw_value = getattr(const_value, "raw", None)
+            if isinstance(raw_value, FakeTensor) and name not in used_names:
+                del initializers[name]
+                pruned = True
+        return pruned
 
 
 class OnnxTransformPipeline(BaseOnnxTransform):

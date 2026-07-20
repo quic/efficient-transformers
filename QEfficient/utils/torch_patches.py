@@ -10,7 +10,7 @@
 Patches kept here:
   - TorchScript ONNX exporter (_setup_trace_module_map, _get_module_attributes,
     _jit_pass_onnx_track_scope_attributes): fix attribute-type mismatches in the
-    legacy trace-based exporter (use_dynamo=False path).
+    legacy trace-based exporter (dynamo=False path).
   - Layerwise safe export pass patches: disable expensive ONNX exporter passes
     for layerwise prefill export (TorchScript path).
   - temporarily_enable_nested_compile_regions / temporarily_disable_nested_compile_regions:
@@ -26,24 +26,29 @@ Patches removed (upstreamed to PyTorch):
   - _translate_fx_graph / _convert_fx_arg_to_onnx_arg nested tensor constants
 """
 
-import inspect
 from contextlib import contextmanager
 
 import torch
 import torch.onnx.utils as onnx_utils
 from torch import _C
-from torch.onnx._internal.torchscript_exporter import utils as ts_utils
+
+try:
+    from torch.onnx._internal.torchscript_exporter import utils as ts_utils
+
+    _ts_utils_available = True
+except ModuleNotFoundError:
+    ts_utils = None
+    _ts_utils_available = False
 
 # Store original references before patching
 _original_setup_trace_module_map = onnx_utils._setup_trace_module_map
 _original_get_module_attributes = getattr(onnx_utils, "_get_module_attributes", None)
 _original_track_scope_attrs = getattr(_C, "_jit_pass_onnx_track_scope_attributes", None)
-_original_ts_setup_trace_module_map = ts_utils._setup_trace_module_map
-_original_ts_get_module_attributes = getattr(ts_utils, "_get_module_attributes", None)
+_original_ts_setup_trace_module_map = ts_utils._setup_trace_module_map if _ts_utils_available else None
+_original_ts_get_module_attributes = getattr(ts_utils, "_get_module_attributes", None) if _ts_utils_available else None
 
 _PATCHES_ACTIVE = False
 _MISSING_INSTANCE_ATTR = object()
-
 _safe_export_patch_depth = 0
 _safe_export_original_passes = {}
 _SAFE_EXPORT_REQUIRED_PASSES = {
@@ -262,10 +267,11 @@ def apply_torch_patches():
     if hasattr(onnx_utils, "_get_module_attributes"):
         onnx_utils._get_module_attributes = _get_module_attributes
 
-    # Patch ts_utils (TorchScript-specific exporter utilities)
-    ts_utils._setup_trace_module_map = _setup_trace_module_map_patched
-    if hasattr(ts_utils, "_get_module_attributes"):
-        ts_utils._get_module_attributes = _get_module_attributes
+    # Patch ts_utils (TorchScript-specific exporter utilities, torch >= 2.13 only)
+    if _ts_utils_available:
+        ts_utils._setup_trace_module_map = _setup_trace_module_map_patched
+        if hasattr(ts_utils, "_get_module_attributes"):
+            ts_utils._get_module_attributes = _get_module_attributes
 
     # Patch _C scope-attribute tracker to filter out IValue-incompatible types
     if _original_track_scope_attrs is not None:
@@ -284,9 +290,10 @@ def undo_torch_patches():
     if _original_get_module_attributes:
         onnx_utils._get_module_attributes = _original_get_module_attributes
 
-    ts_utils._setup_trace_module_map = _original_ts_setup_trace_module_map
-    if _original_ts_get_module_attributes:
-        ts_utils._get_module_attributes = _original_ts_get_module_attributes
+    if _ts_utils_available:
+        ts_utils._setup_trace_module_map = _original_ts_setup_trace_module_map
+        if _original_ts_get_module_attributes:
+            ts_utils._get_module_attributes = _original_ts_get_module_attributes
 
     if _original_track_scope_attrs is not None:
         _C._jit_pass_onnx_track_scope_attributes = _original_track_scope_attrs
@@ -295,16 +302,13 @@ def undo_torch_patches():
 
 
 @contextmanager
-def temporarily_disable_nested_compile_regions(model, target_classes=None):
+def temporarily_enable_nested_compile_regions(model, target_classes=None):
     """
-    Replace nested_compile_region-wrapped ``forward`` methods with their original
-    underlying functions for the duration of plain dynamo export (Path 3).
+    Wrap selected module ``forward`` methods with ``nested_compile_region``
+    during export so repeated block functions are materialized by dynamo.
 
-    Used when use_dynamo=True and use_onnx_subfunctions=False so that
-    @nested_compile_region boundaries statically present on decoder layer
-    forward() methods do not create unwanted subgraph splits during tracing.
+    Used when dynamo=True and use_onnx_subfunctions=True. Requires torch >= 2.13.
     """
-
     target_classes = tuple(target_classes) if target_classes else None
     patched_modules = []
 
@@ -318,21 +322,12 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
                 continue
 
             wrapped_forward = getattr(bound_forward, "__func__", bound_forward)
-            # Only unwrap methods that are actually nested_compile_region-wrapped
-            if getattr(wrapped_forward, "__qualname__", "") != "mark_compile_region.<locals>.wrap.<locals>.inner":
-                continue
-
-            # Extract the original forward from the closure
-            closure = getattr(wrapped_forward, "__closure__", None) or ()
-            original_forward = next(
-                (cell.cell_contents for cell in closure if inspect.isfunction(cell.cell_contents)),
-                None,
-            )
-            if original_forward is None:
+            if getattr(wrapped_forward, "__qualname__", "") == "mark_compile_region.<locals>.wrap.<locals>.inner":
                 continue
 
             previous_forward = module.__dict__.get("forward", _MISSING_INSTANCE_ATTR)
-            setattr(module, "forward", original_forward.__get__(module, type(module)))
+            nested_forward = torch.compiler.nested_compile_region(wrapped_forward)
+            setattr(module, "forward", nested_forward.__get__(module, type(module)))
             patched_modules.append((module, previous_forward))
 
         yield

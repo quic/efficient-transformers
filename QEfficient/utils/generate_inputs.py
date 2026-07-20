@@ -138,6 +138,7 @@ class InputHandler:
             pkv = (past_key, past_value)
             past_key_values.append(pkv)
         inputs["past_key_values"] = tuple(past_key_values)
+
         return inputs
 
     def update_pytorch_inputs(self, inputs, pt_outputs):

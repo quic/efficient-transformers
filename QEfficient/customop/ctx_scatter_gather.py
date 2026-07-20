@@ -8,6 +8,7 @@
 import onnxscript
 import torch
 
+from QEfficient.customop.utils import select_interface
 from QEfficient.utils import constants
 
 ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
@@ -40,7 +41,7 @@ class CtxScatterFunc(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+    def _eager(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
         batch_idx = torch.arange(data.shape[0]).view(-1, 1, 1)
         head_idx = torch.arange(data.shape[1]).view(1, -1, 1)
         ctx_idx = position_ids.unsqueeze(1)
@@ -48,8 +49,19 @@ class CtxScatterFunc(torch.autograd.Function):
         return data
 
     @staticmethod
+    def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+        return select_interface(
+            CtxScatterFunc._eager,
+            torch.ops.qefficient.ctx_scatter,
+        )(data, position_ids, updates)
+
+    @staticmethod
     def setup_context(ctx, inputs, outputs):
-        pass
+        ctx._n_inputs = len(inputs)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        return (None,) * ctx._n_inputs
 
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
@@ -80,7 +92,7 @@ def CtxScatter3D(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates
 
 class CtxScatterFunc3D(torch.autograd.Function):
     @staticmethod
-    def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+    def _eager(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
         data = data.clone()
         batch_idx = torch.arange(data.shape[0]).view(-1, 1)
         ctx_idx = torch.where(position_ids == torch.iinfo(torch.int32).max, data.shape[1] - 1, position_ids)
@@ -88,8 +100,19 @@ class CtxScatterFunc3D(torch.autograd.Function):
         return data
 
     @staticmethod
+    def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+        return select_interface(
+            CtxScatterFunc3D._eager,
+            torch.ops.qefficient.ctx_scatter_3d,
+        )(data, position_ids, updates)
+
+    @staticmethod
     def setup_context(ctx, inputs, outputs):
-        pass
+        ctx._n_inputs = len(inputs)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        return (None,) * ctx._n_inputs
 
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
@@ -106,7 +129,7 @@ class CtxScatterFunc3DGeneralized(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+    def _eager(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
         data = data.clone()
         valid = position_ids != torch.iinfo(torch.int32).max
         batch_idx = torch.arange(data.shape[0], device=data.device).view(-1, 1).expand_as(position_ids)
@@ -114,8 +137,19 @@ class CtxScatterFunc3DGeneralized(torch.autograd.Function):
         return data
 
     @staticmethod
+    def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+        return select_interface(
+            CtxScatterFunc3DGeneralized._eager,
+            torch.ops.qefficient.ctx_scatter_3d_generalized,
+        )(data, position_ids, updates)
+
+    @staticmethod
     def setup_context(ctx, inputs, outputs):
-        pass
+        ctx._n_inputs = len(inputs)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        return (None,) * ctx._n_inputs
 
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
@@ -148,7 +182,7 @@ class CtxScatterFunc3DInt(torch.autograd.Function):
     """Int32-typed scatter used to build a packed->original index table."""
 
     @staticmethod
-    def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+    def _eager(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
         data = data.clone()
         valid = position_ids != torch.iinfo(torch.int32).max
         batch_idx = torch.arange(data.shape[0], device=data.device).view(-1, 1).expand_as(position_ids)
@@ -156,8 +190,19 @@ class CtxScatterFunc3DInt(torch.autograd.Function):
         return data
 
     @staticmethod
+    def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
+        return select_interface(
+            CtxScatterFunc3DInt._eager,
+            torch.ops.qefficient.ctx_scatter_3d_int,
+        )(data, position_ids, updates)
+
+    @staticmethod
     def setup_context(ctx, inputs, outputs):
-        pass
+        ctx._n_inputs = len(inputs)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        return (None,) * ctx._n_inputs
 
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, position_ids: torch.Value, updates: torch.Value) -> torch.Value:
@@ -176,14 +221,25 @@ def CtxGather3D(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxsc
 
 class CtxGatherFunc3D(torch.autograd.Function):
     @staticmethod
-    def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
+    def _eager(data: torch.Tensor, ctx_indices: torch.Tensor):
         batch_indices = torch.arange(data.shape[0], device=data.device).view(-1, 1)
         ctx_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
         return data[batch_indices, ctx_indices]
 
     @staticmethod
+    def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
+        return select_interface(
+            CtxGatherFunc3D._eager,
+            torch.ops.qefficient.ctx_gather_3d,
+        )(data, ctx_indices)
+
+    @staticmethod
     def setup_context(ctx, inputs, outputs):
-        pass
+        ctx._n_inputs = len(inputs)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        return (None,) * ctx._n_inputs
 
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
@@ -201,14 +257,25 @@ class CtxGatherFunc3DGeneralized(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
+    def _eager(data: torch.Tensor, ctx_indices: torch.Tensor):
         batch_indices = torch.arange(data.shape[0]).view(-1, 1)
         ctx_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
         return data[batch_indices, ctx_indices]
 
     @staticmethod
+    def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
+        return select_interface(
+            CtxGatherFunc3DGeneralized._eager,
+            torch.ops.qefficient.ctx_gather_3d_generalized,
+        )(data, ctx_indices)
+
+    @staticmethod
     def setup_context(ctx, inputs, outputs):
-        pass
+        ctx._n_inputs = len(inputs)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        return (None,) * ctx._n_inputs
 
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
@@ -234,15 +301,26 @@ class CtxGatherFunc(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(data: torch.Tensor, ctx_indices: torch.Tensor, comp_ctx_len: int):
+    def _eager(data: torch.Tensor, ctx_indices: torch.Tensor, comp_ctx_len: int):
         batch_indices = torch.arange(data.shape[0]).view(-1, 1, 1)
         head_indices = torch.arange(data.shape[1]).view(1, -1, 1)
         ctx_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
         return data[batch_indices, head_indices, ctx_indices]
 
     @staticmethod
+    def forward(data: torch.Tensor, ctx_indices: torch.Tensor, comp_ctx_len: int):
+        return select_interface(
+            CtxGatherFunc._eager,
+            torch.ops.qefficient.ctx_gather,
+        )(data, ctx_indices, comp_ctx_len)
+
+    @staticmethod
     def setup_context(ctx, inputs, outputs):
-        pass
+        ctx._n_inputs = len(inputs)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        return (None,) * ctx._n_inputs
 
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value, comp_ctx_len: int) -> torch.Value:
@@ -261,15 +339,26 @@ class CtxGatherFuncBlockedKV(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
+    def _eager(data: torch.Tensor, ctx_indices: torch.Tensor):
         batch_indices = torch.arange(data.shape[0]).view(-1, 1, 1)
         head_indices = torch.arange(data.shape[1]).view(1, -1, 1)
         ctx_indices = torch.where(ctx_indices == torch.iinfo(torch.int32).max, 0, ctx_indices)
         return data[batch_indices, head_indices, ctx_indices]
 
     @staticmethod
+    def forward(data: torch.Tensor, ctx_indices: torch.Tensor):
+        return select_interface(
+            CtxGatherFuncBlockedKV._eager,
+            torch.ops.qefficient.ctx_gather_blocked_kv,
+        )(data, ctx_indices)
+
+    @staticmethod
     def setup_context(ctx, inputs, outputs):
-        pass
+        ctx._n_inputs = len(inputs)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        return (None,) * ctx._n_inputs
 
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
