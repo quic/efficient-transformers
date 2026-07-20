@@ -19,16 +19,16 @@ mla_absorption = {"cache_compressed": False, "absorption": False, "online": Fals
 # qaic_config = None # Full PKV Cache
 # qaic_config = {"enable_blocking": True, "blocking_mode": "h"} # Full PKV Cache with Head Blocking
 # qaic_config = {"mla_absorption": mla_absorption} # for No Blocking
-# qaic_config = {"mla_absorption": mla_absorption, "num_kv_heads_repeat": TS}  # No blocking with kv head replication
+# qaic_config = {"mla_absorption": mla_absorption, "num_replicate_kv_heads": TS}  # No blocking with kv head replication
 # qaic_config = {"mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "kv"}  # for KV blocking
-# qaic_config = {"mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "kv",  "num_kv_heads_repeat":TS} # for KV blocking with kv head replication
+# qaic_config = {"mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "kv",  "num_replicate_kv_heads":TS} # for KV blocking with kv head replication
 qaic_config = {
     "mla_absorption": mla_absorption,
     "enable_blocking": True,
     "blocking_mode": "h",
-    "num_kv_heads_repeat": TS,
+    "num_replicate_kv_heads": TS,
 }
-# for h blocking, it internally sets head_block_size equal to num_devices/num_kv_heads_repeat
+# for h blocking, it internally sets head_block_size equal to num_devices/num_replicate_kv_heads
 
 model_name = "moonshotai/Kimi-K2-Thinking"
 model = AutoModelForCausalLM.from_pretrained(
