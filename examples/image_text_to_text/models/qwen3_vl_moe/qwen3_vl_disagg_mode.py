@@ -299,6 +299,8 @@ st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
 print(f"time for first run of decode with KV as input = {perf_counter() - st} sec\n")
 
+exit(0)
+
 all_outputs.append(np.argmax(decode_out["logits"][0]))  # track batch 0
 pos_id = decode_inputs["position_ids"] + 1  # [BS, 1]
 loop_decode_inputs = {
