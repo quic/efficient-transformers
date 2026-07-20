@@ -347,3 +347,42 @@ def ctx_scatter_3d_generalized_op(
 @ctx_scatter_3d_generalized_op.register_fake
 def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> torch.Tensor:
     return torch.empty_like(data)
+
+
+# ---------------------------------------------------------------------------
+# Translation table: torch.ops.qefficient.* → ONNX export classes.
+# Used by _export_via_dynamo via custom_translation_table.
+# ---------------------------------------------------------------------------
+from QEfficient.customop.ctx_scatter_gather import (  # noqa: E402
+    CtxGather,
+    CtxGather3D,
+    CtxGatherBlockedKV,
+    CtxScatter,
+    CtxScatter3D,
+    CtxScatter3DInt,
+)
+from QEfficient.customop.ctx_scatter_gather_cb import (  # noqa: E402
+    CtxGatherBlockedKVCB,
+    CtxGatherCB,
+    CtxGatherCB3D,
+    CtxScatterCB,
+    CtxScatterCB3D,
+)
+from QEfficient.customop.rms_norm import CustomRMSNorm  # noqa: E402
+
+DYNAMO_CUSTOM_OP_TABLE = {
+    torch.ops.qefficient.rms_norm.default: CustomRMSNorm,
+    torch.ops.qefficient.ctx_scatter.default: CtxScatter,
+    torch.ops.qefficient.ctx_scatter_3d.default: CtxScatter3D,
+    torch.ops.qefficient.ctx_scatter_cb.default: CtxScatterCB,
+    torch.ops.qefficient.ctx_scatter_cb_3d.default: CtxScatterCB3D,
+    torch.ops.qefficient.ctx_scatter_3d_int.default: CtxScatter3DInt,
+    torch.ops.qefficient.ctx_scatter_3d_generalized.default: CtxScatter3D,
+    torch.ops.qefficient.ctx_gather.default: CtxGather,
+    torch.ops.qefficient.ctx_gather_3d.default: CtxGather3D,
+    torch.ops.qefficient.ctx_gather_cb.default: CtxGatherCB,
+    torch.ops.qefficient.ctx_gather_cb_3d.default: CtxGatherCB3D,
+    torch.ops.qefficient.ctx_gather_blocked_kv.default: CtxGatherBlockedKV,
+    torch.ops.qefficient.ctx_gather_blocked_kv_cb.default: CtxGatherBlockedKVCB,
+    torch.ops.qefficient.ctx_gather_3d_generalized.default: CtxGather3D,
+}
