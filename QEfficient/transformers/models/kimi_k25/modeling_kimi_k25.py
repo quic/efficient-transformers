@@ -461,7 +461,28 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
+        if self._has_uint4_weight_as_activation_moe():
+            return set()
         return {self.language_model.model.layers[0].__class__}
+
+    def _has_uint4_weight_as_activation_moe(self) -> bool:
+        for layer in self.language_model.model.layers:
+            mlp = getattr(layer, "mlp", None)
+            if mlp is None:
+                continue
+            if all(
+                hasattr(mlp, attr)
+                for attr in (
+                    "all_gate_qweight",
+                    "all_gate_qzeros",
+                    "all_up_qweight",
+                    "all_up_qzeros",
+                    "all_down_qweight",
+                    "all_down_qzeros",
+                )
+            ):
+                return True
+        return False
 
     def forward(
         self,
