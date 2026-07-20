@@ -19,23 +19,40 @@ kernels can be model-agnostic:
 (optional per-expert biases: gate_bias/up_bias [E, I], down_bias [E, H]).
 """
 
-from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Optional
 
 import torch
 from torch import nn
 
 
-@dataclass
-class MoEWeights:
+def _as_frozen_parameter(tensor: Optional[torch.Tensor]) -> Optional[nn.Parameter]:
+    if tensor is None:
+        return None
+    if isinstance(tensor, nn.Parameter):
+        tensor.requires_grad_(False)
+        return tensor
+    return nn.Parameter(tensor.detach(), requires_grad=False)
+
+
+class MoEWeights(nn.Module):
     """Expert weights in canonical orientation (gate/up ``[E,H,I]``, down ``[E,I,H]``)."""
 
-    gate: torch.Tensor
-    up: torch.Tensor
-    down: torch.Tensor
-    gate_bias: Optional[torch.Tensor] = None
-    up_bias: Optional[torch.Tensor] = None
-    down_bias: Optional[torch.Tensor] = None
+    def __init__(
+        self,
+        gate: torch.Tensor,
+        up: torch.Tensor,
+        down: torch.Tensor,
+        gate_bias: Optional[torch.Tensor] = None,
+        up_bias: Optional[torch.Tensor] = None,
+        down_bias: Optional[torch.Tensor] = None,
+    ) -> None:
+        super().__init__()
+        self.gate = _as_frozen_parameter(gate)
+        self.up = _as_frozen_parameter(up)
+        self.down = _as_frozen_parameter(down)
+        self.gate_bias = _as_frozen_parameter(gate_bias)
+        self.up_bias = _as_frozen_parameter(up_bias)
+        self.down_bias = _as_frozen_parameter(down_bias)
 
     @property
     def num_experts(self) -> int:
@@ -158,12 +175,12 @@ def stack_expert_linears(
 
 
 def as_parameters(weights: MoEWeights) -> MoEWeights:
-    """Wrap each present tensor of ``weights`` in an ``nn.Parameter`` (for module registration)."""
-    return MoEWeights(
-        gate=nn.Parameter(weights.gate),
-        up=nn.Parameter(weights.up),
-        down=nn.Parameter(weights.down),
-        gate_bias=nn.Parameter(weights.gate_bias) if weights.gate_bias is not None else None,
-        up_bias=nn.Parameter(weights.up_bias) if weights.up_bias is not None else None,
-        down_bias=nn.Parameter(weights.down_bias) if weights.down_bias is not None else None,
-    )
+    """Backward-compatible no-op; :class:`MoEWeights` already owns frozen parameters."""
+    return weights
+
+
+def delete_module_attrs(module: nn.Module, *names: str) -> None:
+    """Delete original weight attributes after moving them into ``module.moe_weights``."""
+    for name in names:
+        if hasattr(module, name):
+            delattr(module, name)
