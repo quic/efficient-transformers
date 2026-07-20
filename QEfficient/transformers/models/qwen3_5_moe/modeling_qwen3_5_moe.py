@@ -62,6 +62,7 @@ from QEfficient.transformers.moe import (
     MoEWeights,
     QEffMoEBlockMixin,
     build_canonical_expert_weights,
+    delete_module_attrs,
     silu_glu_mlp,
 )
 from QEfficient.utils import constants
@@ -2116,10 +2117,11 @@ class QEffQwen3_5MoeTopKRouter(Qwen3_5MoeTopKRouter):
 
 class QEffQwen3_5MoeExperts(Qwen3_5MoeExperts):
     def __qeff_init__(self):
+        self.weights_transformed = False
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
 
-    def build_moe_weights(self) -> MoEWeights:
-        if getattr(self, "moe_weights", None) is not None:
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
             return self.moe_weights
         self.moe_weights = build_canonical_expert_weights(
             gate_up=self.gate_up_proj,
@@ -2129,9 +2131,8 @@ class QEffQwen3_5MoeExperts(Qwen3_5MoeExperts):
             transpose_gate_up=True,
             transpose_down=True,
         )
-        self.gate_proj = nn.Parameter(self.moe_weights.gate, requires_grad=False)
-        self.up_proj = nn.Parameter(self.moe_weights.up, requires_grad=False)
-        self.down_proj_t = nn.Parameter(self.moe_weights.down, requires_grad=False)
+        delete_module_attrs(self, "gate_up_proj", "down_proj")
+        self.weights_transformed = True
         return self.moe_weights
 
 
@@ -2145,19 +2146,17 @@ class QEffQwen3_5MoeSparseMoeBlock(QEffMoEBlockMixin, Qwen3_5MoeSparseMoeBlock):
     supports_static_moe_prefill_chunks = True
 
     def __qeff_init__(self):
+        super().__qeff_init__()
         self.top_k = getattr(self.gate, "top_k", None)
         self.norm_topk_prob = getattr(self.gate, "norm_topk_prob", False)
         self.num_experts = getattr(self.gate, "num_experts", getattr(self.experts, "num_experts", None))
 
-    def build_moe_weights(self) -> MoEWeights:
-        if getattr(self.experts, "moe_weights", None) is None:
-            self.experts.build_moe_weights()
-        self.moe_weights = self.experts.moe_weights
-        return self.moe_weights
-
-    def get_moe_weights(self) -> MoEWeights:
-        if getattr(self, "moe_weights", None) is None:
-            self.build_moe_weights()
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+        weights = self.experts.transform_weights()
+        self.moe_weights = weights
+        self.weights_transformed = True
         return self.moe_weights
 
     @property

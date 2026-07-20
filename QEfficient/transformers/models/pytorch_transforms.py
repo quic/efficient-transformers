@@ -1391,19 +1391,10 @@ def _iter_optimized_moe_modules(model: nn.Module):
     from QEfficient.transformers.moe import QEffMoEBlockMixin
 
     for module in model.modules():
-        has_structural_contract = callable(getattr(module, "route", None)) and (
-            callable(getattr(module, "get_moe_weights", None)) or callable(getattr(module, "build_moe_weights", None))
+        has_structural_contract = callable(getattr(module, "route", None)) and callable(
+            getattr(module, "transform_weights", None)
         )
         if isinstance(module, QEffMoEBlockMixin) or has_structural_contract:
-            yield module
-
-
-def _iter_optimized_moe_weight_modules(model: nn.Module):
-    for module in model.modules():
-        has_structural_contract = callable(getattr(module, "route", None)) and callable(
-            getattr(module, "build_moe_weights", None)
-        )
-        if has_structural_contract:
             yield module
 
 
@@ -1460,8 +1451,7 @@ class ExternalOptimizedMoEMapperTransform(ExternalModuleMapperTransform):
             "get_supported_moe_flavours": QEffMoEBlockMixin.get_supported_moe_flavours,
             "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
             "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
-            "build_moe_weights": QEffGrok1MoeBlock.build_moe_weights,
-            "get_moe_weights": QEffGrok1MoeBlock.get_moe_weights,
+            "transform_weights": QEffGrok1MoeBlock.transform_weights,
             "route": QEffGrok1MoeBlock.route,
             "moe_profile": QEffGrok1MoeBlock.moe_profile,
             "apply_shared_experts": QEffMoEBlockMixin.apply_shared_experts,
@@ -1471,18 +1461,14 @@ class ExternalOptimizedMoEMapperTransform(ExternalModuleMapperTransform):
             "supports_moe_prefill_blocking": QEffGrok1MoeBlock.supports_moe_prefill_blocking,
             "supports_static_moe_prefill_chunks": QEffGrok1MoeBlock.supports_static_moe_prefill_chunks,
             "supports_moe_decode_bmm": QEffGrok1MoeBlock.supports_moe_decode_bmm,
+            "__qeff_init__": QEffMoEBlockMixin.__qeff_init__,
         },
         "DeepseekV3MoE": {
-            "forward": QEffDeepseekV3MoE.forward,
-            "legacy_forward": QEffDeepseekV3MoE.legacy_forward,
-            "moe": QEffDeepseekV3MoE.moe,
-            "moe_blocked_forward": QEffDeepseekV3MoE.moe_blocked_forward,
-            "moe_blocked_weights_forward": QEffDeepseekV3MoE.moe_blocked_weights_forward,
+            "forward": QEffMoEBlockMixin.forward,
             "get_supported_moe_flavours": QEffMoEBlockMixin.get_supported_moe_flavours,
             "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
             "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
-            "build_moe_weights": QEffDeepseekV3MoE.build_moe_weights,
-            "get_moe_weights": QEffDeepseekV3MoE.get_moe_weights,
+            "transform_weights": QEffDeepseekV3MoE.transform_weights,
             "route": QEffDeepseekV3MoE.route,
             "moe_profile": QEffDeepseekV3MoE.moe_profile,
             "apply_shared_experts": QEffDeepseekV3MoE.apply_shared_experts,
@@ -1503,11 +1489,10 @@ class OptimizedMoEWeightsTransform(PytorchTransform):
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         transformed = False
-        for module in _iter_optimized_moe_weight_modules(model):
-            if getattr(module, "_qeff_moe_weights_ready", False):
+        for module in _iter_optimized_moe_modules(model):
+            if getattr(module, "weights_transformed", False):
                 continue
-            module.build_moe_weights()
-            module._qeff_moe_weights_ready = True
+            module.transform_weights()
             transformed = True
         return model, transformed
 

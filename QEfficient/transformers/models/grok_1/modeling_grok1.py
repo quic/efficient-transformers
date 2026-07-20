@@ -26,6 +26,7 @@ from QEfficient.transformers.moe import (
     MoEProfile,
     MoEWeights,
     QEffMoEBlockMixin,
+    delete_module_attrs,
     silu_glu_mlp,
     stack_expert_linears,
 )
@@ -152,24 +153,18 @@ class QEffGrok1MoeBlock(QEffMoEBlockMixin, nn.Module):
     supports_static_moe_prefill_chunks = False
     supports_moe_decode_bmm = True
 
-    def build_moe_weights(self) -> MoEWeights:
-        """Stack per-expert Linear weights into canonical MoEWeights.
-
-        grok experts expose ``linear`` (gate), ``linear_v`` (up) and ``linear_1``
-        (down) as ``nn.Linear``; canonical target is gate/up [E,H,I], down [E,I,H].
-        """
-        if getattr(self, "moe_weights", None) is None:
-            self.moe_weights = MoEWeights(
-                gate=stack_expert_linears(self.experts, lambda e: e.linear.weight),
-                up=stack_expert_linears(self.experts, lambda e: e.linear_v.weight),
-                down=stack_expert_linears(self.experts, lambda e: e.linear_1.weight),
-            )
-            self.act_fn = self.experts[0].act_fn
-        return self.moe_weights
-
-    def get_moe_weights(self) -> MoEWeights:
-        if getattr(self, "moe_weights", None) is None:
-            self.build_moe_weights()
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+        self.moe_weights = MoEWeights(
+            gate=stack_expert_linears(self.experts, lambda expert: expert.linear.weight),
+            up=stack_expert_linears(self.experts, lambda expert: expert.linear_v.weight),
+            down=stack_expert_linears(self.experts, lambda expert: expert.linear_1.weight),
+        )
+        self.act_fn = self.experts[0].act_fn
+        for expert in self.experts:
+            delete_module_attrs(expert, "linear", "linear_v", "linear_1")
+        self.weights_transformed = True
         return self.moe_weights
 
     def moe_profile(self) -> MoEProfile:

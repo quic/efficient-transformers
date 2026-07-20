@@ -45,6 +45,7 @@ from QEfficient.transformers.moe import (
     MoEWeights,
     QEffMoEBlockMixin,
     build_canonical_expert_weights,
+    delete_module_attrs,
     silu_glu_mlp,
     stack_expert_linears,
 )
@@ -216,13 +217,14 @@ class QEffMixtralSparseMoeBlock(QEffMoEBlockMixin, MixtralSparseMoeBlock):
     supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM)
 
     def __qeff_init__(self):
+        super().__qeff_init__()
         if hasattr(self.experts, "act_fn"):
             self.act_fn = self.experts.act_fn
         else:
             self.act_fn = getattr(self.experts[0], "act_fn", F.silu)
 
-    def build_moe_weights(self) -> MoEWeights:
-        if getattr(self, "moe_weights", None) is not None:
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
             return self.moe_weights
         if hasattr(self.experts, "gate_up_proj"):
             self.moe_weights = build_canonical_expert_weights(
@@ -234,6 +236,7 @@ class QEffMixtralSparseMoeBlock(QEffMoEBlockMixin, MixtralSparseMoeBlock):
                 transpose_down=True,
             )
             self.act_fn = getattr(self.experts, "act_fn", F.silu)
+            delete_module_attrs(self.experts, "gate_up_proj", "down_proj")
         else:
             self.moe_weights = MoEWeights(
                 gate=stack_expert_linears(self.experts, lambda expert: expert.w1.weight),
@@ -241,11 +244,9 @@ class QEffMixtralSparseMoeBlock(QEffMoEBlockMixin, MixtralSparseMoeBlock):
                 down=stack_expert_linears(self.experts, lambda expert: expert.w2.weight),
             )
             self.act_fn = getattr(self.experts[0], "act_fn", F.silu)
-        return self.moe_weights
-
-    def get_moe_weights(self) -> MoEWeights:
-        if getattr(self, "moe_weights", None) is None:
-            self.build_moe_weights()
+            for expert in self.experts:
+                delete_module_attrs(expert, "w1", "w2", "w3")
+        self.weights_transformed = True
         return self.moe_weights
 
     @property

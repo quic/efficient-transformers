@@ -1276,12 +1276,14 @@ class _DummyOptimizedMoEBlock(QEffMoEBlockMixin, nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.build_count = 0
+        self.transform_count = 0
+        self.weights_transformed = False
 
-    def build_moe_weights(self):
-        self.build_count += 1
+    def transform_weights(self):
+        self.transform_count += 1
         tensor = torch.ones(2, 4, 8)
         self.moe_weights = MoEWeights(gate=tensor, up=tensor, down=tensor.transpose(-1, -2).contiguous())
+        self.weights_transformed = True
         return self.moe_weights
 
     def route(self, x):
@@ -1330,6 +1332,16 @@ class TestSplitOptimizedMoETransform:
             class _MissingSupportedMoEFlavours(QEffMoEBlockMixin, nn.Module):
                 pass
 
+    def test_moe_block_mixin_subclasses_must_implement_transform_weights(self):
+        class _MissingTransformWeights(QEffMoEBlockMixin, nn.Module):
+            supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP,)
+
+            def route(self, x):
+                return x, None
+
+        with pytest.raises(TypeError, match="transform_weights"):
+            _MissingTransformWeights()
+
     def test_simple_decode_moe_transform_is_optimized_moe_transform_subclass(self):
         assert issubclass(SimpleDecodeMoeTransform, OptimizedMoETransform)
 
@@ -1339,9 +1351,9 @@ class TestSplitOptimizedMoETransform:
         _, transformed = SimpleDecodeMoeTransform.apply(model)
 
         assert transformed
-        assert model.block.build_count == 1
+        assert model.block.transform_count == 1
         assert model.block.moe_weights is not None
-        assert model.block._qeff_moe_weights_ready is True
+        assert model.block.weights_transformed is True
         assert model.block._moe_flavour is MoEFlavour.DECODE_BMM
 
     def test_simple_decode_moe_transform_falls_back_when_decode_bmm_unsupported(self):
@@ -1351,7 +1363,7 @@ class TestSplitOptimizedMoETransform:
         _, transformed = SimpleDecodeMoeTransform.apply(model)
 
         assert transformed
-        assert model.block.build_count == 1
+        assert model.block.transform_count == 1
         assert model.block._moe_flavour is MoEFlavour.SIMPLE_LOOP
 
     def test_simple_decode_moe_transform_is_registered_after_cache_transforms(self):
@@ -1435,7 +1447,8 @@ class TestSplitOptimizedMoETransform:
 
         assert transformed
         assert not hasattr(model.block, "moe_weights")
-        assert model.block.build_count == 0
+        assert model.block.transform_count == 0
+        assert model.block.weights_transformed is False
 
     def test_weights_transform_canonicalizes_once(self):
         model = _DummyOptimizedMoEModel()
@@ -1445,8 +1458,44 @@ class TestSplitOptimizedMoETransform:
 
         assert transformed
         assert not transformed_again
-        assert model.block.build_count == 1
+        assert model.block.transform_count == 1
+        assert model.block.weights_transformed is True
         assert model.block.moe_weights.gate.shape == (2, 4, 8)
+
+    def test_weights_transform_registers_canonical_moe_parameters(self):
+        model = _DummyOptimizedMoEModel()
+
+        OptimizedMoEWeightsTransform.apply(model)
+        parameter_names = dict(model.named_parameters())
+
+        assert isinstance(model.block.moe_weights, nn.Module)
+        assert "block.moe_weights.gate" in parameter_names
+        assert "block.moe_weights.up" in parameter_names
+        assert "block.moe_weights.down" in parameter_names
+        assert not any(name.endswith(("gate_proj", "all_gate_proj", "down_proj_t")) for name in parameter_names)
+
+    def test_moe_forward_requires_pretransformed_weights(self):
+        model = _DummyOptimizedMoEModel()
+
+        with pytest.raises(RuntimeError, match="weights are not transformed"):
+            model.block(torch.ones(1, 1, 4))
+
+        assert model.block.transform_count == 0
+
+    def test_moe_forward_consumes_prepared_weights_without_transforming(self):
+        model = _DummyOptimizedMoEModel()
+        OptimizedMoEWeightsTransform.apply(model)
+        model.block._moe_return_router_logits = True
+
+        def fail_builder():
+            raise AssertionError("forward must not build MoE weights")
+
+        model.block.transform_weights = fail_builder
+
+        out, router_logits = model.block(torch.ones(1, 1, 4))
+
+        assert router_logits is None
+        assert torch.isfinite(out).all()
 
     def test_export_config_transform_sets_blocking_attrs_and_hash_params(self):
         model = _DummyOptimizedMoEModel()
@@ -1623,7 +1672,7 @@ class TestSplitOptimizedMoETransform:
         )
 
         assert transformed
-        assert model.block.build_count == 1
+        assert model.block.transform_count == 1
         assert model.block.moe_weights is not None
         assert model.block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
         assert hash_params["moe_prefill_num_packed_chunks"] == 2
@@ -1701,7 +1750,7 @@ class TestSplitOptimizedMoETransform:
 
         assert first_transformed
         assert second_transformed
-        assert model.block.build_count == 1
+        assert model.block.transform_count == 1
         assert model.block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
         assert model.block.expert_parallel_num_nsp == 2
         assert model.block.expert_parallel_packed_chunk_size == 16
@@ -1727,8 +1776,8 @@ class TestSplitOptimizedMoETransform:
             def route(self, x):
                 return x, None
 
-            def build_moe_weights(self):
-                return None
+            def transform_weights(self):
+                return self.moe_weights
 
         model = nn.Sequential(StructuralMoE())
 
@@ -2502,6 +2551,12 @@ class TestKVCacheExternalModuleMapperTransform:
         assert model.label == "mapped"
         assert model.mapped_method() is True
 
+    def test_external_optimized_moe_mapper_attaches_only_transform_weights(self):
+        for class_name in ("MoeBlock", "DeepseekV3MoE"):
+            mapping = ExternalOptimizedMoEMapperTransform._match_string_replace_method[class_name]
+            assert "transform_weights" in mapping
+            assert "get_moe_weights" not in mapping
+
     def test_external_mapper_deepseek_moe_is_owned_by_optimized_moe_transform(self):
         from QEfficient.transformers.models.pytorch_transforms import KVCacheExternalModuleMapperTransform
 
@@ -2514,16 +2569,18 @@ class TestKVCacheExternalModuleMapperTransform:
 
         assert transformed
         assert callable(model.route)
-        assert callable(model.get_moe_weights)
-        assert callable(model.build_moe_weights)
+        assert callable(model.transform_weights)
+        assert not hasattr(model, "get_moe_weights")
         assert callable(model.moe_profile)
-        assert callable(model.moe_blocked_forward)
-        assert callable(model.moe_blocked_weights_forward)
+        assert not hasattr(model, "legacy_forward")
+        assert not hasattr(model, "legacy_moe")
+        assert not hasattr(model, "moe_blocked_forward")
+        assert not hasattr(model, "moe_blocked_weights_forward")
         assert model._moe_flavour is MoEFlavour.DECODE_BMM
 
-    def test_prefill_deepseek_default_path_uses_mixin_when_num_ffn_blocks_unset(self, monkeypatch):
-        monkeypatch.delenv("NUM_FFN_BLOCKS", raising=False)
-        monkeypatch.delenv("FFN_W_BLOCK_SIZE", raising=False)
+    def test_prefill_deepseek_uses_mixin_even_when_legacy_env_is_set(self, monkeypatch):
+        monkeypatch.setenv("NUM_FFN_BLOCKS", "2")
+        monkeypatch.setenv("FFN_W_BLOCK_SIZE", "16")
         model = _make_deepseek_external_moe()
         _, transformed = OptimizedMoETransform.apply(model, prefill_only=True)
         calls = []
@@ -2539,59 +2596,3 @@ class TestKVCacheExternalModuleMapperTransform:
         assert transformed
         assert calls
         assert torch.isfinite(out).all()
-
-    def test_prefill_deepseek_legacy_path_runs_when_num_ffn_blocks_set(self, monkeypatch):
-        monkeypatch.setenv("NUM_FFN_BLOCKS", "2")
-        monkeypatch.delenv("FFN_W_BLOCK_SIZE", raising=False)
-        model = _make_deepseek_external_moe()
-        OptimizedMoETransform.apply(model, prefill_only=True)
-        calls = []
-
-        def fake_blocked(self, hidden_states, topk_weights, mask, num_experts):
-            calls.append(("blocked", topk_weights, mask, num_experts))
-            return hidden_states + 1
-
-        def fail_weight_blocked(self, hidden_states, topk_weights, mask, num_experts):
-            raise AssertionError("weight-blocked path should not run when FFN_W_BLOCK_SIZE is unset")
-
-        model.moe_blocked_forward = MethodType(fake_blocked, model)
-        model.moe_blocked_weights_forward = MethodType(fail_weight_blocked, model)
-
-        out = model(torch.zeros(1, 2, 4))
-
-        assert len(calls) == 1
-        assert calls[0][0] == "blocked"
-        assert calls[0][3] == 2
-        torch.testing.assert_close(out, torch.ones(1, 2, 4))
-
-    def test_prefill_deepseek_legacy_path_has_default_blocked_fallback(self, monkeypatch):
-        monkeypatch.setenv("NUM_FFN_BLOCKS", "2")
-        monkeypatch.delenv("FFN_W_BLOCK_SIZE", raising=False)
-        model = _make_deepseek_external_moe()
-        OptimizedMoETransform.apply(model, prefill_only=True)
-
-        out = model(torch.zeros(1, 2, 4))
-
-        assert torch.isfinite(out).all()
-
-    def test_prefill_deepseek_legacy_ffn_weight_block_size_selects_weight_blocking(self, monkeypatch):
-        monkeypatch.setenv("NUM_FFN_BLOCKS", "2")
-        monkeypatch.setenv("FFN_W_BLOCK_SIZE", "16")
-        model = _make_deepseek_external_moe()
-        OptimizedMoETransform.apply(model, prefill_only=True)
-        calls = []
-
-        def fake_weight_blocked(self, hidden_states, topk_weights, mask, num_experts):
-            calls.append("weights")
-            return hidden_states + 2
-
-        def fail_blocked(self, hidden_states, topk_weights, mask, num_experts):
-            raise AssertionError("weight-blocked path should run when FFN_W_BLOCK_SIZE is set")
-
-        model.moe_blocked_weights_forward = MethodType(fake_weight_blocked, model)
-        model.moe_blocked_forward = MethodType(fail_blocked, model)
-
-        out = model(torch.zeros(1, 2, 4))
-
-        assert calls == ["weights"]
-        torch.testing.assert_close(out, torch.full((1, 2, 4), 2.0))

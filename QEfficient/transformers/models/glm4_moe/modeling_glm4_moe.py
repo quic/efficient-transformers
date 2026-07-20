@@ -40,6 +40,7 @@ from QEfficient.transformers.moe import (
     MoEWeights,
     QEffMoEBlockMixin,
     build_canonical_expert_weights,
+    delete_module_attrs,
     silu_glu_mlp,
     stack_expert_linears,
 )
@@ -575,6 +576,7 @@ class QEffGlm4MoeMoE(QEffMoEBlockMixin, Glm4MoeMoE):
     def __qeff_init__(
         self,
     ):
+        super().__qeff_init__()
         if hasattr(self.experts, "gate_up_proj"):
             self.act_fn = self.experts.act_fn
             self.num_experts = self.experts.num_experts
@@ -582,8 +584,8 @@ class QEffGlm4MoeMoE(QEffMoEBlockMixin, Glm4MoeMoE):
             self.act_fn = self.experts[0].act_fn
             self.num_experts = len(self.experts)
 
-    def build_moe_weights(self) -> MoEWeights:
-        if getattr(self, "moe_weights", None) is not None:
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
             return self.moe_weights
         if hasattr(self.experts, "gate_up_proj"):
             self.moe_weights = build_canonical_expert_weights(
@@ -594,20 +596,16 @@ class QEffGlm4MoeMoE(QEffMoEBlockMixin, Glm4MoeMoE):
                 transpose_gate_up=True,
                 transpose_down=True,
             )
+            delete_module_attrs(self.experts, "gate_up_proj", "down_proj")
         else:
             self.moe_weights = MoEWeights(
-                gate=stack_expert_linears(self.experts, lambda e: e.gate_proj.weight),
-                up=stack_expert_linears(self.experts, lambda e: e.up_proj.weight),
-                down=stack_expert_linears(self.experts, lambda e: e.down_proj.weight),
+                gate=stack_expert_linears(self.experts, lambda expert: expert.gate_proj.weight),
+                up=stack_expert_linears(self.experts, lambda expert: expert.up_proj.weight),
+                down=stack_expert_linears(self.experts, lambda expert: expert.down_proj.weight),
             )
-        self.all_gate_proj = nn.Parameter(self.moe_weights.gate, requires_grad=False)
-        self.all_up_proj = nn.Parameter(self.moe_weights.up, requires_grad=False)
-        self.all_down_proj = nn.Parameter(self.moe_weights.down, requires_grad=False)
-        return self.moe_weights
-
-    def get_moe_weights(self) -> MoEWeights:
-        if getattr(self, "moe_weights", None) is None:
-            self.build_moe_weights()
+            for expert in self.experts:
+                delete_module_attrs(expert, "gate_proj", "up_proj", "down_proj")
+        self.weights_transformed = True
         return self.moe_weights
 
     @property

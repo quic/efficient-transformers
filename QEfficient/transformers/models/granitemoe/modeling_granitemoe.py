@@ -41,6 +41,7 @@ from QEfficient.transformers.moe import (
     MoEWeights,
     QEffMoEBlockMixin,
     build_canonical_expert_weights,
+    delete_module_attrs,
     silu_glu_mlp,
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -521,8 +522,8 @@ class QEffGraniteMoeMoE(QEffMoEBlockMixin, GraniteMoeMoE):
     supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP,)
     supports_moe_decode_bmm = False
 
-    def build_moe_weights(self) -> MoEWeights:
-        if getattr(self, "moe_weights", None) is not None:
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
             return self.moe_weights
         self.moe_weights = build_canonical_expert_weights(
             gate_up=self.input_linear.weight,
@@ -532,11 +533,8 @@ class QEffGraniteMoeMoE(QEffMoEBlockMixin, GraniteMoeMoE):
             transpose_gate_up=True,
             transpose_down=True,
         )
-        return self.moe_weights
-
-    def get_moe_weights(self) -> MoEWeights:
-        if getattr(self, "moe_weights", None) is None:
-            self.build_moe_weights()
+        delete_module_attrs(self, "input_linear", "output_linear")
+        self.weights_transformed = True
         return self.moe_weights
 
     @property

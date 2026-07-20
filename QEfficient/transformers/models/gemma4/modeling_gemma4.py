@@ -42,6 +42,7 @@ from QEfficient.transformers.moe import (
     MoEWeights,
     QEffMoEBlockMixin,
     build_canonical_expert_weights,
+    delete_module_attrs,
     silu_glu_mlp,
 )
 from QEfficient.utils import constants
@@ -332,8 +333,8 @@ class QEffGemma4TextMoeBlock(QEffMoEBlockMixin, nn.Module):
         self.pre_feedforward_layernorm = pre_feedforward_layernorm
         self.post_feedforward_layernorm = post_feedforward_layernorm
 
-    def build_moe_weights(self) -> MoEWeights:
-        if getattr(self, "moe_weights", None) is not None:
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
             return self.moe_weights
         self.moe_weights = build_canonical_expert_weights(
             gate_up=self.experts.gate_up_proj,
@@ -343,14 +344,8 @@ class QEffGemma4TextMoeBlock(QEffMoEBlockMixin, nn.Module):
             transpose_gate_up=True,
             transpose_down=True,
         )
-        self.all_gate_proj = nn.Parameter(self.moe_weights.gate, requires_grad=False)
-        self.all_up_proj = nn.Parameter(self.moe_weights.up, requires_grad=False)
-        self.all_down_proj = nn.Parameter(self.moe_weights.down, requires_grad=False)
-        return self.moe_weights
-
-    def get_moe_weights(self) -> MoEWeights:
-        if getattr(self, "moe_weights", None) is None:
-            self.build_moe_weights()
+        delete_module_attrs(self.experts, "gate_up_proj", "down_proj")
+        self.weights_transformed = True
         return self.moe_weights
 
     @property

@@ -13,7 +13,8 @@ override only the variation points:
 
 * ``route(x)``               -> (routing, router_logits); routing is dense ``[T,E]``
                                  or ``(topk_indices, topk_weights)``.
-* ``get_moe_weights()``      -> canonical :class:`MoEWeights` (default: ``self.moe_weights``).
+* ``transform_weights()``    -> transform original weights into canonical
+                                 :class:`MoEWeights` during the MoE weights transform.
 * ``moe_profile``            -> :class:`MoEProfile` (default: plain SiLU-GLU).
 * ``apply_shared_experts``   -> add a shared-expert term (default: no-op).
 
@@ -21,6 +22,7 @@ The flavour is assigned at export time by ``OptimizedMoETransform`` via
 ``self._moe_flavour`` and the ``expert_parallel_*`` attributes.
 """
 
+from abc import ABCMeta, abstractmethod
 from typing import Optional, Tuple
 
 import torch
@@ -36,7 +38,7 @@ from QEfficient.transformers.moe.profiles import SILU_GLU_PROFILE, MoEProfile
 from QEfficient.transformers.moe.weights import MoEWeights
 
 
-class QEffMoEBlockMixin:
+class QEffMoEBlockMixin(metaclass=ABCMeta):
     # Default profile; models with non-standard activations override this.
     moe_profile: MoEProfile = SILU_GLU_PROFILE
     # Set by OptimizedMoETransform at export time; decode is the safe default.
@@ -47,6 +49,8 @@ class QEffMoEBlockMixin:
     expert_parallel_num_nsp: Optional[int] = None
     expert_parallel_packed_chunk_size: Optional[int] = None
     expert_parallel_num_packed_chunks: int = 1
+    # Set by OptimizedMoEWeightsTransform after model-local canonicalization.
+    weights_transformed: bool = False
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -56,6 +60,10 @@ class QEffMoEBlockMixin:
         if not supported_moe_flavours:
             raise TypeError(f"{cls.__name__}.supported_moe_flavours must not be empty")
         cls.supported_moe_flavours = supported_moe_flavours
+
+    def __qeff_init__(self) -> None:
+        if "weights_transformed" not in self.__dict__:
+            self.weights_transformed = False
 
     @property
     def expert_blocking_num_nsp(self) -> Optional[int]:
@@ -85,8 +93,9 @@ class QEffMoEBlockMixin:
     def route(self, x: torch.Tensor):
         raise NotImplementedError
 
-    def get_moe_weights(self) -> MoEWeights:
-        return self.moe_weights
+    @abstractmethod
+    def transform_weights(self) -> MoEWeights:
+        raise NotImplementedError
 
     def apply_shared_experts(self, out: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
         return out
@@ -98,7 +107,11 @@ class QEffMoEBlockMixin:
 
     # ---- orchestration (shared) ----------------------------------------------
     def execute_moe_flavour(self, x: torch.Tensor, routing) -> torch.Tensor:
-        weights = self.get_moe_weights()
+        if not getattr(self, "weights_transformed", False):
+            raise RuntimeError(
+                f"{type(self).__name__} weights are not transformed; run OptimizedMoEWeightsTransform before forward"
+            )
+        weights = self.moe_weights
         profile = self.moe_profile
         if callable(profile):
             profile = profile()

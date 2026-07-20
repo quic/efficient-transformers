@@ -6,7 +6,6 @@
 # ----------------------------------------------------------------------------
 
 import math
-import os
 from functools import partial
 from typing import Callable, Dict, List, Optional, Tuple, Type, Union
 
@@ -30,8 +29,7 @@ from QEfficient.transformers.moe import (
     MoEWeights,
     QEffMoEBlockMixin,
     build_canonical_expert_weights,
-    moe_decode_bmm,
-    moe_simple_loop,
+    delete_module_attrs,
     silu_glu_mlp,
     stack_expert_linears,
 )
@@ -806,10 +804,11 @@ class QEffDeepseekV3MoE(QEffMoEBlockMixin, nn.Module):
     def __qeff_init__(
         self,
     ):
+        QEffMoEBlockMixin.__qeff_init__(self)
         self.act_fn = _deepseek_act_fn(self.experts)
 
-    def build_moe_weights(self) -> MoEWeights:
-        if getattr(self, "moe_weights", None) is not None:
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
             return self.moe_weights
         if hasattr(self.experts, "gate_up_proj"):
             self.moe_weights = build_canonical_expert_weights(
@@ -820,20 +819,16 @@ class QEffDeepseekV3MoE(QEffMoEBlockMixin, nn.Module):
                 transpose_gate_up=True,
                 transpose_down=True,
             )
+            delete_module_attrs(self.experts, "gate_up_proj", "down_proj")
         else:
             self.moe_weights = MoEWeights(
-                gate=stack_expert_linears(self.experts, lambda e: _deepseek_expert_weight(e.gate_proj)),
-                up=stack_expert_linears(self.experts, lambda e: _deepseek_expert_weight(e.up_proj)),
-                down=stack_expert_linears(self.experts, lambda e: _deepseek_expert_weight(e.down_proj)),
+                gate=stack_expert_linears(self.experts, lambda expert: _deepseek_expert_weight(expert.gate_proj)),
+                up=stack_expert_linears(self.experts, lambda expert: _deepseek_expert_weight(expert.up_proj)),
+                down=stack_expert_linears(self.experts, lambda expert: _deepseek_expert_weight(expert.down_proj)),
             )
-        self.all_gate_proj = torch.nn.Parameter(self.moe_weights.gate, requires_grad=False)
-        self.all_up_proj = torch.nn.Parameter(self.moe_weights.up, requires_grad=False)
-        self.all_down_proj = torch.nn.Parameter(self.moe_weights.down, requires_grad=False)
-        return self.moe_weights
-
-    def get_moe_weights(self) -> MoEWeights:
-        if getattr(self, "moe_weights", None) is None:
-            self.build_moe_weights()
+            for expert in self.experts:
+                delete_module_attrs(expert, "gate_proj", "up_proj", "down_proj")
+        self.weights_transformed = True
         return self.moe_weights
 
     def moe_profile(self) -> MoEProfile:
@@ -845,97 +840,6 @@ class QEffDeepseekV3MoE(QEffMoEBlockMixin, nn.Module):
 
     def apply_shared_experts(self, out: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
         return out + self.shared_experts(residual)
-
-    def moe(
-        self,
-        hidden_states: torch.Tensor,
-        *args,
-    ):
-        weights = self.build_moe_weights()
-        profile = MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.act_fn))
-        if len(args) == 2:
-            topk_indices, topk_weights = args
-            hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-            final_hidden_states = moe_decode_bmm(
-                hidden_states,
-                topk_indices,
-                topk_weights,
-                weights,
-                profile,
-                top_k=self.gate.top_k,
-            )
-            return final_hidden_states.type(hidden_states.dtype)
-        if len(args) == 3:
-            _, expert_mask, _ = args
-            return moe_simple_loop(hidden_states, expert_mask, weights, profile).type(hidden_states.dtype)
-        raise TypeError("QEffDeepseekV3MoE.moe expects either topk indices/weights or legacy expert mask inputs")
-
-    def orig_moe(self, hidden_states: torch.Tensor, topk_indices: torch.Tensor, topk_weights: torch.Tensor):
-        r"""
-        CALL FOR CONTRIBUTION! I don't have time to optimise this right now, but expert weights need to be fused
-        to not have to do a loop here (deepseek has 256 experts soooo yeah).
-        """
-        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
-        expert_mask = torch.nn.functional.one_hot(topk_indices, num_classes=len(self.experts))
-        expert_mask = expert_mask.permute(2, 0, 1)
-        for expert_idx in range(len(self.experts)):
-            expert = self.experts[expert_idx]
-            mask = expert_mask[expert_idx]
-            token_indices, weight_indices = torch.where(mask)
-
-            if token_indices.numel() > 0:
-                expert_weights = topk_weights[token_indices, weight_indices]
-                expert_input = hidden_states[token_indices]
-                expert_output = expert(expert_input)
-                weighted_output = expert_output * expert_weights.unsqueeze(-1)
-                final_hidden_states.index_add_(0, token_indices, weighted_output)
-
-        # in original deepseek, the output of the experts are gathered once we leave this module
-        # thus the moe module is itelsf an IsolatedParallel module
-        # and all expert are "local" meaning we shard but we don't gather
-        return final_hidden_states.type(hidden_states.dtype)
-
-    def moe_blocked_forward(
-        self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int
-    ):
-        return self.moe(hidden_states, topk_weights, expert_mask, num_experts)
-
-    def moe_blocked_weights_forward(
-        self, hidden_states: torch.Tensor, topk_weights: torch.Tensor, expert_mask: torch.Tensor, num_experts: int
-    ):
-        return self.moe(hidden_states, topk_weights, expert_mask, num_experts)
-
-    def legacy_forward(self, hidden_states):
-        """
-        Legacy blocked prefill path controlled by NUM_FFN_BLOCKS/FFN_W_BLOCK_SIZE.
-        """
-        residuals = hidden_states
-        orig_shape = hidden_states.shape
-        topk_indices, topk_weights, _ = _deepseek_route_tokens(self, hidden_states)
-        # orig_out = self.orig_moe(hidden_states, topk_indices, topk_weights).view(*orig_shape)
-
-        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        mask = hidden_states.new_zeros(hidden_states.shape[0], self.config.n_routed_experts)
-        mask.scatter_(1, topk_indices, topk_weights)
-        if os.environ.get("NUM_FFN_BLOCKS", None) is not None and os.environ.get("FFN_W_BLOCK_SIZE", None) is not None:
-            hidden_states = self.moe_blocked_weights_forward(
-                hidden_states, topk_weights, mask, self.config.n_routed_experts
-            ).view(*orig_shape)
-        elif os.environ.get("NUM_FFN_BLOCKS", None) is not None:
-            hidden_states = self.moe_blocked_forward(
-                hidden_states, topk_weights, mask, self.config.n_routed_experts
-            ).view(*orig_shape)
-        else:
-            hidden_states = self.moe(hidden_states, topk_weights, mask, self.config.n_routed_experts).view(*orig_shape)
-
-        hidden_states = hidden_states + self.shared_experts(residuals)
-        return hidden_states
-
-    def forward(self, hidden_states):
-        if os.environ.get("NUM_FFN_BLOCKS", None) is not None:
-            return self.legacy_forward(hidden_states)
-        return QEffMoEBlockMixin.forward(self, hidden_states)
 
 
 class QEffDeepseekV3DecoderLayer(nn.Module):
