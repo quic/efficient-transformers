@@ -96,6 +96,35 @@ def update_running_softmax(
         output = output_updated
     return current_max, current_denominator, output
 
+def update_running_softmax_prefill(
+    current_max: torch.Tensor,
+    attn_weights_block: torch.Tensor,
+    current_denominator: torch.Tensor,
+    output: torch.Tensor,
+    v_block: torch.Tensor,
+    skip_kv: bool = False,
+    skip_future: Optional[torch.Tensor] = None,
+):
+    prev_max = current_max
+    current_max_updated = torch.max(prev_max, attn_weights_block.max(dim=-1).values)
+    delta_max = prev_max - current_max_updated
+    current_exp = torch.exp(attn_weights_block - current_max_updated.unsqueeze(-1))
+    prev_denominator = current_denominator
+    curr_exp_sum = current_exp.sum(dim=-1)
+    current_denominator_updated = prev_denominator * torch.exp(delta_max) + curr_exp_sum
+    prev_output = output
+    output_updated = prev_output * torch.exp(delta_max.unsqueeze(-1)) + torch.matmul(current_exp, v_block)
+    if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+        assert skip_future is not None
+        current_max         = torch.where(skip_future, prev_max, current_max_updated)
+        current_denominator = torch.where(skip_future, prev_denominator, current_denominator_updated)
+        output              = torch.where(skip_future.unsqueeze(-1), prev_output, output_updated)
+    else:
+        current_max         = current_max_updated
+        current_denominator = current_denominator_updated
+        output              = output_updated
+    return current_max, current_denominator, output
+
 
 def blocked_kv_attention_forward(
     module: nn.Module,
@@ -753,7 +782,7 @@ def blocked_qkv_attention_forward_prefill_online(
                     .masked_fill(causal.unsqueeze(2), float(MIN_MASKED_ATTENTION_VALUE))
                     .view(B, num_cores, rc * tc, -1)
                 )
-                acc["m_acc"], acc["s_acc"], acc["o_acc"] = update_running_softmax(
+                acc["m_acc"], acc["s_acc"], acc["o_acc"] = update_running_softmax_prefill(
                     acc["m_acc"],
                     attn_m,
                     acc["s_acc"],
@@ -766,7 +795,7 @@ def blocked_qkv_attention_forward_prefill_online(
         r_chunks = []
         for acc in accs:
             rc = acc["rc"]
-            out = acc["o_acc"]
+            out = acc["o_acc"] / acc["s_acc"].unsqueeze(-1)
             r_chunks.append(out.view(B, num_cores, rc, tc, D))
         t_chunks.append(torch.cat(r_chunks, dim=2))
 

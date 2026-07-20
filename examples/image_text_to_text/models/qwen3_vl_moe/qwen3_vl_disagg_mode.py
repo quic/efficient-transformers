@@ -285,11 +285,15 @@ decode_inputs = {
 }
 
 for layer_idx in range(config.text_config.num_hidden_layers):
-    b, h, c, d = outputs[f"past_key.{layer_idx}_RetainedState"].shape
-    decode_inputs[f"past_key.{layer_idx}"] = outputs[f"past_key.{layer_idx}_RetainedState"].reshape(1, b * h, c, d)
-    decode_inputs[f"past_value.{layer_idx}"] = outputs[f"past_value.{layer_idx}_RetainedState"].reshape(1, b * h, c, d)
-
-# import ipdb; ipdb.set_trace()
+    # RetainedState from prefill has shape [1, num_kv_heads, ctx_len, head_dim].
+    # Replicate across BS decode requests, then fold into [1, BS*num_kv_heads, ctx_len, head_dim].
+    _, h, c, d = outputs[f"past_key.{layer_idx}_RetainedState"].shape
+    decode_inputs[f"past_key.{layer_idx}"] = np.tile(
+        outputs[f"past_key.{layer_idx}_RetainedState"], (1, BS, 1, 1)
+    ).reshape(1, BS * h, c, d)
+    decode_inputs[f"past_value.{layer_idx}"] = np.tile(
+        outputs[f"past_value.{layer_idx}_RetainedState"], (1, BS, 1, 1)
+    ).reshape(1, BS * h, c, d)
 
 st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
