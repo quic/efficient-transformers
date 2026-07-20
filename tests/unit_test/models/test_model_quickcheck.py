@@ -107,6 +107,7 @@ CAUSAL_MULTI_SUBFUNCTION_MODEL_TYPES = {
     "phi",
     "starcoder2",
     "gpt_oss",
+    "mixtral",
     # "granitemoe" is intentionally not listed in CAUSAL_RUNTIME_MODEL_IDS yet.
 }
 

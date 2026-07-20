@@ -155,7 +155,6 @@ class QEffGPTJAttention(GPTJAttention):
 
 
 class QEffGPTJBlock(GPTJBlock):
-    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: Optional[torch.FloatTensor],

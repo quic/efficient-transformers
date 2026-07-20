@@ -19,7 +19,7 @@ def main():
     parser.add_argument("--prompt", type=str, default="Hello, how are you?", help="Input prompt")
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=128, help="Context length")
-    parser.add_argument("--use-dynamo", action="store_true", help="Export via dynamo")
+    parser.add_argument("--dynamo", action="store_true", help="Export via dynamo")
     parser.add_argument("--use-onnx-subfunctions", action="store_true", help="Use subfunctions while exporting")
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
@@ -45,7 +45,7 @@ def main():
         num_cores=args.num_cores,
         aic_hw_version=args.aic_hw_version,
         num_devices=(1 if args.device_group is None else len(args.device_group)),
-        use_dynamo=args.use_dynamo,
+        dynamo=args.dynamo,
         use_onnx_subfunctions=args.use_onnx_subfunctions,
     )
     print(f"Model compiled to: {qpc_path}")
