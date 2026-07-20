@@ -275,7 +275,9 @@ class QEffGemma4CustomRMSNormAIC(nn.Module):
             weight = getattr(self, "_qeff_unit_weight", None)
             if weight is None:
                 weight = hidden_states.new_ones(hidden_states.shape[-1])
-        return CustomRMSNormFunc.apply(hidden_states, weight, self.eps)
+        # Cast weight to match hidden_states dtype so the AIC compiler sees
+        # matching Input/Scale dtypes in the CustomRMSNorm op (e.g. bfloat16).
+        return CustomRMSNormFunc.apply(hidden_states, weight.to(hidden_states.dtype), self.eps)
 
 
 class QEffGemma4TextExperts(Gemma4TextExperts):
@@ -1363,7 +1365,9 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         }
         lang_inputs = {
             "input_ids": input_ids,
-            "vision_embeds": torch.zeros((bs, mm_tokens_per_image, self.model.language_model.config.hidden_size)),
+            "vision_embeds": torch.zeros(
+                (bs, mm_tokens_per_image, self.model.language_model.config.hidden_size), dtype=self.config.dtype
+            ),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
             "image_idx": torch.zeros((1, 1), dtype=torch.int64),
             "mm_token_type_ids": mm_token_type_ids,

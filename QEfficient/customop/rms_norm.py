@@ -16,7 +16,7 @@ ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
 
 @onnxscript.script(onnxscript.values.Opset(domain="com.qti.aisw.onnx", version=1))
 def CustomRMSNorm(hidden_states: onnxscript.FLOAT, weight: onnxscript.FLOAT, epsilon: float):
-    weight = ops.Cast(weight, to=1)
+    # weight is passed with the same dtype as hidden_states by the caller; no Cast needed.
     variance = ops.ReduceMean(ops.Pow(hidden_states, 2), axes=[-1], keepdims=1)
     epsilon = ops.Expand(epsilon, ops.Shape(variance))
     hidden_states = hidden_states * ops.Reciprocal(ops.Sqrt(variance + epsilon))

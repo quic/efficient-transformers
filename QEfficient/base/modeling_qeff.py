@@ -1063,7 +1063,8 @@ class QEFFBaseModel(ABC):
         model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
         io_name_prefix = ("past_", "pixel_values", "conv_", "recurrent_")
         pkv_in_bfloat16 = (custom_io is not None) and any(
-            any(bfloat16_io_name in key for bfloat16_io_name in io_name_prefix) and "bfloat16" in value for key, value in custom_io.items()
+            any(bfloat16_io_name in key for bfloat16_io_name in io_name_prefix) and "bfloat16" in value
+            for key, value in custom_io.items()
         )
         if custom_io is not None:
             custom_io_yaml = compile_dir / "custom_io.yaml"
