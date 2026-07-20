@@ -36,6 +36,7 @@ from QEfficient.transformers.moe.weights import (
     MoEWeights,
     as_parameters,
     build_canonical_expert_weights,
+    delete_module_attrs,
     stack_expert_linears,
 )
 
@@ -58,5 +59,6 @@ __all__ = [
     "MoEWeights",
     "as_parameters",
     "build_canonical_expert_weights",
+    "delete_module_attrs",
     "stack_expert_linears",
 ]
