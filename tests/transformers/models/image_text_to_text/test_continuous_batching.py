@@ -317,7 +317,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, image_list, prompt_list)
         compile_kwargs["img_size"] = img_size
 
-    qeff_model.export()
     qeff_model.compile(**compile_kwargs)
     # if _is_kimi_k25(model_name):
     #    manual_cleanup(qeff_model.onnx_path)

@@ -74,6 +74,10 @@ _QUICKCHECK_META = {
         "Qwen MoE",
         "Full logits parity: HF PyTorch vs QEff PyTorch vs ORT (layerwise)",
     ),
+    "test_repeat_kv_quickcheck_hf_qeff_ort_parity": (
+        "Causal LM",
+        "RepeatKV parity: HF PyTorch vs QEff PyTorch vs ORT logits",
+    ),
     "test_causal_subfunction_export_smoke_all_models": (
         "Causal LM",
         "Full parity: HF PyTorch vs QEff PyTorch vs ORT tokens (subfunctions)",
