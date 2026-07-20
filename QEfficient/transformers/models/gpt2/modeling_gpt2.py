@@ -149,7 +149,6 @@ class QEffGPT2Block(GPT2Block):
     - add new args cache idx for the kv retention
     """
 
-    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: Optional[Tuple[torch.FloatTensor]],
