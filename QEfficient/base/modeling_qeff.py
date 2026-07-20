@@ -533,12 +533,13 @@ class QEFFBaseModel(ABC):
             kwargs.update(
                 {
                     "prefill_only": prefill_only,
-                    "prefill_seq_len": specializations[0].get("seq_len"),
+                    "prefill_seq_len": constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
                     "enable_chunking": enable_chunking,
                     "num_cores": compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES),
                     "moe_prefill_packed_chunk_size": constants.MOE_PREFILL_PACKED_CHUNK_SIZE
                     if moe_prefill_packed_chunk_size is None
                     else moe_prefill_packed_chunk_size,
+                    "moe_prefill_target_seq_len": specializations[0].get("seq_len"),
                 }
             )
 
