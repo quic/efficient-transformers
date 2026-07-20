@@ -21,12 +21,24 @@ config = AutoConfig.from_pretrained(model_id)
 # config.vision_config.deepstack_visual_indexes = [8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=True, config=config
+    model_id,
+    attn_implementation="eager",
+    kv_offload=True,
+    config=config,
+    # # For CCL activation
+    # qaic_config={
+    #     "ccl_enabled": True,
+    # },
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 ### use skip_vision=Ture, if want to run only text, else false ###
-skip_vision = False
+skip_vision = True
+
+# Compute-Context-Length (CCL) lists for prefill and decode. When both are None and
+# ccl_enabled=True, they are auto-generated from ctx_len.
+# comp_ctx_lengths_prefill = [2048, 4096]
+# comp_ctx_lengths_decode = [2048, 4096]
 
 if skip_vision:
     ## Only Text ##
@@ -46,6 +58,8 @@ if skip_vision:
         skip_vision=True,
         mos=1,
         use_onnx_subfunctions=True,
+        # comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+        # comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )
 
     messages = [
@@ -90,6 +104,8 @@ else:
         aic_enable_depth_first=True,
         mos=1,
         use_onnx_subfunctions=False,
+        # comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
+        # comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )
 
     ### IMAGE + TEXT ###
