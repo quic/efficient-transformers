@@ -912,6 +912,9 @@ def test_gemma4_text_moe_block_forward_parity(flavour):
     )
     router = Gemma4TextRouter(config).eval()
     experts = Gemma4TextExperts(config).eval()
+    with torch.no_grad():
+        experts.gate_up_proj.normal_(mean=0.0, std=0.02)
+        experts.down_proj.normal_(mean=0.0, std=0.02)
     pre_norm = Gemma4RMSNorm(config.hidden_size, eps=config.rms_norm_eps).eval()
     post_norm = Gemma4RMSNorm(config.hidden_size, eps=config.rms_norm_eps).eval()
     qeff_block = QEffGemma4TextMoeBlock(
@@ -920,8 +923,10 @@ def test_gemma4_text_moe_block_forward_parity(flavour):
         copy.deepcopy(pre_norm),
         copy.deepcopy(post_norm),
     ).eval()
+    _, weights_ready = OptimizedMoEWeightsTransform.apply(qeff_block)
     qeff_block._moe_flavour = MoEFlavour(flavour)
 
+    assert weights_ready
     hidden_states = torch.randn(1, MOE_BLOCK_SEQ_LEN, MOE_BLOCK_HIDDEN_SIZE)
     with torch.no_grad():
         flat = hidden_states.reshape(-1, hidden_states.shape[-1])

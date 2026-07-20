@@ -42,6 +42,7 @@ from QEfficient.transformers.moe import (
     MoEWeights,
     QEffMoEBlockMixin,
     build_canonical_expert_weights,
+    delete_module_attrs,
     silu_glu_mlp,
 )
 from QEfficient.utils import constants
@@ -411,10 +412,11 @@ def eager_attention_forward(
 
 class QEffLlama4TextExperts(Llama4TextExperts):
     def __qeff_init__(self):
+        self.weights_transformed = False
         self.expert_dim = getattr(self, "expert_dim", self.gate_up_proj.shape[-1] // 2)
 
-    def build_moe_weights(self) -> MoEWeights:
-        if getattr(self, "moe_weights", None) is not None:
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
             return self.moe_weights
         self.moe_weights = build_canonical_expert_weights(
             gate_up=self.gate_up_proj,
@@ -424,8 +426,8 @@ class QEffLlama4TextExperts(Llama4TextExperts):
             transpose_gate_up=False,
             transpose_down=False,
         )
-        self.gate_proj = nn.Parameter(self.moe_weights.gate, requires_grad=False)
-        self.up_proj = nn.Parameter(self.moe_weights.up, requires_grad=False)
+        delete_module_attrs(self, "gate_up_proj", "down_proj")
+        self.weights_transformed = True
         return self.moe_weights
 
 
@@ -440,15 +442,12 @@ class QEffLlama4TextMoe(QEffMoEBlockMixin, Llama4TextMoe):
     supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP,)
     supports_moe_decode_bmm = False
 
-    def build_moe_weights(self) -> MoEWeights:
-        if getattr(self.experts, "moe_weights", None) is None:
-            self.experts.build_moe_weights()
-        self.moe_weights = self.experts.moe_weights
-        return self.moe_weights
-
-    def get_moe_weights(self) -> MoEWeights:
-        if getattr(self, "moe_weights", None) is None:
-            self.build_moe_weights()
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+        weights = self.experts.transform_weights()
+        self.moe_weights = weights
+        self.weights_transformed = True
         return self.moe_weights
 
     def moe_profile(self) -> MoEProfile:
