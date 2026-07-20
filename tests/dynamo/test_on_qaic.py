@@ -10,7 +10,6 @@ Dynamo on-QAIC tests.
 
 All tests require QAIC hardware (marked @pytest.mark.on_qaic).
 Every test is run twice: use_onnx_subfunctions=False and use_onnx_subfunctions=True.
-The subfunction=True variant is skipped for DYNAMO_NO_SUBFUNCTION_ARCHS.
 
 Covers:
   - FP16 compile
@@ -33,7 +32,6 @@ from ._helpers import (
     BATCH_SIZE,
     CTX_LEN,
     DYNAMO_CAUSAL_LM_MODEL_IDS,
-    DYNAMO_NO_SUBFUNCTION_ARCHS,
     FULL_BATCH_SIZE,
     PROMPT_LEN,
     exported_onnx_path,
@@ -52,8 +50,8 @@ _MDP_SUBSET = tuple(m for m in _HW_SUBSET if m != "gpt2")
 
 
 @pytest.mark.dynamo
-@pytest.mark.dynamo_on_qaic
 @pytest.mark.on_qaic
+@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
 @pytest.mark.parametrize("use_onnx_subfunctions", [False, True], ids=["flat", "subfn"])
 @pytest.mark.parametrize(
@@ -61,8 +59,6 @@ _MDP_SUBSET = tuple(m for m in _HW_SUBSET if m != "gpt2")
 )
 def test_dynamo_fp16_compile(model_type, model_id, use_onnx_subfunctions, tmp_export_dir):
     """Export with dynamo=True and compile to FP16 QPC."""
-    if use_onnx_subfunctions and model_type in DYNAMO_NO_SUBFUNCTION_ARCHS:
-        pytest.skip(f"{model_type} does not support subfunctions under dynamo")
 
     try:
         model_hf = load_hf_model(model_id)
@@ -91,8 +87,8 @@ def test_dynamo_fp16_compile(model_type, model_id, use_onnx_subfunctions, tmp_ex
 
 
 @pytest.mark.dynamo
-@pytest.mark.dynamo_on_qaic
 @pytest.mark.on_qaic
+@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
 @pytest.mark.parametrize("use_onnx_subfunctions", [False, True], ids=["flat", "subfn"])
 @pytest.mark.parametrize(
@@ -100,8 +96,6 @@ def test_dynamo_fp16_compile(model_type, model_id, use_onnx_subfunctions, tmp_ex
 )
 def test_dynamo_fp32_compile(model_type, model_id, use_onnx_subfunctions, tmp_export_dir):
     """Export with dynamo=True and compile with fp32 model (no precision compression)."""
-    if use_onnx_subfunctions and model_type in DYNAMO_NO_SUBFUNCTION_ARCHS:
-        pytest.skip(f"{model_type} does not support subfunctions under dynamo")
 
     try:
         model_hf = AutoModelForCausalLM.from_pretrained(
@@ -139,7 +133,6 @@ def test_dynamo_fp32_compile(model_type, model_id, use_onnx_subfunctions, tmp_ex
 
 
 @pytest.mark.dynamo
-@pytest.mark.dynamo_on_qaic
 @pytest.mark.dynamo_multi_device
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
@@ -152,8 +145,6 @@ def test_dynamo_fp32_compile(model_type, model_id, use_onnx_subfunctions, tmp_ex
 )
 def test_dynamo_multi_device_compile(model_type, model_id, use_onnx_subfunctions, tmp_export_dir):
     """Export with dynamo=True and compile for 4 devices."""
-    if use_onnx_subfunctions and model_type in DYNAMO_NO_SUBFUNCTION_ARCHS:
-        pytest.skip(f"{model_type} does not support subfunctions under dynamo")
 
     try:
         model_hf = load_hf_model(model_id)
@@ -183,7 +174,6 @@ def test_dynamo_multi_device_compile(model_type, model_id, use_onnx_subfunctions
 
 
 @pytest.mark.dynamo
-@pytest.mark.dynamo_on_qaic
 @pytest.mark.on_qaic
 @pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
@@ -195,8 +185,6 @@ def test_dynamo_multi_device_compile(model_type, model_id, use_onnx_subfunctions
 )
 def test_dynamo_generate_fp16(model_type, model_id, use_onnx_subfunctions, tmp_export_dir):
     """End-to-end export → compile → generate with dynamo=True."""
-    if use_onnx_subfunctions and model_type in DYNAMO_NO_SUBFUNCTION_ARCHS:
-        pytest.skip(f"{model_type} does not support subfunctions under dynamo")
 
     try:
         model_hf = load_hf_model(model_id)
@@ -232,7 +220,6 @@ def test_dynamo_generate_fp16(model_type, model_id, use_onnx_subfunctions, tmp_e
 
 
 @pytest.mark.dynamo
-@pytest.mark.dynamo_on_qaic
 @pytest.mark.on_qaic
 @pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
@@ -245,9 +232,6 @@ def test_dynamo_generate_fp16(model_type, model_id, use_onnx_subfunctions, tmp_e
 def test_dynamo_hw_ort_parity(model_type, model_id, use_onnx_subfunctions, tmp_export_dir):
     """ORT CPU tokens == QAIC FP16 top-1 token (greedy argmax parity)."""
     from QEfficient.utils.run_utils import ApiRunner
-
-    if use_onnx_subfunctions and model_type in DYNAMO_NO_SUBFUNCTION_ARCHS:
-        pytest.skip(f"{model_type} does not support subfunctions under dynamo")
 
     try:
         tokenizer = load_tokenizer(model_id)
@@ -306,7 +290,6 @@ def test_dynamo_hw_ort_parity(model_type, model_id, use_onnx_subfunctions, tmp_e
 
 
 @pytest.mark.dynamo
-@pytest.mark.dynamo_on_qaic
 @pytest.mark.on_qaic
 @pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
@@ -318,8 +301,6 @@ def test_dynamo_hw_ort_parity(model_type, model_id, use_onnx_subfunctions, tmp_e
 )
 def test_dynamo_cb_generate(model_type, model_id, use_onnx_subfunctions, tmp_export_dir):
     """Continuous-batching export → compile → generate with dynamo=True."""
-    if use_onnx_subfunctions and model_type in DYNAMO_NO_SUBFUNCTION_ARCHS:
-        pytest.skip(f"{model_type} does not support subfunctions under dynamo")
 
     try:
         model_hf = load_hf_model(model_id)

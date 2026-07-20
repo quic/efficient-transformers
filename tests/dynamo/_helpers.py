@@ -61,11 +61,6 @@ DYNAMO_CAUSAL_LM_MODEL_IDS = {
     "starcoder2": "hf-internal-testing/tiny-random-Starcoder2ForCausalLM",
 }
 
-# Architectures where use_onnx_subfunctions=True fails under dynamo (TorchExportError)
-# gpt_oss has heterogeneous layer structure (mixed dense/MoE) causing invoke_subgraph
-# schema mismatch — tracked for follow-up.
-DYNAMO_NO_SUBFUNCTION_ARCHS = {}
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -163,14 +158,16 @@ def assert_retained_state_outputs(onnx_path: Path, expected_count: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-def run_dynamo_ort_parity(model_id: str, export_dir: Path, use_onnx_subfunctions: bool = False) -> None:
+def run_dynamo_ort_parity(
+    model_hf: AutoModelForCausalLM,
+    tokenizer,
+    export_dir: Path,
+    use_onnx_subfunctions: bool = False,
+) -> None:
     """
-    Load tiny model, wrap with QEFFAutoModelForCausalLM, export with dynamo=True,
+    Wrap pre-loaded model with QEFFAutoModelForCausalLM, export with dynamo=True,
     and assert HF PT == QEff PT == ORT token parity via ApiRunner.
     """
-    tokenizer = load_tokenizer(model_id)
-    model_hf = load_hf_model(model_id)
-
     api_runner = ApiRunner(
         batch_size=BATCH_SIZE,
         tokenizer=tokenizer,
@@ -196,7 +193,9 @@ def run_dynamo_ort_parity(model_id: str, export_dir: Path, use_onnx_subfunctions
     )
     ort_tokens = api_runner.run_kv_model_on_ort(str(onnx_path))
 
-    assert np.array_equal(hf_tokens, kv_tokens.squeeze(0)), f"HF vs QEff PyTorch parity failed for {model_id}"
+    assert np.array_equal(hf_tokens, kv_tokens.squeeze(0)), (
+        f"HF vs QEff PyTorch parity failed for {model_hf.__class__.__name__}"
+    )
     assert np.array_equal(kv_tokens, ort_tokens), (
-        f"QEff PyTorch vs ORT parity failed for {model_id} (use_onnx_subfunctions={use_onnx_subfunctions})"
+        f"QEff PyTorch vs ORT parity failed for {model_hf.__class__.__name__} (use_onnx_subfunctions={use_onnx_subfunctions})"
     )

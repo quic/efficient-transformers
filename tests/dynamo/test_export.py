@@ -10,7 +10,7 @@ Dynamo export smoke tests.
 
 Every architecture is tested twice:
   - dynamo=True, use_onnx_subfunctions=False
-  - dynamo=True, use_onnx_subfunctions=True  (skipped for DYNAMO_NO_SUBFUNCTION_ARCHS)
+  - dynamo=True, use_onnx_subfunctions=True
 
 CPU-only. No QAIC hardware required.
 """
@@ -23,7 +23,6 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalL
 
 from ._helpers import (
     DYNAMO_CAUSAL_LM_MODEL_IDS,
-    DYNAMO_NO_SUBFUNCTION_ARCHS,
     assert_has_subfunctions,
     assert_retained_state_outputs,
     assert_subfunction_names_match_decoder_class,
@@ -35,15 +34,12 @@ from ._helpers import (
 
 @pytest.mark.dynamo
 @pytest.mark.dynamo_export
-@pytest.mark.regular
 @pytest.mark.parametrize("use_onnx_subfunctions", [False, True], ids=["flat", "subfn"])
 @pytest.mark.parametrize(
     "model_type,model_id", sorted(DYNAMO_CAUSAL_LM_MODEL_IDS.items()), ids=sorted(DYNAMO_CAUSAL_LM_MODEL_IDS)
 )
 def test_dynamo_export(model_type, model_id, use_onnx_subfunctions, tmp_export_dir):
     """ONNX export with dynamo=True for both subfunction modes."""
-    if use_onnx_subfunctions and model_type in DYNAMO_NO_SUBFUNCTION_ARCHS:
-        pytest.skip(f"{model_type} does not support subfunctions under dynamo")
 
     try:
         model_hf = load_hf_model(model_id)

@@ -17,7 +17,6 @@ from __future__ import annotations
 import pytest
 import torch
 
-from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.device_utils import get_available_device_id, is_multi_qranium_setup_available
 
 
@@ -32,8 +31,6 @@ def _parse_torch_version() -> tuple:
 def pytest_configure(config):
     config.addinivalue_line("markers", "dynamo: mark a test as part of the dynamo test suite")
     config.addinivalue_line("markers", "dynamo_export: CPU-only dynamo export smoke and parity tests")
-    config.addinivalue_line("markers", "dynamo_compile: on-QAIC dynamo compile tests")
-    config.addinivalue_line("markers", "dynamo_on_qaic: on-QAIC dynamo compile/generate/parity tests")
     config.addinivalue_line(
         "markers",
         "dynamo_multi_device: dynamo multi-device (MDP) compile tests — requires MDP-capable QAIC setup",
@@ -55,8 +52,8 @@ def set_deterministic_seed():
 
 
 @pytest.fixture
-def tmp_export_dir():
-    export_dir = QEFF_HOME / "qeff_dynamo_exports"
+def tmp_export_dir(tmp_path):
+    export_dir = tmp_path / "qeff_dynamo_exports"
     export_dir.mkdir(parents=True, exist_ok=True)
     return export_dir
 

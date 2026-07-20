@@ -23,3 +23,31 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HUGGINGFACE_HUB_TOKEN: ${{ secrets.HF_TOKEN }}
         run: pytest tests/unit_test/ -n auto -v
+
+  dynamo-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package and test dependencies
+        run: |
+          pip install -e ".[test]"
+          pip install \
+            'torch@https://download.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl' \
+            'torchvision@https://download.pytorch.org/whl/cpu/torchvision-0.28.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl' \
+            'compressed-tensors==0.17.0' \
+            'onnxscript==0.6.2' \
+            onnx_ir
+
+      - name: Run dynamo CPU tests
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HUGGINGFACE_HUB_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pytest tests/dynamo/ tests/unit_test/transforms/test_onnx_transforms.py \
+            -m "not on_qaic" \
+            -n auto -v
