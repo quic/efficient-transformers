@@ -140,7 +140,7 @@ def main(
     trust_remote_code: Optional[bool] = False,
     ccl_enabled: Optional[bool] = False,
     use_onnx_subfunctions: bool = False,
-    use_dynamo: bool = False,
+    dynamo: bool = False,
     **kwargs,
 ) -> None:
     """
@@ -209,7 +209,7 @@ def main(
         If True, trusts remote code when loading models from HuggingFace. Default is False.
     use_onnx_subfunctions : bool, optional
         Enables ONNX subfunctions during export and compile. Default is False.
-    use_dynamo : bool, optional
+    dynamo : bool, optional
         Use the dynamo-based ONNX exporter instead of the legacy TorchScript exporter. Default is False.
     **kwargs :
         Additional compiler options passed directly to `qaic-compile`. Any flag supported by
@@ -285,7 +285,7 @@ def main(
         enable_qnn=enable_qnn,
         qnn_config=qnn_config,
         use_onnx_subfunctions=use_onnx_subfunctions,
-        use_dynamo=use_dynamo,
+        dynamo=dynamo,
         **kwargs,
     )
 
@@ -397,9 +397,8 @@ if __name__ == "__main__":
         help="Enable ONNX subfunctions during export/compile.",
     )
     parser.add_argument(
-        "--use-dynamo",
-        "--use_dynamo",
-        dest="use_dynamo",
+        "--dynamo",
+        dest="dynamo",
         action="store_true",
         default=False,
         help="Use the dynamo-based ONNX exporter instead of the legacy TorchScript exporter.",

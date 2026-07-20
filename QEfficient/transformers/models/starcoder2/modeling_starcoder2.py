@@ -145,7 +145,6 @@ class QEFFStarcoder2DecoderLayer(Starcoder2DecoderLayer):
     - update causal attention mask
     """
 
-    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

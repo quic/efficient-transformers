@@ -142,7 +142,6 @@ class QEffPhiDecoderLayer(PhiDecoderLayer):
     - update the hidden_states, and fix for onnx model
     """
 
-    @torch.compiler.nested_compile_region
     def forward(
         self,
         hidden_states: torch.Tensor,

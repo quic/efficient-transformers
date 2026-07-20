@@ -8,11 +8,6 @@
 import torch
 
 
-def select_interface(eager_impl, custom_op_impl):
-    use_custom_op = torch._dynamo.is_compiling()
-    return custom_op_impl if use_custom_op else eager_impl
-
-
 @torch.library.custom_op("qefficient::rms_norm", mutates_args=())
 def rms_norm_op(hidden_states: torch.Tensor, weight: torch.Tensor, epsilon: float) -> torch.Tensor:
     """Custom RMS Norm operation for QEfficient"""
@@ -82,19 +77,6 @@ def ctx_gather_op(data: torch.Tensor, ctx_indices: torch.Tensor, comp_ctx_len: i
     batch_indices = torch.arange(data.shape[0]).view(-1, 1, 1)
     head_indices = torch.arange(data.shape[1]).view(1, -1, 1)
     return data[batch_indices, head_indices, ctx_indices]
-
-
-# @ctx_gather_op.register_fake
-# def _(
-#     data: torch.Tensor,
-#     ctx_indices: torch.Tensor,
-#     comp_ctx_len: int,
-# ) -> torch.Tensor:
-#     # Output shape: (batch, heads, comp_ctx_len, head_dim)
-#     # axis 2 is the gathered context dimension, which becomes comp_ctx_len
-#     # not data.shape[2] (the original full context length).
-#     out_shape = (data.shape[0], data.shape[1], comp_ctx_len, *data.shape[3:])
-#     return torch.empty(out_shape, dtype=data.dtype, device=data.device)
 
 
 @ctx_gather_op.register_fake
