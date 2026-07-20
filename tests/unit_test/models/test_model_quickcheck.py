@@ -42,6 +42,7 @@ from transformers import (
     AutoModelForSequenceClassification,
     AutoModelForSpeechSeq2Seq,
     AutoTokenizer,
+    LlamaConfig,
     Qwen2Config,
 )
 from transformers.models.qwen3.configuration_qwen3 import Qwen3Config
@@ -268,6 +269,20 @@ def _ort_session(onnx_path: Path) -> ort.InferenceSession:
     if graph_was_patched:
         return ort.InferenceSession(onnx_model.SerializeToString(), sess_options=options)
     return ort.InferenceSession(str(onnx_path), sess_options=options)
+
+
+def _ort_session_zeroing_int32_max_constants(onnx_path: Path):
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    options = ort.SessionOptions()
+    added_initializers = {}
+    for node in onnx_model.graph.node:
+        if node.op_type == "Constant":
+            np_tensor = onnx.numpy_helper.to_array(node.attribute[0].t, os.path.dirname(onnx_path))
+            if len(np_tensor.shape) == 0 and np_tensor.item() == 2147483647:
+                added_initializers[node.output[0]] = ort.OrtValue.ortvalue_from_numpy(np.array(0, np_tensor.dtype))
+    for name, value in added_initializers.items():
+        options.add_initializer(name, value)
+    return ort.InferenceSession(str(onnx_path), sess_options=options), added_initializers
 
 
 _configure_torch_threads()
@@ -1165,6 +1180,53 @@ def test_gemma3_vlm_export_parity_with_and_without_subfunctions(tmp_path):
 
     assert [value.name for value in with_model.graph.input] == [value.name for value in without_model.graph.input]
     assert [value.name for value in with_model.graph.output] == [value.name for value in without_model.graph.output]
+
+
+@pytest.mark.llm_model
+def test_repeat_kv_quickcheck_hf_qeff_ort_parity(tmp_path):
+    config = LlamaConfig(
+        vocab_size=128,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        max_position_embeddings=64,
+    )
+    torch.manual_seed(0)
+    model_hf = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS).eval()
+    qeff_model = QEFFAutoModelForCausalLM(deepcopy(model_hf), qaic_config={"num_replicate_kv_heads": 2})
+
+    input_ids = torch.arange(1, 5, dtype=torch.int64).view(1, 4)
+    position_ids = torch.arange(4, dtype=torch.int64).view(1, 4)
+    head_dim = config.hidden_size // config.num_attention_heads
+    past_key_values = tuple(
+        (
+            torch.zeros((1, config.num_attention_heads, 8, head_dim), dtype=torch.float32),
+            torch.zeros((1, config.num_attention_heads, 8, head_dim), dtype=torch.float32),
+        )
+        for _ in range(config.num_hidden_layers)
+    )
+    inputs = {"input_ids": input_ids, "position_ids": position_ids, "past_key_values": past_key_values}
+    with torch.no_grad():
+        hf_logits = model_hf(input_ids=input_ids, position_ids=position_ids).logits[:, -1:, :].detach().numpy()
+
+    qeff_model.transform(ctx_len=8, seq_len=4, bs=1, qaic_config=qeff_model.model.qaic_config)
+    with torch.no_grad():
+        qeff_logits = qeff_model.model(**inputs).logits.detach().numpy()
+
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "repeat-kv"))
+    ort_session, added_initializers = _ort_session_zeroing_int32_max_constants(onnx_path)
+    assert added_initializers is not None
+    flat_inputs = {name: value.detach().numpy() for name, value in inputs.items() if torch.is_tensor(value)}
+    for layer_idx, layer_state in enumerate(past_key_values):
+        flat_inputs[f"past_key.{layer_idx}"] = layer_state[0].detach().numpy()
+        flat_inputs[f"past_value.{layer_idx}"] = layer_state[1].detach().numpy()
+    ort_inputs = {item.name: flat_inputs[item.name] for item in ort_session.get_inputs()}
+    ort_logits = ort_session.run(None, ort_inputs)[0]
+
+    assert np.allclose(hf_logits, qeff_logits, atol=1e-4, rtol=1e-4)
+    assert np.allclose(qeff_logits, ort_logits, atol=1e-4, rtol=1e-4)
 
 
 @pytest.mark.llm_model
