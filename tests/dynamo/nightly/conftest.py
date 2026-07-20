@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 
 """
-Conftest for tests/dynamo/nightly/.
+Pytest fixtures and hooks for the dynamo nightly test suite (tests/dynamo/nightly/).
 
 Provides a separate artifacts fixture (dynamo_causal_model_artifacts) so dynamo
 nightly results are stored independently from regular nightly results.
