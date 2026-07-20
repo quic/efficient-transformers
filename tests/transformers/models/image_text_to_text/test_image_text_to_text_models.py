@@ -27,19 +27,10 @@ from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import QnnConstants
 from QEfficient.utils.load_kimi_utils import (
-    get_kimi_k25_num_image_tokens as _get_kimi_k25_num_image_tokens,
-)
-from QEfficient.utils.load_kimi_utils import (
-    get_kimi_k25_test_config,
-)
-from QEfficient.utils.load_kimi_utils import (
-    is_kimi_k25 as _is_kimi_k25,
-)
-from QEfficient.utils.load_kimi_utils import (
-    load_kimi_k25_layer_subset_model as _load_kimi_k25_layer_subset_model,
-)
-from QEfficient.utils.load_kimi_utils import (
-    run_kimi_k25_hf_model_on_pytorch as _run_kimi_k25_hf_model_on_pytorch,
+    get_kimi_k25_num_image_tokens,
+    is_kimi_k25,
+    load_kimi_k25_layer_subset_model,
+    run_kimi_k25_hf_model_on_pytorch,
 )
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
 from QEfficient.utils.test_utils import (
@@ -62,10 +53,6 @@ model_config_dict = {model["model_name"]: model for model in multimodal_models}
 test_mm_moe_models = [model["model_name"] for model in multimodal_models if "moe" in model.get("model_type", "")]
 
 NEW_GENERATION_TOKENS = 10
-
-
-def _get_kimi_k25_test_config(model_name: str):
-    return get_kimi_k25_test_config(model_name, model_config_dict)
 
 
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
@@ -99,10 +86,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     n_layer = num_hidden_layers
     qaic_config = copy.deepcopy(qaic_config) if qaic_config is not None else None
 
-    kimi_tokenizer = None
-    kimi_processor = None
-    if _is_kimi_k25(model_name) and config is None:
-        model_hf, kimi_tokenizer, kimi_processor = _load_kimi_k25_layer_subset_model()
+    if is_kimi_k25(model_name) and config is None:
+        model_hf, tokenizer, processor = load_kimi_k25_layer_subset_model()
         config = model_hf.config
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
@@ -259,9 +244,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         inputs["pixel_values"] = inputs.pop("images")
         compile_kwargs["img_size"] = img_size
 
-    elif _is_kimi_k25(model_name):
-        processor = kimi_processor
-        tokenizer = kimi_tokenizer
+    elif is_kimi_k25(model_name):
         image = Image.open(requests.get(img_url, stream=True).raw).convert("RGB")
         conversation = [
             {
@@ -273,38 +256,20 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             },
         ]
         prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
-        api_runner = ApiRunnerVlm(
-            batch_size,
-            processor,
-            config,
-            image,
-            conversation,
-            prompt,
-            prompt_len,
-            ctx_len,
-            max_gen_len,
-            num_hidden_layers,
-        )
         inputs = processor(
             messages=conversation,
             add_generation_prompt=True,
             tokenize=False,
             return_tensors="pt",
         )
-        pytorch_hf_tokens = _run_kimi_k25_hf_model_on_pytorch(copy.deepcopy(model_hf), processor, inputs, max_gen_len)
-        inputs = processor(
-            messages=conversation,
-            add_generation_prompt=True,
-            tokenize=False,
-            return_tensors="pt",
-        )
+        pytorch_hf_tokens = run_kimi_k25_hf_model_on_pytorch(copy.deepcopy(model_hf), processor, inputs, max_gen_len)
         compile_kwargs.update(
             {
                 "prefill_seq_len": 1,
                 "num_patches": int(inputs["pixel_values"].shape[0]),
                 "h": int(inputs["grid_thws"][0, 1].item()),
                 "w": int(inputs["grid_thws"][0, 2].item()),
-                "num_image_tokens": _get_kimi_k25_num_image_tokens(config, inputs["grid_thws"]),
+                "num_image_tokens": get_kimi_k25_num_image_tokens(config, inputs["grid_thws"]),
             }
         )
 

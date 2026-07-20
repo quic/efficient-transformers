@@ -22,22 +22,13 @@ from QEfficient.utils.load_kimi_utils import (
     NUM_EXPERTS_PER_TOKEN,
     NUM_TEXT_LAYERS,
     NUM_VISION_LAYERS,
+    ensure_torch_fx_import_compatibility,
+    get_kimi_k25_num_image_tokens,
     load_kimi_k25_class,
-)
-from QEfficient.utils.load_kimi_utils import (
-    ensure_torch_fx_import_compatibility as _ensure_torch_fx_import_compatibility,
-)
-from QEfficient.utils.load_kimi_utils import (
-    load_layer_subset_model as _load_layer_subset_model,
-)
-from QEfficient.utils.load_kimi_utils import (
-    parse_expert_ids as _parse_expert_ids,
-)
-from QEfficient.utils.load_kimi_utils import (
-    prepare_config as _prepare_config,
-)
-from QEfficient.utils.load_kimi_utils import (
-    set_deterministic as _set_deterministic,
+    load_layer_subset_model,
+    parse_expert_ids,
+    prepare_config,
+    set_deterministic,
 )
 
 
@@ -51,7 +42,7 @@ def parse_args():
     )
     parser.add_argument("--num-vision-layers", type=int, default=NUM_VISION_LAYERS)
     parser.add_argument("--num-text-layers", type=int, default=NUM_TEXT_LAYERS)
-    parser.add_argument("--expert-ids", type=_parse_expert_ids, default=LOADED_EXPERT_IDS)
+    parser.add_argument("--expert-ids", type=parse_expert_ids, default=LOADED_EXPERT_IDS)
     parser.add_argument("--num-experts-per-token", type=int, default=NUM_EXPERTS_PER_TOKEN)
     parser.add_argument(
         "--image-url",
@@ -66,9 +57,9 @@ def parse_args():
 def main():
     args = parse_args()
 
-    _set_deterministic(1234)
-    _ensure_torch_fx_import_compatibility()
-    config = _prepare_config(args.model_path)
+    set_deterministic(1234)
+    ensure_torch_fx_import_compatibility()
+    config = prepare_config(args.model_path)
     kimi_cls = load_kimi_k25_class(args.model_path)
 
     model_kwargs = {
@@ -81,7 +72,7 @@ def main():
     if args.full_model:
         model, tokenizer, processor = kimi_cls.from_pretrained(str(args.model_path), **model_kwargs)
     elif args.num_vision_layers is not None and args.num_text_layers is not None:
-        model, tokenizer, processor = _load_layer_subset_model(
+        model, tokenizer, processor = load_layer_subset_model(
             model_path=args.model_path,
             kimi_cls=kimi_cls,
             config=config,
@@ -169,17 +160,10 @@ def main():
 
         inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
 
-        merge_kernel_size = getattr(model.config.vision_config, "merge_kernel_size", (2, 2))
-        if isinstance(merge_kernel_size, int):
-            kernel_height = kernel_width = merge_kernel_size
-            merge_kernel_size = (merge_kernel_size, merge_kernel_size)
-        else:
-            kernel_height, kernel_width = merge_kernel_size
-
         num_patches = int(inputs["pixel_values"].shape[0])
         h = int(inputs["grid_thws"][0, 1].item())
         w = int(inputs["grid_thws"][0, 2].item())
-        num_image_tokens = int(inputs["pixel_values"].shape[0] // (kernel_height * kernel_width))
+        num_image_tokens = (get_kimi_k25_num_image_tokens(config, inputs["grid_thws"]),)
 
         qeff_model.compile(
             qaic_config=qaic_config,

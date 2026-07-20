@@ -527,7 +527,7 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             inputs_embeds = inputs_embeds.to(vision_embeds_for_state.dtype)
 
             merged_inputs_embeds, merged_attention_mask, _, merged_position_ids = (
-                self.model._qeff_merge_single_image_symbolic(
+                self.model._qeff_merge_input_ids_with_image_features(
                     image_features=vision_embeds_for_state,
                     inputs_embeds=inputs_embeds,
                     input_ids=input_ids,
@@ -601,112 +601,6 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
         return QEffKimiK25DecoderWrapper(self)
 
     def _qeff_merge_input_ids_with_image_features(
-        self,
-        image_features: list[torch.Tensor],
-        inputs_embeds: torch.Tensor,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-        labels: torch.Tensor | None = None,
-    ):
-        """
-        Args:
-            image_features (:obj:`torch.Tensor` of shape :obj:`(num_image_tokens, embed_dim)`):
-                The image features to merge with the input embeddings.
-            inputs_embeds (:obj:`torch.Tensor` of shape :obj:`(batch_size, sequence_length, embed_dim)`):
-                The input embeddings.
-            input_ids (:obj:`torch.Tensor` of shape :obj:`(batch_size, sequence_length)`):
-                The input ids.
-            attention_mask (:obj:`torch.Tensor` of shape :obj:`(batch_size, sequence_length)`):
-                The attention mask.
-            labels (:obj:`torch.Tensor` of shape :obj:`(batch_size, sequence_length)`, *optional*):
-                The labels.
-        """
-        if len(image_features) == 0:
-            raise ValueError("At least one image_features tensor is required.")
-
-        _, embed_dim = image_features[0].shape
-        feature_lengths = [x.shape[0] for x in image_features]
-        image_features_cat = torch.cat(image_features, dim=0)
-
-        image_token_index: int = self.config.media_placeholder_token_id
-        pad_token_id: int = self.config.pad_token_id
-
-        batch_size, _ = input_ids.shape
-        target_device = inputs_embeds.device
-
-        left_padding = (~(input_ids[:, -1] == pad_token_id)).sum() == 0
-
-        image_token_mask = input_ids == image_token_index
-        non_image_mask = ~image_token_mask
-
-        flat_image_token_mask = image_token_mask.reshape(-1).to(torch.long)
-        flat_image_order = torch.cumsum(flat_image_token_mask, dim=0)
-        feature_lengths_tensor = torch.tensor(feature_lengths, dtype=input_ids.dtype, device=input_ids.device)
-        flat_image_lengths = torch.zeros_like(flat_image_order, dtype=input_ids.dtype)
-        for idx in range(len(feature_lengths)):
-            flat_image_lengths = (
-                flat_image_lengths + (flat_image_order == (idx + 1)).to(input_ids.dtype) * (feature_lengths_tensor[idx])
-            )
-
-        token_occupation_table = torch.ones_like(input_ids)
-        token_occupation_table = token_occupation_table.reshape(-1)
-        token_occupation_table = torch.where(flat_image_token_mask.bool(), flat_image_lengths, token_occupation_table)
-        token_occupation_table = token_occupation_table.reshape(input_ids.shape)
-
-        max_embed_dim = int(token_occupation_table.sum(-1).max().item())
-
-        new_token_positions = torch.cumsum(token_occupation_table, 1) - 1
-        nb_image_pad = max_embed_dim - 1 - new_token_positions[:, -1]
-        if bool(left_padding):
-            new_token_positions = new_token_positions + nb_image_pad[:, None]
-
-        merged_positions = torch.arange(max_embed_dim, device=input_ids.device).view(1, 1, -1)
-        text_position_one_hot = merged_positions == new_token_positions.unsqueeze(-1)
-        text_position_one_hot = torch.logical_and(text_position_one_hot, non_image_mask.unsqueeze(-1))
-
-        final_embedding = (
-            text_position_one_hot.to(inputs_embeds.dtype).unsqueeze(-1) * inputs_embeds.unsqueeze(2)
-        ).sum(dim=1)
-        final_attention_mask = (text_position_one_hot.to(attention_mask.dtype) * attention_mask.unsqueeze(-1)).sum(
-            dim=1
-        )
-
-        image_to_overwrite = torch.logical_not(text_position_one_hot.any(dim=1))
-        image_to_overwrite_cumsum = torch.cumsum(image_to_overwrite.to(torch.int64), dim=1)
-        image_to_overwrite = torch.logical_and(
-            image_to_overwrite,
-            image_to_overwrite_cumsum - 1 >= nb_image_pad[:, None].to(target_device),
-        )
-
-        image_slot_ids = torch.cumsum(image_to_overwrite.to(torch.int64), dim=1) - 1
-        if image_features_cat.shape[0] > 0:
-            valid_image_slots = torch.logical_and(image_to_overwrite, image_slot_ids < image_features_cat.shape[0])
-            image_slot_ids = torch.clamp(image_slot_ids, min=0, max=image_features_cat.shape[0] - 1)
-            gathered_image_embeddings = image_features_cat.to(target_device)[image_slot_ids]
-            final_embedding = torch.where(valid_image_slots.unsqueeze(-1), gathered_image_embeddings, final_embedding)
-            image_to_overwrite = valid_image_slots
-        else:
-            image_to_overwrite = torch.zeros_like(image_to_overwrite)
-
-        final_attention_mask = torch.logical_or(final_attention_mask.bool(), image_to_overwrite).to(
-            final_attention_mask.dtype
-        )
-
-        position_ids = torch.cumsum(final_attention_mask, dim=1) - 1
-        position_ids = torch.where(final_attention_mask == 0, torch.ones_like(position_ids), position_ids)
-
-        pad_token_mask = input_ids == pad_token_id
-        pad_position_one_hot = torch.logical_and(
-            merged_positions == new_token_positions.unsqueeze(-1), pad_token_mask.unsqueeze(-1)
-        )
-        pad_positions_mask = pad_position_one_hot.any(dim=1)
-        final_embedding = torch.where(
-            pad_positions_mask.unsqueeze(-1), torch.zeros_like(final_embedding), final_embedding
-        )
-
-        return final_embedding, final_attention_mask, labels, position_ids
-
-    def _qeff_merge_single_image_symbolic(
         self,
         image_features: torch.Tensor,
         inputs_embeds: torch.Tensor,
@@ -949,18 +843,18 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
 
         inputs_shapes = {}
         inputs_shapes["pixel_values"] = (
-            constants.KIMI_NUM_PATCHES,
+            constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_HEIGHT * constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_WIDTH,
             constants.ONNX_EXPORT_IMAGE_DEPTH,
             constants.KIMI_PATCH_SIZE,
             constants.KIMI_PATCH_SIZE,
         )
         inputs_shapes["vision_embeds"] = (
-            constants.KIMI_NUM_IMAGE_TOKENS,
+            constants.KIMI_EXAMPLE_IMAGE_NUM_IMAGE_TOKENS,
             self.language_model.config.hidden_size,
         )
         inputs_shapes["image_idx"] = (1, 1)
-        inputs_shapes["h"] = constants.KIMI_IMAGE_HEIGHT
-        inputs_shapes["w"] = constants.KIMI_IMAGE_WIDTH
+        inputs_shapes["h"] = constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_HEIGHT
+        inputs_shapes["w"] = constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_WIDTH
 
         vision_inputs = {
             "pixel_values": torch.zeros((inputs_shapes["pixel_values"]), dtype=self.config.torch_dtype),
@@ -1131,12 +1025,12 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
             kernel_height, kernel_width = merge_kernel_size
 
         if h is not None or w is not None:
-            heights = normalize_list(h, constants.KIMI_IMAGE_HEIGHT)
-            widths = normalize_list(w, constants.KIMI_IMAGE_WIDTH)
+            heights = normalize_list(h, constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_HEIGHT)
+            widths = normalize_list(w, constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_WIDTH)
             validate_dimension_lists(heights, widths, "h", "w")
         elif height is not None or width is not None:
-            pixel_heights = normalize_list(height, constants.KIMI_IMAGE_HEIGHT * patch_size)
-            pixel_widths = normalize_list(width, constants.KIMI_IMAGE_WIDTH * patch_size)
+            pixel_heights = normalize_list(height, constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_HEIGHT * patch_size)
+            pixel_widths = normalize_list(width, constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_WIDTH * patch_size)
             validate_dimension_lists(pixel_heights, pixel_widths, "height", "width")
 
             in_patch_limit = mm_processor_kwargs.get("in_patch_limit", 16384)
@@ -1161,8 +1055,8 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
                 heights.append((resized_height + pad_height) // patch_size)
                 widths.append((resized_width + pad_width) // patch_size)
         else:
-            heights = [constants.KIMI_IMAGE_HEIGHT]
-            widths = [constants.KIMI_IMAGE_WIDTH]
+            heights = [constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_HEIGHT]
+            widths = [constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_WIDTH]
 
         num_frames = normalize_sized_list(1 if num_frames is None else num_frames, len(heights), "num_frames")
         explicit_num_patches = normalize_sized_list(num_patches, len(heights), "num_patches")

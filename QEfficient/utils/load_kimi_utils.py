@@ -176,7 +176,11 @@ def load_kimi_k25_model_from_config(config):
     torch_dtype = getattr(model.config, "torch_dtype", None)
     if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
         model = model.to(torch.float32)
-    return model.eval()
+    model.vision_tower.patch_embed.pos_emb.interpolation_mode = "bilinear"
+    model.eval()
+    tokenizer = AutoTokenizer.from_pretrained(KIMI_K25_MODEL_NAME, trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(KIMI_K25_MODEL_NAME, trust_remote_code=True)
+    return model, tokenizer, processor
 
 
 def get_kimi_k25_num_image_tokens(config, grid_thws):
@@ -456,7 +460,7 @@ def run_kimi_k25_hf_model_on_pytorch(model, processor, inputs, max_gen_len):
 
 
 @torch.no_grad()
-def run_kimi_k25_hf_model_on_pytorch_cb(model, processor, images, queries, max_gen_len):
+def run_kimi_k25_hf_model_on_pytorch_CB(model, processor, images, queries, max_gen_len):
     generated_tokens = []
 
     eos_token_id = getattr(model.config, "eos_token_id", None)

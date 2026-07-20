@@ -24,20 +24,12 @@ from transformers import (
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils.load_kimi_utils import (
-    get_kimi_k25_num_image_tokens as _get_kimi_k25_num_image_tokens,
-)
-from QEfficient.utils.load_kimi_utils import (
+    get_kimi_k25_num_image_tokens,
     get_kimi_k25_test_config,
+    is_kimi_k25,
     load_kimi_k25_layer_subset_model,
-)
-from QEfficient.utils.load_kimi_utils import (
-    is_kimi_k25 as _is_kimi_k25,
-)
-from QEfficient.utils.load_kimi_utils import (
-    load_kimi_k25_model_from_config as _load_kimi_k25_model_from_config,
-)
-from QEfficient.utils.load_kimi_utils import (
-    run_kimi_k25_hf_model_on_pytorch_cb as _run_kimi_k25_hf_model_on_pytorch_CB,
+    load_kimi_k25_model_from_config,
+    run_kimi_k25_hf_model_on_pytorch_CB,
 )
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
 from QEfficient.utils.test_utils import (
@@ -58,14 +50,6 @@ model_config_dict = {model["model_name"]: model for model in multimodal_models}
 NEW_GENERATION_TOKENS = 10
 
 
-def _get_kimi_k25_test_config(model_name: str):
-    return get_kimi_k25_test_config(model_name, model_config_dict)
-
-
-def _load_kimi_k25_layer_subset_model():
-    return load_kimi_k25_layer_subset_model(num_vision_layers=1, num_text_layers=1)
-
-
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     model_name: str,
     manual_cleanup: callable,
@@ -78,7 +62,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
 ):
     prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
-    max_gen_len = (NEW_GENERATION_TOKENS,)
     img_size = model_config_dict[model_name].get("img_size")
     image_urls = model_config_dict[model_name]["img_url_list"]
     queries = model_config_dict[model_name]["text_prompt_list"]
@@ -86,13 +69,9 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     batch_size = model_config_dict[model_name]["batch_size"]
     full_batch_size = model_config_dict[model_name]["full_batch_size"]
     max_gen_len = NEW_GENERATION_TOKENS
-    kimi_tokenizer = None
-    kimi_processor = None
-    if _is_kimi_k25(model_name):
-        full_batch_size = 1
 
-    if _is_kimi_k25(model_name) and config is None:
-        model_hf, kimi_tokenizer, kimi_processor = _load_kimi_k25_layer_subset_model()
+    if is_kimi_k25(model_name) and config is None:
+        model_hf, tokenizer, processor = load_kimi_k25_layer_subset_model()
         config = model_hf.config
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
@@ -101,11 +80,10 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
             torch_dtype=torch.float32,
             continuous_batching=True,
         )
-    elif _is_kimi_k25(model_name):
+    elif is_kimi_k25(model_name):
         if config is None:
-            config = _get_kimi_k25_test_config(model_name)
-        model_hf = _load_kimi_k25_model_from_config(config)
-        model_hf.vision_tower.patch_embed.pos_emb.interpolation_mode = "bilinear"
+            config = get_kimi_k25_test_config(model_name, model_config_dict)
+        model_hf, tokenizer, processor = load_kimi_k25_model_from_config(config)
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
             kv_offload=kv_offload,
@@ -233,9 +211,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
             model_hf, image_list, prompt_list, generation_config
         )
         compile_kwargs["img_size"] = img_size
-    elif _is_kimi_k25(model_name):
-        processor = kimi_processor or AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
-        tokenizer = kimi_tokenizer or AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    elif is_kimi_k25(model_name):
         image_height = None
         image_width = None
         image_urls = [image_urls[0]] * len(queries)
@@ -261,11 +237,11 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
             num_patches.append(int(inputs["pixel_values"].shape[0]))
             image_heights.append(int(inputs["grid_thws"][0, 1].item()))
             image_widths.append(int(inputs["grid_thws"][0, 2].item()))
-            num_image_tokens.append(_get_kimi_k25_num_image_tokens(config, inputs["grid_thws"]))
+            num_image_tokens.append(get_kimi_k25_num_image_tokens(config, inputs["grid_thws"]))
 
         image_list = [images[0]] * full_batch_size
         prompt_list = [queries[0]] * full_batch_size
-        pytorch_hf_tokens = _run_kimi_k25_hf_model_on_pytorch_CB(
+        pytorch_hf_tokens = run_kimi_k25_hf_model_on_pytorch_CB(
             copy.deepcopy(model_hf), processor, image_list, prompt_list, max_gen_len
         )
         compile_kwargs.update(
@@ -318,9 +294,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         compile_kwargs["img_size"] = img_size
 
     qeff_model.compile(**compile_kwargs)
-    # if _is_kimi_k25(model_name):
-    #    manual_cleanup(qeff_model.onnx_path)
-    #    return
+
     print("QPC Outputs (QAIC):")
     exec_info = qeff_model.generate(
         tokenizer=tokenizer,
@@ -343,8 +317,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
             model_hf, images, queries, generation_config=generation_config
         )
     else:
-        if _is_kimi_k25(model_name):
-            pytorch_hf_tokens = _run_kimi_k25_hf_model_on_pytorch_CB(
+        if is_kimi_k25(model_name):
+            pytorch_hf_tokens = run_kimi_k25_hf_model_on_pytorch_CB(
                 copy.deepcopy(model_hf), processor, images, queries, max_gen_len
             )
         else:

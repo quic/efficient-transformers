@@ -2097,7 +2097,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             if prefill_only:
                 specializations = specializations["lang"][:1]
                 qpc_key = "lang_prefill_qpc_path"
-            elif prefill_seq_len == 1:
+            elif prefill_seq_len == 1 and not (
+                self.continuous_batching and full_batch_size is not None and full_batch_size != batch_size
+            ):
                 specializations = specializations["lang"][-1:]
                 qpc_key = "lang_decode_qpc_path"
             else:
