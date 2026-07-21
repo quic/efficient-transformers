@@ -27,6 +27,7 @@ from QEfficient.base.onnx_transforms import (
 )
 from QEfficient.transformers.cache_utils import InvalidIndexProvider
 from QEfficient.utils.cache import QEFF_HOME
+from QEfficient.utils.constants import _KNOWN_DECODER_LAYER_ATTR_PATHS, _KNOWN_DECODER_LAYER_SUFFIXES
 from QEfficient.utils.hash_utils import create_export_hash
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.torch_patches import (
@@ -145,46 +146,6 @@ def _extract_repeated_block_class(candidate):
         if all(isinstance(item, first_cls) for item in modules):
             return first_cls
     return None
-
-
-_KNOWN_DECODER_LAYER_ATTR_PATHS = (
-    "layers",
-    "h",
-    "model.layers",
-    "model.h",
-    "decoder.layers",
-    "model.decoder.layers",
-    "encoder.layer",
-    "encoder.layers",
-    "model.encoder.layer",
-    "model.encoder.layers",
-    "transformer.h",
-    "transformer.layers",
-    "model.transformer.h",
-    "model.transformer.layers",
-    "language_model.layers",
-    "language_model.model.layers",
-    "llm.layers",
-    "llm.model.layers",
-    "vision_model.encoder.layers",
-    "vision_model.transformer.layers",
-    "model.vision_model.encoder.layers",
-    "model.vision_model.transformer.layers",
-    "vision_tower.transformer.layers",
-    "vision_tower.vision_model.encoder.layers",
-    "model.vision_tower.transformer.layers",
-    "model.vision_tower.vision_model.encoder.layers",
-)
-
-_KNOWN_DECODER_LAYER_SUFFIXES = (
-    ".layers",
-    ".layer",
-    ".h",
-    ".blocks",
-    ".block",
-    ".encoder_layers",
-    ".decoder_layers",
-)
 
 
 def _discover_submodule_classes_for_export(model):
