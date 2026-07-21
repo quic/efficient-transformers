@@ -266,7 +266,7 @@ class TestBlockingModes:
 
         model = make_tiny_llama()
         model, _ = KVCacheTransform.apply(model)
-        config = AttentionBlockingConfig(mode=mode, head_block_size=8, num_kv_blocks=2, num_q_blocks=2)
+        config = AttentionBlockingConfig(mode=mode, head_block_size=8, num_kv_blocks=2, num_q_blocks=2, ctx_len=128)
         model, transformed = BlockingAttentionTransform.apply(model, config)
 
         assert transformed
@@ -285,6 +285,7 @@ class TestBlockingModes:
             head_block_size=8,
             skip_kv=False,
             num_batch_blocks=1,
+            ctx_len=128,
         )
         model, transformed = BlockingAttentionTransform.apply(model, config)
 
@@ -314,7 +315,7 @@ class TestBlockingTransformIdempotent:
         model = make_tiny_llama()
         model, _ = KVCacheTransform.apply(model)
 
-        config1 = AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2)
+        config1 = AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2, ctx_len=1024)
         config2 = AttentionBlockingConfig(mode=BlockingMode.Q, num_q_blocks=4)
 
         model, _ = BlockingAttentionTransform.apply(model, config1)
@@ -358,7 +359,7 @@ class TestBlockingWrapperFallbackAndParity:
             def forward(self, *args, **kwargs):
                 return self.model(*args, **kwargs)
 
-        cfg = AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2)
+        cfg = AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2, ctx_len=128)
         wrapped = _WrapperWithoutConfig(_DeepseekContainer())
         wrapped, transformed = BlockingAttentionTransform.apply(wrapped, cfg)
 
@@ -369,7 +370,7 @@ class TestBlockingWrapperFallbackAndParity:
         "blocking_cfg",
         [
             AttentionBlockingConfig(mode=BlockingMode.NONE),
-            AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2),
+            AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2, ctx_len=128),
         ],
         ids=["mode_none", "mode_kv"],
     )
