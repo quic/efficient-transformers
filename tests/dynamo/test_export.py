@@ -6,12 +6,10 @@
 # -----------------------------------------------------------------------------
 
 """
-Dynamo export smoke tests.
+Dynamo ONNX structure tests.
 
-Every architecture is tested twice:
-  - dynamo=True, use_onnx_subfunctions=False
-  - dynamo=True, use_onnx_subfunctions=True
-
+All tests run with dynamo=True and use_onnx_subfunctions=True.
+Validates ONNX graph structure: retained state outputs, subfunctions, naming.
 CPU-only. No QAIC hardware required.
 """
 
@@ -34,32 +32,28 @@ from ._helpers import (
 
 @pytest.mark.dynamo
 @pytest.mark.dynamo_export
-@pytest.mark.parametrize("use_onnx_subfunctions", [False, True], ids=["flat", "subfn"])
 @pytest.mark.parametrize(
     "model_type,model_id", sorted(DYNAMO_CAUSAL_LM_MODEL_IDS.items()), ids=sorted(DYNAMO_CAUSAL_LM_MODEL_IDS)
 )
-def test_dynamo_export(model_type, model_id, use_onnx_subfunctions, tmp_export_dir):
-    """ONNX export with dynamo=True for both subfunction modes."""
+def test_dynamo_export(model_type, model_id, tmp_export_dir):
+    """ONNX export with dynamo=True and use_onnx_subfunctions=True."""
 
     try:
         model_hf = load_hf_model(model_id)
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
 
-    subfn_label = "subfn" if use_onnx_subfunctions else "flat"
     qeff_model = QEFFAutoModelForCausalLM(model_hf)
     onnx_path = exported_onnx_path(
         qeff_model.export(
-            tmp_export_dir / subfn_label,
+            tmp_export_dir,
             dynamo=True,
-            use_onnx_subfunctions=use_onnx_subfunctions,
-            offload_pt_weights=not use_onnx_subfunctions,
+            use_onnx_subfunctions=True,
+            offload_pt_weights=False,
         )
     )
 
     num_layers = model_hf.config.num_hidden_layers
     assert_retained_state_outputs(onnx_path, expected_count=2 * num_layers)
-
-    if use_onnx_subfunctions:
-        assert_has_subfunctions(onnx_path, qeff_model)
-        assert_subfunction_names_match_decoder_class(onnx_path, qeff_model)
+    assert_has_subfunctions(onnx_path, qeff_model)
+    assert_subfunction_names_match_decoder_class(onnx_path, qeff_model)

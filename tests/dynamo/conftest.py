@@ -6,10 +6,12 @@
 # -----------------------------------------------------------------------------
 
 """
-Pytest fixtures and hooks for the dynamo test suite (tests/dynamo/).
+Shared fixtures and configuration for the dynamo test suite (tests/dynamo/).
 
 All dynamo tests require torch >= 2.13 (the minimum version that supports
 torch.compiler.nested_compile_region and the dynamo export path).
+
+Run with: pytest tests/dynamo/ -m "not on_qaic" -n auto -v
 """
 
 from __future__ import annotations
@@ -47,12 +49,22 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture(autouse=True)
+def set_cpu_threads():
+    """Limit CPU threads per worker to avoid contention in parallel runs."""
+    original = torch.get_num_threads()
+    torch.set_num_threads(min(4, original))
+    yield
+    torch.set_num_threads(original)
+
+
+@pytest.fixture(autouse=True)
 def set_deterministic_seed():
     torch.manual_seed(42)
 
 
 @pytest.fixture
 def tmp_export_dir(tmp_path):
+    """Provide a temporary directory for ONNX exports (unique per test)."""
     export_dir = tmp_path / "qeff_dynamo_exports"
     export_dir.mkdir(parents=True, exist_ok=True)
     return export_dir

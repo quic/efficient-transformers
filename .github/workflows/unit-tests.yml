@@ -33,6 +33,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-dynamo-${{ hashFiles('pyproject.toml') }}-torch2.13
+          restore-keys: |
+            ${{ runner.os }}-pip-dynamo-
+
       - name: Install package and test dependencies
         run: |
           pip install -e ".[test]"
