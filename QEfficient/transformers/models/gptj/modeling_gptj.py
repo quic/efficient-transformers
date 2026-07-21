@@ -111,8 +111,9 @@ class QEffGPTJAttention(GPTJAttention):
         else:
             embed_positions = self._get_embed_positions(position_ids)
         embed_positions = embed_positions.to(value.dtype)
-        repeated_position_ids = position_ids.unsqueeze(-1).repeat(1, 1, embed_positions.shape[-1])
-        repeated_position_ids = torch.where(repeated_position_ids == -1, 0, repeated_position_ids)
+        # Avoid ONNX Tile(repeats=dynamic) from repeat(..., embed_positions.shape[-1]).
+        safe_position_ids = torch.where(position_ids == -1, 0, position_ids)
+        repeated_position_ids = safe_position_ids.unsqueeze(-1).expand(-1, -1, embed_positions.shape[-1])
         sincos = torch.gather(embed_positions, 1, repeated_position_ids)
         sin, cos = torch.split(sincos, sincos.shape[-1] // 2, dim=-1)
 
@@ -370,7 +371,8 @@ class QEffGPTJForCausalLM(GPTJForCausalLM):
         hidden_states = transformer_outputs[0]
         # Cast to INT32 to avoid issue while running in ONNXRT
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = transformer_outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+        gather_index = logit_index.unsqueeze(-1).expand(-1, -1, hidden_states.shape[-1])
+        hidden_states = torch.gather(hidden_states, 1, gather_index)
         lm_logits = self.lm_head(hidden_states)
         lm_logits = lm_logits.float()
 
