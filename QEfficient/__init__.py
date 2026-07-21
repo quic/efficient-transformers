@@ -98,7 +98,7 @@ if QEffWanImageToVideoPipeline is not None:
 
 
 # Conditionally import QAIC-related modules if the SDK is installed
-__version__ = "1.22.0"
+__version__ = "1.23.0.dev0"
 
 
 def check_qaic_sdk():
