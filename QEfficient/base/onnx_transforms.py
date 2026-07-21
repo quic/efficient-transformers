@@ -46,8 +46,10 @@ from QEfficient.customop.ctx_scatter_gather_cb import (
 )
 
 # from QEfficient.customop.quantization_ops import CastToUInt4, CastToUInt4Func
+from QEfficient.customop.onnxscript_utils import get_onnxscript_func
 from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
-from QEfficient.utils.constants import FILE_CHUNK_SIZE_DEFAULT, ONNX_EXPORT_OPSET, SIZE_THRESHOLD_DEFAULT
+from QEfficient.utils import constants
+from QEfficient.utils.constants import FILE_CHUNK_SIZE_DEFAULT, SIZE_THRESHOLD_DEFAULT
 
 logger = logging.getLogger(__name__)
 
@@ -114,13 +116,13 @@ class CustomOpTransform(BaseOnnxTransform):
     }
 
     @classmethod
-    def apply(cls, model: ModelProto) -> bool:
+    def apply(cls, model: ModelProto, onnx_export_opset: int = constants.ONNX_LEGACY_EXPORT_OPSET) -> bool:
         op_applied = False
 
         # Register with PyTorch ONNX exporter (for export time)
         for op_name, (func_class, _) in cls._custom_ops.items():
             if hasattr(func_class, "symbolic"):
-                torch.onnx.register_custom_op_symbolic(f"::{op_name}", func_class.symbolic, ONNX_EXPORT_OPSET)
+                torch.onnx.register_custom_op_symbolic(f"::{op_name}", func_class.symbolic, onnx_export_opset)
 
         used_op_types = {node.op_type for node in model.graph.node}
         for function_proto in model.functions:
@@ -130,7 +132,7 @@ class CustomOpTransform(BaseOnnxTransform):
         existing = {f.name for f in model.functions}
 
         for func_name, onnxscript_func in cls._custom_ops.values():
-            proto = onnxscript_func.to_function_proto()
+            proto = get_onnxscript_func(onnxscript_func, onnx_export_opset).to_function_proto()
             if proto.name not in used_op_types:
                 continue
             if proto.name not in existing:
@@ -643,7 +645,9 @@ class OnnxTransformPipeline(BaseOnnxTransform):
 
         # Non-looping transforms
         if CustomOpTransform in requested:
-            applied[CustomOpTransform] = CustomOpTransform.apply(model)
+            applied[CustomOpTransform] = CustomOpTransform.apply(
+                model, onnx_export_opset=kwargs.get("onnx_export_opset", constants.ONNX_LEGACY_EXPORT_OPSET)
+            )
 
         if RenameFunctionOutputsTransform in requested:
             applied[RenameFunctionOutputsTransform] = RenameFunctionOutputsTransform.apply(
