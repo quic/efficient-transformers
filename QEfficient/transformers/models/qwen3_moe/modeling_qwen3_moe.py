@@ -50,6 +50,28 @@ from QEfficient.transformers.moe import (
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
+class _TraceOnlyMatMul(torch.autograd.Function):
+    """Emit ONNX MatMul while skipping expensive CPU matmul during export tracing."""
+
+    @staticmethod
+    def forward(lhs: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
+        return lhs.new_zeros((*lhs.shape[:-1], rhs.shape[-1]))
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g: torch.Graph, lhs: torch.Value, rhs: torch.Value) -> torch.Value:
+        return g.op("MatMul", lhs, rhs)
+
+
+def _matmul_for_export(lhs: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
+    if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
+        return _TraceOnlyMatMul.apply(lhs, rhs)
+    return lhs @ rhs
+
+
 class QEffQwen3MoeRotaryEmbedding(Qwen3MoeRotaryEmbedding):
     def __init__(self, config: Qwen3MoeConfig, device=None):
         super().__init__(config=config)

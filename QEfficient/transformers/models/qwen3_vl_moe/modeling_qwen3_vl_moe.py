@@ -68,6 +68,29 @@ from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
 
+
+class _TraceOnlyMatMul(torch.autograd.Function):
+    """Emit ONNX MatMul while skipping expensive CPU matmul during export tracing."""
+
+    @staticmethod
+    def forward(lhs: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
+        return lhs.new_zeros((*lhs.shape[:-1], rhs.shape[-1]))
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g: torch.Graph, lhs: torch.Value, rhs: torch.Value) -> torch.Value:
+        return g.op("MatMul", lhs, rhs)
+
+
+def _matmul_for_export(lhs: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
+    if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
+        return _TraceOnlyMatMul.apply(lhs, rhs)
+    return lhs @ rhs
+
+
 QWEN3_VL_ROPE_CACHE_EXPORT_CAP = 76800
 
 
@@ -1069,6 +1092,7 @@ QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock = QEffQwen3VLMoeTextSparseMoeBloc
         expert_out = torch.zeros(N, T, H, dtype=x_flat.dtype, device=x_flat.device)
 
         packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
+        num_packed_chunks = getattr(self, "expert_blocking_num_packed_chunks", None)
         W_g = (
             self.experts.gate_proj.view(num_pipeline_stages, num_parallelized_experts, H, -1)
             .transpose(0, 1)
@@ -1095,6 +1119,7 @@ QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock = QEffQwen3VLMoeTextSparseMoeBloc
                 packed_chunk_size=packed_chunk_size,
                 router_weights=rw,
                 act_fn=self.experts.act_fn,
+                num_packed_chunks=num_packed_chunks,
             )
 
         def reduce_nsp_tree(values: torch.Tensor, num_lanes: int) -> torch.Tensor:
@@ -1150,6 +1175,8 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         **kwargs,
     ):
         bs = kwargs.get("batch_size", constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE)
+        if bs > 1:
+            bs = 2
 
         prefill_seq_len = kwargs.get("prefill_seq_len")
         if prefill_seq_len is None:
@@ -1191,11 +1218,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             (inputs_shapes["vision_embeds"]), dtype=self.model.config.torch_dtype
         )
         lang_inputs["position_ids"] = (
-            (
-                torch.arange(prefill_seq_len, dtype=torch.int64)
-                .view(1, prefill_seq_len)
-                .repeat(bs, 1)
-            )
+            (torch.arange(prefill_seq_len, dtype=torch.int64).view(1, prefill_seq_len).repeat(bs, 1))
             .unsqueeze(0)
             .repeat(4, 1, 1)
         )
@@ -1419,7 +1442,11 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             return lang, compiler_options
 
     def get_onnx_dynamic_axes(
-        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False, batch_fold: bool = False,
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        batch_fold: bool = False,
     ):
         # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
@@ -1436,7 +1463,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             "deepstack_features": {0: "num_feature_layers", 1: "vision_batch_size", 2: "vision_size"},
         }
 
-        if batch_fold: # Cache layout is 1 x BH x ctx_len x head_dim
+        if batch_fold:  # Cache layout is 1 x BH x ctx_len x head_dim
             for i in range(num_layers):
                 lang_dynamic_axes[f"past_key.{i}"] = {
                     1: "BH",
@@ -1446,7 +1473,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                     1: "BH",
                     2: "ctx_len",
                 }
-        else: 
+        else:
             for i in range(num_layers):
                 lang_dynamic_axes[f"past_key.{i}"] = {
                     0: "full_batch_size" if continuous_batching else "batch_size",
