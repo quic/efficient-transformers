@@ -61,5 +61,5 @@ def test_dynamo_export(model_type, model_id, use_onnx_subfunctions, tmp_export_d
     assert_retained_state_outputs(onnx_path, expected_count=2 * num_layers)
 
     if use_onnx_subfunctions:
-        assert_has_subfunctions(onnx_path)
+        assert_has_subfunctions(onnx_path, qeff_model)
         assert_subfunction_names_match_decoder_class(onnx_path, qeff_model)

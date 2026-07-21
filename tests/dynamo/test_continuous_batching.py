@@ -60,4 +60,4 @@ def test_dynamo_cb_export(model_type, model_id, use_onnx_subfunctions, tmp_expor
     assert_retained_state_outputs(onnx_path, expected_count=2 * num_layers)
 
     if use_onnx_subfunctions:
-        assert_has_subfunctions(onnx_path)
+        assert_has_subfunctions(onnx_path, qeff_model)

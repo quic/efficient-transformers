@@ -112,11 +112,32 @@ def exported_onnx_path(export_result) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def assert_has_subfunctions(onnx_path: Path) -> None:
+def assert_has_subfunctions(onnx_path: Path, qeff_model: QEFFAutoModelForCausalLM) -> None:
+    """Assert the ONNX graph contains at least one decoder-block subfunction.
+
+    CtxScatter/CtxGather/CustomRMSNorm always appear as functions regardless of
+    use_onnx_subfunctions, so checking len(model.functions) > 0 is not sufficient.
+    We require at least one function whose name contains a decoder class name from
+    get_submodules_for_export(), matching the main suite's approach.
+    """
+    get_submodules = getattr(qeff_model.model, "get_submodules_for_export", None)
+    if not callable(get_submodules):
+        return  # Model doesn't declare submodule boundaries — skip check
+
+    submodule_classes = get_submodules()
+    if not submodule_classes:
+        return
+
+    decoder_names = {
+        cls.__name__
+        for cls in (submodule_classes if isinstance(submodule_classes, (set, list, tuple)) else [submodule_classes])
+    }
+
     model = onnx.load(str(onnx_path), load_external_data=False)
-    assert len(model.functions) > 0, (
-        f"Expected ONNX subfunctions in {onnx_path.name} but found none. "
-        "Check that use_onnx_subfunctions=True was passed and the model supports subfunctions."
+    found = [fn.name for fn in model.functions if any(d in fn.name for d in decoder_names)]
+    assert found, (
+        f"Expected decoder-block subfunctions ({decoder_names}) in {onnx_path.name} but found none. "
+        f"Functions present: {[fn.name for fn in model.functions]}"
     )
 
 
