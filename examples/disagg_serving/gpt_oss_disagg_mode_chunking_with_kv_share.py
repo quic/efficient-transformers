@@ -49,8 +49,6 @@ def _compile_sessions(
     stages,
     prefill_num_devices,
     decode_num_devices,
-    subfunc_npi,
-    non_subfunc_npi,
 ):
     decode_qpc_path = qeff_model.compile(
         prefill_seq_len=1,
@@ -62,7 +60,7 @@ def _compile_sessions(
         num_speculative_tokens=None,
         offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation
         split_retained_state_io=True,
-        retain_full_kv=True,  # required for DMA slice writes into full KV
+        retain_full_kv=True,
         use_onnx_subfunctions=True,
     )
     prefill_qpc_path = qeff_model.compile(
@@ -78,7 +76,7 @@ def _compile_sessions(
         num_speculative_tokens=None,
         prefill_only=True,
         enable_chunking=True,
-        retain_full_kv=True,  # promote sliding layers to full ctx_len so KV lines up with decode
+        retain_full_kv=True,  # promote sliding layers to full ctx_len
         use_onnx_subfunctions=True,
     )
     # `stages` sizes the prefill execObj pool (pipeline depth); the decode session

@@ -23,12 +23,13 @@ DEFAULT_MODEL_ID = "Qwen/Qwen3-30B-A3B"
 DEFAULT_PROMPT = "Explain quantum computing in simple terms."
 DEFAULT_PREFILL_SEQ_LEN = 256
 DEFAULT_CTX_LEN = DEFAULT_PREFILL_SEQ_LEN * 2
-NUM_CORES = 4
+NUM_CORES = 16
 MOE_PREFILL_PACKED_CHUNK_SIZE = 128
 # Prefill pipeline depth: >1 chunk can be in flight on the device at once.
 STAGES = 4
 DECODE_NUM_DEVICES = 4
 PREFILL_NUM_DEVICES = 8
+BATCH_SIZE = 1
 
 
 def _build_config(model_id: str, num_hidden_layers: int = None):
@@ -43,6 +44,7 @@ def _build_config(model_id: str, num_hidden_layers: int = None):
 def _compile_sessions(qeff_model, prefill_seq_len, ctx_len, stages, prefill_num_devices, decode_num_devices):
     """Compile decode/prefill QPCs (spec §5 flags) and open kv_dma_share sessions."""
     decode_qpc_path = qeff_model.compile(
+        batch_size=BATCH_SIZE,
         prefill_seq_len=1,
         ctx_len=ctx_len,
         num_cores=NUM_CORES,
@@ -58,6 +60,7 @@ def _compile_sessions(qeff_model, prefill_seq_len, ctx_len, stages, prefill_num_
         use_onnx_subfunctions=True,
     )
     prefill_qpc_path = qeff_model.compile(
+        batch_size=BATCH_SIZE,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
         num_cores=NUM_CORES,
