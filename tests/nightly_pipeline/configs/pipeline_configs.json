@@ -8,6 +8,8 @@
         "ctx_len": 128,
         "num_cores": 16,
         "num_devices": 4,
+        "mxfp6_matmul": true,
+        "mxint8_kv_cache": true,
         "aic_hw_version": "ai100"
       },
       "generate_params": {
@@ -23,6 +25,7 @@
       "compile_params": {
         "num_cores": 16,
         "num_devices": 1,
+        "mxfp6_matmul": true,
         "aic_hw_version": "ai100"
       },
       "generate_params": {
@@ -69,6 +72,9 @@
         "ctx_len": 1024,
         "num_cores": 16,
         "num_devices": 4,
+        "mxfp6_matmul": true,
+        "mxint8_kv_cache": true,
+        "split_model_io": true,
         "aic_hw_version": "ai100"
       },
       "generate_params": {
@@ -85,6 +91,7 @@
       "compile_params": {
         "num_cores": 16,
         "num_devices": 1,
+        "mxfp6_matmul": true,
         "aic_hw_version": "ai100"
       },
       "generate_params": {
