@@ -96,6 +96,7 @@ def update_running_softmax(
         output = output_updated
     return current_max, current_denominator, output
 
+
 def update_running_softmax_prefill(
     current_max: torch.Tensor,
     attn_weights_block: torch.Tensor,
@@ -110,19 +111,19 @@ def update_running_softmax_prefill(
     delta_max = prev_max - current_max_updated
     current_exp = torch.exp(attn_weights_block - current_max_updated.unsqueeze(-1))
     prev_denominator = current_denominator
-    curr_exp_sum = current_exp.sum(dim=-1)
+    curr_exp_sum = torch.einsum("bhqk->bhq", current_exp)
     current_denominator_updated = prev_denominator * torch.exp(delta_max) + curr_exp_sum
     prev_output = output
     output_updated = prev_output * torch.exp(delta_max.unsqueeze(-1)) + torch.matmul(current_exp, v_block)
     if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
         assert skip_future is not None
-        current_max         = torch.where(skip_future, prev_max, current_max_updated)
+        current_max = torch.where(skip_future, prev_max, current_max_updated)
         current_denominator = torch.where(skip_future, prev_denominator, current_denominator_updated)
-        output              = torch.where(skip_future.unsqueeze(-1), prev_output, output_updated)
+        output = torch.where(skip_future.unsqueeze(-1), prev_output, output_updated)
     else:
-        current_max         = current_max_updated
+        current_max = current_max_updated
         current_denominator = current_denominator_updated
-        output              = output_updated
+        output = output_updated
     return current_max, current_denominator, output
 
 
@@ -320,13 +321,15 @@ def blocked_kv_attention_forward_decode_headpar_batch(
         )
         # [1, BH, seq_len, T_block] -> [1, BH, num_kv_groups*seq_len, T_block]
         # (tile, not interleave — query_flat's m-axis is rep-major/seq-minor: m = r*seq_len + q_pos)
-        causal_mask =  (
+        causal_mask = (
             causal_mask.unsqueeze(3)
             .expand(1, BH, seq_len, num_kv_groups, kv_len_block)
             .reshape(1, BH, seq_len * num_kv_groups, kv_len_block)
         )
-        attn_weights_block = torch.where(causal_mask, torch.full_like(attn_weights_block, float(MIN_MASKED_ATTENTION_VALUE)), attn_weights_block)
-        
+        attn_weights_block = torch.where(
+            causal_mask, torch.full_like(attn_weights_block, float(MIN_MASKED_ATTENTION_VALUE)), attn_weights_block
+        )
+
         # causal_mask = causal_mask.repeat(1, 1, num_kv_groups, 1)
         # attn_weights_block = attn_weights_block.masked_fill(causal_mask, float(MIN_MASKED_ATTENTION_VALUE))
 

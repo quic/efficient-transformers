@@ -19,15 +19,15 @@ from onnx import ModelProto, TensorProto, external_data_helper, numpy_helper
 from QEfficient.customop.ctx_scatter_gather import (
     CtxChunkScatterBatch,
     CtxChunkScatterBatchFunc,
-    CtxGatherBlockedKVBatch,
-    CtxGatherFuncBlockedKVBatch,
     CtxGather,
     CtxGather3D,
     CtxGatherBlockedKV,
+    CtxGatherBlockedKVBatch,
     CtxGatherFunc,
     CtxGatherFunc3D,
     CtxGatherFunc3DGeneralized,
     CtxGatherFuncBlockedKV,
+    CtxGatherFuncBlockedKVBatch,
     CtxScatter,
     CtxScatter3D,
     CtxScatter3DInt,
@@ -117,7 +117,8 @@ class CustomOpTransform(BaseOnnxTransform):
         "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
         "CastToUInt4": (CastToUInt4Func, CastToUInt4),
         "CtxChunkScatterBatchFunc": (CtxChunkScatterBatchFunc, CtxChunkScatterBatch),
-        "CtxGatherFuncBlockedKVBatch": (CtxGatherFuncBlockedKVBatch, CtxGatherBlockedKVBatch)
+        "CtxGatherFuncBlockedKVBatch": (CtxGatherFuncBlockedKVBatch, CtxGatherBlockedKVBatch),
+        # "CastToUInt4": (CastToUInt4Func, CastToUInt4),
     }
 
     @classmethod
