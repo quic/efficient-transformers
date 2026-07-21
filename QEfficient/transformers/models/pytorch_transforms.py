@@ -324,6 +324,7 @@ from QEfficient.transformers.models.deberta_v2.modeling_deberta_v2 import (
     QEffDisentangledSelfAttention,
 )
 from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
+    QEffDeepseekMoEGate,
     QEffDeepseekV3Attention,
     QEffDeepseekV3CustomRMSNormAIC,
     QEffDeepseekV3DecoderLayer,
@@ -441,6 +442,11 @@ from QEfficient.transformers.models.internvl.modeling_internvl import (
     QEffInternDecoderWrapper,
     QEffInternVisionEmbeddings,
     QEffInternVLModel,
+)
+from QEfficient.transformers.models.kimi_k25.modeling_kimi_k25 import (
+    QEffKimiK25ForConditionalGeneration,
+    QEffLearnable2DInterpPosEmbDivided_fixed,
+    QEffMoonViT3dEncoder,
 )
 from QEfficient.transformers.models.llama.modeling_llama import (
     QEffLlamaAttention,
@@ -1315,6 +1321,21 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         "RMSNorm": {
             "forward": QEFFGrok1CustomRMSNormAIC.forward,
         },
+        "KimiK25ForConditionalGeneration": {
+            "_qeff_merge_input_ids_with_image_features": QEffKimiK25ForConditionalGeneration._qeff_merge_input_ids_with_image_features,
+            "get_qeff_vision_encoder": QEffKimiK25ForConditionalGeneration.get_qeff_vision_encoder,
+            "get_qeff_language_decoder": QEffKimiK25ForConditionalGeneration.get_qeff_language_decoder,
+            "get_specializations": QEffKimiK25ForConditionalGeneration.get_specializations,
+            "get_onnx_dynamic_axes": QEffKimiK25ForConditionalGeneration.get_onnx_dynamic_axes,
+            "get_output_names": QEffKimiK25ForConditionalGeneration.get_output_names,
+            "get_dummy_inputs": QEffKimiK25ForConditionalGeneration.get_dummy_inputs,
+        },
+        "MoonViT3dEncoder": {
+            "__qeff_init__": QEffMoonViT3dEncoder.__qeff_init__,
+        },
+        "Learnable2DInterpPosEmbDivided_fixed": {
+            "__qeff_init__": QEffLearnable2DInterpPosEmbDivided_fixed.__qeff_init__,
+        },
         "DeepseekV3ForCausalLM": {
             "forward": QEffDeepseekV3ForCausalLM.forward,
             "get_submodules_for_export": QEffDeepseekV3ForCausalLM.get_submodules_for_export,
@@ -1326,8 +1347,11 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
         },
         "DeepseekV3MoE": {
             "forward": QEffDeepseekV3MoE.forward,
-            "moe": QEffDeepseekV3MoE.moe,
+            "moe_weights_as_activations": QEffDeepseekV3MoE.moe_weights_as_activations,
+            "moe_waa_unpack": QEffDeepseekV3MoE.moe_waa_unpack,
+            "original_moe": QEffDeepseekV3MoE.original_moe,
             "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
+            "gate.forward": QEffDeepseekMoEGate.forward,
         },
         "DeepseekV3Attention": {
             "forward": QEffDeepseekV3Attention.forward,
@@ -1350,8 +1374,9 @@ class PrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_string_replace_method = {
         "DeepseekV3MoE": {
             "forward": QEffPrefillOnlyDeepseekV3MoE.forward,
-            "moe": QEffPrefillOnlyDeepseekV3MoE.moe,
             "__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
+            "_forward_expert_blocked": QEffPrefillOnlyDeepseekV3MoE._forward_expert_blocked,
+            "_cumsum_scatter_gather_update_expert_blocked": QEffPrefillOnlyDeepseekV3MoE._cumsum_scatter_gather_update_expert_blocked,
         },
     }
 
@@ -1361,7 +1386,7 @@ class RevertPrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransfo
     _match_string_replace_method = {
         "DeepseekV3MoE": {
             "forward": QEffDeepseekV3MoE.forward,
-            "moe": QEffDeepseekV3MoE.moe,
+            "moe": QEffDeepseekV3MoE.moe_waa_unpack,
             "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
         },
     }

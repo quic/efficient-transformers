@@ -42,6 +42,7 @@ VTCM_SIZE_THRESHOLD = 8 * 1024 * 1024 * 0.75
 # Compiler defaults
 DEFAULT_AIC_NUM_CORES = 16
 DEFAULT_AIC_MXPF6_MATMUL = False
+DEFAULT_ONNX_SUBFUNCTION_PREFILL_ELF_VA_LIMIT_MB = 2048
 # Hashing defaults
 HASH_HEXDIGEST_STR_LEN = 16
 KWARGS_INCLUSION_LIST = [
@@ -140,6 +141,7 @@ def get_default_aic_hw_version() -> str:
 DEFAULT_AIC_HW_VERSION = get_default_aic_hw_version()
 ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL = 100
 
+EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
 # Generic config key aliases used across model families.
 ATTENTION_HEAD_CONFIG_KEYS = ("num_attention_heads", "n_head", "n_heads", "num_heads")
 KV_HEAD_CONFIG_KEYS = ("num_key_value_heads", "n_kv_heads", "num_kv_heads", "effective_n_kv_heads")
@@ -177,7 +179,11 @@ VISION_MXFP6_MATMUL = False
 LLAMA4_ATTENTION_CHUNK_SIZE = 8192
 LLAMA4_MAX_POSITION_EMBEDDINGS = 65536
 
-# DeepSeek Kimi-k2 Constant
+# DeepSeek Kimi-k2.5 Constants
+KIMI_PATCH_SIZE = 14
+KIMI_EXAMPLE_IMAGE_NUM_IMAGE_TOKENS = 600
+KIMI_EXAMPLE_IMAGE_NUM_PATCHES_HEIGHT = 30
+KIMI_EXAMPLE_IMAGE_NUM_PATCHES_WIDTH = 80
 MAX_POSITION_EMBEDDINGS = 32768
 FP16_BYTES = 2
 DEFAULT_NUM_HEADS = 64

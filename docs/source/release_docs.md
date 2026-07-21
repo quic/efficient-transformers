@@ -26,6 +26,12 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
   - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
   - [Mistral-3.1 Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text/models/mistral_vision/mistral3_example.py)
 
+- **Kimi-K2.5 (Vision Language)**
+  - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
+  - Supports `moonshotai/Kimi-K2.5` with `KimiK25ForConditionalGeneration`
+  - Supports dual-QPC (`kv_offload=True`) vision-language compilation
+  - [Kimi-K2.5 Vision Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/kimi_k2/export_kimi_k25_vision.py)
+
 
 - **Disaggregated serving ready via vLLM GPT-OSS**
   > **Note**: If running GPT-OSS models natively via vLLM, PR-685 of the qefficient library is required for Python 3.12 compatibility.
@@ -78,7 +84,7 @@ Welcome to the official release of **Efficient Transformer Library v1.21.0**! Th
 - **Compute-Context-Length (CCL) support**: To optimize the throughput when handling very large context lengths
 - **Prefill/Decode Separation**: Support for GPT OSS using disaggregate serving models
 - **Continuous Batching (VLMs)**: Extended to Vision Language Models with multi-image handling
-  - Supported models: Llava, Llava_Next, Gemma3, Mistral3, InternVL2_5, InternVL3_5, Molmo
+  - Supported models: Llava, Llava_Next, Gemma3, Mistral3, InternVL2_5, InternVL3_5, Molmo, Kimi-K2.5
 - **ONNX Sub-Functions**: Feature enabling more efficient model compilation and execution on hardware. Users can enable the feature by passing `use_onnx_subfunctions=True` during export
 - **Memory Profiling**: Built-in utilities for optimization analysis
 - **Extend on-device Sampling**: Extend on-device sampling to dual QPC VLMs and Guided decoding for on-device sampling

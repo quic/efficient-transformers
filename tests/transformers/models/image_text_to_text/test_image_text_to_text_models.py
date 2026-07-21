@@ -26,6 +26,12 @@ from transformers import (
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import QnnConstants
+from QEfficient.utils.load_kimi_utils import (
+    get_kimi_k25_num_image_tokens,
+    is_kimi_k25,
+    load_kimi_k25_layer_subset_model,
+    run_kimi_k25_hf_model_on_pytorch,
+)
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
 from QEfficient.utils.test_utils import (
     InternProcessor,
@@ -79,7 +85,17 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     ort_tokens = None
     n_layer = num_hidden_layers
     qaic_config = copy.deepcopy(qaic_config) if qaic_config is not None else None
-    if config is None:
+
+    if is_kimi_k25(model_name) and config is None:
+        model_hf, tokenizer, processor = load_kimi_k25_layer_subset_model()
+        config = model_hf.config
+        qeff_model = QEFFAutoModelForImageTextToText(
+            copy.deepcopy(model_hf),
+            kv_offload=kv_offload,
+            config=model_hf.config,
+            torch_dtype=torch_dtype,
+        )
+    elif config is None:
         config = AutoConfig.from_pretrained(
             model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS
         )
@@ -227,6 +243,35 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         inputs["valid_idx"] = torch.nonzero(valid)[:, 1].unsqueeze(0)
         inputs["pixel_values"] = inputs.pop("images")
         compile_kwargs["img_size"] = img_size
+
+    elif is_kimi_k25(model_name):
+        image = Image.open(requests.get(img_url, stream=True).raw).convert("RGB")
+        conversation = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": image},
+                    {"type": "text", "text": query},
+                ],
+            },
+        ]
+        prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
+        inputs = processor(
+            messages=conversation,
+            add_generation_prompt=True,
+            tokenize=False,
+            return_tensors="pt",
+        )
+        pytorch_hf_tokens = run_kimi_k25_hf_model_on_pytorch(copy.deepcopy(model_hf), processor, inputs, max_gen_len)
+        compile_kwargs.update(
+            {
+                "prefill_seq_len": 1,
+                "num_patches": int(inputs["pixel_values"].shape[0]),
+                "h": int(inputs["grid_thws"][0, 1].item()),
+                "w": int(inputs["grid_thws"][0, 2].item()),
+                "num_image_tokens": get_kimi_k25_num_image_tokens(config, inputs["grid_thws"]),
+            }
+        )
 
     else:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
@@ -486,6 +531,7 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_off
         "google/gemma-3-4b-it",
         "tiny-random/gemma-4-dense",
         "tiny-random/gemma-4-moe",
+        "moonshotai/Kimi-K2.5",
     ]:
         pytest.skip("QNN is not supported for these models yet.")
 

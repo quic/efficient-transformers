@@ -98,6 +98,8 @@ def set_num_layers_vlm(config: AutoConfig, n_layer: int = -1):
     elif hasattr(config, "text_config"):
         config.text_config.num_hidden_layers = n_layer
         config.vision_config.num_hidden_layers = n_layer
+        if hasattr(config.vision_config, "vt_num_hidden_layers"):
+            config.vision_config.vt_num_hidden_layers = n_layer
         if hasattr(config.vision_config, "depth"):
             config.vision_config.depth = n_layer
         if hasattr(config.vision_config, "deepstack_visual_indexes"):
@@ -499,6 +501,7 @@ class ModelConfig:
         "Qwen/Qwen3-VL-Reranker-8B",
         "Qwen/Qwen3.5-0.8B",
         "Qwen/Qwen3.5-35B-A3B",
+        "moonshotai/Kimi-K2.5",
         "tiny-random/gemma-4-dense",
         "tiny-random/gemma-4-moe",
     }

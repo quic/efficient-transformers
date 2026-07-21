@@ -90,6 +90,7 @@
 | **Qwen3_5MoeForConditionalGeneration** | Qwen3.5 | [Qwen/Qwen3.5-122B-A10B](https://huggingface.co/Qwen/Qwen3.5-122B-A10B)<br>[Qwen/Qwen3.5-35B-A3B](https://huggingface.co/Qwen/Qwen3.5-35B-A3B) |        ✕          |        ✔️                |       ✕         |       ✔️       |
 | **Qwen3_5ForConditionalGeneration** | Qwen3.6       |   [Qwen/Qwen3.6-27B](https://huggingface.co/Qwen/Qwen3.6-27B)    |      ✕          |       ✔️                 |       ✕       |     ✔️         |
 | **Qwen3_5MoeForConditionalGeneration** | Qwen3.6       |   [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B)    |      ✕          |       ✔️                 |       ✕       |     ✔️         |
+| **KimiK25ForConditionalGeneration** | Kimi-K2.5 | [moonshotai/Kimi-K2.5](https://huggingface.co/moonshotai/Kimi-K2.5) | ✔️ | ✔️ | ✕ | ✕ |
 | **Mistral3ForConditionalGeneration** | Mistral3| [mistralai/Mistral-Small-3.1-24B-Instruct-2503](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503)| ✕ | ✔️ | ✕  | ✕  |
 
 ### Vision-Language Reranker Models (Text + Image Scoring)

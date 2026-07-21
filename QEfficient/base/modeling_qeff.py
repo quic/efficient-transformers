@@ -98,6 +98,19 @@ def _restore_output_names_exact(model: onnx.ModelProto, output_names: List[str])
         _rename_graph_value(model.graph, current_name, expected_name)
 
 
+def _has_exported_model_subfunctions(onnx_path: Union[str, Path]) -> bool:
+    """Return True when the ONNX has non-custom local functions for compiler subfunction mode."""
+    try:
+        model = onnx.load(onnx_path, load_external_data=False)
+    except Exception:
+        return True
+
+    custom_function_names = {
+        onnxscript_func.to_function_proto().name for _, onnxscript_func in CustomOpTransform._custom_ops.values()
+    }
+    return any(function.name not in custom_function_names for function in model.functions)
+
+
 class QEFFBaseModel(ABC):
     """
     Base class for all the model classes (i.e. LLMs, SD, quantized etc.).
@@ -967,6 +980,11 @@ class QEFFBaseModel(ABC):
 
             return self.qpc_path
 
+        use_compiler_subfunctions = use_onnx_subfunctions and _has_exported_model_subfunctions(onnx_path)
+
+        if use_compiler_subfunctions and prefill_only is True:
+            compiler_options.setdefault("elf_va_limit", constants.DEFAULT_ONNX_SUBFUNCTION_PREFILL_ELF_VA_LIMIT_MB)
+
         command = (
             constants.COMPILER
             + [
@@ -1018,6 +1036,8 @@ class QEFFBaseModel(ABC):
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
         for key, value in compiler_options.items():
+            if value is None:
+                continue
             option = "-" + key.replace("_", "-")
             if isinstance(value, bool):
                 if value:
@@ -1050,7 +1070,7 @@ class QEFFBaseModel(ABC):
             except Exception:
                 pass
 
-        if use_onnx_subfunctions:
+        if use_compiler_subfunctions:
             logger.info("Using ONNX subfunctions for compilation.")
             command.append("-sub-functions")
 

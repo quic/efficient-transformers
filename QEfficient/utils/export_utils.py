@@ -177,8 +177,12 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
     apply_torch_patches()
     InvalidIndexProvider.SUBFUNC_ENABLED = True
 
-    # Transform output names for subfunction compatibility
-    if "output_names" in kwargs:
+    submodule_classes = qeff_model.model.get_submodules_for_export()
+
+    # Transform output names for decoder-layer subfunction compatibility. If a model opts out of
+    # exporting decoder layers as ONNX functions, keep the public retained-state names because there
+    # are no function outputs for RenameFunctionOutputsTransform to map back.
+    if "output_names" in kwargs and submodule_classes:
         kwargs["output_names"] = [
             re.sub("_RetainedState", "_InternalRetainedState", name)
             if name.endswith("_RetainedState")
@@ -193,7 +197,7 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
             else name
             for name in kwargs["output_names"]
         ]
-    else:
+    elif "output_names" not in kwargs:
         warnings.warn(
             "ONNX subfunctions are enabled, but no retained-state output names were found to rewrite. "
             "Ensure `output_names` includes key/value retained states if subfunction compatibility is required."
@@ -208,7 +212,6 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
     if CustomOpTransform not in qeff_model._onnx_transforms:
         qeff_model._onnx_transforms.append(CustomOpTransform)
 
-    submodule_classes = qeff_model.model.get_submodules_for_export()
     if submodule_classes:
         kwargs["export_modules_as_functions"] = submodule_classes
     return args, kwargs, {"onnx_transforms": original_transforms}

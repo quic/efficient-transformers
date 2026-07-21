@@ -462,6 +462,7 @@ class QEffTextGenerationBase:
         self.include_guided_decoding = include_guided_decoding
         self.sampling_params = sampling_params
         self._qpc_path = qpc_path  # Store qpc_path for later use
+        self.tokenizer = tokenizer
 
         # Load QPC
         self._session = QAICInferenceSession(
@@ -496,7 +497,6 @@ class QEffTextGenerationBase:
         self.decode_pos_ids = None
         self.generation_len = None
 
-        self.tokenizer = tokenizer
         self._set_tokenizer_params()  # set tokenizer params
         # Skip inputs/outputs
         self._session.skip_buffers(
@@ -569,7 +569,18 @@ class QEffTextGenerationBase:
             decode_seq_len = min(
                 [x[self._session.binding_index_map["input_ids"]][1][1] for x in self._session.allowed_shapes]
             )
-        return decode_seq_len
+        elif "input_ids" in self._session.binding_index_map:
+            dims = self._session.bindings[self._session.binding_index_map["input_ids"]].dims
+            if len(dims) > 1 and dims[1] not in (None, -1):
+                decode_seq_len = dims[1]
+
+        if decode_seq_len is None:
+            decode_seq_len = getattr(self, "_prefill_seq_len", None)
+
+        if decode_seq_len is None:
+            raise ValueError("Unable to determine decode sequence length from QPC input_ids binding.")
+
+        return int(decode_seq_len)
 
     def _fetch_vocab_size(
         self,
@@ -588,6 +599,16 @@ class QEffTextGenerationBase:
         )
         if self._session.allowed_shapes:
             return [x[self._session.binding_index_map[key]] for x in self._session.allowed_shapes][0][1][2]
+        if key in self._session.binding_index_map:
+            dims = self._session.bindings[self._session.binding_index_map[key]].dims
+            if len(dims) >= 3 and dims[2] not in (None, -1):
+                return dims[2]
+        if self.tokenizer is not None:
+            vocab_size = getattr(self.tokenizer, "vocab_size", None)
+            if vocab_size is not None:
+                return vocab_size
+            return len(self.tokenizer)
+        return None
 
         return self._session.bindings[self._session.binding_index_map[key]].dims[2]
 
@@ -685,6 +706,7 @@ class QEffTextGenerationBase:
         self.generated_ids = np.full((num_prompts, max_gen_length), self.tokenizer.pad_token_id)
         self.decode_input_ids = np.zeros((execution_batch_size, 1), np.int64)
         self.decode_pos_ids = np.zeros((execution_batch_size, 1), np.int64)
+        self.decode_image_idx = np.zeros((execution_batch_size, 1), np.int64)
         self.generation_len = np.zeros((execution_batch_size, 1), np.int64)
 
     def initialize_lora_id_mapping(self, prompt_to_lora_id_mapping):
@@ -722,6 +744,8 @@ class QEffTextGenerationBase:
         decode_batch = decode_batch_id if decode_batch_id is not None else slice(None)
         self.decode_input_ids[decode_batch] = next_token_id
         self.decode_pos_ids[decode_batch] = position_ids
+        if "image_idx_output" in outputs:
+            self.decode_image_idx[decode_batch] = outputs["image_idx_output"]
         self.generated_ids[decode_batch, 0] = next_token_id.squeeze()
         self.generation_len[decode_batch] = generation_len
         return next_token_id
@@ -763,6 +787,10 @@ class QEffTextGenerationBase:
         else:
             logits_out_placeholder = np.zeros((batch_size, sequence_length, self._vocab_size), dtype=np.float32)
             self._session.set_buffers({"logits": logits_out_placeholder})
+
+        if "image_idx_output" in getattr(self._session, "binding_index_map", {}):
+            image_idx_out_placeholder = np.zeros((batch_size, 1), dtype=np.int64)
+            self._session.set_buffers({"image_idx_output": image_idx_out_placeholder})
 
     def run_prefill(self, prompt, generation_len, prefill_logit_bs=1, decode_batch_id=None):
         """
