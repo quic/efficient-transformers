@@ -36,7 +36,7 @@ tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
 PREFILL_SEQ_LEN = 1024
-CTX_LEN = 2048 * 8
+CTX_LEN = 2048 * 2
 BS = 256
 
 NUM_KV_BLOCKS = 4
@@ -94,6 +94,7 @@ if not skip_vision:
     )
 decode_qaic_config = _qaic_config()
 print("decode", decode_qaic_config)
+decode_start_time = perf_counter()
 decode_qpc_path = qeff_model.compile(
     batch_size=BS,
     prefill_seq_len=1,
@@ -117,6 +118,9 @@ decode_qpc_path = qeff_model.compile(
     offload_pt_weights=False,
     qaic_config=decode_qaic_config,
 )
+print(f"Decode export + compile time is {(perf_counter() - decode_start_time):.3f}s")
+
+# exit(0)
 
 ################
 # Prefill modes:
@@ -131,7 +135,7 @@ MOE_PREFILL_PACKED_CHUNK_SIZE = 256
 prefill_qaic_config = _qaic_config()
 print("prefill", prefill_qaic_config)
 
-
+prefill_start_time = perf_counter()
 prefill_qpc_path = qeff_model.compile(
     batch_size=1,
     prefill_seq_len=PREFILL_SEQ_LEN,
@@ -155,6 +159,7 @@ prefill_qpc_path = qeff_model.compile(
     offload_pt_weights=True,
     qaic_config=prefill_qaic_config,
 )
+print(f"Prefill export + compile time is {(perf_counter() - prefill_start_time):.3f}s")
 
 print(f"Prefill qpc path {prefill_qpc_path}")
 print(f"Decode qpc path {decode_qpc_path}")
@@ -208,7 +213,7 @@ input_len = inputs["attention_mask"].sum(1, keepdims=True)
 input_ids_length = inputs["input_ids"].shape[1]
 num_chunks = -(input_ids_length // -PREFILL_SEQ_LEN)  # ceil divide without float
 padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
-generation_len = CTX_LEN - input_len.max()
+generation_len = 30  # CTX_LEN - input_len.max()
 print(f"generation_len : {generation_len}")
 generated_ids = np.full((BS, generation_len + 1), pad_token_id)
 
@@ -299,7 +304,7 @@ st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
 print(f"time for first run of decode with KV as input = {perf_counter() - st} sec\n")
 
-exit(0)
+# exit(0)
 
 all_outputs.append(np.argmax(decode_out["logits"][0]))  # track batch 0
 pos_id = decode_inputs["position_ids"] + 1  # [BS, 1]
@@ -308,9 +313,9 @@ loop_decode_inputs = {
     "position_ids": pos_id,
 }
 
-for i in range(config.text_config.num_hidden_layers):
-    loop_decode_inputs[f"past_key.{i}"] = decode_out[f"past_key.{i}_RetainedState"]
-    loop_decode_inputs[f"past_value.{i}"] = decode_out[f"past_value.{i}_RetainedState"]
+# for i in range(config.text_config.num_hidden_layers):
+#     loop_decode_inputs[f"past_key.{i}"] = decode_out[f"past_key.{i}_RetainedState"]
+#     loop_decode_inputs[f"past_value.{i}"] = decode_out[f"past_value.{i}_RetainedState"]
 
 
 st = perf_counter()
@@ -318,9 +323,9 @@ for i in range(generation_len - 2):
     decode_out = lang_decode_session.run(loop_decode_inputs)
     all_outputs.append(np.argmax(decode_out["logits"][0]))
     pos_id += 1
-    for j in range(config.text_config.num_hidden_layers):
-        loop_decode_inputs[f"past_key.{j}"] = decode_out[f"past_key.{j}_RetainedState"]
-        loop_decode_inputs[f"past_value.{j}"] = decode_out[f"past_value.{j}_RetainedState"]
+    # for j in range(config.text_config.num_hidden_layers):
+    #     loop_decode_inputs[f"past_key.{j}"] = decode_out[f"past_key.{j}_RetainedState"]
+    #     loop_decode_inputs[f"past_value.{j}"] = decode_out[f"past_value.{j}_RetainedState"]
     loop_decode_inputs.update(
         {
             "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
