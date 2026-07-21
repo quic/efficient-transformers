@@ -549,9 +549,6 @@ class QEFFBaseModel(ABC):
             kwargs["_layerwise_cache_probe"] = True
         if kv_cache_prefix:
             kwargs["kv_cache_prefix"] = kv_cache_prefix
-        if qaic_config is None and hasattr(self, "model"):
-            qaic_config = getattr(self.model, "qaic_config", None)
-
         if prefill_only:
             kwargs.update(
                 {
@@ -833,8 +830,6 @@ class QEFFBaseModel(ABC):
         **compiler_options,
     ):
         # Apply the transformations that are dependent on compilation parameters
-        qaic_config = qaic_config if qaic_config is not None else getattr(self.model, "qaic_config", None)
-
         model_config = getattr(self.model, "config", None) or getattr(
             getattr(self.model, "model", None), "config", None
         )
@@ -932,8 +927,6 @@ class QEFFBaseModel(ABC):
         """
 
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
-        if qaic_config is None and hasattr(self, "model"):
-            qaic_config = getattr(self.model, "qaic_config", None)
 
         for removed_option in ("compile_only", "compile-only"):
             if removed_option in compiler_options:
