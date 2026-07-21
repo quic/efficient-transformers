@@ -1,7 +1,7 @@
 # Pre-requisites
 System Requirements:
 1. [Supported Linux OS](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/#operating-systems) - Ubuntu, RHEL and AWS Linux
-2. [Cloud AI 100 Platform SDK installed](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/#platform-sdk) 
+2. [Cloud AIxx (AI100, AI200 and so on) Platform SDK installed](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/#platform-sdk) 
 3. [SDK Pre-requisites](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Pre-requisites/pre-requisites/) 
 4. [Multi-device support enabled for model sharding](https://github.com/quic/cloud-ai-sdk/tree/1.12/utils/multi-device)
 
@@ -10,7 +10,7 @@ System Requirements:
 # Installation 
 
 ## 1. Download Apps SDK
-   * [Cloud AI 100 Apps SDK install](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/)  
+   * [Cloud AIxx (AI100, AI200 and so on) Apps SDK install](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/)  
 
 Uninstall existing Apps SDK
 ```
@@ -65,4 +65,4 @@ After above installation methods, you can check if ``QEfficient`` is installed c
 ```bash
 python -c "import QEfficient; print(QEfficient.__version__)"
 ```
-If the above line executes successfully, you are good to go ahead and start deploying models on ``Cloud AI 100`` cards using ``QEfficient`` library.
+If the above line executes successfully, you are good to go ahead and start deploying models on ``Cloud AIxx (AI100, AI200 and so on)`` cards using ``QEfficient`` library.

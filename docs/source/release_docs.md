@@ -8,19 +8,11 @@ Welcome to the official release of **Efficient Transformer Library v1.22.0**! Th
 
 ## Newly Supported Models
 
-- **Gemma 4 (Text + Multimodal)**
+- **Gemma 4**
   - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText) (multimodal)
   - Covers both dense and MoE configurations
   - Optimized chunked prefill and disaggregated (vision/language split) serving
   - [Gemma 4 Example Scripts](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/gemma_vision/gemma4)
-
-- **Kimi-K2 (MLA + MoE)**
-  - Executable via [`QEFFAutoModelForCausalLM`](#QEFFAutoModelForCausalLM)
-  - Multi-head Latent Attention (MLA) with dual KV cache (compressed KV + k_pe)
-  - Configurable MLA absorption modes: no absorption, offline absorption, online absorption
-  - KV blocking, head blocking, and KV head replication support
-  - Disaggregated prefill/decode serving
-  - [Kimi-K2 Example Script](https://github.com/quic/efficient-transformers/tree/main/examples/kimi_k2)
 
 - **Qwen3-VL (Vision Language)**
   - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
@@ -41,17 +33,6 @@ Welcome to the official release of **Efficient Transformer Library v1.22.0**! Th
   - KV-blocked attention and ONNX subfunction export
   - [GLM4-MOE Disaggregated Example](https://github.com/quic/efficient-transformers/blob/main/examples/disagg_serving/glm4_moe_disagg_mode_with_chunking.py)
 
-- **Qwen3-VL Embedding Model**
-  - Executable via [`QEffAutoModel`](#QEffAutoModel)
-  - Supports `Qwen/Qwen3-VL-Embedding-8B`
-  - CPU vs AI100 MAD validated
-
-- **Qwen3-VL Reranker Models**
-  - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
-  - Supports `Qwen/Qwen3-VL-Reranker-2B` and `Qwen/Qwen3-VL-Reranker-8B`
-  - [Reranker Example Scripts](https://github.com/quic/efficient-transformers/tree/main/examples/reranker)
-
-
 ---
 
 ## Deprecations
@@ -66,13 +47,6 @@ Welcome to the official release of **Efficient Transformer Library v1.22.0**! Th
   - Transformers rebased to `v5.5.4` — modeling wrappers, `cache_utils`, and export flows aligned; PyTorch/ORT parity restored
   - Intermediate rebase to `v4.57.3` also landed, unifying subfunction changes
   - Python `3.12` support added (while retaining `3.10` and `3.11` compatibility)
-
-- **Multi-head Latent Attention (MLA)**
-  - Full MLA support for DeepSeek-style models (Kimi-K2)
-  - Dual KV cache: compressed KV + k_pe
-  - Three absorption modes: no absorption, offline absorption, online absorption
-  - KV blocking, head blocking, and KV head replication strategies
-  - Online/offline absorption bug fixes
 
 - **Causal Attention Blocking**
   - New KV, Q, Head, and Batch blocking strategies for CausalLM models
@@ -152,8 +126,7 @@ Welcome to the official release of **Efficient Transformer Library v1.22.0**! Th
 
 ## Example Scripts
 
-- [Gemma 4 (Text + Multimodal)](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/gemma_vision/gemma4)
-- [Kimi-K2 (MLA + MoE)](https://github.com/quic/efficient-transformers/tree/main/examples/kimi_k2)
+- [Gemma 4](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/gemma_vision/gemma4)
 - [Qwen3-VL](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3vl)
 - [Qwen3.5 VLM](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3_5)
 - [Qwen3.5-MoE](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3_5_moe)
@@ -161,8 +134,6 @@ Welcome to the official release of **Efficient Transformer Library v1.22.0**! Th
 - [GLM4-MOE Disaggregated](https://github.com/quic/efficient-transformers/blob/main/examples/disagg_serving/glm4_moe_disagg_mode_with_chunking.py)
 - [Sequence Classification](https://github.com/quic/efficient-transformers/tree/main/examples/sequence_classification)
 - [Wan Image-to-Video](https://github.com/quic/efficient-transformers/tree/main/examples/diffusers/wan)
-- [Reranker Models](https://github.com/quic/efficient-transformers/tree/main/examples/reranker)
-
 
 
 # Efficient Transformer Library - 1.21.6 Release Notes
