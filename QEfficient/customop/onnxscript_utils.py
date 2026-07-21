@@ -48,6 +48,7 @@ def _compile_with_default_opset(
 
 
 def qeff_custom_op(domain: str, version: int):
+    # TODO: remove this decorator and the legacy compilation path once legacy (torch.onnx.export) is deprecated.
     """Compile one custom op body into legacy and dynamo ONNXScript variants."""
     custom_opset = onnxscript.values.Opset(domain, version)
 
