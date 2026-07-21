@@ -109,7 +109,7 @@ COMPILER = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw"]
 def get_default_aic_hw_version() -> str:
     """Detect the AIC hardware version from the first available device.
 
-    Runs ``qaic-util -q`` and inspects the ``FW IMAGE_VARIANT`` field of the
+    Runs ``qaic-util -q`` and inspects the ``NSP IMAGE_VARIANT`` field of the
     first device (QID 0) to determine whether the hardware is ``ai100`` or
     ``ai200``.  Falls back to ``"ai100"`` when no device is found or the tool
     is unavailable.
@@ -129,7 +129,7 @@ def get_default_aic_hw_version() -> str:
     except Exception:
         return "ai100"
 
-    match = re.search(r"FW IMAGE_VARIANT\s*:\s*(\S+)", output)
+    match = re.search(r"NSP IMAGE_VARIANT\s*:\s*(\S+)", output)
     if match:
         variant = match.group(1).upper()
         if "AIC200" in variant:
