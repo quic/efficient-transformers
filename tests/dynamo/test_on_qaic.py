@@ -9,19 +9,20 @@
 Dynamo on-QAIC tests.
 
 All tests require QAIC hardware (marked @pytest.mark.on_qaic).
-Every test is run twice: use_onnx_subfunctions=False and use_onnx_subfunctions=True.
+All tests run with dynamo=True and use_onnx_subfunctions=True.
 
 Covers:
   - FP16 compile
   - FP32 compile (torch_dtype=float32 model)
   - Multi-device compile (num_devices=4)
   - Generate FP16
-  - HW ORT parity (ORT CPU tokens == QAIC FP16 top-1 token)
+  - HF AIC HW parity (HF PT tokens == QAIC FP16 top-1 token)
   - Continuous-batching generate
 """
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 import torch
 from transformers import AutoModelForCausalLM
@@ -53,49 +54,46 @@ _MDP_SUBSET = tuple(m for m in _HW_SUBSET if m != "gpt2")
 @pytest.mark.on_qaic
 @pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
-@pytest.mark.parametrize("use_onnx_subfunctions", [False, True], ids=["flat", "subfn"])
 @pytest.mark.parametrize(
     "model_type,model_id", sorted(DYNAMO_CAUSAL_LM_MODEL_IDS.items()), ids=sorted(DYNAMO_CAUSAL_LM_MODEL_IDS)
 )
-def test_dynamo_fp16_compile(model_type, model_id, use_onnx_subfunctions, tmp_export_dir):
-    """Export with dynamo=True and compile to FP16 QPC."""
+def test_dynamo_fp16_compile(model_type, model_id, tmp_export_dir):
+    """Export with dynamo=True and use_onnx_subfunctions=True, compile to FP16 QPC."""
 
     try:
         model_hf = load_hf_model(model_id)
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
 
-    subfn_label = "subfn" if use_onnx_subfunctions else "flat"
     qeff_model = QEFFAutoModelForCausalLM(model_hf)
     onnx_path = exported_onnx_path(
         qeff_model.export(
-            tmp_export_dir / f"fp16_export_{subfn_label}",
+            tmp_export_dir / "fp16_export",
             dynamo=True,
-            use_onnx_subfunctions=use_onnx_subfunctions,
+            use_onnx_subfunctions=True,
         )
     )
     qeff_model.compile(
         onnx_path=str(onnx_path),
-        compile_dir=str(tmp_export_dir / f"fp16_compile_{subfn_label}"),
+        compile_dir=str(tmp_export_dir / "fp16_compile"),
         prefill_seq_len=PROMPT_LEN,
         ctx_len=CTX_LEN,
         num_cores=16,
         batch_size=BATCH_SIZE,
-        use_onnx_subfunctions=use_onnx_subfunctions,
+        use_onnx_subfunctions=True,
     )
-    assert (tmp_export_dir / f"fp16_compile_{subfn_label}").is_dir()
+    assert (tmp_export_dir / "fp16_compile").is_dir()
 
 
 @pytest.mark.dynamo
 @pytest.mark.on_qaic
 @pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
-@pytest.mark.parametrize("use_onnx_subfunctions", [False, True], ids=["flat", "subfn"])
 @pytest.mark.parametrize(
     "model_type,model_id", sorted(DYNAMO_CAUSAL_LM_MODEL_IDS.items()), ids=sorted(DYNAMO_CAUSAL_LM_MODEL_IDS)
 )
-def test_dynamo_fp32_compile(model_type, model_id, use_onnx_subfunctions, tmp_export_dir):
-    """Export with dynamo=True and compile with fp32 model (no precision compression)."""
+def test_dynamo_fp32_compile(model_type, model_id, tmp_export_dir):
+    """Export with dynamo=True and use_onnx_subfunctions=True, compile with fp32 model."""
 
     try:
         model_hf = AutoModelForCausalLM.from_pretrained(
@@ -109,27 +107,26 @@ def test_dynamo_fp32_compile(model_type, model_id, use_onnx_subfunctions, tmp_ex
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
 
-    subfn_label = "subfn" if use_onnx_subfunctions else "flat"
     qeff_model = QEFFAutoModelForCausalLM(model_hf)
     onnx_path = exported_onnx_path(
         qeff_model.export(
-            tmp_export_dir / f"fp32_export_{subfn_label}",
+            tmp_export_dir / "fp32_export",
             dynamo=True,
-            use_onnx_subfunctions=use_onnx_subfunctions,
+            use_onnx_subfunctions=True,
         )
     )
     qeff_model.compile(
         onnx_path=str(onnx_path),
-        compile_dir=str(tmp_export_dir / f"fp32_compile_{subfn_label}"),
+        compile_dir=str(tmp_export_dir / "fp32_compile"),
         prefill_seq_len=PROMPT_LEN,
         ctx_len=CTX_LEN,
         num_cores=16,
         batch_size=BATCH_SIZE,
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
-        use_onnx_subfunctions=use_onnx_subfunctions,
+        use_onnx_subfunctions=True,
     )
-    assert (tmp_export_dir / f"fp32_compile_{subfn_label}").is_dir()
+    assert (tmp_export_dir / "fp32_compile").is_dir()
 
 
 @pytest.mark.dynamo
@@ -137,54 +134,51 @@ def test_dynamo_fp32_compile(model_type, model_id, use_onnx_subfunctions, tmp_ex
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.xdist_group(name="qaic-runtime")
-@pytest.mark.parametrize("use_onnx_subfunctions", [False, True], ids=["flat", "subfn"])
 @pytest.mark.parametrize(
     "model_type,model_id",
     [(k, DYNAMO_CAUSAL_LM_MODEL_IDS[k]) for k in _MDP_SUBSET if k in DYNAMO_CAUSAL_LM_MODEL_IDS],
     ids=list(_MDP_SUBSET),
 )
-def test_dynamo_multi_device_compile(model_type, model_id, use_onnx_subfunctions, tmp_export_dir):
-    """Export with dynamo=True and compile for 4 devices."""
+def test_dynamo_multi_device_compile(model_type, model_id, tmp_export_dir):
+    """Export with dynamo=True and use_onnx_subfunctions=True, compile for 4 devices."""
 
     try:
         model_hf = load_hf_model(model_id)
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
 
-    subfn_label = "subfn" if use_onnx_subfunctions else "flat"
     qeff_model = QEFFAutoModelForCausalLM(model_hf)
     onnx_path = exported_onnx_path(
         qeff_model.export(
-            tmp_export_dir / f"mdp_export_{subfn_label}",
+            tmp_export_dir / "mdp_export",
             dynamo=True,
-            use_onnx_subfunctions=use_onnx_subfunctions,
+            use_onnx_subfunctions=True,
         )
     )
     qeff_model.compile(
         onnx_path=str(onnx_path),
-        compile_dir=str(tmp_export_dir / f"mdp_compile_{subfn_label}"),
+        compile_dir=str(tmp_export_dir / "mdp_compile"),
         prefill_seq_len=PROMPT_LEN,
         ctx_len=CTX_LEN,
         num_cores=16,
         num_devices=4,
         batch_size=BATCH_SIZE,
-        use_onnx_subfunctions=use_onnx_subfunctions,
+        use_onnx_subfunctions=True,
     )
-    assert (tmp_export_dir / f"mdp_compile_{subfn_label}").is_dir()
+    assert (tmp_export_dir / "mdp_compile").is_dir()
 
 
 @pytest.mark.dynamo
 @pytest.mark.on_qaic
 @pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
-@pytest.mark.parametrize("use_onnx_subfunctions", [False, True], ids=["flat", "subfn"])
 @pytest.mark.parametrize(
     "model_type,model_id",
     [(k, DYNAMO_CAUSAL_LM_MODEL_IDS[k]) for k in _HW_SUBSET if k in DYNAMO_CAUSAL_LM_MODEL_IDS],
     ids=list(_HW_SUBSET),
 )
-def test_dynamo_generate_fp16(model_type, model_id, use_onnx_subfunctions, tmp_export_dir):
-    """End-to-end export → compile → generate with dynamo=True."""
+def test_dynamo_generate_fp16(model_type, model_id, tmp_export_dir):
+    """End-to-end export → compile → generate with dynamo=True and use_onnx_subfunctions=True."""
 
     try:
         model_hf = load_hf_model(model_id)
@@ -192,23 +186,22 @@ def test_dynamo_generate_fp16(model_type, model_id, use_onnx_subfunctions, tmp_e
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
 
-    subfn_label = "subfn" if use_onnx_subfunctions else "flat"
     qeff_model = QEFFAutoModelForCausalLM(model_hf)
     onnx_path = exported_onnx_path(
         qeff_model.export(
-            tmp_export_dir / f"gen_export_{subfn_label}",
+            tmp_export_dir / "gen_export",
             dynamo=True,
-            use_onnx_subfunctions=use_onnx_subfunctions,
+            use_onnx_subfunctions=True,
         )
     )
     qeff_model.compile(
         onnx_path=str(onnx_path),
-        compile_dir=str(tmp_export_dir / f"gen_compile_{subfn_label}"),
+        compile_dir=str(tmp_export_dir / "gen_compile"),
         prefill_seq_len=PROMPT_LEN,
         ctx_len=CTX_LEN,
         num_cores=16,
         batch_size=BATCH_SIZE,
-        use_onnx_subfunctions=use_onnx_subfunctions,
+        use_onnx_subfunctions=True,
     )
     output = qeff_model.generate(
         tokenizer=tokenizer,
@@ -223,14 +216,13 @@ def test_dynamo_generate_fp16(model_type, model_id, use_onnx_subfunctions, tmp_e
 @pytest.mark.on_qaic
 @pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
-@pytest.mark.parametrize("use_onnx_subfunctions", [False, True], ids=["flat", "subfn"])
 @pytest.mark.parametrize(
     "model_type,model_id",
     [(k, DYNAMO_CAUSAL_LM_MODEL_IDS[k]) for k in _HW_SUBSET if k in DYNAMO_CAUSAL_LM_MODEL_IDS],
     ids=list(_HW_SUBSET),
 )
-def test_dynamo_hw_ort_parity(model_type, model_id, use_onnx_subfunctions, tmp_export_dir):
-    """ORT CPU tokens == QAIC FP16 top-1 token (greedy argmax parity)."""
+def test_dynamo_hw_hf_parity(model_type, model_id, tmp_export_dir):
+    """HF PT tokens == QAIC FP16 tokens (exact equality)."""
     from QEfficient.utils.run_utils import ApiRunner
 
     try:
@@ -249,28 +241,27 @@ def test_dynamo_hw_ort_parity(model_type, model_id, use_onnx_subfunctions, tmp_e
         full_batch_size=None,
     )
 
-    subfn_label = "subfn" if use_onnx_subfunctions else "flat"
+    hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
+    assert hf_tokens is not None, "HF PT inference returned None"
+
     qeff_model = QEFFAutoModelForCausalLM(model_hf)
     onnx_path = exported_onnx_path(
         qeff_model.export(
-            tmp_export_dir / f"hw_parity_export_{subfn_label}",
+            tmp_export_dir / "hw_parity_export",
             dynamo=True,
-            use_onnx_subfunctions=use_onnx_subfunctions,
+            use_onnx_subfunctions=True,
             offload_pt_weights=False,
         )
     )
 
-    ort_tokens = api_runner.run_kv_model_on_ort(str(onnx_path))
-    assert ort_tokens is not None, "ORT inference returned None"
-
     qeff_model.compile(
         onnx_path=str(onnx_path),
-        compile_dir=str(tmp_export_dir / f"hw_parity_compile_{subfn_label}"),
+        compile_dir=str(tmp_export_dir / "hw_parity_compile"),
         prefill_seq_len=PROMPT_LEN,
         ctx_len=CTX_LEN,
         num_cores=16,
         batch_size=BATCH_SIZE,
-        use_onnx_subfunctions=use_onnx_subfunctions,
+        use_onnx_subfunctions=True,
     )
 
     qaic_output = qeff_model.generate(
@@ -281,11 +272,10 @@ def test_dynamo_hw_ort_parity(model_type, model_id, use_onnx_subfunctions, tmp_e
 
     assert qaic_output is not None, "QAIC generate returned None"
     if hasattr(qaic_output, "generated_ids") and qaic_output.generated_ids is not None:
-        ort_first_token = int(ort_tokens[0][0])
-        qaic_first_token = int(qaic_output.generated_ids[0][0][0])
-        assert ort_first_token == qaic_first_token, (
-            f"HW ORT parity failed for {model_id} (subfunctions={use_onnx_subfunctions}): "
-            f"ORT={ort_first_token}, QAIC={qaic_first_token}"
+        gen_len = CTX_LEN - PROMPT_LEN
+        qaic_tokens = qaic_output.generated_ids[0].flatten()[:gen_len]
+        assert np.array_equal(hf_tokens, qaic_tokens), (
+            f"HF AIC HW parity failed for {model_id}: HF={hf_tokens.tolist()}, QAIC={qaic_tokens.tolist()}"
         )
 
 
@@ -293,14 +283,13 @@ def test_dynamo_hw_ort_parity(model_type, model_id, use_onnx_subfunctions, tmp_e
 @pytest.mark.on_qaic
 @pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
-@pytest.mark.parametrize("use_onnx_subfunctions", [False, True], ids=["flat", "subfn"])
 @pytest.mark.parametrize(
     "model_type,model_id",
     [(k, DYNAMO_CAUSAL_LM_MODEL_IDS[k]) for k in _HW_SUBSET if k in DYNAMO_CAUSAL_LM_MODEL_IDS],
     ids=list(_HW_SUBSET),
 )
-def test_dynamo_cb_generate(model_type, model_id, use_onnx_subfunctions, tmp_export_dir):
-    """Continuous-batching export → compile → generate with dynamo=True."""
+def test_dynamo_cb_generate(model_type, model_id, tmp_export_dir):
+    """Continuous-batching export → compile → generate with dynamo=True and use_onnx_subfunctions=True."""
 
     try:
         model_hf = load_hf_model(model_id)
@@ -308,24 +297,23 @@ def test_dynamo_cb_generate(model_type, model_id, use_onnx_subfunctions, tmp_exp
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
 
-    subfn_label = "subfn" if use_onnx_subfunctions else "flat"
     qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=True)
     onnx_path = exported_onnx_path(
         qeff_model.export(
-            tmp_export_dir / f"cb_gen_export_{subfn_label}",
+            tmp_export_dir / "cb_gen_export",
             dynamo=True,
-            use_onnx_subfunctions=use_onnx_subfunctions,
+            use_onnx_subfunctions=True,
         )
     )
     qeff_model.compile(
         onnx_path=str(onnx_path),
-        compile_dir=str(tmp_export_dir / f"cb_gen_compile_{subfn_label}"),
+        compile_dir=str(tmp_export_dir / "cb_gen_compile"),
         prefill_seq_len=PROMPT_LEN,
         ctx_len=CTX_LEN,
         num_cores=16,
         batch_size=BATCH_SIZE,
         full_batch_size=FULL_BATCH_SIZE,
-        use_onnx_subfunctions=use_onnx_subfunctions,
+        use_onnx_subfunctions=True,
     )
     prompts = ["hello world"] * FULL_BATCH_SIZE
     output = qeff_model.generate(

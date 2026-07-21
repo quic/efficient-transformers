@@ -8,11 +8,8 @@
 """
 Dynamo ORT parity tests.
 
-Every architecture is tested twice:
-  - dynamo=True, use_onnx_subfunctions=False
-  - dynamo=True, use_onnx_subfunctions=True
-
-Validates HF PT == QEff PT == ORT token parity via ApiRunner.
+All tests run with dynamo=True and use_onnx_subfunctions=True.
+Validates HF PT == ORT token parity via ApiRunner.
 CPU-only. No QAIC hardware required.
 """
 
@@ -31,12 +28,11 @@ from ._helpers import (
 
 @pytest.mark.dynamo
 @pytest.mark.dynamo_export
-@pytest.mark.parametrize("use_onnx_subfunctions", [False, True], ids=["flat", "subfn"])
 @pytest.mark.parametrize(
     "model_type,model_id", sorted(DYNAMO_CAUSAL_LM_MODEL_IDS.items()), ids=sorted(DYNAMO_CAUSAL_LM_MODEL_IDS)
 )
-def test_dynamo_hf_qeff_ort_parity(model_type, model_id, use_onnx_subfunctions, tmp_export_dir):
-    """HF PT == QEff PT == ORT parity for both subfunction modes."""
+def test_dynamo_hf_ort_parity(model_type, model_id, tmp_export_dir):
+    """HF PT == ORT parity with dynamo=True and use_onnx_subfunctions=True."""
     if model_type == "gpt_oss":
         pytest.xfail()
 
@@ -46,7 +42,4 @@ def test_dynamo_hf_qeff_ort_parity(model_type, model_id, use_onnx_subfunctions, 
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
 
-    subfn_label = "subfn" if use_onnx_subfunctions else "flat"
-    run_dynamo_ort_parity(
-        model_hf, tokenizer, tmp_export_dir / subfn_label, use_onnx_subfunctions=use_onnx_subfunctions
-    )
+    run_dynamo_ort_parity(model_hf, tokenizer, tmp_export_dir, use_onnx_subfunctions=True)

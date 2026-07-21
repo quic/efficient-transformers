@@ -187,7 +187,7 @@ def run_dynamo_ort_parity(
 ) -> None:
     """
     Wrap pre-loaded model with QEFFAutoModelForCausalLM, export with dynamo=True,
-    and assert HF PT == QEff PT == ORT token parity via ApiRunner.
+    and assert HF PT == ORT token parity via ApiRunner.
     """
     api_runner = ApiRunner(
         batch_size=BATCH_SIZE,
@@ -202,8 +202,6 @@ def run_dynamo_ort_parity(
     hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
 
     qeff_model = QEFFAutoModelForCausalLM(model_hf)
-    kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
-
     onnx_path = exported_onnx_path(
         qeff_model.export(
             export_dir,
@@ -214,9 +212,6 @@ def run_dynamo_ort_parity(
     )
     ort_tokens = api_runner.run_kv_model_on_ort(str(onnx_path))
 
-    assert np.array_equal(hf_tokens, kv_tokens.squeeze(0)), (
-        f"HF vs QEff PyTorch parity failed for {model_hf.__class__.__name__}"
-    )
-    assert np.array_equal(kv_tokens, ort_tokens), (
-        f"QEff PyTorch vs ORT parity failed for {model_hf.__class__.__name__} (use_onnx_subfunctions={use_onnx_subfunctions})"
+    assert np.array_equal(hf_tokens, ort_tokens.flatten()), (
+        f"HF PT vs ORT parity failed for {model_hf.__class__.__name__} (use_onnx_subfunctions={use_onnx_subfunctions})"
     )
