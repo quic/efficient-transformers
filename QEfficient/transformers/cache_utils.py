@@ -1545,9 +1545,8 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
         invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-        all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
+        all_indices = torch.arange(ctx_len) + kv_position_ids.max() + 1
         rolling_indices = torch.where(all_indices > layer_ctx_len - 1, all_indices % layer_ctx_len, all_indices)
-        rolling_indices = rolling_indices[:ctx_len]
         use_rolling_indices = position_ids.max() >= (layer_ctx_len - 1)
         final_indices = torch.where(use_rolling_indices, rolling_indices, ctx_indices)
 
