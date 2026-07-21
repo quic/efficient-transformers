@@ -37,8 +37,8 @@ skip_vision = True
 
 # Compute-Context-Length (CCL) lists for prefill and decode. When both are None and
 # ccl_enabled=True, they are auto-generated from ctx_len.
-# comp_ctx_lengths_prefill = [2048, 4096]
-# comp_ctx_lengths_decode = [2048, 4096]
+# comp_ctx_lengths_prefill = [2048]
+# comp_ctx_lengths_decode = [65536]
 
 if skip_vision:
     ## Only Text ##
