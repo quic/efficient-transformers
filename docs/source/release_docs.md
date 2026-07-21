@@ -33,8 +33,6 @@ Welcome to the official release of **Efficient Transformer Library v1.22.0**! Th
   - KV-blocked attention and ONNX subfunction export
   - [GLM4-MOE Disaggregated Example](https://github.com/quic/efficient-transformers/blob/main/examples/disagg_serving/glm4_moe_disagg_mode_with_chunking.py)
 
-
-
 ---
 
 ## Deprecations
@@ -49,7 +47,6 @@ Welcome to the official release of **Efficient Transformer Library v1.22.0**! Th
   - Transformers rebased to `v5.5.4` — modeling wrappers, `cache_utils`, and export flows aligned; PyTorch/ORT parity restored
   - Intermediate rebase to `v4.57.3` also landed, unifying subfunction changes
   - Python `3.12` support added (while retaining `3.10` and `3.11` compatibility)
-
 
 - **Causal Attention Blocking**
   - New KV, Q, Head, and Batch blocking strategies for CausalLM models
@@ -129,7 +126,7 @@ Welcome to the official release of **Efficient Transformer Library v1.22.0**! Th
 
 ## Example Scripts
 
-- [Gemma 4 ](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/gemma_vision/gemma4)
+- [Gemma 4](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/gemma_vision/gemma4)
 - [Qwen3-VL](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3vl)
 - [Qwen3.5 VLM](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3_5)
 - [Qwen3.5-MoE](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3_5_moe)
