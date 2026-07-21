@@ -693,12 +693,40 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         decay_mask = decay_mask * (~mask_strict).float()  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
-        for i in range(1, chunk_size):
-            row = attn[..., i, :i].clone()
-            sub = attn[..., :i, :i].clone()
-            # attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
-            attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
-        attn = attn + eye.to(dtype=attn.dtype, device=attn.device)
+        # for i in range(1, chunk_size):
+        #     row = attn[..., i, :i].clone()
+        #     sub = attn[..., :i, :i].clone()
+        #     # attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
+        #     attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
+        # attn = attn + eye.to(dtype=attn.dtype, device=attn.device)
+
+        ## Recursive Scaled Newton-Schulz ##
+        strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+        acc_dtype = attn.dtype
+        I_base = eye if eye is not None else torch.eye(chunk_size, device=attn.device, dtype=acc_dtype)
+        I64 = I_base.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        A64 = attn.masked_fill(mask, 0).to(acc_dtype)
+        ns_iters = int(math.log2(chunk_size)) + 4
+
+        def _ns_solve(L: torch.Tensor) -> torch.Tensor:
+            X = I64.clone()
+            for _ in range(ns_iters):
+                R = I64 - ((I64 - L) @ X)
+                ck = X + (X @ R).masked_fill(~strict_lower, 0)
+                X = ck.masked_fill(~strict_lower, 0) + I64
+            return X
+
+        default_depth = max(1, (int(math.ceil(math.log2(chunk_size))) - 1) // 2)
+        depth = getattr(self, "recursive_sns_depth", None)
+        depth = default_depth if depth is None else int(depth)
+        depth = max(1, depth)
+
+        X = _ns_solve(A64 * (0.5**depth))
+        for _ in range(depth):
+            M = (X - I64).masked_fill(~strict_lower, 0)
+            Z = _ns_solve(M)
+            X = (Z @ X).masked_fill(~strict_lower, 0) + I64
+        attn = X.to(attn.dtype)
 
         ## Approximation code ##
         # A = attn
@@ -869,6 +897,19 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             else:
                 conv_state = conv_state_all
                 recurrent_state = recurrent_state_all
+
+            if position_ids is not None:
+                text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
+                zero_cumsum = torch.cumsum((text_position_ids == 0).to(torch.int32), dim=1)[:, -1:]
+                conv_reset_mask = zero_cumsum.to(dtype=torch.bool, device=conv_state.device).reshape(
+                    conv_state.shape[0], *([1] * (conv_state.ndim - 1))
+                )
+                conv_state = torch.where(conv_reset_mask, torch.zeros_like(conv_state), conv_state)
+
+                recurrent_reset_mask = conv_reset_mask.to(device=recurrent_state.device).reshape(
+                    recurrent_state.shape[0], *([1] * (recurrent_state.ndim - 1))
+                )
+                recurrent_state = torch.where(recurrent_reset_mask, torch.zeros_like(recurrent_state), recurrent_state)
 
             mixed_qkv, new_conv_state = qeff_torch_causal_conv1d_update(
                 mixed_qkv,
