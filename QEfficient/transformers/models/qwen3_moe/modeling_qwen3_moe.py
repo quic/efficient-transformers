@@ -45,28 +45,6 @@ from QEfficient.transformers.models._layerwise import is_last_layer_window, is_l
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
-class _TraceOnlyMatMul(torch.autograd.Function):
-    """Emit ONNX MatMul while skipping expensive CPU matmul during export tracing."""
-
-    @staticmethod
-    def forward(lhs: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
-        return lhs.new_zeros((*lhs.shape[:-1], rhs.shape[-1]))
-
-    @staticmethod
-    def setup_context(ctx, inputs, outputs):
-        pass
-
-    @staticmethod
-    def symbolic(g: torch.Graph, lhs: torch.Value, rhs: torch.Value) -> torch.Value:
-        return g.op("MatMul", lhs, rhs)
-
-
-def _matmul_for_export(lhs: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
-    if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
-        return _TraceOnlyMatMul.apply(lhs, rhs)
-    return lhs @ rhs
-
-
 class QEffQwen3MoeRotaryEmbedding(Qwen3MoeRotaryEmbedding):
     def __init__(self, config: Qwen3MoeConfig, device=None):
         super().__init__(config=config)
@@ -189,9 +167,9 @@ def _cumsum_scatter_gather_update_expert_blocked(
 
         x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
 
-        gate_prime = _matmul_for_export(x_chunk, W_g)
-        up_prime = _matmul_for_export(x_chunk, W_u)
-        down_chunk = _matmul_for_export(up_prime * act_fn(gate_prime), W_d)
+        gate_prime = x_chunk @ W_g
+        up_prime = x_chunk @ W_u
+        down_chunk = (up_prime * act_fn(gate_prime)) @ W_d
 
         rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
         down_chunk = down_chunk * rw_chunk
