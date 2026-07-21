@@ -58,6 +58,29 @@ from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
 
+
+class _TraceOnlyMatMul(torch.autograd.Function):
+    """Emit ONNX MatMul while skipping expensive CPU matmul during export tracing."""
+
+    @staticmethod
+    def forward(lhs: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
+        return lhs.new_zeros((*lhs.shape[:-1], rhs.shape[-1]))
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g: torch.Graph, lhs: torch.Value, rhs: torch.Value) -> torch.Value:
+        return g.op("MatMul", lhs, rhs)
+
+
+def _matmul_for_export(lhs: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
+    if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
+        return _TraceOnlyMatMul.apply(lhs, rhs)
+    return lhs @ rhs
+
+
 QWEN3_VL_ROPE_CACHE_EXPORT_CAP = 76800
 
 
@@ -977,24 +1000,41 @@ def cumsum_scatter_gather_update_one_local_expert(
     packed_chunk_size: int,
     router_weights=None,
     act_fn=F.silu,
+    num_packed_chunks: Optional[int] = None,
     **_unused_kwargs,
 ) -> torch.Tensor:
+    """Cumsum-scatter-gather-update expert helper for NSP-blocked dispatch.
+
+    ``num_packed_chunks`` decouples export tensor length from target prefill
+    length, so a small dummy export can still emit the target packed loop count.
+    """
     batch_size, seq_len = T2Ei.shape
-    packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
+    packed_chunk_size = max(1, int(packed_chunk_size))
+    if num_packed_chunks is None:
+        packed_chunk_size = min(packed_chunk_size, seq_len)
+        num_packed_chunks = max(1, -(-seq_len // packed_chunk_size))
+    else:
+        num_packed_chunks = max(1, int(num_packed_chunks))
 
     matched_idx = build_matched_idx_from_cumsum(T2Ei)
+    total_packed_rows = packed_chunk_size * num_packed_chunks
+    if total_packed_rows > seq_len:
+        int32_max = torch.iinfo(torch.int32).max
+        pad = matched_idx.new_full((batch_size, total_packed_rows - seq_len), int32_max)
+        matched_idx = torch.cat((matched_idx, pad), dim=1)
     valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
     row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
 
-    for packed_start in range(0, seq_len, packed_chunk_size):
+    for packed_idx in range(num_packed_chunks):
+        packed_start = packed_idx * packed_chunk_size
         packed_stop = packed_start + packed_chunk_size
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
         x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
-        gate_prime = x_chunk @ W_g
-        up_prime = x_chunk @ W_u
-        down_chunk = (up_prime * act_fn(gate_prime)) @ W_d
+        gate_prime = _matmul_for_export(x_chunk, W_g)
+        up_prime = _matmul_for_export(x_chunk, W_u)
+        down_chunk = _matmul_for_export(up_prime * act_fn(gate_prime), W_d)
 
         expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
         rw_chunk = CtxGatherFunc3DGeneralized.apply(router_weights, chunk_matched_idx)
@@ -1107,6 +1147,7 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
         expert_out = torch.zeros(N, T, H, dtype=x_flat.dtype, device=x_flat.device)
 
         packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
+        num_packed_chunks = getattr(self, "expert_blocking_num_packed_chunks", None)
         W_g = (
             self.experts.gate_proj.view(num_pipeline_stages, num_parallelized_experts, H, -1)
             .transpose(0, 1)
@@ -1133,6 +1174,7 @@ class QEffQwen3VLMoeTextSparseMoeBlock(Qwen3VLMoeTextSparseMoeBlock):
                 packed_chunk_size=packed_chunk_size,
                 router_weights=rw,
                 act_fn=self.experts.act_fn,
+                num_packed_chunks=num_packed_chunks,
             )
 
         def reduce_nsp_tree(values: torch.Tensor, num_lanes: int) -> torch.Tensor:
@@ -1188,6 +1230,8 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         **kwargs,
     ):
         bs = kwargs.get("batch_size", constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE)
+        if bs > 1:
+            bs = 2
 
         prefill_seq_len = kwargs.get("prefill_seq_len")
         if prefill_seq_len is None:
@@ -1229,11 +1273,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             (inputs_shapes["vision_embeds"]), dtype=self.model.config.torch_dtype
         )
         lang_inputs["position_ids"] = (
-            (
-                torch.arange(prefill_seq_len, dtype=torch.int64)
-                .view(1, prefill_seq_len)
-                .repeat(bs, 1)
-            )
+            (torch.arange(prefill_seq_len, dtype=torch.int64).view(1, prefill_seq_len).repeat(bs, 1))
             .unsqueeze(0)
             .repeat(4, 1, 1)
         )
@@ -1457,7 +1497,11 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             return lang, compiler_options
 
     def get_onnx_dynamic_axes(
-        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False, batch_fold: bool = False,
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        batch_fold: bool = False,
     ):
         # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
@@ -1474,7 +1518,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             "deepstack_features": {0: "num_feature_layers", 1: "vision_batch_size", 2: "vision_size"},
         }
 
-        if batch_fold: # Cache layout is 1 x BH x ctx_len x head_dim
+        if batch_fold:  # Cache layout is 1 x BH x ctx_len x head_dim
             for i in range(num_layers):
                 lang_dynamic_axes[f"past_key.{i}"] = {
                     1: "BH",
@@ -1484,7 +1528,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                     1: "BH",
                     2: "ctx_len",
                 }
-        else: 
+        else:
             for i in range(num_layers):
                 lang_dynamic_axes[f"past_key.{i}"] = {
                     0: "full_batch_size" if continuous_batching else "batch_size",
