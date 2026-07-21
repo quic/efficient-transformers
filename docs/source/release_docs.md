@@ -1,180 +1,136 @@
-# Efficient Transformer Library - 1.21.0 Release Notes
+# Efficient Transformer Library - 1.22.0 Release Notes
 
-Welcome to the official release of **Efficient Transformer Library v1.21.0**! This release introduces advanced attention mechanisms, expanded model support, optimized serving capabilities, and significant improvements to fine-tuning and deployment workflows.
+Welcome to the official release of **Efficient Transformer Library v1.22.0**! This release delivers major new model support including Gemma 4, Kimi-K2, Qwen3-VL, and GLM4-MOE, a full rebase to Transformers v5.5.4, Python 3.12 support, advanced attention blocking, Multi-head Latent Attention (MLA), and numerous performance and export improvements.
 
-> ✅ All features and models listed below are available on the [`release/v1.21.0`](https://github.com/quic/efficient-transformers/tree/release/v1.21.0) branch and [`mainline`](https://github.com/quic/efficient-transformers/tree/main).
+> ✅ All features and models listed below are available on the [`release/v1.22.0`](https://github.com/quic/efficient-transformers/tree/release/v1.22.0) branch and [`mainline`](https://github.com/quic/efficient-transformers/tree/main).
 
 ---
 
 ## Newly Supported Models
 
-- **Flux (Diffusers - Image Generation)**
-  - Diffusion-based image generation model
-  - [Flux.1 Schnell Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/flux/flux_1_schnell.py)
+- **Gemma 4**
+  - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText) (multimodal)
+  - Covers both dense and MoE configurations
+  - Optimized chunked prefill and disaggregated (vision/language split) serving
+  - [Gemma 4 Example Scripts](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/gemma_vision/gemma4)
 
-- **WAN (Diffusers - Video Generation)**
-  - Wide-Area Network Lightning support for distributed inference
-  - [Wan_lightning Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/wan/wan_lightning.py)
-
-- **Qwen2.5-VL (Vision Language)**
+- **Qwen3-VL (Vision Language)**
   - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
-  - Multi-image prompt support
+  - Dense and MoE variants supported
   - Continuous batching enabled
-  - [Qwen2.5-VL Usage Guide](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen_vl)
+  - Disaggregated VL-MoE serving (three-QPC split)
+  - [Qwen3-VL Example Scripts](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3vl)
 
-- **Mistral 3.1 (24B)**
+- **Qwen3.5 / Qwen3.6 VLM Series**
   - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
-  - [Mistral-3.1 Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text/models/mistral_vision/mistral3_example.py)
+  - Linear attention variants for Qwen3.5 and Qwen3.6 architectures
+  - Continuous batching and disaggregated serving support
+  - [Qwen3.5 Example Scripts](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3_5)
 
+- **GLM4-MOE**
+  - Executable via [`QEFFAutoModelForCausalLM`](#QEFFAutoModelForCausalLM)
+  - Disaggregated prefill and decode support with chunked prefill
+  - KV-blocked attention and ONNX subfunction export
+  - [GLM4-MOE Disaggregated Example](https://github.com/quic/efficient-transformers/blob/main/examples/disagg_serving/glm4_moe_disagg_mode_with_chunking.py)
 
-- **Disaggregated serving ready via vLLM GPT-OSS**
-  > **Note**: If running GPT-OSS models natively via vLLM, PR-685 of the qefficient library is required for Python 3.12 compatibility.
-    
-  - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
-  - Separate prefill and decode compilation supported
-  - Disaggregated serving ready
-  - [GPT-OSS Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/disagg_serving/gpt_oss_disagg_mode.py)
+---
 
-- **Olmo2**
-  - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
-  - Full CausalLM support with optimizations
-  - Refer to [Text generation Example Scripts](https://github.com/quic/efficient-transformers/tree/main/examples/text_generation) for usage details.
+## Deprecations
 
-- **Molmo**
-  - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
-  - Multi-modal capabilities
-  - [Molmo Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text/models/molmo/molmo_example.py)
-
-- **InternVL 3.5 Series**
-  - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
-  - Full Vision-Language support
-  - Multi-image handling with continuous batching
-  - Refer to [InternVL 3.5 Example Scripts](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/internvl) for usage details.
-
-- **Qwen3-MOE (Mixture of Experts)**
-  - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
-  - Efficient expert routing
-  - [Qwen3-MOE Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/moe_inference.py)
-
-- **Wav2Vec2 (Audio)**
-  - Executable via [`QEFFAutoModelForCTC`](#QEFFAutoModelForCTC)
-  - Speech recognition and audio feature extraction
-  - [Wav2Vec2 Example Scripts](https://github.com/quic/efficient-transformers/blob/main/examples/audio/wav2vec2_inference.py)
-
-- **Multilingual-e5-Large (Embedding Model)**
-  - Executable via [`QEffAutoModel`](#QEffAutoModel)
-  - Multilingual text embedding capabilities
-  - Refer [usage details](https://github.com/quic/efficient-transformers/tree/main/examples/embeddings) here.
+- **Llama 3.2 Vision (mllama)**: Support for `meta-llama/Llama-3.2-11B-Vision` has been deprecated. Users should migrate to supported VLM alternatives.
 
 ---
 
 ## Key Features & Enhancements
 
-- **Framework Upgrades**: Transformers `4.55`, PyTorch `2.7.0+cpu`, Torchvision `0.22.0+cpu`
-- **Python Support**:  Requires Python `3.10`
-- **ONNX Opset**: Updated to version `17` for broader operator support
-- **Advanced Attention**: Flux blocking support, BlockedKV attention for CausalLM models
-- **Diffusers Integration**: Full support for diffuser-based image generation and video generation models
-- **Compute-Context-Length (CCL) support**: To optimize the throughput when handling very large context lengths
-- **Prefill/Decode Separation**: Support for GPT OSS using disaggregate serving models
-- **Continuous Batching (VLMs)**: Extended to Vision Language Models with multi-image handling
-  - Supported models: Llava, Llava_Next, Gemma3, Mistral3, InternVL2_5, InternVL3_5, Molmo
-- **ONNX Sub-Functions**: Feature enabling more efficient model compilation and execution on hardware. Users can enable the feature by passing `use_onnx_subfunctions=True` during export
-- **Memory Profiling**: Built-in utilities for optimization analysis
-- **Extend on-device Sampling**: Extend on-device sampling to dual QPC VLMs and Guided decoding for on-device sampling
-- **ONNX transform, memory & time optimizations**: Optimizations for faster ONNX Transform and reduced memory footprint
-- **Removed platform SDK dependency**: Support QPC generation on systems without the Platform SDK
-- **Example Scripts Revamp**: New example scripts for audio, embeddings, and image-text-to-text tasks
-- **Onboarding Guide**:
-Simplified setup and deployment process for new users
-  - [CausalLM Onboarding Guide](https://github.com/quic/efficient-transformers/tree/release/v1.21.0/examples/onboarding_guide/causallm)
-  - [Custom ops](https://github.com/quic/efficient-transformers/tree/release/v1.21.0/examples/onboarding_guide/customop)
-- Organized examples into domain-specific subdirectories [Examples](https://github.com/quic/efficient-transformers/tree/release/v1.21.0/examples)
+- **Framework Upgrades**
+  - Transformers rebased to `v5.5.4` — modeling wrappers, `cache_utils`, and export flows aligned; PyTorch/ORT parity restored
+  - Intermediate rebase to `v4.57.3` also landed, unifying subfunction changes
+  - Python `3.12` support added (while retaining `3.10` and `3.11` compatibility)
 
+- **Causal Attention Blocking**
+  - New KV, Q, Head, and Batch blocking strategies for CausalLM models
+  - Supported architectures: Llama3, GPT-OSS, Gemma, Gemma2, Granite, GraniteMOE, Mistral
+  - Configurable via `qaic_config` with `enable_blocking: True`; disabled by default
+  - Automatic blocking configurator with `skip_kv` enabled by default
+  - Optimized nested loop implementation for attention blocking
 
+- **NSP-Blocked Expert Dispatch for MoE Prefill**
+  - Batched packed-prefix expert dispatch for Qwen3MOE and GPT-OSS chunked prefill
+  - Configurable via `num_cores` and `moe_prefill_packed_chunk_size` in compile API
+  - Replaces sequential per-expert loop for improved throughput
 
+- **First-Block Caching for Diffusers (Wan)**
+  - Block caching infrastructure for Wan non-unified transformer
+  - Enable via `enable_first_block_cache=True` and `first_block_cache_downsample_factor`
+  - Supports `Wan-AI/Wan2.2-T2V-A14B-Diffusers` at 720p
 
----
+- **Named Graph Specializations**
+  - `specializations.json` now carries meaningful graph names: `Prefill`, `Decode`, `Vision`, `Encoder`, `Embedding`
+  - Automatic name inference based on input key patterns
 
-## Embedding Model Upgrades
+- **Multiple TLM Decode Specializations**
+  - `QEFFAutoModelForCausalLM.compile()` now accepts `num_speculative_tokens` as `List[int]`
+  - Compiles multiple decode specializations in one QPC for per-step dispatch to the cheapest kernel
+  - Backward compatible: plain `int` input still works
 
-- **Multi-Sequence Length Support**: Auto-selects optimal graph at runtime
-- **Enhanced Pooling**: Flexible pooling strategies for various embedding tasks
+- **CCL Support for Disaggregated Prefill**
+  - Compute-Context-Length (CCL) now supported during the prefill phase of disaggregated serving
+  - Enables compilation at maximum context length with efficient TTFT for smaller prompt lengths
 
----
+- **FP16/BF16 Export & Compile for VLMs**
+  - Added `fp16`/`bf16` precision export and compile support for Vision Language Models
 
-## Fine-Tuning Support
+- **Proxy Model Export**
+  - New `enable_proxy=True` flag to export a proxy model (disables Embedding Layer and LM Head)
+  - Supported across text, embedding, vision, and audio models
+  - Proxy-gated ONNX transforms: `FP16ClipTransform` and `SplitTensorsTransform` now only applied when `enable_proxy=True`
 
-- **Checkpoint Management**: Resume from epochs with proper state restoration
-- **Enhanced Loss Tracking**: Corrected data type handling for accurate loss computation
-- **Custom Dataset Support**: Improved handling with better tokenization
-- **Device-Aware Scaling**: Optimized GradScaler for multi-device training
-- **Comprehensive Testing**: Unit tests for fine-tuning workflows
+- **On-Device Sampling for Qwen3**
+  - Extended on-device sampling support to `Qwen3ForCausalLM`
 
----
+- **ONNX Subfunction Support for VLMs**
+  - `use_onnx_subfunctions=True` now supported for Vision Language Models
+  - RoPE indexing hoisted out of decoder subfunctions for cached text models (performance improvement)
+  - Subfunction changes for Qwen2.5 models
 
+- **Weight Offloading Improvements**
+  - Improved weight offloading to handle plain tensor attributes using `to_empty()`
+  - Fixes for large model export OOM risk
 
-# Efficient Transformer Library - 1.20.0 Release Notes
+- **Large Model ONNX Export**
+  - `SplitTensorsTransform` added to `QEFFAutoModel` to prevent >2GB protobuf export failures
+  - Improved proxy-only clip/split transform gating
 
-Welcome to the official release of **Efficient Transformer Library v1.20.0**! This release introduces advanced attention mechanisms, expanded model support, optimized serving capabilities, and significant improvements to fine-tuning and deployment workflows.
+- **Compiler Toolchain Update**
+  - Compilation updated from deprecated `qaic-exec` to `qaic-compile`
+  - Removed deprecated `-compile-only` compiler flag
 
-> ✅ All features and models listed below are available on the [`release/v1.20.0`](https://github.com/quic/efficient-transformers/tree/release/v1.20.0) branch and [`mainline`](https://github.com/quic/efficient-transformers/tree/main).
+- **Disaggregated Serving Enhancements**
+  - ONNX reuse fix for disaggregated compile and diffusion modules
+  - Qwen3-MoE disaggregated mode support
+  - CCL input precision changed from `int8` to `int64` to align with compiler
 
----
-
-
-## Newly Supported Models
-
-- **Llama-4-Scout-17B-16E-Instruct**
-  - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
-  - Text & Image+Text support
-  - Chunk attention, Single/Dual QPC support
-  - Multi-image prompts enabled via VLLM interface
-  - [Llama4 Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text/models/llama_vision/single_image.py)
-
-- **Grok-1**
-  - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
-
-- **Gemma3**
-  - Executable via [`QEFFAutoModelForImageTextToText`](#QEFFAutoModelForImageTextToText)
-  - Text & Image+Text support
-  - Sliding window support
-  - [Gemma3 Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/image_text_to_text/models/gemma_vision/inference.py)
-
-
-- **SwiftKV (Llama-3.1-SwiftKV-8B-Instruct)**
-  - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
-  - Supports both continuous and non-continuous batching
-
-- **GGUF Models**
-  - Executable via [`QEffAutoModelForCausalLM`](#QEffAutoModelForCausalLM)
-  - Execution support (non-quantized)
-  - [Example Script](https://github.com/quic/efficient-transformers/blob/main/examples/text_generation/gguf_models.py)
-
-- **FP8 Compressed Quantization**
-  - Support for [`Llama-3.3-70B-Instruct-FP8-Dynamic`](https://huggingface.co/Infermatic/Llama-3.3-70B-Instruct-FP8-Dynamic)
+- **Bug Fixes**
+  - Fixed MLA KV head replication for correct head count handling
+  - Fixed RoPE dtype for `custom_dtype` export
+  - Fixed `fp16`/`bf16` export and compile for Qwen3-VL and Qwen3-VL-MoE models
+  - Fixed continuous batching inconsistency for Qwen2.5-VL
+  - Fixed Gemma3 sliding window issue
+  - Fixed CCL support during disaggregated serving decode phase
+  - Fixed `device_ids` type handling for single-device `qaicrt.Program`
+  - Clarified CausalLM decode-only flag handling and fixed PL=1 specialization naming
+  - Removed `custom_io` passing for BF16 dtype case
 
 ---
 
-## Key Features & Enhancements
+## Example Scripts
 
-- **Transformer Upgrade**: Now using version `4.51.3`
-- **SpD & Multi-Projection Heads**: Token speculation via post-attention projections
-- **I/O Encryption**: `--io-encrypt` flag support in compile/infer APIs
-- **Separate Prefill/Decode Compilation**: For disaggregated serving
-- **On-Device Sampling**: Supported using VLLM, which reduces host-device latency for CausalLM models
-
----
-
-## Embedding Model Upgrades
-
-- **Flexible Pooling**: Choose from standard or custom strategies
-- **Sentence Embedding**: Now runs directly on AI100
-- **Multi-Seq Length Compilation**: Auto-selects optimal graph at runtime
-
----
-
-## Fine-Tuning Support
-
-- BERT fine-tuning support with templates and documentation
-- Gradient checkpointing, device-aware `GradScaler`, and CLI `--help` added
+- [Gemma 4](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/gemma_vision/gemma4)
+- [Qwen3-VL](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3vl)
+- [Qwen3.5 VLM](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3_5)
+- [Qwen3.5-MoE](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3_5_moe)
+- [Qwen3-VL-MoE](https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3_vl_moe)
+- [GLM4-MOE Disaggregated](https://github.com/quic/efficient-transformers/blob/main/examples/disagg_serving/glm4_moe_disagg_mode_with_chunking.py)
+- [Sequence Classification](https://github.com/quic/efficient-transformers/tree/main/examples/sequence_classification)
+- [Wan Image-to-Video](https://github.com/quic/efficient-transformers/tree/main/examples/diffusers/wan)
