@@ -11,7 +11,6 @@ from torch import nn
 
 from QEfficient.customop.utils import select_interface
 from QEfficient.utils import constants
-from QEfficient.customop.utils import select_interface
 
 ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
 
