@@ -9,8 +9,8 @@ import onnxscript
 import torch
 from torch import nn
 
-from QEfficient.customop.utils import select_interface
 from QEfficient.customop.onnxscript_utils import qeff_custom_op
+from QEfficient.customop.utils import select_interface
 from QEfficient.utils import constants
 
 ops = getattr(onnxscript, "opset" + str(constants.ONNX_LEGACY_EXPORT_OPSET))
