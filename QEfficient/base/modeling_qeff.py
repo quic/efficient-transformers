@@ -650,7 +650,11 @@ class QEFFBaseModel(ABC):
             if effective_onnx_transform_kwargs is not None:
                 transform_kwargs.update(effective_onnx_transform_kwargs)
 
-            onnx_transforms = OnnxTransformPipeline(transforms=effective_transform_owner._onnx_transforms)
+            active_onnx_transforms = [
+                t for t in effective_transform_owner._onnx_transforms
+                if not (use_weight_free_export and t is SplitTensorsTransform)
+            ]
+            onnx_transforms = OnnxTransformPipeline(transforms=active_onnx_transforms)
             model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
             # Keep this strictly layerwise-scoped so regular non-layerwise export

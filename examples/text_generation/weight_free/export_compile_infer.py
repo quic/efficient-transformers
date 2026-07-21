@@ -61,6 +61,7 @@ def parse_args():
     p.add_argument("--no_subfunctions", action="store_true", help="Disable ONNX subfunction extraction.")
     p.add_argument("--mxfp6_matmul", action="store_true", help="Enable MXFP6 matmul quantisation.")
     p.add_argument("--mxint8_kv_cache", action="store_true", help="Enable MXINT8 KV cache quantisation.")
+    p.add_argument("--dtype", choices=["float16", "float32"], default="float16", help="Dtype for model weights (float16 or float32).")
     return p.parse_args()
 
 
@@ -91,7 +92,7 @@ def main():
     if config is None:
         config = AutoConfig.from_pretrained(args.model_name, trust_remote_code=True)
 
-    config.dtype = torch.float32
+    config.dtype = getattr(torch, args.dtype)
 
     # Some older models (e.g. Falcon-7B) predate the max_position_embeddings attribute.
     # Newer transformers requires it — set a safe default if missing.
@@ -115,6 +116,7 @@ def main():
         qeff_model = QEFFAutoModelForCausalLM(
             meta_model,
             pretrained_model_name_or_path=args.model_name,
+            enable_proxy=False,
         )
     else:
         print("\nLoading model via from_pretrained for regular dynamo export ...")

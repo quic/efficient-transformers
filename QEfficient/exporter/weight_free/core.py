@@ -161,7 +161,7 @@ def _build_meta_qeff_model(qeff_model):
         meta_model = qeff_model._hf_auto_class.from_config(config, attn_implementation="eager")
 
     if quant_config is None:
-        target_dtype = getattr(config, "dtype", torch.float32) or torch.float32
+        target_dtype = getattr(config, "dtype", None) or torch.float32
         if target_dtype == torch.bfloat16:
             target_dtype = torch.float16
         meta_model = meta_model.to(dtype=target_dtype)
@@ -172,6 +172,7 @@ def _build_meta_qeff_model(qeff_model):
         qaic_config=copy.deepcopy(getattr(qeff_model.model, "qaic_config", None)),
         max_seq_len_cached=getattr(qeff_model.model.config, "max_seq_len_cached", None),
         pretrained_model_name_or_path=model_ref,
+        enable_proxy=getattr(qeff_model, "_enable_proxy", False),
     )
     meta_qeff_model.hash_params.update(copy.deepcopy(qeff_model.hash_params))
 
@@ -445,6 +446,9 @@ def export_weight_free_onnx(
         # Prepare checkpoint: stack MoE experts (if needed) and convert dtype.
         # Store next to the SOURCE checkpoint directory (not inside the hashed export dir)
         # so any model config variant pointing at the same source reuses the prepared data.
+        target_dtype = getattr(qeff_model.model.config, "dtype", None) or torch.float32
+        if target_dtype == torch.bfloat16:
+            target_dtype = torch.float16
         prep_pipeline = CheckpointTransformPipeline(transforms=qeff_model._checkpoint_transforms)
         source_dir = _resolve_checkpoint_dir(model_ref)
         prepared_out = source_dir.parent / (source_dir.name + "-qeff-prepared")
@@ -457,7 +461,7 @@ def export_weight_free_onnx(
             prep_pipeline.apply(
                 src=source_dir,
                 out=prepared_out,
-                target_dtype=torch.float32,
+                target_dtype=target_dtype,
             )
         )
 
