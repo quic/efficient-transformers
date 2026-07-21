@@ -3771,7 +3771,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
 
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        seq_len: int = getattr(self.model, "ONNX_EXPORT_EXAMPLE_SEQ_LEN", constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
 
         # increase seq_len if using a larger number of blocks
         if self.hash_params.get("blocking_kwargs", None):
