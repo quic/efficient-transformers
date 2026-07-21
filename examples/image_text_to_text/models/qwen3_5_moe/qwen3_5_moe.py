@@ -50,8 +50,8 @@ CTX_LEN = 4096
 
 # Compute-Context-Length (CCL) lists for prefill and decode. When both are None and
 # ccl_enabled=True, they are auto-generated from CTX_LEN.
-# comp_ctx_lengths_prefill = [2048, 4096]
-# comp_ctx_lengths_decode = [2048, 4096]
+# comp_ctx_lengths_prefill = [2048]
+# comp_ctx_lengths_decode = [4096,65536]
 
 if skip_vision:
     ## Only Text ##
