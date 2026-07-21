@@ -48,6 +48,6 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HUGGINGFACE_HUB_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          pytest tests/dynamo/ tests/unit_test/transforms/test_onnx_transforms.py \
+          pytest tests/dynamo/ \
             -m "not on_qaic" \
             -n auto -v

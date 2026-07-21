@@ -38,9 +38,7 @@ from ._helpers import (
 def test_dynamo_hf_qeff_ort_parity(model_type, model_id, use_onnx_subfunctions, tmp_export_dir):
     """HF PT == QEff PT == ORT parity for both subfunction modes."""
     if model_type == "gpt_oss":
-        pytest.xfail(
-            "gpt_oss ORT parity fails for flat and subfn — heterogeneous dense/MoE layer structure causes invoke_subgraph schema mismatch"
-        )
+        pytest.xfail()
 
     try:
         model_hf = load_hf_model(model_id)
