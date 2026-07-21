@@ -361,3 +361,43 @@ class QnnConstants:
         },
         "SKIP_QNN_CONVERTER_STEP": False,
     }
+
+
+_KNOWN_DECODER_LAYER_ATTR_PATHS = (
+    "layers",
+    "h",
+    "model.layers",
+    "model.h",
+    "decoder.layers",
+    "model.decoder.layers",
+    "encoder.layer",
+    "encoder.layers",
+    "model.encoder.layer",
+    "model.encoder.layers",
+    "transformer.h",
+    "transformer.layers",
+    "model.transformer.h",
+    "model.transformer.layers",
+    "language_model.layers",
+    "language_model.model.layers",
+    "llm.layers",
+    "llm.model.layers",
+    "vision_model.encoder.layers",
+    "vision_model.transformer.layers",
+    "model.vision_model.encoder.layers",
+    "model.vision_model.transformer.layers",
+    "vision_tower.transformer.layers",
+    "vision_tower.vision_model.encoder.layers",
+    "model.vision_tower.transformer.layers",
+    "model.vision_tower.vision_model.encoder.layers",
+)
+
+_KNOWN_DECODER_LAYER_SUFFIXES = (
+    ".layers",
+    ".layer",
+    ".h",
+    ".blocks",
+    ".block",
+    ".encoder_layers",
+    ".decoder_layers",
+)

@@ -6,10 +6,12 @@
 # -----------------------------------------------------------------------------
 
 """
-Pytest fixtures and hooks for the dynamo test suite (tests/dynamo/).
+Shared fixtures and configuration for the dynamo test suite (tests/dynamo/).
 
 All dynamo tests require torch >= 2.13 (the minimum version that supports
 torch.compiler.nested_compile_region and the dynamo export path).
+
+Run with: pytest tests/dynamo/ -m "not on_qaic" -n auto -v
 """
 
 from __future__ import annotations
@@ -17,7 +19,6 @@ from __future__ import annotations
 import pytest
 import torch
 
-from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.device_utils import get_available_device_id, is_multi_qranium_setup_available
 
 
@@ -32,8 +33,6 @@ def _parse_torch_version() -> tuple:
 def pytest_configure(config):
     config.addinivalue_line("markers", "dynamo: mark a test as part of the dynamo test suite")
     config.addinivalue_line("markers", "dynamo_export: CPU-only dynamo export smoke and parity tests")
-    config.addinivalue_line("markers", "dynamo_compile: on-QAIC dynamo compile tests")
-    config.addinivalue_line("markers", "dynamo_on_qaic: on-QAIC dynamo compile/generate/parity tests")
     config.addinivalue_line(
         "markers",
         "dynamo_multi_device: dynamo multi-device (MDP) compile tests — requires MDP-capable QAIC setup",
@@ -50,13 +49,23 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture(autouse=True)
+def set_cpu_threads():
+    """Limit CPU threads per worker to avoid contention in parallel runs."""
+    original = torch.get_num_threads()
+    torch.set_num_threads(min(4, original))
+    yield
+    torch.set_num_threads(original)
+
+
+@pytest.fixture(autouse=True)
 def set_deterministic_seed():
     torch.manual_seed(42)
 
 
 @pytest.fixture
-def tmp_export_dir():
-    export_dir = QEFF_HOME / "qeff_dynamo_exports"
+def tmp_export_dir(tmp_path):
+    """Provide a temporary directory for ONNX exports (unique per test)."""
+    export_dir = tmp_path / "qeff_dynamo_exports"
     export_dir.mkdir(parents=True, exist_ok=True)
     return export_dir
 

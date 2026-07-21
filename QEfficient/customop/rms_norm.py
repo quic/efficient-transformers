@@ -9,13 +9,14 @@ import onnxscript
 import torch
 from torch import nn
 
+from QEfficient.customop.utils import select_interface
 from QEfficient.utils import constants
 
 ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
 
 
 @onnxscript.script(onnxscript.values.Opset(domain="com.qti.aisw.onnx", version=1))
-def CustomRMSNorm(hidden_states: onnxscript.FLOAT, weight: onnxscript.FLOAT, epsilon: float):
+def CustomRMSNorm(hidden_states: onnxscript.FLOAT, weight: onnxscript.FLOAT, epsilon: float) -> onnxscript.FLOAT:
     weight = ops.Cast(weight, to=1)
     variance = ops.ReduceMean(ops.Pow(hidden_states, 2), axes=[-1], keepdims=1)
     epsilon = ops.Expand(epsilon, ops.Shape(variance))
@@ -51,7 +52,8 @@ class CustomRMSNormAIC(nn.Module):
         self.weight = torch.nn.Parameter(torch.ones(hidden_size))
 
     def forward(self, hidden_states):
-        return CustomRMSNormFunc.apply(
+        rms_interface = select_interface(CustomRMSNormFunc.apply, torch.ops.qefficient.rms_norm)
+        return rms_interface(
             hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
         )
 
