@@ -6,8 +6,18 @@
 ---
 
 *Latest news* :fire: <br>
+- [06/2026] Added support for Gemma4 models, [google/gemma-4-E2B-it](https://huggingface.co/google/gemma-4-E2B), [google/gemma-4-26B-A4B-it](https://huggingface.co/google/gemma-4-26B-A4B-it)
+- [06/2026] Added support for Qwen3.5 MoE model [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B)
+- [06/2026] Added support for Qwen3.5 model[Qwen/Qwen3.5-0.8B](https://huggingface.co/Qwen/Qwen3.5-0.8B)
+- [06/2026] Added support for Qwen3 VL and Qwen3 MoE VL models, [Qwen/Qwen3-VL-30B-A3B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct), [Qwen/Qwen3-VL-32B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct)
+- [06/2026] Added support for GLM-4.5 MoE model and enabled its disaggregated mode [zai-org/GLM-4.5](https://huggingface.co/zai-org/GLM-4.5)
+- [06/2026] Enabled disaggregated support for Qwen3 MoE model
 - [04/2026] Added WAN non-unified execution support in `QEffWanPipeline` with separate `transformer_high` and `transformer_low` modules
 - [04/2026] Added first-block-cache support for WAN non-unified mode and FLUX (`QEffWanPipeline`, `QEffFluxPipeline`)
+
+<details>
+<summary>More</summary>
+
 - [12/2025] Enabled [disaggregated serving](examples/disagg_serving) for GPT-OSS model
 - [12/2025] Added support for wav2vec2 Audio Model [facebook/wav2vec2-base-960h](https://huggingface.co/facebook/wav2vec2-base-960h)
 - [12/2025] Added support for diffuser video generation model [WAN 2.2 Model Card](https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B-Diffusers)
@@ -19,11 +29,6 @@
 - [10/2025] Added support for Qwen2.5VL Multi-Model [Qwen/Qwen2.5-VL-32B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-32B-Instruct)
 - [10/2025] Added support for Mistral3 Multi-Model [mistralai/Mistral-Small-3.1-24B-Instruct-2503](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503)
 - [10/2025] Added support for Molmo Multi-Model [allenai/Molmo-7B-D-0924](https://huggingface.co/allenai/Molmo-7B-D-0924)
-
-
-<details>
-<summary>More</summary>
-
 - [06/2025] Added support for Llama4 Multi-Model [meta-llama/Llama-4-Scout-17B-16E-Instruct](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct)
 - [06/2025] Added support for Gemma3 Multi-Modal-Model [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it)
 - [06/2025] Added support of model `hpcai-tech/grok-1` [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)
@@ -75,7 +80,7 @@
 
 ## Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain
 
-This library provides reimplemented blocks of LLMs which are used to make the models functional and highly performant on Qualcomm Cloud AI 100.
+This library provides reimplemented blocks of LLMs which are used to make the models functional and highly performant on Qualcomm Cloud AIxx (AI100, AI200 and so on).
 There are several models which can be directly transformed from a pre-trained original form to a deployment ready optimized form.
 For other models, there is comprehensive documentation to inspire upon the changes needed and How-To(s).
 
@@ -117,7 +122,7 @@ pip install dist/qefficient-0.0.1.dev0-py3-none-any.whl
 
 ``` 
 
-For more details about using ``QEfficient`` via Cloud AI 100 Apps SDK, visit [Linux Installation Guide](https://quic.github.io/efficient-transformers/source/installation.html)
+For more details about using ``QEfficient`` via Cloud AIxx (AI100, AI200 and so on) Apps SDK, visit [Linux Installation Guide](https://quic.github.io/efficient-transformers/source/installation.html)
 
 
 ## Documentation

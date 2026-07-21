@@ -109,7 +109,7 @@ python -m QEfficient.cloud.execute --model_name gpt2 --qpc_path qeff_models/gpt2
 
 This is the single e2e CLI API, which takes `model_card` name as input along with other compilation arguments. Check [Infer API doc](#infer_api) for more details.
 
-* HuggingFace model files Download → Optimize for Cloud AI 100 → Export to `ONNX` → Compile on Cloud AI 100 → [Execute](#execute_api)
+* HuggingFace model files Download → Optimize for Cloud Cloud AIxx (AI100, AI200 and so on) → Export to `ONNX` → Compile on Cloud Cloud AIxx (AI100, AI200 and so on) → [Execute](#execute_api)
 * It skips the export/compile stage based if `ONNX` or `qpc` files are found. If you use infer second time with different compilation arguments, it will automatically skip `ONNX` model creation and directly jump to compile stage.
 * ONNX subfunctions can be enabled explicitly using `--use-onnx-subfunctions`.
 
@@ -165,11 +165,11 @@ For more details on finetune, please refer to the [**finetune**](finetune.md) pa
 ---
 
 ## QEFF Auto Class Execution
-Here is the high level API to compile and run the model on Cloud AI 100 via Python using Qeff Autoclasses.
+Here is the high level API to compile and run the model on Cloud AIxx (AI100, AI200 and so on) via Python using Qeff Autoclasses.
 To Know more about the QEFF Auto Classes, refer the link [QEFFAutoClasses](qeff_autoclasses.md)
 
 
-### 1. Model download and Optimize for Cloud AI 100
+### 1. Model download and Optimize for Cloud AIxx (AI100, AI200 and so on)
 
 If your models falls into the model architectures that are [already supported](validated_models), Below steps should work fine.
 Please raise an [issue](https://github.com/quic/efficient-transformers/issues), in case of trouble.
@@ -192,7 +192,7 @@ from transformers import AutoTokenizer
 model_name = "gpt2"  # Similar, we can change model name and generate corresponding models, if we have added the support in the lib.
 
 qeff_model = AutoModelForCausalLM.from_pretrained(model_name)
-print(f"{model_name} optimized for AI 100 \n", qeff_model)
+print(f"{model_name} optimized for Cloud AIxx (AI100, AI200 and so on) \n", qeff_model)
 ```
 
 ### 2. Export and Compile with one API
@@ -202,7 +202,7 @@ Use the qualcomm_efficient_converter API to export the KV transformed Model to O
 ```Python
 # We can now export the modified models to ONNX framework
 # This will generate single ONNX Model for both Prefill and Decode Variations which are optimized for
-# Cloud AI 100 Platform.
+# Cloud AIxx (AI100, AI200 and so on) Platform.
 
 # While generating the ONNX model, this will clip the overflow constants to fp16
 # Verify the model on ONNXRuntime vs Pytorch
@@ -219,10 +219,10 @@ generated_qpc_path = qeff_model.compile(
 
 ### 3. Execute
 
-Benchmark the model on Cloud AI 100, run the infer API to print tokens and tok/sec
+Benchmark the model on Cloud AIxx (AI100, AI200 and so on), run the infer API to print tokens and tok/sec
 
 ```Python
-# post compilation, we can print the latency stats for the kv models, We provide API to print token and Latency stats on AI 100
+# post compilation, we can print the latency stats for the kv models, We provide API to print token and Latency stats on Cloud AIxx (AI100, AI200 and so on)
 # We need the compiled prefill and decode qpc to compute the token generated, This is based on Greedy Sampling Approach
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 qeff_model.generate(prompts=["My name is"],tokenizer=tokenizer)
