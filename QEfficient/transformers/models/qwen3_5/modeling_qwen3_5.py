@@ -613,7 +613,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
         diff = g.unsqueeze(-1) - g.unsqueeze(-2)  # (B, H, num_chunks, C, C)
         diff = diff * (~mask_strict).float()  # zero upper triangle (strict)
         decay_mask = diff.exp().float()
-        decay_mask = (decay_mask * (~mask_strict).float()).to(self.torch_dtype) # ensure upper is zero
+        decay_mask = (decay_mask * (~mask_strict).float()).to(self.torch_dtype)  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
         for i in range(1, chunk_size):
