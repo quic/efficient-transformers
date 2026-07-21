@@ -14,16 +14,23 @@ in tests/unit_test/models/test_model_quickcheck.py.
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
+from typing import Dict, Tuple
 
-import numpy as np
 import onnx
 import pytest
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
-from QEfficient.utils.run_utils import ApiRunner
+
+# ---------------------------------------------------------------------------
+# Worker-level model cache — from_pretrained runs once per model per worker.
+# Tests receive a deepcopy so weight offload or transforms in one test
+# do not affect other tests that share the same cached instance.
+# ---------------------------------------------------------------------------
+_HF_MODEL_CACHE: Dict[str, Tuple[AutoModelForCausalLM, AutoTokenizer]] = {}
 
 # ---------------------------------------------------------------------------
 # Model registry
@@ -83,19 +90,25 @@ def skip_on_model_fetch_error(exc: Exception, model_id: str) -> None:
 
 
 def load_hf_model(model_id: str) -> AutoModelForCausalLM:
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        trust_remote_code=True,
-        **MODEL_KWARGS,
-    )
-    model.eval()
-    return model
+    if model_id not in _HF_MODEL_CACHE:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            trust_remote_code=True,
+            **MODEL_KWARGS,
+        )
+        model.eval()
+        tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+        if not hasattr(tokenizer, "pad_token") or tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        _HF_MODEL_CACHE[model_id] = (model, tokenizer)
+    model, _ = _HF_MODEL_CACHE[model_id]
+    return copy.deepcopy(model)
 
 
 def load_tokenizer(model_id: str) -> AutoTokenizer:
-    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-    if not hasattr(tokenizer, "pad_token") or tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    if model_id not in _HF_MODEL_CACHE:
+        load_hf_model(model_id)
+    _, tokenizer = _HF_MODEL_CACHE[model_id]
     return tokenizer
 
 
@@ -171,47 +184,4 @@ def assert_retained_state_outputs(onnx_path: Path, expected_count: int) -> None:
     retained = [o for o in model.graph.output if o.name.endswith("_RetainedState")]
     assert len(retained) == expected_count, (
         f"Expected {expected_count} _RetainedState outputs, got {len(retained)}: {[o.name for o in retained]}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# ORT parity helper
-# ---------------------------------------------------------------------------
-
-
-def run_dynamo_ort_parity(
-    model_hf: AutoModelForCausalLM,
-    tokenizer,
-    export_dir: Path,
-    use_onnx_subfunctions: bool = False,
-) -> None:
-    """
-    Wrap pre-loaded model with QEFFAutoModelForCausalLM, export with dynamo=True,
-    and assert HF PT == ORT token parity via ApiRunner.
-    """
-    api_runner = ApiRunner(
-        batch_size=BATCH_SIZE,
-        tokenizer=tokenizer,
-        config=model_hf.config,
-        prompt=["hello world"],
-        prompt_len=PROMPT_LEN,
-        ctx_len=CTX_LEN,
-        full_batch_size=None,
-    )
-
-    hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
-
-    qeff_model = QEFFAutoModelForCausalLM(model_hf)
-    onnx_path = exported_onnx_path(
-        qeff_model.export(
-            export_dir,
-            dynamo=True,
-            use_onnx_subfunctions=use_onnx_subfunctions,
-            offload_pt_weights=False,
-        )
-    )
-    ort_tokens = api_runner.run_kv_model_on_ort(str(onnx_path))
-
-    assert np.array_equal(hf_tokens, ort_tokens.flatten()), (
-        f"HF PT vs ORT parity failed for {model_hf.__class__.__name__} (use_onnx_subfunctions={use_onnx_subfunctions})"
     )
