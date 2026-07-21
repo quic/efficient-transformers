@@ -81,6 +81,24 @@ class TestONNXTransformsModuleStructure:
         assert hasattr(CustomOpTransform, "apply")
         assert callable(CustomOpTransform.apply)
 
+    def test_custom_op_variants_use_legacy_and_dynamo_opsets(self):
+        from QEfficient.customop.onnxscript_utils import get_onnxscript_func
+        from QEfficient.customop.rms_norm import CustomRMSNorm
+        from QEfficient.utils import constants
+
+        def default_domain_opset(function_proto):
+            return next(opset.version for opset in function_proto.opset_import if opset.domain == "")
+
+        legacy_proto = get_onnxscript_func(
+            CustomRMSNorm, constants.get_onnx_export_opset(dynamo=False)
+        ).to_function_proto()
+        dynamo_proto = get_onnxscript_func(
+            CustomRMSNorm, constants.get_onnx_export_opset(dynamo=True)
+        ).to_function_proto()
+
+        assert default_domain_opset(legacy_proto) == constants.ONNX_LEGACY_EXPORT_OPSET
+        assert default_domain_opset(dynamo_proto) == constants.ONNX_DYNAMO_EXPORT_OPSET
+
     def test_base_onnx_transform_importable(self):
         from QEfficient.base.onnx_transforms import BaseOnnxTransform
 
