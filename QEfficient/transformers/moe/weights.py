@@ -5,7 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-"""Canonical MoE expert-weight container and builders.
+"""MoE expert-weight container and builders.
 
 Every MoE model stores its expert weights differently (fused gate_up vs separate
 gate/up, transposed or not, interleaved halves, module-list, compressed). These
@@ -17,6 +17,12 @@ kernels can be model-agnostic:
     down : [E, I, H]
 
 (optional per-expert biases: gate_bias/up_bias [E, I], down_bias [E, H]).
+
+Expert-parallel export packs the same data as:
+
+    gate : [num_nsp, local_experts, H, I]
+    up   : [num_nsp, local_experts, H, I]
+    down : [num_nsp, local_experts, I, H]
 """
 
 from typing import Any, Callable, Iterable, Optional
@@ -35,7 +41,7 @@ def _as_frozen_parameter(tensor: Optional[torch.Tensor]) -> Optional[nn.Paramete
 
 
 class MoEWeights(nn.Module):
-    """Expert weights in canonical orientation (gate/up ``[E,H,I]``, down ``[E,I,H]``)."""
+    """Expert weights in canonical or expert-parallel-packed orientation."""
 
     def __init__(
         self,
@@ -56,15 +62,17 @@ class MoEWeights(nn.Module):
 
     @property
     def num_experts(self) -> int:
+        if self.gate.ndim == 4:
+            return self.gate.shape[0] * self.gate.shape[1]
         return self.gate.shape[0]
 
     @property
     def hidden_size(self) -> int:
-        return self.gate.shape[1]
+        return self.gate.shape[-2]
 
     @property
     def intermediate_size(self) -> int:
-        return self.gate.shape[2]
+        return self.gate.shape[-1]
 
     @property
     def has_bias(self) -> bool:
@@ -75,6 +83,149 @@ def _maybe_clone(t: Optional[torch.Tensor], clone: bool) -> Optional[torch.Tenso
     if t is None:
         return None
     return t.detach().clone() if clone else t.detach()
+
+
+def _validate_matching_optional_shape(
+    *,
+    name: str,
+    tensor: Optional[torch.Tensor],
+    expected: tuple[int, ...],
+) -> None:
+    if tensor is not None and tuple(tensor.shape) != expected:
+        raise ValueError(f"{name} shape {tuple(tensor.shape)} does not match expected shape {expected}")
+
+
+def validate_canonical_moe_weights(weights: MoEWeights) -> None:
+    """Validate canonical MoE weight layout.
+
+    Canonical layout is gate/up ``[E,H,I]`` and down ``[E,I,H]``. Biases, when
+    present, are gate/up ``[E,I]`` and down ``[E,H]``.
+    """
+    if weights.gate.ndim != 3:
+        raise ValueError(f"canonical MoE gate weights must be 3-D, got shape {tuple(weights.gate.shape)}")
+    expected_gate_shape = tuple(weights.gate.shape)
+    expected_down_shape = (weights.gate.shape[0], weights.gate.shape[2], weights.gate.shape[1])
+    if tuple(weights.up.shape) != expected_gate_shape:
+        raise ValueError(
+            f"canonical MoE up weights must have shape {expected_gate_shape}, got {tuple(weights.up.shape)}"
+        )
+    if tuple(weights.down.shape) != expected_down_shape:
+        raise ValueError(
+            f"canonical MoE down weights must have shape {expected_down_shape}, got {tuple(weights.down.shape)}"
+        )
+    _validate_matching_optional_shape(
+        name="canonical MoE gate bias",
+        tensor=weights.gate_bias,
+        expected=(weights.gate.shape[0], weights.gate.shape[2]),
+    )
+    _validate_matching_optional_shape(
+        name="canonical MoE up bias",
+        tensor=weights.up_bias,
+        expected=(weights.gate.shape[0], weights.gate.shape[2]),
+    )
+    _validate_matching_optional_shape(
+        name="canonical MoE down bias",
+        tensor=weights.down_bias,
+        expected=(weights.gate.shape[0], weights.gate.shape[1]),
+    )
+
+
+def validate_expert_parallel_moe_weights(weights: MoEWeights, num_nsp: Optional[int] = None) -> None:
+    """Validate expert-parallel packed MoE weight layout."""
+    if weights.gate.ndim != 4:
+        raise ValueError(f"expert-parallel MoE gate weights must be 4-D, got shape {tuple(weights.gate.shape)}")
+    expected_gate_shape = tuple(weights.gate.shape)
+    expected_down_shape = (weights.gate.shape[0], weights.gate.shape[1], weights.gate.shape[3], weights.gate.shape[2])
+    if num_nsp is not None and weights.gate.shape[0] != num_nsp:
+        raise ValueError(
+            f"expert-parallel weights were packed for num_nsp={weights.gate.shape[0]}, "
+            f"but expert_parallel_num_nsp={num_nsp}"
+        )
+    if tuple(weights.up.shape) != expected_gate_shape:
+        raise ValueError(
+            f"expert-parallel MoE up weights must have shape {expected_gate_shape}, got {tuple(weights.up.shape)}"
+        )
+    if tuple(weights.down.shape) != expected_down_shape:
+        raise ValueError(
+            f"expert-parallel MoE down weights must have shape {expected_down_shape}, got {tuple(weights.down.shape)}"
+        )
+    _validate_matching_optional_shape(
+        name="expert-parallel MoE gate bias",
+        tensor=weights.gate_bias,
+        expected=(weights.gate.shape[0], weights.gate.shape[1], weights.gate.shape[3]),
+    )
+    _validate_matching_optional_shape(
+        name="expert-parallel MoE up bias",
+        tensor=weights.up_bias,
+        expected=(weights.gate.shape[0], weights.gate.shape[1], weights.gate.shape[3]),
+    )
+    _validate_matching_optional_shape(
+        name="expert-parallel MoE down bias",
+        tensor=weights.down_bias,
+        expected=(weights.gate.shape[0], weights.gate.shape[1], weights.gate.shape[2]),
+    )
+
+
+def _pack_expert_parallel_tensor(
+    tensor: Optional[torch.Tensor],
+    *,
+    local_experts: int,
+    num_nsp: int,
+) -> Optional[torch.Tensor]:
+    if tensor is None:
+        return None
+    return tensor.view(local_experts, num_nsp, *tensor.shape[1:]).transpose(0, 1).contiguous()
+
+
+def _unpack_expert_parallel_tensor(tensor: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+    if tensor is None:
+        return None
+    return tensor.transpose(0, 1).contiguous().view(tensor.shape[0] * tensor.shape[1], *tensor.shape[2:])
+
+
+def pack_moe_weights_for_expert_parallel(weights: MoEWeights, num_nsp: int) -> MoEWeights:
+    """Return weights packed for expert-parallel execution.
+
+    If ``weights`` are already packed for the same ``num_nsp`` this returns the
+    original object. If they are packed for a different ``num_nsp``, the helper
+    first restores canonical layout and then repacks.
+    """
+    if num_nsp <= 0:
+        raise ValueError("expert_parallel_num_nsp must be greater than zero")
+    if weights.gate.ndim == 4:
+        validate_expert_parallel_moe_weights(weights)
+        if weights.gate.shape[0] == num_nsp:
+            return weights
+        weights = unpack_moe_weights_from_expert_parallel(weights)
+    validate_canonical_moe_weights(weights)
+    num_experts = weights.num_experts
+    if num_experts % num_nsp != 0:
+        raise ValueError(f"num_experts ({num_experts}) must be divisible by expert_parallel_num_nsp ({num_nsp})")
+    local_experts = num_experts // num_nsp
+    return MoEWeights(
+        gate=_pack_expert_parallel_tensor(weights.gate, local_experts=local_experts, num_nsp=num_nsp),
+        up=_pack_expert_parallel_tensor(weights.up, local_experts=local_experts, num_nsp=num_nsp),
+        down=_pack_expert_parallel_tensor(weights.down, local_experts=local_experts, num_nsp=num_nsp),
+        gate_bias=_pack_expert_parallel_tensor(weights.gate_bias, local_experts=local_experts, num_nsp=num_nsp),
+        up_bias=_pack_expert_parallel_tensor(weights.up_bias, local_experts=local_experts, num_nsp=num_nsp),
+        down_bias=_pack_expert_parallel_tensor(weights.down_bias, local_experts=local_experts, num_nsp=num_nsp),
+    )
+
+
+def unpack_moe_weights_from_expert_parallel(weights: MoEWeights) -> MoEWeights:
+    """Return weights in canonical layout, unpacking expert-parallel layout if needed."""
+    if weights.gate.ndim == 3:
+        validate_canonical_moe_weights(weights)
+        return weights
+    validate_expert_parallel_moe_weights(weights)
+    return MoEWeights(
+        gate=_unpack_expert_parallel_tensor(weights.gate),
+        up=_unpack_expert_parallel_tensor(weights.up),
+        down=_unpack_expert_parallel_tensor(weights.down),
+        gate_bias=_unpack_expert_parallel_tensor(weights.gate_bias),
+        up_bias=_unpack_expert_parallel_tensor(weights.up_bias),
+        down_bias=_unpack_expert_parallel_tensor(weights.down_bias),
+    )
 
 
 def build_canonical_expert_weights(

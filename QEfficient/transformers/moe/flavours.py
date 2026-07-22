@@ -25,7 +25,7 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxScatterFunc3DInt,
 )
 from QEfficient.transformers.moe.profiles import MoEProfile
-from QEfficient.transformers.moe.weights import MoEWeights
+from QEfficient.transformers.moe.weights import MoEWeights, validate_expert_parallel_moe_weights
 
 
 class MoEFlavour(str, Enum):
@@ -48,12 +48,6 @@ def densify_topk(topk_indices: torch.Tensor, topk_weights: torch.Tensor, num_exp
     routing_weights = topk_weights.new_zeros((T, num_experts))
     routing_weights.scatter_(1, topk_indices, topk_weights)
     return routing_weights
-
-
-def _slot_bias(bias: Optional[torch.Tensor], local_experts: int, num_nsp: int) -> Optional[torch.Tensor]:
-    if bias is None:
-        return None
-    return bias.view(local_experts, num_nsp, -1).transpose(0, 1).contiguous()
 
 
 def build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
@@ -139,18 +133,23 @@ def moe_expert_parallel(
 ) -> torch.Tensor:
     """Prefill expert-parallel flavour: NUM_NSP experts per block, cumsum/scatter packed."""
     T, H = x.shape
+    validate_expert_parallel_moe_weights(weights, num_nsp=num_nsp)
     num_experts = weights.num_experts
-    if num_experts % num_nsp != 0:
-        raise ValueError(f"num_experts ({num_experts}) must be divisible by expert_parallel_num_nsp ({num_nsp})")
-    local_experts = num_experts // num_nsp
+    if routing_weights.shape != (T, num_experts):
+        raise ValueError(
+            f"expert-parallel routing_weights must have shape {(T, num_experts)}, got {tuple(routing_weights.shape)}"
+        )
+    if weights.hidden_size != H:
+        raise ValueError(f"expert-parallel hidden size mismatch: input H={H}, weights H={weights.hidden_size}")
+    local_experts = weights.gate.shape[1]
 
     rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-    W_g = weights.gate.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-    W_u = weights.up.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-    W_d = weights.down.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
-    b_g = _slot_bias(weights.gate_bias, local_experts, num_nsp)
-    b_u = _slot_bias(weights.up_bias, local_experts, num_nsp)
-    b_d = _slot_bias(weights.down_bias, local_experts, num_nsp)
+    W_g = weights.gate
+    W_u = weights.up
+    W_d = weights.down
+    b_g = weights.gate_bias
+    b_u = weights.up_bias
+    b_d = weights.down_bias
 
     expert_out = x.new_zeros((num_nsp, T, H))
     routing_weights_unsqueezed = rw.unsqueeze(-1)
