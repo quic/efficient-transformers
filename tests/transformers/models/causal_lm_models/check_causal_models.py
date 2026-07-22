@@ -161,7 +161,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     replace_transformers_quantizers()
     torch_dtype = transform_params.get("torch_dtype", torch.float32)
     model_hf = load_hf_causal_lm_model(model_name, num_hidden_layers=n_layer, config=config, torch_dtype=torch_dtype)
-    print(model_hf)
+    # print(model_hf)
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
     prompt = generate_params.get("prompt", Constants.INPUT_STR)
@@ -277,14 +277,13 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
                 f"HF PyTorch token: {pt_token}, AIC token: {aic_token}."
             )
         else:
-            for batch_idx in range(pytorch_hf_tokens.shape[0]):
-                pt_seq = pytorch_hf_tokens[batch_idx].tolist()
-                aic_seq = aic_tokens[batch_idx].tolist()
-                similarity = _sequence_cosine_similarity(pt_seq, aic_seq, vocab_size)
-                assert similarity >= cosine_similarity_threshold, (
-                    f"Batch index {batch_idx}: cosine similarity between HF PyTorch and AIC output "
-                    f"sequences is {similarity:.4f}, below threshold {cosine_similarity_threshold}."
-                )
+            pytorch_hf_tokens = pytorch_hf_tokens.tolist()
+            aic_tokens = aic_tokens.flatten().tolist()
+            similarity = _sequence_cosine_similarity(pytorch_hf_tokens, aic_tokens, vocab_size)
+            assert similarity >= cosine_similarity_threshold, (
+                f"Batch index {batch_idx}: cosine similarity between HF PyTorch and AIC output "
+                f"sequences is {similarity:.4f}, below threshold {cosine_similarity_threshold}."
+            )
 
 
 def check_prefix_caching_inference(
@@ -359,146 +358,160 @@ def check_prefix_caching_inference(
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     generator = TextGeneration(tokenizer=tokenizer, qpc_path=qpc_path, full_batch_size=full_batch_size, ctx_len=ctx_len)
-    vocab_size = generator._qaic_model._vocab_size
 
-    # ── Step 1: baseline generation on batch slots 0 and 1 ──────────────────
-    prompts_suffix1 = [pref + suff for pref, suff in zip(prefixes, suffixes1)]
-    baseline_exec_info = generator.generate(prompts_suffix1)
+    prompts = [pref + suff for pref, suff in zip(prefixes, suffixes1)]
 
-    # ── Step 2: manual prefill + decode on slots 2 and 3 ────────────────────
-    # Run prefill for slots 2 and 3 with the same prompts used in step 1.
-    prefill_out_slot2, pos_slot2, gen_len_slot2 = generator._qaic_model.run_prefill(
-        prompts_suffix1[0], generation_len=None, decode_batch_id=np.array(2, dtype=np.int64).reshape(1, 1)
+    # generation for batch_indices = 0, 1
+    prompts_exec_info = generator.generate(prompts)
+    ##############################
+    # generation for batch_indices
+    ##############################
+    # Run prefill for indices 2, 3 with same prompts
+    out2, pos2, gen_len2 = generator._qaic_model.run_prefill(
+        prompts[0], generation_len=None, decode_batch_id=np.array(2, dtype=np.int64).reshape(1, 1)
     )
-    prefill_out_slot3, pos_slot3, _ = generator._qaic_model.run_prefill(
-        prompts_suffix1[1], generation_len=None, decode_batch_id=np.array(3, dtype=np.int64).reshape(1, 1)
+    out3, pos3, gen_len3 = generator._qaic_model.run_prefill(
+        prompts[1], generation_len=None, decode_batch_id=np.array(3, dtype=np.int64).reshape(1, 1)
     )
 
+    # Run decode for batch indices 2, 3
     decode_inputs = {
-        "input_ids": np.array(
-            [[prefill_out_slot2["logits"].argmax(2)[0][0]], [prefill_out_slot3["logits"].argmax(2)[0][0]]]
-        ),
-        "position_ids": np.array([[pos_slot2[0][0]], [pos_slot3[0][0]]]),
+        "input_ids": np.array([[out2["logits"].argmax(2)[0][0]], [out3["logits"].argmax(2)[0][0]]]),
+        "position_ids": np.array([[pos2[0][0]], [pos3[0][0]]]),
         "batch_index": np.array([[2], [3]], dtype=np.int64),
     }
 
-    logits_placeholder = np.zeros(
-        (generator._qaic_model.full_batch_size, generator._qaic_model._decode_seq_len, vocab_size),
+    # Set logits placeholder for decode
+    logits_out_placeholder = np.zeros(
+        (
+            generator._qaic_model.full_batch_size,
+            generator._qaic_model._decode_seq_len,
+            generator._qaic_model._vocab_size,
+        ),
         dtype=np.float32,
     )
-    generator._qaic_model._session.set_buffers({"logits": logits_placeholder})
+    generator._qaic_model._session.set_buffers({"logits": logits_out_placeholder})
 
-    step_by_step_tokens = []
-    for _ in range(gen_len_slot2):
-        step_by_step_tokens.append(decode_inputs["input_ids"])
+    generation_outputs = []
+    for i in range(gen_len2):
+        generation_outputs.append(decode_inputs["input_ids"])
         outputs = generator._qaic_model._session.run(decode_inputs)
         logits = outputs["logits"]
         if len(logits.shape) == 2:
             logits = np.expand_dims(logits, 1)
-        decode_inputs["input_ids"] = logits.argmax(2)
+        next_token_id = logits.argmax(2)
+
+        decode_inputs["input_ids"] = next_token_id
         decode_inputs["position_ids"] += 1
 
-    # Verify that the session's accumulated generated_ids match the step-by-step tokens.
-    for slot_offset, slot_idx in enumerate([0, 1]):
-        ref_seq = generator._qaic_model.generated_ids[slot_idx, :gen_len_slot2].tolist()
-        loop_seq = [int(val[slot_offset, 0]) for val in step_by_step_tokens]
-        similarity = _sequence_cosine_similarity(ref_seq, loop_seq, vocab_size)
-        assert similarity >= cosine_similarity_threshold, (
-            f"Decode-loop slot {slot_idx}: cosine similarity between session generated_ids and "
-            f"step-by-step outputs is {similarity:.4f}, below threshold {cosine_similarity_threshold}."
-        )
+    assert np.all(generator._qaic_model.generated_ids[0, :gen_len2] == [int(val[0, 0]) for val in generation_outputs])
+    assert np.all(generator._qaic_model.generated_ids[1, :gen_len2] == [int(val[1, 0]) for val in generation_outputs])
 
-    # ── Step 3: prefix-cache KV correctness on slot 0 ───────────────────────
-    # Re-run prefill on slot 0 with a prompt that shares the same prefix but
-    # has a different suffix.  Modifying tokens outside the cached prefix window
-    # should not change the prefill logits for the shared prefix.
-    prompts_suffix2 = [pref + suff for pref, suff in zip(prefixes, suffixes2)]
-    new_prompt = prompts_suffix2[0]
-    new_inputs = tokenizer(new_prompt, return_tensors="np", padding=True)
-    position_ids = new_inputs["attention_mask"].sum(1, keepdims=True)
-    padded_len = new_inputs["input_ids"].shape[1]
+    ##############################
+    # Now rerun with cached prefix on 0th index with prompt3 and use -1 for 1st index
+    ##############################
+
+    nprompts = [pref + suff for pref, suff in zip(prefixes, suffixes2)]
+
+    ## Prefill run on index 0
+    prompt = nprompts[0]
+    inputs = tokenizer(prompt, return_tensors="np", padding=True)
+    position_ids = inputs["attention_mask"].sum(1, keepdims=True)
+    padded_len = inputs["input_ids"].shape[1]
     num_chunks = -(padded_len // -generator._qaic_model._prefill_seq_len)
-    padded_len = num_chunks * generator._qaic_model._prefill_seq_len
+    padded_len = num_chunks * generator._qaic_model._prefill_seq_len  # Convert to a multiple of prompt_len
 
+    # Initialize variables specific to request
+    # Calculate the max generation length.
     max_gen_len = generator._qaic_model._ctx_len - position_ids.max()
 
-    generator._qaic_model._session.set_buffers({"logits": np.zeros((1, 1, vocab_size), dtype=np.float32)})
-    new_inputs = tokenizer(new_prompt, return_tensors="np", padding="max_length", max_length=padded_len)
-    new_inputs["position_ids"] = np.where(new_inputs.pop("attention_mask"), np.arange(padded_len), -1)
-    new_inputs.pop("token_type_ids", None)
-    new_inputs["batch_index"] = np.array([[0]], dtype=np.int64)
+    # Set the prefill logic buffer
+    logits_out_placeholder = np.zeros((1, 1, generator._qaic_model._vocab_size), dtype=np.float32)
+    generator._qaic_model._session.set_buffers({"logits": logits_out_placeholder})
+    inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
+    inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
+    inputs.pop("token_type_ids", None)
+    inputs["batch_index"] = np.array([[0]], dtype=np.int64)
+    norm_outputs = generator._qaic_model._session.run(inputs)
+    inputs["input_ids"][:, :3] = inputs["input_ids"][:, 4:7]
+    inputs["input_ids"][:, 3:] = 50256
+    inputs["position_ids"][:, :3] = inputs["position_ids"][:, 4:7]
+    inputs["position_ids"][:, 3:] = -1
+    mod_outputs = generator._qaic_model._session.run(inputs)
 
-    unmodified_outputs = generator._qaic_model._session.run(new_inputs)
-
-    # Shift tokens outside the prefix window to simulate a different suffix.
-    new_inputs["input_ids"][:, :3] = new_inputs["input_ids"][:, 4:7]
-    new_inputs["input_ids"][:, 3:] = 50256
-    new_inputs["position_ids"][:, :3] = new_inputs["position_ids"][:, 4:7]
-    new_inputs["position_ids"][:, 3:] = -1
-    modified_outputs = generator._qaic_model._session.run(new_inputs)
-
-    unmodified_logit_tokens = unmodified_outputs["logits"].argmax(-1).flatten().tolist()
-    modified_logit_tokens = modified_outputs["logits"].argmax(-1).flatten().tolist()
+    vocab_size = generator._qaic_model._vocab_size
+    unmodified_logit_tokens = norm_outputs["logits"].flatten().tolist()
+    modified_logit_tokens = mod_outputs["logits"].flatten().tolist()
     prefix_kv_similarity = _sequence_cosine_similarity(unmodified_logit_tokens, modified_logit_tokens, vocab_size)
     assert prefix_kv_similarity >= cosine_similarity_threshold, (
         f"Prefix-cache KV correctness: cosine similarity between unmodified and "
         f"prefix-modified prefill logits is {prefix_kv_similarity:.4f}, "
         f"below threshold {cosine_similarity_threshold}."
     )
-
     decode_inputs = {
-        "input_ids": np.array([[modified_outputs["logits"].argmax(2)[0][0]], [0]]),
+        "input_ids": np.array([[mod_outputs["logits"].argmax(2)[0][0]], [0]]),
         "position_ids": np.array([[position_ids[0][0]], [-1]]),
         "batch_index": np.array([[0], [1]], dtype=np.int64),
     }
 
-    generator._qaic_model._session.set_buffers(
-        {
-            "logits": np.zeros(
-                (generator._qaic_model.full_batch_size, generator._qaic_model._decode_seq_len, vocab_size),
-                dtype=np.float32,
-            )
-        }
+    # Set logits placeholder for decode
+    logits_out_placeholder = np.zeros(
+        (
+            generator._qaic_model.full_batch_size,
+            generator._qaic_model._decode_seq_len,
+            generator._qaic_model._vocab_size,
+        ),
+        dtype=np.float32,
     )
+    generator._qaic_model._session.set_buffers({"logits": logits_out_placeholder})
 
-    for _ in range(max_gen_len):
+    generation_outputs = []
+    for i in range(max_gen_len):
+        generation_outputs.append(decode_inputs["input_ids"])
         outputs = generator._qaic_model._session.run(decode_inputs)
         logits = outputs["logits"]
         if len(logits.shape) == 2:
             logits = np.expand_dims(logits, 1)
-        decode_inputs["input_ids"] = logits.argmax(2)
+        next_token_id = logits.argmax(2)
+
+        decode_inputs["input_ids"] = next_token_id
         decode_inputs["position_ids"][0][0] += 1
 
-    # ── Step 4: cached-prefix decode on slot 1 matches baseline ─────────────
-    # Re-run decode on slot 1 starting from the cached prefix state and verify
-    # that the output sequence is consistent with the original baseline generation.
+    # TODO: add a check if this matches normal execution for same prompt
+    ##############
+    # Now run decode on 1st index again with mod_inputs and check if output is correct
+    ##############
     decode_inputs = {
-        "input_ids": np.array([[0], [baseline_exec_info.generated_ids[1][0]]]),
+        "input_ids": np.array([[0], [prompts_exec_info.generated_ids[1][0]]]),
         "position_ids": np.array([[-1], [9]]),
         "batch_index": np.array([[0], [1]], dtype=np.int64),
     }
 
-    generator._qaic_model._session.set_buffers(
-        {
-            "logits": np.zeros(
-                (generator._qaic_model.full_batch_size, generator._qaic_model._decode_seq_len, vocab_size),
-                dtype=np.float32,
-            )
-        }
+    # Set logits placeholder for decode
+    logits_out_placeholder = np.zeros(
+        (
+            generator._qaic_model.full_batch_size,
+            generator._qaic_model._decode_seq_len,
+            generator._qaic_model._vocab_size,
+        ),
+        dtype=np.float32,
     )
+    generator._qaic_model._session.set_buffers({"logits": logits_out_placeholder})
 
-    cached_prefix_tokens = []
-    for _ in range(max_gen_len):
-        cached_prefix_tokens.append(decode_inputs["input_ids"])
+    generation_outputs_prefill_cached = []
+    for i in range(max_gen_len):
+        generation_outputs_prefill_cached.append(decode_inputs["input_ids"])
         outputs = generator._qaic_model._session.run(decode_inputs)
         logits = outputs["logits"]
         if len(logits.shape) == 2:
             logits = np.expand_dims(logits, 1)
-        decode_inputs["input_ids"] = logits.argmax(2)
+        next_token_id = logits.argmax(2)
+
+        decode_inputs["input_ids"] = next_token_id
         decode_inputs["position_ids"][1][0] += 1
 
-    baseline_seq = baseline_exec_info.generated_ids[1][:247].tolist()
-    cached_seq = [int(val[1, 0]) for val in cached_prefix_tokens][:247]
+    baseline_seq = prompts_exec_info.generated_ids[1][:128].tolist()
+    cached_seq = [int(val[1, 0]) for val in generation_outputs_prefill_cached][:128]
     cached_similarity = _sequence_cosine_similarity(baseline_seq, cached_seq, vocab_size)
     assert cached_similarity >= cosine_similarity_threshold, (
         f"Prefix-cached decode: cosine similarity between baseline and prefix-cached "

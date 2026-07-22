@@ -47,7 +47,7 @@ def test_fp16_export_compile_prefix_caching_cb(model_name):
         export_params=export_params,
         compile_params=temp_compile_params,
         generate_params=generate_params,
-        continuous_batching=False,
+        continuous_batching=True,
         export_compile_only=True,
         cosine_similarity_threshold=COSINE_SIMILARITY_THRESHOLD,
     )
@@ -91,7 +91,7 @@ def test_fp16_export_compile_generate_prefix_caching_cb(model_name):
         export_params=export_params,
         compile_params=temp_compile_params,
         generate_params=temp_generate_params,
-        continuous_batching=False,
+        continuous_batching=True,
         export_compile_only=False,
         cosine_similarity_threshold=COSINE_SIMILARITY_THRESHOLD,
     )

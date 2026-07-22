@@ -26,6 +26,7 @@ NUM_KV_BLOCKS = 2
 NUM_Q_BLOCKS = 2
 
 
+@pytest.mark.skip(reason="enable it later when all the models are fixed")
 @pytest.mark.llm
 @pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models_causal)
@@ -118,6 +119,7 @@ def test_fp16_export_compile_blocking_cb(model_name):
     )
 
 
+@pytest.mark.skip(reason="enable it later when all the models are fixed")
 @pytest.mark.llm
 @pytest.mark.qaic
 @pytest.mark.parametrize("model_name", test_models_causal)

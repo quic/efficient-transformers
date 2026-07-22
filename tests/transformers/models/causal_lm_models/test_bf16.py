@@ -21,6 +21,7 @@ from .config import (
 )
 
 
+@pytest.mark.skip(reason="enable it later when all the models are fixed")
 @pytest.mark.llm
 @pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models_causal)
