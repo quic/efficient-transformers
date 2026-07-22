@@ -9,13 +9,14 @@ import onnxscript
 import torch
 from torch import nn
 
+from QEfficient.customop.onnxscript_utils import qeff_custom_op
 from QEfficient.customop.utils import select_interface
 from QEfficient.utils import constants
 
-ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
+ops = getattr(onnxscript, "opset" + str(constants.ONNX_LEGACY_EXPORT_OPSET))
 
 
-@onnxscript.script(onnxscript.values.Opset(domain="com.qti.aisw.onnx", version=1))
+@qeff_custom_op("com.qti.aisw.onnx", 1)
 def CustomRMSNorm(hidden_states: onnxscript.FLOAT, weight: onnxscript.FLOAT, epsilon: float) -> onnxscript.FLOAT:
     weight = ops.Cast(weight, to=1)
     variance = ops.ReduceMean(ops.Pow(hidden_states, 2), axes=[-1], keepdims=1)
