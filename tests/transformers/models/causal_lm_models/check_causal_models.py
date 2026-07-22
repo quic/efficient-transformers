@@ -146,15 +146,6 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         num_devices=num_devices,
         qaic_config=qaic_config,
     )
-    api_runner = ApiRunner(
-        batch_size,
-        tokenizer,
-        qeff_model.config,
-        prompts,
-        Constants.PROMPT_LEN,
-        Constants.CTX_LEN,
-        full_batch_size if continuous_batching else None,
-    )
     if continuous_batching is False:
         pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
