@@ -7,6 +7,23 @@
 
 import torch
 
+from QEfficient.customop.ctx_scatter_gather import (  # noqa: E402
+    CtxGather,
+    CtxGather3D,
+    CtxGatherBlockedKV,
+    CtxScatter,
+    CtxScatter3D,
+    CtxScatter3DInt,
+)
+from QEfficient.customop.ctx_scatter_gather_cb import (  # noqa: E402
+    CtxGatherBlockedKVCB,
+    CtxGatherCB,
+    CtxGatherCB3D,
+    CtxScatterCB,
+    CtxScatterCB3D,
+)
+from QEfficient.customop.rms_norm import CustomRMSNorm  # noqa: E402
+
 
 @torch.library.custom_op("qefficient::rms_norm", mutates_args=())
 def rms_norm_op(hidden_states: torch.Tensor, weight: torch.Tensor, epsilon: float) -> torch.Tensor:
@@ -353,23 +370,6 @@ def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> 
 # Translation table: torch.ops.qefficient.* → ONNX export classes.
 # Used by _export_via_dynamo via custom_translation_table.
 # ---------------------------------------------------------------------------
-from QEfficient.customop.ctx_scatter_gather import (  # noqa: E402
-    CtxGather,
-    CtxGather3D,
-    CtxGatherBlockedKV,
-    CtxScatter,
-    CtxScatter3D,
-    CtxScatter3DInt,
-)
-from QEfficient.customop.ctx_scatter_gather_cb import (  # noqa: E402
-    CtxGatherBlockedKVCB,
-    CtxGatherCB,
-    CtxGatherCB3D,
-    CtxScatterCB,
-    CtxScatterCB3D,
-)
-from QEfficient.customop.onnxscript_utils import get_dynamo_onnxscript_func  # noqa: E402
-from QEfficient.customop.rms_norm import CustomRMSNorm  # noqa: E402
 
 DYNAMO_CUSTOM_OP_TABLE = {
     torch.ops.qefficient.rms_norm.default: get_dynamo_onnxscript_func(CustomRMSNorm),
