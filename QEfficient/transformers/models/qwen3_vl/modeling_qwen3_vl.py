@@ -948,7 +948,6 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         lang_inputs["deepstack_features"] = torch.zeros(
             (inputs_shapes["deepstack_features"]), dtype=self.model.config.torch_dtype
         )
-        lang_inputs["deepstack_features"] = torch.zeros((inputs_shapes["deepstack_features"]), dtype=torch.float32)
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         for i in range(self.model.config.text_config.num_hidden_layers):
