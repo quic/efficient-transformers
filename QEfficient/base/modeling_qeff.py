@@ -8,6 +8,7 @@
 import gc
 import inspect
 import logging
+import re
 import shutil
 import subprocess
 import warnings
@@ -57,6 +58,31 @@ from QEfficient.utils.export_utils import export_wrapper
 from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
 logger = logging.getLogger(__name__)
+
+_MDP_PARTITION_ORDER_ERR_RE = re.compile(r'Consumer node "([^"]+)" appears in partition before producer node "([^"]+)"')
+
+
+def _drop_mdp_nodes(mdp_json_path: Path, nodes_to_drop: set[str]) -> int:
+    """Drop specific nodes from MDP partition nodeLists and persist the JSON."""
+    if not nodes_to_drop:
+        return 0
+    mdp_json = load_json(str(mdp_json_path))
+    removed = 0
+    for partition in mdp_json.get("partitions", []):
+        node_list = partition.get("nodeList")
+        if not isinstance(node_list, list):
+            continue
+        filtered = [name for name in node_list if name not in nodes_to_drop]
+        removed += len(node_list) - len(filtered)
+        partition["nodeList"] = filtered
+    if removed:
+        create_json(str(mdp_json_path), mdp_json)
+    return removed
+
+
+def _is_decoder_layer_callsite(node_name: str) -> bool:
+    """Return True for decoder layer callsite names that must never be dropped."""
+    return "/language_model/layers." in node_name
 
 
 def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
@@ -910,6 +936,7 @@ class QEFFBaseModel(ABC):
                 compiler_options.pop(removed_option, None)
 
         mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
+        user_supplied_mdp = mdp_ts_json_path is not None
         mdp_strategy = MdpStrategy(compiler_options.pop("mdp_strategy", MdpStrategy.ONNX))
         mdp_compiler_dump_path = compiler_options.pop("mdp_compiler_dump_path", None)
 
@@ -1108,17 +1135,81 @@ class QEFFBaseModel(ABC):
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
 
+        latest_error: Optional[subprocess.CalledProcessError] = None
+        latest_stderr = ""
         try:
             subprocess.run(command, capture_output=True, check=True)
         except subprocess.CalledProcessError as e:
+            latest_error = e
+            latest_stderr = e.stderr.decode()
+
+            # Work around compiler partition-order failures that can happen with
+            # subfunctions + disaggregated prefill by pruning the offending
+            # consumer node(s) from generated nodeList entries and retrying.
+            can_autofix_mdp = (
+                use_onnx_subfunctions
+                and mdp_num_partitions > 1
+                and mdp_ts_json_path is not None
+                and not user_supplied_mdp
+                and "Invalid partition configuration file" in latest_stderr
+            )
+            if can_autofix_mdp:
+                dropped_nodes: set[str] = set()
+                for _ in range(8):
+                    match = _MDP_PARTITION_ORDER_ERR_RE.search(latest_stderr)
+                    if not match:
+                        break
+                    consumer_node = match.group(1)
+                    producer_node = match.group(2)
+
+                    # Prefer removing producer alias bases like "/Gather_5" when
+                    # compiler reports producer "/Gather_5." under subfunctions.
+                    drop_candidates: List[str] = []
+                    if producer_node.endswith("."):
+                        drop_candidates.append(producer_node[:-1])
+                    drop_candidates.append(consumer_node)
+
+                    node_to_drop = None
+                    for candidate in drop_candidates:
+                        if not candidate or candidate in dropped_nodes:
+                            continue
+                        if _is_decoder_layer_callsite(candidate):
+                            continue
+                        node_to_drop = candidate
+                        break
+                    if node_to_drop is None:
+                        break
+                    removed = _drop_mdp_nodes(Path(mdp_ts_json_path), {node_to_drop})
+                    if removed <= 0:
+                        break
+                    dropped_nodes.add(node_to_drop)
+                    logger.warning(
+                        "Retrying compile after auto-fixing MDP partition order: removed node %r (consumer=%r producer=%r, %d occurrence(s)) from %s",
+                        node_to_drop,
+                        consumer_node,
+                        producer_node,
+                        removed,
+                        mdp_ts_json_path,
+                    )
+                    if qpc_path.is_dir():
+                        shutil.rmtree(qpc_path)
+                    try:
+                        subprocess.run(command, capture_output=True, check=True)
+                        latest_error = None
+                        break
+                    except subprocess.CalledProcessError as retry_error:
+                        latest_error = retry_error
+                        latest_stderr = retry_error.stderr.decode()
+
+        if latest_error is not None:
             raise RuntimeError(
                 "\n".join(
                     [
                         "Compilation failed!",
-                        f"Compiler command: {e.cmd}",
-                        f"Compiler exitcode: {e.returncode}",
+                        f"Compiler command: {latest_error.cmd}",
+                        f"Compiler exitcode: {latest_error.returncode}",
                         "Compiler stderr:",
-                        e.stderr.decode(),
+                        latest_stderr,
                     ]
                 )
             )
