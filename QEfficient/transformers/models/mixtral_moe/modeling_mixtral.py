@@ -7,13 +7,13 @@
 
 """PyTorch Mixtral model."""
 
+from functools import partial
 from typing import List, Optional, Tuple, Type, Union
 
 import torch
-import torch.nn.functional as F
 from torch import nn
+from torch.nn import functional as F
 from transformers.cache_utils import Cache
-from transformers.integrations.moe import batched_mm_experts_forward
 from transformers.modeling_outputs import (
     MoeCausalLMOutputWithPast,
     MoeModelOutputWithPast,
@@ -39,6 +39,16 @@ from QEfficient.blocking.attention_blocking import (
 )
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    MoEProfile,
+    MoEWeights,
+    QEffMoEBlockMixin,
+    build_canonical_expert_weights,
+    delete_module_attrs,
+    silu_glu_mlp,
+    stack_expert_linears,
+)
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
@@ -191,7 +201,7 @@ MIXTRAL_ATTENTION_CLASSES = {
 }
 
 
-class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
+class QEffMixtralSparseMoeBlock(QEffMoEBlockMixin, MixtralSparseMoeBlock):
     """
     This implementation is
     strictly equivalent to standard MoE with full capacity (no
@@ -203,69 +213,58 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
     and memory on padding.
     """
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """Mixtral MoE forward compatible with both pre-v5 and v5 gate/experts APIs."""
-        batch_size, sequence_length, hidden_dim = hidden_states.shape
-        if self.training and getattr(self, "jitter_noise", 0) > 0:
-            hidden_states = hidden_states * torch.empty_like(hidden_states).uniform_(
-                1.0 - self.jitter_noise, 1.0 + self.jitter_noise
-            )
-        hidden_states = hidden_states.view(-1, hidden_dim)
-        gate_dtype = getattr(getattr(self.gate, "weight", None), "dtype", hidden_states.dtype)
-        gate_out = self.gate(hidden_states.to(gate_dtype))
+    _moe_return_router_logits = True
+    supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM)
 
+    def __qeff_init__(self):
+        super().__qeff_init__()
+        if hasattr(self.experts, "act_fn"):
+            self.act_fn = self.experts.act_fn
+        else:
+            self.act_fn = getattr(self.experts[0], "act_fn", F.silu)
+
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+        if hasattr(self.experts, "gate_up_proj"):
+            self.moe_weights = build_canonical_expert_weights(
+                gate_up=self.experts.gate_up_proj,
+                down=self.experts.down_proj,
+                fused=True,
+                fused_split_dim=1,
+                transpose_gate_up=True,
+                transpose_down=True,
+            )
+            self.act_fn = getattr(self.experts, "act_fn", F.silu)
+            delete_module_attrs(self.experts, "gate_up_proj", "down_proj")
+        else:
+            self.moe_weights = MoEWeights(
+                gate=stack_expert_linears(self.experts, lambda expert: expert.w1.weight),
+                up=stack_expert_linears(self.experts, lambda expert: expert.w3.weight),
+                down=stack_expert_linears(self.experts, lambda expert: expert.w2.weight),
+            )
+            self.act_fn = getattr(self.experts[0], "act_fn", F.silu)
+            for expert in self.experts:
+                delete_module_attrs(expert, "w1", "w2", "w3")
+        self.weights_transformed = True
+        return self.moe_weights
+
+    @property
+    def moe_profile(self) -> MoEProfile:
+        return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=getattr(self, "act_fn", F.silu)))
+
+    def route(self, x: torch.Tensor):
+        gate_dtype = getattr(getattr(self.gate, "weight", None), "dtype", x.dtype)
+        gate_out = self.gate(x.to(gate_dtype))
         if isinstance(gate_out, tuple) and len(gate_out) >= 3:
             router_logits, routing_weights, selected_experts = gate_out[0], gate_out[1], gate_out[2]
         else:
             router_logits = gate_out[0] if isinstance(gate_out, tuple) else gate_out
             routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
             routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
-            routing_weights /= torch.einsum("bi->b", routing_weights)[:, None]
-            routing_weights = routing_weights.to(hidden_states.dtype)
-
-        # transformers>=5.3 uses MixtralExperts aggregate with call signature
-        # experts(hidden_states, top_k_index, top_k_weights)
-        if callable(self.experts) and not hasattr(self.experts, "__getitem__"):
-            experts_dtype = None
-            for param in self.experts.parameters():
-                experts_dtype = param.dtype
-                break
-            hidden_states_for_experts = hidden_states.to(experts_dtype) if experts_dtype else hidden_states
-            if torch.onnx.is_in_onnx_export():
-                # Avoid grouped-mm ONNX incompatibility (`aten::histc`) while keeping
-                # upstream experts math/parameter layout.
-                final_hidden_states = batched_mm_experts_forward(
-                    self.experts, hidden_states_for_experts, selected_experts, routing_weights
-                )
-            else:
-                final_hidden_states = self.experts(hidden_states_for_experts, selected_experts, routing_weights)
-            final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
-            return final_hidden_states, router_logits
-
-        # Backward compatible path for older expert containers.
-        final_hidden_states = torch.zeros_like(hidden_states)
-        B, K = selected_experts.shape
-        E = int(getattr(self, "num_experts", getattr(self.experts, "num_experts", self.gate.weight.shape[0])))
-        flat = selected_experts.reshape(-1)
-        mask = torch.zeros((B * K, E), dtype=torch.int64)
-        mask[torch.arange(B * K), flat] = 1
-        expert_mask = mask.view(B, K, E).permute(2, 1, 0)
-
-        for expert_idx in range(E):
-            expert_layer = self.experts[expert_idx]
-            expert_mask_tr = expert_mask[expert_idx].transpose(0, 1)
-            scale = torch.einsum("be,be->b", routing_weights, expert_mask_tr.to(self.gate.weight.dtype))[:, None]
-            current_hidden_states = expert_layer(hidden_states) * scale
-            current_hidden_states = torch.where(
-                torch.einsum("be,be->b", routing_weights, expert_mask_tr.to(routing_weights.dtype)).to(torch.bool)[
-                    :, None
-                ],
-                current_hidden_states,
-                torch.tensor(0.0),
-            )
-            final_hidden_states = final_hidden_states + current_hidden_states
-        final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
-        return final_hidden_states, router_logits
+            routing_weights = routing_weights / torch.einsum("bi->b", routing_weights)[:, None]
+            routing_weights = routing_weights.to(x.dtype)
+        return (selected_experts, routing_weights), router_logits
 
 
 class QeffMixtralDecoderLayer(MixtralDecoderLayer):

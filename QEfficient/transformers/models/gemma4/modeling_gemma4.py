@@ -7,6 +7,7 @@
 
 import os
 from collections import defaultdict
+from functools import partial
 from pathlib import Path
 from typing import List, Optional, Type, Union
 
@@ -35,6 +36,15 @@ from QEfficient.base.onnx_transforms import FP16ClipTransform
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    MoEProfile,
+    MoEWeights,
+    QEffMoEBlockMixin,
+    build_canonical_expert_weights,
+    delete_module_attrs,
+    silu_glu_mlp,
+)
 from QEfficient.utils import constants
 
 _FP16_CLAMP_MIN = -65504.0
@@ -304,49 +314,56 @@ class QEffGemma4TextExperts(Gemma4TextExperts):
         return torch.bmm(weighted_experts, combine_weights).squeeze(-1)
 
 
-class QEffPrefillChunckedGemma4TextExperts(Gemma4TextExperts):
-    def forward(
+class QEffGemma4TextMoeBlock(QEffMoEBlockMixin, nn.Module):
+    supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM)
+    supports_moe_prefill_blocking = False
+    supports_static_moe_prefill_chunks = False
+    supports_moe_decode_bmm = True
+
+    def __init__(
         self,
-        hidden_states: torch.Tensor,
-        top_k_index: torch.Tensor,
-        top_k_weights: torch.Tensor,
-    ) -> torch.Tensor:
-        # Supports [T, H] or [B, S, H]
-        if hidden_states.dim() == 3:
-            B, S, H = hidden_states.shape
-            x = hidden_states.view(B * S, H)
-            reshape_back = True
-        else:
-            T, H = hidden_states.shape
-            x = hidden_states
-            reshape_back = False
+        router: nn.Module,
+        experts: nn.Module,
+        pre_feedforward_layernorm: nn.Module,
+        post_feedforward_layernorm: nn.Module,
+    ) -> None:
+        super().__init__()
+        self.router = router
+        self.experts = experts
+        self.pre_feedforward_layernorm = pre_feedforward_layernorm
+        self.post_feedforward_layernorm = post_feedforward_layernorm
 
-        T = x.shape[0]
-
-        # Build dense routing weights [T, E] from top-k indices/weights
-        expert_weights = torch.zeros(
-            T,
-            self.num_experts,
-            dtype=top_k_weights.dtype,
-            device=top_k_weights.device,
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+        self.moe_weights = build_canonical_expert_weights(
+            gate_up=self.experts.gate_up_proj,
+            down=self.experts.down_proj,
+            fused=True,
+            fused_split_dim=1,
+            transpose_gate_up=True,
+            transpose_down=True,
         )
-        expert_weights.scatter_add_(1, top_k_index, top_k_weights)
-        expert_weights = expert_weights.to(x.dtype)
-        out = x.new_zeros((T, H))
-        for e in range(self.num_experts):
-            w = expert_weights[:, e].unsqueeze(-1)  # [T, 1]
+        delete_module_attrs(self.experts, "gate_up_proj", "down_proj")
+        self.weights_transformed = True
+        return self.moe_weights
 
-            # gate_up_proj[e]: [2I, H], down_proj[e]: [H, I] (matching your original matmuls)
-            gate_up = x @ self.gate_up_proj[e].transpose(0, 1)  # [T, 2I]
-            gate, up = gate_up.chunk(2, dim=-1)  # [T, I], [T, I]
-            activated = self.act_fn(gate) * up  # [T, I]
-            down = activated @ self.down_proj[e].transpose(0, 1)  # [T, H]
+    @property
+    def moe_profile(self) -> MoEProfile:
+        return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.experts.act_fn))
 
-            out += down * w
+    def route(self, x: torch.Tensor):
+        router_probabilities, top_k_weights, top_k_index = self.router(x)
+        return (top_k_index, top_k_weights.to(x.dtype)), router_probabilities
 
-        if reshape_back:
-            return out.view(B, S, H)
-        return out
+    def forward(self, hidden_states: torch.Tensor):
+        B, S, H = hidden_states.shape
+        x = hidden_states.reshape(B * S, H)
+        routing, _ = self.route(x)
+        x = self.pre_feedforward_layernorm(x)
+        out = self.execute_moe_flavour(x, routing)
+        out = out.reshape(B, S, H)
+        return self.post_feedforward_layernorm(out)
 
 
 class QEffGemma4VisionAttention(Gemma4VisionAttention):
@@ -504,6 +521,15 @@ EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_C
 
 
 class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
+    def __qeff_init__(self):
+        if not getattr(self, "enable_moe_block", False) or hasattr(self, "moe_block"):
+            return
+        router = self._modules.pop("router")
+        experts = self._modules.pop("experts")
+        pre_norm = self._modules.pop("pre_feedforward_layernorm_2")
+        post_norm = self._modules.pop("post_feedforward_layernorm_2")
+        self.moe_block = QEffGemma4TextMoeBlock(router, experts, pre_norm, post_norm)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -534,14 +560,10 @@ class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
         hidden_states = self.mlp(hidden_states)
 
         if self.enable_moe_block:
+            if not hasattr(self, "moe_block"):
+                self.__qeff_init__()
             hidden_states_1 = self.post_feedforward_layernorm_1(hidden_states)
-
-            hidden_states_flat = residual.reshape(-1, residual.shape[-1])
-            _, top_k_weights, top_k_index = self.router(hidden_states_flat)
-            hidden_states_2 = self.pre_feedforward_layernorm_2(hidden_states_flat)
-            hidden_states_2 = self.experts(hidden_states_2, top_k_index, top_k_weights)
-            hidden_states_2 = hidden_states_2.reshape(residual.shape)
-            hidden_states_2 = self.post_feedforward_layernorm_2(hidden_states_2)
+            hidden_states_2 = self.moe_block(residual)
             hidden_states = hidden_states_1 + hidden_states_2
 
         hidden_states = self.post_feedforward_layernorm(hidden_states)

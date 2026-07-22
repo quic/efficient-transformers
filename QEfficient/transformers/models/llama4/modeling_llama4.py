@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import math
+from functools import partial
 from typing import Callable, List, Optional, Tuple, Type, Union
 
 import torch
@@ -35,6 +36,15 @@ from transformers.models.llama4.modeling_llama4 import (
 
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    MoEProfile,
+    MoEWeights,
+    QEffMoEBlockMixin,
+    build_canonical_expert_weights,
+    delete_module_attrs,
+    silu_glu_mlp,
+)
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -402,9 +412,23 @@ def eager_attention_forward(
 
 class QEffLlama4TextExperts(Llama4TextExperts):
     def __qeff_init__(self):
-        # TODO: Update qeff_init with config to get the custom dtype
-        self.gate_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_size, self.expert_dim))
-        self.up_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_size, self.expert_dim))
+        self.weights_transformed = False
+        self.expert_dim = getattr(self, "expert_dim", self.gate_up_proj.shape[-1] // 2)
+
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+        self.moe_weights = build_canonical_expert_weights(
+            gate_up=self.gate_up_proj,
+            down=self.down_proj,
+            fused=True,
+            fused_split_dim=2,
+            transpose_gate_up=False,
+            transpose_down=False,
+        )
+        delete_module_attrs(self, "gate_up_proj", "down_proj")
+        self.weights_transformed = True
+        return self.moe_weights
 
 
 class QEffLlama4Router(Llama4Router):
@@ -412,56 +436,35 @@ class QEffLlama4Router(Llama4Router):
         return torch.matmul(hidden_states, self.weight.T)
 
 
-class QEffLlama4TextMoe(Llama4TextMoe):
-    def forward(self, hidden: torch.Tensor):
-        B, S, H = hidden.shape
-        T = B * S
-        hidden = hidden.view(T, H)
+class QEffLlama4TextMoe(QEffMoEBlockMixin, Llama4TextMoe):
+    _moe_return_router_logits = True
+    _moe_flavour = MoEFlavour.SIMPLE_LOOP
+    supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP,)
+    supports_moe_decode_bmm = False
 
-        router_logits = self.router(hidden)
-        # *top-k = 1*  → LLama4
-        top_w, top_i = torch.topk(router_logits, self.top_k, dim=-1)  # both [T, K]
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+        weights = self.experts.transform_weights()
+        self.moe_weights = weights
+        self.weights_transformed = True
+        return self.moe_weights
+
+    def moe_profile(self) -> MoEProfile:
+        # llama4 pre-scales the expert input by sigmoid(top_w); routing is a boolean mask.
+        return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.experts.act_fn), scale_mode="pre")
+
+    def route(self, x: torch.Tensor):
+        router_logits = self.router(x)
+        top_w, top_i = torch.topk(router_logits, self.top_k, dim=-1)
         masked_logits = torch.full_like(router_logits, float("-inf"))
         masked_logits.scatter_(1, top_i, top_w)
 
-        # Here we multiply by scores before experts, different only for Llama4
-        x = hidden * torch.sigmoid(top_w.float())
+        routing_weights = torch.sigmoid(masked_logits.to(x.dtype)).to(x.dtype)
+        return routing_weights, router_logits
 
-        # ── Book-keeping: create one boolean mask per expert once  ───────────────
-        # routing_weights[e]  ==  True where token routed to that expert. Shape [E, T]
-        routing_weights = torch.sigmoid(masked_logits.to(hidden.dtype)).to(hidden.dtype)
-
-        # ────────────────── allocate the two big tensors ─────
-        ffn_dim = self.experts.intermediate_size  # = 8/3 · H
-        upgate = hidden.new_zeros((T, ffn_dim))
-        expert_out = hidden.new_zeros((T, H))  # accum-out buffer
-
-        # ───────────────────────── Stage-1 : Up-Gate ─────────────────────────────
-        # Loop over experts
-        for e in range(self.num_experts):
-            W_g, W_u = self.experts.gate_proj[e], self.experts.up_proj[e]
-            routing_weight = routing_weights[:, e].unsqueeze(-1)
-            masked_up = torch.where(
-                routing_weights[:, e].unsqueeze(-1) > 0,
-                ((self.experts.act_fn(x @ W_g)) * (x @ W_u)),
-                torch.zeros_like(upgate),
-            )
-            upgate += masked_up
-
-        # At this point  upgate[t]  holds   UpGate(x_t)   for that token’s expert,
-        # and arbitrary (zeros) data for tokens not routed to that expert.
-        # ───────────────────────── Stage-2 : Down ────────────────────────────────
-        for e in range(self.num_experts):
-            routing_weight = routing_weights[:, e].unsqueeze(-1)
-            masked_down = torch.where(
-                routing_weight > 0, (upgate @ self.experts.down_proj[e]), torch.zeros_like(expert_out)
-            )
-            expert_out += masked_down
-
-        # ───────────────────────── Stage-3 : Shared expert ───────────────────────
-        shared_out = self.shared_expert(hidden)  # [T, H]
-        final = shared_out + expert_out  # restore [B,S,H]
-        return final.view(B, S, H), router_logits
+    def apply_shared_experts(self, out: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
+        return self.shared_expert(residual) + out
 
 
 class QEffLlama4TextAttention(Llama4TextAttention):

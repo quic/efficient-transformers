@@ -1240,6 +1240,16 @@ def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, confi
     model_hf = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     model_hf.eval()
     qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=False)
+    qeff_model.transform(
+        ctx_len=64,
+        seq_len=64,
+        bs=1,
+        prefill_only=True,
+        enable_chunking=True,
+        num_cores=2,
+        qaic_config={"moe_config": {"packed_chunk_size": 32}},
+        prefill_seq_len=64,
+    )
 
     onnx_path = _exported_onnx_path(
         qeff_model.export(
@@ -1248,7 +1258,7 @@ def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, confi
             enable_chunking=True,
             prefill_seq_len=64,
             num_cores=2,
-            moe_prefill_packed_chunk_size=32,
+            qaic_config={"moe_config": {"packed_chunk_size": 32}},
             use_onnx_subfunctions=True,
             offload_pt_weights=False,
         )
@@ -2224,30 +2234,35 @@ def test_qwen3_5_moe_get_specializations_strips_vision_symbols_for_comp_ctx_vari
 
 
 def test_moe_prefill_transform_does_not_require_enable_chunking():
-    from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeMoE, QEffPrefillChunkedGlm4MoeMoE
-    from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyTransform
+    from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeMoE
+    from QEfficient.transformers.models.pytorch_transforms import (
+        PrefillOnlyChunkedTransform,
+        PrefillOnlyTransform,
+        RevertPrefillKeepAttentionTransform,
+        RevertPrefillOnlyTransform,
+    )
     from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
-        QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
         QEffQwen3_5MoeSparseMoeBlock,
     )
     from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
-        QEffPrefillChunkedQwen3MoeSparseMoeBlock,
         QEffQwen3MoeSparseMoeBlock,
     )
     from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
-        QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
         QEffQwen3VLMoeTextSparseMoeBlock,
     )
 
-    assert PrefillOnlyTransform._module_mapping[QEffGlm4MoeMoE] is QEffPrefillChunkedGlm4MoeMoE
-    assert PrefillOnlyTransform._module_mapping[QEffQwen3MoeSparseMoeBlock] is QEffPrefillChunkedQwen3MoeSparseMoeBlock
-    assert (
-        PrefillOnlyTransform._module_mapping[QEffQwen3VLMoeTextSparseMoeBlock]
-        is QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock
-    )
-    assert (
-        PrefillOnlyTransform._module_mapping[QEffQwen3_5MoeSparseMoeBlock] is QEffPrefillChunkedQwen3_5MoeSparseMoeBlock
-    )
+    for moe_cls in (
+        QEffGlm4MoeMoE,
+        QEffQwen3MoeSparseMoeBlock,
+        QEffQwen3VLMoeTextSparseMoeBlock,
+        QEffQwen3_5MoeSparseMoeBlock,
+    ):
+        assert moe_cls not in PrefillOnlyTransform._module_mapping
+        assert moe_cls not in PrefillOnlyChunkedTransform._module_mapping
+        assert moe_cls not in RevertPrefillKeepAttentionTransform._module_mapping
+        assert moe_cls not in RevertPrefillOnlyTransform._module_mapping
+        assert moe_cls.supports_moe_prefill_blocking is True
+        assert moe_cls.supports_static_moe_prefill_chunks is True
 
 
 def test_layerwise_matches_default_path_for_qwen3_moe():
@@ -3343,7 +3358,6 @@ def test_causal_compile_custom_io_carries_prefix(tmp_path, monkeypatch):
         "mxfp6_matmul",
         # compile-time args added by causal compile():
         "aic_num_cores",
-        "moe_prefill_packed_chunk_size",
     }
     implicit_compiler_options = {k: v for k, v in captured.items() if k not in _known_explicit_params}
     assert "kv_cache_prefix" not in implicit_compiler_options, (

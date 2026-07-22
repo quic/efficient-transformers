@@ -66,3 +66,77 @@ Supported Features
      - A script for computing the perplexity of a model, allowing for the evaluation of model performance and comparison across different models and datasets. Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/scripts/perplexity_computation/calculate_perplexity.py>`_ for more **details**.
    * - KV Heads Replication Script
      - A sample script for replicating key-value (KV) heads for the Llama-3-8B-Instruct model, running inference with the original model, replicating KV heads, validating changes, and exporting the modified model to ONNX format. Refer `sample script <https://github.com/quic/efficient-transformers/blob/main/scripts/replicate_kv_head/replicate_kv_heads.py>`_ for more **details**.
+
+MOE Execution Flavour Support Matrix
+====================================
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 12 12 14 18 42
+
+   * - Model family
+     - ``decode_bmm``
+     - ``simple_loop``
+     - ``expert_parallel``
+     - ``legacy_ffn_blocking``
+     - Notes
+   * - Qwen3-MOE
+     - Yes
+     - Yes
+     - Yes
+     - No
+     - Config-derived block quicktests cover all three shared MOE flavours.
+   * - Qwen3-VL-MOE
+     - Yes
+     - Yes
+     - Yes
+     - No
+     - Text MOE block is covered with tiny text-only config-derived quicktests.
+   * - Qwen3.5-MOE
+     - Yes
+     - Yes
+     - Yes
+     - No
+     - Text MOE block is covered with tiny text-only config-derived quicktests.
+   * - GLM4-MOE
+     - Yes
+     - Yes
+     - Yes
+     - No
+     - Config-derived block quicktests cover all three shared MOE flavours.
+   * - GPT-OSS
+     - No
+     - Yes
+     - Yes
+     - No
+     - Optimized MOE flavour selection covers ``simple_loop`` and ``expert_parallel``.
+   * - Mixtral
+     - Yes
+     - Yes
+     - No
+     - No
+     - Shared MOE block supports decode gather/BMM and prefill simple-loop execution.
+   * - Granite-MOE
+     - No
+     - Yes
+     - No
+     - No
+     - Granite-MOE uses the shared simple-loop flavour.
+   * - Llama4
+     - No
+     - Yes
+     - No
+     - No
+     - Llama4 uses pre-scaled routing and explicitly disables ``decode_bmm``.
+   * - DeepSeek-V3
+     - Yes
+     - Yes
+     - No
+     - Yes
+     - External string-mapper quicktests cover shared flavours; legacy FFN blocking is covered separately.
+   * - Grok-1
+     - Yes
+     - Yes
+     - No
+     - No
+     - Covered through synthetic Grok-like ``MoeBlock`` tests using the optimized MOE adapter path.

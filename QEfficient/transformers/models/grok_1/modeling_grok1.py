@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+from functools import partial
 from typing import List, Optional, Tuple, Type, Union
 
 import torch
@@ -20,6 +21,15 @@ from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.models.llama.modeling_llama import qeff_apply_rotary_pos_emb
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    MoEProfile,
+    MoEWeights,
+    QEffMoEBlockMixin,
+    delete_module_attrs,
+    silu_glu_mlp,
+    stack_expert_linears,
+)
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
@@ -132,66 +142,44 @@ class QEffGrok1MultiHeadAttention(nn.Module):
         return attn_output, attn_weights, past_key_value
 
 
-class QEffGrok1MoeBlock(nn.Module):
+class QEffGrok1MoeBlock(QEffMoEBlockMixin, nn.Module):
     """
     Mixture of experts (MoE) block.
     """
 
-    def forward(self, hidden_states: torch.Tensor):
-        """
-        Forward pass of the MoE block.
+    _moe_return_router_logits = True
+    supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM)
+    supports_moe_prefill_blocking = False
+    supports_static_moe_prefill_chunks = False
+    supports_moe_decode_bmm = True
 
-        Args:
-            hidden_states (torch.Tensor): Input tensor.
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+        self.moe_weights = MoEWeights(
+            gate=stack_expert_linears(self.experts, lambda expert: expert.linear.weight),
+            up=stack_expert_linears(self.experts, lambda expert: expert.linear_v.weight),
+            down=stack_expert_linears(self.experts, lambda expert: expert.linear_1.weight),
+        )
+        self.act_fn = self.experts[0].act_fn
+        for expert in self.experts:
+            delete_module_attrs(expert, "linear", "linear_v", "linear_1")
+        self.weights_transformed = True
+        return self.moe_weights
 
-        Returns:
-            torch.Tensor: MoE output.
-        """
-        batch_size, sequence_length, hidden_dim = hidden_states.shape
-        hidden_states = hidden_states.view(-1, hidden_dim)
-        router_logits = self.gate(hidden_states)
+    def moe_profile(self) -> MoEProfile:
+        return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.act_fn))
+
+    def route(self, x: torch.Tensor):
+        router_logits = self.gate(x)
 
         routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float32)
-        routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
-        # Creating experts mask and routing weights masked
-        awesome_experts_mask_1 = (
-            torch.nn.functional.one_hot(selected_experts[:, 0], num_classes=self.num_experts).bool().T.unsqueeze(-1)
-        )
-        awesome_experts_mask_2 = (
-            torch.nn.functional.one_hot(selected_experts[:, 1], num_classes=self.num_experts).bool().T.unsqueeze(-1)
-        )
+        topk_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
+        topk_weights = topk_weights.to(x.dtype)
+        return (selected_experts, topk_weights), router_logits
 
-        gateupout1 = torch.zeros(hidden_states.shape[0], self.ffn_dim)  # T, hs
-        gateupout2 = torch.zeros(hidden_states.shape[0], self.ffn_dim)  # T, hs
-        for expert_idx in range(self.num_experts):
-            expert_layer = self.experts[expert_idx]
-            current_expert_output = expert_layer.act_fn(expert_layer.linear(hidden_states)) * expert_layer.linear_v(
-                hidden_states
-            )
-            gateupout1 += torch.where(
-                awesome_experts_mask_1[expert_idx], current_expert_output, torch.zeros_like(gateupout1)
-            )
-            gateupout2 += torch.where(
-                awesome_experts_mask_2[expert_idx], current_expert_output, torch.zeros_like(gateupout2)
-            )
-
-        downout1 = torch.zeros_like(hidden_states)
-        downout2 = torch.zeros_like(hidden_states)
-        concat_mask = torch.cat((awesome_experts_mask_1.unsqueeze(0), awesome_experts_mask_2.unsqueeze(0)), dim=0)
-        concat_down = torch.cat((downout1.unsqueeze(0), downout2.unsqueeze(0)), dim=0)
-        concat_gateout = torch.cat((gateupout1.unsqueeze(0), gateupout2.unsqueeze(0)), dim=0)
-        for expert_idx in range(self.num_experts):
-            expert_layer = self.experts[expert_idx]
-            concat_down += torch.where(
-                concat_mask[:, expert_idx, :], expert_layer.linear_1(concat_gateout), torch.zeros_like(concat_down)
-            )
-
-        downout1, downout2 = concat_down[0], concat_down[1]
-        hidden_states = (
-            downout1 * routing_weights[:, 0].unsqueeze(-1) + downout2 * routing_weights[:, 1].unsqueeze(-1)
-        ).reshape(batch_size, sequence_length, hidden_dim)
-
-        return hidden_states, router_logits
+    def forward(self, hidden_states: torch.Tensor):
+        return QEffMoEBlockMixin.forward(self, hidden_states)
 
 
 class QEffGrok1DecoderLayer(nn.Module):

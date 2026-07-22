@@ -37,6 +37,7 @@ from QEfficient.compile.qnn_compiler import compile as qnn_compile
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
+    OptimizedMoETransform,
     ReplicateKVHeadTransform,
 )
 from QEfficient.utils import (
@@ -57,6 +58,16 @@ from QEfficient.utils.export_utils import export_wrapper
 from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
 logger = logging.getLogger(__name__)
+
+
+_LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR = (
+    "moe_prefill_packed_chunk_size is no longer supported; use qaic_config['moe_config']['packed_chunk_size']"
+)
+
+
+def reject_legacy_moe_prefill_packed_chunk_size(kwargs: Optional[dict]) -> None:
+    if kwargs and "moe_prefill_packed_chunk_size" in kwargs:
+        raise TypeError(_LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR)
 
 
 def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
@@ -353,7 +364,6 @@ class QEFFBaseModel(ABC):
         onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
-        prefill_only: Optional[bool] = False,
         **export_kwargs,
     ) -> str:
         """
@@ -526,7 +536,6 @@ class QEFFBaseModel(ABC):
         use_onnx_subfunctions: Optional[bool] = False,
         retain_full_kv: Optional[bool] = False,
         qaic_config: Optional[dict] = None,
-        moe_prefill_packed_chunk_size: Optional[int] = None,
         kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ):
@@ -540,7 +549,6 @@ class QEFFBaseModel(ABC):
             kwargs["_layerwise_cache_probe"] = True
         if kv_cache_prefix:
             kwargs["kv_cache_prefix"] = kv_cache_prefix
-
         if prefill_only:
             kwargs.update(
                 {
@@ -548,16 +556,13 @@ class QEFFBaseModel(ABC):
                     "prefill_seq_len": specializations[0].get("seq_len"),
                     "enable_chunking": enable_chunking,
                     "num_cores": compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES),
-                    "moe_prefill_packed_chunk_size": constants.MOE_PREFILL_PACKED_CHUNK_SIZE
-                    if moe_prefill_packed_chunk_size is None
-                    else moe_prefill_packed_chunk_size,
                 }
             )
 
+        if qaic_config is not None:
+            kwargs["qaic_config"] = qaic_config
+
         # Transform before export
-        qaic_config = (
-            qaic_config if qaic_config else getattr(self.model, "qaic_config", None) if hasattr(self, "model") else None
-        )
         if specializations is not None:
             bs = require_value(get_attr_or_key(specializations[0], ("batch_size", "batch")), "batch size")
             seq_len = get_attr_or_key(specializations[0], ("cl", "seq_len", "sequence_length"))
@@ -572,6 +577,10 @@ class QEFFBaseModel(ABC):
             seq_len=seq_len,
             bs=bs,
             qaic_config=qaic_config,
+            prefill_only=prefill_only,
+            enable_chunking=enable_chunking,
+            num_cores=kwargs.get("num_cores", compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)),
+            prefill_seq_len=kwargs.get("prefill_seq_len"),
             **compiler_options,
         )
 
@@ -588,6 +597,10 @@ class QEFFBaseModel(ABC):
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
+        enable_chunking: Optional[bool] = False,
+        num_cores: Optional[int] = constants.DEFAULT_AIC_NUM_CORES,
+        qaic_config: Optional[dict] = None,
+        prefill_seq_len: Optional[int] = None,
         kv_cache_prefix: Optional[str] = None,
         **export_kwargs,
     ) -> str:
@@ -817,8 +830,6 @@ class QEFFBaseModel(ABC):
         **compiler_options,
     ):
         # Apply the transformations that are dependent on compilation parameters
-        qaic_config = qaic_config if qaic_config else getattr(self.model, "qaic_config", None)
-
         model_config = getattr(self.model, "config", None) or getattr(
             getattr(self.model, "model", None), "config", None
         )
@@ -847,6 +858,20 @@ class QEFFBaseModel(ABC):
         if qaic_config is not None:
             self.hash_params["qaic_config"] = qaic_config
         self.hash_params["num_replicate_kv_heads"] = effective_num_replicate_kv_heads
+
+        num_cores = compiler_options.get("num_cores", compiler_options.get("aic_num_cores"))
+        if num_cores is None:
+            num_cores = constants.DEFAULT_AIC_NUM_CORES
+        prefill_seq_len = compiler_options.get("prefill_seq_len", seq_len)
+        reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
+        self.model, _ = OptimizedMoETransform.apply(
+            self.model,
+            prefill_only=bool(compiler_options.get("prefill_only", False)),
+            num_cores=num_cores,
+            qaic_config=qaic_config,
+            prefill_seq_len=prefill_seq_len,
+            hash_params=self.hash_params,
+        )
 
     @dump_qconfig
     def _compile(
@@ -902,7 +927,6 @@ class QEFFBaseModel(ABC):
         """
 
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
-        moe_prefill_packed_chunk_size = compiler_options.pop("moe_prefill_packed_chunk_size", None)
 
         for removed_option in ("compile_only", "compile-only"):
             if removed_option in compiler_options:
@@ -930,7 +954,6 @@ class QEFFBaseModel(ABC):
                     retain_full_kv,
                     num_devices=mdp_ts_num_devices,
                     qaic_config=qaic_config,
-                    moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                     _layerwise_cache_probe=layerwise_cache_probe,
                     kv_cache_prefix=kv_cache_prefix,
                     **compiler_options,

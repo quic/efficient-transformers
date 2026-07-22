@@ -58,7 +58,7 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
 - Ask the user for the virtualenv path only when there is a real need to execute Python-dependent commands, such as `python`, `pip`, `pytest`, `ruff`, or `pre-commit`; otherwise do not ask.
 - Ask the user for `HF_HUB_CACHE` before downloading or loading any model.
 - Set `HF_HUB_ENABLE_HF_TRANSFER=1` whenever downloading models from Hugging Face.
-- Ask the user for `QEFF_HOME` before export/compile work that produces QEff artifacts only when the correct location is ambiguous; otherwise choose an appropriate local path and proceed.
+- Choose appropriate `QEFF_HOME` path before export/compile work that produces QEff artifacts.
 
 ## Contribution policy
 - Follow the fork → branch → PR flow in `CONTRIBUTING.md`; sync from `upstream/main`.
