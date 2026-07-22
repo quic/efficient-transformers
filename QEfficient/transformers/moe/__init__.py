@@ -37,7 +37,11 @@ from QEfficient.transformers.moe.weights import (
     as_parameters,
     build_canonical_expert_weights,
     delete_module_attrs,
+    pack_moe_weights_for_expert_parallel,
     stack_expert_linears,
+    unpack_moe_weights_from_expert_parallel,
+    validate_canonical_moe_weights,
+    validate_expert_parallel_moe_weights,
 )
 
 __all__ = [
@@ -60,5 +64,9 @@ __all__ = [
     "as_parameters",
     "build_canonical_expert_weights",
     "delete_module_attrs",
+    "pack_moe_weights_for_expert_parallel",
     "stack_expert_linears",
+    "unpack_moe_weights_from_expert_parallel",
+    "validate_canonical_moe_weights",
+    "validate_expert_parallel_moe_weights",
 ]

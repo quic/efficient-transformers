@@ -17,6 +17,7 @@ from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.transformers.models.pytorch_transforms import (
     ExternalOptimizedMoEMapperTransform,
     KVCacheTransform,
+    OptimizedMoEExpertParallelWeightsTransform,
     OptimizedMoEExportConfigTransform,
     OptimizedMoEMapperTransform,
     OptimizedMoETransform,
@@ -315,6 +316,7 @@ def _make_qeff_moe_block(original_block: nn.Module, flavour_name: str, options: 
         qeff_block.expert_parallel_num_nsp = 2
         qeff_block.expert_parallel_packed_chunk_size = 4
         qeff_block.expert_parallel_num_packed_chunks = 2
+        OptimizedMoEExpertParallelWeightsTransform.apply(qeff_block)
     return qeff_block
 
 
@@ -476,6 +478,7 @@ def test_glm4_moe_blocked_prefill_forward_parity():
         qaic_config={"moe_config": {"packed_chunk_size": 256}},
         prefill_seq_len=8,
     )
+    OptimizedMoEExpertParallelWeightsTransform.apply(chunked_model)
     chunked_block = next(module for module in chunked_model.modules() if isinstance(module, QEffGlm4MoeMoE))
 
     assert chunked_block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
@@ -640,6 +643,7 @@ def test_qwen3moe_blocked_forward_parity():
         qaic_config={"moe_config": {"packed_chunk_size": 256}},
         prefill_seq_len=8,
     )
+    OptimizedMoEExpertParallelWeightsTransform.apply(chunked_model)
     chunked = next(module for module in chunked_model.modules() if isinstance(module, QEffQwen3MoeSparseMoeBlock))
 
     assert chunked._moe_flavour is MoEFlavour.EXPERT_PARALLEL
