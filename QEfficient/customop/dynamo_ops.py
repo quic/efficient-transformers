@@ -7,6 +7,24 @@
 
 import torch
 
+from QEfficient.customop.ctx_scatter_gather import (  # noqa: E402
+    CtxGather,
+    CtxGather3D,
+    CtxGatherBlockedKV,
+    CtxScatter,
+    CtxScatter3D,
+    CtxScatter3DInt,
+)
+from QEfficient.customop.ctx_scatter_gather_cb import (  # noqa: E402
+    CtxGatherBlockedKVCB,
+    CtxGatherCB,
+    CtxGatherCB3D,
+    CtxScatterCB,
+    CtxScatterCB3D,
+)
+from QEfficient.customop.onnxscript_utils import get_dynamo_onnxscript_func
+from QEfficient.customop.rms_norm import CustomRMSNorm  # noqa: E402
+
 
 @torch.library.custom_op("qefficient::rms_norm", mutates_args=())
 def rms_norm_op(hidden_states: torch.Tensor, weight: torch.Tensor, epsilon: float) -> torch.Tensor:
@@ -353,36 +371,20 @@ def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> 
 # Translation table: torch.ops.qefficient.* → ONNX export classes.
 # Used by _export_via_dynamo via custom_translation_table.
 # ---------------------------------------------------------------------------
-from QEfficient.customop.ctx_scatter_gather import (  # noqa: E402
-    CtxGather,
-    CtxGather3D,
-    CtxGatherBlockedKV,
-    CtxScatter,
-    CtxScatter3D,
-    CtxScatter3DInt,
-)
-from QEfficient.customop.ctx_scatter_gather_cb import (  # noqa: E402
-    CtxGatherBlockedKVCB,
-    CtxGatherCB,
-    CtxGatherCB3D,
-    CtxScatterCB,
-    CtxScatterCB3D,
-)
-from QEfficient.customop.rms_norm import CustomRMSNorm  # noqa: E402
 
 DYNAMO_CUSTOM_OP_TABLE = {
-    torch.ops.qefficient.rms_norm.default: CustomRMSNorm,
-    torch.ops.qefficient.ctx_scatter.default: CtxScatter,
-    torch.ops.qefficient.ctx_scatter_3d.default: CtxScatter3D,
-    torch.ops.qefficient.ctx_scatter_cb.default: CtxScatterCB,
-    torch.ops.qefficient.ctx_scatter_cb_3d.default: CtxScatterCB3D,
-    torch.ops.qefficient.ctx_scatter_3d_int.default: CtxScatter3DInt,
-    torch.ops.qefficient.ctx_scatter_3d_generalized.default: CtxScatter3D,
-    torch.ops.qefficient.ctx_gather.default: CtxGather,
-    torch.ops.qefficient.ctx_gather_3d.default: CtxGather3D,
-    torch.ops.qefficient.ctx_gather_cb.default: CtxGatherCB,
-    torch.ops.qefficient.ctx_gather_cb_3d.default: CtxGatherCB3D,
-    torch.ops.qefficient.ctx_gather_blocked_kv.default: CtxGatherBlockedKV,
-    torch.ops.qefficient.ctx_gather_blocked_kv_cb.default: CtxGatherBlockedKVCB,
-    torch.ops.qefficient.ctx_gather_3d_generalized.default: CtxGather3D,
+    torch.ops.qefficient.rms_norm.default: get_dynamo_onnxscript_func(CustomRMSNorm),
+    torch.ops.qefficient.ctx_scatter.default: get_dynamo_onnxscript_func(CtxScatter),
+    torch.ops.qefficient.ctx_scatter_3d.default: get_dynamo_onnxscript_func(CtxScatter3D),
+    torch.ops.qefficient.ctx_scatter_cb.default: get_dynamo_onnxscript_func(CtxScatterCB),
+    torch.ops.qefficient.ctx_scatter_cb_3d.default: get_dynamo_onnxscript_func(CtxScatterCB3D),
+    torch.ops.qefficient.ctx_scatter_3d_int.default: get_dynamo_onnxscript_func(CtxScatter3DInt),
+    torch.ops.qefficient.ctx_scatter_3d_generalized.default: get_dynamo_onnxscript_func(CtxScatter3D),
+    torch.ops.qefficient.ctx_gather.default: get_dynamo_onnxscript_func(CtxGather),
+    torch.ops.qefficient.ctx_gather_3d.default: get_dynamo_onnxscript_func(CtxGather3D),
+    torch.ops.qefficient.ctx_gather_cb.default: get_dynamo_onnxscript_func(CtxGatherCB),
+    torch.ops.qefficient.ctx_gather_cb_3d.default: get_dynamo_onnxscript_func(CtxGatherCB3D),
+    torch.ops.qefficient.ctx_gather_blocked_kv.default: get_dynamo_onnxscript_func(CtxGatherBlockedKV),
+    torch.ops.qefficient.ctx_gather_blocked_kv_cb.default: get_dynamo_onnxscript_func(CtxGatherBlockedKVCB),
+    torch.ops.qefficient.ctx_gather_3d_generalized.default: get_dynamo_onnxscript_func(CtxGather3D),
 }
