@@ -235,6 +235,14 @@ def _disable_safe_export_pass_patches():
         _safe_export_original_passes.clear()
 
 
+def _layerwise_safe_export_passes_enabled():
+    try:
+        from QEfficient.base.modeling_qeff import QEFFBaseModel
+    except Exception:
+        return False
+    return bool(getattr(QEFFBaseModel, "_layerwise_active", False))
+
+
 @contextmanager
 def layerwise_safe_onnx_export_patches(enabled: bool = True, keep_passes=None):
     """Temporarily disable expensive ONNX exporter passes for layerwise prefill.
@@ -245,7 +253,7 @@ def layerwise_safe_onnx_export_patches(enabled: bool = True, keep_passes=None):
     default because some exported graphs need it to remove aten/prim nodes before
     PyTorch serializes ONNX. ``keep_passes`` can retain additional passes.
     """
-    if not enabled:
+    if not enabled or not _layerwise_safe_export_passes_enabled():
         yield
         return
 
