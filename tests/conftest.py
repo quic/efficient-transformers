@@ -151,6 +151,95 @@ def manual_cleanup():
     return qeff_models_clean_up
 
 
+# Number of QAic cards on the CI machine. Workers are sharded round-robin
+# across these cards via QAIC_VISIBLE_DEVICES. Override with QEFF_NUM_QAIC_CARDS
+# if a host has a different count.
+_QAIC_CARDS_DEFAULT = 4
+
+
+def _xdist_worker_index():
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if not worker or not worker.startswith("gw"):
+        return None
+    try:
+        return int(worker[2:])
+    except ValueError:
+        return None
+
+
+def _is_two_phase_shared_home_session():
+    """True when the run uses one shared QEFF_HOME across a compile/execute split.
+
+    Two env flags opt in:
+      - QEFF_PER_PR_COMPILE_WARM_ONLY  (Phase A: compile-only warm-up)
+      - QEFF_PER_PR_SHARED_HOME        (Phase B: execute against the warm cache)
+
+    In this mode the per-worker QEFF_HOME remap and the session-level cache wipe
+    are both skipped: every worker must share one QEFF_HOME so Phase B hits the
+    QPCs Phase A warmed, and the session-start/finish rmtree of QEFF_HOME would
+    otherwise destroy that warm cache (Phase A on finish, Phase B on start). The
+    caller owns the shared QEFF_HOME lifecycle (starts clean, cleans up when the
+    whole two-phase run is done).
+    """
+    return bool(os.environ.get("QEFF_PER_PR_SHARED_HOME") or os.environ.get("QEFF_PER_PR_COMPILE_WARM_ONLY"))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _qaic_device_for_xdist_worker():
+    """Pin each pytest-xdist worker to one of the QAic cards.
+
+    Serial runs (no xdist) and runs that already export QAIC_VISIBLE_DEVICES
+    are left untouched. Under ``pytest -n 4`` on a 4-card host, gw0..gw3 each
+    own one card -- so .compile()/.generate() across workers run in parallel,
+    while same-worker calls remain sequential on that card.
+
+    QEFF_QAIC_CARD_OFFSET allows two stages to run simultaneously on non-
+    overlapping card slices. E.g. stage A sets QEFF_NUM_QAIC_CARDS=2 + offset=0
+    -> cards 0,1; stage B sets QEFF_NUM_QAIC_CARDS=2 + offset=2 -> cards 2,3.
+    """
+    if "QAIC_VISIBLE_DEVICES" in os.environ:
+        return
+    idx = _xdist_worker_index()
+    if idx is None:
+        return
+    cards = max(1, int(os.environ.get("QEFF_NUM_QAIC_CARDS", _QAIC_CARDS_DEFAULT)))
+    offset = int(os.environ.get("QEFF_QAIC_CARD_OFFSET", 0))
+    os.environ["QAIC_VISIBLE_DEVICES"] = str(offset + (idx % cards))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _qeff_home_per_xdist_worker():
+    """Give each xdist worker its own QEFF_HOME subdir so compile-cache writes
+    don't race. Serial runs are untouched.
+
+    Setting os.environ alone is not enough because QEfficient.utils.cache and
+    QEfficient.utils.export_utils bind QEFF_HOME to a module-level constant at
+    import time.  We patch those constants directly so every runtime call to
+    _prepare_export_directory() resolves to the per-worker path.
+
+    Exception: in the two-phase compile-warm mode, every worker must share one
+    QEFF_HOME so the execute phase hits the QPC cache warmed by the compile
+    phase; the per-worker remap is skipped (see _is_two_phase_shared_home_session).
+    """
+    if _is_two_phase_shared_home_session():
+        return
+    idx = _xdist_worker_index()
+    if idx is None:
+        return
+    base = os.environ.get("QEFF_HOME")
+    if not base:
+        return
+
+    import QEfficient.utils.cache as _cache_mod
+    import QEfficient.utils.export_utils as _export_mod
+
+    worker_home = Path(base) / f"worker_{idx}"
+    worker_home.mkdir(parents=True, exist_ok=True)
+    os.environ["QEFF_HOME"] = str(worker_home)
+    _cache_mod.QEFF_HOME = worker_home
+    _export_mod.QEFF_HOME = worker_home
+
+
 def pytest_sessionstart(session):
     logger.info("PYTEST Session Starting ...")
     # Skip cleanup for nightly_pipeline tests
@@ -163,6 +252,10 @@ def pytest_sessionstart(session):
     # Suppress noisy ONNX torchvision-missing warnings from torch exporter internals.
     py_logging.getLogger("torch.onnx._internal.exporter._registration").setLevel(py_logging.ERROR)
     py_logging.getLogger("torch.onnx").setLevel(py_logging.ERROR)
+
+    if _is_two_phase_shared_home_session():
+        logger.info("Skipping session-start cleanup: two-phase shared QEFF_HOME run")
+        return
 
     qeff_models_clean_up()
 
@@ -180,6 +273,9 @@ def pytest_sessionfinish(session, exitstatus):
     # Skip cleanup for nightly_pipeline tests
     if _is_nightly_pipeline_session(session):
         logger.info("Skipping cleanup for nightly_pipeline tests")
+        return
+    if _is_two_phase_shared_home_session():
+        logger.info("Skipping session-finish cleanup: two-phase shared QEFF_HOME run")
         return
     if inside_worker is None:
         qeff_models_clean_up()

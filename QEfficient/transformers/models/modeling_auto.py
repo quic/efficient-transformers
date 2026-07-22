@@ -3937,7 +3937,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names.append("logits")
 
         # TODO Update the get_padding_shape_from_config method to handle the case when the model config has attention_chunk_size or sliding_window and it should return a list of shapes for each layer
-        if (
+        if hasattr(self.model, "get_onnx_retained_state_specs"):
+            retained_state_specs = self.model.get_onnx_retained_state_specs(
+                batch_size=fbs if self.continuous_batching else bs,
+                seq_len=seq_len,
+                kv_cache_shape=kv_cache_shape,
+                continuous_batching=self.continuous_batching,
+                retain_full_kv=kwargs.get("retain_full_kv", False)
+                or (prefill_only and kwargs.get("enable_chunking", False)),
+            )
+            example_inputs["past_key_values"] = retained_state_specs["past_key_values"]
+            dynamic_axes.update(retained_state_specs["dynamic_axes"])
+            output_names.extend(retained_state_specs["output_names"])
+        elif (
             hasattr(self.model.config, "model_type")
             and self.model.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH
             and hasattr(self.model, "get_dummy_pkv_cache")
@@ -4042,7 +4054,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             import functools
             import inspect
 
-            from transformers.cache_utils import Cache, DynamicCache
+            from transformers.cache_utils import Cache
 
             model_forward = self.model.forward
             model_forward_sig = inspect.signature(model_forward)
@@ -4067,9 +4079,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     return obj
 
                 bound_args = model_forward_sig.bind_partial(*args, **kwargs)
-                past_key_values = bound_args.arguments.get("past_key_values", None)
-                if past_key_values is not None and not isinstance(past_key_values, Cache):
-                    bound_args.arguments["past_key_values"] = DynamicCache(tuple(past_key_values))
                 outputs = model_forward(*bound_args.args, **bound_args.kwargs)
                 if torch.onnx.is_in_onnx_export():
                     if hasattr(outputs, "logits") and hasattr(outputs, "past_key_values"):
@@ -4578,18 +4587,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         custom_io = {}
         if not cache_compressed:
             kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
-            for i in range(self.num_layers):
-                for kv in ["key", "value"]:
-                    output_name = _compile_io_name(
-                        f"past_{kv}.{i}{kv_infix}_RetainedState",
-                        use_onnx_subfunctions=use_onnx_subfunctions,
-                    )
-                    _add_retained_state_custom_io(
-                        custom_io,
-                        output_name,
-                        dtype=kv_cache_dtype,
-                        use_onnx_subfunctions=False,
-                    )
+            retained_state_names = (
+                self.model.get_retained_state_names()
+                if hasattr(self.model, "get_retained_state_names")
+                else [f"past_{kv}.{i}" for i in range(self.num_layers) for kv in ["key", "value"]]
+            )
+            for state_name in retained_state_names:
+                output_name = _compile_io_name(
+                    f"{state_name}{kv_infix}_RetainedState",
+                    use_onnx_subfunctions=use_onnx_subfunctions,
+                )
+                _add_retained_state_custom_io(
+                    custom_io,
+                    output_name,
+                    dtype=kv_cache_dtype,
+                    use_onnx_subfunctions=False,
+                )
         else:
             kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
             for i in range(self.num_layers):

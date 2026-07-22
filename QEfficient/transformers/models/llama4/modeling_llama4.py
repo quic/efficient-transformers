@@ -746,6 +746,12 @@ class QEffLlama4ForCausalLM(Llama4ForCausalLM):
             "Current output differs from HF output due to a bug in TF v_4.55. Switch to branch release/v_1.20 for TF match. Refer link: https://github.com/huggingface/transformers/pull/39501"
         )
 
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the class used as the repeated layer across the text decoder for subfunction extraction.
+        """
+        return {QEffLlama4TextDecoderLayer}
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
