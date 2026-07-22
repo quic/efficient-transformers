@@ -52,7 +52,9 @@ class QEffMptAttention(MptAttention):
         batch_size, seq_length = hidden_states.shape[:2]
 
         mixed_qkv = self.Wqkv(hidden_states)
-        query_states, key_states, value_states = mixed_qkv.chunk(3, dim=2)
+        # refactored due to SplitToSequence error caused by .chunk()
+        qkv_split = self.n_heads * self.head_dim
+        query_states, key_states, value_states = mixed_qkv.split(qkv_split, dim=2)
         query_states = query_states.reshape(batch_size, seq_length, self.n_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.reshape(batch_size, seq_length, self.n_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.reshape(batch_size, seq_length, self.n_heads, self.head_dim).transpose(1, 2)

@@ -15,7 +15,7 @@ from QEfficient import QEFFAutoModelForCausalLM
 def main():
     parser = argparse.ArgumentParser(description="Basic text generation inference")
     parser.add_argument("--model-name", type=str, default="Qwen/Qwen2-1.5B-Instruct", help="HuggingFace model ID")
-    parser.add_argument("--num-hidden-layers", type=int, default=4, help="Num hidden layers in the model")
+    parser.add_argument("--num-hidden-layers", type=int, default=-1, help="Num hidden layers in the model")
     parser.add_argument("--prompt", type=str, default="Hello, how are you?", help="Input prompt")
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=128, help="Context length")
@@ -35,7 +35,8 @@ def main():
     # Load tokenizer and model
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     config = AutoConfig.from_pretrained(args.model_name)
-    config.num_hidden_layers = args.num_hidden_layers
+    if args.num_hidden_layers > 0:
+        config.num_hidden_layers = args.num_hidden_layers
     model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, config=config)
 
     # Compile the model

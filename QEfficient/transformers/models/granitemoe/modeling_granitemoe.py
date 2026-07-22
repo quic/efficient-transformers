@@ -494,17 +494,6 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
                 num of experts.
 
         """
-        # logits = self.layer(hidden_states).float()
-        # top_k_logits, top_k_indices = torch.topk(logits, self.top_k, dim=1)  # [num_tokens, top_k]
-        # top_k_gates = torch.softmax(top_k_logits, dim=1).type_as(hidden_states)  # [num_tokens, top_k]
-
-        # B, K = top_k_indices.shape
-        # E = int(self.num_experts)
-        # flat = top_k_indices.reshape(-1)
-        # mask = torch.zeros((B * K, E), dtype=torch.int64, device=top_k_indices.device)
-        # mask[torch.arange(B * K, device=flat.device), flat] = torch.ones(1, dtype=torch.int64, device=flat.device)
-        # expert_mask = mask.view(B, K, E).permute(2, 1, 0)
-        # return top_k_gates, expert_mask, logits, self.num_experts
 
         logits = self.layer(hidden_states).float()
 
@@ -550,8 +539,9 @@ class QEffGraniteMoeMoE(GraniteMoeMoE):
             # mask_weight = torch.einsum("be,be->b", topk_gates, mask.to(topk_gates.dtype))[:, None]
             mask_weight = torch.einsum("be,be->b", topk_gates, mask.to(dtype=topk_gates.dtype))[:, None]
             hidden_states = self.input_linear(layer_input, expert_idx)
-            chunked_hidden_states = hidden_states.chunk(2, dim=-1)
-            hidden_states = self.activation(chunked_hidden_states[0]) * chunked_hidden_states[1]
+            # refactored due to SplitToSequence error
+            hidden_states, gate = hidden_states[..., : self.hidden_size], hidden_states[..., self.hidden_size :]
+            hidden_states = self.activation(hidden_states) * gate
             expert_outputs = self.output_linear(hidden_states, expert_idx)
             # current_hidden_states = torch.where(mask_weight > 0, expert_outputs * mask_weight, 0.0, dtype=mask_weight.dtype)
 
