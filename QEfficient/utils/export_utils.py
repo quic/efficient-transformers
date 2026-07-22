@@ -7,9 +7,7 @@
 
 import copy
 import inspect
-import platform
 import re
-import sys
 import warnings
 from contextlib import nullcontext
 from pathlib import Path
@@ -229,16 +227,10 @@ def export_wrapper(func):
             torch_version = torch.__version__
             major, minor = (int(x) for x in torch_version.split("+")[0].split(".")[:2])
             if (major, minor) < (2, 13):
-                py = f"cp{sys.version_info.major}{sys.version_info.minor}"
-                arch = "aarch64" if platform.machine() == "aarch64" else "x86_64"
                 raise AssertionError(
                     f"dynamo=True requires PyTorch >= 2.13, but found {torch_version}. "
                     "Please install the required dependencies:\n"
-                    f"  pip install "
-                    f"'torch@https://download.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-{py}-{py}-manylinux_2_28_{arch}.whl' "
-                    f"'torchvision@https://download.pytorch.org/whl/cpu/torchvision-0.28.0%2Bcpu-{py}-{py}-manylinux_2_28_{arch}.whl' "
-                    "'compressed-tensors==0.17.0' "
-                    "'onnxscript==0.6.2'"
+                    "  pip install -r dynamo_requirements.txt"
                 )
             # Resolve dynamic_shapes from dynamic_axes before the hash so the hash captures
             # the actual shape constraints.
