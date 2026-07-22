@@ -204,7 +204,7 @@ class QEffDynamicLayer(CacheLayerMixin):
             v_out = ctx_gather(v_out, ctx_indices, ctx_len)
 
         invalid_mask = _match_invalid_mask(invalid_mask, v_out.shape[-2])
-        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=torch.float32), v_out)
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
 
         return k_out, v_out
 
@@ -249,7 +249,7 @@ class QEffDynamicLayer(CacheLayerMixin):
             v_out = ctx_gather_blocked_kv(v_out, ctx_indices)
 
         invalid_mask = _match_invalid_mask(invalid_mask, v_out.shape[-2])
-        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=torch.float32), v_out)
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
 
         return k_out, v_out
 
@@ -347,7 +347,7 @@ class QEffDynamicLayer(CacheLayerMixin):
                 k_out = ctx_gather(k_out, ctx_indices, ctx_len)
                 v_out = ctx_gather(v_out, ctx_indices, ctx_len)
 
-            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=torch.float32), v_out)
+            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
 
         return k_out, v_out
 
@@ -411,7 +411,7 @@ class QEffDynamicLayer(CacheLayerMixin):
                 k_out = ctx_gather_3d(k_out, ctx_indices)
                 v_out = ctx_gather_3d(v_out, ctx_indices)
 
-            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=torch.float32), v_out)
+            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
 
         return k_out, v_out
 
@@ -435,7 +435,7 @@ class QEffDynamicCompressedKVRopeLayer:
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
         ckv_out = ctx_gather(ckv_out, ctx_indices, ctx_len)
-        ckv_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(ckv_out, dtype=torch.float32), ckv_out)
+        ckv_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(ckv_out, dtype=ckv_out.dtype), ckv_out)
         return ckv_out
 
     def update_k_pe(self, k_pe_cache, cache_kwargs):
@@ -452,7 +452,7 @@ class QEffDynamicCompressedKVRopeLayer:
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
         k_pe_out = ctx_gather(k_pe_out, ctx_indices, ctx_len)
-        k_pe_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(k_pe_out, dtype=torch.float32), k_pe_out)
+        k_pe_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(k_pe_out, dtype=k_pe_out.dtype), k_pe_out)
         return k_pe_out
 
     def read_only_blocked_ckv(self, start_index, end_index, cache_kwargs):
@@ -471,7 +471,7 @@ class QEffDynamicCompressedKVRopeLayer:
         ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
         ckv_out = ctx_gather_blocked_kv(ckv_out, ctx_indices)
 
-        ckv_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(ckv_out, dtype=torch.float32), ckv_out)
+        ckv_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(ckv_out, dtype=ckv_out.dtype), ckv_out)
         return ckv_out
 
     def read_only_blocked_k_pe(self, start_index, end_index, cache_kwargs):
@@ -490,7 +490,7 @@ class QEffDynamicCompressedKVRopeLayer:
         ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
         k_pe_out = ctx_gather_blocked_kv(k_pe_out, ctx_indices)
 
-        k_pe_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(k_pe_out, dtype=torch.float32), k_pe_out)
+        k_pe_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(k_pe_out, dtype=k_pe_out.dtype), k_pe_out)
         return k_pe_out
 
     def write_only_k_pe(self, k_pe_cache, cache_kwargs):
@@ -857,7 +857,7 @@ class QEffHybridCache(HybridCache):
 
             k_out = ctx_gather(k_out, final_indices, ctx_len)
             v_out = ctx_gather(v_out, final_indices, ctx_len)
-            ctx_v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=torch.float32), v_out)
+            ctx_v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
             v_out = torch.where((is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1))), v_out, ctx_v_out)
         return k_out, v_out
 
@@ -981,7 +981,7 @@ class QEffHybridChunkedCache(HybridChunkedCache):
 
             k_out = ctx_gather(k_out, final_indices, ctx_len)
             v_out = ctx_gather(v_out, final_indices, ctx_len)
-            ctx_v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=torch.float32), v_out)
+            ctx_v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
             v_out = torch.where((is_sliding_layer & (position_ids.max() >= (layer_ctx_len - 1))), v_out, ctx_v_out)
         return k_out, v_out
 
@@ -1137,7 +1137,7 @@ class QEffSlidingWindowCache:
                 k_out = ctx_gather(k_out, ctx_indices, ctx_len)
                 v_out = ctx_gather(v_out, ctx_indices, ctx_len)
 
-            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=torch.float32), v_out)
+            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
         return k_out, v_out
 
 
@@ -1263,7 +1263,7 @@ class QEffHybridCacheForGPTOSS:
             k_out = ctx_gather_blocked_kv(k_out, ctx_indices)
             v_out = ctx_gather_blocked_kv(v_out, ctx_indices)
 
-        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=torch.float32), v_out)
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
         return k_out, v_out
 
     def update(
@@ -1330,7 +1330,7 @@ class QEffHybridCacheForGPTOSS:
                 k_out = ctx_gather(k_out, ctx_indices, ctx_len)
                 v_out = ctx_gather(v_out, ctx_indices, ctx_len)
 
-            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=torch.float32), v_out)
+            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
         return k_out, v_out
 
     def full_cache_update_chunked(
@@ -1372,7 +1372,7 @@ class QEffHybridCacheForGPTOSS:
         else:
             k_out = ctx_gather(k_out, ctx_indices, ctx_len)
             v_out = ctx_gather(v_out, ctx_indices, ctx_len)
-        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=torch.float32), v_out)
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
 
         return k_out, v_out
 
@@ -1418,7 +1418,7 @@ class QEffHybridCacheForGPTOSS:
         else:
             k_out = ctx_gather(k_out, ctx_indices, ctx_len)
             v_out = ctx_gather(v_out, ctx_indices, ctx_len)
-        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=torch.float32), v_out)
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
 
         return k_out, v_out
 
@@ -1571,8 +1571,8 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
             k_out = ctx_gather(k_out, final_indices, ctx_len)
             v_out = ctx_gather(v_out, final_indices, ctx_len)
 
-        k_ctx_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(k_out, dtype=torch.float32), k_out)
-        v_ctx_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=torch.float32), v_out)
+        k_ctx_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(k_out, dtype=k_out.dtype), k_out)
+        v_ctx_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
         k_out = torch.where(use_rolling_indices, k_out, k_ctx_out)
         v_out = torch.where(use_rolling_indices, v_out, v_ctx_out)
         return k_out, v_out
