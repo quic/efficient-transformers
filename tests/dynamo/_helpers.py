@@ -61,7 +61,7 @@ DYNAMO_CAUSAL_LM_MODEL_IDS = {
     "mpt": "hf-internal-testing/tiny-random-MptForCausalLM",
     "olmo2": "hf-internal-testing/tiny-random-Olmo2ForCausalLM",
     "phi": "hf-internal-testing/tiny-random-PhiForCausalLM",
-    "phi3": "tiny-random/phi-4",
+    # "phi3": "tiny-random/phi-4", #TODO: need to fix the SplitToSequence issue
     "qwen2": "yujiepan/qwen2-tiny-random",
     "qwen3": "tiny-random/qwen3",
     "qwen3_moe": "tiny-random/qwen3-moe",

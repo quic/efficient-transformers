@@ -19,7 +19,6 @@ from transformers.models.phi3.modeling_phi3 import (
     Phi3Config,
     Phi3DecoderLayer,
     Phi3ForCausalLM,
-    Phi3MLP,
     Phi3Model,
     Phi3RotaryEmbedding,
     repeat_kv,
@@ -88,9 +87,7 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask,
-            torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
-            attn_weights,
+            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
@@ -98,17 +95,6 @@ def eager_attention_forward(
     attn_output = attn_output.transpose(1, 2).contiguous()
 
     return attn_output, attn_weights
-
-
-class QEffPhi3MLP(Phi3MLP):
-    def forward(self, hidden_states: torch.FloatTensor) -> torch.FloatTensor:
-        up_states = self.gate_up_proj(hidden_states)
-        # Replace chunk(2, dim=-1) with explicit slices using self.config.intermediate_size
-        # so TorchScript emits a constant Slice rather than SplitToSequence inside subfunctions.
-        gate = up_states[:, :, : self.config.intermediate_size]
-        up_states = up_states[:, :, self.config.intermediate_size :]
-        up_states = up_states * self.activation_fn(gate)
-        return self.down_proj(up_states)
 
 
 class QEffPhi3Attention(Phi3Attention):
@@ -135,19 +121,17 @@ class QEffPhi3Attention(Phi3Attention):
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.head_dim)
 
         qkv = self.qkv_proj(hidden_states)
-        # Reshape to (batch, seq, num_kv_heads, num_kv_groups+2, head_dim) so the
-        # Q/K/V split falls on a static axis dimension, avoiding Split/SplitToSequence.
-        batch, seq = hidden_states.shape[0], hidden_states.shape[1]
-        qkv = qkv.view(batch, seq, self.num_key_value_heads, self.num_key_value_groups + 2, self.head_dim)
-        query_states = qkv[:, :, :, : self.num_key_value_groups, :].reshape(batch, seq, -1)
-        key_states = qkv[:, :, :, self.num_key_value_groups, :]
-        value_states = qkv[:, :, :, self.num_key_value_groups + 1, :]
+        query_pos = self.config.num_attention_heads * self.head_dim
+        query_states = qkv[..., :query_pos]
+        key_states = qkv[..., query_pos : query_pos + self.num_key_value_heads * self.head_dim]
+        value_states = qkv[..., query_pos + self.num_key_value_heads * self.head_dim :]
 
-        query_states = query_states.view(batch, seq, -1, self.head_dim).transpose(1, 2)
-        key_states = key_states.transpose(1, 2)
-        value_states = value_states.transpose(1, 2)
+        query_states = query_states.view(hidden_shape).transpose(1, 2)
+        key_states = key_states.view(hidden_shape).transpose(1, 2)
+        value_states = value_states.view(hidden_shape).transpose(1, 2)
 
         # kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
 
