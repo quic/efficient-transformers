@@ -357,7 +357,7 @@ class QEFFBaseModel(ABC):
         export_kwargs: Dict,
     ) -> None:
         """Export via TorchScript symbolic tracing (dynamo=False)."""
-        with layerwise_safe_onnx_export_patches():
+        with layerwise_safe_onnx_export_patches(enabled=bool(QEFFBaseModel._layerwise_active)):
             torch.onnx.export(
                 self.model,
                 (),
