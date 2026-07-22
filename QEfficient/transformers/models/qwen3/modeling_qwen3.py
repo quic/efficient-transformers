@@ -265,12 +265,17 @@ class QEffQwen3Model(Qwen3Model):
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     - update causal attention mask
+    - support flux2 klein model with specific hidden states extraction
     """
 
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3RotaryEmbedding(config=self.config)
         self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached * self.rotary_emb.attention_scaling)
         self.cos_cached = torch.nn.Parameter(self.rotary_emb.cos_cached * self.rotary_emb.attention_scaling)
+
+    def is_flux2(self):
+        """Check if the model is configured for flux2 klein."""
+        return getattr(self.config, "is_flux2", False)
 
     def forward(
         self,
@@ -313,9 +318,23 @@ class QEffQwen3Model(Qwen3Model):
             position_ids = cache_position.unsqueeze(0)
 
         target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
-        causal_mask = _create_causal_mask(
-            position_ids=position_ids, target_length=target_length, sliding_window=self.config.sliding_window
-        )
+
+        # Create causal mask based on model type
+        is_flux2 = self.is_flux2()
+        if is_flux2:
+            # For flux2 klein: only create causal mask when using cache
+            causal_mask = (
+                _create_causal_mask(
+                    position_ids=position_ids, target_length=target_length, sliding_window=self.config.sliding_window
+                )
+                if use_cache
+                else None
+            )
+        else:
+            # Standard behavior: always create causal mask
+            causal_mask = _create_causal_mask(
+                position_ids=position_ids, target_length=target_length, sliding_window=self.config.sliding_window
+            )
 
         hidden_states = inputs_embeds
 
@@ -324,7 +343,12 @@ class QEffQwen3Model(Qwen3Model):
         sin = self.sin_cached[position_ids].unsqueeze(1)
         cos = self.cos_cached[position_ids].unsqueeze(1)
 
-        for decoder_layer in self.layers:
+        # Flux2 klein specific: track hidden states at specific layers
+        if is_flux2:
+            hidden_states_list = []
+            hidden_states_layers = [8, 17, 26]
+
+        for layer_idx, decoder_layer in enumerate(self.layers):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -341,7 +365,18 @@ class QEffQwen3Model(Qwen3Model):
                 cos_cached=cos,
             )
 
-        hidden_states = self.norm(hidden_states)
+            # Flux2 klein specific: collect hidden states at specific layers
+            if is_flux2 and layer_idx in hidden_states_layers:
+                hidden_states_list.append(hidden_states)
+
+        # Process final hidden states based on model type
+        if is_flux2:
+            # Flux2 klein: stack selected hidden states
+            last_hidden_state = torch.stack(hidden_states_list, dim=1)
+        else:
+            # Standard behavior: apply normalization
+            hidden_states = self.norm(hidden_states)
+            last_hidden_state = hidden_states
 
         # add hidden states from the last decoder layer
         if output_hidden_states:
@@ -351,7 +386,7 @@ class QEffQwen3Model(Qwen3Model):
             past_key_values = past_key_values.to_legacy_cache()
 
         return BaseModelOutputWithPast(
-            last_hidden_state=hidden_states,
+            last_hidden_state=last_hidden_state,
             past_key_values=past_key_values if use_cache else None,
             hidden_states=all_hidden_states,
         )
@@ -363,7 +398,12 @@ class QEffQwen3ForCausalLM(Qwen3ForCausalLM):
     The only differences are:
     - add new args position idx for the cache_kwargs for kv retention
     - update the hidden_states, and fix for onnx model
+    - support flux2 klein model with direct output return
     """
+
+    def is_flux2(self):
+        """Check if the model is configured for flux2 klein."""
+        return getattr(self.config, "is_flux2", False)
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
@@ -406,6 +446,11 @@ class QEffQwen3ForCausalLM(Qwen3ForCausalLM):
             output_hidden_states=output_hidden_states,
         )
 
+        # Flux2 klein specific: return outputs directly without logits computation
+        if self.is_flux2():
+            return outputs
+
+        # Standard behavior: compute logits from hidden states
         # Cast to INT32 to avoid issue while running in ONNXRT
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
