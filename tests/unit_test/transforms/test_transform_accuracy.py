@@ -52,6 +52,7 @@ from transformers import (
     Qwen2ForCausalLM,
 )
 
+import QEfficient.transformers.models.pytorch_transforms as pytorch_transforms
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
@@ -1483,6 +1484,16 @@ class TestSplitOptimizedMoETransform:
         assert model.block.weights_transformed is True
         assert model.block.moe_weights.gate.shape == (2, 4, 8)
 
+    def test_weights_transform_collects_after_transform_weights(self, monkeypatch):
+        model = _DummyOptimizedMoEModel()
+        collect_calls = []
+        monkeypatch.setattr(pytorch_transforms.gc, "collect", lambda: collect_calls.append(None))
+
+        _, transformed = OptimizedMoEWeightsTransform.apply(model)
+
+        assert transformed
+        assert collect_calls == [None]
+
     def test_weights_transform_registers_canonical_moe_parameters(self):
         model = _DummyOptimizedMoEModel()
 
@@ -1861,7 +1872,31 @@ class TestSplitOptimizedMoETransform:
         assert model.block.moe_weights is model.block.experts.moe_weights
         assert model.block.moe_weights is not old_weights
         assert model.block.moe_weights.gate.shape == (2, 1, 4, 8)
+        for name in ("gate", "up", "down"):
+            packed_param = getattr(model.block.moe_weights, name)
+            old_param = getattr(old_weights, name)
+            assert isinstance(packed_param, nn.Parameter)
+            assert packed_param.requires_grad is False
+            assert packed_param.data_ptr() != old_param.data_ptr()
         assert old_weights.gate.shape == (2, 4, 8)
+
+    def test_expert_parallel_transform_collects_after_replacing_weights(self, monkeypatch):
+        model = _DummyOptimizedMoEModel()
+        OptimizedMoEWeightsTransform.apply(model)
+        OptimizedMoEExportConfigTransform.apply(
+            model,
+            prefill_only=True,
+            num_cores=2,
+            qaic_config={"moe_config": {"flavour": "expert_parallel", "packed_chunk_size": 16}},
+            prefill_seq_len=32,
+        )
+        collect_calls = []
+        monkeypatch.setattr(pytorch_transforms.gc, "collect", lambda: collect_calls.append(None))
+
+        _, transformed = OptimizedMoEExpertParallelWeightsTransform.apply(model)
+
+        assert transformed
+        assert collect_calls == [None]
 
     def test_split_transforms_noop_for_non_moe_models(self):
         model = nn.Sequential(nn.Linear(4, 4))

@@ -171,10 +171,11 @@ def _pack_expert_parallel_tensor(
     *,
     local_experts: int,
     num_nsp: int,
-) -> Optional[torch.Tensor]:
+) -> Optional[nn.Parameter]:
     if tensor is None:
         return None
-    return tensor.view(local_experts, num_nsp, *tensor.shape[1:]).transpose(0, 1).contiguous()
+    packed = tensor.view(local_experts, num_nsp, *tensor.shape[1:]).transpose(0, 1).contiguous().detach().clone()
+    return nn.Parameter(packed, requires_grad=False)
 
 
 def _unpack_expert_parallel_tensor(tensor: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
