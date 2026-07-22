@@ -630,7 +630,12 @@ from QEfficient.transformers.models.whisper.modeling_whisper import (
     QEffWhisperModel,
     QEffWhisperPositionalEmbedding,
 )
-from QEfficient.transformers.moe import MoEFlavour, QEffMoEBlockMixin
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    QEffMoEBlockMixin,
+    pack_moe_weights_for_expert_parallel,
+    unpack_moe_weights_from_expert_parallel,
+)
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
 from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
@@ -1489,7 +1494,7 @@ class OptimizedMoEWeightsTransform(PytorchTransform):
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
         transformed = False
-        for module in _iter_optimized_moe_modules(model):
+        for module in list(_iter_optimized_moe_modules(model)):
             if getattr(module, "weights_transformed", False):
                 continue
             module.transform_weights()
@@ -1534,7 +1539,7 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
         transformed = False
         flavour = None
         uses_expert_parallel = False
-        for module in _iter_optimized_moe_modules(model):
+        for module in list(_iter_optimized_moe_modules(model)):
             get_supported_moe_flavours = getattr(module, "get_supported_moe_flavours", None)
             if callable(get_supported_moe_flavours):
                 supported_flavours = get_supported_moe_flavours()
@@ -1577,6 +1582,45 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
         return model, transformed
 
 
+def _replace_moe_weight_aliases(model: nn.Module, old_weights: nn.Module, new_weights: nn.Module) -> None:
+    for module in list(model.modules()):
+        for name, child in list(module._modules.items()):
+            if child is old_weights:
+                setattr(module, name, new_weights)
+
+
+class OptimizedMoEExpertParallelWeightsTransform(PytorchTransform):
+    """Pack or restore MoE weights according to the selected MoE export flavour."""
+
+    @classmethod
+    def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
+        transformed = False
+        for module in list(_iter_optimized_moe_modules(model)):
+            if not getattr(module, "weights_transformed", False):
+                continue
+            weights = getattr(module, "moe_weights", None)
+            if weights is None:
+                continue
+
+            flavour = getattr(module, "_moe_flavour", MoEFlavour.DECODE_BMM)
+            if not isinstance(flavour, MoEFlavour):
+                flavour = MoEFlavour(flavour)
+
+            if flavour is MoEFlavour.EXPERT_PARALLEL:
+                num_nsp = getattr(module, "expert_parallel_num_nsp", None)
+                if num_nsp is None:
+                    num_nsp = getattr(module, "expert_blocking_num_nsp", None) or weights.num_experts
+                new_weights = pack_moe_weights_for_expert_parallel(weights, int(num_nsp))
+            else:
+                new_weights = unpack_moe_weights_from_expert_parallel(weights)
+
+            if new_weights is weights:
+                continue
+            _replace_moe_weight_aliases(model, weights, new_weights)
+            transformed = True
+        return model, transformed
+
+
 class OptimizedMoETransform(PytorchTransform):
     """Compatibility facade for MoE mapping discovery, weights, and export config."""
 
@@ -1602,7 +1646,8 @@ class OptimizedMoETransform(PytorchTransform):
             prefill_seq_len=prefill_seq_len,
             hash_params=hash_params,
         )
-        return model, mapped or external_mapped or weights_ready or export_configured
+        _, expert_parallel_weights_ready = OptimizedMoEExpertParallelWeightsTransform.apply(model)
+        return model, mapped or external_mapped or weights_ready or export_configured or expert_parallel_weights_ready
 
 
 class SimpleDecodeMoeTransform(OptimizedMoETransform):

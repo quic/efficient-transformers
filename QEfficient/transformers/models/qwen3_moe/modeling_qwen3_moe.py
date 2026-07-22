@@ -178,7 +178,7 @@ class QEffQwen3MoeSparseMoeBlock(QEffMoEBlockMixin, Qwen3MoeSparseMoeBlock):
     def route(self, x: torch.Tensor):
         router_logits, top_w, top_i = self.gate(x)
         if self.norm_topk_prob:
-            top_w = top_w / top_w.sum(-1, keepdim=True)
+            top_w = top_w / torch.einsum("bk->b", top_w).unsqueeze(-1)
         top_w = top_w.to(x.dtype)
         return (top_i, top_w), router_logits
 

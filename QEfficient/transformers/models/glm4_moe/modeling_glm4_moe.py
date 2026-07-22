@@ -503,11 +503,10 @@ class QEffGlm4MoeTopkRouter(nn.Module):
     @torch.no_grad()
     def get_topk_indices(self, scores):
         scores_for_choice = scores.view(-1, self.n_routed_experts) + self.e_score_correction_bias.unsqueeze(0)
-        group_scores = (
-            scores_for_choice.view(-1, self.n_group, self.n_routed_experts // self.n_group)
-            .topk(2, dim=-1)[0]
-            .sum(dim=-1)
-        )
+        group_scores_top2 = scores_for_choice.view(-1, self.n_group, self.n_routed_experts // self.n_group).topk(
+            2, dim=-1
+        )[0]
+        group_scores = torch.einsum("bge->bg", group_scores_top2)
         group_idx = torch.topk(group_scores, k=self.topk_group, dim=-1, sorted=False)[1]
         group_mask = torch.zeros_like(group_scores)
         group_mask.scatter_(1, group_idx, 1)

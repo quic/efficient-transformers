@@ -57,6 +57,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     ExternalOptimizedMoEMapperTransform,
     KVCacheTransform,
+    OptimizedMoEExpertParallelWeightsTransform,
     OptimizedMoEExportConfigTransform,
     OptimizedMoEMapperTransform,
     OptimizedMoETransform,
@@ -1299,6 +1300,26 @@ class _DummyOptimizedMoEModel(nn.Module):
         self.block = _DummyOptimizedMoEBlock()
 
 
+class _DummyNestedOptimizedMoEBlock(_DummyOptimizedMoEBlock):
+    supported_moe_flavours = _DummyOptimizedMoEBlock.supported_moe_flavours
+
+    def __init__(self):
+        super().__init__()
+        self.experts = nn.Module()
+
+    def transform_weights(self):
+        weights = super().transform_weights()
+        self.experts.moe_weights = weights
+        return weights
+
+
+class _DummyNestedOptimizedMoEModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.config = SimpleNamespace(model_type="qwen3_moe")
+        self.block = _DummyNestedOptimizedMoEBlock()
+
+
 def test_moe_simple_loop_prescale_matches_manual_expert_input_scaling():
     x = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
     routing_weights = torch.tensor([[0.25, 0.0, 0.5], [0.0, 0.75, 0.0]])
@@ -1674,8 +1695,55 @@ class TestSplitOptimizedMoETransform:
         assert transformed
         assert model.block.transform_count == 1
         assert model.block.moe_weights is not None
+        assert model.block.moe_weights.gate.shape == (2, 1, 4, 8)
+        assert model.block.moe_weights.down.shape == (2, 1, 8, 4)
+        assert model.block.moe_weights.num_experts == 2
         assert model.block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
         assert hash_params["moe_prefill_num_packed_chunks"] == 2
+
+    @pytest.mark.parametrize(
+        ("prefill_only", "qaic_config", "expected_flavour"),
+        [
+            (True, {"moe_config": {"flavour": "simple_loop"}}, MoEFlavour.SIMPLE_LOOP),
+            (False, {"moe_config": {"flavour": "decode_bmm"}}, MoEFlavour.DECODE_BMM),
+        ],
+    )
+    def test_facade_keeps_non_expert_parallel_weights_canonical(self, prefill_only, qaic_config, expected_flavour):
+        model = _DummyOptimizedMoEModel()
+
+        _, transformed = OptimizedMoETransform.apply(
+            model,
+            prefill_only=prefill_only,
+            qaic_config=qaic_config,
+        )
+
+        assert transformed
+        assert model.block._moe_flavour is expected_flavour
+        assert model.block.moe_weights.gate.shape == (2, 4, 8)
+        assert model.block.moe_weights.down.shape == (2, 8, 4)
+
+    def test_facade_does_not_rebuild_weights_when_reapplied_to_expert_parallel(self):
+        model = _DummyOptimizedMoEModel()
+
+        OptimizedMoETransform.apply(
+            model,
+            prefill_only=True,
+            num_cores=2,
+            qaic_config={"moe_config": {"flavour": "expert_parallel", "packed_chunk_size": 16}},
+            prefill_seq_len=32,
+        )
+        first_weights = model.block.moe_weights
+        OptimizedMoETransform.apply(
+            model,
+            prefill_only=True,
+            num_cores=2,
+            qaic_config={"moe_config": {"flavour": "expert_parallel", "packed_chunk_size": 16}},
+            prefill_seq_len=32,
+        )
+
+        assert model.block.transform_count == 1
+        assert model.block.moe_weights is first_weights
+        assert model.block.moe_weights.gate.shape == (2, 1, 4, 8)
 
     @pytest.mark.parametrize("qaic_config", [None, {"moe_config": {}}, {"moe_config": {"packed_chunk_size": None}}])
     def test_missing_packed_chunk_size_uses_default_constant(self, qaic_config):
@@ -1732,6 +1800,7 @@ class TestSplitOptimizedMoETransform:
         model = _DummyOptimizedMoEModel()
         first_hash_params = {}
         second_hash_params = {}
+        third_hash_params = {}
 
         _, first_transformed = OptimizedMoETransform.apply(
             model,
@@ -1747,14 +1816,23 @@ class TestSplitOptimizedMoETransform:
             prefill_seq_len=32,
             hash_params=second_hash_params,
         )
+        _, third_transformed = OptimizedMoETransform.apply(
+            model,
+            prefill_only=True,
+            qaic_config={"moe_config": {"flavour": "simple_loop"}},
+            hash_params=third_hash_params,
+        )
 
         assert first_transformed
         assert second_transformed
+        assert third_transformed
         assert model.block.transform_count == 1
-        assert model.block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
+        assert model.block._moe_flavour is MoEFlavour.SIMPLE_LOOP
         assert model.block.expert_parallel_num_nsp == 2
         assert model.block.expert_parallel_packed_chunk_size == 16
         assert model.block.expert_parallel_num_packed_chunks == 2
+        assert model.block.moe_weights.gate.shape == (2, 4, 8)
+        assert model.block.moe_weights.down.shape == (2, 8, 4)
         assert first_hash_params == {"moe_prefill_flavour": "simple_loop"}
         assert second_hash_params == {
             "moe_prefill_flavour": "expert_parallel",
@@ -1762,6 +1840,28 @@ class TestSplitOptimizedMoETransform:
             "moe_prefill_packed_chunk_size": 16,
             "moe_prefill_num_packed_chunks": 2,
         }
+        assert third_hash_params == {"moe_prefill_flavour": "simple_loop"}
+
+    def test_expert_parallel_transform_replaces_nested_moe_weight_aliases(self):
+        model = _DummyNestedOptimizedMoEModel()
+
+        OptimizedMoEWeightsTransform.apply(model)
+        old_weights = model.block.moe_weights
+        assert model.block.experts.moe_weights is old_weights
+        OptimizedMoEExportConfigTransform.apply(
+            model,
+            prefill_only=True,
+            num_cores=2,
+            qaic_config={"moe_config": {"flavour": "expert_parallel", "packed_chunk_size": 16}},
+            prefill_seq_len=32,
+        )
+        _, transformed = OptimizedMoEExpertParallelWeightsTransform.apply(model)
+
+        assert transformed
+        assert model.block.moe_weights is model.block.experts.moe_weights
+        assert model.block.moe_weights is not old_weights
+        assert model.block.moe_weights.gate.shape == (2, 1, 4, 8)
+        assert old_weights.gate.shape == (2, 4, 8)
 
     def test_split_transforms_noop_for_non_moe_models(self):
         model = nn.Sequential(nn.Linear(4, 4))
@@ -1769,6 +1869,7 @@ class TestSplitOptimizedMoETransform:
         assert not OptimizedMoEMapperTransform.apply(model)[1]
         assert not OptimizedMoEWeightsTransform.apply(model)[1]
         assert not OptimizedMoEExportConfigTransform.apply(model)[1]
+        assert not OptimizedMoEExpertParallelWeightsTransform.apply(model)[1]
         assert not OptimizedMoETransform.apply(model)[1]
 
     def test_mapper_discovers_structurally_bound_external_moe_modules(self):
@@ -1906,7 +2007,7 @@ class TestSplitOptimizedMoETransform:
         assert events[0][0] == "optimized_moe"
         assert "enable_chunking" not in events[0][1]
         assert "moe_prefill_packed_chunk_size" not in events[0][1]
-        assert events[0][1]["qaic_config"] == {"moe_config": {"flavour": "simple_loop"}}
+        assert events[0][1]["qaic_config"]["moe_config"] == {"flavour": "simple_loop"}
         assert events[1] == ("export", True, True, 2, 32)
         assert qeff.hash_params["optimized_moe_hook"] is True
 
