@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import gc
 import warnings
 from types import MethodType
 from typing import Callable, Optional, Tuple, Union
@@ -1518,6 +1519,7 @@ class OptimizedMoEWeightsTransform(PytorchTransform):
             if getattr(module, "weights_transformed", False):
                 continue
             module.transform_weights()
+            gc.collect()
             transformed = True
         return model, transformed
 
@@ -1637,6 +1639,8 @@ class OptimizedMoEExpertParallelWeightsTransform(PytorchTransform):
             if new_weights is weights:
                 continue
             _replace_moe_weight_aliases(model, weights, new_weights)
+            del weights
+            gc.collect()
             transformed = True
         return model, transformed
 
