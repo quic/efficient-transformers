@@ -539,6 +539,7 @@ class QEffGraniteMoeMoE(GraniteMoeMoE):
             # mask_weight = torch.einsum("be,be->b", topk_gates, mask.to(topk_gates.dtype))[:, None]
             mask_weight = torch.einsum("be,be->b", topk_gates, mask.to(dtype=topk_gates.dtype))[:, None]
             hidden_states = self.input_linear(layer_input, expert_idx)
+            # refactored due to SplitToSequence error
             hidden_states, gate = hidden_states[..., : self.hidden_size], hidden_states[..., self.hidden_size :]
             hidden_states = self.activation(hidden_states) * gate
             expert_outputs = self.output_linear(hidden_states, expert_idx)
