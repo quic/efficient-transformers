@@ -22,6 +22,7 @@ from QEfficient.customop.ctx_scatter_gather_cb import (  # noqa: E402
     CtxScatterCB,
     CtxScatterCB3D,
 )
+from QEfficient.customop.onnxscript_utils import get_dynamo_onnxscript_func
 from QEfficient.customop.rms_norm import CustomRMSNorm  # noqa: E402
 
 
