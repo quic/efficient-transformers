@@ -67,16 +67,12 @@ def update_running_softmax(
 
     prev_output = output
     # if updating running softmax with attention sinks, we don't have v_block
+    output_scale = ((prev_denominator / current_denominator_updated).unsqueeze(-1)) * torch.exp(delta_max.unsqueeze(-1))
     if v_block is not None:
-        output_updated = ((prev_denominator / current_denominator_updated).unsqueeze(-1)) * prev_output * torch.exp(
-            delta_max.unsqueeze(-1)
-        ) + torch.matmul(prob, v_block)
+        value_output = torch.matmul(prob.to(v_block.dtype), v_block).to(prev_output.dtype)
+        output_updated = output_scale.to(prev_output.dtype) * prev_output + value_output
     else:
-        output_updated = (
-            ((prev_denominator / current_denominator_updated).unsqueeze(-1))
-            * prev_output
-            * torch.exp(delta_max.unsqueeze(-1))
-        )
+        output_updated = output_scale.to(prev_output.dtype) * prev_output
 
     if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
         current_max = torch.where(skip_future, prev_max, current_max_updated)

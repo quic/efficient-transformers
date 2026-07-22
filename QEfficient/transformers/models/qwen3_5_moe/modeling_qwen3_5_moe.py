@@ -71,6 +71,22 @@ from QEfficient.utils.logging_utils import logger
 # EXPERT_BLOCKING_NUM_NSP = 16
 # EXPERT_BLOCKING_PACKED_CHUNK_SIZE = 32
 QWEN3_5_MOE_ROPE_CACHE_EXPORT_CAP = 76800
+QWEN3_5_MOE_DEFAULT_MROPE_SECTION = [11, 11, 10]
+
+
+def _get_mrope_section(config) -> List[int]:
+    rope_parameters = getattr(config, "rope_parameters", None) or getattr(config, "rope_scaling", None) or {}
+    return rope_parameters.get("mrope_section", QWEN3_5_MOE_DEFAULT_MROPE_SECTION)
+
+
+def _expand_mrope_position_ids(position_ids, cache_position, batch_size):
+    if position_ids is None:
+        return cache_position.view(1, 1, -1).expand(4, batch_size, -1)
+    if position_ids.ndim == 1:
+        return position_ids.view(1, 1, -1).expand(4, batch_size, -1)
+    if position_ids.ndim == 2:
+        return position_ids.unsqueeze(0).expand(4, position_ids.shape[0], -1)
+    return position_ids
 
 
 class QEffQwen3_5MoeGatedDeltaNetCustomRMSNormAIC(nn.Module):
@@ -286,7 +302,7 @@ class QEffQwen3_5MoeTextRotaryEmbedding(Qwen3_5MoeTextRotaryEmbedding):
             device=self.inv_freq.device,
             dtype=torch.get_default_dtype(),
         )
-        self.mrope_section = config.rope_parameters.get("mrope_section", [11, 11, 10])
+        self.mrope_section = _get_mrope_section(config)
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
@@ -1065,8 +1081,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         #
         # ── Output ────────────────────────────────────────────
         core_attn_out = self.norm(core_attn_out.reshape(-1, self.head_v_dim), z.reshape(-1, self.head_v_dim))
-        # core_attn_out = core_attn_out.reshape(-1, self.head_v_dim)
-        return self.out_proj(core_attn_out.reshape(batch_size, seq_len, -1))
+        core_attn_out = core_attn_out.reshape(batch_size, seq_len, -1).to(self.out_proj.weight.dtype)
+        return self.out_proj(core_attn_out)
 
     @staticmethod
     def apply_mask_to_padding_states(hidden_states, attention_mask):
@@ -1195,28 +1211,28 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
                 cache_position = torch.arange(
                     past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
                 )
-        if position_ids is None:
-            position_ids = cache_position.unsqueeze(0)
+        position_ids = _expand_mrope_position_ids(position_ids, cache_position, inputs_embeds.shape[0])
+        text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
+        rotary_position_ids = (
+            position_ids[1:] if position_ids.ndim == 3 and position_ids.shape[0] == 4 else position_ids
+        )
 
         if isinstance(attention_mask, torch.Tensor):
             target_length = attention_mask.shape[-1]
         else:
             pos_max = 0
-            if position_ids is not None:
-                text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
-                pos_max = int(text_position_ids.max().item()) + 1
+            pos_max = int(text_position_ids.max().item()) + 1
             target_length = max(past_seen_tokens, pos_max)
         causal_mask = _create_causal_mask(
-            position_ids=position_ids[0], target_length=target_length, sliding_window=None
+            position_ids=text_position_ids, target_length=target_length, sliding_window=None
         )
         linear_attn_mask = self._update_linear_attn_mask(attention_mask, past_key_values)
 
         hidden_states = inputs_embeds
 
-        rope_parameters = getattr(self.config, "rope_parameters", {}) or {}
-        mrope_section = rope_parameters.get("mrope_section", [11, 11, 10])
+        mrope_section = _get_mrope_section(self.config)
         cos, sin = qeff_prepare_mrope_cos_sin(
-            self.cos_cached, self.sin_cached, position_ids[1:], mrope_section, dtype=hidden_states.dtype
+            self.cos_cached, self.sin_cached, rotary_position_ids, mrope_section, dtype=hidden_states.dtype
         )
         position_embeddings = (cos, sin)
         all_hidden_states = () if output_hidden_states else None
@@ -1283,6 +1299,11 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
 
     def get_retained_state_names(self) -> List[str]:
         return self._iter_retained_state_names()
+
+    def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
+        if self.config.layer_types[layer_idx] == "full_attention":
+            return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
+        return [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
 
     def get_onnx_retained_state_specs(
         self,
