@@ -22,7 +22,7 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-235B-A22B-Instruct"
 DEFAULT_PROMPTS = [
     "Tell me about yourself.",
     "What is the capital of France?",
@@ -41,14 +41,14 @@ DEFAULT_IMAGE_URLS = [
     "https://picsum.photos/id/234/536/354",
     "https://picsum.photos/id/235/536/354",
 ]
-DEFAULT_PREFILL_SEQ_LEN = 128
-DEFAULT_CTX_LEN = 2048
+DEFAULT_PREFILL_SEQ_LEN = 256
+DEFAULT_CTX_LEN = 4096
 DEFAULT_GENERATION_LEN = 100
 DEFAULT_FULL_BATCH_SIZE = 32
 
-STAGES = 4
-PREFILL_NUM_DEVICES = 8
-DECODE_NUM_DEVICES = 4
+STAGES = 8
+PREFILL_NUM_DEVICES = 16
+DECODE_NUM_DEVICES = 16
 # NOTE: the prefill-exec (input_ids) batch is always 1 under CB — each prompt is prefilled
 # individually into its own KV slot; the batch dimension is `full_batch_size` (KV slots).
 
@@ -132,7 +132,7 @@ def run(
             height=354,
             width=536,
             num_cores=16,
-            num_devices=2,
+            num_devices=16,
             mos=1,
             aic_enable_depth_first=True,
             skip_vision=False,
