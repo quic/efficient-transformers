@@ -367,7 +367,7 @@ class QEFFBaseModel(ABC):
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
                 dynamo=False,
-                opset_version=constants.ONNX_EXPORT_OPSET,
+                opset_version=constants.ONNX_LEGACY_EXPORT_OPSET,
                 **export_kwargs,
             )
 
@@ -416,7 +416,7 @@ class QEFFBaseModel(ABC):
                 output_names=output_names,
                 dynamic_axes=None,
                 dynamic_shapes=dynamic_shapes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
+                opset_version=constants.ONNX_DYNAMO_EXPORT_OPSET,
                 **export_kwargs,
             )
             if onnx_program is None:
@@ -580,6 +580,7 @@ class QEFFBaseModel(ABC):
                 "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
                 "model_name": self.model_name,
                 "dynamic_axes": None if dynamo else dynamic_axes,  # dynamo uses dynamic_shapes, not axes
+                "onnx_export_opset": constants.get_onnx_export_opset(dynamo),
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
@@ -880,7 +881,7 @@ class QEFFBaseModel(ABC):
                     input_names=input_names,
                     output_names=output_names,
                     dynamic_axes=dynamic_axes,
-                    opset_version=constants.ONNX_EXPORT_OPSET,
+                    opset_version=constants.ONNX_LEGACY_EXPORT_OPSET,
                     dynamo=False,
                     **export_kwargs,
                 )

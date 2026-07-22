@@ -179,6 +179,11 @@ def test_causal_lm_hash_creation(config, cb, subfunc, prefill_only, tmp_path):
     hash_params["qeff_auto_class"] = qeff_model.__class__.__name__
     hash_params["max_seq_len_cached"] = None
     hash_params["qaic_config"] = None
+    hash_params["use_onnx_subfunctions"] = subfunc
+    hash_params["onnx_transform_version"] = 1
+    hash_params["dynamo"] = False
+    if subfunc:
+        hash_params["onnx_subfunction_version"] = 2
 
     # Create parameters separately for hash creation
     bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
@@ -226,6 +231,7 @@ def test_causal_lm_hash_creation(config, cb, subfunc, prefill_only, tmp_path):
     export_params = {}
     export_params["output_names"] = output_names
     export_params["dynamic_axes"] = dynamic_axes
+    export_params["dynamic_shapes"] = None
     hash_params["export_params"] = export_params
     if subfunc:
         hash_params["export_modules_as_functions"] = qeff_model.model.get_submodules_for_export()
