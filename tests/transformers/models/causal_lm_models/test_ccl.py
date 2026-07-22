@@ -11,6 +11,7 @@ import torch
 
 from .check_causal_models import check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100
 from .config import (
+    COSINE_SIMILARITY_THRESHOLD,
     QEFF_TEST_PROFILE,
     causal_lm_models_dict,
     compile_params,
@@ -25,15 +26,16 @@ from .config import (
 @pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_fp16_export_compile_ccl_cb(model_name):
-    """
-    Fp16 + Subfunction + CB + CCL  (end to end run+ output verification)
+    """Verify that FP16 export and compilation succeed with CCL and continuous batching.
+
+    Exports in FP16 with Compute-Context-Length (CCL) enabled and continuous
+    batching, compiles with separate prefill and decode CCL specialisations, and
+    asserts that ``qconfig.json`` is present.  Inference is not run.
     """
     if causal_lm_models_dict.get(model_name, None) == model_name and QEFF_TEST_PROFILE == "tiny_model":
         pytest.skip("Skipping it is not a tiny model and will run in nightly tests.")
 
-    qaic_config = {
-        "ccl_enabled": True,
-    }
+    qaic_config = {"ccl_enabled": True}
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name,
         continuous_batching=True,
@@ -46,6 +48,7 @@ def test_fp16_export_compile_ccl_cb(model_name):
         },
         generate_params=generate_params,
         export_compile_only=True,
+        cosine_similarity_threshold=COSINE_SIMILARITY_THRESHOLD,
     )
 
 
@@ -53,15 +56,17 @@ def test_fp16_export_compile_ccl_cb(model_name):
 @pytest.mark.qaic
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_fp16_export_compile_generate_ccl_cb(model_name):
-    """
-    Fp16 + Subfunction + CB + CCL  (end to end run+ output verification)
+    """Verify end-to-end FP16 inference quality with CCL and continuous batching.
+
+    Exports in FP16 with CCL enabled and continuous batching, compiles with CCL
+    specialisations, runs inference on the AIC device, and checks that the cosine
+    similarity between the AIC output sequences and the HF PyTorch reference
+    sequences meets the configured threshold for every batch slot.
     """
     if causal_lm_models_dict.get(model_name, None) == model_name and QEFF_TEST_PROFILE == "tiny_model":
         pytest.skip("Skipping it is not a tiny model and will run in nightly tests.")
 
-    qaic_config = {
-        "ccl_enabled": True,
-    }
+    qaic_config = {"ccl_enabled": True}
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name,
         continuous_batching=True,
@@ -74,6 +79,7 @@ def test_fp16_export_compile_generate_ccl_cb(model_name):
         },
         generate_params=generate_params,
         export_compile_only=False,
+        cosine_similarity_threshold=COSINE_SIMILARITY_THRESHOLD,
     )
 
 
@@ -81,20 +87,21 @@ def test_fp16_export_compile_generate_ccl_cb(model_name):
 @pytest.mark.non_qaic
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_fp32_export_fp16_compile_ccl_cb(model_name):
-    """
-    FP32 export + FP16 compilation + Subfunction + CB + CCL  (end to end run+ output verification)
+    """Verify that FP32 export followed by FP16 compilation succeeds with CCL and continuous batching.
+
+    Exports the model in FP32 (no dtype cast at export time) with CCL enabled
+    and continuous batching, compiles in FP16 with CCL specialisations, and
+    asserts that ``qconfig.json`` is present.  Inference is not run.
     """
     if causal_lm_models_dict.get(model_name, None) == model_name and QEFF_TEST_PROFILE == "tiny_model":
         pytest.skip("Skipping it is not a tiny model and will run in nightly tests.")
 
-    qaic_config = {
-        "ccl_enabled": True,
-    }
-    temp_transform_params = {"torch_dtype": torch.float32, "qaic_config": qaic_config}
+    qaic_config = {"ccl_enabled": True}
+    fp32_transform_params = {"torch_dtype": torch.float32, "qaic_config": qaic_config}
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name,
         continuous_batching=True,
-        transform_params=temp_transform_params,
+        transform_params=fp32_transform_params,
         export_params=export_params,
         compile_params={
             **compile_params,
@@ -103,6 +110,7 @@ def test_fp32_export_fp16_compile_ccl_cb(model_name):
         },
         generate_params=generate_params,
         export_compile_only=True,
+        cosine_similarity_threshold=COSINE_SIMILARITY_THRESHOLD,
     )
 
 
@@ -110,20 +118,22 @@ def test_fp32_export_fp16_compile_ccl_cb(model_name):
 @pytest.mark.qaic
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_fp32_export_fp16_compile_generate_ccl_cb(model_name):
-    """
-    FP32 export + FP16 compilation + Subfunction + CB + CCL  (end to end run+ output verification)
+    """Verify end-to-end inference quality for FP32 export + FP16 compile with CCL and continuous batching.
+
+    Exports in FP32 with CCL enabled and continuous batching, compiles in FP16
+    with CCL specialisations, runs inference on the AIC device, and checks that
+    the cosine similarity between the AIC output sequences and the HF PyTorch
+    reference sequences meets the configured threshold for every batch slot.
     """
     if causal_lm_models_dict.get(model_name, None) == model_name and QEFF_TEST_PROFILE == "tiny_model":
         pytest.skip("Skipping it is not a tiny model and will run in nightly tests.")
 
-    qaic_config = {
-        "ccl_enabled": True,
-    }
-    temp_transform_params = {"torch_dtype": torch.float32, "qaic_config": qaic_config}
+    qaic_config = {"ccl_enabled": True}
+    fp32_transform_params = {"torch_dtype": torch.float32, "qaic_config": qaic_config}
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name,
         continuous_batching=True,
-        transform_params=temp_transform_params,
+        transform_params=fp32_transform_params,
         export_params=export_params,
         compile_params={
             **compile_params,
@@ -132,4 +142,5 @@ def test_fp32_export_fp16_compile_generate_ccl_cb(model_name):
         },
         generate_params=generate_params,
         export_compile_only=False,
+        cosine_similarity_threshold=COSINE_SIMILARITY_THRESHOLD,
     )

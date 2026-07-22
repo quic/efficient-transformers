@@ -10,6 +10,7 @@ import pytest
 
 from .check_causal_models import check_prefix_caching_inference
 from .config import (
+    COSINE_SIMILARITY_THRESHOLD,
     QEFF_TEST_PROFILE,
     causal_lm_models_dict,
     compile_params,
@@ -24,9 +25,12 @@ from .config import (
 @pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_fp16_export_compile_prefix_caching_cb(model_name):
-    """
-    Fp16 + Subfunction + CB with prefix caching  (end to end run+ output verification)
-    The test should first generate output with some prefix+suffix1 or batch_id and then confirm that we are still able to execute of prefix+suffix2 on same batch id and getting correct output.
+    """Verify that FP16 export and compilation succeed for a prefix-caching continuous-batching model.
+
+    Compiles the model with a KV-cache batch size larger than the active batch
+    (``full_batch_size=2``, ``kv_cache_batch_size=4``) so that prefill KV state
+    can be retained and reused across requests.  Asserts that ``qconfig.json``
+    is present.  Inference is not run.
     """
     if causal_lm_models_dict.get(model_name, None) == model_name and QEFF_TEST_PROFILE == "tiny_model":
         pytest.skip("Skipping it is not a tiny model and will run in nightly tests.")
@@ -45,6 +49,7 @@ def test_fp16_export_compile_prefix_caching_cb(model_name):
         generate_params=generate_params,
         continuous_batching=False,
         export_compile_only=True,
+        cosine_similarity_threshold=COSINE_SIMILARITY_THRESHOLD,
     )
 
 
@@ -52,9 +57,20 @@ def test_fp16_export_compile_prefix_caching_cb(model_name):
 @pytest.mark.llm
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_fp16_export_compile_generate_prefix_caching_cb(model_name):
-    """
-    Fp16 + Subfunction + CB with prefix caching  (end to end run+ output verification)
-    The test should first generate output with some prefix+suffix1 or batch_id and then confirm that we are still able to execute of prefix+suffix2 on same batch id and getting correct output.
+    """Verify prefix-caching KV-reuse correctness end-to-end on the AIC device.
+
+    Compiles with ``full_batch_size=2`` and ``kv_cache_batch_size=4``, then runs
+    a multi-stage inference scenario that exercises KV-cache reuse:
+
+    1. Generates outputs for two prompts (prefix + suffix1) on batch slots 0 and 1.
+    2. Manually prefills the same prompts on slots 2 and 3 and verifies that the
+       step-by-step decode tokens match the session's accumulated ``generated_ids``
+       via cosine similarity.
+    3. Re-runs prefill on slot 0 with a modified input sharing the same prefix,
+       and verifies that the cached prefix produces consistent logits via cosine
+       similarity.
+    4. Re-runs decode on slot 1 from the cached prefix state and verifies that
+       the output sequence matches the original baseline via cosine similarity.
     """
     if causal_lm_models_dict.get(model_name, None) == model_name and QEFF_TEST_PROFILE == "tiny_model":
         pytest.skip("Skipping it is not a tiny model and will run in nightly tests.")
@@ -77,4 +93,5 @@ def test_fp16_export_compile_generate_prefix_caching_cb(model_name):
         generate_params=temp_generate_params,
         continuous_batching=False,
         export_compile_only=False,
+        cosine_similarity_threshold=COSINE_SIMILARITY_THRESHOLD,
     )

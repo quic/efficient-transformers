@@ -59,6 +59,15 @@ QAIC_ATOL = 5e-2
 @pytest.mark.parametrize("model_id", model_id_blocking)
 @pytest.mark.parametrize("prompt", prompts)
 def test_disagg_mode_prefill(model_id, prompt):
+    """Verify prefill logit parity across HF PyTorch, QEff PyTorch, and the compiled QPC.
+
+    Runs a single prefill pass through three execution paths and checks that
+    the last-token logits agree within tolerance at each step:
+
+    1. HF PyTorch reference model.
+    2. QEff-transformed PyTorch model (sliding-window KV cache).
+    3. Compiled prefill-only QPC on the AIC device.
+    """
     PREFILL_SEQ_LEN = 256
     CTX_LEN = 256
     _, hf_inputs, qeff_inputs, _, _ = _prepare_inputs(model_id, prompt, PREFILL_SEQ_LEN)
@@ -81,6 +90,16 @@ def test_disagg_mode_prefill(model_id, prompt):
 @pytest.mark.parametrize("model_id", model_id_chunking)
 @pytest.mark.parametrize("prompt", prompts)
 def test_disagg_mode_prefill_chunked(model_id, prompt):
+    """Verify chunked prefill logit parity across HF PyTorch, QEff PyTorch, and the compiled QPC.
+
+    Splits the prompt into ``prefill_seq_len``-sized chunks and feeds them
+    sequentially.  Checks that the final-chunk last-token logits agree within
+    tolerance at each step:
+
+    1. HF PyTorch reference model (full sequence in one pass).
+    2. QEff-transformed PyTorch model (chunked, with KV state carried across chunks).
+    3. Compiled chunked prefill-only QPC on the AIC device.
+    """
     PREFILL_SEQ_LEN = 128
     CTX_LEN = 128 * 3
     _, hf_inputs, qeff_inputs, _, num_chunks = _prepare_inputs(model_id, prompt, PREFILL_SEQ_LEN)
@@ -121,6 +140,16 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
 @pytest.mark.parametrize("model_id", model_id_blocking)
 @pytest.mark.parametrize("prompt", [prompt1])
 def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
+    """Verify disaggregated prefill-only and decode-only compilation and execution.
+
+    Compiles separate prefill-only and decode-only QPCs and validates each stage:
+
+    1. HF PyTorch full generation loop (reference).
+    2. QEff PyTorch prefill + decode loop — asserts token-level parity with the HF reference.
+    3. AIC prefill QPC — asserts logit parity with the QEff PyTorch prefill output.
+    4. AIC decode QPC — runs the decode loop and prints the completion (no token assertion;
+       end-to-end parity is covered by the PyTorch decode loop check above).
+    """
     PREFILL_SEQ_LEN = 256
     CTX_LEN = 256
     generation_len = 10
@@ -223,6 +252,13 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
 @pytest.mark.parametrize("model_id", model_id_blocking)
 @pytest.mark.parametrize("prompt", [prompt1])
 def test_disagg_mode_prefix_caching(model_id, prompt):
+    """Verify that prefix-caching KV state is identical across two batch slots.
+
+    Compiles separate chunked prefill-only and decode-only QPCs with a KV-cache
+    batch size of 2.  Runs the same prompt through both batch slots independently
+    and asserts that the retained KV state (``past_key`` and ``past_value``) for
+    every layer is numerically consistent between the two slots within ``QAIC_ATOL``.
+    """
     PREFILL_SEQ_LEN = 128
     CTX_LEN = 128 * 3
     config = AutoConfig.from_pretrained(model_id)
