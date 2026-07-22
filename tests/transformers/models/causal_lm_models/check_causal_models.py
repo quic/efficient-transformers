@@ -19,7 +19,7 @@ from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.config_utils import get_first_config_value
 from QEfficient.utils.constants import ATTENTION_HEAD_CONFIG_KEYS, KV_HEAD_CONFIG_KEYS, Constants
 from QEfficient.utils.run_utils import ApiRunner
-from QEfficient.utils.test_utils import ModelConfig, load_hf_causal_lm_model
+from QEfficient.utils.test_utils import ModelConfig, load_hf_causal_lm_model, load_qeff_causal_lm_model
 
 
 def get_custom_n_layers(model_name):
@@ -87,7 +87,7 @@ def check_kv_repeat_causal_lm_pytorch_vs_ai100(
 def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
     continuous_batching: bool = False,
-    n_layer: int = 2,
+    n_layer: int = -1,
     config: Optional[AutoConfig] = None,
     transform_params: Optional[dict] = None,
     export_params: Optional[dict] = None,
@@ -99,7 +99,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     replace_transformers_quantizers()
     torch_dtype = transform_params.get("torch_dtype", torch.float32)
     model_hf = load_hf_causal_lm_model(model_name, num_hidden_layers=n_layer, config=config, torch_dtype=torch_dtype)
-    # print(model_hf)
+    print(model_hf)
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
     prompt = generate_params.get("prompt", Constants.INPUT_STR)
@@ -227,16 +227,46 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
             )
 
 
-def prefix_caching_inference(model_name, qpc_path):
+def check_prefix_caching_inference(
+    model_name: str,
+    continuous_batching: bool = False,
+    n_layer: int = -1,
+    config: Optional[AutoConfig] = None,
+    transform_params: Optional[dict] = None,
+    export_params: Optional[dict] = None,
+    compile_params: Optional[dict] = None,
+    generate_params: Optional[dict] = None,
+    export_compile_only: bool = False,
+):
 
     torch.manual_seed(42)
-    prefixes = ["Once upon a time ", "Once upon a time "]
-    suffixes1 = ["in a land far away", "there was a small village"]
-    suffixes2 = ["a little girl", "in a bustling city"]
+    replace_transformers_quantizers()
+    torch_dtype = transform_params.get("torch_dtype", torch.float32)
+    qeff_model = load_qeff_causal_lm_model(
+        model_name=model_name,
+        num_hidden_layers=n_layer,
+        continuous_batching=continuous_batching,
+        config=config,
+        torch_dtype=torch_dtype,
+    )
+    qeff_model.compile(
+        **compile_params,
+    )
+    if export_compile_only:
+        return
+
+    qpc_path = qeff_model.qpc_path
+    assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
+
+    full_batch_size = compile_params.get("full_batch_size", 2)
+    ctx_len = compile_params.get("ctx_len", Constants.CTX_LEN)
+    prefixes = generate_params.get("prefixes", ["Once upon a time ", "Once upon a time "])
+    suffixes1 = generate_params.get("suffixes1", ["in a land far away", "there was a small village"])
+    suffixes2 = generate_params.get("suffixes2", ["a little girl", "in a bustling city"])
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    generator = TextGeneration(tokenizer=tokenizer, qpc_path=qpc_path, full_batch_size=2, ctx_len=256)
+    generator = TextGeneration(tokenizer=tokenizer, qpc_path=qpc_path, full_batch_size=full_batch_size, ctx_len=ctx_len)
 
     prompts = [pref + suff for pref, suff in zip(prefixes, suffixes1)]
 
