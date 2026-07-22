@@ -100,5 +100,7 @@ markers = [
     "qnn: marks QNN tests",
     "cli: marks CLI tests",
     "finetune: marks finetune tests",
-    "vllm: marks vLLM tests"
+    "vllm: marks vLLM tests",
+    "dummy_layers: marks tests running on reduced-layer dummy configs (per-PR lane)",
+    "full_layers: marks tests running on full-layer configs (nightly lane)"
 ]

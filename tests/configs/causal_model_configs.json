@@ -732,5 +732,399 @@
         "num_local_experts": 4
       }
     }
+  ],
+  "per_pr_causal_text_models": [
+    {
+      "id": "gpt2_text",
+      "model_name": "hf-internal-testing/tiny-random-GPT2LMHeadModel",
+      "model_type": "gpt2",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "llama_text",
+      "model_name": "hf-internal-testing/tiny-random-LlamaForCausalLM",
+      "model_type": "llama",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "llama4_text",
+      "model_name": "llamafactory/tiny-random-Llama-4",
+      "model_type": "llama4_text",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "config_attr": "text_config",
+      "num_hidden_layers": 4,
+      "config_overrides": {
+        "rope_parameters": {
+          "rope_type": "llama3",
+          "factor": 8.0,
+          "low_freq_factor": 1.0,
+          "high_freq_factor": 4.0,
+          "original_max_position_embeddings": 8192,
+          "rope_theta": 500000.0
+        },
+        "rope_scaling": {
+          "rope_type": "llama3",
+          "factor": 8.0,
+          "low_freq_factor": 1.0,
+          "high_freq_factor": 4.0,
+          "original_max_position_embeddings": 8192,
+          "rope_theta": 500000.0
+        }
+      },
+      "known_ccl_export_or_compile_issue": "Llama4 text CCL export currently segfaults inside torch.onnx.export when comp_ctx_lengths_decode is enabled."
+    },
+    {
+      "id": "llava_text",
+      "model_name": "IlyasMoutawwakil/tiny-random-LlavaForConditionalGeneration",
+      "model_type": "llava_text",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "config_attr": "text_config",
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "llava_next_text",
+      "model_name": "katuni4ka/tiny-random-llava-next",
+      "model_type": "llava_next_text",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "config_attr": "text_config",
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "phi_text",
+      "model_name": "hf-internal-testing/tiny-random-PhiForCausalLM",
+      "model_type": "phi",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "phi3_text",
+      "model_name": "tiny-random/phi-4",
+      "model_type": "phi3",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "gemma_text",
+      "model_name": "unsloth/gemma-2b",
+      "model_type": "gemma",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "gemma2_text",
+      "model_name": "hf-internal-testing/tiny-random-Gemma2ForCausalLM",
+      "model_type": "gemma2",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1,
+      "num_cores": 4
+    },
+    {
+      "id": "gemma3_text",
+      "model_name": "tiny-random/gemma-3",
+      "model_type": "gemma3_text",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "use_text_config": true,
+      "layer_types": [
+        "sliding_attention",
+        "full_attention"
+      ]
+    },
+    {
+      "id": "gemma4_dense_text",
+      "model_name": "yujiepan/gemma-4-dense-tiny-random",
+      "model_type": "gemma4_text",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "use_text_config": true,
+      "config_overrides": {
+        "num_kv_shared_layers": 0
+      },
+      "layer_types": [
+        "sliding_attention",
+        "full_attention"
+      ],
+      "known_export_or_compile_issue": "Gemma4 dense text export currently fails in QEff Gemma4 attention with an o_proj shape mismatch for the available tiny Gemma4 dense config."
+    },
+    {
+      "id": "gemma4_moe_text",
+      "model_name": "tiny-random/gemma-4-moe",
+      "model_type": "gemma4_text",
+      "is_moe": true,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "use_text_config": true,
+      "config_overrides": {
+        "num_kv_shared_layers": 0
+      },
+      "layer_types": [
+        "sliding_attention",
+        "full_attention"
+      ],
+      "known_export_or_compile_issue": "Gemma4 MoE text export currently fails in QEff Gemma4 attention with an o_proj shape mismatch for the available tiny Gemma4 MoE config."
+    },
+    {
+      "id": "qwen2_dense_text",
+      "model_name": "onnx-internal-testing/tiny-random-Qwen2ForCausalLM",
+      "model_type": "qwen2",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "internvl2_qwen2_text",
+      "model_name": "katuni4ka/tiny-random-internvl2",
+      "model_type": "internvl_qwen2_text",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "config_attr": "llm_config",
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "qwen2_5_dense_text",
+      "model_name": "tiny-random/qwen2.5",
+      "model_type": "qwen2",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1,
+      "config_overrides": {
+        "hidden_size": 32,
+        "intermediate_size": 64,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2
+      }
+    },
+    {
+      "id": "qwen3_dense_text",
+      "model_name": "tiny-random/qwen3",
+      "model_type": "qwen3",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "qwen3_moe_text",
+      "model_name": "tiny-random/qwen3-moe",
+      "model_type": "qwen3_moe",
+      "is_moe": true,
+      "supports_disagg": true,
+      "supports_blocking": true,
+      "num_hidden_layers": 2
+    },
+    {
+      "id": "qwen3_5_dense_text",
+      "model_name": "tiny-random/qwen3.5",
+      "model_type": "qwen3_5_text",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "known_runtime_parity_issue": "Qwen3.5 hybrid text exports and compiles, but QAIC decode tokens diverge from HF after prefill; keep compile-only coverage until retained-state/subfunction runtime parity is fixed.",
+      "known_bf16_compile_issue": "Qwen3.5 BF16 compile with -aic-hw-version=ai200 and -aic-num-cores=4 currently aborts in compiler FoldRMSNorm with a BF16 constant handle type assertion.",
+      "use_text_config": true,
+      "layer_types": [
+        "linear_attention",
+        "linear_attention",
+        "linear_attention",
+        "full_attention"
+      ]
+    },
+    {
+      "id": "qwen3_6_dense_text",
+      "model_name": "tiny-random/qwen3.6",
+      "model_type": "qwen3_5_text",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "known_runtime_parity_issue": "Qwen3.6 uses the Qwen3.5 hybrid text path; QAIC decode tokens currently diverge from HF after prefill.",
+      "known_bf16_compile_issue": "Qwen3.6 BF16 compile with -aic-hw-version=ai200 and -aic-num-cores=4 currently aborts in compiler FoldRMSNorm with a BF16 constant handle type assertion.",
+      "use_text_config": true,
+      "layer_types": [
+        "linear_attention",
+        "linear_attention",
+        "linear_attention",
+        "full_attention"
+      ]
+    },
+    {
+      "id": "qwen3_5_moe_text",
+      "model_name": "tiny-random/qwen3.5-moe",
+      "model_type": "qwen3_5_moe_text",
+      "is_moe": true,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "known_runtime_parity_issue": "Qwen3.5-MoE hybrid text exports and compiles, but QAIC decode tokens diverge from HF after prefill; keep compile-only coverage until retained-state/subfunction runtime parity is fixed.",
+      "known_bf16_compile_issue": "Qwen3.5-MoE BF16 compile with -aic-hw-version=ai200 and -aic-num-cores=4 currently aborts in compiler FoldRMSNorm with a BF16 constant handle type assertion.",
+      "use_text_config": true,
+      "layer_types": [
+        "linear_attention",
+        "linear_attention",
+        "linear_attention",
+        "full_attention"
+      ]
+    },
+    {
+      "id": "qwen3_6_moe_text",
+      "model_name": "tiny-random/qwen3.6-moe",
+      "model_type": "qwen3_5_moe_text",
+      "is_moe": true,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "known_runtime_parity_issue": "Qwen3.6-MoE uses the Qwen3.5-MoE hybrid text path; QAIC decode tokens currently diverge from HF after prefill.",
+      "known_bf16_compile_issue": "Qwen3.6-MoE BF16 compile with -aic-hw-version=ai200 and -aic-num-cores=4 currently aborts in compiler FoldRMSNorm with a BF16 constant handle type assertion.",
+      "use_text_config": true,
+      "layer_types": [
+        "linear_attention",
+        "linear_attention",
+        "linear_attention",
+        "full_attention"
+      ]
+    },
+    {
+      "id": "mistral_text",
+      "model_name": "hf-internal-testing/tiny-random-MistralForCausalLM",
+      "model_type": "mistral",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "mixtral_moe_text",
+      "model_name": "hf-internal-testing/tiny-random-MixtralForCausalLM",
+      "model_type": "mixtral",
+      "is_moe": true,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 2,
+      "known_export_or_compile_issue": "Mixtral subfunction compile currently fails in qaic-compile with a non-constant ReduceSum axes tensor in the MoE path."
+    },
+    {
+      "id": "granite_text",
+      "model_name": "hf-internal-testing/tiny-random-GraniteForCausalLM",
+      "model_type": "granite",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "granitemoe_text",
+      "model_name": "ibm-granite/granite-3.1-1b-a400m-base",
+      "model_type": "granitemoe",
+      "is_moe": true,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "olmo2_text",
+      "model_name": "hf-internal-testing/tiny-random-Olmo2ForCausalLM",
+      "model_type": "olmo2",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "gptj_text",
+      "model_name": "hf-internal-testing/tiny-random-GPTJForCausalLM",
+      "model_type": "gptj",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1,
+      "known_export_or_compile_issue": "GPT-J subfunction compile currently fails in qaic-compile because the exported Range limit is not constant."
+    },
+    {
+      "id": "codegen_text",
+      "model_name": "hf-internal-testing/tiny-random-CodeGenForCausalLM",
+      "model_type": "codegen",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "falcon_text",
+      "model_name": "hf-internal-testing/tiny-random-FalconForCausalLM",
+      "model_type": "falcon",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "mpt_text",
+      "model_name": "hf-internal-testing/tiny-random-MptForCausalLM",
+      "model_type": "mpt",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "starcoder2_text",
+      "model_name": "hf-internal-testing/tiny-random-Starcoder2ForCausalLM",
+      "model_type": "starcoder2",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "gpt_bigcode_text",
+      "model_name": "hf-internal-testing/tiny-random-GPTBigCodeForCausalLM",
+      "model_type": "gpt_bigcode",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "gpt_oss_moe_text",
+      "model_name": "tiny-random/gpt-oss-bf16",
+      "model_type": "gpt_oss",
+      "tokenizer_id": "gpt2",
+      "is_moe": true,
+      "supports_disagg": true,
+      "supports_blocking": false,
+      "num_hidden_layers": 2,
+      "known_export_or_compile_issue": "GPT-OSS subfunction compile currently fails in qaic-compile with unsupported Clip datatype handling."
+    },
+    {
+      "id": "glm4_moe_text",
+      "model_name": "tiny-random/glm-4-moe",
+      "model_type": "glm4_moe",
+      "is_moe": true,
+      "supports_disagg": true,
+      "supports_blocking": false,
+      "num_hidden_layers": 2
+    }
   ]
 }

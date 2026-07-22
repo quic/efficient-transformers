@@ -508,6 +508,12 @@ class QEffGemma3TextModel(Gemma3TextModel):
 
 
 class QEffGemma3ForCausalLMModel(Gemma3ForCausalLM):
+    def get_submodules_for_export(self) -> Type[nn.Module]:
+        """
+        Return the class used as the repeated layer across the text decoder for subfunction extraction.
+        """
+        return {QEffGemma3DecoderLayer}
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
