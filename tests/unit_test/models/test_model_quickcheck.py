@@ -1952,7 +1952,7 @@ class TestGetCompilationDims:
                 ]
             },
         )
-        bs, ctx, fbs = get_compilation_dims(qpc_path)
+        bs, ctx, fbs, num_kv_blocks = get_compilation_dims(qpc_path)
         assert bs == 1
         assert ctx == 4096
         assert fbs is None
@@ -1975,7 +1975,7 @@ class TestGetCompilationDims:
                 ]
             },
         )
-        bs, ctx, fbs = get_compilation_dims(qpc_path)
+        bs, ctx, fbs, num_kv_blocks = get_compilation_dims(qpc_path)
         assert bs == 1
         assert ctx == 4096
         assert fbs == 16
@@ -1992,7 +1992,7 @@ class TestGetCompilationDims:
                 ]
             },
         )
-        bs, ctx, fbs = get_compilation_dims(qpc_path)
+        bs, ctx, fbs, num_kv_blocks = get_compilation_dims(qpc_path)
         assert bs == 1
         assert ctx == 4096
         assert fbs is None

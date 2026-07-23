@@ -20,7 +20,16 @@ from QEfficient.utils import (
 
 class InputHandler:
     def __init__(
-        self, batch_size, tokenizer, config, prompt, prompt_len, ctx_len, full_batch_size, dtype=torch.float32
+        self,
+        batch_size,
+        tokenizer,
+        config,
+        prompt,
+        prompt_len,
+        ctx_len,
+        full_batch_size,
+        dtype=torch.float32,
+        qaic_config=None,
     ):
         """
         Initialization
@@ -43,6 +52,7 @@ class InputHandler:
         self.full_batch_size = full_batch_size
         self.config = config
         self.dtype = dtype
+        self.qaic_config = qaic_config
         self.n_layer = get_num_layers_from_config(config)
         self.padding_shape = get_padding_shape_from_config(
             config=config, batch_size=full_batch_size if full_batch_size else batch_size, seq_len=ctx_len
@@ -90,6 +100,23 @@ class InputHandler:
         batch = self.full_batch_size if self.full_batch_size else self.padding_shape[0]
         return [batch, n_heads, ctx_len, d_head]
 
+    def _is_paged_attention(self) -> bool:
+        if self.qaic_config is None:
+            return False
+        blocking_mode = self.qaic_config.get("blocking_mode")
+        return blocking_mode is not None and "paged" in blocking_mode
+
+    def _get_num_kv_blocks(self):
+        if not self._is_paged_attention():
+            return None
+        return self.qaic_config.get("num_kv_blocks")
+
+    def _get_kv_block_size(self):
+        num_kv_blocks = self._get_num_kv_blocks()
+        if num_kv_blocks is None:
+            return None
+        return -(-self.ctx_len // num_kv_blocks)
+
     def prepare_pytorch_inputs(self):
         """
         Function responsible for creating Prefill stage tensor inputs for PyTorch model.
@@ -131,8 +158,21 @@ class InputHandler:
             inputs["batch_index"] = torch.arange(self.full_batch_size).view(-1, 1)
 
         past_key_values = []
+        num_kv_blocks = self._get_num_kv_blocks()
+        kv_block_size = self._get_kv_block_size()
+
+        if self._is_paged_attention and num_kv_blocks and kv_block_size:
+            inputs["block_table"] = torch.arange(batch_size * num_kv_blocks, dtype=torch.int64).reshape(
+                batch_size, num_kv_blocks
+            )
+            inputs["slot_id"] = torch.zeros(batch_size, dtype=torch.int64)
+            pad_shape_paged = [batch_size * num_kv_blocks, self.padding_shape[1], kv_block_size, self.padding_shape[3]]
+
         for i in range(self.n_layer):
-            pad_shape = self._get_layer_cache_shape(i)
+            if self._is_paged_attention and num_kv_blocks and kv_block_size:
+                pad_shape = pad_shape_paged
+            else:
+                pad_shape = self._get_layer_cache_shape(i)
             past_key = torch.zeros((pad_shape), dtype=self.dtype)
             past_value = torch.zeros((pad_shape), dtype=self.dtype)
             pkv = (past_key, past_value)
@@ -178,6 +218,16 @@ class InputHandler:
         else:
             updated_inputs["past_key_values"] = pkv
 
+        num_kv_blocks = self._get_num_kv_blocks()
+        kv_block_size = self._get_kv_block_size()
+        if self._is_paged_attention and num_kv_blocks and kv_block_size and "slot_id" in inputs:
+            updated_inputs["slot_id"] = ((updated_inputs["position_ids"]) % kv_block_size).view(
+                updated_inputs["position_ids"].shape[0]
+            )
+            updated_inputs["block_table"] = torch.arange(
+                updated_inputs["input_ids"].shape[0] * inputs["block_table"].shape[1], dtype=torch.int64
+            ).reshape(updated_inputs["input_ids"].shape[0], inputs["block_table"].shape[1])
+
         return updated_inputs
 
     def prepare_ort_inputs(self):
@@ -207,12 +257,26 @@ class InputHandler:
             axis=1,
         ).astype(np.int64)
 
+        num_kv_blocks = self._get_num_kv_blocks()
+        kv_block_size = self._get_kv_block_size()
+
+        if self._is_paged_attention and num_kv_blocks and kv_block_size:
+            inputs["block_table"] = np.arange(batch_size * num_kv_blocks, dtype=np.int64).reshape(
+                batch_size, num_kv_blocks
+            )
+            inputs["slot_id"] = np.zeros(batch_size, dtype=np.int64)
+            pad_shape_paged = [batch_size * num_kv_blocks, self.padding_shape[1], kv_block_size, self.padding_shape[3]]
+
         for i in range(self.n_layer):
-            pad_shape = self._get_layer_cache_shape(i)
+            if self._is_paged_attention and num_kv_blocks and kv_block_size:
+                pad_shape = pad_shape_paged
+            else:
+                pad_shape = self._get_layer_cache_shape(i)
             inputs["past_key." + str(i)] = np.zeros((pad_shape), dtype=np.float32)
             inputs["past_value." + str(i)] = np.zeros((pad_shape), dtype=np.float32)
         if self.full_batch_size:
             inputs["batch_index"] = np.arange(self.full_batch_size).reshape(-1, 1)
+
         return inputs
 
     def update_ort_inputs(self, inputs, ort_outputs):
@@ -235,6 +299,17 @@ class InputHandler:
             updated_inputs["past_value." + str(i)] = ort_outputs["past_key_values"][i * 2 + 1]
         if self.full_batch_size:
             updated_inputs["batch_index"] = inputs["batch_index"]
+
+        num_kv_blocks = self._get_num_kv_blocks()
+        kv_block_size = self._get_kv_block_size()
+        if self._is_paged_attention and num_kv_blocks and kv_block_size and "slot_id" in inputs:
+            updated_inputs["slot_id"] = ((updated_inputs["position_ids"]) % kv_block_size).reshape(
+                updated_inputs["position_ids"].shape[0]
+            )
+            updated_inputs["block_table"] = np.arange(
+                updated_inputs["input_ids"].shape[0] * inputs["block_table"].shape[1], dtype=np.int64
+            ).reshape(updated_inputs["input_ids"].shape[0], inputs["block_table"].shape[1])
+
         return updated_inputs
 
     def update_ort_outputs(self, ort_outputs):
@@ -440,6 +515,7 @@ class InputHandlerVLM:
             updated_inputs["mm_token_type_ids"] = np.zeros_like(
                 updated_inputs["input_ids"], dtype=inputs["mm_token_type_ids"].dtype
             )
+
         if "cross_attention_mask" in inputs.keys():
             bs, _, num_images, img_tiles = inputs["cross_attention_mask"].shape
             updated_inputs["cross_attention_mask"] = torch.ones(
