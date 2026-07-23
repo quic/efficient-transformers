@@ -75,8 +75,9 @@ def load_qeff_causal_lm_model(
     continuous_batching: bool = False,
     qaic_config: Dict = None,
     config: Optional[AutoConfig] = None,
+    torch_dtype: Optional[torch.dtype] = torch.float32,
 ):
-    kwargs = dict(continuous_batching=continuous_batching, qaic_config=qaic_config)
+    kwargs = dict(continuous_batching=continuous_batching, qaic_config=qaic_config, torch_dtype=torch_dtype)
     if config is None:
         if num_hidden_layers != -1:
             kwargs["num_hidden_layers"] = num_hidden_layers
