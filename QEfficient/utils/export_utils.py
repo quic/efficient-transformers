@@ -9,15 +9,199 @@ import copy
 import inspect
 import re
 import warnings
+from contextlib import nullcontext
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 
-from QEfficient.base.onnx_transforms import CustomOpTransform, RenameFunctionOutputsTransform
+import torch
+import torch.nn as nn
+from torch.export import Dim
+
+from QEfficient.base.onnx_transforms import (
+    CustomOpTransform,
+    PreserveNestedCacheRetainedStateTransform,
+    RenameFunctionOutputsTransform,
+    RenameRepeatedSubgraphTransform,
+)
 from QEfficient.transformers.cache_utils import InvalidIndexProvider
 from QEfficient.utils.cache import QEFF_HOME
+from QEfficient.utils.constants import (
+    _KNOWN_DECODER_LAYER_ATTR_PATHS,
+    _KNOWN_DECODER_LAYER_SUFFIXES,
+    DYNAMO_DIM_MAX_BATCH_SIZE,
+    DYNAMO_DIM_MIN_COMP_CTX_LENGTHS,
+)
 from QEfficient.utils.hash_utils import create_export_hash
 from QEfficient.utils.logging_utils import logger
-from QEfficient.utils.torch_patches import apply_torch_patches, undo_torch_patches
+from QEfficient.utils.torch_patches import (
+    apply_torch_patches,
+    temporarily_enable_nested_compile_regions,
+    undo_torch_patches,
+)
+
+
+def convert_dynamic_axes_to_dynamic_shapes(
+    dynamic_axes: Dict[str, Dict[int, str]],
+    model_config=None,
+) -> Dict[str, Any]:
+    """
+    Convert ONNX dynamic_axes format to torch.export dynamic_shapes format.
+
+    Parameters
+    ----------
+    dynamic_axes : Dict[str, Dict[int, str]]
+        ONNX-style axes map, e.g.
+        {"input_ids": {0: "batch_size", 1: "seq_len"},
+         "past_key.0": {0: "batch_size", 2: "ctx_len"}, ...}
+    model_config : optional
+        The HuggingFace model config object (model.config). Used to read:
+          - max_position_embeddings  -> upper bound for seq_len / ctx_len dims
+          - sliding_window           -> upper bound for sliding_window dim
+          - model_type               -> controls batch_min and whether
+                                       compressed_kvs reconstruction runs
+        When None, safe defaults are used for all bounds and model-type-specific
+        passes are skipped.
+
+    Returns
+    -------
+    Dict[str, Any]
+        torch.export dynamic_shapes dict with Dim objects, suitable for
+        torch.onnx.export(dynamic_shapes=...).
+    """
+    max_seq_len = getattr(model_config, "max_position_embeddings", 1024)
+    model_type = getattr(model_config, "model_type", None)
+    batch_min = 1 if model_type == "gpt_oss" else 2
+
+    dim_registry: Dict[str, Any] = {}
+
+    def resolve_dim(dim_name: str):
+        if dim_name not in dim_registry:
+            if dim_name == "batch_size":
+                dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=DYNAMO_DIM_MAX_BATCH_SIZE)
+            elif dim_name == "full_batch_size":
+                # CB pool capacity; different min prevents torch.export collapsing it with batch_size.
+                dim_registry[dim_name] = Dim("full_batch_size", min=batch_min + 1, max=DYNAMO_DIM_MAX_BATCH_SIZE)
+            elif "seq_len" in dim_name:
+                dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
+            elif "comp_ctx_lengths" in dim_name:
+                dim_registry[dim_name] = Dim("comp_ctx_lengths", min=DYNAMO_DIM_MIN_COMP_CTX_LENGTHS, max=max_seq_len)
+            elif "ctx_len" in dim_name:
+                dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
+            elif "sliding_window" in dim_name:
+                dim_registry[dim_name] = Dim(
+                    "sliding_window",
+                    min=2,
+                    max=getattr(model_config, "sliding_window", max_seq_len),
+                )
+            else:
+                dim_registry[dim_name] = Dim.DYNAMIC
+        return dim_registry[dim_name]
+
+    dynamic_shapes: Dict[str, Any] = {}
+    past_keys: Dict[int, Any] = {}
+    past_values: Dict[int, Any] = {}
+    compressed_kv_layers: Dict[int, Any] = {}
+    k_pe_layers: Dict[int, Any] = {}
+
+    for input_name, axes_map in dynamic_axes.items():
+        resolved = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
+        if input_name.startswith("past_key."):
+            past_keys[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("past_value."):
+            past_values[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("compressed_kv."):
+            compressed_kv_layers[int(input_name.split(".")[1])] = resolved
+        elif input_name.startswith("k_pe."):
+            k_pe_layers[int(input_name.split(".")[1])] = resolved
+        else:
+            dynamic_shapes[input_name] = resolved
+
+    if past_keys or past_values:
+        max_layer = max(list(past_keys.keys()) + list(past_values.keys()))
+        dynamic_shapes["past_key_values"] = [
+            [past_keys.get(i, {}), past_values.get(i, {})] for i in range(max_layer + 1)
+        ]
+
+    if compressed_kv_layers or k_pe_layers:
+        max_layer = max(list(compressed_kv_layers.keys()) + list(k_pe_layers.keys()))
+        dynamic_shapes["compressed_kvs"] = [
+            (compressed_kv_layers.get(i, {}), k_pe_layers.get(i, {})) for i in range(max_layer + 1)
+        ]
+
+    return dynamic_shapes
+
+
+def _resolve_attr_path(root, attr_path):
+    current = root
+    for attr in attr_path.split("."):
+        if current is None or not hasattr(current, attr):
+            return None
+        current = getattr(current, attr)
+    return current
+
+
+def _extract_repeated_block_class(candidate):
+    if isinstance(candidate, (nn.ModuleList, nn.Sequential, list, tuple)):
+        modules = [item for item in candidate if isinstance(item, nn.Module)]
+        if len(modules) < 2:
+            return None
+        first_cls = modules[0].__class__
+        if all(isinstance(item, first_cls) for item in modules):
+            return first_cls
+    return None
+
+
+def _discover_submodule_classes_for_export(model):
+    discovered = set()
+
+    for attr_path in _KNOWN_DECODER_LAYER_ATTR_PATHS:
+        candidate = _resolve_attr_path(model, attr_path)
+        repeated_cls = _extract_repeated_block_class(candidate)
+        if repeated_cls is not None:
+            discovered.add(repeated_cls)
+
+    if discovered:
+        return discovered
+
+    if not hasattr(model, "named_modules"):
+        return discovered
+
+    for module_name, module in model.named_modules():
+        if not module_name:
+            continue
+        if not module_name.endswith(_KNOWN_DECODER_LAYER_SUFFIXES):
+            continue
+        repeated_cls = _extract_repeated_block_class(module)
+        if repeated_cls is None:
+            continue
+        cls_name = repeated_cls.__name__.lower()
+        if any(token in cls_name for token in ("layer", "block", "decoder", "encoder")):
+            discovered.add(repeated_cls)
+
+    return discovered
+
+
+def get_decoder_layer_classes_for_export(model):
+    get_submodules_for_export = getattr(model, "get_submodules_for_export", None)
+    if get_submodules_for_export is not None:
+        try:
+            submodule_classes = get_submodules_for_export()
+            if submodule_classes:
+                return {cls for cls in submodule_classes if inspect.isclass(cls)}
+        except Exception as exc:
+            logger.warning(
+                f"get_submodules_for_export failed for {model.__class__.__name__}: "
+                f"{type(exc).__name__}: {exc}. Falling back to auto-discovery."
+            )
+
+    discovered = _discover_submodule_classes_for_export(model)
+    if discovered:
+        logger.info(
+            "Auto-discovered repeated submodule classes for export: "
+            + ", ".join(sorted(cls.__name__ for cls in discovered))
+        )
+        return discovered
+    return []
 
 
 def export_wrapper(func):
@@ -40,11 +224,41 @@ def export_wrapper(func):
     """
 
     def wrapper(self, *args, **kwargs):
+        # Extract flags
+        dynamo = kwargs.get("dynamo", False)
+        use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
+
+        if dynamo:
+            torch_version = torch.__version__
+            major, minor = (int(x) for x in torch_version.split("+")[0].split(".")[:2])
+            if (major, minor) < (2, 13):
+                raise AssertionError(
+                    f"dynamo=True requires PyTorch >= 2.13, but found {torch_version}. "
+                    "Please install the required dependencies:\n"
+                    "  pip install -r examples/dynamo/causal_lm/requirements.txt"
+                )
+            # Resolve dynamic_shapes from dynamic_axes before the hash so the hash captures
+            # the actual shape constraints.
+            dynamic_axes = kwargs.get("dynamic_axes")
+            if dynamic_axes is not None:
+                model_config = getattr(self.model, "config", None)
+                kwargs["dynamic_shapes"] = convert_dynamic_axes_to_dynamic_shapes(dynamic_axes, model_config)
+
+        # Cache probe flag (used for layerwise inspection runs)
         cache_probe = kwargs.pop("_layerwise_cache_probe", False)
+
+        # Default context managers and state trackers
+        export_context = nullcontext()
         subfunction_state = None
-        # 1. Setup ONNX subfunctions if requested
-        if use_onnx_subfunctions := kwargs.pop("use_onnx_subfunctions", False):
-            args, kwargs, subfunction_state = _setup_onnx_subfunctions(self, args, kwargs)
+
+        # 1. Setup the requested export mode
+        if use_onnx_subfunctions:
+            # Handles both Path 4 (dynamo + subfunctions) and Path 2 (TorchScript + subfunctions).
+            args, kwargs, subfunction_state = _setup_onnx_subfunctions(self, args, kwargs, dynamo=dynamo)
+            if dynamo:
+                # Wrap only decoder layers (not top-level model) — wrapping top-level breaks dynamic_shapes validation.
+                target_classes = subfunction_state.get("decoder_layer_classes") or None
+                export_context = temporarily_enable_nested_compile_regions(self.model, target_classes=target_classes)
 
         # 2. Prepare export directory
         export_dir = _prepare_export_directory(self, kwargs)
@@ -54,16 +268,38 @@ def export_wrapper(func):
         export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
         kwargs["export_dir"] = export_dir
         self.export_hash = export_hash
+
+        # Re-inject cache probe flag if needed
         if cache_probe:
             kwargs["_layerwise_cache_probe"] = True
 
         try:
             # 4. Execute the actual export
-            onnx_path = func(self, *args, **kwargs)
+            # Keep each decoder layer as a repeated_subgraph; inline_single_use_invoke_subgraph=True
+            # would inline single-use layers before ONNX translation, losing _RetainedState wiring.
+            dynamo_patch = (
+                torch._dynamo.config.patch(inline_single_use_invoke_subgraph=False)
+                if use_onnx_subfunctions and dynamo
+                else nullcontext()
+            )
+            try:
+                with export_context:
+                    with dynamo_patch:
+                        onnx_path = func(self, *args, **kwargs)
+            except Exception as export_exc:
+                if use_onnx_subfunctions and dynamo:
+                    raise RuntimeError(
+                        "Export failed with dynamo=True and use_onnx_subfunctions=True "
+                        "while nested compile regions were enabled for repeated-subgraph "
+                        f"extraction ({type(export_exc).__name__}: {export_exc}). "
+                        "Retry export with use_onnx_subfunctions=False for this model/runtime."
+                    ) from export_exc
+                raise
 
-            # 5. Save export metadata
+            # 5. Save export metadata (skip when running cache probe)
             if not cache_probe:
                 _save_export_metadata(export_dir, filtered_hash_params)
+
         finally:
             # 6. Always cleanup subfunctions if they were setup
             if use_onnx_subfunctions:
@@ -133,14 +369,20 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     copy_of_hash_params.update(
         {
             "config": config_val,
+            "use_onnx_subfunctions": getattr(qeff_model, "_use_onnx_subfunctions", False),
+            "onnx_transform_version": 1,
+            "dynamo": all_args.get("dynamo", False),
         }
     )
+    if getattr(qeff_model, "_use_onnx_subfunctions", False):
+        copy_of_hash_params["onnx_subfunction_version"] = 2
     # Generate hash from relevant parameters
     export_hash, filtered_hash_params = create_export_hash(
         model_params=copy_of_hash_params,
         output_names=all_args.get("output_names"),
         dynamic_axes=all_args.get("dynamic_axes"),
         blocking_kwargs=all_args.get("blocking_kwargs", None),
+        dynamic_shapes=all_args.get("dynamic_shapes"),
         export_kwargs=all_args.get("export_kwargs", None),
         onnx_transform_kwargs=all_args.get("onnx_transform_kwargs", None),
     )
@@ -148,13 +390,13 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     return export_hash, filtered_hash_params
 
 
-def _setup_onnx_subfunctions(qeff_model, args, kwargs):
+def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
     """
     Setup ONNX subfunction export environment.
 
     This function prepares the model and environment for exporting with
     ONNX subfunctions enabled. It:
-    - Applies necessary torch patches
+    - Applies necessary torch patches (TorchScript path only)
     - Modifies output names for subfunction compatibility
     - Adds subfunction-specific ONNX transforms
     - Updates export kwargs with module classes
@@ -163,6 +405,8 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
         qeff_model: The QEff model instance.
         args: Positional export arguments.
         kwargs: Export keyword arguments (modified in-place).
+        dynamo: Whether the dynamo exporter is active. Passed explicitly by the
+            caller so this function does not need to read it from kwargs.
 
     Returns:
         Updated args/kwargs plus cleanup state used to restore the original
@@ -172,46 +416,85 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs):
         "The subfunction feature is experimental. Please note that using compile "
         "consecutively with and without subfunction may produce inconsistent results."
     )
-
-    # Apply torch patches for subfunction support
-    apply_torch_patches()
+    orig_use_onnx_subfunctions = getattr(qeff_model, "_use_onnx_subfunctions", False)
+    orig_hash_use_subfunctions = qeff_model.hash_params.get("use_onnx_subfunctions", False)
+    orig_hash_subfunction_version = qeff_model.hash_params.get("onnx_subfunction_version")
+    qeff_model._use_onnx_subfunctions = True
+    qeff_model.hash_params["use_onnx_subfunctions"] = True
+    qeff_model.hash_params["onnx_subfunction_version"] = 2
+    # TorchScript patches are irrelevant on the dynamo path.
+    if not dynamo:
+        apply_torch_patches()
     InvalidIndexProvider.SUBFUNC_ENABLED = True
 
-    # Transform output names for subfunction compatibility
-    if "output_names" in kwargs:
-        kwargs["output_names"] = [
-            re.sub("_RetainedState", "_InternalRetainedState", name)
-            if name.endswith("_RetainedState")
-            and (
-                "key" in name
-                or "value" in name
-                or "compressed_kv" in name
-                or "k_pe" in name
-                or "conv" in name
-                or "recurrent" in name
+    # TorchScript renames _RetainedState → _InternalRetainedState; dynamo keeps _RetainedState for PreserveNestedCacheRetainedStateTransform.
+    if not dynamo:
+        if "output_names" in kwargs:
+            kwargs["output_names"] = [
+                re.sub("_RetainedState", "_InternalRetainedState", name)
+                if name.endswith("_RetainedState")
+                and (
+                    "key" in name
+                    or "value" in name
+                    or "compressed_kv" in name
+                    or "k_pe" in name
+                    or "conv" in name
+                    or "recurrent" in name
+                )
+                else name
+                for name in kwargs["output_names"]
+            ]
+        else:
+            warnings.warn(
+                "ONNX subfunctions are enabled, but no retained-state output names were found to rewrite. "
+                "Ensure `output_names` includes key/value retained states if subfunction compatibility is required."
             )
-            else name
-            for name in kwargs["output_names"]
-        ]
-    else:
-        warnings.warn(
-            "ONNX subfunctions are enabled, but no retained-state output names were found to rewrite. "
-            "Ensure `output_names` includes key/value retained states if subfunction compatibility is required."
-        )
 
     # Work on an instance-local copy and restore it in cleanup. Without this,
     # failed or repeated subfunction exports can leak transforms into later exports.
     original_transforms = list(qeff_model._onnx_transforms)
     qeff_model._onnx_transforms = list(original_transforms)
-    if RenameFunctionOutputsTransform not in qeff_model._onnx_transforms:
-        qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
-    if CustomOpTransform not in qeff_model._onnx_transforms:
-        qeff_model._onnx_transforms.append(CustomOpTransform)
 
-    submodule_classes = qeff_model.model.get_submodules_for_export()
-    if submodule_classes:
-        kwargs["export_modules_as_functions"] = submodule_classes
-    return args, kwargs, {"onnx_transforms": original_transforms}
+    # Add subfunction-specific ONNX transforms based on export path
+    if dynamo:
+        # Dynamo: PreserveNestedCacheRetainedStateTransform + RenameRepeatedSubgraphTransform.
+        if PreserveNestedCacheRetainedStateTransform not in qeff_model._onnx_transforms:
+            qeff_model._onnx_transforms.append(PreserveNestedCacheRetainedStateTransform)
+        if RenameRepeatedSubgraphTransform not in qeff_model._onnx_transforms:
+            qeff_model._onnx_transforms.append(RenameRepeatedSubgraphTransform)
+    else:
+        # TorchScript: RenameFunctionOutputsTransform + CustomOpTransform.
+        if RenameFunctionOutputsTransform not in qeff_model._onnx_transforms:
+            qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
+        if CustomOpTransform not in qeff_model._onnx_transforms:
+            qeff_model._onnx_transforms.append(CustomOpTransform)
+
+    # TODO: Handle this in the modelling class QEFFTransformersBase, remove from here.
+    decoder_layer_classes = get_decoder_layer_classes_for_export(qeff_model.model)
+    if decoder_layer_classes:
+        if dynamo:
+            # Pass resolved classnames to RenameRepeatedSubgraphTransform; single resolution point to avoid double-call.
+            resolved_classnames = sorted(cls.__name__ for cls in decoder_layer_classes)
+            qeff_model._subfunction_target_classnames = resolved_classnames
+            onnx_transform_kwargs = dict(kwargs.get("onnx_transform_kwargs") or {})
+            onnx_transform_kwargs["target_classnames"] = resolved_classnames
+            kwargs["onnx_transform_kwargs"] = onnx_transform_kwargs
+        else:
+            # TorchScript path: pass class objects for export_modules_as_functions
+            kwargs["export_modules_as_functions"] = decoder_layer_classes
+
+    return (
+        args,
+        kwargs,
+        {
+            "onnx_transforms": original_transforms,
+            "dynamo": dynamo,
+            "use_onnx_subfunctions": orig_use_onnx_subfunctions,
+            "hash_use_subfunctions": orig_hash_use_subfunctions,
+            "hash_subfunction_version": orig_hash_subfunction_version,
+            "decoder_layer_classes": decoder_layer_classes if dynamo else None,
+        },
+    )
 
 
 def _cleanup_onnx_subfunctions(qeff_model, state=None):
@@ -219,7 +502,7 @@ def _cleanup_onnx_subfunctions(qeff_model, state=None):
     Cleanup ONNX subfunction export environment.
 
     Restores the model and environment to pre-subfunction state by:
-    - Undoing torch patches
+    - Undoing torch patches (TorchScript path only)
     - Resetting InvalidIndexProvider flag
     - Restoring original ONNX transforms list
 
@@ -231,11 +514,19 @@ def _cleanup_onnx_subfunctions(qeff_model, state=None):
         even if export fails. Errors during cleanup are logged but
         not re-raised to avoid masking the original exception.
     """
-    # Undo torch patches
-    undo_torch_patches()
+    # TorchScript patches are only applied on the non-dynamo path, so only undo them there.
+    if state is None or not state.get("dynamo", False):
+        undo_torch_patches()
     InvalidIndexProvider.SUBFUNC_ENABLED = False
     if state is not None and "onnx_transforms" in state:
         qeff_model._onnx_transforms = state["onnx_transforms"]
+    if state is not None:
+        qeff_model._use_onnx_subfunctions = state.get("use_onnx_subfunctions", False)
+        qeff_model.hash_params["use_onnx_subfunctions"] = state.get("hash_use_subfunctions", False)
+        if state.get("hash_subfunction_version") is None:
+            qeff_model.hash_params.pop("onnx_subfunction_version", None)
+        else:
+            qeff_model.hash_params["onnx_subfunction_version"] = state["hash_subfunction_version"]
 
 
 def _save_export_metadata(export_dir: Path, filtered_hash_params: Dict):

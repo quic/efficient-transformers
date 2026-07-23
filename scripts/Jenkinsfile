@@ -42,6 +42,7 @@ pipeline {
         booleanParam(name: 'RUN_QAIC_DIFFUSION', defaultValue: true)
         booleanParam(name: 'RUN_CLI', defaultValue: true)
         booleanParam(name: 'RUN_FINETUNE', defaultValue: false)
+        booleanParam(name: 'RUN_DYNAMO_QAIC', defaultValue: true, description: 'Run dynamo on-QAIC compile/generate tests (torch 2.13)')
     }
 
     environment {
@@ -203,6 +204,26 @@ pipeline {
                     export QEFF_HOME=$PWD/cli &&
                     pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log3.xml --durations=10 &&
                     junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
+                }
+            }
+        }
+
+        stage('QAIC DYNAMO') {
+            when { expression { params.RUN_DYNAMO_QAIC } }
+            steps {
+                timeout(time: 240, unit: 'MINUTES') {
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    pip install -r examples/dynamo/causal_lm/requirements.txt &&
+                    mkdir -p \\$PWD/dynamo_qeff_qaic &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=\\$PWD/dynamo_qeff_qaic &&
+                    pytest tests/dynamo -m '(dynamo) and (on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly --dist loadgroup -n auto --junitxml=tests/tests_log_dynamo_qaic.xml --durations=10 &&
+                    junitparser merge tests/tests_log_dynamo_qaic.xml tests/tests_log.xml &&
                     deactivate"
                     '''
                 }

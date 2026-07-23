@@ -13,7 +13,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from transformers.cache_utils import Cache
-from transformers.integrations.moe import batched_mm_experts_forward
+from transformers.integrations.moe import _batched_linear
 from transformers.modeling_outputs import (
     MoeCausalLMOutputWithPast,
     MoeModelOutputWithPast,
@@ -100,13 +100,69 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
+            attention_mask,
+            torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
+            attn_weights,
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
     return attn_output, attn_weights
+
+
+def _qeff_batched_mm_experts_forward(
+    self: torch.nn.Module,
+    hidden_states: torch.Tensor,
+    top_k_index: torch.Tensor,
+    top_k_weights: torch.Tensor,
+) -> torch.Tensor:
+    """Like batched_mm_experts_forward but replaces masked_fill_ with torch.where
+    so ONNX Where node gets consistent f32 types on both value inputs."""
+    device = hidden_states.device
+    num_top_k = top_k_index.size(-1)
+    num_tokens = hidden_states.size(0)
+    hidden_dim = hidden_states.size(-1)
+
+    token_idx = torch.arange(num_tokens, device=device).unsqueeze(1).expand(-1, num_top_k).reshape(-1)
+    sample_weights = top_k_weights.reshape(-1)
+    expert_ids = top_k_index.reshape(-1)
+
+    invalid_mask = expert_ids >= self.num_experts
+    expert_ids = expert_ids.clamp(0, self.num_experts - 1)
+
+    selected_hidden_states = hidden_states[token_idx]
+
+    if self.has_gate:
+        selected_weights = self.gate_up_proj[expert_ids]
+        selected_biases = self.gate_up_proj_bias[expert_ids] if self.has_bias else None
+    else:
+        selected_weights = self.up_proj[expert_ids]
+        selected_biases = self.up_proj_bias[expert_ids] if self.has_bias else None
+
+    proj_out = _batched_linear(
+        selected_hidden_states, selected_weights, bias=selected_biases, is_transposed=self.is_transposed
+    )
+
+    if self.has_gate:
+        proj_out = self._apply_gate(proj_out)
+    else:
+        proj_out = self.act_fn(proj_out)
+
+    selected_weights = self.down_proj[expert_ids]
+    selected_biases = self.down_proj_bias[expert_ids] if self.has_bias else None
+
+    proj_out = _batched_linear(proj_out, selected_weights, bias=selected_biases, is_transposed=self.is_transposed)
+
+    weighted_out = proj_out * sample_weights.unsqueeze(-1)
+    # Use torch.where instead of masked_fill_ so the ONNX Where node sees
+    # consistent f32 types on both value branches (zeros_like inherits dtype).
+    weighted_out = torch.where(
+        invalid_mask.unsqueeze(-1), torch.zeros_like(weighted_out, dtype=weighted_out.dtype), weighted_out
+    )
+
+    final_hidden_states = weighted_out.view(num_tokens, num_top_k, hidden_dim).sum(dim=1)
+    return final_hidden_states.to(hidden_states.dtype)
 
 
 class QEffMixtralAttention(MixtralAttention):
@@ -231,10 +287,10 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
                 experts_dtype = param.dtype
                 break
             hidden_states_for_experts = hidden_states.to(experts_dtype) if experts_dtype else hidden_states
-            if torch.onnx.is_in_onnx_export():
+            if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
                 # Avoid grouped-mm ONNX incompatibility (`aten::histc`) while keeping
                 # upstream experts math/parameter layout.
-                final_hidden_states = batched_mm_experts_forward(
+                final_hidden_states = _qeff_batched_mm_experts_forward(
                     self.experts, hidden_states_for_experts, selected_experts, routing_weights
                 )
             else:
@@ -261,7 +317,7 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
                     :, None
                 ],
                 current_hidden_states,
-                torch.tensor(0.0),
+                torch.zeros_like(current_hidden_states),
             )
             final_hidden_states = final_hidden_states + current_hidden_states
         final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)

@@ -8,12 +8,13 @@
 import onnxscript
 import torch
 
+from QEfficient.customop.onnxscript_utils import qeff_custom_op
 from QEfficient.utils import constants
 
-ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
+ops = getattr(onnxscript, "opset" + str(constants.ONNX_LEGACY_EXPORT_OPSET))
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+@qeff_custom_op("com.qualcomm.cloud", 1)
 def CtxScatter(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT) -> onnxscript.FLOAT:
     # Find dims
     batch_size = ops.Gather(ops.Shape(data), [0])
@@ -56,7 +57,7 @@ class CtxScatterFunc(torch.autograd.Function):
         return g.onnxscript_op(CtxScatter, data, position_ids, updates).setTypeAs(data)
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+@qeff_custom_op("com.qualcomm.cloud", 1)
 def CtxScatter3D(data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT) -> onnxscript.FLOAT:
     # Find dims
     batch_size = ops.Gather(ops.Shape(data), [0])
@@ -122,7 +123,7 @@ class CtxScatterFunc3DGeneralized(torch.autograd.Function):
         return g.onnxscript_op(CtxScatter3D, data, position_ids, updates).setTypeAs(data)
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+@qeff_custom_op("com.qualcomm.cloud", 1)
 def CtxScatter3DInt(
     data: onnxscript.INT32, position_ids: onnxscript.INT32, updates: onnxscript.INT32
 ) -> onnxscript.INT32:
@@ -164,7 +165,7 @@ class CtxScatterFunc3DInt(torch.autograd.Function):
         return g.onnxscript_op(CtxScatter3DInt, data, position_ids, updates).setTypeAs(data)
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+@qeff_custom_op("com.qualcomm.cloud", 1)
 def CtxGather3D(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
     batch_size = ops.Slice(ops.Shape(data), starts=[0], ends=[1], axes=[0])
     idx_seq_len = ops.Slice(ops.Shape(ctx_indices), starts=[1], ends=[2], axes=[0])
@@ -215,9 +216,9 @@ class CtxGatherFunc3DGeneralized(torch.autograd.Function):
         return g.onnxscript_op(CtxGather3D, data, ctx_indices)
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+@qeff_custom_op("com.qualcomm.cloud", 1)
 def CtxGather(
-    data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32, comp_ctx_len: onnxscript.INT32
+    data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32, comp_ctx_len: onnxscript.INT64
 ) -> onnxscript.FLOAT:
     # Create a shape tensor based on comp_ctx_len
     shape_tensor = ops.Concat(ops.Shape(data)[:2], ops.Reshape(comp_ctx_len, [1]), axis=0)
@@ -249,7 +250,7 @@ class CtxGatherFunc(torch.autograd.Function):
         return g.onnxscript_op(CtxGather, data, ctx_indices, comp_ctx_len).setTypeAs(data)
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+@qeff_custom_op("com.qualcomm.cloud", 1)
 def CtxGatherBlockedKV(data: onnxscript.FLOAT, ctx_indices: onnxscript.INT32) -> onnxscript.FLOAT:
     ctx_indices = ops.Unsqueeze(ctx_indices, [-1])
     return ops.GatherND(data, ctx_indices, batch_dims=2)
