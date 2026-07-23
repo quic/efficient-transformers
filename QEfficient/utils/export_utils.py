@@ -235,7 +235,7 @@ def export_wrapper(func):
                 raise AssertionError(
                     f"dynamo=True requires PyTorch >= 2.13, but found {torch_version}. "
                     "Please install the required dependencies:\n"
-                    "  pip install -r dynamo_requirements.txt"
+                    "  pip install -r examples/dynamo/causal_lm/requirements.txt"
                 )
             # Resolve dynamic_shapes from dynamic_axes before the hash so the hash captures
             # the actual shape constraints.

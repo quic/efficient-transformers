@@ -210,27 +210,6 @@ pipeline {
             }
         }
 
-        stage('Install Torch 2.13') {
-            when { expression { params.RUN_DYNAMO_QAIC || params.TEST_PROFILE == 'full_layers_model' } }
-            steps {
-                timeout(time: 15, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    py=\\$(python3 -c \\"import sys; print('cp'+str(sys.version_info.major)+str(sys.version_info.minor))\\") &&
-                    arch=\\$(uname -m) &&
-                    pip install \\
-                        \\"torch@https://download.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-\\${py}-\\${py}-manylinux_2_28_\\${arch}.whl\\" \\
-                        \\"torchvision@https://download.pytorch.org/whl/cpu/torchvision-0.28.0%2Bcpu-\\${py}-\\${py}-manylinux_2_28_\\${arch}.whl\\" \\
-                        'compressed-tensors==0.17.0' \\
-                        'onnxscript==0.6.2' &&
-                    deactivate"
-                    '''
-                }
-            }
-        }
-
         stage('QAIC DYNAMO') {
             when { expression { params.RUN_DYNAMO_QAIC } }
             steps {
@@ -239,6 +218,7 @@ pipeline {
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
+                    pip install -r examples/dynamo/causal_lm/requirements.txt &&
                     mkdir -p \\$PWD/dynamo_qeff_qaic &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=\\$PWD/dynamo_qeff_qaic &&
