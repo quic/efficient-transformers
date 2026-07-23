@@ -76,25 +76,46 @@ def get_custom_n_layers(model_name: str) -> int:
 
 def check_kv_repeat_causal_lm_pytorch_vs_ai100(
     model_name: str,
-    manual_cleanup: callable,
-    prompt_len: int = Constants.PROMPT_LEN,
-    ctx_len: int = Constants.CTX_LEN,
     n_layer: int = -1,
     config: Optional[AutoConfig] = None,
+    transform_params: Optional[dict] = None,
+    export_params: Optional[dict] = None,
+    compile_params: Optional[dict] = None,
+    generate_params: Optional[dict] = None,
+    export_compile_only: bool = False,
+    continuous_batching: bool = False,
+    cosine_similarity_threshold: float = 0.95,
 ):
+    """Validate causal LM export and compile with KV-head replication (GQA → MHA).
+
+    Reads ``num_attention_heads`` and ``num_key_value_heads`` from the model
+    config, derives the replication factor, injects it into ``transform_params``
+    as ``qaic_config={"num_replicate_kv_heads": factor}``, and delegates to
+    ``check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100``.
+
+    Args:
+        model_name: HuggingFace model identifier.
+        n_layer: Number of hidden layers to load; -1 uses the model default.
+        config: Optional pre-built ``AutoConfig``; fetched from HF if ``None``.
+        transform_params: Extra transform kwargs merged with the KV-replicate config.
+        export_params: Keyword arguments forwarded to ``qeff_model.export()``.
+        compile_params: Keyword arguments forwarded to ``qeff_model.compile()``.
+        generate_params: Prompt and generation-length kwargs.
+        export_compile_only: When ``True``, stop after compilation.
+        continuous_batching: Whether to enable continuous-batching mode.
+        cosine_similarity_threshold: Minimum cosine similarity for output checks.
     """
-    Validate causal LM flow with repeated KV heads configuration.
-    """
-    if config is None:
-        model_config = AutoConfig.from_pretrained(
+    resolved_config = (
+        config
+        if config is not None
+        else AutoConfig.from_pretrained(
             model_name,
             trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
         )
-    else:
-        model_config = config
+    )
 
-    num_attention_heads = get_first_config_value(model_config, ATTENTION_HEAD_CONFIG_KEYS, default=1, cast_int=True)
-    num_key_value_heads = get_first_config_value(model_config, KV_HEAD_CONFIG_KEYS, default=None, cast_int=True)
+    num_attention_heads = get_first_config_value(resolved_config, ATTENTION_HEAD_CONFIG_KEYS, default=1, cast_int=True)
+    num_key_value_heads = get_first_config_value(resolved_config, KV_HEAD_CONFIG_KEYS, default=None, cast_int=True)
     if num_key_value_heads is None:
         num_key_value_heads = num_attention_heads
     if num_attention_heads < 1 or num_key_value_heads < 1:
@@ -109,14 +130,21 @@ def check_kv_repeat_causal_lm_pytorch_vs_ai100(
         )
     num_replicate_kv_heads = num_attention_heads // num_key_value_heads
 
+    kv_replicate_transform_params = {
+        **(transform_params or {}),
+        "qaic_config": {"num_replicate_kv_heads": num_replicate_kv_heads},
+    }
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name,
-        manual_cleanup=manual_cleanup,
-        prompt_len=prompt_len,
-        ctx_len=ctx_len,
         n_layer=n_layer,
         config=config,
-        qaic_config={"num_replicate_kv_heads": num_replicate_kv_heads},
+        transform_params=kv_replicate_transform_params,
+        export_params=export_params,
+        compile_params=compile_params,
+        generate_params=generate_params,
+        export_compile_only=export_compile_only,
+        continuous_batching=continuous_batching,
+        cosine_similarity_threshold=cosine_similarity_threshold,
     )
 
 
