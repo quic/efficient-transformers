@@ -25,7 +25,12 @@ from QEfficient.base.onnx_transforms import (
 )
 from QEfficient.transformers.cache_utils import InvalidIndexProvider
 from QEfficient.utils.cache import QEFF_HOME
-from QEfficient.utils.constants import _KNOWN_DECODER_LAYER_ATTR_PATHS, _KNOWN_DECODER_LAYER_SUFFIXES
+from QEfficient.utils.constants import (
+    _KNOWN_DECODER_LAYER_ATTR_PATHS,
+    _KNOWN_DECODER_LAYER_SUFFIXES,
+    DYNAMO_DIM_MAX_BATCH_SIZE,
+    DYNAMO_DIM_MIN_COMP_CTX_LENGTHS,
+)
 from QEfficient.utils.hash_utils import create_export_hash
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.torch_patches import (
@@ -72,14 +77,14 @@ def convert_dynamic_axes_to_dynamic_shapes(
     def resolve_dim(dim_name: str):
         if dim_name not in dim_registry:
             if dim_name == "batch_size":
-                dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=512)
+                dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=DYNAMO_DIM_MAX_BATCH_SIZE)
             elif dim_name == "full_batch_size":
                 # CB pool capacity; different min prevents torch.export collapsing it with batch_size.
-                dim_registry[dim_name] = Dim("full_batch_size", min=batch_min + 1, max=512)
+                dim_registry[dim_name] = Dim("full_batch_size", min=batch_min + 1, max=DYNAMO_DIM_MAX_BATCH_SIZE)
             elif "seq_len" in dim_name:
                 dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
             elif "comp_ctx_lengths" in dim_name:
-                dim_registry[dim_name] = Dim("comp_ctx_lengths", min=4, max=max_seq_len)
+                dim_registry[dim_name] = Dim("comp_ctx_lengths", min=DYNAMO_DIM_MIN_COMP_CTX_LENGTHS, max=max_seq_len)
             elif "ctx_len" in dim_name:
                 dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
             elif "sliding_window" in dim_name:

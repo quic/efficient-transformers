@@ -98,7 +98,7 @@ def test_tinyllama_exports_single_decoder_subfunction(tmp_path):
 
     try:
         qeff_model = QEFFAutoModelForCausalLM(
-            AutoModelForCausalLM.from_pretrained(model_id, **model_kwargs, dtype=torch.float32),
+            AutoModelForCausalLM.from_pretrained(model_id, **model_kwargs),
             cb=False,
         )
     except Exception as exc:
