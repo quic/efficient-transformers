@@ -47,7 +47,7 @@ from ._helpers import (
 @pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
-    "model_type,model_id", sorted(DYNAMO_CAUSAL_LM_MODEL_IDS.items()), ids=sorted(DYNAMO_CAUSAL_LM_MODEL_IDS)
+    "model_type,model_id", list(DYNAMO_CAUSAL_LM_MODEL_IDS.items()), ids=list(DYNAMO_CAUSAL_LM_MODEL_IDS)
 )
 def test_dynamo_fp16_compile(model_type, model_id, tmp_export_dir):
     """Export with dynamo=True and use_onnx_subfunctions=True, compile to FP16 QPC."""
@@ -82,7 +82,7 @@ def test_dynamo_fp16_compile(model_type, model_id, tmp_export_dir):
 @pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
-    "model_type,model_id", sorted(DYNAMO_CAUSAL_LM_MODEL_IDS.items()), ids=sorted(DYNAMO_CAUSAL_LM_MODEL_IDS)
+    "model_type,model_id", list(DYNAMO_CAUSAL_LM_MODEL_IDS.items()), ids=list(DYNAMO_CAUSAL_LM_MODEL_IDS)
 )
 def test_dynamo_fp32_compile(model_type, model_id, tmp_export_dir):
     """Export with dynamo=True and use_onnx_subfunctions=True, compile with fp32 model."""
@@ -128,8 +128,8 @@ def test_dynamo_fp32_compile(model_type, model_id, tmp_export_dir):
 @pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.parametrize(
     "model_type,model_id",
-    sorted(DYNAMO_CAUSAL_LM_MODEL_IDS.items()),
-    ids=sorted(DYNAMO_CAUSAL_LM_MODEL_IDS),
+    list(DYNAMO_CAUSAL_LM_MODEL_IDS.items()),
+    ids=list(DYNAMO_CAUSAL_LM_MODEL_IDS),
 )
 def test_dynamo_multi_device_compile(model_type, model_id, tmp_export_dir):
     """Export with dynamo=True and use_onnx_subfunctions=True, compile for 4 devices."""
@@ -166,8 +166,8 @@ def test_dynamo_multi_device_compile(model_type, model_id, tmp_export_dir):
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id",
-    sorted(DYNAMO_CAUSAL_LM_MODEL_IDS.items()),
-    ids=sorted(DYNAMO_CAUSAL_LM_MODEL_IDS),
+    list(DYNAMO_CAUSAL_LM_MODEL_IDS.items()),
+    ids=list(DYNAMO_CAUSAL_LM_MODEL_IDS),
 )
 def test_dynamo_generate_fp16(model_type, model_id, tmp_export_dir):
     """End-to-end export → compile → generate with dynamo=True and use_onnx_subfunctions=True."""
@@ -210,8 +210,8 @@ def test_dynamo_generate_fp16(model_type, model_id, tmp_export_dir):
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id",
-    sorted(DYNAMO_CAUSAL_LM_MODEL_IDS.items()),
-    ids=sorted(DYNAMO_CAUSAL_LM_MODEL_IDS),
+    list(DYNAMO_CAUSAL_LM_MODEL_IDS.items()),
+    ids=list(DYNAMO_CAUSAL_LM_MODEL_IDS),
 )
 def test_dynamo_hw_hf_parity(model_type, model_id, tmp_export_dir):
     """HF PT tokens == QAIC FP16 tokens (exact equality)."""
@@ -277,8 +277,8 @@ def test_dynamo_hw_hf_parity(model_type, model_id, tmp_export_dir):
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id",
-    sorted(DYNAMO_CAUSAL_LM_MODEL_IDS.items()),
-    ids=sorted(DYNAMO_CAUSAL_LM_MODEL_IDS),
+    list(DYNAMO_CAUSAL_LM_MODEL_IDS.items()),
+    ids=list(DYNAMO_CAUSAL_LM_MODEL_IDS),
 )
 def test_dynamo_cb_generate(model_type, model_id, tmp_export_dir):
     """Continuous-batching export → compile → generate with dynamo=True and use_onnx_subfunctions=True."""
