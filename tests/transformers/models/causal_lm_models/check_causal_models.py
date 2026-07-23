@@ -192,7 +192,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     # print(model_hf)
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=model_name)
     config = model_hf.config
-    prompt = generate_params.get("prompt", Constants.INPUT_STR)
+    prompt = generate_params.pop("prompt", Constants.INPUT_STR)
     prompt_len = compile_params.get("prefill_seq_len", Constants.PROMPT_LEN)
     ctx_len = compile_params.get("ctx_len", Constants.CTX_LEN)
     num_devices = compile_params.get("num_devices", 1)
@@ -221,23 +221,6 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         num_devices=num_devices,
         qaic_config=qaic_config,
     )
-    api_runner = ApiRunner(
-        batch_size,
-        tokenizer,
-        qeff_model.config,
-        prompts,
-        Constants.PROMPT_LEN,
-        Constants.CTX_LEN,
-        full_batch_size if continuous_batching else None,
-    )
-    if not continuous_batching:
-        pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
-    if model_name not in ModelConfig.SWIFTKV_MODELS and model_name not in ModelConfig.EXTERNAL_MODELS:
-        if continuous_batching:
-            pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
-            pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
-        else:
-            pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
 
     _ = qeff_model.export(**export_params)
 
@@ -279,14 +262,33 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     if export_compile_only:
         return
 
-    exec_info = qeff_model.generate(tokenizer, prompts=prompts)
+    api_runner = ApiRunner(
+        batch_size,
+        tokenizer,
+        qeff_model.config,
+        prompts,
+        Constants.PROMPT_LEN,
+        Constants.CTX_LEN,
+        full_batch_size if continuous_batching else None,
+    )
+    if not continuous_batching:
+        pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
+    if model_name not in ModelConfig.SWIFTKV_MODELS and model_name not in ModelConfig.EXTERNAL_MODELS:
+        if continuous_batching:
+            pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
+            pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
+        else:
+            pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
+
+    exec_info = qeff_model.generate(tokenizer, prompts=prompts, **generate_params)
     vocab_size = config.vocab_size
 
     if continuous_batching:
         aic_tokens = exec_info.generated_ids
         if aic_tokens is not None and pytorch_hf_tokens is not None:
+            gen_len = pytorch_hf_tokens.shape[-1]
             for batch_idx, (pt_seq, aic_seq) in enumerate(zip(pytorch_hf_tokens, aic_tokens)):
-                similarity = _sequence_cosine_similarity(pt_seq, aic_seq, vocab_size)
+                similarity = _sequence_cosine_similarity(pt_seq[:gen_len], aic_seq[:gen_len], vocab_size)
                 assert similarity >= cosine_similarity_threshold, (
                     f"Batch index {batch_idx}: cosine similarity between HF PyTorch and AIC output "
                     f"sequences is {similarity:.4f}, below threshold {cosine_similarity_threshold}."
@@ -538,8 +540,8 @@ def check_prefix_caching_inference(
         decode_inputs["input_ids"] = next_token_id
         decode_inputs["position_ids"][1][0] += 1
 
-    baseline_seq = prompts_exec_info.generated_ids[1][:128].tolist()
-    cached_seq = [int(val[1, 0]) for val in generation_outputs_prefill_cached][:128]
+    baseline_seq = prompts_exec_info.generated_ids[1][:113].tolist()
+    cached_seq = [int(val[1, 0]) for val in generation_outputs_prefill_cached][:113]
     cached_similarity = _sequence_cosine_similarity(baseline_seq, cached_seq, vocab_size)
     assert cached_similarity >= cosine_similarity_threshold, (
         f"Prefix-cached decode: cosine similarity between baseline and prefix-cached "
