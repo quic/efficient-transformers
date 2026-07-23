@@ -383,17 +383,17 @@ class QEFFBaseModel(ABC):
         """Export via torch.export (dynamo=True) with custom op translation."""
         # Reorder example_inputs and dynamic_shapes to match model.forward signature order,
         # which torch.export requires for dynamic_shapes to bind correctly.
-        sig = inspect.signature(self.model.forward)
-        sig_keys = sig.parameters.keys()
-        example_inputs = {
-            **{k: example_inputs[k] for k in sig_keys if k in example_inputs},
-            **{k: v for k, v in example_inputs.items() if k not in sig_keys},
-        }
+        sig_keys = list(inspect.signature(self.model.forward).parameters.keys())
+        sig_key_set = set(sig_keys)
+        ordered_inputs, ordered_shapes = {}, {}
+        for k in sig_keys:
+            if k in example_inputs:
+                ordered_inputs[k] = example_inputs[k]
+            if dynamic_shapes is not None and k in dynamic_shapes:
+                ordered_shapes[k] = dynamic_shapes[k]
+        example_inputs = {**ordered_inputs, **{k: v for k, v in example_inputs.items() if k not in sig_key_set}}
         if dynamic_shapes is not None:
-            dynamic_shapes = {
-                **{k: dynamic_shapes[k] for k in sig_keys if k in dynamic_shapes},
-                **{k: v for k, v in dynamic_shapes.items() if k not in sig_keys},
-            }
+            dynamic_shapes = {**ordered_shapes, **{k: v for k, v in dynamic_shapes.items() if k not in sig_key_set}}
 
         export_kwargs = dict(export_kwargs)
         export_kwargs.setdefault("report", False)
@@ -455,13 +455,16 @@ class QEFFBaseModel(ABC):
         Args:
             :example_inputs (dict): Sample inputs to trace the model.
             :output_names (list): names to assign to the output nodes of the graph, in order.
-            :dynamic_axes (dict): Same as dynamic_axes parameter to be passed to `torch.onnx.export`.
+            :dynamic_axes (dict): Same as dynamic_axes parameter to be passed to `torch.onnx.export`. Used when dynamo=False.
             :export_kwargs (dict): Additional arguments to be passed to `torch.onnx.export`.
             :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
             :offload_pt_weights (bool): If True, offload PyTorch model weights to meta device
             after successful export to reduce memory usage. Set to False if you need to
             keep weights for further operations. Defaults to True.
+            :prefill_only (bool): If True, export only the prefill (context) graph without decode. Defaults to False.
+            :dynamo (bool): If True, export via torch.export (dynamo path) instead of the legacy torch.onnx.export TorchScript path. Defaults to False.
+            :dynamic_shapes (dict): Dynamic shape constraints passed to torch.export when dynamo=True. Keys are input names; values are per-dimension constraint dicts. Ignored when dynamo=False.
             Note:
             Once weights are offloaded, the model cannot be re-exported. Create a new
             instance using from_pretrained() for re-export.
@@ -1111,12 +1114,10 @@ class QEFFBaseModel(ABC):
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
         elif mdp_ts_num_devices > 1 and not compiler_options.get("mdp_dump_partition_config", None):
             # Template (tensor-slice) MDP: single partition, empty nodeList; compiler fills it.
+            # File write and command flag are deferred to after compile_dir is finalised (post-hash).
             mdp_ts_json = generate_mdp_partition_config(
                 mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
             )
-            mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
-            create_json(str(mdp_ts_json_path), mdp_ts_json)
-            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
@@ -1178,7 +1179,11 @@ class QEFFBaseModel(ABC):
             shutil.rmtree(qpc_path)
         compile_dir.mkdir(parents=True, exist_ok=True)
 
-        # Write the generated MDP partition config file (not if user provided it)
+        # Write tensor-slice MDP partition config now that compile_dir exists.
+        if mdp_ts_json is not None and mdp_ts_json_path is None:
+            mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
+            create_json(str(mdp_ts_json_path), mdp_ts_json)
+            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
         # Write specializations.json file
         if specializations is not None:

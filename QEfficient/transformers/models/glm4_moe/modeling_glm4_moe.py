@@ -349,6 +349,7 @@ class QEffGlm4MoeAttention(Glm4MoeAttention):
 
         if sin_cached is not None and cos_cached is not None:
             sin, cos = sin_cached, cos_cached
+            # detach().clone() avoids a dynamo arg-count mismatch at subfunction boundaries when tracing
             rotary_dim = int(self.rotary_emb.cos_cached.detach().clone().shape[-1])
             query_states, key_states = qeff_apply_precomputed_rotary_pos_emb(
                 query_states, key_states, cos, sin, rotary_dim

@@ -41,14 +41,6 @@ from ._helpers import (
     skip_on_model_fetch_error,
 )
 
-# Small subset used for compile+generate tests to keep hardware time reasonable
-_HW_SUBSET = ("gpt2", "llama", "qwen2")
-
-# Multi-device (MDP) subset: exclude gpt2 — it has only 2 layers which forces
-# the tensor-slice MDP path; that path has a pre-existing bug (mdp_ts_N.json is
-# written before compile_dir is created) that is tracked separately on main.
-_MDP_SUBSET = tuple(m for m in _HW_SUBSET if m != "gpt2")
-
 
 @pytest.mark.dynamo
 @pytest.mark.on_qaic
@@ -136,8 +128,8 @@ def test_dynamo_fp32_compile(model_type, model_id, tmp_export_dir):
 @pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.parametrize(
     "model_type,model_id",
-    [(k, DYNAMO_CAUSAL_LM_MODEL_IDS[k]) for k in _MDP_SUBSET if k in DYNAMO_CAUSAL_LM_MODEL_IDS],
-    ids=list(_MDP_SUBSET),
+    sorted(DYNAMO_CAUSAL_LM_MODEL_IDS.items()),
+    ids=sorted(DYNAMO_CAUSAL_LM_MODEL_IDS),
 )
 def test_dynamo_multi_device_compile(model_type, model_id, tmp_export_dir):
     """Export with dynamo=True and use_onnx_subfunctions=True, compile for 4 devices."""
@@ -174,8 +166,8 @@ def test_dynamo_multi_device_compile(model_type, model_id, tmp_export_dir):
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id",
-    [(k, DYNAMO_CAUSAL_LM_MODEL_IDS[k]) for k in _HW_SUBSET if k in DYNAMO_CAUSAL_LM_MODEL_IDS],
-    ids=list(_HW_SUBSET),
+    sorted(DYNAMO_CAUSAL_LM_MODEL_IDS.items()),
+    ids=sorted(DYNAMO_CAUSAL_LM_MODEL_IDS),
 )
 def test_dynamo_generate_fp16(model_type, model_id, tmp_export_dir):
     """End-to-end export → compile → generate with dynamo=True and use_onnx_subfunctions=True."""
@@ -218,8 +210,8 @@ def test_dynamo_generate_fp16(model_type, model_id, tmp_export_dir):
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id",
-    [(k, DYNAMO_CAUSAL_LM_MODEL_IDS[k]) for k in _HW_SUBSET if k in DYNAMO_CAUSAL_LM_MODEL_IDS],
-    ids=list(_HW_SUBSET),
+    sorted(DYNAMO_CAUSAL_LM_MODEL_IDS.items()),
+    ids=sorted(DYNAMO_CAUSAL_LM_MODEL_IDS),
 )
 def test_dynamo_hw_hf_parity(model_type, model_id, tmp_export_dir):
     """HF PT tokens == QAIC FP16 tokens (exact equality)."""
@@ -285,8 +277,8 @@ def test_dynamo_hw_hf_parity(model_type, model_id, tmp_export_dir):
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id",
-    [(k, DYNAMO_CAUSAL_LM_MODEL_IDS[k]) for k in _HW_SUBSET if k in DYNAMO_CAUSAL_LM_MODEL_IDS],
-    ids=list(_HW_SUBSET),
+    sorted(DYNAMO_CAUSAL_LM_MODEL_IDS.items()),
+    ids=sorted(DYNAMO_CAUSAL_LM_MODEL_IDS),
 )
 def test_dynamo_cb_generate(model_type, model_id, tmp_export_dir):
     """Continuous-batching export → compile → generate with dynamo=True and use_onnx_subfunctions=True."""
