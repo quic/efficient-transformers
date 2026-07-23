@@ -1,0 +1,42 @@
+name: Protected Manifest Guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  pyproject-read-only:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Block unapproved pyproject.toml changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          APPROVAL_LABEL: maintainer-approved-pyproject-change
+          LABEL_APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'maintainer-approved-pyproject-change') }}
+        run: |
+          set -euo pipefail
+
+          changed_files="$({
+            gh api \
+              --paginate \
+              "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+              --jq '.[].filename'
+          })"
+
+          if ! printf '%s\n' "${changed_files}" | grep -qx 'pyproject.toml'; then
+            echo "pyproject.toml was not changed."
+            exit 0
+          fi
+
+          if [ "${LABEL_APPROVED}" = "true" ]; then
+            echo "::notice::pyproject.toml changed with maintainer approval label '${APPROVAL_LABEL}'."
+            exit 0
+          fi
+
+          echo "::error file=pyproject.toml::pyproject.toml is protected. Agents must not edit it or change its mode. If a change is required, hand off the exact proposed diff or file-mode request to a human maintainer. A maintainer may approve an intentional manifest PR by adding the '${APPROVAL_LABEL}' label."
+          exit 1

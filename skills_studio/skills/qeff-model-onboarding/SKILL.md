@@ -68,11 +68,21 @@ Read `references/validation-playbook.md`, run the narrowest relevant test slice 
 ## Non-Negotiables
 - Preserve HF PyTorch to QEff PyTorch parity before treating ONNX or compile success as sufficient.
 - Keep tuple-cache compatibility whenever shared export or runtime code still expects legacy cache layout.
+- Treat `pyproject.toml` as read-only. Do not edit it, change its mode or permissions, or
+  add/remove dependency, tool, build-system, marker, or test configuration entries.
+  If onboarding appears to require a `pyproject.toml` change, stop and provide the
+  exact proposed diff or file-mode request as a human-maintainer handoff instead.
 - Prefer feature detection and boundary normalization over version-specific hacks.
 - For MoE architectures, start with a weights-as-activation implementation as the default decode path. Use this as the first integration mode because it is faster to validate and simpler to debug; add alternate/prefill-specialized paths only after baseline parity and export stability are proven.
 - In MoE/router paths, avoid `.sum(..., keepdim=True)` when it creates non-constant ONNX reduction axes under subfunctions; prefer `torch.einsum(...)`-based normalization for export/compile stability.
 - For `use_onnx_subfunctions=True`, avoid shape-derived reduction/slice expressions in model logic (for example runtime `.sum(..., keepdim=True)` axes or `x[..., :tensor.shape[-1]]` bounds). Prefer compile-stable forms (for example `einsum` normalization and config-constant dimensions) so ONNX function-local axes/bounds remain constant and compile cleanly.
 - Do not add a bespoke test file when `tests/test_model_quickcheck.py` can carry the regression.
+- Do not open, raise, submit, or publish pull requests directly. Prepare local
+  changes, validation evidence, and PR handoff text only; a human maintainer must
+  review and submit any PR.
+- Do not add, remove, request, or suggest workflow-bypass labels such as
+  `maintainer-approved-pyproject-change`; only human maintainers may apply them
+  after reviewing the proposed change.
 
 ## References
 - Load `references/model-family-map.md` when deciding which local modeling file to copy or extend.

@@ -30,6 +30,16 @@ This sequencing keeps diffs understandable, makes regressions easier to bisect, 
 ## Source Of Truth
 - Ultimate validation gate: `tests/test_model_quickcheck.py`
 - Do not claim success unless full quickcheck passes in the user-provided environment.
+- Treat `pyproject.toml` as read-only. Do not edit it, change its mode or permissions, or
+  add/remove dependency, tool, build-system, marker, or test configuration entries.
+  If a dependency alignment requires a `pyproject.toml` change, stop and provide
+  the exact proposed diff or file-mode request as a human-maintainer handoff instead.
+- Do not open, raise, submit, or publish pull requests directly. Prepare local
+  changes, validation evidence, and PR handoff text only; a human maintainer must
+  review and submit any PR.
+- Do not add, remove, request, or suggest workflow-bypass labels such as
+  `maintainer-approved-pyproject-change`; only human maintainers may apply them
+  after reviewing the proposed change.
 
 ## Environment Rule
 - Environment is user-provided.
@@ -40,7 +50,8 @@ This sequencing keeps diffs understandable, makes regressions easier to bisect, 
   - `python -m pytest -q tests/test_model_quickcheck.py -n auto`
 
 ## Rebase Workflow (Always)
-1. Align dependency stack first, then install.
+1. Audit dependency stack first, then ask a human maintainer to apply any required
+   `pyproject.toml` changes before installing.
 2. Run full quickcheck once to capture failure baseline.
 3. Fix failures in focused groups (small diffs, re-test quickly).
 4. Re-run full quickcheck.
@@ -51,7 +62,8 @@ Use this exact sequence for a smooth first-time rebase execution:
 
 1. Environment bootstrap
 - activate the user-provided environment
-- install/update dependencies from `pyproject.toml` (plus optional test extras)
+- install dependencies from `pyproject.toml` (plus optional test extras) after any
+  required manifest updates have been applied by a human maintainer
 
 2. Hygiene cleanup
 - clear stale temp/export/cache artifacts before any test run
@@ -101,7 +113,8 @@ If still blocked after these checks:
 
 ## Rebase Workflow (Detailed Execution Contract)
 1. Dependency and API surface lock
-- update dependency pins together (`transformers`, `huggingface-hub`, `diffusers`, `peft`, export/runtime libs)
+- audit dependency pins together (`transformers`, `huggingface-hub`, `diffusers`, `peft`, export/runtime libs),
+  but do not edit `pyproject.toml`; hand off the exact proposed manifest diff to a human maintainer
 - ensure no mixed-era cache/quantizer imports remain
 
 2. Baseline failure snapshot
@@ -388,8 +401,9 @@ Fix:
 
 ## File-Level Audit Checklist (Use Every Upgrade)
 - `pyproject.toml`:
-  - dependency pin alignment
-  - `pytest-xdist` present in test extras if quickcheck uses `-n`
+  - read-only audit for dependency pin alignment
+  - read-only audit that `pytest-xdist` is present in test extras if quickcheck uses `-n`
+  - hand off any required manifest diff to a human maintainer instead of editing it
 - `QEfficient/transformers/cache_utils.py`:
   - no hard dependency on removed HF cache-layer internals
   - tuple/object interop + `get_seq_length` compatibility

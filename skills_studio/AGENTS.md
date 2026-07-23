@@ -43,6 +43,10 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
 ## Conventions
 - Keep changes surgical and consistent with surrounding code; prefer fixing root causes.
 - Preserve HF → QEff PyTorch parity before treating ONNX/compile success as sufficient.
+- Treat `pyproject.toml` as read-only. Agents must not edit it, change its mode,
+  or add/remove dependency, tool, build-system, marker, or test configuration entries.
+  If such a change appears necessary, stop and hand off the exact proposed diff or file-mode request
+  to a human maintainer instead.
 - Keep tuple-cache compatibility wherever shared export/runtime code expects the legacy layout.
 - Follow SOLID principles when writing code. If a change must intentionally diverge
   from SOLID for compatibility, performance, export constraints, or minimal-risk
@@ -67,7 +71,13 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
 - A human submitter must understand and be able to defend every AI-assisted change
   end-to-end, and must review every changed line and run the relevant tests.
 - Disclose AI assistance and the exact test commands run in the PR description.
-- Do not raise PRs without human validation, and state what's chaging from existing arch to the user for validation.
+- Agents must not open, raise, submit, or publish pull requests directly. Agents may
+  only prepare local changes, validation evidence, and PR handoff text for a human
+  maintainer to review and submit.
+- Agents must not add, remove, request, or suggest bypass labels such as
+  `maintainer-approved-pyproject-change`; only human maintainers may apply
+  workflow-bypass labels after reviewing the proposed change.
+- State what's changing from existing architecture to the user for validation.
 - Do not open low-value busywork PRs or duplicate existing open PRs/issues.
 
 ## Local agent setup
