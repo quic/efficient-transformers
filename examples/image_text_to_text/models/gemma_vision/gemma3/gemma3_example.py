@@ -14,7 +14,7 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 
 # Change model_id to "google/gemma-3-27b-it" for 27B model
-model_id = "google/gemma-3-4b-it"
+model_id = "google/gemma-3-27b-it"
 
 config = AutoConfig.from_pretrained(model_id)
 
@@ -32,10 +32,7 @@ npi_file_full_path = str(gemma_vision_dir / "configs" / "gemma_updated_npi.yaml"
 
 # For single QPC: kv_offload=False, For dual QPC: kv_offload=True
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id,
-    config=config,
-    attn_implementation="eager",
-    kv_offload=False,
+    model_id, config=config, attn_implementation="eager", kv_offload=True
 )
 
 
@@ -56,7 +53,6 @@ if skip_vision:
         skip_vision=True,
         mos=1,
         node_precision_info=npi_file_full_path,
-        use_onnx_subfunctions=True,
     )
 
     messages = [
@@ -94,7 +90,6 @@ else:
         mos=1,
         node_precision_info=npi_file_full_path,
         split_model_io=True,
-        use_onnx_subfunctions=True,
     )
 
     ### IMAGE + TEXT ###
