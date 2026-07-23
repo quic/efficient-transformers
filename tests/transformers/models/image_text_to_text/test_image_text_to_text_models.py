@@ -15,6 +15,7 @@ import pytest
 import requests
 import torch
 from PIL import Image
+from requests.adapters import HTTPAdapter
 from transformers import (
     AutoConfig,
     AutoProcessor,
@@ -22,6 +23,7 @@ from transformers import (
     GenerationConfig,
     TextStreamer,
 )
+from urllib3.util.retry import Retry
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils._utils import create_json
@@ -37,6 +39,9 @@ from QEfficient.utils.test_utils import (
 )
 
 from ..check_model_results import dump_and_compare_results
+
+_session = requests.Session()
+_session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=1)))
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
 with open(CONFIG_PATH, "r") as f:
@@ -168,7 +173,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         num_patches_list = []
         questions = []
         for i in range(len(prompt)):
-            img = requests.get(img_url_list[i], stream=True)
+            img = _session.get(img_url_list[i], stream=True)
             image = Image.open(BytesIO(img.content)).convert("RGB")
             image = image.resize((448, 448))
             pixel_value = processor.load_image(image, max_num=12)
@@ -202,7 +207,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     elif model_name in ModelConfig.MOLMO_MODELS:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-        img = requests.get(img_url, stream=True)
+        img = _session.get(img_url, stream=True)
         image = Image.open(BytesIO(img.content)).convert("RGB")
         image = image.resize((536, 354))
         inputs = processor.process(images=[image], text=query)
@@ -230,7 +235,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     else:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-        image = Image.open(requests.get(img_url, stream=True).raw)
+        image = Image.open(_session.get(img_url, stream=True).raw)
         if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
             image = image.resize((1540, 1540))
         conversation = [
