@@ -50,17 +50,5 @@ Use this skill to add transforms with the same architecture and safety expectati
 - For mutators, verify replacement object identity changes where expected and validate weight/buffer shapes, dtype, bias handling, and numerical equivalence or dequantization correctness.
 - For mode-dependent bespoke transforms, test both disabled and enabled paths and assert unsupported models raise clear errors.
 
-## Agent Guardrails
-- Treat `pyproject.toml` as read-only. Do not edit it, change its mode or permissions, or
-  add/remove dependency, tool, build-system, marker, or test configuration entries.
-  If transform work appears to require a `pyproject.toml` change, stop and provide
-  the exact proposed diff or file-mode request as a human-maintainer handoff instead.
-- Do not open, raise, submit, or publish pull requests directly. Prepare local
-  changes, validation evidence, and PR handoff text only; a human maintainer must
-  review and submit any PR.
-- Do not add, remove, request, or suggest workflow-bypass labels such as
-  `maintainer-approved-pyproject-change`; only human maintainers may apply them
-  after reviewing the proposed change.
-
 ## References
 - `references/transform-patterns.md` — transform taxonomy, registration sites, examples, and test locations.

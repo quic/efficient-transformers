@@ -42,7 +42,13 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
 
 ## Conventions
 - Keep changes surgical and consistent with surrounding code; prefer fixing root causes.
-- Preserve HF → QEff PyTorch parity before treating ONNX/compile success as sufficient.
+- Treat public APIs, model inputs/outputs, cache layouts, tensor names, artifact formats,
+  compile options, and runtime semantics as contracts. If one must change, make the
+  compatibility impact and validation path explicit.
+- Keep model-specific facts close to the owning wrapper. Promote logic into shared helpers
+  only when it removes real duplication across model families or isolates a volatile boundary.
+- Debug from concrete evidence: exact commands, tracebacks, ONNX nodes, graph dumps, compiler
+  logs, QPC paths, tensor shapes, dtypes, and measured numerical differences.
 - Treat `pyproject.toml` as read-only. Agents must not edit it, change its mode,
   or add/remove dependency, tool, build-system, marker, or test configuration entries.
   If such a change appears necessary, stop and hand off the exact proposed diff or file-mode request
@@ -51,18 +57,35 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
 - Follow SOLID principles when writing code. If a change must intentionally diverge
   from SOLID for compatibility, performance, export constraints, or minimal-risk
   integration, call that out to the user with the reason.
+- Avoid speculative extension points, broad registries, or configuration surfaces for
+  hypothetical future cases.
 - Always use signed-off commits with `git commit -s`.
 - Keep code standards high: follow PEP 8 for Python, including naming variables,
   classes, functions, and modules appropriately and maintaining clean import order.
   Avoid commented-out code, and never leave breakpoints, ad-hoc debug prints, or
   temporary debugging hooks.
 - Do not add new test files when an existing test (or the quickcheck gate) can carry the regression.
+- For regressions, reproduce the real failing boundary when feasible. Reduced repros are acceptable
+  only when they exercise the same mechanism as the reported failure.
+
+## Working style
+- Before broad or risky changes, state the current architecture, what is changing,
+  preserved compatibility surfaces, and the validation boundary.
+- Prefer narrow, faithful validation first, then widen to subsystem tests, quickcheck,
+  export/compile, ONNXRuntime, or QAIC checks as the change requires.
+- Report handoff evidence in reviewer-friendly terms: commands run, pass/fail results,
+  artifact paths when relevant, known gaps, and hardware/cache limitations.
 
 ## Required user inputs
-- Ask the user for the virtualenv path only when there is a real need to execute Python-dependent commands, such as `python`, `pip`, `pytest`, `ruff`, or `pre-commit`; otherwise do not ask.
+- Ask the user for the virtualenv path only when there is a real need to execute
+  Python-dependent commands, such as `python`, `pip`, `pytest`, `ruff`, or
+  `pre-commit`; otherwise do not ask.
 - Ask the user for `HF_HUB_CACHE` before downloading or loading any model.
 - Set `HF_HUB_ENABLE_HF_TRANSFER=1` whenever downloading models from Hugging Face.
-- Ask the user for `QEFF_HOME` before export/compile work that produces QEff artifacts only when the correct location is ambiguous; otherwise choose an appropriate local path and proceed.
+- For export/compile work that produces QEff artifacts, choose an appropriate
+  local `QEFF_HOME` without asking whenever possible. Ask the user only when an
+  existing required location cannot be inferred or choosing one could overwrite,
+  hide, or invalidate artifacts the user likely needs.
 
 ## Contribution policy
 - Follow the fork → branch → PR flow in `CONTRIBUTING.md`; sync from `upstream/main`.
@@ -77,7 +100,6 @@ while preserving PyTorch ↔ ONNX ↔ on-device parity.
 - Agents must not add, remove, request, or suggest bypass labels such as
   `maintainer-approved-pyproject-change`; only human maintainers may apply
   workflow-bypass labels after reviewing the proposed change.
-- State what's changing from existing architecture to the user for validation.
 - Do not open low-value busywork PRs or duplicate existing open PRs/issues.
 
 ## Local agent setup
