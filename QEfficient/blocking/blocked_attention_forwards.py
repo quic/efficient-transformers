@@ -132,7 +132,7 @@ def blocked_kv_attention_forward(
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks else 1
     kv_block_size = -(-past_seen_tokens // num_kv_blocks)
     if hasattr(module, "config"):
         mask_dtype = module.config.torch_dtype
@@ -242,9 +242,9 @@ def blocked_qkv_attention_forward(
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
 
-    num_q_blocks = max(1, num_q_blocks)
+    num_q_blocks = max(1, num_q_blocks) if num_q_blocks else 1
     q_block_positions = [-(-i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks else 1
     kv_block_size = -(-past_seen_tokens // num_kv_blocks)
 
     q_output_blocks = []
@@ -255,9 +255,6 @@ def blocked_qkv_attention_forward(
         mask_dtype = value.dtype
     masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
     current_position = position_ids.max(dim=-1).values
-    # needed for GPT-OSS
-    if sinks is not None:
-        sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
 
     for q_block_idx in range(num_q_blocks):
         q_start = q_block_positions[q_block_idx]
@@ -340,7 +337,8 @@ def blocked_qkv_attention_forward(
 
         # If present, apply Attention Sinks, needed for GPT-OSS
         if sinks is not None:
-            _, _, output_blocks = update_running_softmax(current_max, sinks, current_denominator, output_blocks, None)
+            sinks_g = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, q_len_block, -1)
+            _, _, output_blocks = update_running_softmax(current_max, sinks_g, current_denominator, output_blocks, None)
         q_output_blocks.append(output_blocks)
         q_attn_blocks.append(attn_weights_block)
 
@@ -382,9 +380,9 @@ def blocked_hqkv_attention_forward(
     if head_block_size <= 0:
         head_block_size = num_heads
     num_head_blocks = math.ceil(num_heads / head_block_size)
-    num_q_blocks = max(1, num_q_blocks)
+    num_q_blocks = max(1, num_q_blocks) if num_q_blocks else 1
     q_block_positions = [-(-i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks else 1
     kv_block_size = -(-past_seen_tokens // num_kv_blocks)
 
     h_output_blocks = []
@@ -395,9 +393,6 @@ def blocked_hqkv_attention_forward(
         mask_dtype = value.dtype
     masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
     current_position = position_ids.max(dim=-1).values
-    # needed for GPT-OSS
-    if sinks is not None:
-        sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
 
     # Process each head block independently
     for head_block_idx in range(num_head_blocks):
@@ -489,8 +484,9 @@ def blocked_hqkv_attention_forward(
                 )
             # If present, apply Attention Sinks, needed for GPT-OSS
             if sinks is not None:
+                sinks_g = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, q_len_block, -1)
                 _, _, output_blocks = update_running_softmax(
-                    current_max, sinks, current_denominator, output_blocks, None
+                    current_max, sinks_g, current_denominator, output_blocks, None
                 )
             q_output_blocks.append(output_blocks)
             q_attn_blocks.append(attn_weights_block)
@@ -540,9 +536,9 @@ def blocked_bhqkv_attention_forward(
     if head_block_size <= 0:
         head_block_size = num_heads
     num_head_blocks = math.ceil(num_heads / head_block_size)
-    num_q_blocks = max(1, _normalize_int(num_q_blocks))
+    num_q_blocks = max(1, _normalize_int(num_q_blocks)) if num_q_blocks else 1
     q_block_positions = [-(-i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks else 1
     kv_block_size = -(-past_seen_tokens // num_kv_blocks)
 
     h_output_blocks = []
@@ -779,7 +775,7 @@ def blocked_q_attention_forward(
     Q-blocked attention that slices the query sequence into blocks and processes each block.
     """
     batch_size, num_heads, q_len, _ = query.shape
-    num_q_blocks = max(1, _normalize_int(num_q_blocks))
+    num_q_blocks = max(1, _normalize_int(num_q_blocks)) if num_q_blocks else 1
     key_states, value_states = _get_kv_states(module, key, value)
 
     q_block_positions = [-(-i * q_len) // num_q_blocks for i in range(num_q_blocks)]

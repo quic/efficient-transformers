@@ -3779,8 +3779,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # increase seq_len if using a larger number of blocks
         if self.hash_params.get("blocking_kwargs", None):
             max_blocks = -1
-            for num_blocks in self.hash_params.get("blocking_kwargs").__dict__.values():
-                if isinstance(num_blocks, int):
+            for blocking_param, num_blocks in self.hash_params.get("blocking_kwargs").__dict__.items():
+                if ("num_kv_blocks" in blocking_param or "num_q_blocks" in blocking_param) and isinstance(
+                    num_blocks, int
+                ):
                     max_blocks = max(max_blocks, num_blocks)
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
