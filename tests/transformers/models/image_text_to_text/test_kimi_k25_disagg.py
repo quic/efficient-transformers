@@ -20,46 +20,23 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils.load_kimi_utils import (
     LOADED_EXPERT_IDS,
     NUM_EXPERTS_PER_TOKEN,
+    ensure_torch_fx_import_compatibility,
     load_kimi_k25_class,
-)
-from QEfficient.utils.load_kimi_utils import (
-    ensure_torch_fx_import_compatibility as _ensure_torch_fx_import_compatibility,
-)
-from QEfficient.utils.load_kimi_utils import (
-    load_layer_subset_model as _load_layer_subset_model,
-)
-from QEfficient.utils.load_kimi_utils import (
-    prepare_config as _prepare_config,
-)
-from QEfficient.utils.load_kimi_utils import (
-    resolve_model_path as _resolve_model_path,
-)
-from QEfficient.utils.load_kimi_utils import (
-    set_deterministic as _set_deterministic,
+    load_layer_subset_model,
+    prepare_config,
+    resolve_model_path,
+    run_kimi_k25_hf_model_on_pytorch,
+    set_deterministic,
 )
 
 PREFILL_SEQ_LEN = 512
 CTX_LEN = 2048
 BATCH_SIZE = 1
 GENERATION_LEN = 10
-NUM_VISION_LAYERS = 2
-NUM_TEXT_LAYERS = 2
+NUM_VISION_LAYERS = 4
+NUM_TEXT_LAYERS = 4
 IMAGE_URL = "https://huggingface.co/moonshotai/Kimi-K2.5/resolve/main/figures/kimi-logo.png"
 TEXT_PROMPT = "Describe this image."
-
-
-def _has_qaic_runtime_access() -> bool:
-    try:
-        _ = QAICInferenceSession
-    except Exception:
-        return False
-    try:
-        import qaicrt
-
-        _ctx = qaicrt.Context()
-        return True
-    except Exception:
-        return False
 
 
 def _prepare_inputs(processor):
@@ -88,43 +65,6 @@ def _decode_tokens(tokenizer, token_ids: torch.Tensor) -> str:
 
 def _clone_inputs(inputs):
     return {k: (v.clone() if torch.is_tensor(v) else copy.deepcopy(v)) for k, v in inputs.items()}
-
-
-def _greedy_generate_hf(model, inputs, max_new_tokens: int):
-    generated_ids = inputs["input_ids"]
-    attention_mask = inputs["attention_mask"]
-    pixel_values = inputs["pixel_values"]
-    grid_thws = inputs["grid_thws"]
-
-    eos_token_id = getattr(model.config, "eos_token_id", None)
-    if eos_token_id is None and hasattr(model.config, "text_config"):
-        eos_token_id = getattr(model.config.text_config, "eos_token_id", None)
-
-    for _ in range(max_new_tokens):
-        outputs = model(
-            input_ids=generated_ids,
-            attention_mask=attention_mask,
-            pixel_values=pixel_values,
-            grid_thws=grid_thws,
-            use_cache=False,
-            return_dict=True,
-        )
-        logits = outputs[0] if isinstance(outputs, tuple) else outputs.logits
-        next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
-
-        generated_ids = torch.cat([generated_ids, next_token], dim=1)
-        attention_mask = torch.cat(
-            [
-                attention_mask,
-                torch.ones((attention_mask.shape[0], 1), dtype=attention_mask.dtype, device=attention_mask.device),
-            ],
-            dim=1,
-        )
-
-        if eos_token_id is not None and torch.all(next_token == eos_token_id):
-            break
-
-    return generated_ids[:, -max_new_tokens:]
 
 
 def _assert_onnx_path(onnx_path, label: str) -> Path:
@@ -179,13 +119,13 @@ def _update_retained_states(target_inputs: dict[str, np.ndarray], source_outputs
 
 
 def _load_kimi_subset_model():
-    _set_deterministic(1234)
-    _ensure_torch_fx_import_compatibility()
-    model_path = _resolve_model_path()
-    config = _prepare_config(model_path)
+    set_deterministic(1234)
+    ensure_torch_fx_import_compatibility()
+    model_path = resolve_model_path()
+    config = prepare_config(model_path)
     kimi_cls = load_kimi_k25_class(model_path)
 
-    model, tokenizer, processor = _load_layer_subset_model(
+    model, tokenizer, processor = load_layer_subset_model(
         model_path=model_path,
         kimi_cls=kimi_cls,
         config=config,
@@ -214,13 +154,11 @@ def _compile_disagg_qpcs(qeff_model: QEFFAutoModelForImageTextToText, compile_di
     common_compile_kwargs = {
         "batch_size": BATCH_SIZE,
         "ctx_len": CTX_LEN,
-        "num_devices": 1,
         "num_cores": 16,
         "mxfp6_matmul": False,
         "split_model_io": True,
         "mos": 1,
         "aic_enable_depth_first": True,
-        "use_onnx_subfunctions": True,
         "layerwise": False,
         **compile_dims,
     }
@@ -230,17 +168,17 @@ def _compile_disagg_qpcs(qeff_model: QEFFAutoModelForImageTextToText, compile_di
         prefill_seq_len=PREFILL_SEQ_LEN,
         skip_vision=False,
         skip_lang=True,
+        num_devices=1,
         **common_compile_kwargs,
     )
     compiled_onnx_paths["vision"] = _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
 
     prefill_qpc_path = qeff_model.compile(
         prefill_seq_len=PREFILL_SEQ_LEN,
-        # retain_full_kv=True,
         prefill_only=True,
-        # enable_chunking=True,
         skip_vision=True,
         skip_lang=False,
+        num_devices=4,
         **common_compile_kwargs,
     )
     compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")
@@ -250,6 +188,7 @@ def _compile_disagg_qpcs(qeff_model: QEFFAutoModelForImageTextToText, compile_di
         prefill_only=False,
         skip_vision=True,
         skip_lang=False,
+        num_devices=4,
         **common_compile_kwargs,
     )
     compiled_onnx_paths["decode"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "decode")
@@ -341,13 +280,13 @@ def _run_disagg_qaic_generation(
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 def test_kimi_k25_disagg_qaic_vs_hf_fp32():
-    if not _has_qaic_runtime_access():
-        pytest.skip("QAIC runtime is not available.")
 
     model, tokenizer, processor = _load_kimi_subset_model()
     inputs = _prepare_inputs(processor)
     inputs = {name: (value.to("cpu") if torch.is_tensor(value) else value) for name, value in inputs.items()}
-    hf_tokens = _greedy_generate_hf(copy.deepcopy(model), _clone_inputs(inputs), max_new_tokens=GENERATION_LEN)
+    hf_tokens = run_kimi_k25_hf_model_on_pytorch(
+        copy.deepcopy(model), processor, _clone_inputs(inputs), max_gen_len=GENERATION_LEN
+    )
 
     qeff_model = QEFFAutoModelForImageTextToText(
         model,
