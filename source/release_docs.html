@@ -4,7 +4,7 @@
   <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Efficient Transformer Library - 1.21.0 Release Notes &mdash; efficient-transformers main documentation</title>
+  <title>Efficient Transformer Library - 1.22.0 Release Notes &mdash; efficient-transformers main documentation</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
       <link rel="stylesheet" type="text/css" href="../_static/my_theme.css?v=f6ee2d30" />
@@ -47,18 +47,31 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Release Documents</span></p>
 <ul class="current">
-<li class="toctree-l1 current"><a class="current reference internal" href="#">Efficient Transformer Library - 1.21.0 Release Notes</a><ul>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Efficient Transformer Library - 1.22.0 Release Notes</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="#newly-supported-models">Newly Supported Models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#deprecations">Deprecations</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#key-features-enhancements">Key Features &amp; Enhancements</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#example-scripts">Example Scripts</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="#efficient-transformer-library-1-21-6-release-notes">Efficient Transformer Library - 1.21.6 Release Notes</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#branch-summary">Branch Summary</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#id1">Key Features &amp; Enhancements</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#validation-quality-updates">Validation &amp; Quality Updates</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="#efficient-transformer-library-1-21-0-release-notes">Efficient Transformer Library - 1.21.0 Release Notes</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#id2">Newly Supported Models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#id3">Key Features &amp; Enhancements</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#embedding-model-upgrades">Embedding Model Upgrades</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#fine-tuning-support">Fine-Tuning Support</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="#efficient-transformer-library-1-20-0-release-notes">Efficient Transformer Library - 1.20.0 Release Notes</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="#id1">Newly Supported Models</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#id2">Key Features &amp; Enhancements</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#id3">Embedding Model Upgrades</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#id4">Fine-Tuning Support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#id4">Newly Supported Models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#id5">Key Features &amp; Enhancements</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#id6">Embedding Model Upgrades</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#id7">Fine-Tuning Support</a></li>
 </ul>
 </li>
 </ul>
@@ -67,6 +80,7 @@
 <li class="toctree-l1"><a class="reference internal" href="introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
 <li class="toctree-l1"><a class="reference internal" href="supported_features.html">Supported Features</a></li>
 <li class="toctree-l1"><a class="reference internal" href="validate.html">Validated Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="validate.html#note">Note</a></li>
 <li class="toctree-l1"><a class="reference internal" href="validate.html#models-coming-soon">Models Coming Soon</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
@@ -75,7 +89,7 @@
 <li class="toctree-l1"><a class="reference internal" href="installation.html#installation">Installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="installation.html#sanity-check">Sanity Check</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Inference on Cloud AI 100</span></p>
+<p class="caption" role="heading"><span class="caption-text">Inference on Cloud AIxx (AI100, AI200 and so on)</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start</a></li>
 <li class="toctree-l1"><a class="reference internal" href="features_enablement.html">Fetaures Enablement Guide</a></li>
@@ -121,7 +135,7 @@
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
       <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">Efficient Transformer Library - 1.21.0 Release Notes</li>
+      <li class="breadcrumb-item active">Efficient Transformer Library - 1.22.0 Release Notes</li>
       <li class="wy-breadcrumbs-aside">
             <a href="../_sources/source/release_docs.md.txt" rel="nofollow"> View page source</a>
       </li>
@@ -131,15 +145,280 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="efficient-transformer-library-1-21-0-release-notes">
+  <section id="efficient-transformer-library-1-22-0-release-notes">
+<h1>Efficient Transformer Library - 1.22.0 Release Notes<a class="headerlink" href="#efficient-transformer-library-1-22-0-release-notes" title="Permalink to this heading"></a></h1>
+<p>Welcome to the official release of <strong>Efficient Transformer Library v1.22.0</strong>! This release delivers major new model support including Gemma 4, Qwen3-VL, and GLM4-MOE, a full rebase to Transformers v5.5.4, Python 3.12 support, advanced attention blocking, Multi-head Latent Attention (MLA), and numerous performance and export improvements.</p>
+<blockquote>
+<div><p>✅ All features and models listed below are available on the <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/release/v1.22.0"><code class="docutils literal notranslate"><span class="pre">release/v1.22.0</span></code></a> branch and <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main"><code class="docutils literal notranslate"><span class="pre">mainline</span></code></a>.</p>
+</div></blockquote>
+<hr class="docutils" />
+<section id="newly-supported-models">
+<h2>Newly Supported Models<a class="headerlink" href="#newly-supported-models" title="Permalink to this heading"></a></h2>
+<ul class="simple">
+<li><p><strong>Gemma 4</strong></p>
+<ul>
+<li><p>Executable via <a class="reference internal" href="qeff_autoclasses.html#qeffautomodelforimagetexttotext"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForImageTextToText</span></code></span></a> (multimodal)</p></li>
+<li><p>Covers both dense and MoE configurations</p></li>
+<li><p>Optimized chunked prefill and disaggregated (vision/language split) serving</p></li>
+<li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/gemma_vision/gemma4">Gemma 4 Example Scripts</a></p></li>
+</ul>
+</li>
+<li><p><strong>Qwen3-VL (Vision Language)</strong></p>
+<ul>
+<li><p>Executable via <a class="reference internal" href="qeff_autoclasses.html#qeffautomodelforimagetexttotext"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForImageTextToText</span></code></span></a></p></li>
+<li><p>Dense and MoE variants supported</p></li>
+<li><p>Continuous batching enabled</p></li>
+<li><p>Disaggregated VL-MoE serving (three-QPC split)</p></li>
+<li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3vl">Qwen3-VL Example Scripts</a></p></li>
+</ul>
+</li>
+<li><p><strong>Qwen3.5 / Qwen3.6 VLM Series</strong></p>
+<ul>
+<li><p>Executable via <a class="reference internal" href="qeff_autoclasses.html#qeffautomodelforimagetexttotext"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForImageTextToText</span></code></span></a></p></li>
+<li><p>Linear attention variants for Qwen3.5 and Qwen3.6 architectures</p></li>
+<li><p>Continuous batching and disaggregated serving support</p></li>
+<li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3_5">Qwen3.5 Example Scripts</a></p></li>
+</ul>
+</li>
+<li><p><strong>GLM4-MOE</strong></p>
+<ul>
+<li><p>Executable via <a class="reference internal" href="qeff_autoclasses.html#qeffautomodelforcausallm"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM</span></code></span></a></p></li>
+<li><p>Disaggregated prefill and decode support with chunked prefill</p></li>
+<li><p>KV-blocked attention and ONNX subfunction export</p></li>
+<li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/disagg_serving/glm4_moe_disagg_mode_with_chunking.py">GLM4-MOE Disaggregated Example</a></p></li>
+</ul>
+</li>
+</ul>
+</section>
+<hr class="docutils" />
+<section id="deprecations">
+<h2>Deprecations<a class="headerlink" href="#deprecations" title="Permalink to this heading"></a></h2>
+<ul class="simple">
+<li><p><strong>Llama 3.2 Vision (mllama)</strong>: Support for <code class="docutils literal notranslate"><span class="pre">meta-llama/Llama-3.2-11B-Vision</span></code> has been deprecated. Users should migrate to supported VLM alternatives.</p></li>
+</ul>
+</section>
+<hr class="docutils" />
+<section id="key-features-enhancements">
+<h2>Key Features &amp; Enhancements<a class="headerlink" href="#key-features-enhancements" title="Permalink to this heading"></a></h2>
+<ul class="simple">
+<li><p><strong>Framework Upgrades</strong></p>
+<ul>
+<li><p>Transformers rebased to <code class="docutils literal notranslate"><span class="pre">v5.5.4</span></code> — modeling wrappers, <code class="docutils literal notranslate"><span class="pre">cache_utils</span></code>, and export flows aligned; PyTorch/ORT parity restored</p></li>
+<li><p>Intermediate rebase to <code class="docutils literal notranslate"><span class="pre">v4.57.3</span></code> also landed, unifying subfunction changes</p></li>
+<li><p>Python <code class="docutils literal notranslate"><span class="pre">3.12</span></code> support added (while retaining <code class="docutils literal notranslate"><span class="pre">3.10</span></code> and <code class="docutils literal notranslate"><span class="pre">3.11</span></code> compatibility)</p></li>
+</ul>
+</li>
+<li><p><strong>Causal Attention Blocking</strong></p>
+<ul>
+<li><p>New KV, Q, Head, and Batch blocking strategies for CausalLM models</p></li>
+<li><p>Supported architectures: Llama3, GPT-OSS, Gemma, Gemma2, Granite, GraniteMOE, Mistral</p></li>
+<li><p>Configurable via <code class="docutils literal notranslate"><span class="pre">qaic_config</span></code> with <code class="docutils literal notranslate"><span class="pre">enable_blocking:</span> <span class="pre">True</span></code>; disabled by default</p></li>
+<li><p>Automatic blocking configurator with <code class="docutils literal notranslate"><span class="pre">skip_kv</span></code> enabled by default</p></li>
+<li><p>Optimized nested loop implementation for attention blocking</p></li>
+</ul>
+</li>
+<li><p><strong>NSP-Blocked Expert Dispatch for MoE Prefill</strong></p>
+<ul>
+<li><p>Batched packed-prefix expert dispatch for Qwen3MOE and GPT-OSS chunked prefill</p></li>
+<li><p>Configurable via <code class="docutils literal notranslate"><span class="pre">num_cores</span></code> and <code class="docutils literal notranslate"><span class="pre">moe_prefill_packed_chunk_size</span></code> in compile API</p></li>
+<li><p>Replaces sequential per-expert loop for improved throughput</p></li>
+</ul>
+</li>
+<li><p><strong>First-Block Caching for Diffusers (Wan)</strong></p>
+<ul>
+<li><p>Block caching infrastructure for Wan non-unified transformer</p></li>
+<li><p>Enable via <code class="docutils literal notranslate"><span class="pre">enable_first_block_cache=True</span></code> and <code class="docutils literal notranslate"><span class="pre">first_block_cache_downsample_factor</span></code></p></li>
+<li><p>Supports <code class="docutils literal notranslate"><span class="pre">Wan-AI/Wan2.2-T2V-A14B-Diffusers</span></code> at 720p</p></li>
+</ul>
+</li>
+<li><p><strong>Named Graph Specializations</strong></p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">specializations.json</span></code> now carries meaningful graph names: <code class="docutils literal notranslate"><span class="pre">Prefill</span></code>, <code class="docutils literal notranslate"><span class="pre">Decode</span></code>, <code class="docutils literal notranslate"><span class="pre">Vision</span></code>, <code class="docutils literal notranslate"><span class="pre">Encoder</span></code>, <code class="docutils literal notranslate"><span class="pre">Embedding</span></code></p></li>
+<li><p>Automatic name inference based on input key patterns</p></li>
+</ul>
+</li>
+<li><p><strong>Multiple TLM Decode Specializations</strong></p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">QEFFAutoModelForCausalLM.compile()</span></code> now accepts <code class="docutils literal notranslate"><span class="pre">num_speculative_tokens</span></code> as <code class="docutils literal notranslate"><span class="pre">List[int]</span></code></p></li>
+<li><p>Compiles multiple decode specializations in one QPC for per-step dispatch to the cheapest kernel</p></li>
+<li><p>Backward compatible: plain <code class="docutils literal notranslate"><span class="pre">int</span></code> input still works</p></li>
+</ul>
+</li>
+<li><p><strong>CCL Support for Disaggregated Prefill</strong></p>
+<ul>
+<li><p>Compute-Context-Length (CCL) now supported during the prefill phase of disaggregated serving</p></li>
+<li><p>Enables compilation at maximum context length with efficient TTFT for smaller prompt lengths</p></li>
+</ul>
+</li>
+<li><p><strong>FP16/BF16 Export &amp; Compile for VLMs</strong></p>
+<ul>
+<li><p>Added <code class="docutils literal notranslate"><span class="pre">fp16</span></code>/<code class="docutils literal notranslate"><span class="pre">bf16</span></code> precision export and compile support for Vision Language Models</p></li>
+</ul>
+</li>
+<li><p><strong>Proxy Model Export</strong></p>
+<ul>
+<li><p>New <code class="docutils literal notranslate"><span class="pre">enable_proxy=True</span></code> flag to export a proxy model (disables Embedding Layer and LM Head)</p></li>
+<li><p>Supported across text, embedding, vision, and audio models</p></li>
+<li><p>Proxy-gated ONNX transforms: <code class="docutils literal notranslate"><span class="pre">FP16ClipTransform</span></code> and <code class="docutils literal notranslate"><span class="pre">SplitTensorsTransform</span></code> now only applied when <code class="docutils literal notranslate"><span class="pre">enable_proxy=True</span></code></p></li>
+</ul>
+</li>
+<li><p><strong>On-Device Sampling for Qwen3</strong></p>
+<ul>
+<li><p>Extended on-device sampling support to <code class="docutils literal notranslate"><span class="pre">Qwen3ForCausalLM</span></code></p></li>
+</ul>
+</li>
+<li><p><strong>ONNX Subfunction Support for VLMs</strong></p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">use_onnx_subfunctions=True</span></code> now supported for Vision Language Models</p></li>
+<li><p>RoPE indexing hoisted out of decoder subfunctions for cached text models (performance improvement)</p></li>
+<li><p>Subfunction changes for Qwen2.5 models</p></li>
+</ul>
+</li>
+<li><p><strong>Weight Offloading Improvements</strong></p>
+<ul>
+<li><p>Improved weight offloading to handle plain tensor attributes using <code class="docutils literal notranslate"><span class="pre">to_empty()</span></code></p></li>
+<li><p>Fixes for large model export OOM risk</p></li>
+</ul>
+</li>
+<li><p><strong>Large Model ONNX Export</strong></p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">SplitTensorsTransform</span></code> added to <code class="docutils literal notranslate"><span class="pre">QEFFAutoModel</span></code> to prevent &gt;2GB protobuf export failures</p></li>
+<li><p>Improved proxy-only clip/split transform gating</p></li>
+</ul>
+</li>
+<li><p><strong>Compiler Toolchain Update</strong></p>
+<ul>
+<li><p>Compilation updated from deprecated <code class="docutils literal notranslate"><span class="pre">qaic-exec</span></code> to <code class="docutils literal notranslate"><span class="pre">qaic-compile</span></code></p></li>
+<li><p>Removed deprecated <code class="docutils literal notranslate"><span class="pre">-compile-only</span></code> compiler flag</p></li>
+</ul>
+</li>
+<li><p><strong>Disaggregated Serving Enhancements</strong></p>
+<ul>
+<li><p>ONNX reuse fix for disaggregated compile and diffusion modules</p></li>
+<li><p>Qwen3-MoE disaggregated mode support</p></li>
+<li><p>CCL input precision changed from <code class="docutils literal notranslate"><span class="pre">int8</span></code> to <code class="docutils literal notranslate"><span class="pre">int64</span></code> to align with compiler</p></li>
+</ul>
+</li>
+<li><p><strong>Bug Fixes</strong></p>
+<ul>
+<li><p>Fixed MLA KV head replication for correct head count handling</p></li>
+<li><p>Fixed RoPE dtype for <code class="docutils literal notranslate"><span class="pre">custom_dtype</span></code> export</p></li>
+<li><p>Fixed <code class="docutils literal notranslate"><span class="pre">fp16</span></code>/<code class="docutils literal notranslate"><span class="pre">bf16</span></code> export and compile for Qwen3-VL and Qwen3-VL-MoE models</p></li>
+<li><p>Fixed continuous batching inconsistency for Qwen2.5-VL</p></li>
+<li><p>Fixed Gemma3 sliding window issue</p></li>
+<li><p>Fixed CCL support during disaggregated serving decode phase</p></li>
+<li><p>Fixed <code class="docutils literal notranslate"><span class="pre">device_ids</span></code> type handling for single-device <code class="docutils literal notranslate"><span class="pre">qaicrt.Program</span></code></p></li>
+<li><p>Clarified CausalLM decode-only flag handling and fixed PL=1 specialization naming</p></li>
+<li><p>Removed <code class="docutils literal notranslate"><span class="pre">custom_io</span></code> passing for BF16 dtype case</p></li>
+</ul>
+</li>
+</ul>
+</section>
+<hr class="docutils" />
+<section id="example-scripts">
+<h2>Example Scripts<a class="headerlink" href="#example-scripts" title="Permalink to this heading"></a></h2>
+<ul class="simple">
+<li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/gemma_vision/gemma4">Gemma 4</a></p></li>
+<li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3vl">Qwen3-VL</a></p></li>
+<li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3_5">Qwen3.5 VLM</a></p></li>
+<li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3_5_moe">Qwen3.5-MoE</a></p></li>
+<li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/image_text_to_text/models/qwen3_vl_moe">Qwen3-VL-MoE</a></p></li>
+<li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/blob/main/examples/disagg_serving/glm4_moe_disagg_mode_with_chunking.py">GLM4-MOE Disaggregated</a></p></li>
+<li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/sequence_classification">Sequence Classification</a></p></li>
+<li><p><a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main/examples/diffusers/wan">Wan Image-to-Video</a></p></li>
+</ul>
+</section>
+</section>
+<section id="efficient-transformer-library-1-21-6-release-notes">
+<h1>Efficient Transformer Library - 1.21.6 Release Notes<a class="headerlink" href="#efficient-transformer-library-1-21-6-release-notes" title="Permalink to this heading"></a></h1>
+<p>Welcome to the official release of <strong>Efficient Transformer Library v1.21.6</strong>! This targeted release builds on the v1.21 line with multi-resolution Vision Language Model workflows, Qwen3-VL stability fixes, on-device sampling enablement, online serving support for Gemma3 through vLLM, and compatibility updates for newer model and framework APIs.</p>
+<blockquote>
+<div><p>✅ The exact release content is available on the <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/release/v1.21.6"><code class="docutils literal notranslate"><span class="pre">release/v1.21.6</span></code></a> branch. The package version for this branch is <code class="docutils literal notranslate"><span class="pre">1.21.6.0</span></code>.</p>
+</div></blockquote>
+<hr class="docutils" />
+<section id="branch-summary">
+<h2>Branch Summary<a class="headerlink" href="#branch-summary" title="Permalink to this heading"></a></h2>
+<ul class="simple">
+<li><p><strong>Release branch</strong>: <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/release/v1.21.6"><code class="docutils literal notranslate"><span class="pre">release/v1.21.6</span></code></a></p></li>
+<li><p><strong>Release head</strong>: <code class="docutils literal notranslate"><span class="pre">25e7c53</span></code> (<code class="docutils literal notranslate"><span class="pre">Updated</span> <span class="pre">release</span> <span class="pre">version</span> <span class="pre">to</span> <span class="pre">1.21.6.0</span></code>)</p></li>
+<li><p><strong>Mainline comparison</strong>: Reviewed against <code class="docutils literal notranslate"><span class="pre">upstream/main</span></code>; the release branch contains 11 release commits from merge base <code class="docutils literal notranslate"><span class="pre">d02f717</span></code>.</p></li>
+</ul>
+</section>
+<hr class="docutils" />
+<section id="id1">
+<h2>Key Features &amp; Enhancements<a class="headerlink" href="#id1" title="Permalink to this heading"></a></h2>
+<ul class="simple">
+<li><p><strong>Multi-specialization vision compilation for Qwen VLMs</strong></p>
+<ul>
+<li><p>Qwen2.5-VL, Qwen3-VL Dense can compile multiple vision resolution and frame configurations in one pass.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">height</span></code>, <code class="docutils literal notranslate"><span class="pre">width</span></code>, and <code class="docutils literal notranslate"><span class="pre">num_frames</span></code> can be supplied as lists when building specializations.</p></li>
+<li><p>Runtime generation can select the matching specialization through the multi-frame generation path.</p></li>
+<li><p>New example scripts are available for <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/release/v1.21.6/examples/image_text_to_text/models/qwen2_5_vl">Qwen2.5-VL</a>, <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/release/v1.21.6/examples/image_text_to_text/models/qwen3vl">Qwen3-VL Dense</a>.</p></li>
+</ul>
+</li>
+<li><p><strong>Qwen3-VL Dense on-device sampling</strong></p>
+<ul>
+<li><p>Registers Qwen3-VL Dense with the sampler transform path.</p></li>
+<li><p>Handles Qwen3-VL Dense deepstack feature inputs and outputs for on-device sampling.</p></li>
+<li><p>Adds sampler coverage to validate the new transform behavior.</p></li>
+</ul>
+</li>
+<li><p><strong>Large embedding export robustness</strong></p>
+<ul>
+<li><p>Adds <code class="docutils literal notranslate"><span class="pre">SplitTensorsTransform</span></code> to <code class="docutils literal notranslate"><span class="pre">QEFFAutoModel</span></code> ONNX transforms so large initializers are emitted as <code class="docutils literal notranslate"><span class="pre">*.onnx.data</span></code> sidecar files.</p></li>
+<li><p>Prevents ONNX ModelProto parser failures when exports exceed the 2 GB protobuf limit.</p></li>
+<li><p>Adds regression coverage for large embedding and reranker model export flows.</p></li>
+</ul>
+</li>
+<li><p><strong>Qwen VLM runtime stability</strong></p>
+<ul>
+<li><p>Fixes Qwen3-VL Dense continuous batching with multi-image, multi-prompt inputs by preserving the complete hidden-state tensor during broadcast.</p></li>
+<li><p>Handles multi-resolution <code class="docutils literal notranslate"><span class="pre">vision_embeds</span></code> edge cases for Qwen2.5-VL, Qwen3-VL Dense, and Qwen3-VL-MoE.</p></li>
+<li><p>Moves Qwen2.5-VL examples into a dedicated <code class="docutils literal notranslate"><span class="pre">qwen2_5_vl</span></code> example directory.</p></li>
+</ul>
+</li>
+<li><p><strong>Gemma3 configuration compatibility</strong></p>
+<ul>
+<li><p>Updates Gemma3 cache handling for the newer <code class="docutils literal notranslate"><span class="pre">_sliding_window_pattern</span></code> config field.</p></li>
+<li><p>Preserves sliding-window behavior for Gemma3 models using updated Transformers configs.</p></li>
+<li><p>Added online serving support for Gemma3 through vLLM</p></li>
+</ul>
+</li>
+<li><p><strong>Llama4 compatibility with Transformers <code class="docutils literal notranslate"><span class="pre">4.57.3</span></code></strong></p>
+<ul>
+<li><p>Adds <code class="docutils literal notranslate"><span class="pre">**kwargs</span></code> support to <code class="docutils literal notranslate"><span class="pre">QEffLlama4VisionModel.forward()</span></code>.</p></li>
+<li><p>Accepts <code class="docutils literal notranslate"><span class="pre">vision_feature_layer</span></code> and <code class="docutils literal notranslate"><span class="pre">vision_feature_select_strategy</span></code> forwarded by newer Transformers Llama4 APIs.</p></li>
+<li><p>Fixes ONNX export failures for Llama4 vision models while remaining backward compatible.</p></li>
+</ul>
+</li>
+<li><p><strong>GPT-OSS batch size flexibility</strong></p>
+<ul>
+<li><p>Added GPT OSS 120B with BS&gt;1 and GPT OSS 20B BS&gt;2 support is enabled</p></li>
+</ul>
+</li>
+</ul>
+</section>
+<hr class="docutils" />
+<section id="validation-quality-updates">
+<h2>Validation &amp; Quality Updates<a class="headerlink" href="#validation-quality-updates" title="Permalink to this heading"></a></h2>
+<ul class="simple">
+<li><p>Added tests for Qwen3-VL Dense on-device sampling transformations.</p></li>
+<li><p>Added regression tests that verify large ONNX initializers are split into external data files.</p></li>
+<li><p>Updated image-text model configs and Qwen3-VL examples for continuous batching and multi-specialization workflows.</p></li>
+<li><p>Reverted a temporary Qwen VLM multi-image test/config change before landing the stable Qwen3-VL Dense continuous batching fix.</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="efficient-transformer-library-1-21-0-release-notes">
 <h1>Efficient Transformer Library - 1.21.0 Release Notes<a class="headerlink" href="#efficient-transformer-library-1-21-0-release-notes" title="Permalink to this heading"></a></h1>
 <p>Welcome to the official release of <strong>Efficient Transformer Library v1.21.0</strong>! This release introduces advanced attention mechanisms, expanded model support, optimized serving capabilities, and significant improvements to fine-tuning and deployment workflows.</p>
 <blockquote>
 <div><p>✅ All features and models listed below are available on the <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/release/v1.21.0"><code class="docutils literal notranslate"><span class="pre">release/v1.21.0</span></code></a> branch and <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main"><code class="docutils literal notranslate"><span class="pre">mainline</span></code></a>.</p>
 </div></blockquote>
 <hr class="docutils" />
-<section id="newly-supported-models">
-<h2>Newly Supported Models<a class="headerlink" href="#newly-supported-models" title="Permalink to this heading"></a></h2>
+<section id="id2">
+<h2>Newly Supported Models<a class="headerlink" href="#id2" title="Permalink to this heading"></a></h2>
 <ul>
 <li><p><strong>Flux (Diffusers - Image Generation)</strong></p>
 <ul class="simple">
@@ -224,8 +503,8 @@
 </ul>
 </section>
 <hr class="docutils" />
-<section id="key-features-enhancements">
-<h2>Key Features &amp; Enhancements<a class="headerlink" href="#key-features-enhancements" title="Permalink to this heading"></a></h2>
+<section id="id3">
+<h2>Key Features &amp; Enhancements<a class="headerlink" href="#id3" title="Permalink to this heading"></a></h2>
 <ul class="simple">
 <li><p><strong>Framework Upgrades</strong>: Transformers <code class="docutils literal notranslate"><span class="pre">4.55</span></code>, PyTorch <code class="docutils literal notranslate"><span class="pre">2.7.0+cpu</span></code>, Torchvision <code class="docutils literal notranslate"><span class="pre">0.22.0+cpu</span></code></p></li>
 <li><p><strong>Python Support</strong>:  Requires Python <code class="docutils literal notranslate"><span class="pre">3.10</span></code></p></li>
@@ -283,8 +562,8 @@ Simplified setup and deployment process for new users</p>
 <div><p>✅ All features and models listed below are available on the <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/release/v1.20.0"><code class="docutils literal notranslate"><span class="pre">release/v1.20.0</span></code></a> branch and <a class="reference external" href="https://github.com/quic/efficient-transformers/tree/main"><code class="docutils literal notranslate"><span class="pre">mainline</span></code></a>.</p>
 </div></blockquote>
 <hr class="docutils" />
-<section id="id1">
-<h2>Newly Supported Models<a class="headerlink" href="#id1" title="Permalink to this heading"></a></h2>
+<section id="id4">
+<h2>Newly Supported Models<a class="headerlink" href="#id4" title="Permalink to this heading"></a></h2>
 <ul class="simple">
 <li><p><strong>Llama-4-Scout-17B-16E-Instruct</strong></p>
 <ul>
@@ -329,8 +608,8 @@ Simplified setup and deployment process for new users</p>
 </ul>
 </section>
 <hr class="docutils" />
-<section id="id2">
-<h2>Key Features &amp; Enhancements<a class="headerlink" href="#id2" title="Permalink to this heading"></a></h2>
+<section id="id5">
+<h2>Key Features &amp; Enhancements<a class="headerlink" href="#id5" title="Permalink to this heading"></a></h2>
 <ul class="simple">
 <li><p><strong>Transformer Upgrade</strong>: Now using version <code class="docutils literal notranslate"><span class="pre">4.51.3</span></code></p></li>
 <li><p><strong>SpD &amp; Multi-Projection Heads</strong>: Token speculation via post-attention projections</p></li>
@@ -340,8 +619,8 @@ Simplified setup and deployment process for new users</p>
 </ul>
 </section>
 <hr class="docutils" />
-<section id="id3">
-<h2>Embedding Model Upgrades<a class="headerlink" href="#id3" title="Permalink to this heading"></a></h2>
+<section id="id6">
+<h2>Embedding Model Upgrades<a class="headerlink" href="#id6" title="Permalink to this heading"></a></h2>
 <ul class="simple">
 <li><p><strong>Flexible Pooling</strong>: Choose from standard or custom strategies</p></li>
 <li><p><strong>Sentence Embedding</strong>: Now runs directly on AI100</p></li>
@@ -349,8 +628,8 @@ Simplified setup and deployment process for new users</p>
 </ul>
 </section>
 <hr class="docutils" />
-<section id="id4">
-<h2>Fine-Tuning Support<a class="headerlink" href="#id4" title="Permalink to this heading"></a></h2>
+<section id="id7">
+<h2>Fine-Tuning Support<a class="headerlink" href="#id7" title="Permalink to this heading"></a></h2>
 <ul class="simple">
 <li><p>BERT fine-tuning support with templates and documentation</p></li>
 <li><p>Gradient checkpointing, device-aware <code class="docutils literal notranslate"><span class="pre">GradScaler</span></code>, and CLI <code class="docutils literal notranslate"><span class="pre">--help</span></code> added</p></li>
@@ -382,7 +661,7 @@ Simplified setup and deployment process for new users</p>
       </div>
     </section>
   </div>
-    <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
     <span class="rst-current-version" data-toggle="rst-current-version">
       Version: Main
       <span class="fa fa-caret-down"></span>
