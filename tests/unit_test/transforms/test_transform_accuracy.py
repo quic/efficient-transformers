@@ -1545,7 +1545,6 @@ class TestSplitOptimizedMoETransform:
         assert transformed
         assert model.block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
         assert model.block.expert_parallel_num_nsp == 4
-        assert model.block.expert_parallel_packed_chunk_size == 16
         assert model.block.expert_parallel_num_packed_chunks == 3
         assert hash_params == {
             "moe_prefill_flavour": "expert_parallel",
@@ -1584,7 +1583,6 @@ class TestSplitOptimizedMoETransform:
         assert hash_params["moe_prefill_flavour"] == expected.value
         if expected is MoEFlavour.EXPERT_PARALLEL:
             assert model.block.expert_parallel_num_nsp == 2
-            assert model.block.expert_parallel_packed_chunk_size == 16
             assert model.block.expert_parallel_num_packed_chunks == 2
         else:
             assert "moe_prefill_num_nsp" not in hash_params
@@ -1771,7 +1769,6 @@ class TestSplitOptimizedMoETransform:
         )
 
         assert transformed
-        assert model.block.expert_parallel_packed_chunk_size == MOE_PREFILL_PACKED_CHUNK_SIZE
         assert hash_params["moe_prefill_packed_chunk_size"] == MOE_PREFILL_PACKED_CHUNK_SIZE
         assert hash_params["moe_prefill_num_packed_chunks"] == 2
 
@@ -1840,7 +1837,6 @@ class TestSplitOptimizedMoETransform:
         assert model.block.transform_count == 1
         assert model.block._moe_flavour is MoEFlavour.SIMPLE_LOOP
         assert model.block.expert_parallel_num_nsp == 2
-        assert model.block.expert_parallel_packed_chunk_size == 16
         assert model.block.expert_parallel_num_packed_chunks == 2
         assert model.block.moe_weights.gate.shape == (2, 4, 8)
         assert model.block.moe_weights.down.shape == (2, 8, 4)

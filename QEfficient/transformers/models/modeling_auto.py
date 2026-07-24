@@ -3650,6 +3650,16 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         if enable_chunking:
             self.hash_params["chunking"] = True
+
+        num_packed_chunks = self.hash_params.get("moe_prefill_num_packed_chunks")
+        if self.hash_params.get("moe_prefill_flavour") == "expert_parallel" and num_packed_chunks is not None:
+            num_packed_chunks = int(num_packed_chunks)
+            if num_packed_chunks <= 0:
+                raise ValueError(f"moe_prefill_num_packed_chunks must be positive, got {num_packed_chunks}")
+            export_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+            return export_seq_len if export_seq_len % num_packed_chunks == 0 else num_packed_chunks
+
+        if enable_chunking:
             if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe"}:
                 return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
             return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN

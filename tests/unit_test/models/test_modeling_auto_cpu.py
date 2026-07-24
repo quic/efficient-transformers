@@ -503,6 +503,30 @@ class TestQEFFAutoModelForCausalLMGetSeqLen:
         assert qeff.hash_params.get("prefill_only") is True
         assert qeff.hash_params.get("chunking") is True
 
+    def test_expert_parallel_uses_default_export_seq_len_when_divisible_by_num_packed_chunks(self):
+        """Expert-parallel export uses the default export seq len when it divides evenly into packed chunks."""
+        from QEfficient.utils.constants import ONNX_EXPORT_EXAMPLE_SEQ_LEN
+
+        model, cfg = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff.hash_params["moe_prefill_flavour"] = "expert_parallel"
+        qeff.hash_params["moe_prefill_num_packed_chunks"] = 2
+
+        result = qeff.get_seq_len_and_handle_specialized_prefill_model(prefill_seq_len=512, enable_chunking=True)
+
+        assert result == ONNX_EXPORT_EXAMPLE_SEQ_LEN
+
+    def test_expert_parallel_uses_num_packed_chunks_when_default_export_seq_len_is_not_divisible(self):
+        """Expert-parallel export picks the minimum seq len divisible by num_packed_chunks."""
+        model, cfg = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff.hash_params["moe_prefill_flavour"] = "expert_parallel"
+        qeff.hash_params["moe_prefill_num_packed_chunks"] = 3
+
+        result = qeff.get_seq_len_and_handle_specialized_prefill_model(prefill_seq_len=768, enable_chunking=True)
+
+        assert result == 3
+
     def test_no_prefill_seq_len_no_env_var_raises_value_error(self):
         """Without prefill_seq_len and NUM_Q_BLOCKS env var, raises ValueError."""
         model, cfg = make_tiny_gpt2()

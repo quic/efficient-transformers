@@ -1556,11 +1556,9 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
             if flavour is MoEFlavour.EXPERT_PARALLEL:
                 uses_expert_parallel = True
                 module.expert_parallel_num_nsp = num_nsp
-                module.expert_parallel_packed_chunk_size = packed_chunk_size
                 module.expert_parallel_num_packed_chunks = num_packed_chunks
                 # Backward-compatible attribute names for one transition period.
                 module.expert_blocking_num_nsp = num_nsp
-                module.expert_blocking_packed_chunk_size = packed_chunk_size
                 module.expert_blocking_num_packed_chunks = num_packed_chunks
             transformed = True
 
