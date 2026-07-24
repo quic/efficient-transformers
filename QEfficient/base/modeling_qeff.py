@@ -1197,7 +1197,7 @@ class QEFFBaseModel(ABC):
         # Write custom_io.yaml file
         model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
         pkv_in_bfloat16 = (custom_io is not None) and any(
-            "past_" in key and "bfloat16" in value for key, value in custom_io.items()
+            ("past_" in key or "pixel_values" in key) and "bfloat16" in value for key, value in custom_io.items()
         )
         if custom_io is not None:
             custom_io_yaml = compile_dir / "custom_io.yaml"
