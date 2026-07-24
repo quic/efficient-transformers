@@ -26,6 +26,7 @@ from QEfficient.base.onnx_transforms import (
     OnnxTransformPipeline,
     PruneFakeInitializersTransform,
     RenameFunctionOutputsTransform,
+    RenameWsubTransform,
     SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
@@ -60,6 +61,44 @@ from QEfficient.utils.export_utils import export_wrapper
 from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_hf_cache_path(pretrained_model_name_or_path: str) -> Optional[str]:
+    """Resolve the local HF cache path for a model given its HF hub name.
+
+    Looks in HF_HOME (or ~/.cache/huggingface) for the cached snapshot.
+    Returns the snapshot directory path if found, else None.
+    """
+    if not pretrained_model_name_or_path:
+        return None
+    if os.path.isdir(pretrained_model_name_or_path):
+        safetensors_index = os.path.join(pretrained_model_name_or_path, "model.safetensors.index.json")
+        safetensors_single = os.path.join(pretrained_model_name_or_path, "model.safetensors")
+        if os.path.exists(safetensors_index) or os.path.exists(safetensors_single):
+            return pretrained_model_name_or_path
+    hf_home = (
+        os.environ.get("HF_HOME")
+        or os.environ.get("HUGGINGFACE_HUB_CACHE")
+        or os.path.join(os.path.expanduser("~"), ".cache", "huggingface")
+    )
+    hub_dir = os.path.join(hf_home, "hub")
+    if not os.path.isdir(hub_dir):
+        return None
+    model_dir_name = "models--" + pretrained_model_name_or_path.replace("/", "--")
+    snapshots_dir = os.path.join(hub_dir, model_dir_name, "snapshots")
+    if not os.path.isdir(snapshots_dir):
+        return None
+    snapshots = [
+        os.path.join(snapshots_dir, s)
+        for s in os.listdir(snapshots_dir)
+        if os.path.isdir(os.path.join(snapshots_dir, s))
+    ]
+    for snap in sorted(snapshots, key=lambda p: -os.path.getmtime(p)):
+        if os.path.exists(os.path.join(snap, "model.safetensors.index.json")) or os.path.exists(
+            os.path.join(snap, "model.safetensors")
+        ):
+            return snap
+    return None
 
 
 def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
@@ -441,6 +480,7 @@ class QEFFBaseModel(ABC):
         prefill_only: Optional[bool] = False,
         dynamo: bool = False,
         dynamic_shapes: Optional[Dict[str, Dict[int, Any]]] = None,
+        rename_onnx_nodes: bool = False,
         **export_kwargs,
     ) -> str:
         """
@@ -601,6 +641,40 @@ class QEFFBaseModel(ABC):
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )
             logger.info("ONNX transforms applied")
+
+            # W_Sub semantic rename: when enabled, rename opaque weights/nodes
+            # to semantic HF names using fingerprint matching.
+            if rename_onnx_nodes and not export_kwargs.get("use_onnx_subfunctions", False):
+                logger.warning(
+                    "rename_onnx_nodes=True requires use_onnx_subfunctions=True. "
+                    "Skipping semantic rename."
+                )
+            elif rename_onnx_nodes and export_kwargs.get("use_onnx_subfunctions", False):
+                hf_model_path = (onnx_transform_kwargs or {}).get("hf_model_path")
+                if hf_model_path is None:
+                    hf_model_path = _resolve_hf_cache_path(
+                        self.hash_params.get("pretrained_model_name_or_path", "")
+                    )
+                if hf_model_path:
+                    logger.info(
+                        f"RenameWsubTransform: applying semantic rename (hf_model_path={hf_model_path})"
+                    )
+                    model, renamed = RenameWsubTransform.apply(
+                        model,
+                        hf_model_path=hf_model_path,
+                        onnx_base_dir=str(export_dir),
+                    )
+                    if renamed:
+                        logger.info("RenameWsubTransform: semantic names baked into ONNX")
+                    else:
+                        logger.warning(
+                            "RenameWsubTransform: rename failed — check hf_model_path and ONNX weights"
+                        )
+                else:
+                    logger.warning(
+                        "RenameWsubTransform: HF model path not found. "
+                        "Set HF_HOME or pass onnx_transform_kwargs={'hf_model_path': ...}"
+                    )
 
             onnx_path_tmp = onnx_path.with_suffix(onnx_path.suffix + ".tmp")
             onnx.save(model, onnx_path_tmp)
