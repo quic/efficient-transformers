@@ -70,6 +70,7 @@ def get_sampling_inputs_and_outputs(
     continuous_batching: bool,
     vocab_size: int,
     qaic_config: Dict,
+    dynamic_shapes: Optional[Dict] = None,
 ):
     """
     Updates the example inputs, output names, and dynamic axes to include
@@ -149,4 +150,4 @@ def get_sampling_inputs_and_outputs(
         example_inputs["token_bitmasks"] = torch.zeros((bs, vocab_size), dtype=torch.bool)
         dynamic_axes["token_bitmasks"] = {0: "batch_size"}
 
-    return example_inputs, output_names, dynamic_axes
+    return example_inputs, output_names, dynamic_axes, dynamic_shapes

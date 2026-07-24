@@ -628,26 +628,27 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
     def __qeff_init__(
         self,
     ):
-        if hasattr(self.experts, "gate_up_proj"):
-            gate_proj, up_proj = self.experts.gate_up_proj.chunk(2, dim=1)
-            self.all_gate_proj = torch.nn.Parameter(gate_proj.transpose(1, 2).contiguous())
-            self.all_up_proj = torch.nn.Parameter(up_proj.transpose(1, 2).contiguous())
-            self.all_down_proj = torch.nn.Parameter(self.experts.down_proj.transpose(1, 2).contiguous())
+        E = self.experts.gate_up_proj.shape[0]
+        intermediate_dim = self.experts.gate_up_proj.shape[1] // 2
+        H = self.experts.gate_up_proj.shape[2]
+
+        if self.experts.gate_up_proj.device.type == "meta":
+            # Weight-free export: register shape-only placeholders on self.experts so
+            # ONNX param names are model.layers.L.mlp.experts.gate_proj etc.,
+            # matching the preprocessed checkpoint keys from MoEFusedExpertSplitCheckpointTransform.
+            self.experts.gate_proj = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta"))
+            self.experts.up_proj = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta"))
+            self.experts.down_proj_t = nn.Parameter(torch.empty(E, intermediate_dim, H, device="meta"))
             self.act_fn = self.experts.act_fn
             self.num_experts = self.experts.num_experts
             return
 
-        self.all_gate_proj = torch.nn.Parameter(
-            torch.cat([exp.gate_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
-        )
-        self.all_up_proj = torch.nn.Parameter(
-            torch.cat([exp.up_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
-        )
-        self.all_down_proj = torch.nn.Parameter(
-            torch.cat([exp.down_proj.weight.T.unsqueeze(0) for exp in self.experts], dim=0)
-        )
-        self.act_fn = self.experts[0].act_fn
-        self.num_experts = len(self.experts)
+        gate_proj, up_proj = self.experts.gate_up_proj.chunk(2, dim=1)
+        self.experts.gate_proj = nn.Parameter(gate_proj.transpose(1, 2).contiguous())
+        self.experts.up_proj = nn.Parameter(up_proj.transpose(1, 2).contiguous())
+        self.experts.down_proj_t = nn.Parameter(self.experts.down_proj.transpose(1, 2).contiguous())
+        self.act_fn = self.experts.act_fn
+        self.num_experts = self.experts.num_experts
 
     def orig_moe(self, hidden_states: torch.Tensor, topk_indices: torch.Tensor, topk_weights: torch.Tensor):
         r"""
@@ -688,9 +689,9 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
         bs, seq_len, _ = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
         final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
-        gate_proj = self.all_gate_proj[topk_indices.flatten()]
-        up_proj = self.all_up_proj[topk_indices.flatten()]
-        down_proj = self.all_down_proj[topk_indices.flatten()]
+        gate_proj = self.experts.gate_proj[topk_indices.flatten()]
+        up_proj = self.experts.up_proj[topk_indices.flatten()]
+        down_proj = self.experts.down_proj_t[topk_indices.flatten()]
         expert_in = (
             hidden_states.unsqueeze(1).expand(-1, self.gate.top_k, -1).contiguous().view(-1, 1, self.config.hidden_size)
         )
@@ -741,9 +742,9 @@ class QEffPrefillChunkedGlm4MoeMoE(QEffGlm4MoeMoE):
 
         local_experts = num_experts // num_nsp
         rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        W_g = self.all_gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_u = self.all_up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_d = self.all_down_proj.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
+        W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_u = self.experts.up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
+        W_d = self.experts.down_proj_t.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
         expert_out = hidden_states.new_zeros((num_nsp, T, H))
         routing_weights_unsqueezed = rw.unsqueeze(-1)
 

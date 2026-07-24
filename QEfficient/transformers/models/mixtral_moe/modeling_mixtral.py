@@ -22,6 +22,7 @@ from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
     MixtralConfig,
     MixtralDecoderLayer,
+    MixtralExperts,
     MixtralForCausalLM,
     MixtralModel,
     MixtralRotaryEmbedding,
@@ -245,6 +246,48 @@ class QEffMixtralAttention(MixtralAttention):
 MIXTRAL_ATTENTION_CLASSES = {
     "eager": MixtralAttention,
 }
+
+
+class QEffMixtralExperts(MixtralExperts):
+    """
+    ONNX-compatible replacement for MixtralExperts.
+
+    The upstream MixtralExperts.forward uses ``torch.no_grad()`` + ``nonzero()``
+    which is not traceable by the ONNX exporter.  This override delegates to
+    ``_qeff_batched_mm_experts_forward`` which replaces those ops with
+    ONNX-safe equivalents (gather / torch.where instead of masked_fill_).
+    """
+
+    def __qeff_init__(self):
+        intermediate_dim = self.intermediate_dim
+
+        if self.gate_up_proj.device.type == "meta":
+            # Weight-free export: register correctly-shaped placeholder parameters.
+            E = self.gate_up_proj.shape[0]
+            H = self.gate_up_proj.shape[2]
+            self.gate_proj = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta"))
+            self.up_proj = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta"))
+            self.down_proj_t = nn.Parameter(torch.empty(E, intermediate_dim, H, device="meta"))
+            return
+
+        # Normal export: compute derived params — values embedded in ONNX.
+        self.gate_proj = nn.Parameter(
+            self.gate_up_proj[:, :intermediate_dim, :].detach().clone().transpose(1, 2)
+        )
+        self.up_proj = nn.Parameter(
+            self.gate_up_proj[:, intermediate_dim:, :].detach().clone().transpose(1, 2)
+        )
+        self.down_proj_t = nn.Parameter(
+            self.down_proj.detach().clone().transpose(1, 2)
+        )
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        top_k_index: torch.Tensor,
+        top_k_weights: torch.Tensor,
+    ) -> torch.Tensor:
+        return _qeff_batched_mm_experts_forward(self, hidden_states, top_k_index, top_k_weights)
 
 
 class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):

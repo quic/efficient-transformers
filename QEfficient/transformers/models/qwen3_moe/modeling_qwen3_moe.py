@@ -73,6 +73,8 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin):
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
 
+    cos = cos.to(device=q.device, dtype=q.dtype)
+    sin = sin.to(device=q.device, dtype=q.dtype)
     # Apply rotation
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
@@ -191,6 +193,18 @@ class QEffQwen3MoeTopKRouter(Qwen3MoeTopKRouter):
 class QEffQwen3MoeExperts(Qwen3MoeExperts):
     def __qeff_init__(self):
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
+
+        if self.gate_up_proj.device.type == "meta":
+            # Weight-free export: register shape-only placeholders so ONNX initializer names
+            # match the preprocessed checkpoint keys from MoEFusedExpertSplitCheckpointTransform.
+            E = self.gate_up_proj.shape[0]
+            H = self.gate_up_proj.shape[2]
+            self.gate_proj = nn.Parameter(torch.empty(E, H, self.expert_dim, device="meta"), requires_grad=False)
+            self.up_proj = nn.Parameter(torch.empty(E, H, self.expert_dim, device="meta"), requires_grad=False)
+            self.down_proj_t = nn.Parameter(torch.empty(E, self.expert_dim, H, device="meta"), requires_grad=False)
+            return
+
+        # Normal export: compute derived params — values embedded in ONNX.
         gate_up_proj = self.gate_up_proj.detach()
         down_proj = self.down_proj.detach()
         self.gate_proj = nn.Parameter(

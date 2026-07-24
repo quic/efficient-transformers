@@ -85,7 +85,8 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-
+    cos = cos.to(device=q.device)
+    sin = sin.to(device=q.device)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
 

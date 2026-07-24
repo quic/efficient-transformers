@@ -32,6 +32,12 @@ import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
+from QEfficient.exporter.weight_free.transforms import (
+    DtypeConversionCheckpointTransform,
+    GptOssMxfp4ExpertDequantSplitCheckpointTransform,
+    MoEExpertStackingCheckpointTransform,
+    MoEFusedExpertSplitCheckpointTransform,
+)
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfoNew,
@@ -1625,7 +1631,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         ):
             logits_index = output_names["lang"].index("logits")
             output_names["lang"][logits_index] = "next_tokens"
-            inputs["lang"], output_names["lang"], dynamic_axes["lang"] = get_sampling_inputs_and_outputs(
+            inputs["lang"], output_names["lang"], dynamic_axes["lang"], _ = get_sampling_inputs_and_outputs(
                 example_inputs=inputs["lang"],
                 output_names=output_names["lang"],
                 dynamic_axes=dynamic_axes["lang"],
@@ -3432,6 +3438,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     _onnx_transforms = []
 
+    _checkpoint_transforms = [
+        GptOssMxfp4ExpertDequantSplitCheckpointTransform,
+        MoEExpertStackingCheckpointTransform,
+        MoEFusedExpertSplitCheckpointTransform,
+        DtypeConversionCheckpointTransform,
+    ]
+
     def prefill(
         self,
         enable: Optional[bool] = True,
@@ -3791,6 +3804,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
         dynamo: bool = False,
+        use_weight_free_export: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -3845,7 +3859,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
-        if dynamo and not (
+        if (dynamo or use_weight_free_export) and not (
             getattr(self.model.config, "model_type", None) == "gpt_oss" and not self.continuous_batching
         ):
             # torch.export requires example inputs to satisfy dynamic_shapes min=2; gpt_oss non-CB keeps bs=1.
@@ -3853,7 +3867,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
-        if dynamo:
+        if dynamo or use_weight_free_export:
             kv_cache_shape = list(kv_cache_shape)
             kv_cache_shape[1 if len(kv_cache_shape) == 3 else 2] = max(
                 2, kv_cache_shape[1 if len(kv_cache_shape) == 3 else 2]
@@ -4023,7 +4037,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
 
         if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
-            example_inputs, output_names, dynamic_axes = get_sampling_inputs_and_outputs(
+            example_inputs, output_names, dynamic_axes, _ = get_sampling_inputs_and_outputs(
                 example_inputs=example_inputs,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
@@ -4110,6 +4124,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 dynamo=dynamo,
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
                 prefill_only=prefill_only,
+                use_weight_free_export=use_weight_free_export,
             )
 
     def build_prefill_specialization(

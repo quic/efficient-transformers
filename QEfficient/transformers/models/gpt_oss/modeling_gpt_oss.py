@@ -659,6 +659,8 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin):
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
 
+    cos = cos.to(device=q.device, dtype=q.dtype)
+    sin = sin.to(device=q.device, dtype=q.dtype)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
 
@@ -820,7 +822,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
             attention_mask = sliding_mask
             # positive_pos_ids = torch.where(position_ids<0, 0, position_ids)
             ctx_len = position_ids.shape[1] + self.sliding_window
-            ctx_indices = torch.arange(ctx_len)
+            ctx_indices = torch.arange(ctx_len, device=position_ids.device)
             first_pos_idx = position_ids[0][0]
             add_idx = torch.where(first_pos_idx >= self.sliding_window, first_pos_idx - self.sliding_window, 0)
             # start_idx = torch.where(first_pos_idx>=self.sliding_window, first_pos_idx-self.sliding_window, 0)
@@ -888,7 +890,7 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
             }
             if self.sliding_window is not None:
                 sliding_window_len = past_key_values.sliding_window_len
-                short_read_idx = torch.arange(past_key_values.key_cache[self.layer_idx].shape[2])
+                short_read_idx = torch.arange(past_key_values.key_cache[self.layer_idx].shape[2], device=position_ids.device)
                 read_idx = short_read_idx + torch.where(
                     position_ids.max() > sliding_window_len - 1, position_ids.max() - sliding_window_len + 1, 0
                 )

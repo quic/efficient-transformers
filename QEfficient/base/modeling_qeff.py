@@ -14,7 +14,7 @@ import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Type, Union
 
 import onnx
 import torch
@@ -117,6 +117,7 @@ class QEFFBaseModel(ABC):
     _layerwise_active = False
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
+    _checkpoint_transforms: List[Type] = []
 
     def _transform_names(self) -> List[str]:
         return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
@@ -160,6 +161,7 @@ class QEFFBaseModel(ABC):
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
+        self.weight_spec_path: Optional[str] = None
         self.model_architecture = (
             (arch := getattr(self.model.config, "architectures", None)) and len(arch) > 0 and arch[0]
         ) or None
@@ -432,6 +434,55 @@ class QEFFBaseModel(ABC):
             else:
                 os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = prev_invoke_fallback
 
+    def _export_via_weightfree(
+        self,
+        tmp_onnx_path: Path,
+        example_inputs: Dict[str, torch.Tensor],
+        input_names: List[str],
+        output_names: List[str],
+        dynamic_axes: Dict,
+        export_kwargs: Dict,
+        onnx_transform_kwargs: Optional[Dict] = None,
+    ):
+        """Export via weight-free dynamo path: meta-device model, no embedded weights."""
+        from QEfficient.customop.dynamo_ops import DYNAMO_CUSTOM_OP_TABLE
+        from QEfficient.exporter.weight_free.core import export_weight_free_onnx
+        from QEfficient.utils.export_utils import convert_dynamic_axes_to_dynamic_shapes
+
+        model_config = getattr(self.model, "config", None)
+        dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes(dynamic_axes, model_config)
+
+        wf_export_kwargs = dict(export_kwargs)
+        wf_export_kwargs.setdefault("report", False)
+        wf_export_kwargs.setdefault("optimize", False)
+        wf_export_kwargs["dynamo"] = True
+        wf_export_kwargs["opset_version"] = constants.ONNX_DYNAMO_EXPORT_OPSET
+        wf_export_kwargs["custom_translation_table"] = {
+            **(wf_export_kwargs.pop("custom_translation_table", None) or {}),
+            **DYNAMO_CUSTOM_OP_TABLE,
+        }
+
+        prev_invoke_fallback = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
+        os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = "1"
+        try:
+            _, updated_onnx_transform_kwargs, cleanup = export_weight_free_onnx(
+                qeff_model=self,
+                tmp_onnx_path=tmp_onnx_path,
+                example_inputs=example_inputs,
+                input_names=input_names,
+                output_names=output_names,
+                dynamic_shapes=dynamic_shapes,
+                export_kwargs=wf_export_kwargs,
+                onnx_transform_kwargs=onnx_transform_kwargs or {},
+            )
+        finally:
+            if prev_invoke_fallback is None:
+                os.environ.pop("TORCH_INVOKE_ALLOW_CREATE_FALLBACK", None)
+            else:
+                os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = prev_invoke_fallback
+
+        return updated_onnx_transform_kwargs, cleanup
+
     @export_wrapper
     def _export(
         self,
@@ -444,6 +495,7 @@ class QEFFBaseModel(ABC):
         prefill_only: Optional[bool] = False,
         dynamo: bool = False,
         dynamic_shapes: Optional[Dict[str, Dict[int, Any]]] = None,
+        use_weight_free_export: bool = False,
         **export_kwargs,
     ) -> str:
         """
@@ -483,7 +535,9 @@ class QEFFBaseModel(ABC):
             return onnx_path
 
         # check if the model is in meta state or weights are offloaded
-        self._model_offloaded_check()
+        # (skip for weight-free export which intentionally uses a meta-device model)
+        if not use_weight_free_export:
+            self._model_offloaded_check()
 
         export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -557,7 +611,31 @@ class QEFFBaseModel(ABC):
             input_names = aligned_input_names
 
         try:
-            if dynamo:
+            if use_weight_free_export:
+                tmp_onnx_dir = export_dir / "onnx_tmp"
+                tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
+                tmp_onnx_path = tmp_onnx_dir / f"{self.model_name}.onnx"
+                onnx_transform_kwargs, cleanup_fn = self._export_via_weightfree(
+                    tmp_onnx_path=tmp_onnx_path,
+                    example_inputs=example_inputs,
+                    input_names=input_names,
+                    output_names=output_names,
+                    dynamic_axes=dynamic_axes,
+                    export_kwargs=export_kwargs,
+                    onnx_transform_kwargs=onnx_transform_kwargs,
+                )
+                shutil.move(str(tmp_onnx_path), str(onnx_path))
+                tmp_weight_spec = tmp_onnx_dir / "weight_spec.json"
+                final_weight_spec = export_dir / "weight_spec.json"
+                if tmp_weight_spec.exists():
+                    shutil.move(str(tmp_weight_spec), str(final_weight_spec))
+                    self.weight_spec_path = str(final_weight_spec)
+                try:
+                    shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
+                except Exception:
+                    pass
+                cleanup_fn()
+            elif dynamo:
                 self._export_via_dynamo(
                     onnx_path,
                     example_inputs,
@@ -631,6 +709,7 @@ class QEFFBaseModel(ABC):
         qaic_config: Optional[dict] = None,
         moe_prefill_packed_chunk_size: Optional[int] = None,
         kv_cache_prefix: Optional[str] = None,
+        use_weight_free_export: bool = False,
         **compiler_options,
     ):
         kwargs = {
@@ -638,6 +717,7 @@ class QEFFBaseModel(ABC):
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "dynamo": dynamo,
             "retain_full_kv": retain_full_kv,
+            "use_weight_free_export": use_weight_free_export,
         }
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
         if layerwise_cache_probe:
@@ -1009,6 +1089,7 @@ class QEFFBaseModel(ABC):
 
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
         moe_prefill_packed_chunk_size = compiler_options.pop("moe_prefill_packed_chunk_size", None)
+        use_weight_free_export = compiler_options.pop("use_weight_free_export", False)
 
         for removed_option in ("compile_only", "compile-only"):
             if removed_option in compiler_options:
@@ -1040,6 +1121,7 @@ class QEFFBaseModel(ABC):
                     moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                     _layerwise_cache_probe=layerwise_cache_probe,
                     kv_cache_prefix=kv_cache_prefix,
+                    use_weight_free_export=use_weight_free_export,
                     **compiler_options,
                 )
         if QEFFBaseModel._layerwise_active:
