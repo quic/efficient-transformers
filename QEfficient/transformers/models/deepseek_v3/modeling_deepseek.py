@@ -1086,50 +1086,38 @@ class QEffDeepseekV3MoE(nn.Module):
         return final_out
 
     def moe_waa_unpack(self, hidden_states, topk_indices, topk_weights):
-        # GATHER - collect weights for selected experts
-        gate_proj_qweight = self.all_gate_qweight[topk_indices.flatten()]
-        gate_proj_scales = self.all_gate_scales[topk_indices.flatten()]
-        gate_proj_qzeros = self.all_gate_qzeros[topk_indices.flatten()]
-
-        up_proj_qweight = self.all_up_qweight[topk_indices.flatten()]
-        up_proj_scales = self.all_up_scales[topk_indices.flatten()]
-        up_proj_qzeros = self.all_up_qzeros[topk_indices.flatten()]
-
-        down_proj_qweight = self.all_down_qweight[topk_indices.flatten()]
-        down_proj_scales = self.all_down_scales[topk_indices.flatten()]
-        down_proj_qzeros = self.all_down_qzeros[topk_indices.flatten()]
-
-        gate_proj_unpacked = CastToUInt4Func.apply(gate_proj_qweight)
-        gate_zeros_unpacked = CastToUInt4Func.apply(gate_proj_qzeros)
+        gate_proj_unpacked = CastToUInt4Func.apply(self.all_gate_qweight)
+        gate_zeros_unpacked = CastToUInt4Func.apply(self.all_gate_qzeros)
         gate_proj_dq = DequantizeLinearFunc.apply(
-            gate_proj_unpacked, gate_proj_scales, gate_zeros_unpacked, self.group_size
+            gate_proj_unpacked, self.all_gate_scales, gate_zeros_unpacked, self.group_size
         )
 
-        up_proj_unpacked = CastToUInt4Func.apply(up_proj_qweight)
-        up_zeros_unpacked = CastToUInt4Func.apply(up_proj_qzeros)
-        up_proj_dq = DequantizeLinearFunc.apply(up_proj_unpacked, up_proj_scales, up_zeros_unpacked, self.group_size)
+        up_proj_unpacked = CastToUInt4Func.apply(self.all_up_qweight)
+        up_zeros_unpacked = CastToUInt4Func.apply(self.all_up_qzeros)
+        up_proj_dq = DequantizeLinearFunc.apply(
+            up_proj_unpacked, self.all_up_scales, up_zeros_unpacked, self.group_size
+        )
 
-        down_proj_unpacked = CastToUInt4Func.apply(down_proj_qweight)
-        down_zeros_unpacked = CastToUInt4Func.apply(down_proj_qzeros)
+        down_proj_unpacked = CastToUInt4Func.apply(self.all_down_qweight)
+        down_zeros_unpacked = CastToUInt4Func.apply(self.all_down_qzeros)
         down_proj_dq = DequantizeLinearFunc.apply(
-            down_proj_unpacked, down_proj_scales, down_zeros_unpacked, self.group_size
+            down_proj_unpacked, self.all_down_scales, down_zeros_unpacked, self.group_size
         )
 
-        # Reshape for bmm: (bs*seq_len*top_k, 1, hidden_size)
-        expert_in = (
-            hidden_states.unsqueeze(1).expand(-1, self.gate.top_k, -1).contiguous().view(-1, 1, self.in_features_gate)
-        )
-
+        num_experts = self.all_gate_qweight.shape[0]
+        expert_in = hidden_states.unsqueeze(0).expand(num_experts, -1, -1)
         gate_out = torch.bmm(expert_in, gate_proj_dq.transpose(1, 2).to(expert_in.dtype))
         up_out = torch.bmm(expert_in, up_proj_dq.transpose(1, 2).to(expert_in.dtype))
         hidden = self.act_fn(gate_out) * up_out
         down_out = torch.bmm(hidden, down_proj_dq.transpose(1, 2).to(expert_in.dtype))
 
-        down_out = down_out.view(-1, self.gate.top_k, self.out_features_down)
-
-        down_out = down_out * topk_weights.unsqueeze(-1)
-
-        return torch.einsum("abc-> ac", down_out)
+        routed_out = down_out.transpose(0, 1)
+        selected_out = torch.gather(
+            routed_out,
+            1,
+            topk_indices.unsqueeze(-1).expand(-1, self.gate.top_k, self.out_features_down),
+        )
+        return torch.einsum("abc,ab->ac", selected_out, topk_weights)
 
     def forward(self, hidden_states):
         print("Using new MoE forward with weights as activations")
