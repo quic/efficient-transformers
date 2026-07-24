@@ -96,6 +96,23 @@ def make_tiny_bert():
     return BertModel(cfg).eval(), cfg
 
 
+def make_tiny_qwen3():
+    from transformers.models.qwen3.configuration_qwen3 import Qwen3Config
+    from transformers.models.qwen3.modeling_qwen3 import Qwen3Model
+
+    cfg = Qwen3Config(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        vocab_size=VOCAB_SIZE,
+        max_position_embeddings=CTX_LEN,
+    )
+    cfg.is_decoder = None
+    return Qwen3Model(cfg).eval(), cfg
+
+
 def make_tiny_bert_seq_cls():
     cfg = BertConfig(
         num_hidden_layers=2,
@@ -669,6 +686,64 @@ class TestQEFFAutoModel:
         decoder_model.config.is_decoder = True
         qeff_decoder = QEFFAutoModel(decoder_model)
         assert qeff_decoder.model.base_model.config.use_cache is True
+
+    def test_init_applies_qwen3_kv_cache_transform(self):
+        """Qwen3 models loaded via AutoModel path are transformed to QEff wrappers."""
+        from QEfficient.transformers.models.qwen3.modeling_qwen3 import QEffQwen3Model
+
+        model, cfg = make_tiny_qwen3()
+        qeff = QEFFAutoModel(model)
+        assert isinstance(qeff.model, QEffQwen3Model)
+
+    def test_qwen3_forward_without_past_cache_does_not_fail(self):
+        """Qwen3 embedding-style forwards should work without past_key_values input."""
+        model, cfg = make_tiny_qwen3()
+        qeff = QEFFAutoModel(model)
+        inputs = {
+            "input_ids": torch.zeros((1, SEQ_LEN), dtype=torch.int64),
+            "attention_mask": torch.ones((1, SEQ_LEN), dtype=torch.int64),
+        }
+        with torch.no_grad():
+            out = qeff.model(**inputs)
+        assert out.last_hidden_state.shape == (1, SEQ_LEN, cfg.hidden_size)
+
+    def test_cloud_ai_100_feature_generate_supports_single_input_qpc(self):
+        """AI100 embedding runtime supports QPCs exposing only input_ids input."""
+        model, cfg = make_tiny_bert()
+        qeff = QEFFAutoModel(model)
+        qeff._write_io_dir = None
+
+        class _Binding:
+            def __init__(self, name, dims):
+                self.name = name
+                self.dims = dims
+
+        class _FakeSession:
+            def __init__(self):
+                self.bindings = [_Binding("input_ids", [1, 16]), _Binding("output", [1, 16, 64])]
+                self.allowed_shapes = []
+                self.input_names = ["input_ids"]
+                self.output_names = ["output"]
+                self.last_inputs = None
+                self._outputs = None
+
+            def set_buffers(self, outputs):
+                self._outputs = outputs
+
+            def run(self, inputs):
+                self.last_inputs = inputs
+                return self._outputs
+
+        qeff.qpc_session = _FakeSession()
+        qeff.batch_size = 1
+        inputs = {
+            "input_ids": torch.zeros((1, SEQ_LEN), dtype=torch.int64),
+            "attention_mask": torch.ones((1, SEQ_LEN), dtype=torch.int64),
+        }
+        outputs = qeff.cloud_ai_100_feature_generate(inputs=inputs)
+        assert "output" in outputs
+        assert tuple(outputs["output"].shape) == (1, 16, 64)
+        assert set(qeff.qpc_session.last_inputs.keys()) == {"input_ids"}
 
     def test_get_model_config_returns_dict(self):
         """get_model_config returns the model's config as a dict."""

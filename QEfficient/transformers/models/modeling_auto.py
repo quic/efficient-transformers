@@ -418,7 +418,7 @@ class QEFFAutoModel(QEFFTransformersBase):
     """
 
     _hf_auto_class = AutoModel
-    _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
+    _pytorch_transforms = [CustomOpsTransform, KVCacheTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform]
     # FP16Clip inlines external weights; without Split the saved protobuf exceeds 2GB for large embedders.
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
@@ -726,7 +726,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
 
-        # Dynamic switching to closest seq_Len based on input_ids_len
+        # Dynamic switching to closest seq_len based on input_ids length.
         input_ids_len = inputs["input_ids"].shape[1]
 
         for allowed_shape in self.qpc_session.allowed_shapes:
@@ -742,34 +742,39 @@ class QEFFAutoModel(QEFFTransformersBase):
         input_ids = np.array(
             torch.nn.functional.pad(inputs["input_ids"], (0, self.seq_len - input_ids_len), "constant", 0)
         )
-        attention_mask = np.array(
-            torch.nn.functional.pad(
-                inputs["attention_mask"], (0, self.seq_len - inputs["attention_mask"].size(1)), "constant", 0
+        session_inputs = {"input_ids": input_ids}
+        if "attention_mask" in self.qpc_session.input_names and "attention_mask" in inputs:
+            attention_mask = np.array(
+                torch.nn.functional.pad(
+                    inputs["attention_mask"], (0, self.seq_len - inputs["attention_mask"].size(1)), "constant", 0
+                )
             )
-        )
+            session_inputs["attention_mask"] = attention_mask
 
-        inputs = dict(input_ids=input_ids, attention_mask=attention_mask)
+        output_name = self.qpc_session.output_names[0]
+        output_binding = next((binding for binding in self.qpc_session.bindings if binding.name == output_name), None)
+        if output_binding is None:
+            raise RuntimeError(f"Could not find output binding '{output_name}' in QAIC session bindings.")
 
         # TODO: Remove try and catch after compiler fix
         try:
             outputs = {
-                "output": np.random.randn(*list(self.qpc_session.bindings[2].dims)).astype(
-                    TORCH_TO_NUMPY_DTYPE_MAP[dtype]
-                ),
+                output_name: np.random.randn(*list(output_binding.dims)).astype(TORCH_TO_NUMPY_DTYPE_MAP[dtype]),
             }
             self.qpc_session.set_buffers(outputs)
-            outputs = self.qpc_session.run(inputs)
+            outputs = self.qpc_session.run(session_inputs)
         except Exception:
+            feature_dim = output_binding.dims[-1] if len(output_binding.dims) > 0 else 1
             outputs = {
-                "output": np.random.randn(self.batch_size, self.seq_len, self.qpc_session.bindings[2].dims[1]).astype(
+                output_name: np.random.randn(self.batch_size, self.seq_len, feature_dim).astype(
                     TORCH_TO_NUMPY_DTYPE_MAP[dtype]
                 ),
             }
             self.qpc_session.set_buffers(outputs)
-            outputs = self.qpc_session.run(inputs)
+            outputs = self.qpc_session.run(session_inputs)
 
         if self._write_io_dir is not None:
-            write_io_files(inputs, outputs, self._write_io_dir, "output", "aic_batch_io", True, False)
+            write_io_files(session_inputs, outputs, self._write_io_dir, output_name, "aic_batch_io", True, False)
 
         return outputs
 
