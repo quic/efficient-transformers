@@ -584,7 +584,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             logger.warning("num_frames not specified, defaulting to 1")
             num_frames = 1
 
-        batch_size, ctx_len, fbs = get_compilation_dims(self._qpc_path)
+        batch_size, ctx_len, fbs, _ = get_compilation_dims(self._qpc_path)
 
         pad_token_id = 1
 
@@ -737,7 +737,6 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         generation_len: int = None,
         stream: List[str] = None,
     ):
-
         exec_batch_size = self.batch_size
         max_gen_length = self._ctx_len if not generation_len else max(self._ctx_len, generation_len)
         self.initialize_decode_inputs(
