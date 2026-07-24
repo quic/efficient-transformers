@@ -181,13 +181,13 @@ Reference examples:
 
 ---
 
-# Note
+
+```{NOTE}
 Models marked with `**` are currently not functional on the `main` and `release/1.22.0` branches due to failures with Transformers 5.x.  
    To run these models, please use:
    - `release/v1.21.6`
    - `release/v1.22.0_tf_4.57.3`
 
-```{NOTE}
 ① Intern-VL and Molmo models are Vision-Language Models but use `QEFFAutoModelForCausalLM` for inference to stay compatible with HuggingFace Transformers.
 
 ② Set `trust_remote_code=True` for end-to-end inference with vLLM.
