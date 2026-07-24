@@ -3730,6 +3730,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
+        dynamo: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -3746,6 +3747,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If not provided, the default export directory is used.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+        dynamo: bool, optional
+            whether to enable dynamo during export.
         Returns
         -------
         str
@@ -3782,10 +3785,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
-
+        if dynamo and not (
+            getattr(self.model.config, "model_type", None) == "gpt_oss" and not self.continuous_batching
+        ):
+            # torch.export requires example inputs to satisfy dynamic_shapes min=2; gpt_oss non-CB keeps bs=1.
+            bs = max(2, bs)
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
         )
+        if dynamo:
+            kv_cache_shape = list(kv_cache_shape)
+            kv_cache_shape[1 if len(kv_cache_shape) == 3 else 2] = max(
+                2, kv_cache_shape[1 if len(kv_cache_shape) == 3 else 2]
+            )
         enable_chunking = kwargs.get("enable_chunking", False)
         if (
             kwargs.get("retain_full_kv", False)
@@ -3843,7 +3855,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
         if self.ccl_enabled:
-            example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (512,), dtype=torch.int64)
+            example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (seq_len,), dtype=torch.int64)
             dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
 
         if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
@@ -4035,6 +4047,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 dynamic_axes=dynamic_axes,
                 export_dir=export_dir,
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+                dynamo=dynamo,
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
                 prefill_only=prefill_only,
             )

@@ -15,12 +15,14 @@ import pytest
 import requests
 import torch
 from PIL import Image
+from requests.adapters import HTTPAdapter
 from transformers import (
     AutoConfig,
     AutoProcessor,
     AutoTokenizer,
     GenerationConfig,
 )
+from urllib3.util.retry import Retry
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
@@ -31,6 +33,9 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
+
+_session = requests.Session()
+_session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=1)))
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
 with open(CONFIG_PATH, "r") as f:
@@ -134,7 +139,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         image_height = 448
         image_width = 448
         for img_url in image_urls:
-            img = requests.get(img_url, stream=True)
+            img = _session.get(img_url, stream=True)
             image = Image.open(BytesIO(img.content)).convert("RGB")
             image = image.resize((image_height, image_width))
             images.append(image)
@@ -162,7 +167,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         image_height = 536
         image_width = 354
         for img_url in image_urls:
-            img = requests.get(img_url, stream=True)
+            img = _session.get(img_url, stream=True)
             image = Image.open(BytesIO(img.content)).convert("RGB")
             image = image.resize((image_height, image_width))
             images.append(image)
@@ -186,11 +191,12 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         compile_kwargs["img_size"] = img_size
     else:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        use_fast = model_name != "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=use_fast)
         image_height = None
         image_width = None
         for img_url in image_urls:
-            image = Image.open(requests.get(img_url, stream=True).raw)
+            image = Image.open(_session.get(img_url, stream=True).raw)
             if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
                 image_height = 1540
                 image_width = 1540

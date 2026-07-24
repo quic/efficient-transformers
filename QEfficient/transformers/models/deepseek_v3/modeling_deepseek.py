@@ -21,6 +21,7 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_mla_attention_interface,
 )
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
+from QEfficient.customop.utils import select_interface
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MAX_POSITION_EMBEDDINGS, MIN_MASKED_ATTENTION_VALUE
@@ -75,7 +76,7 @@ class QEffDeepseekV3CustomRMSNormAIC(nn.Module):
         Returns:
             torch.Tensor: Normalized tensor.
         """
-        return CustomRMSNormFunc.apply(
+        return select_interface(CustomRMSNormFunc.apply, torch.ops.qefficient.rms_norm)(
             hidden_states, self.weight, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
         )
 
@@ -513,12 +514,11 @@ class QEffDeepseekV3Attention(nn.Module):
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
 
+        mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
+
         if attention_mask is not None:
-            attn_weights = torch.where(
-                attention_mask,
-                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
-                attn_weights,
-            )
+            # Apply the attention mask
+            attn_weights = torch.where(attention_mask, mask_value, attn_weights)
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q_pe.dtype)
         ## Do v_proj here
         attn_output = torch.matmul(attn_weights, value_states)
@@ -640,10 +640,11 @@ class QEffDeepseekV3Attention(nn.Module):
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
 
-        if attention_mask is not None:  # no matter the length, we just slice it
-            attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-            )
+        mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32)
+
+        if attention_mask is not None:
+            # Apply the attention mask
+            attn_weights = torch.where(attention_mask, mask_value, attn_weights)
 
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_weights = F.dropout(attn_weights, p=self.attention_dropout, training=self.training)
