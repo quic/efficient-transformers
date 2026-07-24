@@ -83,19 +83,24 @@ def cumsum_scatter_gather_update_expert_blocked(
     b_g: Optional[torch.Tensor] = None,
     b_u: Optional[torch.Tensor] = None,
     b_d: Optional[torch.Tensor] = None,
-    packed_chunk_size: int,
     num_packed_chunks: int = 1,
 ) -> torch.Tensor:
     """Run one local expert slot over statically traced packed chunks."""
     batch_size, seq_len = T2Ei.shape
     num_packed_chunks = max(1, int(num_packed_chunks))
-
+    assert seq_len % num_packed_chunks == 0, (
+        f"seq_len={seq_len} must be divisible by num_packed_chunks={num_packed_chunks}"
+    )
+    packed_chunk_size = seq_len // num_packed_chunks
     matched_idx = build_matched_idx_from_cumsum(T2Ei)
     valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
-    chunk_starts = [-(-chunk_idx * seq_len) // num_packed_chunks for chunk_idx in range(num_packed_chunks)]
-    for chunk_idx, packed_start in enumerate(chunk_starts):
-        packed_stop = seq_len if chunk_idx == num_packed_chunks - 1 else chunk_starts[chunk_idx + 1]
+    for chunk_idx in range(num_packed_chunks):
+        packed_start = chunk_idx * packed_chunk_size
+        if chunk_idx == num_packed_chunks - 1:
+            packed_stop = seq_len
+        else:
+            packed_stop = packed_start + packed_chunk_size
         chunk_rows = packed_stop - packed_start
         row_range = torch.arange(chunk_rows, dtype=torch.int32, device=x.device).unsqueeze(0)
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
@@ -128,7 +133,6 @@ def moe_expert_parallel(
     profile: MoEProfile,
     *,
     num_nsp: int,
-    packed_chunk_size: int,
     num_packed_chunks: int = 1,
 ) -> torch.Tensor:
     """Prefill expert-parallel flavour: NUM_NSP experts per block, cumsum/scatter packed."""
@@ -167,7 +171,6 @@ def moe_expert_parallel(
             b_g=b_g[:, slot] if b_g is not None else None,
             b_u=b_u[:, slot] if b_u is not None else None,
             b_d=b_d[:, slot] if b_d is not None else None,
-            packed_chunk_size=packed_chunk_size,
             num_packed_chunks=num_packed_chunks,
         )
     return torch.einsum("nth->th", expert_out)
