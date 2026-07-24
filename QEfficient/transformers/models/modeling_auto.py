@@ -1612,10 +1612,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         # TODO: remove the current pt weight offload capability once CustomLoader is in place
         if offload_pt_weights is None:
-            if prefill_only and prefill_seq_len > 1:
+            if prefill_only and prefill_seq_len is not None and prefill_seq_len > 1:
                 offload_pt_weights = False  # keep weights resident for the decode export
             else:
-                offload_pt_weights = True
+                num_replicate_kv_heads = self.lang_model.hash_params.get("num_replicate_kv_heads", 1)
+                offload_pt_weights = num_replicate_kv_heads <= 1
 
         if not skip_lang:
             self.lang_model.export(

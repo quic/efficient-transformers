@@ -1195,7 +1195,7 @@ def test_repeat_kv_quickcheck_hf_qeff_ort_parity(tmp_path):
     )
     torch.manual_seed(0)
     model_hf = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS).eval()
-    qeff_model = QEFFAutoModelForCausalLM(deepcopy(model_hf), qaic_config={"num_replicate_kv_heads": 2})
+    qeff_model = QEFFAutoModelForCausalLM(deepcopy(model_hf), qaic_config={"replicate_kv_heads": True})
 
     input_ids = torch.arange(1, 5, dtype=torch.int64).view(1, 4)
     position_ids = torch.arange(4, dtype=torch.int64).view(1, 4)
