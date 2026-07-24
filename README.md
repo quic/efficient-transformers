@@ -1,4 +1,10 @@
-![alt text](docs/image/Cloud_AI_100.png)
+<p align="center">
+  <img src="./docs/image/Qualcomm-Dragonfly-Logo-1068x601.png" alt="Qualcomm Dragonfly logo" width="420" />
+</p>
+
+<p align="center">
+  <img src="./docs/image/QualcommAIRack.png" alt="Qualcomm AI200 rack" width="640" />
+</p>
 
 
 ---
