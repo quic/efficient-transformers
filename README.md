@@ -79,7 +79,7 @@
 
 ## Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain
 
-This library provides reimplemented blocks of LLMs which are used to make the models functional and highly performant on Qualcomm Cloud AIxx (AI100, AI200 and so on).
+This library provides reimplemented blocks of LLMs which are used to make the models functional and highly performant on Qualcomm Cloud AIxxx (AI100, AI200 and so on).
 There are several models which can be directly transformed from a pre-trained original form to a deployment ready optimized form.
 For other models, there is comprehensive documentation to inspire upon the changes needed and How-To(s).
 
@@ -121,7 +121,7 @@ pip install dist/qefficient-0.0.1.dev0-py3-none-any.whl
 
 ``` 
 
-For more details about using ``QEfficient`` via Cloud AIxx (AI100, AI200 and so on) Apps SDK, visit [Linux Installation Guide](https://quic.github.io/efficient-transformers/source/installation.html)
+For more details about using ``QEfficient`` via Cloud AIxxx (AI100, AI200 and so on) Apps SDK, visit [Linux Installation Guide](https://quic.github.io/efficient-transformers/source/installation.html)
 
 
 ## Documentation

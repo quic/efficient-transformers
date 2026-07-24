@@ -5,8 +5,8 @@
  
 **Train anywhere, Infer on Qualcomm Cloud AI with a Developer-centric Toolchain**
 
-This library provides reimplemented blocks of LLMs which are used to make the models functional and highly performant on Qualcomm Cloud AIxx (AI100, AI200 and so on).
-We support wide range of [models](validated_models) architectures, for easy efficient deployment on Cloud AIxx (AI100, AI200 and so on) cards. Users only need to provide model card from HuggingFace or Path to the local model and the library will take care of transforming model to it's efficient implementation for Cloud AIxx (AI100, AI200 and so on).
+This library provides reimplemented blocks of LLMs which are used to make the models functional and highly performant on Qualcomm Cloud AIxxx (AI100, AI200 and so on).
+We support wide range of [models](validated_models) architectures, for easy efficient deployment on Cloud AIxxx (AI100, AI200 and so on) cards. Users only need to provide model card from HuggingFace or Path to the local model and the library will take care of transforming model to it's efficient implementation for Cloud AIxxx (AI100, AI200 and so on).
 
 For other models, there is comprehensive documentation to inspire upon the changes needed and How-To(s).
 
@@ -21,7 +21,7 @@ For other models, there is comprehensive documentation to inspire upon the chang
 8. Unit test templates.
 
 
-*Latest news* :fire: <br>
+*Latest news* : <br>
 - [07/2026] Added `dynamo` flag to `QEFFAutoModelForCausalLM.export()` to support `torch.onnx.export` dynamo-based ONNX export for CausalLM models
 - [06/2026] Added support for Gemma4 models, [google/gemma-4-E2B-it](https://huggingface.co/google/gemma-4-E2B), [google/gemma-4-26B-A4B-it](https://huggingface.co/google/gemma-4-26B-A4B-it)
 - [06/2026] Added support for Qwen3.6 model [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B)

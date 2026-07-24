@@ -1,6 +1,6 @@
 # Efficient Transformer Library - 1.22.0 Release Notes
 
-Welcome to the official release of **Efficient Transformer Library v1.22.0**! This release delivers major new model support including Gemma 4, Kimi-K2, Qwen3-VL, and GLM4-MOE, a full rebase to Transformers v5.5.4, Python 3.12 support, advanced attention blocking, Multi-head Latent Attention (MLA), and numerous performance and export improvements.
+Welcome to the official release of **Efficient Transformer Library v1.22.0**! This release delivers major new model support including Gemma 4, Qwen3-VL, and GLM4-MOE, a full rebase to Transformers v5.5.4, Python 3.12 support, advanced attention blocking, Multi-head Latent Attention (MLA), and numerous performance and export improvements.
 
 > ✅ All features and models listed below are available on the [`release/v1.22.0`](https://github.com/quic/efficient-transformers/tree/release/v1.22.0) branch and [`mainline`](https://github.com/quic/efficient-transformers/tree/main).
 
