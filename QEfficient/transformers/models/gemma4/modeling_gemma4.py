@@ -409,6 +409,7 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
         position_ids: Optional[torch.LongTensor] = None,
         mm_token_type_ids: Optional[torch.Tensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
+        comp_ctx_lengths: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         input_shape = hidden_states.shape[:-1]
@@ -445,6 +446,9 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
             token_key_states, token_value_states = key_states, value_states
 
         if past_key_values is not None:
+            if comp_ctx_lengths is not None and attention_mask is not None:
+                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                cache_kwargs["CCL"] = attention_mask.shape[-1]
             if self.is_kv_shared_layer:
                 if token_key_states is not None and token_value_states is not None:
                     key_states, value_states = past_key_values.update(
@@ -512,6 +516,7 @@ class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: Cache | None = None,
+        comp_ctx_lengths: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
         hidden_states = _clamp_to_fp16_range(hidden_states)
@@ -524,6 +529,7 @@ class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
             **kwargs,
         )
         hidden_states = self.post_attention_layernorm(hidden_states)
@@ -569,6 +575,7 @@ class QEffGemma4TextModel(Gemma4TextModel):
         past_key_values: Optional[Cache] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         per_layer_inputs: Optional[torch.Tensor] = None,
+        comp_ctx_lengths: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         **kwargs,
@@ -643,6 +650,7 @@ class QEffGemma4TextModel(Gemma4TextModel):
                 attention_mask=layer_attention_mask,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
+                comp_ctx_lengths=comp_ctx_lengths,
                 **kwargs,
             )
 
@@ -866,9 +874,9 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
                 spec["batch_size"] = kv_cache_batch_size
             return spec
 
-        if comp_ctx_lengths_prefill and comp_ctx_lengths_decode:
-            specializations = [build_prefill_spec(length) for length in comp_ctx_lengths_prefill]
-            specializations.extend(build_decode_spec(length) for length in comp_ctx_lengths_decode)
+        if comp_ctx_lengths_prefill or comp_ctx_lengths_decode:
+            specializations = [build_prefill_spec(length) for length in (comp_ctx_lengths_prefill or [])]
+            specializations.extend(build_decode_spec(length) for length in (comp_ctx_lengths_decode or []))
             return specializations
 
         return [build_prefill_spec(), build_decode_spec()]
@@ -1242,9 +1250,9 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 spec["batch_size"] = kv_cache_batch_size or batch_size
             return spec
 
-        if comp_ctx_lengths_prefill and comp_ctx_lengths_decode:
-            lang = [build_lang_prefill_spec(length) for length in comp_ctx_lengths_prefill]
-            lang.extend(build_lang_decode_spec(length) for length in comp_ctx_lengths_decode)
+        if comp_ctx_lengths_prefill or comp_ctx_lengths_decode:
+            lang = [build_lang_prefill_spec(length) for length in (comp_ctx_lengths_prefill or [])]
+            lang.extend(build_lang_decode_spec(length) for length in (comp_ctx_lengths_decode or []))
         else:
             lang = [build_lang_prefill_spec(), build_lang_decode_spec()]
         if kv_offload:
@@ -1362,7 +1370,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
         if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int64)
         if kv_offload:
             return {"vision": vision_inputs, "lang": lang_inputs}
         return {**vision_inputs, **lang_inputs}
