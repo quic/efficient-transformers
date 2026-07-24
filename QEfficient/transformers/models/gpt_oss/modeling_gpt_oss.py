@@ -146,6 +146,73 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
 class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
     supports_moe_prefill_blocking = True
 
+    def _ensure_blocked_expert_weights(self, num_nsp: int) -> None:
+        """Rebuild blocked expert tensors when NSP partitioning changes."""
+        num_experts = self.experts.num_experts
+        local_experts = num_experts // num_nsp
+        expected_wg_shape = (num_nsp, local_experts)
+
+        has_blocked_weights = all(hasattr(self, name) for name in ("W_g", "W_u", "W_d", "b_g", "b_u", "b_d"))
+        if has_blocked_weights and self.W_g.shape[:2] == expected_wg_shape:
+            return
+
+        # Ensure split gate/up aliases exist before blocked views are materialized.
+        if not hasattr(self.experts, "gate_proj") and hasattr(self.experts, "__qeff_init__"):
+            self.experts.__qeff_init__()
+        self.expert_blocking_num_nsp = num_nsp
+        self.__qeff_init__()
+
+    def __qeff_init__(self):
+        num_experts = self.experts.num_experts
+        num_nsp = getattr(self, "expert_blocking_num_nsp", num_experts)
+        local_experts = num_experts // num_nsp
+        expert_dim = self.experts.expert_dim
+        hidden_size = getattr(self, "hidden_size", self.experts.hidden_size)
+        self.hidden_size = hidden_size
+
+        self.W_g = nn.Parameter(
+            self.experts.gate_proj.view(local_experts, num_nsp, hidden_size, expert_dim)
+            .transpose(0, 1)
+            .contiguous()
+            .detach()
+            .clone()
+        )
+        self.W_u = nn.Parameter(
+            self.experts.up_proj.view(local_experts, num_nsp, hidden_size, expert_dim)
+            .transpose(0, 1)
+            .contiguous()
+            .detach()
+            .clone()
+        )
+        self.W_d = nn.Parameter(
+            self.experts.down_proj.view(local_experts, num_nsp, expert_dim, hidden_size)
+            .transpose(0, 1)
+            .contiguous()
+            .detach()
+            .clone()
+        )
+        self.b_g = nn.Parameter(
+            self.experts.gate_proj_bias.view(local_experts, num_nsp, expert_dim)
+            .transpose(0, 1)
+            .contiguous()
+            .detach()
+            .clone()
+        )
+        self.b_u = nn.Parameter(
+            self.experts.up_proj_bias.view(local_experts, num_nsp, expert_dim)
+            .transpose(0, 1)
+            .contiguous()
+            .detach()
+            .clone()
+        )
+        self.b_d = nn.Parameter(
+            self.experts.down_proj_bias.view(local_experts, num_nsp, hidden_size)
+            .transpose(0, 1)
+            .contiguous()
+            .detach()
+            .clone()
+        )
+
     def forward(self, hidden: torch.Tensor):
         B, S, H = hidden.shape
         T = B * S
@@ -164,17 +231,11 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         if num_experts % num_nsp != 0:
             raise ValueError(f"num_experts ({num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})")
 
+        self._ensure_blocked_expert_weights(num_nsp)
         local_experts = num_experts // num_nsp
-        expert_dim = self.experts.expert_dim
         routing_weights_by_expert = (
             routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
         )
-        W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, expert_dim).transpose(0, 1).contiguous()
-        W_u = self.experts.up_proj.view(local_experts, num_nsp, H, expert_dim).transpose(0, 1).contiguous()
-        W_d = self.experts.down_proj.view(local_experts, num_nsp, expert_dim, H).transpose(0, 1).contiguous()
-        b_g = self.experts.gate_proj_bias.view(local_experts, num_nsp, expert_dim).transpose(0, 1).contiguous()
-        b_u = self.experts.up_proj_bias.view(local_experts, num_nsp, expert_dim).transpose(0, 1).contiguous()
-        b_d = self.experts.down_proj_bias.view(local_experts, num_nsp, H).transpose(0, 1).contiguous()
 
         expert_out = hidden.new_zeros((num_nsp, T, H))
         routing_weights_unsqueezed = routing_weights_by_expert.unsqueeze(-1)
@@ -183,12 +244,12 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
             expert_out = _cumsum_scatter_gather_update_gptoss_expert_blocked(
                 x=hidden,
                 T2Ei=T2Ei,
-                W_g=W_g[:, local_slot],
-                W_u=W_u[:, local_slot],
-                W_d=W_d[:, local_slot],
-                b_g=b_g[:, local_slot],
-                b_u=b_u[:, local_slot],
-                b_d=b_d[:, local_slot],
+                W_g=self.W_g[:, local_slot],
+                W_u=self.W_u[:, local_slot],
+                W_d=self.W_d[:, local_slot],
+                b_g=self.b_g[:, local_slot],
+                b_u=self.b_u[:, local_slot],
+                b_d=self.b_d[:, local_slot],
                 routing_weight=routing_weights_unsqueezed[:, local_slot],
                 expert_out=expert_out,
                 limit=self.experts.limit,
