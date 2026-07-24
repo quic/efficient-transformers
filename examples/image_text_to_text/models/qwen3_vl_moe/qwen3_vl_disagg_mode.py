@@ -24,13 +24,18 @@ config = AutoConfig.from_pretrained(model_id)
 config.dtype = "float16"
 config.torch_dtype = torch.float16
 
-# For faster execution user can run with lesser layers, For Testing Purpose Only
+# # For faster execution user can run with lesser layers, For Testing Purpose Only
 config.vision_config.depth = 9
 config.text_config.num_hidden_layers = 2
 config.vision_config.deepstack_visual_indexes = [8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=True, config=config, dtype=torch.float16, layerwise=False
+    model_id,
+    attn_implementation="eager",
+    kv_offload=True,
+    config=config,
+    dtype=torch.float16,
+    layerwise=False,
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -120,7 +125,6 @@ decode_qpc_path = qeff_model.compile(
 )
 print(f"Decode export + compile time is {(perf_counter() - decode_start_time):.3f}s")
 
-# exit(0)
 
 ################
 # Prefill modes:
@@ -154,7 +158,7 @@ prefill_qpc_path = qeff_model.compile(
     prefill_only=True,
     enable_chunking=True,
     skip_vision=True,
-    use_onnx_subfunctions=False,
+    use_onnx_subfunctions=True,
     layerwise=False,
     offload_pt_weights=True,
     qaic_config=prefill_qaic_config,
