@@ -8,12 +8,13 @@
 import onnxscript
 import torch
 
+from QEfficient.customop.onnxscript_utils import qeff_custom_op
 from QEfficient.utils import constants
 
-ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
+ops = getattr(onnxscript, "opset" + str(constants.ONNX_LEGACY_EXPORT_OPSET))
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+@qeff_custom_op("com.qualcomm.cloud", 1)
 def CtxScatterCB(
     data: onnxscript.FLOAT, batch_index: onnxscript.INT32, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT
 ) -> onnxscript.FLOAT:
@@ -58,7 +59,7 @@ class CtxScatterFuncCB(torch.autograd.Function):
         return g.onnxscript_op(CtxScatterCB, data, batch_index, position_ids, updates).setTypeAs(data)
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+@qeff_custom_op("com.qualcomm.cloud", 1)
 def CtxScatterCB3D(
     data: onnxscript.FLOAT, batch_index: onnxscript.INT32, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT
 ) -> onnxscript.FLOAT:
@@ -99,7 +100,7 @@ class CtxScatterFuncCB3D(torch.autograd.Function):
         return g.onnxscript_op(CtxScatterCB3D, data, batch_index, position_ids, updates).setTypeAs(data)
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+@qeff_custom_op("com.qualcomm.cloud", 1)
 def CtxGatherCB(
     data: onnxscript.FLOAT, batch_index: onnxscript.INT32, ctx_indices: onnxscript.INT32, comp_ctx_len: onnxscript.INT32
 ) -> onnxscript.FLOAT:
@@ -146,7 +147,7 @@ class CtxGatherFuncCB(torch.autograd.Function):
         return g.onnxscript_op(CtxGatherCB, data, batch_index, ctx_indices, comp_ctx_len).setTypeAs(data)
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+@qeff_custom_op("com.qualcomm.cloud", 1)
 def CtxGatherBlockedKVCB(
     data: onnxscript.FLOAT, batch_index: onnxscript.INT32, ctx_indices: onnxscript.INT32
 ) -> onnxscript.FLOAT:
@@ -185,7 +186,7 @@ class CtxGatherFuncBlockedKVCB(torch.autograd.Function):
         return g.onnxscript_op(CtxGatherBlockedKVCB, data, batch_index, ctx_indices).setTypeAs(data)
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+@qeff_custom_op("com.qualcomm.cloud", 1)
 def CtxGatherCB3D(
     data: onnxscript.FLOAT, batch_index: onnxscript.INT32, ctx_indices: onnxscript.INT32
 ) -> onnxscript.FLOAT:

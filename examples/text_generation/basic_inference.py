@@ -7,7 +7,7 @@
 
 import argparse
 
-from transformers import AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 
@@ -15,9 +15,12 @@ from QEfficient import QEFFAutoModelForCausalLM
 def main():
     parser = argparse.ArgumentParser(description="Basic text generation inference")
     parser.add_argument("--model-name", type=str, default="Qwen/Qwen2-1.5B-Instruct", help="HuggingFace model ID")
+    parser.add_argument("--num-hidden-layers", type=int, default=-1, help="Num hidden layers in the model")
     parser.add_argument("--prompt", type=str, default="Hello, how are you?", help="Input prompt")
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=128, help="Context length")
+    parser.add_argument("--dynamo", action="store_true", help="Export via dynamo")
+    parser.add_argument("--use-onnx-subfunctions", action="store_true", help="Use subfunctions while exporting")
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
     parser.add_argument("--aic-hw-version", type=str, default="ai100", help="Version of aic hardware")
@@ -31,7 +34,10 @@ def main():
 
     # Load tokenizer and model
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name)
+    config = AutoConfig.from_pretrained(args.model_name)
+    if args.num_hidden_layers > 0:
+        config.num_hidden_layers = args.num_hidden_layers
+    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, config=config)
 
     # Compile the model
     qpc_path = model.compile(
@@ -40,6 +46,8 @@ def main():
         num_cores=args.num_cores,
         aic_hw_version=args.aic_hw_version,
         num_devices=(1 if args.device_group is None else len(args.device_group)),
+        dynamo=args.dynamo,
+        use_onnx_subfunctions=args.use_onnx_subfunctions,
     )
     print(f"Model compiled to: {qpc_path}")
 
