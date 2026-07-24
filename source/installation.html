@@ -47,7 +47,9 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Release Documents</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="release_docs.html">Efficient Transformer Library - 1.21.0 Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="release_docs.html">Efficient Transformer Library - 1.22.0 Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="release_docs.html#efficient-transformer-library-1-21-6-release-notes">Efficient Transformer Library - 1.21.6 Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="release_docs.html#efficient-transformer-library-1-21-0-release-notes">Efficient Transformer Library - 1.21.0 Release Notes</a></li>
 <li class="toctree-l1"><a class="reference internal" href="release_docs.html#efficient-transformer-library-1-20-0-release-notes">Efficient Transformer Library - 1.20.0 Release Notes</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
@@ -70,7 +72,7 @@
 </li>
 <li class="toctree-l1"><a class="reference internal" href="#sanity-check">Sanity Check</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Inference on Cloud AI 100</span></p>
+<p class="caption" role="heading"><span class="caption-text">Inference on Cloud AIxxx</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="quick_start.html">Quick Start</a></li>
 <li class="toctree-l1"><a class="reference internal" href="features_enablement.html">Fetaures Enablement Guide</a></li>
@@ -84,8 +86,6 @@
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="finetune.html">Finetune Infra</a></li>
-<li class="toctree-l1"><a class="reference internal" href="finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -133,7 +133,7 @@
 <p>System Requirements:</p>
 <ol class="arabic simple">
 <li><p><a class="reference external" href="https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/#operating-systems">Supported Linux OS</a> - Ubuntu, RHEL and AWS Linux</p></li>
-<li><p><a class="reference external" href="https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/#platform-sdk">Cloud AI 100 Platform SDK installed</a></p></li>
+<li><p><a class="reference external" href="https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/#platform-sdk">Cloud AIxxx (AI100, AI200 and so on) Platform SDK installed</a></p></li>
 <li><p><a class="reference external" href="https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Pre-requisites/pre-requisites/">SDK Pre-requisites</a></p></li>
 <li><p><a class="reference external" href="https://github.com/quic/cloud-ai-sdk/tree/1.12/utils/multi-device">Multi-device support enabled for model sharding</a></p></li>
 </ol>
@@ -144,7 +144,7 @@
 <section id="download-apps-sdk">
 <h2>1. Download Apps SDK<a class="headerlink" href="#download-apps-sdk" title="Permalink to this heading"></a></h2>
 <ul class="simple">
-<li><p><a class="reference external" href="https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/">Cloud AI 100 Apps SDK install</a></p></li>
+<li><p><a class="reference external" href="https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/Cloud-AI-SDK/Cloud-AI-SDK/">Cloud AIxxx (AI100, AI200 and so on) Apps SDK install</a></p></li>
 </ul>
 <p>Uninstall existing Apps SDK</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">sudo</span> <span class="o">./</span><span class="n">uninstall</span><span class="o">.</span><span class="n">sh</span>
@@ -180,7 +180,7 @@
 </div>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Create Python virtual env and activate it. (Required Python 3.10)</span>
 
-python3.10<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>qeff_env
+python3.12<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>qeff_env
 <span class="nb">source</span><span class="w"> </span>qeff_env/bin/activate
 pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span>pip
 
@@ -198,7 +198,7 @@ pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import QEfficient; print(QEfficient.__version__)&quot;</span>
 </pre></div>
 </div>
-<p>If the above line executes successfully, you are good to go ahead and start deploying models on <code class="docutils literal notranslate"><span class="pre">Cloud</span> <span class="pre">AI</span> <span class="pre">100</span></code> cards using <code class="docutils literal notranslate"><span class="pre">QEfficient</span></code> library.</p>
+<p>If the above line executes successfully, you are good to go ahead and start deploying models on <code class="docutils literal notranslate"><span class="pre">Cloud</span> <span class="pre">AIxxx</span> <span class="pre">(AI100,</span> <span class="pre">AI200</span> <span class="pre">and</span> <span class="pre">so</span> <span class="pre">on)</span></code> cards using <code class="docutils literal notranslate"><span class="pre">QEfficient</span></code> library.</p>
 </section>
 
 
@@ -238,6 +238,7 @@ pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com
         <dd><a href="release/v1.19/index.html">release/v1.19</a></dd>
         <dd><a href="release/v1.20/index.html">release/v1.20</a></dd>
         <dd><a href="release/v1.21/index.html">release/v1.21</a></dd>
+        <dd><a href="release/v1.21.6/index.html">release/v1.21.6</a></dd>
       </dl>
     </div>
 </div><script>

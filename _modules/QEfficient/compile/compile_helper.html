@@ -44,7 +44,9 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Release Documents</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/release_docs.html">Efficient Transformer Library - 1.21.0 Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/release_docs.html">Efficient Transformer Library - 1.22.0 Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/release_docs.html#efficient-transformer-library-1-21-6-release-notes">Efficient Transformer Library - 1.21.6 Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/release_docs.html#efficient-transformer-library-1-21-0-release-notes">Efficient Transformer Library - 1.21.0 Release Notes</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/release_docs.html#efficient-transformer-library-1-20-0-release-notes">Efficient Transformer Library - 1.20.0 Release Notes</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
@@ -52,6 +54,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../source/introduction.html">Introduction Qualcomm <code class="docutils literal notranslate"><span class="pre">efficient-transformers</span></code> library</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/supported_features.html">Supported Features</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/validate.html">Validated Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../source/validate.html#note">Note</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/validate.html#models-coming-soon">Models Coming Soon</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Installation</span></p>
@@ -60,7 +63,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#installation">Installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/installation.html#sanity-check">Sanity Check</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Inference on Cloud AI 100</span></p>
+<p class="caption" role="heading"><span class="caption-text">Inference on Cloud AIxx (AI100, AI200 and so on)</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/quick_start.html">Quick Start</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/features_enablement.html">Fetaures Enablement Guide</a></li>
@@ -74,8 +77,6 @@
 <p class="caption" role="heading"><span class="caption-text">QAIC Finetune</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html">Finetune Infra</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html#expose-qaic-accelerator-devices">Expose QAIC accelerator devices</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../source/finetune.html#start-docker-container">Start Docker container</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
@@ -135,35 +136,34 @@
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.compile.qnn_compiler</span><span class="w"> </span><span class="kn">import</span> <span class="nb">compile</span> <span class="k">as</span> <span class="n">qnn_compile</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">constants</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.utils._utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_json</span><span class="p">,</span> <span class="n">load_yaml</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.utils._utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_json</span><span class="p">,</span> <span class="n">load_yaml</span><span class="p">,</span> <span class="n">to_named_specializations</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">QEfficient.utils.logging_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">logger</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">create_and_dump_specializations</span><span class="p">(</span>
     <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">prompt_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">ctx_len</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">full_batch_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
 <span class="p">):</span>
-    <span class="c1"># Create specialization file.</span>
-    <span class="n">specializations</span> <span class="o">=</span> <span class="p">{</span>
-        <span class="s2">&quot;specializations&quot;</span><span class="p">:</span> <span class="p">[</span>
-            <span class="p">{</span>
-                <span class="s2">&quot;batch_size&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">batch_size</span><span class="p">),</span>
-                <span class="s2">&quot;seq_len&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">prompt_len</span><span class="p">),</span>
-                <span class="s2">&quot;ctx_len&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ctx_len</span><span class="p">),</span>
-            <span class="p">},</span>
-            <span class="p">{</span><span class="s2">&quot;batch_size&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">batch_size</span><span class="p">),</span> <span class="s2">&quot;seq_len&quot;</span><span class="p">:</span> <span class="s2">&quot;1&quot;</span><span class="p">,</span> <span class="s2">&quot;ctx_len&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ctx_len</span><span class="p">)},</span>
-        <span class="p">]</span>
-    <span class="p">}</span>
-    <span class="c1"># If continuous batching is enabled by proving full_batch_size we need to add FBS to the specialization file and update the batch size of decoder part to FBS</span>
+    <span class="c1"># Build the base specialization entries first, then convert to named format.</span>
+    <span class="n">base_specializations</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;batch_size&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">batch_size</span><span class="p">),</span>
+            <span class="s2">&quot;seq_len&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">prompt_len</span><span class="p">),</span>
+            <span class="s2">&quot;ctx_len&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ctx_len</span><span class="p">),</span>
+        <span class="p">},</span>
+        <span class="p">{</span><span class="s2">&quot;batch_size&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">batch_size</span><span class="p">),</span> <span class="s2">&quot;seq_len&quot;</span><span class="p">:</span> <span class="s2">&quot;1&quot;</span><span class="p">,</span> <span class="s2">&quot;ctx_len&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ctx_len</span><span class="p">)},</span>
+    <span class="p">]</span>
+    <span class="c1"># If continuous batching is enabled by providing full_batch_size we need to add FBS to the specialization file and update the batch size of decoder part to FBS</span>
     <span class="k">if</span> <span class="n">full_batch_size</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">specializations</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">full_batch_size</span><span class="p">)</span>
-        <span class="n">specializations</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">][</span><span class="mi">1</span><span class="p">][</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">full_batch_size</span><span class="p">)</span>
-        <span class="n">specializations</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">][</span><span class="mi">1</span><span class="p">][</span><span class="s2">&quot;batch_size&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">full_batch_size</span><span class="p">)</span>
+        <span class="n">base_specializations</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">full_batch_size</span><span class="p">)</span>
+        <span class="n">base_specializations</span><span class="p">[</span><span class="mi">1</span><span class="p">][</span><span class="s2">&quot;full_batch_size&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">full_batch_size</span><span class="p">)</span>
+        <span class="n">base_specializations</span><span class="p">[</span><span class="mi">1</span><span class="p">][</span><span class="s2">&quot;batch_size&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">full_batch_size</span><span class="p">)</span>
 
-    <span class="c1"># To handle repetative input in specializations when prompt_len is 1</span>
+    <span class="c1"># To handle repetitive input in specializations when prompt_len is 1</span>
     <span class="k">if</span> <span class="n">prompt_len</span> <span class="o">==</span> <span class="mi">1</span> <span class="ow">and</span> <span class="n">full_batch_size</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">specializations</span><span class="p">[</span><span class="s2">&quot;specializations&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+        <span class="n">base_specializations</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
 
     <span class="c1"># Dump</span>
+    <span class="n">specializations</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;specializations&quot;</span><span class="p">:</span> <span class="n">to_named_specializations</span><span class="p">(</span><span class="n">base_specializations</span><span class="p">)}</span>
     <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">file</span><span class="p">:</span>
         <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">specializations</span><span class="p">,</span> <span class="n">file</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
 
@@ -260,7 +260,6 @@
         <span class="s2">&quot;-retained-state&quot;</span><span class="p">,</span>
         <span class="sa">f</span><span class="s2">&quot;-aic-num-cores=</span><span class="si">{</span><span class="n">num_cores</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
         <span class="sa">f</span><span class="s2">&quot;-custom-IO-list-file=</span><span class="si">{</span><span class="n">custom_io_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-        <span class="s2">&quot;-compile-only&quot;</span><span class="p">,</span>
         <span class="sa">f</span><span class="s2">&quot;-aic-binary-dir=</span><span class="si">{</span><span class="n">aic_binary_dir</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
     <span class="p">]</span>
     <span class="k">if</span> <span class="n">mxfp6</span><span class="p">:</span>
