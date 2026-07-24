@@ -47,7 +47,6 @@ class QEffMoEBlockMixin(metaclass=ABCMeta):
     _moe_return_router_logits: bool = False
     # Expert-parallel knobs, set by OptimizedMoETransform when flavour is EXPERT_PARALLEL.
     expert_parallel_num_nsp: Optional[int] = None
-    expert_parallel_packed_chunk_size: Optional[int] = None
     expert_parallel_num_packed_chunks: int = 1
     # Set by OptimizedMoEWeightsTransform after model-local canonicalization.
     weights_transformed: bool = False
@@ -72,14 +71,6 @@ class QEffMoEBlockMixin(metaclass=ABCMeta):
     @expert_blocking_num_nsp.setter
     def expert_blocking_num_nsp(self, value: Optional[int]) -> None:
         self.expert_parallel_num_nsp = value
-
-    @property
-    def expert_blocking_packed_chunk_size(self) -> Optional[int]:
-        return self.expert_parallel_packed_chunk_size
-
-    @expert_blocking_packed_chunk_size.setter
-    def expert_blocking_packed_chunk_size(self, value: Optional[int]) -> None:
-        self.expert_parallel_packed_chunk_size = value
 
     @property
     def expert_blocking_num_packed_chunks(self) -> int:
@@ -132,9 +123,6 @@ class QEffMoEBlockMixin(metaclass=ABCMeta):
             num_nsp = getattr(self, "expert_parallel_num_nsp", None)
             if num_nsp is None:
                 num_nsp = getattr(self, "expert_blocking_num_nsp", None) or weights.num_experts
-            packed_chunk_size = getattr(self, "expert_parallel_packed_chunk_size", None)
-            if packed_chunk_size is None:
-                packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", None) or x.shape[0]
             num_packed_chunks = getattr(
                 self,
                 "expert_parallel_num_packed_chunks",
@@ -146,7 +134,6 @@ class QEffMoEBlockMixin(metaclass=ABCMeta):
                 weights,
                 profile,
                 num_nsp=num_nsp,
-                packed_chunk_size=packed_chunk_size,
                 num_packed_chunks=num_packed_chunks,
             )
         return moe_simple_loop(x, dense, weights, profile, prescale=profile.scale_mode == "pre")

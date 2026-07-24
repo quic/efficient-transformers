@@ -314,7 +314,6 @@ def _make_qeff_moe_block(original_block: nn.Module, flavour_name: str, options: 
     qeff_block._moe_flavour = flavour
     if flavour is MoEFlavour.EXPERT_PARALLEL:
         qeff_block.expert_parallel_num_nsp = 2
-        qeff_block.expert_parallel_packed_chunk_size = 4
         qeff_block.expert_parallel_num_packed_chunks = 2
         OptimizedMoEExpertParallelWeightsTransform.apply(qeff_block)
     return qeff_block
@@ -334,7 +333,6 @@ def test_moe_block_flavour_forward_parity(model_family, factory, block_class_nam
 
         qeff_block = _make_qeff_moe_block(original_block, flavour_name, options)
         if flavour_name == "expert_parallel":
-            assert qeff_block.expert_parallel_packed_chunk_size == 4
             assert qeff_block.expert_parallel_num_packed_chunks == 2
         with torch.no_grad():
             actual = _first_tensor(qeff_block(hidden_states))
@@ -483,7 +481,7 @@ def test_glm4_moe_blocked_prefill_forward_parity():
 
     assert chunked_block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
     assert chunked_block.expert_parallel_num_nsp == 2
-    assert chunked_block.expert_parallel_packed_chunk_size == 256
+    assert chunked_block.expert_parallel_num_packed_chunks == 1
 
     x = torch.randn(1, 8, config.hidden_size)
     with torch.no_grad():
@@ -648,7 +646,7 @@ def test_qwen3moe_blocked_forward_parity():
 
     assert chunked._moe_flavour is MoEFlavour.EXPERT_PARALLEL
     assert chunked.expert_parallel_num_nsp == 2
-    assert chunked.expert_parallel_packed_chunk_size == 256
+    assert chunked.expert_parallel_num_packed_chunks == 1
 
     x = torch.randn(1, 8, config.hidden_size)
     with torch.no_grad():
@@ -834,7 +832,7 @@ def test_gptoss_blocked_forward_parity():
     assert blocks_chunked
     assert blocks_chunked[0]._moe_flavour is MoEFlavour.EXPERT_PARALLEL
     assert blocks_chunked[0].expert_parallel_num_nsp == 2
-    assert blocks_chunked[0].expert_parallel_packed_chunk_size == 256
+    assert blocks_chunked[0].expert_parallel_num_packed_chunks == 1
 
     with torch.no_grad():
         blocked, _ = blocks_chunked[0].forward(x)
