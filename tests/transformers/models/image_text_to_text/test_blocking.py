@@ -15,12 +15,27 @@ import pytest
 import requests
 import torch
 from PIL import Image
+from requests.adapters import HTTPAdapter
 from transformers import (
     AutoConfig,
     AutoProcessor,
     AutoTokenizer,
     GenerationConfig,
     TextStreamer,
+)
+from urllib3.util.retry import Retry
+
+from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
+from QEfficient.utils._utils import create_json
+from QEfficient.utils.constants import QnnConstants
+from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
+from QEfficient.utils.test_utils import (
+    InternProcessor,
+    ModelConfig,
+    get_text_config,
+    load_vlm_model,
+    load_vlm_model_from_config,
+    set_num_layers_vlm,
 )
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
@@ -35,6 +50,9 @@ from QEfficient.utils.test_utils import (
 
 from ..check_model_results import dump_and_compare_results
 
+_session = requests.Session()
+_session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=1)))
+
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
 with open(CONFIG_PATH, "r") as f:
     config_data = json.load(f)
@@ -45,7 +63,6 @@ test_mm_moe_models = [model["model_name"] for model in multimodal_models if "moe
 
 NEW_GENERATION_TOKENS = 10
 
-
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
     manual_cleanup: callable,
@@ -55,38 +72,45 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
+    qaic_config: Optional[dict] = None,
+    test_kv_replicate: Optional[bool] = None,
     torch_dtype: Optional[torch.dtype] = torch.float32,
     compare_results: Optional[bool] = False,
     compile_only: bool = False,
     mdp_num_partitions: Optional[int] = None,
     mdp_strategy: Optional[str] = None,
     use_onnx_subfunctions: bool = False,
-    qaic_config: Optional[Dict] = None,
-    decode_only: bool = False,
 ):
-    prompt_len = model_config_dict[model_name]["prompt_len"] if not decode_only else 1
+    prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
     img_size = model_config_dict[model_name].get("img_size")
     img_url = model_config_dict[model_name]["img_url"]
-    query = (
-        model_config_dict[model_name]["text_prompt"]
-        if not decode_only
-        else model_config_dict[model_name]["text_prompt"].split(" ")[:1]
-    )
+    query = model_config_dict[model_name]["text_prompt"]
     batch_size = model_config_dict[model_name]["batch_size"]
 
     max_gen_len = NEW_GENERATION_TOKENS
     pytorch_kv_tokens = None
     ort_tokens = None
     n_layer = num_hidden_layers
+    qaic_config = copy.deepcopy(qaic_config) if qaic_config is not None else None
     if config is None:
         config = AutoConfig.from_pretrained(
             model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS
         )
         config = set_num_layers_vlm(config, n_layer=n_layer)
+        if test_kv_replicate:
+            text_config = get_text_config(config)
+            num_replicate_kv_heads = text_config.num_attention_heads // text_config.num_key_value_heads
+            qaic_config = qaic_config or {}
+            qaic_config["num_replicate_kv_heads"] = num_replicate_kv_heads
         if hasattr(config, "model_type") and config.model_type in ["gemma3"]:
             config.text_config._sliding_window_pattern = 2
             config.text_config.layer_types = ["sliding_attention", "full_attention"]
+        if hasattr(config, "model_type") and config.model_type in ["gemma4"]:
+            config.text_config.num_kv_shared_layers = 0
+            config.text_config.num_hidden_layers = 1
+            config.vision_config.num_hidden_layers = 1
+            config.text_config.layer_types = ["sliding_attention"]
         if hasattr(config, "model_type") and config.model_type in [
             "qwen3_vl",
             "qwen3_vl_moe",
@@ -101,7 +125,9 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
                 model_name,
                 kv_offload=kv_offload,
                 config=config,
+                qaic_config=qaic_config,
                 torch_dtype=torch_dtype,
+                ignore_mismatched_sizes=True,
             )
         else:
             model_hf = load_vlm_model(config)
@@ -109,16 +135,27 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
                 model_name,
                 kv_offload=kv_offload,
                 config=config,
+                qaic_config=qaic_config,
                 torch_dtype=torch_dtype,
+                ignore_mismatched_sizes=True,
             )
     else:
+        if test_kv_replicate:
+            text_config = get_text_config(config)
+            num_replicate_kv_heads = text_config.num_attention_heads // text_config.num_key_value_heads
+            qaic_config = qaic_config or {}
+            qaic_config["num_replicate_kv_heads"] = num_replicate_kv_heads
         model_hf = load_vlm_model_from_config(config)
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
             kv_offload=kv_offload,
             config=model_hf.config,
+            qaic_config=qaic_config,
             torch_dtype=torch_dtype,
+            ignore_mismatched_sizes=True,
         )
+    if qaic_config is not None:
+        qaic_config["ctx_len"] = ctx_len
     compile_kwargs = {
         "num_devices": num_devices,
         "prefill_seq_len": prompt_len,
@@ -126,7 +163,9 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         "mxfp6": False,
         "enable_qnn": enable_qnn,
         "qnn_config": qnn_config,
+        "qaic_config": qaic_config,
         "use_onnx_subfunctions": use_onnx_subfunctions,
+        "split-model-io": True,
     }
 
     mdp_compile_kwargs = {}
@@ -134,7 +173,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         mdp_compile_kwargs["mdp_num_partitions"] = mdp_num_partitions
     if mdp_strategy is not None:
         mdp_compile_kwargs["mdp_strategy"] = mdp_strategy
-
+    if model_name == "tiny-random/gemma-4-dense" or model_name == "tiny-random/gemma-4-moe":
+        compile_kwargs["node_precision_info"] = True
     if model_name in ModelConfig.INTERNVL_MODELS:
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
         processor = InternProcessor(model_hf, tokenizer)
@@ -144,7 +184,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         num_patches_list = []
         questions = []
         for i in range(len(prompt)):
-            img = requests.get(img_url_list[i], stream=True)
+            img = _session.get(img_url_list[i], stream=True)
             image = Image.open(BytesIO(img.content)).convert("RGB")
             image = image.resize((448, 448))
             pixel_value = processor.load_image(image, max_num=12)
@@ -178,7 +218,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     elif model_name in ModelConfig.MOLMO_MODELS:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-        img = requests.get(img_url, stream=True)
+        img = _session.get(img_url, stream=True)
         image = Image.open(BytesIO(img.content)).convert("RGB")
         image = image.resize((536, 354))
         inputs = processor.process(images=[image], text=query)
@@ -206,7 +246,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     else:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-        image = Image.open(requests.get(img_url, stream=True).raw)
+        image = Image.open(_session.get(img_url, stream=True).raw)
         if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
             image = image.resize((1540, 1540))
         conversation = [
@@ -254,18 +294,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     # assert (pytorch_kv_tokens == pytorch_hf_tokens).all(), (
     #     "Tokens don't match for pytorch HF output and pytorch KV output"
     # )
-
-    if qaic_config is not None:
-        qaic_config["ctx_len"] = ctx_len
-        qeff_model.transform(
-            ctx_len=ctx_len,
-            seq_len=prompt_len,
-            batch_size=batch_size,
-            num_devices=num_devices,
-            qaic_config=qaic_config,
-        )
-
-    _ = qeff_model.export(use_onnx_subfunctions=use_onnx_subfunctions)
     # ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
     # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
 
@@ -278,10 +306,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         compile_kwargs.update(mdp_compile_kwargs)
     elif mdp_compile_kwargs:
         compile_kwargs.update(mdp_compile_kwargs)
-
-    if qaic_config is not None:
-        compile_kwargs["qaic_config"] = qaic_config
-
+    compile_kwargs["use_onnx_subfunctions"] = use_onnx_subfunctions
     qeff_model.compile(**compile_kwargs)
 
     if compile_only:
