@@ -15,9 +15,7 @@ from PIL import Image
 
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.utils.load_kimi_utils import (
-    DEFAULT_MODEL_PATH as MODEL_PATH,
-)
-from QEfficient.utils.load_kimi_utils import (
+    DEFAULT_MODEL_PATH,
     LOADED_EXPERT_IDS,
     NUM_EXPERTS_PER_TOKEN,
     NUM_TEXT_LAYERS,
@@ -34,7 +32,7 @@ from QEfficient.utils.load_kimi_utils import (
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Load Kimi K2.5 with runtime compatibility for transformers==5.5.4.")
-    parser.add_argument("--model-path", type=Path, default=MODEL_PATH)
+    parser.add_argument("--model-path", type=Path, default=DEFAULT_MODEL_PATH)
     parser.add_argument(
         "--full-model",
         action="store_true",

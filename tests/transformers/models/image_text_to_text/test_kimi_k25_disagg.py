@@ -159,6 +159,7 @@ def _compile_disagg_qpcs(qeff_model: QEFFAutoModelForImageTextToText, compile_di
         "split_model_io": True,
         "mos": 1,
         "aic_enable_depth_first": True,
+        "use_onnx_subfunctions": True,
         "layerwise": False,
         **compile_dims,
     }
@@ -280,7 +281,6 @@ def _run_disagg_qaic_generation(
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 def test_kimi_k25_disagg_qaic_vs_hf_fp32():
-
     model, tokenizer, processor = _load_kimi_subset_model()
     inputs = _prepare_inputs(processor)
     inputs = {name: (value.to("cpu") if torch.is_tensor(value) else value) for name, value in inputs.items()}

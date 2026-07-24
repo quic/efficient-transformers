@@ -428,9 +428,9 @@ class QEffDynamicCompressedKVRopeLayer:
         if batch_index is not None:
             invalid_scatter_index = torch.iinfo(torch.int32).max
             scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
-            self.ckv = CtxScatterFuncCB.apply(self.ckv, batch_index, scatter_position_ids, compressed_kv)
+            self.ckv = ctx_scatter_cb.apply(self.ckv, batch_index, scatter_position_ids, compressed_kv)
         else:
-            self.ckv = CtxScatterFunc.apply(self.ckv, position_ids, compressed_kv)
+            self.ckv = ctx_scatter.apply(self.ckv, position_ids, compressed_kv)
 
         ckv_out = self.ckv
         ctx_len = ckv_out.shape[-2]
@@ -441,9 +441,9 @@ class QEffDynamicCompressedKVRopeLayer:
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
         if batch_index is not None:
-            ckv_out = CtxGatherFuncCB.apply(ckv_out, batch_index, ctx_indices, ctx_len)
+            ckv_out = ctx_gather_cb.apply(ckv_out, batch_index, ctx_indices, ctx_len)
         else:
-            ckv_out = CtxGatherFunc.apply(ckv_out, ctx_indices, ctx_len)
+            ckv_out = ctx_gather.apply(ckv_out, ctx_indices, ctx_len)
         ckv_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), ckv_out)
         return ckv_out
 
@@ -454,9 +454,9 @@ class QEffDynamicCompressedKVRopeLayer:
         if batch_index is not None:
             invalid_scatter_index = torch.iinfo(torch.int32).max
             scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
-            self.k_pe = CtxScatterFuncCB.apply(self.k_pe, batch_index, scatter_position_ids, k_pe_cache)
+            self.k_pe = ctx_scatter_cb.apply(self.k_pe, batch_index, scatter_position_ids, k_pe_cache)
         else:
-            self.k_pe = CtxScatterFunc.apply(self.k_pe, position_ids, k_pe_cache)
+            self.k_pe = ctx_scatter.apply(self.k_pe, position_ids, k_pe_cache)
 
         k_pe_out = self.k_pe
         ctx_len = k_pe_out.shape[-2]
@@ -467,9 +467,9 @@ class QEffDynamicCompressedKVRopeLayer:
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
         if batch_index is not None:
-            k_pe_out = CtxGatherFuncCB.apply(k_pe_out, batch_index, ctx_indices, ctx_len)
+            k_pe_out = ctx_gather_cb.apply(k_pe_out, batch_index, ctx_indices, ctx_len)
         else:
-            k_pe_out = CtxGatherFunc.apply(k_pe_out, ctx_indices, ctx_len)
+            k_pe_out = ctx_gather.apply(k_pe_out, ctx_indices, ctx_len)
         k_pe_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), k_pe_out)
         return k_pe_out
 
@@ -488,10 +488,10 @@ class QEffDynamicCompressedKVRopeLayer:
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
         if batch_index is not None:
-            ckv_out = CtxGatherFuncBlockedKVCB.apply(ckv_out, batch_index, ctx_indices)
+            ckv_out = ctx_gather_blocked_kv_cb.apply(ckv_out, batch_index, ctx_indices)
         else:
             ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
-            ckv_out = CtxGatherFuncBlockedKV.apply(ckv_out, ctx_indices)
+            ckv_out = ctx_gather_blocked_kv.apply(ckv_out, ctx_indices)
 
         ckv_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(ckv_out, dtype=ckv_out.dtype), ckv_out)
         return ckv_out
@@ -511,10 +511,10 @@ class QEffDynamicCompressedKVRopeLayer:
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
         if batch_index is not None:
-            k_pe_out = CtxGatherFuncBlockedKVCB.apply(k_pe_out, batch_index, ctx_indices)
+            k_pe_out = ctx_gather_blocked_kv_cb.apply(k_pe_out, batch_index, ctx_indices)
         else:
             ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
-            k_pe_out = CtxGatherFuncBlockedKV.apply(k_pe_out, ctx_indices)
+            k_pe_out = ctx_gather_blocked_kv.apply(k_pe_out, ctx_indices)
 
         k_pe_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(k_pe_out, dtype=k_pe_out.dtype), k_pe_out)
         return k_pe_out
@@ -526,9 +526,9 @@ class QEffDynamicCompressedKVRopeLayer:
         if batch_index is not None:
             invalid_scatter_index = torch.iinfo(torch.int32).max
             scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
-            self.k_pe = CtxScatterFuncCB.apply(self.k_pe, batch_index, scatter_position_ids, k_pe_cache)
+            self.k_pe = ctx_scatter_cb.apply(self.k_pe, batch_index, scatter_position_ids, k_pe_cache)
         else:
-            self.k_pe = CtxScatterFunc.apply(self.k_pe, position_ids, k_pe_cache)
+            self.k_pe = ctx_scatter.apply(self.k_pe, position_ids, k_pe_cache)
         return self.k_pe
 
     def write_only_ckv(self, compressed_kv, cache_kwargs):
@@ -538,9 +538,9 @@ class QEffDynamicCompressedKVRopeLayer:
         if batch_index is not None:
             invalid_scatter_index = torch.iinfo(torch.int32).max
             scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
-            self.ckv = CtxScatterFuncCB.apply(self.ckv, batch_index, scatter_position_ids, compressed_kv)
+            self.ckv = ctx_scatter_cb.apply(self.ckv, batch_index, scatter_position_ids, compressed_kv)
         else:
-            self.ckv = CtxScatterFunc.apply(self.ckv, position_ids, compressed_kv)
+            self.ckv = ctx_scatter.apply(self.ckv, position_ids, compressed_kv)
         return self.ckv
 
 

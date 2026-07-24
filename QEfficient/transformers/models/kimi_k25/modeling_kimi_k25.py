@@ -461,28 +461,7 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        if self._has_uint4_weight_as_activation_moe():
-            return set()
         return {self.language_model.model.layers[0].__class__}
-
-    def _has_uint4_weight_as_activation_moe(self) -> bool:
-        for layer in self.language_model.model.layers:
-            mlp = getattr(layer, "mlp", None)
-            if mlp is None:
-                continue
-            if all(
-                hasattr(mlp, attr)
-                for attr in (
-                    "all_gate_qweight",
-                    "all_gate_qzeros",
-                    "all_up_qweight",
-                    "all_up_qzeros",
-                    "all_down_qweight",
-                    "all_down_qzeros",
-                )
-            ):
-                return True
-        return False
 
     def forward(
         self,
@@ -560,6 +539,7 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             )
             image_position_delta = torch.clamp(merged_image_tokens - selected_image_tokens, min=0)
             image_idx = image_idx + selected_any.to(torch.int64) * image_position_delta
+            image_idx = image_idx + torch.zeros_like(input_ids[:, :1], dtype=image_idx.dtype, device=image_idx.device)
 
         if position_ids is None and attention_mask is not None:
             position_ids = attention_mask.long().cumsum(-1) - 1
