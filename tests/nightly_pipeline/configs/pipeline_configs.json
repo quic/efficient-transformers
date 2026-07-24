@@ -73,6 +73,8 @@
         "num_cores": 16,
         "num_devices": 4,
         "mxfp6_matmul": true,
+        "mxint8_kv_cache": true,
+        "split_model_io": true,
         "aic_hw_version": "ai100"
       },
       "generate_params": {
