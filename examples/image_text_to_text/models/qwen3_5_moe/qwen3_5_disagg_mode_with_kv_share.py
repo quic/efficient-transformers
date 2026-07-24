@@ -5,27 +5,9 @@
 #
 # -----------------------------------------------------------------------------
 
-"""Disaggregated prefill/decode for Qwen3.5-MoE — numpy-copy KV handoff (baseline).
+"""Disaggregated prefill/decode for Qwen3.5-MoE — DMA-based KV handoff."""
 
-The prefill worker produces the KV cache and the decode worker consumes it. This
-baseline bridges the prefill->decode boundary with a host copy: after every prefill
-chunk / decode step it re-assigns each layer's KV input from the previous step's
-``*_RetainedState`` output (``_update_retained_states``). Qwen3.5-MoE has a hybrid
-cache — 4-D ``past_key``/``past_value`` full-attention layers and 3-D
-``conv_state``/``recurrent_state`` linear (GatedDeltaNet) layers.
-
-Supports both text-only (``skip_vision=True``, the default) and image+text
-(``skip_vision=False``) inputs; the latter compiles a vision QPC, runs it, and threads
-``vision_embeds`` through prefill/decode.
-
-The body is exposed as ``run(...)`` so the on_qaic parity test
-(``tests/transformers/disaggregated/test_qwen3_5_kv_share_parity.py``) can import and
-compare it against the DMA-based KV-share path
-(``qwen3_5_disagg_mode_with_kv_share.py``) in one process. The parity test uses the
-text-only path.
-"""
-
-import os
+import argparse
 from time import perf_counter
 
 import numpy as np
@@ -47,11 +29,11 @@ DEFAULT_PREFILL_SEQ_LEN = 64
 DEFAULT_CTX_LEN = 4096
 DEFAULT_GENERATION_LEN = 256
 
+STAGES = 4
 LAYERWISE = False
 LAYERWISE_WINDOW_SIZE = 1
-STAGES = 4
 PREFILL_NUM_DEVICES = 8
-DECODE_NUM_DEVICES = int(os.environ.get("QEFF_DECODE_NUM_DEVICES", "1"))
+DECODE_NUM_DEVICES = 4
 BS = 1
 
 # Vision-tower inputs are routed to the vision QPC; everything else feeds the lang QPCs.
@@ -77,16 +59,6 @@ def _build_config(model_id: str):
     return config
 
 
-def _update_retained_states(target_inputs, source_outputs, layer_types):
-    for layer_idx, layer_type in enumerate(layer_types):
-        if layer_type == "full_attention":
-            target_inputs[f"past_key.{layer_idx}"] = source_outputs[f"past_key.{layer_idx}_RetainedState"]
-            target_inputs[f"past_value.{layer_idx}"] = source_outputs[f"past_value.{layer_idx}_RetainedState"]
-        else:
-            target_inputs[f"conv_state.{layer_idx}"] = source_outputs[f"conv_state.{layer_idx}_RetainedState"]
-            target_inputs[f"recurrent_state.{layer_idx}"] = source_outputs[f"recurrent_state.{layer_idx}_RetainedState"]
-
-
 def run(
     model_id: str = DEFAULT_MODEL_ID,
     prompt: str = DEFAULT_PROMPT,
@@ -99,7 +71,7 @@ def run(
     prefill_num_devices: int = PREFILL_NUM_DEVICES,
     decode_num_devices: int = DECODE_NUM_DEVICES,
 ):
-    """Run chunked-prefill + decode with the numpy-copy KV handoff.
+    """Run chunked-prefill + decode with the DMA-based KV handoff.
 
     ``skip_vision=True`` (default) runs a text-only prompt; ``skip_vision=False`` fetches
     ``image_url`` and runs an image+text prompt through the vision QPC. Returns a dict
@@ -107,7 +79,6 @@ def run(
     full decoded ``tokens`` list, for parity comparison.
     """
     config = _build_config(model_id)
-    layer_types = config.text_config.layer_types
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         model_id, attn_implementation="eager", kv_offload=True, config=config, layerwise=LAYERWISE
@@ -126,7 +97,6 @@ def run(
             num_cores=16,
             num_devices=1,
             mos=1,
-            mxfp6_matmul=True,
             aic_enable_depth_first=True,
             skip_vision=False,
             split_model_io=True,
@@ -148,15 +118,17 @@ def run(
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         retain_full_kv=True,
-        split_model_io=True,  # This should be used for disagg serving via VLLM
+        split_retained_state_io=True,
         mos=1,
-        user_tiled=True,
+        # user_tiled=True, #enable only with kv blocking
         aic_enable_depth_first=False,
+        mdp_num_partitions=stages,
         prefill_only=True,
         enable_chunking=True,
         skip_vision=True,
         use_onnx_subfunctions=True,
-        mdp_num_partitions=stages,
+        layerwise=LAYERWISE,
+        layerwise_window_size=LAYERWISE_WINDOW_SIZE,
     )
 
     decode_qpc_path = qeff_model.compile(
@@ -169,8 +141,8 @@ def run(
         num_devices=decode_num_devices,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
-        retain_full_kv=True,
-        split_model_io=True,  # This should be used for disagg serving via VLLM
+        retain_full_kv=True,  # required for DMA slice writes into full KV
+        split_retained_state_io=True,
         mos=1,
         aic_enable_depth_first=True,
         prefill_only=False,
@@ -180,8 +152,12 @@ def run(
         layerwise_window_size=LAYERWISE_WINDOW_SIZE,
     )
 
-    lang_prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"))
-    lang_decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"))
+    prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"), kv_dma_share=True)
+    decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"), kv_dma_share=True)
+
+    # image_idx must be a compiled input binding; the KV-share path silently drops
+    # unknown input names (warn + skip), so assert it up front.
+    assert "image_idx" in decode_session.binding_index_map, "image_idx not a compiled decode input binding"
 
     if skip_vision:
         content = [{"type": "text", "text": prompt}]
@@ -223,12 +199,12 @@ def run(
     for k, v in inputs.items():
         inputs[k] = np.array(v)
 
-    # ---- Vision (producer): run the vision QPC, feed embeds into the lang prefill ----
+    # ---- Vision (producer): run the vision QPC once; its output feeds every lang step ----
     vision_inputs = {k: v for k, v in inputs.items() if k in VISION_INPUT_KEYS}
     vision_inputs.update({k: vision_inputs[k].astype("float16") for k in VISION_FP16_KEYS if k in vision_inputs})
-    vision_outputs = {}
+    vision_embeds = None
     if not skip_vision and vision_inputs:
-        vision_outputs = vision_session.run(vision_inputs)
+        vision_embeds = vision_session.run(vision_inputs)["vision_embeds"]
 
     lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
     if "position_ids" in inputs:
@@ -241,67 +217,136 @@ def run(
 
     lang_inputs["image_idx"] = np.array([[0]])
     if not skip_vision:
-        lang_inputs["vision_embeds"] = vision_outputs["vision_embeds"]
+        # vision_embeds is constant across every prefill chunk and decode step, so
+        # register it once as a persistent input on both pooled sessions instead of
+        # re-supplying it in each step's dict (a large per-step host->device copy).
+        # The lang forward gathers image embeds inline via image_idx on every step,
+        # so the binding must still be satisfied — set_persistent_inputs appends it
+        # to each enqueue's tuple list automatically.
+        prefill_session.set_persistent_inputs({"vision_embeds": vision_embeds})
+        decode_session.set_persistent_inputs({"vision_embeds": vision_embeds})
 
-    # RUN prefill
-    all_outputs = []
-    if not skip_vision:
-        lang_prefill_session.set_buffers(vision_outputs)
-    chunk_inputs = lang_inputs.copy()
+    # Shared host KV arrays, allocated once in decode-map order (per-slot shape[0] == 1).
+    # Hybrid: kv_cache_info carries mixed 4-D (full) and 3-D (linear) shapes.
+    kv_caches = [np.zeros(shape, dtype=dtype) for (shape, dtype) in decode_session.kv_cache_info]
+
+    # ---- Prefill (producer, SERIAL): image_idx threads chunk-to-chunk ----
+    # Only the LAST chunk wires the DMA handoff into kv_caches (earlier chunks just
+    # accumulate KV on-device). np_run_pipeline selects decode_rs_full_buff_map
+    # internally for the hybrid cache.
+    prefill_start = perf_counter()
+    chunk_inputs = dict(lang_inputs)
+    exec_idx = None
     for i in range(num_chunks):
         chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * prefill_seq_len : (i + 1) * prefill_seq_len]
         chunk_inputs["position_ids"] = lang_inputs["position_ids"][..., i * prefill_seq_len : (i + 1) * prefill_seq_len]
-        outputs = lang_prefill_session.run(chunk_inputs)
-        _update_retained_states(chunk_inputs, outputs, layer_types)
-        chunk_inputs["image_idx"] = outputs["image_idx_output"]
+        last_chunk = i == num_chunks - 1
+        exec_idx = prefill_session.np_run_pipeline(
+            chunk_inputs,
+            last_chunk=last_chunk,
+            kv_cache_buffers=kv_caches if last_chunk else None,
+        )
+        prefill_session.complete_inf(exec_idx, is_prefill=True)
+        chunk_inputs["image_idx"] = prefill_session.get_outputs(index=exec_idx)["image_idx_output"]
+    print(f"Prefill time : {perf_counter() - prefill_start:.2f} secs")
 
-    prefill_logits = outputs["logits"]
+    prefill_out = prefill_session.get_outputs(index=exec_idx)
+    prefill_logits = prefill_out["logits"]
     first_token = int(np.argmax(prefill_logits))
-    all_outputs.append(first_token)
+    all_outputs = [first_token]
+
+    decode_kv_map = decode_session.decode_buff_map + decode_session.decode_rs_kv_only_buff_map
+    image_idx = prefill_out["image_idx_output"]
+
+    num_pos_sections = lang_inputs["position_ids"].shape[0]
+    phys_pos = int(lang_inputs["position_ids"][0].max()) + 1
+    mrope_pos = int(lang_inputs["position_ids"][1:].max()) + 1
+
+    def _decode_position_ids(next_phys, next_mrope):
+        pos = np.empty((num_pos_sections, BS, 1), dtype=np.int64)
+        pos[0] = next_phys
+        pos[1:] = next_mrope
+        return pos
 
     decode_inputs = {
         "input_ids": np.array(first_token, dtype=np.int64).reshape(1, 1),
-        "position_ids": np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1,
+        "position_ids": _decode_position_ids(phys_pos, mrope_pos),
+        "image_idx": image_idx,
     }
-    _update_retained_states(decode_inputs, outputs, layer_types)
-    decode_inputs["image_idx"] = outputs["image_idx_output"]
-    if not skip_vision:
-        decode_inputs["vision_embeds"] = outputs["vision_embeds_RetainedState"]
-
-    decode_out = lang_decode_session.run(decode_inputs)
-    all_outputs.append(int(np.argmax(decode_out["logits"])))
-
-    pos_id = np.max(decode_inputs["position_ids"], axis=-1, keepdims=True) + 1
-    loop_decode_inputs = {
-        "input_ids": np.array(all_outputs[-1], dtype=np.int64).reshape(1, 1),
-        "position_ids": pos_id,
-    }
-    _update_retained_states(loop_decode_inputs, decode_out, layer_types)
-    loop_decode_inputs["image_idx"] = decode_out["image_idx_output"]
-    if not skip_vision:
-        loop_decode_inputs["vision_embeds"] = decode_out["vision_embeds_RetainedState"]
-
     st = perf_counter()
-    for _ in range(generation_len - 2):
-        decode_out = lang_decode_session.run(loop_decode_inputs)
-        all_outputs.append(int(np.argmax(decode_out["logits"])))
-        pos_id = pos_id + 1
-        _update_retained_states(loop_decode_inputs, decode_out, layer_types)
-        loop_decode_inputs.update(
-            {
-                "input_ids": np.array(all_outputs[-1], dtype=np.int64).reshape(1, 1),
-                "position_ids": pos_id,
-            }
+    for _ in range(generation_len - 1):
+        decode_session.set_data_for_kv_handoff(
+            kv_caches + kv_caches,
+            [("batch_index", 0), ("ctx_start", 0)],
+            index=decode_session.decode_execObj_idx,
+            buff_map=decode_kv_map,
         )
-        loop_decode_inputs["image_idx"] = decode_out["image_idx_output"]
-        if not skip_vision:
-            loop_decode_inputs["vision_embeds"] = decode_out["vision_embeds_RetainedState"]
+        exec_idx = decode_session.np_run(decode_inputs, is_prefill=False)
+        decode_session.complete_inf(exec_idx, is_prefill=False)
+        out = decode_session.get_outputs(index=exec_idx)
+        tok = int(np.argmax(out["logits"]))
+        all_outputs.append(tok)
+        phys_pos += 1
+        mrope_pos += 1
+        decode_inputs = {
+            "input_ids": np.array(tok, dtype=np.int64).reshape(1, 1),
+            "position_ids": _decode_position_ids(phys_pos, mrope_pos),
+            "image_idx": out["image_idx_output"],
+        }
     ft = perf_counter()
-    print(f"decode tok/sec={(generation_len - 2) / (ft - st)}")
-    print(f"\noutput\n{tokenizer.decode(all_outputs)}")
+
+    print(f"decode tok/sec={(generation_len - 1) / (ft - st)}")
+    print(f"input\n{prompt}\noutput\n{tokenizer.decode(all_outputs)}")
 
     return {"logits": prefill_logits, "first_token": first_token, "tokens": all_outputs}
 
 
 if __name__ == "__main__":
-    run()
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--model-id", default=DEFAULT_MODEL_ID, help="HF model id")
+    parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="text prompt")
+    parser.add_argument("--prefill-seq-len", type=int, default=DEFAULT_PREFILL_SEQ_LEN)
+    parser.add_argument("--ctx-len", type=int, default=DEFAULT_CTX_LEN)
+    parser.add_argument("--generation-len", type=int, default=DEFAULT_GENERATION_LEN)
+    parser.add_argument("--stages", type=int, default=STAGES, help="prefill pipeline depth (mdp_num_partitions)")
+    parser.add_argument(
+        "--prefill-num-devices", type=int, default=PREFILL_NUM_DEVICES, help="num devices for the prefill QPC"
+    )
+    parser.add_argument(
+        "--decode-num-devices", type=int, default=DECODE_NUM_DEVICES, help="num devices for the decode QPC"
+    )
+    vision = parser.add_mutually_exclusive_group()
+    vision.add_argument(
+        "--skip-vision",
+        dest="skip_vision",
+        action="store_true",
+        help="text-only lang path (default)",
+    )
+    vision.add_argument(
+        "--with-vision",
+        dest="skip_vision",
+        action="store_false",
+        help="image+text: compile and run the vision QPC on --image-url",
+    )
+    parser.set_defaults(skip_vision=True)
+    parser.add_argument("--image-url", default=DEFAULT_IMAGE_URL, help="image URL when --with-vision")
+    args = parser.parse_args()
+
+    # With vision the default text prompt is a poor fit; use the image prompt unless
+    # the user overrode --prompt.
+    prompt = args.prompt
+    if not args.skip_vision and prompt == DEFAULT_PROMPT:
+        prompt = DEFAULT_IMAGE_PROMPT
+
+    run(
+        model_id=args.model_id,
+        prompt=prompt,
+        prefill_seq_len=args.prefill_seq_len,
+        ctx_len=args.ctx_len,
+        generation_len=args.generation_len,
+        skip_vision=args.skip_vision,
+        image_url=args.image_url,
+        stages=args.stages,
+        prefill_num_devices=args.prefill_num_devices,
+        decode_num_devices=args.decode_num_devices,
+    )
