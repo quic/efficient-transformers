@@ -330,9 +330,6 @@ def blocked_kv_attention_forward_decode_headpar_batch(
             causal_mask, torch.full_like(attn_weights_block, float(MIN_MASKED_ATTENTION_VALUE)), attn_weights_block
         )
 
-        # causal_mask = causal_mask.repeat(1, 1, num_kv_groups, 1)
-        # attn_weights_block = attn_weights_block.masked_fill(causal_mask, float(MIN_MASKED_ATTENTION_VALUE))
-
         max_block = attn_weights_block.max(dim=-1).values
         exp_block = torch.exp(attn_weights_block - max_block.unsqueeze(-1))
         if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
@@ -343,7 +340,6 @@ def blocked_kv_attention_forward_decode_headpar_batch(
 
         # Read V: [B, num_kv_heads, T_block, D] -> [1, BH, T_block, D]
         v_block = past_key_value.read_only_blocked_V_batch(start_index, end_index, layer_idx, cache_kwargs)
-        # sum_block = exp_block.sum(dim=-1)
         sum_block = torch.einsum("btdn->btd", exp_block)
         out_block = torch.matmul(exp_block, v_block)
         if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
@@ -359,9 +355,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
     block_max = max_stacked.max(dim=0).values
     block_weight = torch.exp(max_stacked - block_max.unsqueeze(0))
     block_sum = torch.einsum("nbtd->btd", (block_weight * sum_stacked))
-    # block_sum = (block_weight * sum_stacked).sum(dim=0)
     block_out = torch.einsum("nbtdk->btdk", (block_weight.unsqueeze(-1) * out_stacked))
-    # block_out = (block_weight.unsqueeze(-1) * out_stacked).sum(dim=0)
     output = block_out / block_sum.unsqueeze(-1)  # [1, BH, num_kv_groups*seq_len, D]
     return output.reshape(batch_size, num_kv_heads, num_kv_groups, seq_len, head_dim).reshape(
         batch_size, num_heads, seq_len, head_dim
@@ -444,18 +438,6 @@ def blocked_kv_attention_forward_headpar_offline(
             pad_mask = key_idx.unsqueeze(0) >= valid_in_chunk.unsqueeze(1)
             attn_weights_block = attn_weights_block.masked_fill(pad_mask.view(1, 1, split, 1, split_block_len), -3.0e4)
 
-        # key_abs = (
-        #     start_index
-        #     + torch.arange(split, device=query.device)[:, None] * split_block_len
-        #     + torch.arange(split_block_len, device=query.device)[None, :]
-        # )
-        # # use expand instead of repeat to make sure it is subfunction compatible
-        # query_pos = (
-        #     position_ids.unsqueeze(1)
-        #     .expand(-1, num_kv_groups, -1)
-        #     .reshape(position_ids.shape[0], position_ids.shape[1] * num_kv_groups)
-        # )
-
         split_causal_masks = []
         for s in range(split):
             s_start = start_index + s * split_block_len
@@ -475,7 +457,6 @@ def blocked_kv_attention_forward_headpar_offline(
             split_causal_masks.append(mask_s)
         causal_mask = torch.stack(split_causal_masks, dim=2)  # [B, 1, split, G*Q, split_block_len]
 
-        # causal_mask = key_abs[None, :, None, :] > query_pos[:, None, :, None]
         attn_weights_block = attn_weights_block.masked_fill(causal_mask, -3.0e4)
 
         max_block = attn_weights_block.max(dim=-1).values
@@ -488,7 +469,6 @@ def blocked_kv_attention_forward_headpar_offline(
         if pad_len > 0:
             v_block = nn.functional.pad(v_block, (0, 0, 0, pad_len))
         value_5d = v_block.view(batch_size, num_kv_heads, split, split_block_len, head_dim)
-        # sum_block = exp_block.sum(dim=-1)
         sum_block = torch.einsum("bsgkn->bsgk", exp_block)
         out_block = torch.matmul(exp_block, value_5d)
         if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
@@ -656,7 +636,6 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
                 .expand(batch_size, num_kv_heads, split, tc, split_block_len)
                 .reshape(batch_size, num_kv_heads * split, tc, split_block_len)
             )
-            # causal_mask_block = off[None, :, None, :] > (pos_sub - start_index)[:, None, :, None]
             skip_split = (kv_offsets[:, 0] > (pos_sub.max() - start_index)).view(1, num_kv_heads * split)
 
             for acc in accs:
@@ -945,39 +924,12 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
     w1 = torch.exp(max_stk - m1.unsqueeze(0))
     s1 = torch.einsum("nbhsrq->bhsrq", w1 * sum_stk)
     o1 = torch.einsum("nbhsrqv->bhsrqv", w1.unsqueeze(-1) * out_stk)
-    # m_run = max_buf[0]
-    # s_run = sum_buf[0]
-    # o_run = out_buf[0]
-
-    # for i in range(1, len(max_buf)):
-    #     m_new = torch.maximum(m_run, max_buf[i])
-    #     e_old = torch.exp(m_run      - m_new)   # [B, Hkv, split, n_rep, QL]
-    #     e_new = torch.exp(max_buf[i] - m_new)
-    #     s_run = e_old * s_run + e_new * sum_buf[i]
-    #     o_run = e_old.unsqueeze(-1) * o_run + e_new.unsqueeze(-1) * out_buf[i]
-    #     m_run = m_new
-    # m1 = m_run
-    # s1 = s_run
-    # o1 = o_run
 
     # ── Stage 2: merge across splits ─────────────────────────────────────────
     m2 = m1.max(dim=2).values  # [B, Hkv, n_rep, QL]
     w2 = torch.exp(m1 - m2.unsqueeze(2))
     s2 = torch.einsum("bhsrq->bhrq", w2 * s1)
     o2 = torch.einsum("bhsrqv->bhrqv", w2.unsqueeze(-1) * o1)
-    # m_run_2 = m1[:, :, 0, :, :]   # [B, Hkv, n_rep, QL]
-    # s_run_2 = s1[:, :, 0, :, :]
-    # o_run_2 = o1[:, :, 0, :, :, :]
-
-    # for i in range(1, m1.shape[2]):
-    #     m_new = torch.maximum(m_run_2, m1[:, :, i, :, :])
-    #     e_old = torch.exp(m_run_2 - m_new)
-    #     e_new = torch.exp(m1[:, :, i, :, :] - m_new)
-    #     s_run_2 = e_old * s_run_2 + e_new * s1[:, :, i, :, :]
-    #     o_run_2 = e_old.unsqueeze(-1) * o_run_2 + e_new.unsqueeze(-1) * o1[:, :, i, :, :, :]
-    #     m_run = m_new
-    # s2 = s_run_2
-    # o2 = o_run_2
 
     if sinks is not None:
         # sinks: [NQH] → per-head logit, same for all query positions
