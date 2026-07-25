@@ -13,7 +13,7 @@ import torch
 from transformers import AutoConfig
 
 from QEfficient.utils._utils import create_json
-from QEfficient.utils.constants import QnnConstants
+from QEfficient.utils.constants import Constants, QnnConstants
 from QEfficient.utils.test_utils import ModelConfig
 
 from .check_causal_models import (
@@ -88,6 +88,7 @@ def _run_per_pr_qwen_causal_text_case(
     kv_cache_batch_size=None,
     num_cores=16,
     compile_options=None,
+    num_speculative_tokens=None,
 ):
     # Two-phase shared-QEFF_HOME run: the per-test cleanup must be suppressed in BOTH phases,
     # because variants of one model share a content-addressed export dir (the QPCs nest inside
@@ -128,6 +129,7 @@ def _run_per_pr_qwen_causal_text_case(
         kv_cache_batch_size=kv_cache_batch_size,
         num_cores=num_cores,
         compile_options=compile_options,
+        num_speculative_tokens=num_speculative_tokens,
         tokenizer_name=model_config.get("tokenizer_id"),
     )
 
@@ -393,6 +395,29 @@ def test_per_pr_causal_moe_disagg_fp16_subfunction_cb_ccl(model_config, manual_c
         retain_full_kv=True,
         comp_ctx_lengths_prefill=PER_PR_CCL_PREFILL,
         comp_ctx_lengths_decode=PER_PR_CCL_DECODE,
+    )
+
+
+@pytest.mark.dummy_layers
+@pytest.mark.on_qaic
+@pytest.mark.llm_model
+@pytest.mark.parametrize("model_config", test_models_per_pr_causal, ids=_per_pr_id)
+def test_per_pr_causal_speculative_tlm_fp16_subfunction_cb(model_config, manual_cleanup):
+    """Speculative-decoding (TLM) FP16 export/compile/generate in continuous-batching mode.
+
+    Compiles each per-PR dummy model as a Target Language Model with
+    ``Constants.NUM_SPECULATIVE_TOKENS`` speculative tokens, then validates the
+    full HF/ORT/AI100 parity path (compile-only under the compile-warm phase).
+    Models whose speculative export/compile is a known repo/compiler gap opt out
+    via a ``known_speculative_export_or_compile_issue`` registry field, mirroring
+    the CCL/BF16 escape hatches.
+    """
+    if model_config.get("known_speculative_export_or_compile_issue"):
+        pytest.xfail(model_config["known_speculative_export_or_compile_issue"])
+    _run_per_pr_qwen_causal_text_case(
+        model_config,
+        manual_cleanup,
+        num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS,
     )
 
 
