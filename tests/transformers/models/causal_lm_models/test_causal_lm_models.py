@@ -75,7 +75,7 @@ def _no_cleanup(*args, **kwargs):
     """No-op cleanup used by the compile-warm phase to preserve the compiled QPC."""
 
 
-def _run_per_pr_qwen_causal_text_case(
+def _run_per_pr_causal_text_case(
     model_config,
     manual_cleanup,
     *,
@@ -295,7 +295,7 @@ def test_dummy_causal_lm_pytorch_vs_ort_vs_ai100_cb(model_name, manual_cleanup):
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_config", test_models_per_pr_causal, ids=_per_pr_id)
 def test_per_pr_causal_fp16_subfunction_cb(model_config, manual_cleanup):
-    _run_per_pr_qwen_causal_text_case(model_config, manual_cleanup)
+    _run_per_pr_causal_text_case(model_config, manual_cleanup)
 
 
 @pytest.mark.dummy_layers
@@ -303,7 +303,7 @@ def test_per_pr_causal_fp16_subfunction_cb(model_config, manual_cleanup):
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_config", test_models_per_pr_causal, ids=_per_pr_id)
 def test_per_pr_causal_fp16_subfunction_cb_prefix_caching(model_config, manual_cleanup):
-    _run_per_pr_qwen_causal_text_case(model_config, manual_cleanup, kv_cache_batch_size=8)
+    _run_per_pr_causal_text_case(model_config, manual_cleanup, kv_cache_batch_size=8)
 
 
 @pytest.mark.dummy_layers
@@ -313,7 +313,7 @@ def test_per_pr_causal_fp16_subfunction_cb_prefix_caching(model_config, manual_c
 def test_per_pr_causal_fp16_subfunction_cb_ccl(model_config, manual_cleanup):
     if model_config.get("known_ccl_export_or_compile_issue"):
         pytest.xfail(model_config["known_ccl_export_or_compile_issue"])
-    _run_per_pr_qwen_causal_text_case(
+    _run_per_pr_causal_text_case(
         model_config,
         manual_cleanup,
         comp_ctx_lengths_prefill=PER_PR_CCL_PREFILL,
@@ -330,7 +330,7 @@ def test_per_pr_causal_fp16_subfunction_cb_ccl(model_config, manual_cleanup):
     ids=_per_pr_id,
 )
 def test_per_pr_causal_fp16_subfunction_cb_blocking(model_config, manual_cleanup):
-    _run_per_pr_qwen_causal_text_case(
+    _run_per_pr_causal_text_case(
         model_config,
         manual_cleanup,
         qaic_config={"enable_blocking": True, "num_kv_blocks": 2},
@@ -344,7 +344,7 @@ def test_per_pr_causal_fp16_subfunction_cb_blocking(model_config, manual_cleanup
 def test_per_pr_causal_fp32_export_fp16_compile_subfunction_cb_ccl(model_config, manual_cleanup):
     if model_config.get("known_ccl_export_or_compile_issue"):
         pytest.xfail(model_config["known_ccl_export_or_compile_issue"])
-    _run_per_pr_qwen_causal_text_case(
+    _run_per_pr_causal_text_case(
         model_config,
         manual_cleanup,
         torch_dtype=torch.float32,
@@ -362,7 +362,7 @@ def test_per_pr_causal_bf16_subfunction_cb_ccl_compile_only(model_config, manual
     if model_config.get("known_ccl_export_or_compile_issue"):
         pytest.xfail(model_config["known_ccl_export_or_compile_issue"])
     try:
-        _run_per_pr_qwen_causal_text_case(
+        _run_per_pr_causal_text_case(
             model_config,
             manual_cleanup,
             torch_dtype=torch.bfloat16,
@@ -389,7 +389,7 @@ def test_per_pr_causal_bf16_subfunction_cb_ccl_compile_only(model_config, manual
     ids=_per_pr_id,
 )
 def test_per_pr_causal_moe_disagg_fp16_subfunction_cb_ccl(model_config, manual_cleanup):
-    _run_per_pr_qwen_causal_text_case(
+    _run_per_pr_causal_text_case(
         model_config,
         manual_cleanup,
         retain_full_kv=True,
@@ -414,7 +414,7 @@ def test_per_pr_causal_speculative_tlm_fp16_subfunction_cb(model_config, manual_
     """
     if model_config.get("known_speculative_export_or_compile_issue"):
         pytest.xfail(model_config["known_speculative_export_or_compile_issue"])
-    _run_per_pr_qwen_causal_text_case(
+    _run_per_pr_causal_text_case(
         model_config,
         manual_cleanup,
         num_speculative_tokens=Constants.NUM_SPECULATIVE_TOKENS,

@@ -825,40 +825,6 @@
       ]
     },
     {
-      "id": "gemma4_dense_text",
-      "model_name": "yujiepan/gemma-4-dense-tiny-random",
-      "model_type": "gemma4_text",
-      "is_moe": false,
-      "supports_disagg": false,
-      "supports_blocking": false,
-      "use_text_config": true,
-      "config_overrides": {
-        "num_kv_shared_layers": 0
-      },
-      "layer_types": [
-        "sliding_attention",
-        "full_attention"
-      ],
-      "known_export_or_compile_issue": "Gemma4 dense text export currently fails in QEff Gemma4 attention with an o_proj shape mismatch for the available tiny Gemma4 dense config."
-    },
-    {
-      "id": "gemma4_moe_text",
-      "model_name": "tiny-random/gemma-4-moe",
-      "model_type": "gemma4_text",
-      "is_moe": true,
-      "supports_disagg": false,
-      "supports_blocking": false,
-      "use_text_config": true,
-      "config_overrides": {
-        "num_kv_shared_layers": 0
-      },
-      "layer_types": [
-        "sliding_attention",
-        "full_attention"
-      ],
-      "known_export_or_compile_issue": "Gemma4 MoE text export currently fails in QEff Gemma4 attention with an o_proj shape mismatch for the available tiny Gemma4 MoE config."
-    },
-    {
       "id": "qwen2_dense_text",
       "model_name": "onnx-internal-testing/tiny-random-Qwen2ForCausalLM",
       "model_type": "qwen2",
