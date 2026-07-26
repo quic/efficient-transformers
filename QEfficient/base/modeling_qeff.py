@@ -182,8 +182,17 @@ class QEFFBaseModel(ABC):
         else:
             logger.info(f"Pytorch transforms applied to model: {self.model_name}")
 
-        if self.config.torch_dtype == torch.bfloat16:
-            logger.warning("BFloat16 dtype is not yet supported; converting to float16 precision!")
+        if self.config.torch_dtype == torch.bfloat16 and constants.DEFAULT_AIC_HW_VERSION != "ai200":
+            logger.warning(
+                "BFloat16 dtype is not supported on %s; converting model to float16 precision for export.",
+                constants.DEFAULT_AIC_HW_VERSION,
+            )
+            self.model = self.model.to(torch.float16)
+            self.config.torch_dtype = torch.float16
+            if hasattr(self.config, "text_config"):
+                self.config.text_config.torch_dtype = torch.float16
+            if hasattr(self.config, "llm_config"):
+                self.config.llm_config.torch_dtype = torch.float16
 
     def _normalize_torch_dtype(self):
         """

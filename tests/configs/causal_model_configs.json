@@ -884,7 +884,6 @@
       "supports_disagg": false,
       "supports_blocking": false,
       "known_runtime_parity_issue": "Qwen3.5 hybrid text exports and compiles, but QAIC decode tokens diverge from HF after prefill; keep compile-only coverage until retained-state/subfunction runtime parity is fixed.",
-      "known_bf16_compile_issue": "Qwen3.5 BF16 compile with -aic-hw-version=ai200 and -aic-num-cores=4 currently aborts in compiler FoldRMSNorm with a BF16 constant handle type assertion.",
       "use_text_config": true,
       "layer_types": [
         "linear_attention",
@@ -901,7 +900,6 @@
       "supports_disagg": false,
       "supports_blocking": false,
       "known_runtime_parity_issue": "Qwen3.6 uses the Qwen3.5 hybrid text path; QAIC decode tokens currently diverge from HF after prefill.",
-      "known_bf16_compile_issue": "Qwen3.6 BF16 compile with -aic-hw-version=ai200 and -aic-num-cores=4 currently aborts in compiler FoldRMSNorm with a BF16 constant handle type assertion.",
       "use_text_config": true,
       "layer_types": [
         "linear_attention",
@@ -918,7 +916,6 @@
       "supports_disagg": false,
       "supports_blocking": false,
       "known_runtime_parity_issue": "Qwen3.5-MoE hybrid text exports and compiles, but QAIC decode tokens diverge from HF after prefill; keep compile-only coverage until retained-state/subfunction runtime parity is fixed.",
-      "known_bf16_compile_issue": "Qwen3.5-MoE BF16 compile with -aic-hw-version=ai200 and -aic-num-cores=4 currently aborts in compiler FoldRMSNorm with a BF16 constant handle type assertion.",
       "use_text_config": true,
       "layer_types": [
         "linear_attention",
@@ -935,7 +932,6 @@
       "supports_disagg": false,
       "supports_blocking": false,
       "known_runtime_parity_issue": "Qwen3.6-MoE uses the Qwen3.5-MoE hybrid text path; QAIC decode tokens currently diverge from HF after prefill.",
-      "known_bf16_compile_issue": "Qwen3.6-MoE BF16 compile with -aic-hw-version=ai200 and -aic-num-cores=4 currently aborts in compiler FoldRMSNorm with a BF16 constant handle type assertion.",
       "use_text_config": true,
       "layer_types": [
         "linear_attention",
