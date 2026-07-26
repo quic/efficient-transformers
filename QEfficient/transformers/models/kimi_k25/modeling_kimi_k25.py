@@ -539,7 +539,6 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             )
             image_position_delta = torch.clamp(merged_image_tokens - selected_image_tokens, min=0)
             image_idx = image_idx + selected_any.to(torch.int64) * image_position_delta
-            image_idx = image_idx + torch.zeros_like(input_ids[:, :1], dtype=image_idx.dtype, device=image_idx.device)
 
         if position_ids is None and attention_mask is not None:
             position_ids = attention_mask.long().cumsum(-1) - 1
@@ -833,13 +832,13 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
             self.language_model.config.hidden_size,
         )
         inputs_shapes["image_idx"] = (1, 1)
-        inputs_shapes["h"] = constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_HEIGHT
-        inputs_shapes["w"] = constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_WIDTH
+        inputs_shapes["grid_h"] = constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_HEIGHT
+        inputs_shapes["grid_w"] = constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_WIDTH
 
         vision_inputs = {
             "pixel_values": torch.zeros((inputs_shapes["pixel_values"]), dtype=self.config.torch_dtype),
-            "h_shape": torch.zeros((inputs_shapes["h"]), dtype=torch.int64),
-            "w_shape": torch.zeros((inputs_shapes["w"]), dtype=torch.int64),
+            "h_shape": torch.zeros((inputs_shapes["grid_h"]), dtype=torch.int64),
+            "w_shape": torch.zeros((inputs_shapes["grid_w"]), dtype=torch.int64),
         }
 
         input_ids = torch.zeros((bs, prefill_seq_len), dtype=torch.int64)
@@ -912,8 +911,8 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
             lang_dynamic_axes["batch_index"] = {0: "batch_size"}
         vision_dynamic_axes = {
             "pixel_values": {0: "num_patches"},
-            "h_shape": {0: "h"},
-            "w_shape": {0: "w"},
+            "h_shape": {0: "grid_h"},
+            "w_shape": {0: "grid_w"},
             "vision_embeds": {0: "num_image_tokens"},
         }
 
@@ -960,13 +959,18 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
         comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
         compiler_options.pop("img_size", None)
-        num_patches = compiler_options.pop("num_patches", None)
-        height = compiler_options.pop("height", None)
-        width = compiler_options.pop("width", None)
-        h = compiler_options.pop("h", None)
-        w = compiler_options.pop("w", None)
+        image_height = compiler_options.pop("image_height", None)
+        image_width = compiler_options.pop("image_width", None)
+        unsupported_shape_args = {
+            name: compiler_options.pop(name, None)
+            for name in ("height", "width", "h", "w", "num_patches", "num_image_tokens")
+        }
+        if any(value is not None for value in unsupported_shape_args.values()):
+            raise ValueError(
+                "Kimi-K2.5 compile expects image_height and image_width. "
+                "Do not pass height/width, h/w grid dimensions, num_patches, or num_image_tokens."
+            )
         num_frames = compiler_options.pop("num_frames", 1)
-        num_image_tokens = compiler_options.pop("num_image_tokens", None)
         mm_processor_kwargs = compiler_options.pop("mm_processor_kwargs", None) or {}
 
         prefill_seq_len = prefill_seq_len if prefill_seq_len else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
@@ -995,6 +999,8 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
                     f"Expected {height_name} and {width_name} to contain the same number of entries, "
                     f"got {len(heights)} and {len(widths)}."
                 )
+            if any(height <= 0 for height in heights) or any(width <= 0 for width in widths):
+                raise ValueError(f"Expected {height_name} and {width_name} to contain positive values.")
 
         patch_size = getattr(self.config.vision_config, "patch_size", constants.KIMI_PATCH_SIZE)
         merge_kernel_size = getattr(self.config.vision_config, "merge_kernel_size", (2, 2))
@@ -1004,21 +1010,20 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
         else:
             kernel_height, kernel_width = merge_kernel_size
 
-        if h is not None or w is not None:
-            heights = normalize_list(h, constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_HEIGHT)
-            widths = normalize_list(w, constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_WIDTH)
-            validate_dimension_lists(heights, widths, "h", "w")
-        elif height is not None or width is not None:
-            pixel_heights = normalize_list(height, constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_HEIGHT * patch_size)
-            pixel_widths = normalize_list(width, constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_WIDTH * patch_size)
-            validate_dimension_lists(pixel_heights, pixel_widths, "height", "width")
+        if (image_height is None) != (image_width is None):
+            raise ValueError("Kimi-K2.5 compile expects image_height and image_width to be provided together.")
+
+        if image_height is not None:
+            pixel_heights = normalize_list(image_height, constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_HEIGHT * patch_size)
+            pixel_widths = normalize_list(image_width, constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_WIDTH * patch_size)
+            validate_dimension_lists(pixel_heights, pixel_widths, "image_height", "image_width")
 
             in_patch_limit = mm_processor_kwargs.get("in_patch_limit", 16384)
             patch_limit_on_one_side = mm_processor_kwargs.get("patch_limit_on_one_side", 512)
             factor_height = kernel_height * patch_size
             factor_width = kernel_width * patch_size
-            heights = []
-            widths = []
+            grid_heights = []
+            grid_widths = []
             for pixel_height, pixel_width in zip(pixel_heights, pixel_widths):
                 scale = min(
                     1.0,
@@ -1032,40 +1037,33 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
                 resized_width = min(max(1, int(pixel_width * scale)), patch_limit_on_one_side * patch_size)
                 pad_height = (factor_height - resized_height % factor_height) % factor_height
                 pad_width = (factor_width - resized_width % factor_width) % factor_width
-                heights.append((resized_height + pad_height) // patch_size)
-                widths.append((resized_width + pad_width) // patch_size)
+                grid_heights.append((resized_height + pad_height) // patch_size)
+                grid_widths.append((resized_width + pad_width) // patch_size)
         else:
-            heights = [constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_HEIGHT]
-            widths = [constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_WIDTH]
+            grid_heights = [constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_HEIGHT]
+            grid_widths = [constants.KIMI_EXAMPLE_IMAGE_NUM_PATCHES_WIDTH]
 
-        num_frames = normalize_sized_list(1 if num_frames is None else num_frames, len(heights), "num_frames")
-        explicit_num_patches = normalize_sized_list(num_patches, len(heights), "num_patches")
-        explicit_num_image_tokens = normalize_sized_list(num_image_tokens, len(heights), "num_image_tokens")
+        num_frames = normalize_sized_list(1 if num_frames is None else num_frames, len(grid_heights), "num_frames")
 
         vision = []
         max_num_image_tokens = 0
-        for index, (height, width, frames) in enumerate(zip(heights, widths, num_frames)):
-            if height % kernel_height != 0 or width % kernel_width != 0:
+        for index, (grid_height, grid_width, frames) in enumerate(zip(grid_heights, grid_widths, num_frames)):
+            if grid_height % kernel_height != 0 or grid_width % kernel_width != 0:
                 raise ValueError(
-                    f"Kimi image grid h={height}, w={width} must be divisible by merge_kernel_size={merge_kernel_size}."
+                    f"Kimi image grid h={grid_height}, w={grid_width} must be divisible by "
+                    f"merge_kernel_size={merge_kernel_size}."
                 )
 
-            computed_num_patches = height * width * frames
-            computed_num_image_tokens = (height // kernel_height) * (width // kernel_width) * frames
-            resolved_num_patches = (
-                explicit_num_patches[index] if explicit_num_patches is not None else computed_num_patches
-            )
-            resolved_num_image_tokens = (
-                explicit_num_image_tokens[index] if explicit_num_image_tokens is not None else computed_num_image_tokens
-            )
-            max_num_image_tokens = max(max_num_image_tokens, resolved_num_image_tokens)
+            computed_num_patches = grid_height * grid_width * frames
+            computed_num_image_tokens = (grid_height // kernel_height) * (grid_width // kernel_width) * frames
+            max_num_image_tokens = max(max_num_image_tokens, computed_num_image_tokens)
 
             vision.append(
                 {
-                    "num_patches": resolved_num_patches,
-                    "h": height,
-                    "w": width,
-                    "num_image_tokens": resolved_num_image_tokens,
+                    "num_patches": computed_num_patches,
+                    "grid_h": grid_height,
+                    "grid_w": grid_width,
+                    "num_image_tokens": computed_num_image_tokens,
                 }
             )
 

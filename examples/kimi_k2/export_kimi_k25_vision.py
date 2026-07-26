@@ -21,7 +21,6 @@ from QEfficient.utils.load_kimi_utils import (
     NUM_TEXT_LAYERS,
     NUM_VISION_LAYERS,
     ensure_torch_fx_import_compatibility,
-    get_kimi_k25_num_image_tokens,
     load_kimi_k25_class,
     load_layer_subset_model,
     parse_expert_ids,
@@ -47,9 +46,23 @@ def parse_args():
         type=str,
         default="https://huggingface.co/moonshotai/Kimi-K2.5/resolve/main/figures/kimi-logo.png",
     )
+    parser.add_argument(
+        "--image-height",
+        type=int,
+        default=None,
+        help="Image height in pixels for Kimi-K2.5 vision compile. Defaults to the loaded image height.",
+    )
+    parser.add_argument(
+        "--image-width",
+        type=int,
+        default=None,
+        help="Image width in pixels for Kimi-K2.5 vision compile. Defaults to the loaded image width.",
+    )
     parser.add_argument("--prompt", type=str, default="Describe this image.")
-    parser.add_argument("--test", action="store_true", help="Validate ONNX output matches PyTorch image-only forward.")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if (args.image_height is None) != (args.image_width is None):
+        parser.error("--image-height and --image-width must be provided together.")
+    return args
 
 
 def main():
@@ -138,6 +151,8 @@ def main():
         ## VISION + TEXT MODE ##
 
         image = Image.open(BytesIO(requests.get(args.image_url).content)).convert("RGB")
+        if args.image_height is not None:
+            image = image.resize((args.image_width, args.image_height))
 
         messages = [
             {
@@ -158,11 +173,6 @@ def main():
 
         inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
 
-        num_patches = int(inputs["pixel_values"].shape[0])
-        h = int(inputs["grid_thws"][0, 1].item())
-        w = int(inputs["grid_thws"][0, 2].item())
-        num_image_tokens = (get_kimi_k25_num_image_tokens(config, inputs["grid_thws"]),)
-
         qeff_model.compile(
             qaic_config=qaic_config,
             prefill_seq_len=1,
@@ -173,10 +183,8 @@ def main():
             mxint8_kv_cache=False,
             aic_enable_depth_first=False,
             mos=1,
-            num_patches=num_patches,
-            h=h,
-            w=w,
-            num_image_tokens=num_image_tokens,
+            image_height=image.height,
+            image_width=image.width,
         )
 
         output = qeff_model.generate(inputs=inputs, generation_len=10)

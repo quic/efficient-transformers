@@ -3554,7 +3554,7 @@ def test_layerwise_export_default_names_unchanged(tmp_path):
 
 
 def test_kimi_k25_get_specializations_supports_multi_resolution_grid_sizes():
-    """Kimi K2.5 accepts list-valued raw-pixel and patch-grid sizes for multi-resolution specs."""
+    """Kimi K2.5 accepts list-valued image sizes for multi-resolution specs."""
     from types import SimpleNamespace
 
     from QEfficient.transformers.models.kimi_k25.modeling_kimi_k25 import QEffKimiK25ForConditionalGeneration
@@ -3566,28 +3566,35 @@ def test_kimi_k25_get_specializations_supports_multi_resolution_grid_sizes():
         batch_size=1,
         prefill_seq_len=64,
         ctx_len=4096,
-        height=[512, 448],
-        width=[910, 448],
+        image_height=[512, 448],
+        image_width=[910, 448],
         num_frames=[1, 1],
         kv_offload=True,
     )
     assert specs["vision"] == [
-        {"num_patches": 2508, "h": 38, "w": 66, "num_image_tokens": 627},
-        {"num_patches": 1024, "h": 32, "w": 32, "num_image_tokens": 256},
+        {"num_patches": 2508, "grid_h": 38, "grid_w": 66, "num_image_tokens": 627},
+        {"num_patches": 1024, "grid_h": 32, "grid_w": 32, "num_image_tokens": 256},
     ]
     assert all(spec["num_image_tokens"] == 627 for spec in specs["lang"])
 
-    specs, _ = model.get_specializations(
-        batch_size=1,
-        prefill_seq_len=64,
-        ctx_len=4096,
-        h=[30, 32],
-        w=[80, 64],
-        num_frames=[1, 2],
-        kv_offload=True,
-    )
-    assert specs["vision"] == [
-        {"num_patches": 2400, "h": 30, "w": 80, "num_image_tokens": 600},
-        {"num_patches": 4096, "h": 32, "w": 64, "num_image_tokens": 1024},
-    ]
-    assert all(spec["num_image_tokens"] == 1024 for spec in specs["lang"])
+    with pytest.raises(ValueError, match="image_height and image_width"):
+        model.get_specializations(
+            batch_size=1,
+            prefill_seq_len=64,
+            ctx_len=4096,
+            h=[30, 32],
+            w=[80, 64],
+            num_frames=[1, 2],
+            kv_offload=True,
+        )
+
+    with pytest.raises(ValueError, match="num_patches"):
+        model.get_specializations(
+            batch_size=1,
+            prefill_seq_len=64,
+            ctx_len=4096,
+            image_height=512,
+            image_width=910,
+            num_patches=2508,
+            kv_offload=True,
+        )

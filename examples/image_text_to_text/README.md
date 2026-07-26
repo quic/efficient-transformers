@@ -112,17 +112,19 @@ Some models have specialized examples demonstrating advanced features:
 
 ### Kimi-K2.5 Vision
 
-Kimi-K2.5 uses the `moonshotai/Kimi-K2.5` remote-code model with the `KimiK25ForConditionalGeneration` architecture. The example script loads either the full checkpoint or a smaller layer subset, wraps it with `QEFFAutoModelForImageTextToText`, and compiles the vision-language path with Kimi-specific image-grid specializations.
+Kimi-K2.5 uses the `moonshotai/Kimi-K2.5` remote-code model with the `KimiK25ForConditionalGeneration` architecture. The example script loads either the full checkpoint or a smaller layer subset, wraps it with `QEFFAutoModelForImageTextToText`, and compiles the vision-language path with Kimi-specific image-size specializations.
 
 ```bash
 
 python ../kimi_k2/export_kimi_k25_vision.py \
     --model-path "$HF_HUB_CACHE/models--moonshotai--Kimi-K2.5/snapshots/<snapshot-id>" \
     --image-url "https://huggingface.co/moonshotai/Kimi-K2.5/resolve/main/figures/kimi-logo.png" \
+    --image-height 512 \
+    --image-width 910 \
     --prompt "Describe this image."
 ```
 
-For custom image sizes, pass matching compile specializations for the processed image grid: `num_patches`, `h`, `w`, and `num_image_tokens`. The defaults in `../kimi_k2/export_kimi_k25_vision.py` demonstrate the expected values for the sample image and keep the language-side image embedding shape bounded to the actual image token count.
+For custom image sizes, pass only the input image pixel dimensions with `--image-height` and `--image-width`. Kimi-K2.5 compile derives the internal grid height, grid width, patch count, and image-token count from those pixel dimensions.
 
 For reranker examples, see [../reranker/](../reranker/).
 

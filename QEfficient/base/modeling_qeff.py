@@ -1120,8 +1120,6 @@ class QEFFBaseModel(ABC):
             )
 
         for key, value in compiler_options.items():
-            if value is None:
-                continue
             option = "-" + key.replace("_", "-")
             if isinstance(value, bool):
                 if value:

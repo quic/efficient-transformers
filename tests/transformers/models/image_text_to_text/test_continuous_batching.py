@@ -26,7 +26,6 @@ from urllib3.util.retry import Retry
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils.load_kimi_utils import (
-    get_kimi_k25_num_image_tokens,
     get_kimi_k25_test_config,
     is_kimi_k25,
     load_kimi_k25_layer_subset_model,
@@ -220,42 +219,22 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         image_height = None
         image_width = None
         image_urls = [image_urls[0]] * len(queries)
-        num_patches = []
-        image_heights = []
-        image_widths = []
-        num_image_tokens = []
         for img_url in image_urls:
             image = Image.open(requests.get(img_url, stream=True).raw).convert("RGB")
             images.append(image)
-
-        for image, query in zip(images, queries):
-            conversation = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": image},
-                        {"type": "text", "text": query},
-                    ],
-                },
-            ]
-            inputs = processor(messages=conversation, add_generation_prompt=True, tokenize=False, return_tensors="pt")
-            num_patches.append(int(inputs["pixel_values"].shape[0]))
-            image_heights.append(int(inputs["grid_thws"][0, 1].item()))
-            image_widths.append(int(inputs["grid_thws"][0, 2].item()))
-            num_image_tokens.append(get_kimi_k25_num_image_tokens(config, inputs["grid_thws"]))
 
         image_list = [images[0]] * full_batch_size
         prompt_list = [queries[0]] * full_batch_size
         pytorch_hf_tokens = run_kimi_k25_hf_model_on_pytorch_CB(
             copy.deepcopy(model_hf), processor, image_list, prompt_list, max_gen_len
         )
+        image_height = images[0].height
+        image_width = images[0].width
         compile_kwargs.update(
             {
                 "prefill_seq_len": 1,
-                "num_patches": num_patches[0],
-                "h": image_heights[0],
-                "w": image_widths[0],
-                "num_image_tokens": num_image_tokens[0],
+                "image_height": image_height,
+                "image_width": image_width,
             }
         )
     else:

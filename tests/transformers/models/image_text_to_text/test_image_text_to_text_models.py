@@ -29,7 +29,6 @@ from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import QnnConstants
 from QEfficient.utils.load_kimi_utils import (
-    get_kimi_k25_num_image_tokens,
     is_kimi_k25,
     load_kimi_k25_layer_subset_model,
     run_kimi_k25_hf_model_on_pytorch,
@@ -271,10 +270,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         compile_kwargs.update(
             {
                 "prefill_seq_len": 1,
-                "num_patches": int(inputs["pixel_values"].shape[0]),
-                "h": int(inputs["grid_thws"][0, 1].item()),
-                "w": int(inputs["grid_thws"][0, 2].item()),
-                "num_image_tokens": get_kimi_k25_num_image_tokens(config, inputs["grid_thws"]),
+                "image_height": image.height,
+                "image_width": image.width,
             }
         )
 
