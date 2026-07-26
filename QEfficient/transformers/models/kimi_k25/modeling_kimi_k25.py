@@ -517,13 +517,23 @@ class QEffKimiK25DecoderWrapper(nn.Module):
 
             inputs_embeds = merged_inputs_embeds
             attention_mask = merged_attention_mask
+            merged_image_tokens = (
+                torch._shape_as_tensor(vision_embeds_for_state)[:1]
+                .view(1, 1)
+                .to(device=image_idx.device, dtype=torch.int64)
+            )
+            default_image_idx = torch.clamp(merged_image_tokens - 1, min=0)
+            input_batch = torch._shape_as_tensor(input_ids)[:1].view(1, 1).to(device=image_idx.device)
+            image_idx_batch = torch._shape_as_tensor(image_idx)[:1].view(1, 1).to(device=image_idx.device)
+            use_default_image_idx = torch.logical_and(torch.logical_not(selected_any), input_batch != image_idx_batch)
+            effective_image_idx = torch.where(use_default_image_idx, default_image_idx, image_idx)
             if position_ids is None:
                 position_ids = merged_position_ids
             else:
                 # Preserve caller-provided absolute position offset (needed for
                 # chunked prefill/decode parity) while using merged sequence
                 # positions for image-expanded tokens.
-                position_offset = position_ids[:, :1] + image_idx.to(
+                position_offset = position_ids[:, :1] + effective_image_idx.to(
                     device=position_ids.device, dtype=position_ids.dtype
                 )
                 position_ids = torch.where(
@@ -532,13 +542,8 @@ class QEffKimiK25DecoderWrapper(nn.Module):
                     torch.full_like(merged_position_ids, -1),
                 )
 
-            merged_image_tokens = (
-                torch._shape_as_tensor(vision_embeds_for_state)[:1]
-                .view(1, 1)
-                .to(device=image_idx.device, dtype=torch.int64)
-            )
             image_position_delta = torch.clamp(merged_image_tokens - selected_image_tokens, min=0)
-            image_idx = image_idx + selected_any.to(torch.int64) * image_position_delta
+            image_idx = effective_image_idx + selected_any.to(torch.int64) * image_position_delta
 
         if position_ids is None and attention_mask is not None:
             position_ids = attention_mask.long().cumsum(-1) - 1
@@ -568,7 +573,8 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             output_kvs = getattr(outputs, "compressed_kvs", None)
         else:
             output_kvs = getattr(outputs, "past_key_values", None)
-        return logits, vision_embeds_for_state, image_idx, output_kvs
+        image_idx_output = image_idx[:1, :1] if image_idx is not None else image_idx
+        return logits, vision_embeds_for_state, image_idx_output, output_kvs
 
 
 # ref https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/llava/modeling_llava.py#L240

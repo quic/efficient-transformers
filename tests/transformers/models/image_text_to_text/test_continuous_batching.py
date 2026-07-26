@@ -216,8 +216,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         )
         compile_kwargs["img_size"] = img_size
     elif is_kimi_k25(model_name):
-        image_height = None
-        image_width = None
         image_urls = [image_urls[0]] * len(queries)
         for img_url in image_urls:
             image = Image.open(requests.get(img_url, stream=True).raw).convert("RGB")

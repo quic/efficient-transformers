@@ -685,7 +685,6 @@ class QEffTextGenerationBase:
         self.generated_ids = np.full((num_prompts, max_gen_length), self.tokenizer.pad_token_id)
         self.decode_input_ids = np.zeros((execution_batch_size, 1), np.int64)
         self.decode_pos_ids = np.zeros((execution_batch_size, 1), np.int64)
-        self.decode_image_idx = np.zeros((execution_batch_size, 1), np.int64)
         self.generation_len = np.zeros((execution_batch_size, 1), np.int64)
 
     def initialize_lora_id_mapping(self, prompt_to_lora_id_mapping):
@@ -723,8 +722,6 @@ class QEffTextGenerationBase:
         decode_batch = decode_batch_id if decode_batch_id is not None else slice(None)
         self.decode_input_ids[decode_batch] = next_token_id
         self.decode_pos_ids[decode_batch] = position_ids
-        if "image_idx_output" in outputs:
-            self.decode_image_idx[decode_batch] = outputs["image_idx_output"]
         self.generated_ids[decode_batch, 0] = next_token_id.squeeze()
         self.generation_len[decode_batch] = generation_len
         return next_token_id
@@ -766,10 +763,6 @@ class QEffTextGenerationBase:
         else:
             logits_out_placeholder = np.zeros((batch_size, sequence_length, self._vocab_size), dtype=np.float32)
             self._session.set_buffers({"logits": logits_out_placeholder})
-
-        if "image_idx_output" in getattr(self._session, "binding_index_map", {}):
-            image_idx_out_placeholder = np.zeros((batch_size, 1), dtype=np.int64)
-            self._session.set_buffers({"image_idx_output": image_idx_out_placeholder})
 
     def run_prefill(self, prompt, generation_len, prefill_logit_bs=1, decode_batch_id=None):
         """
