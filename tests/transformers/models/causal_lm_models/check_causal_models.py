@@ -217,22 +217,6 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
             assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for ONNXRT output and PyTorch output."
 
         compiler_options = {}
-        if continuous_batching and prompt_len == 1:
-            prefill_spec = {
-                "batch_size": batch_size,
-                "seq_len": 1,
-                "ctx_len": ctx_len,
-                "full_batch_size": full_batch_size,
-                "sliding_window": 128,
-            }
-            decode_spec = {
-                "batch_size": full_batch_size,
-                "seq_len": 1,
-                "ctx_len": ctx_len,
-                "full_batch_size": full_batch_size,
-                "sliding_window": 128,
-            }
-            compiler_options["specializations"] = [prefill_spec, decode_spec]
 
         mdp_compile_kwargs = {}
         if mdp_num_partitions is not None:
