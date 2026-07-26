@@ -36,10 +36,6 @@ PER_PR_CTX_LEN = 2048
 PER_PR_GENERATION_LEN = 8
 PER_PR_CCL_PREFILL = None
 PER_PR_CCL_DECODE = [2048]
-PER_PR_BF16_COMPILER_ISSUE = (
-    "BF16 compile-only is a known repo/compiler gap: with aic_hw_version=ai200 and num_cores=4, "
-    "qaic-compile fails broadly with unsupported ONNX COMPLEX128 casts or missing libjit_convert_f_to_f kernels."
-)
 
 
 def _per_pr_id(model_config):
@@ -358,26 +354,18 @@ def test_per_pr_causal_fp32_export_fp16_compile_subfunction_cb_ccl(model_config,
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_config", test_models_per_pr_causal, ids=_per_pr_id)
 def test_per_pr_causal_bf16_subfunction_cb_ccl_compile_only(model_config, manual_cleanup):
-    pytest.xfail(PER_PR_BF16_COMPILER_ISSUE)
     if model_config.get("known_ccl_export_or_compile_issue"):
         pytest.xfail(model_config["known_ccl_export_or_compile_issue"])
-    try:
-        _run_per_pr_causal_text_case(
-            model_config,
-            manual_cleanup,
-            torch_dtype=torch.bfloat16,
-            compile_only=True,
-            comp_ctx_lengths_prefill=PER_PR_CCL_PREFILL,
-            comp_ctx_lengths_decode=PER_PR_CCL_DECODE,
-            num_cores=4,
-            compile_options={"aic_hw_version": "ai200"},
-        )
-    except RuntimeError as exc:
-        if model_config.get("known_bf16_compile_issue") and (
-            "FoldRMSNorm" in str(exc) or "getHandle<float>" in str(exc)
-        ):
-            pytest.xfail(model_config["known_bf16_compile_issue"])
-        raise
+    if model_config.get("known_bf16_compile_issue"):
+        pytest.xfail(model_config["known_bf16_compile_issue"])
+    _run_per_pr_causal_text_case(
+        model_config,
+        manual_cleanup,
+        torch_dtype=torch.bfloat16,
+        compile_only=True,
+        comp_ctx_lengths_prefill=PER_PR_CCL_PREFILL,
+        comp_ctx_lengths_decode=PER_PR_CCL_DECODE,
+    )
 
 
 @pytest.mark.dummy_layers

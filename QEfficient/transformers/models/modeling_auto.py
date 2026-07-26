@@ -103,6 +103,24 @@ CUSTOM_IO_DTYPE_MAP = {
     "float32": "float16",  # Since compiler doesn't support fp32
 }
 
+
+def _should_convert_to_fp16(target_dtype: "torch.dtype", compiler_options: dict) -> bool:
+    """Determine whether the compiler needs -convert-to-fp16.
+
+    On ai100 hardware, bfloat16 is not natively supported so we must downcast
+    to fp16 at compile time (same as fp32). On ai200, bfloat16 passes through
+    natively and no conversion is needed.
+    """
+    if CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16":
+        return True
+    if target_dtype == torch.bfloat16:
+        aic_hw = compiler_options.get(
+            "aic_hw_version", compiler_options.get("aic-hw-version", constants.DEFAULT_AIC_HW_VERSION)
+        )
+        return aic_hw != "ai200"
+    return False
+
+
 TORCH_TO_NUMPY_DTYPE_MAP = {
     torch.float16: np.float16,
     torch.bfloat16: np.float16,  # Since numpy doesn't support bfloat16
@@ -708,7 +726,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             onnx_path=onnx_path,
             compile_dir=compile_dir,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -1060,7 +1078,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
             onnx_path=onnx_path,
             compile_dir=compile_dir,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -2178,7 +2196,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 compile_dir=compile_dir,
                 specializations=specializations["vision"],
                 specialization_module_name="Vision",
-                convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+                convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
                 mxfp6_matmul=constants.VISION_MXFP6_MATMUL,
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
@@ -2240,7 +2258,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 compile_dir=compile_dir,
                 retained_state=True,
                 specializations=specializations,
-                convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+                convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
                 mxfp6_matmul=mxfp6_matmul,
                 mdp_ts_num_devices=num_devices,
                 aic_num_cores=num_cores,
@@ -3011,7 +3029,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             compile_dir=compile_dir,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
@@ -4786,7 +4804,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             compile_dir=compile_dir,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             custom_io=custom_io,
             mdp_ts_num_devices=num_devices,
@@ -5151,7 +5169,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             compile_dir=compile_dir,
             retained_state=True,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
@@ -5479,7 +5497,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             onnx_path=onnx_path,
             compile_dir=compile_dir,
             specializations=specializations,
-            convert_to_fp16=(CUSTOM_IO_DTYPE_MAP[target_dtype] == "float16"),
+            convert_to_fp16=_should_convert_to_fp16(target_dtype, compiler_options),
             mxfp6_matmul=mxfp6_matmul,
             mdp_ts_num_devices=num_devices,
             aic_num_cores=num_cores,
