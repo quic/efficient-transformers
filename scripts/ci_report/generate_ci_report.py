@@ -417,6 +417,26 @@ FEATURE_COLUMNS = [
     ),
 ]
 
+# Per-PR end-to-end scenario columns for the Scenario coverage matrix. Unlike
+# FEATURE_COLUMNS (atomic capabilities), each column here is ONE per-PR test
+# function that pins a whole dtype+subfunction+CB+feature combination, so a
+# single cell answers "did this scenario pass on this model?". Keyed on the
+# exact test-function name (stable; verified against test_causal_lm_models.py).
+# Display labels state ONLY each scenario's delta from the shared base
+# (causal · subfunction · CB · FP16 export), which the matrix caption spells out
+# once. A leading "+" means "baseline plus this feature"; labels without "+" pin a
+# different dtype/mode. The exact test-function name still rides in the cell tooltip.
+SCENARIO_COLUMNS = [
+    ("test_per_pr_causal_fp16_subfunction_cb", "Baseline"),
+    ("test_per_pr_causal_fp16_subfunction_cb_prefix_caching", "+ Prefix cache"),
+    ("test_per_pr_causal_fp16_subfunction_cb_ccl", "+ CCL"),
+    ("test_per_pr_causal_fp16_subfunction_cb_blocking", "+ Blocking"),
+    ("test_per_pr_causal_fp32_export_fp16_compile_subfunction_cb_ccl", "FP32 export · CCL"),
+    ("test_per_pr_causal_bf16_subfunction_cb_ccl_compile_only", "BF16 · CCL · compile-only"),
+    ("test_per_pr_causal_moe_disagg_fp16_subfunction_cb_ccl", "MoE disagg · CCL"),
+    ("test_per_pr_causal_speculative_tlm_fp16_subfunction_cb", "+ Speculation (TLM)"),
+]
+
 # Severity order for reducing many test outcomes in one (model, feature) cell to a single
 # status: a red cell always wins over a green one for the same capability.
 _CELL_SEVERITY = {
@@ -558,6 +578,19 @@ def load_report(xml_dir, pattern, meta):
 # immediately after — always contiguous, never interleaved.
 
 _GW_LINE_RE = re.compile(r"^\[gw\d+\] (PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS) (\S+)$")
+# Plain (non-xdist) `pytest -v` output on a non-TTY writes the nodeid first with the status
+# still pending, lets the test emit its stdout, then prints the status alone on a later line.
+# Short-circuiting outcomes (e.g. an xfail raised at collection) print `nodeid STATUS` inline.
+# Both shapes are matched here; the trailing status group is optional.
+#
+# The nodeid is anchored at line start but the rest of the line is NOT required to be empty:
+# a library warning emitted during collection (``\`torch_dtype\` is deprecated!``, an HF
+# "new version downloaded" notice) lands on the same line, and an end-anchored pattern would
+# drop that test entirely. ``_nodeid_from_line`` re-balances ``[...]`` before trimming so
+# parametrize ids containing spaces (``test_disagg_mode_prefill[Once upon a time-...]``) are
+# not truncated at the first space.
+_NODEID_LINE_RE = re.compile(r"^(tests/\S+::\S+?)(?:\s+(PASSED|FAILED|SKIPPED|XFAIL|XPASS|ERROR))?(?:\s|$)")
+_BARE_STATUS_RE = re.compile(r"^(PASSED|FAILED|SKIPPED|XFAIL|XPASS|ERROR)\s*$")
 _SUMMARY_RE = re.compile(r"^=+ (?P<body>.*?) in (?P<time>[0-9.]+)s(?: \([0-9hms: ]+\))? =+$")
 _COUNT_TOKEN_RE = re.compile(r"(\d+)\s+(passed|failed|error|errors|skipped|xfailed|xpassed|deselected)")
 _SLOW_LINE_RE = re.compile(r"^([0-9.]+)s\s+(?:call|setup|teardown)\s+(\S+)$")
@@ -671,8 +704,66 @@ def _parse_stage_trailer(lines, marker_idx):
     return slow_durations, summary_counts, wall_time
 
 
+def _nodeid_from_line(raw):
+    """Return ``(nodeid, inline_status)`` for a plain ``pytest -v`` line, or ``(None, None)``.
+
+    ``_NODEID_LINE_RE`` stops the nodeid at the first whitespace, which truncates parametrize
+    ids that contain spaces (``test_disagg_mode_prefill[Once upon a time-openai/gpt-oss-20b]``).
+    When the captured nodeid has an unclosed ``[``, we extend it to the matching ``]`` on the
+    same line so the full id is kept; anything after that bracket is trailing noise (a library
+    warning printed on the nodeid's line) and is discarded unless it is a status token.
+    """
+    m = _NODEID_LINE_RE.match(raw)
+    if not m or "::" not in m.group(1):
+        return None, None
+    nodeid, inline_status = m.group(1), m.group(2)
+    if nodeid.count("[") > nodeid.count("]"):
+        close = raw.find("]", len(nodeid))
+        if close != -1:
+            nodeid = raw[: close + 1]
+            rest = raw[close + 1 :].strip()
+            inline_status = rest if _BARE_STATUS_RE.match(rest) else None
+    return nodeid, inline_status
+
+
+def _scan_plain_verbose_cases(lines, start, end):
+    """Return ``{nodeid: status}`` from plain (non-xdist) ``pytest -v`` output in a range.
+
+    Non-TTY verbose pytest splits one test across two lines: the nodeid (status pending)
+    and, after the test's own stdout, the status alone. We therefore hold the most recent
+    unresolved nodeid and bind it to the next standalone status line. A nodeid carrying an
+    inline status resolves immediately, and encountering a second nodeid abandons any still
+    unresolved one — output that never produced a status line (killed/truncated run) is
+    dropped rather than mis-bound to a later test's result.
+    """
+    statuses = OrderedDict()
+    pending = None
+    for i in range(start, end):
+        raw = strip_ansi(lines[i]).rstrip()
+        nodeid, inline_status = _nodeid_from_line(raw)
+        if nodeid:
+            if inline_status:
+                statuses.setdefault(nodeid, inline_status)
+                pending = None
+            else:
+                pending = nodeid
+            continue
+        if pending:
+            sm = _BARE_STATUS_RE.match(raw)
+            if sm:
+                statuses.setdefault(pending, sm.group(1))
+                pending = None
+    return statuses
+
+
 def _scan_verbose_cases(lines, start, end, stage_display):
-    """Collect `[gw#] STATUS ...` cases from a line range (xdist-verbose output only)."""
+    """Collect per-test cases from a line range, from either verbose pytest format.
+
+    ``[gw#] STATUS nodeid`` (xdist) is authoritative; plain ``pytest -v`` nodeid/status
+    pairs fill in stages that ran without xdist (the QAIC stages in the reference log emit
+    only this shape, so their per-test detail was previously lost entirely). A nodeid seen
+    in the xdist form is never re-added from the plain form, so the two cannot double-count.
+    """
     cases = []
     seen = set()
     for i in range(start, end):
@@ -681,6 +772,13 @@ def _scan_verbose_cases(lines, start, end, stage_display):
         if not m:
             continue
         status, nodeid = m.group(1), m.group(2)
+        outcome = _CONSOLE_STATUS_TO_OUTCOME.get(status)
+        if outcome is None or nodeid in seen:
+            continue
+        seen.add(nodeid)
+        cases.append(_testcase_from_nodeid(nodeid, outcome, 0.0, stage_display))
+
+    for nodeid, status in _scan_plain_verbose_cases(lines, start, end).items():
         outcome = _CONSOLE_STATUS_TO_OUTCOME.get(status)
         if outcome is None or nodeid in seen:
             continue
@@ -695,11 +793,11 @@ def load_report_from_console(log_path, meta):
     The log is expected to contain one or more pytest sessions, each terminated by a
     ``generated xml file: .../<basename>.xml`` marker whose basename matches a key in
     ``STAGE_MAP``. Stages without a matching marker render as "Not Run", same as the
-    XML path. When two pytest processes launched by Jenkins run concurrently and
-    interleave their output, per-test lines are attributed to whichever stage's xml
-    marker they precede — this is exact for the xdist-verbose lines used here because
-    only one of the two commands passes ``-n`` (so all ``[gw#]`` lines belong to that
-    stage) and the slowest-N + summary trailer sits contiguously after each marker.
+    XML path. Per-test lines are attributed to whichever stage's xml marker they precede,
+    and both verbose shapes are read: xdist ``[gw#] STATUS nodeid`` and plain ``pytest -v``
+    nodeid/status pairs. The slowest-N + summary trailer sits contiguously after each
+    marker, so stage totals stay exact even when two Jenkins-launched pytest processes
+    interleave their output.
     """
     with open(log_path, encoding="utf-8", errors="replace") as fh:
         lines = fh.readlines()
@@ -723,7 +821,7 @@ def load_report_from_console(log_path, meta):
             if tc.nodeid in slow_durations:
                 tc.duration = slow_durations[tc.nodeid]
 
-        # Also seed cases from slowest-N entries that didn't appear as `[gw#]` lines —
+        # Also seed cases from slowest-N entries that didn't appear as per-test lines —
         # useful for non-verbose stages where slowest-N is the only per-test signal.
         seen_ids = {tc.nodeid for tc in verbose_cases}
         seeded = list(verbose_cases)
@@ -746,8 +844,8 @@ def load_report_from_console(log_path, meta):
                 seeded_extra = len(seeded) - attributable
                 unattributed = max(0, total - attributable - seeded_extra)
                 stage.note = (
-                    f"Console log ran without pytest -v: {total} tests in the summary but only "
-                    f"{attributable} attributable from `[gw#]` lines "
+                    f"Console log per-test attribution is partial: {total} tests in the summary but only "
+                    f"{attributable} attributable from per-test verbose lines "
                     f"({seeded_extra} additional seeded from the slowest-10 block, "
                     f"{unattributed} un-attributable). Totals in the top summary come "
                     "from pytest's own summary line."
@@ -798,6 +896,7 @@ CSS = """
   th{text-align:left;font-weight:600;color:#24292e;border-bottom:2px solid #d1d5da;padding:9px 10px;white-space:nowrap;background:#f6f8fa}
   td{padding:8px 10px;border-bottom:1px solid #e1e4e8;vertical-align:top}
   th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
+  th.scol{white-space:normal;width:92px;min-width:92px;vertical-align:bottom;font-size:.8em;line-height:1.28;font-weight:600}
   tbody tr:hover{background:#f6f8fa}
   code{font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-size:.92em}
   .marker{font-family:'SFMono-Regular',Consolas,Menlo,monospace;font-size:.82em;color:#57606a;word-break:break-word}
@@ -806,6 +905,9 @@ CSS = """
   .b-err{color:#bc4c00;background:#fff1e5}.b-skip{color:#57606a;background:#eaeef2}
   .b-xfail{color:#9a6700;background:#fff8c5}.b-nr{color:#57606a;background:#eaeef2;font-style:italic}
   .row-nr td{color:#8b949e}
+  tr.group-row td{background:#eef1f5;border-bottom:1px solid #d1d5da;padding:6px 10px;font-size:.7em;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#3a4149}
+  tr.group-row .group-count{color:#8b949e;font-weight:600}
+  tr.group-row:hover td{background:#eef1f5}
   details.stage{border:1px solid #e1e4e8;border-radius:8px;margin:10px 0;overflow:hidden}
   details.stage>summary{cursor:pointer;padding:10px 14px;font-weight:600;background:#f6f8fa;list-style:none}
   details.stage>summary::-webkit-details-marker{display:none}
@@ -1065,6 +1167,105 @@ def render_coverage_matrix(report):
     return "\n".join(rows)
 
 
+# Model-family tokens that denote a Mixture-of-Experts architecture even when the
+# normalized slug does not literally contain "moe" (Mixtral and GPT-OSS are always MoE).
+_MOE_FAMILY_TOKENS = ("mixtral", "gpt_oss", "gpt-oss")
+
+
+def _scenario_group(model):
+    """Bucket a scenario-matrix model into ``"MoE"`` or ``"Dense"``.
+
+    The per-PR causal models split cleanly on Mixture-of-Experts vs dense — the axis
+    that actually drives QEff export/compile behaviour. Detection is purely on the
+    normalized model slug (e.g. ``gpt_oss_moe_text``, ``mixtral_moe_text``): a literal
+    ``moe`` substring covers the common case, and a small known-family set catches the
+    MoE architectures whose slug omits ``moe``.
+    """
+    slug = model.lower()
+    if "moe" in slug or any(tok in slug for tok in _MOE_FAMILY_TOKENS):
+        return "MoE"
+    return "Dense"
+
+
+def render_scenario_matrix(report):
+    """Render a model × per-PR-scenario grid, one aggregated status glyph per cell.
+
+    Columns are the named per-PR end-to-end scenarios (SCENARIO_COLUMNS) — each a single
+    ``test_per_pr_causal_*`` function that pins a whole dtype+subfunction+CB+feature combo —
+    so one cell answers "did this scenario run+verify pass on this model?" without the reader
+    reassembling atomic feature columns. Cells key on ``tc.test_fn`` (exact match), aggregating
+    across that scenario's parametrizations for the model. Same exclusions and cell/row rules as
+    the Feature coverage matrix: seeded placeholders and ``(no model param)`` are dropped, cells
+    reduce to the most-severe outcome, failing/most-covered rows float to the top.
+    """
+    # cells[model][test_fn] -> Counter of outcomes; models with no scenario hits never appear.
+    scenario_fns = {fn for fn, _display in SCENARIO_COLUMNS}
+    cells = OrderedDict()
+    for tc in report.all_cases:
+        if tc.seeded or tc.test_fn not in scenario_fns:
+            continue
+        model = normalize_model(tc.param_id)
+        if model == _NO_MODEL:
+            continue
+        cells.setdefault(model, {}).setdefault(tc.test_fn, Counter())[tc.outcome] += 1
+    if not cells:
+        return ""
+
+    def _lit_columns(model_cells):
+        return sum(1 for c in model_cells.values() if c)
+
+    def _fail_count(model_cells):
+        return sum(c[Outcome.FAILED] + c[Outcome.ERROR] for c in model_cells.values())
+
+    # Failing models first (fastest reviewer signal); then most-covered models; alphabetical last.
+    ordered = sorted(cells.items(), key=lambda item: (-_fail_count(item[1]), -_lit_columns(item[1]), item[0]))
+
+    # Bucket rows into Dense / MoE groups (the axis that drives QEff export/compile) while
+    # keeping the fail-first ordering within each group. Group order also floats the bucket
+    # with failures to the top, then falls back to a fixed Dense-before-MoE order.
+    grouped = OrderedDict()
+    for model, by_fn in ordered:
+        grouped.setdefault(_scenario_group(model), []).append((model, by_fn))
+    group_fail = {g: sum(_fail_count(by_fn) for _m, by_fn in members) for g, members in grouped.items()}
+    _GROUP_RANK = {"Dense": 0, "MoE": 1}
+    group_order = sorted(grouped, key=lambda g: (-group_fail[g], _GROUP_RANK.get(g, 99), g))
+
+    # Headers carry only each scenario's short delta label; the shared base lives in the
+    # caption and the exact test-function name rides in the tooltip. The fixed-width .scol
+    # keeps the row compact instead of forcing horizontal scroll.
+    header_cells = "".join(
+        f"<th class='num scol' title='{esc(fn)}'>{esc(display)}</th>" for fn, display in SCENARIO_COLUMNS
+    )
+    rows = [
+        "    <h2>Scenario coverage matrix</h2>",
+        '    <div class="note" style="background:#f6f8fa;border-color:#e1e4e8;color:#57606a">'
+        "Per-PR end-to-end run + output-verification scenarios (causal-LM only), grouped by "
+        "<strong>Dense</strong> vs <strong>Mixture-of-Experts</strong> architecture. Every scenario shares the "
+        "base <code>causal &middot; subfunction &middot; CB &middot; FP16 export</code>; each column shows only "
+        "its delta &mdash; a leading <code>+</code> adds that feature to the base, while a label without "
+        "<code>+</code> pins a different dtype/mode. A model appears when at least one scenario ran against it. "
+        "Cells reduce to the most-severe outcome across that scenario's parametrizations; hover a cell for the "
+        "raw counts, or a column header for the exact test function."
+        "</div>",
+        f"    <table><thead><tr><th>Model / Config</th>{header_cells}</tr></thead><tbody>",
+    ]
+    group_colspan = 1 + len(SCENARIO_COLUMNS)
+    for group in group_order:
+        members = grouped[group]
+        rows.append(
+            f'      <tr class="group-row"><td colspan="{group_colspan}">'
+            f'{esc(group)} <span class="group-count">({len(members)})</span></td></tr>'
+        )
+        for model, by_fn in members:
+            tds = [f"      <tr><td><code>{esc(model)}</code></td>"]
+            for fn, _display in SCENARIO_COLUMNS:
+                tds.append(_coverage_cell(by_fn.get(fn)))
+            tds.append("</tr>")
+            rows.append("".join(tds))
+    rows.append("    </tbody></table>")
+    return "\n".join(rows)
+
+
 def _coverage_cell(counter):
     """Render one matrix cell: a status glyph reduced from all outcomes hitting the cell."""
     if not counter:
@@ -1180,12 +1381,14 @@ def render_footer(report):
 
 def build_document(report):
     """Assemble the full standalone HTML document string."""
-    # Order matters: reviewers want the model × feature verdict as fast as possible,
-    # so the Feature coverage matrix sits directly under the KPI strip and above
-    # the Stage summary. By-model / Failures / Stage detail / Slowest follow for
-    # the PR owner's drill-down.
+    # Order matters: reviewers want the per-PR end-to-end verdict as fast as possible, so the
+    # Scenario coverage matrix (whole dtype+feature combinations, one cell per scenario) sits
+    # directly under the KPI strip, followed by the Feature coverage matrix that breaks the same
+    # run down into atomic capabilities, then the Stage summary. By-model / Failures /
+    # Stage detail / Slowest follow for the PR owner's drill-down.
     sections = [
         render_kpis(report),
+        render_scenario_matrix(report),
         render_coverage_matrix(report),
         render_stage_summary(report),
         render_by_model(report),

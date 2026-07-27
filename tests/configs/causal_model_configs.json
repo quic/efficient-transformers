@@ -752,7 +752,7 @@
           "rope_theta": 500000.0
         }
       },
-      "known_ccl_export_or_compile_issue": "Llama4 text CCL export currently segfaults inside torch.onnx.export when comp_ctx_lengths_decode is enabled."
+      "known_bf16_compile_issue": "Llama4 MoE forward uses .float() for sigmoid routing which causes dtype mismatch (float vs half) during bf16-to-fp16 export on ai100."
     },
     {
       "id": "llava_text",
@@ -993,8 +993,7 @@
       "is_moe": false,
       "supports_disagg": false,
       "supports_blocking": false,
-      "num_hidden_layers": 1,
-      "known_export_or_compile_issue": "GPT-J subfunction compile currently fails in qaic-compile because the exported Range limit is not constant."
+      "num_hidden_layers": 1
     },
     {
       "id": "codegen_text",

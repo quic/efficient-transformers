@@ -5,10 +5,13 @@ self-contained `ci_report.html` — a top summary for reviewers/maintainers plus
 per-test drill-down for the PR owner. It is **pure Python standard library** (no pip installs),
 so it runs in the CI container venv as-is.
 
-Layout: KPI strip → **Feature coverage matrix** (model × feature grid, causal-LM only) →
-Stage summary → By model / config → Failures → per-stage detail → Slowest. The matrix sits
-directly under the KPIs so reviewers can see which capabilities passed on which models
-without scrolling.
+Layout: KPI strip → **Scenario coverage matrix** (model × per-PR end-to-end scenario grid) →
+**Feature coverage matrix** (model × feature grid, causal-LM only) → Stage summary →
+By model / config → Failures → per-stage detail → Slowest. The matrices sit directly under
+the KPIs so reviewers can see which per-PR scenarios and capabilities passed on which models
+without scrolling; scenarios come first because one cell answers the whole
+dtype+subfunction+CB+feature question, and the feature grid then breaks the same run down
+into atomic capabilities.
 
 ## Generate the bundled sample
 
