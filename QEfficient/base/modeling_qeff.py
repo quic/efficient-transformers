@@ -556,6 +556,13 @@ class QEFFBaseModel(ABC):
             dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
             input_names = aligned_input_names
 
+        for k, v in example_inputs.items():
+            if type(v) is list:
+                for i, v_i in enumerate(v):
+                    print(f"input {k}_{i} shape is {v_i[0].shape}")
+            else:
+                print(f"input {k} shape is {v.shape}")
+
         try:
             if dynamo:
                 self._export_via_dynamo(
