@@ -80,24 +80,34 @@ def _normalize_attention_mode(raw_mode: str) -> str:
 
 def _resolve_effective_blocking_mode(attention_cfg: Dict[str, Any], requested_mode: str) -> str:
     mode = _normalize_attention_mode(requested_mode)
+    if mode == "":
+        return ""
     num_q_blocks = attention_cfg.get("num_q_blocks") or 1
     num_kv_blocks = attention_cfg.get("num_kv_blocks") or 1
     head_block_size = (attention_cfg.get("head_block_size") or 1) if attention_cfg.get("head_blocking_enabled") else 1
 
-    if head_block_size > 1 and num_q_blocks == 1 and num_kv_blocks == 1:
-        return "h"
+    if head_block_size > 1 and num_q_blocks > 1 and num_kv_blocks > 1 and "paged" in mode:
+        return "hqkv_paged"
+    if head_block_size > 1 and num_q_blocks > 1 and num_kv_blocks > 1 and "paged" not in mode:
+        return "hqkv"
     if head_block_size > 1 and num_q_blocks > 1:
         return "hq"
-    if head_block_size > 1 and num_kv_blocks > 1:
+    if head_block_size > 1 and num_kv_blocks > 1 and "paged" in mode:
+        return "hkv_paged"
+    if head_block_size > 1 and num_kv_blocks > 1 and "paged" not in mode:
         return "hkv"
     if head_block_size > 1:
-        return "h" + mode
-    if num_q_blocks > 1 and num_kv_blocks > 1:
-        return mode
+        return "h"
+    if num_q_blocks > 1 and num_kv_blocks > 1 and "paged" in mode:
+        return "qkv_paged"
+    if num_q_blocks > 1 and num_kv_blocks > 1 and "paged" not in mode:
+        return "qkv"
     if num_q_blocks > 1:
-        return mode
-    if num_kv_blocks > 1:
-        return mode
+        return "q"
+    if num_kv_blocks > 1 and "paged" in mode:
+        return "kv_paged"
+    if num_kv_blocks > 1 and "paged" not in mode:
+        return "kv"
     return ""
 
 
