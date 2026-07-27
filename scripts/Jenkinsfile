@@ -38,6 +38,7 @@ pipeline {
         )
         booleanParam(name: 'RUN_HL_APIS', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_FEATURE', defaultValue: true)
+        booleanParam(name: 'RUN_QAIC_EMBEDDING_AUDIO', defaultValue: true, description: 'Run text-embedding and audio (CTC / speech-seq2seq) model tests')
         booleanParam(name: 'RUN_QAIC_MM', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_DIFFUSION', defaultValue: true)
         booleanParam(name: 'RUN_CLI', defaultValue: true)
@@ -134,6 +135,24 @@ pipeline {
                     export QEFF_HOME=$PWD/Non_qaic_feature &&
                     pytest tests -m '(on_qaic) and (feature) and (not qnn) and ${TEST_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log2_feature.xml --durations=10 &&
                     junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
+                }
+            }
+        }
+        stage('QAIC Embedding & Audio') {
+            when {expression { params.RUN_QAIC_EMBEDDING_AUDIO }}
+            steps {
+                timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 120, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    mkdir -p $PWD/Non_qaic_embedding_audio &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=$PWD/Non_qaic_embedding_audio &&
+                    pytest tests -m '(embedding_audio_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log_embedding_audio.xml --durations=10 &&
+                    junitparser merge tests/tests_log_embedding_audio.xml tests/tests_log.xml &&
                     deactivate"
                     '''
                 }
