@@ -31,11 +31,27 @@ test_models_causal = [model["model_name"] for model in causal_lm_models]
 model_config_dict = {model["model_name"]: model for model in causal_lm_models}
 test_models_per_pr_causal = per_pr_causal_text_models
 
+# per_pr_causal_text_models already covers every architecture in causal_lm_models at
+# dummy-layer scope except these: quantized checkpoints (AWQ/GPTQ/FP8, no tiny-random
+# equivalent) and the custom-path grok-1/SwiftKV models. Dummy-layer parity tests below
+# run only this subset to avoid re-validating architectures the per-PR suite already covers.
+_dummy_layers_unique_models = (
+    ModelConfig.QUANTIZED_MODELS | set(ModelConfig.EXTERNAL_MODELS) | ModelConfig.SWIFTKV_MODELS
+)
+test_models_causal_dummy_only = [m for m in test_models_causal if m in _dummy_layers_unique_models]
+
 PER_PR_PROMPT_LEN = 1024
 PER_PR_CTX_LEN = 2048
 PER_PR_GENERATION_LEN = 8
 PER_PR_CCL_PREFILL = None
 PER_PR_CCL_DECODE = [2048]
+# Blocked-KV walks the cache in fixed-size blocks, so a second, differently-sized prompt is
+# what exercises block boundaries that a single prompt would never reach. These two prompts
+# are tiled across the unchanged full_batch_size, so export/compile still happen exactly once.
+PER_PR_BLOCKING_PROMPTS = [
+    "My name is",
+    "The capital city of France is called",
+]
 
 
 def _per_pr_id(model_config):
@@ -85,6 +101,7 @@ def _run_per_pr_causal_text_case(
     num_cores=16,
     compile_options=None,
     num_speculative_tokens=None,
+    prompts=None,
 ):
     # Two-phase shared-QEFF_HOME run: the per-test cleanup must be suppressed in BOTH phases,
     # because variants of one model share a content-addressed export dir (the QPCs nest inside
@@ -127,6 +144,7 @@ def _run_per_pr_causal_text_case(
         compile_options=compile_options,
         num_speculative_tokens=num_speculative_tokens,
         tokenizer_name=model_config.get("tokenizer_id"),
+        prompts=prompts,
     )
 
 
@@ -178,7 +196,7 @@ def test_few_causal_lm_onnx_mdp_compile_only(model_name, use_onnx_subfunctions, 
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
-@pytest.mark.parametrize("model_name", test_models_causal)
+@pytest.mark.parametrize("model_name", test_models_causal_dummy_only)
 def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to issues in HF.")
@@ -197,7 +215,7 @@ def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanu
 
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.feature
 @pytest.mark.parametrize("model_name", test_models_causal)
 def test_check_kv_repeat_custom_causal_lm_pytorch_vs_ai100(model_name, manual_cleanup):
     """
@@ -259,7 +277,7 @@ def test_few_causal_lm_pytorch_vs_ort_vs_ai100_cb(model_name, manual_cleanup):
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
-@pytest.mark.parametrize("model_name", test_models_causal)
+@pytest.mark.parametrize("model_name", test_models_causal_dummy_only)
 def test_dummy_causal_lm_pytorch_vs_ort_vs_ai100_cb(model_name, manual_cleanup):
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to issues in HF.")
@@ -326,10 +344,17 @@ def test_per_pr_causal_fp16_subfunction_cb_ccl(model_config, manual_cleanup):
     ids=_per_pr_id,
 )
 def test_per_pr_causal_fp16_subfunction_cb_blocking(model_config, manual_cleanup):
+    """Blocked-KV FP16 CB run, validated against two distinct prompts.
+
+    The prompts are tiled across the same ``full_batch_size`` the other per-PR
+    variants use, so the QPC shape is unchanged and export/compile still run once
+    per model -- only the generate/reference legs see the extra prompt.
+    """
     _run_per_pr_causal_text_case(
         model_config,
         manual_cleanup,
         qaic_config={"enable_blocking": True, "num_kv_blocks": 2},
+        prompts=PER_PR_BLOCKING_PROMPTS,
     )
 
 

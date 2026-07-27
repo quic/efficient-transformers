@@ -148,17 +148,26 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     num_cores: int = 16,
     compile_options: Optional[dict] = None,
     tokenizer_name: Optional[str] = None,
-    prompts: Optional[str] = None,
+    prompts: Optional[list[str]] = None,
 ):
     torch.manual_seed(42)
     replace_transformers_quantizers()
     model_hf = load_hf_causal_lm_model(model_name, num_hidden_layers=n_layer, config=config, torch_dtype=torch_dtype)
     tokenizer = load_hf_tokenizer(pretrained_model_name_or_path=tokenizer_name or model_name)
     config = model_hf.config
+    # `prompts` lets a caller validate generation against several distinct prompts without
+    # paying for an extra export/compile: the QPC is keyed on batch_size/full_batch_size, and
+    # both stay fixed because the base prompts are tiled to exactly full_batch_size entries.
+    # Only continuous batching can absorb extra prompts this way -- the non-CB QPC is compiled
+    # with batch_size=1, so a multi-prompt override there would not match the compiled shape.
+    base_prompts = list(prompts) if prompts else Constants.INPUT_STR
+    if len(base_prompts) > len(Constants.INPUT_STR) and not continuous_batching:
+        raise ValueError("Multiple prompts are only supported with continuous_batching=True.")
     batch_size = len(Constants.INPUT_STR)
-    prompts = prompts if prompts else Constants.INPUT_STR
     full_batch_size = kv_cache_batch_size or 4
-    prompts = Constants.INPUT_STR * full_batch_size if continuous_batching else prompts
+    prompts = (
+        [base_prompts[i % len(base_prompts)] for i in range(full_batch_size)] if continuous_batching else base_prompts
+    )
     gen_len = generation_len or 24
     is_tlm = False if num_speculative_tokens is None else True
     pytorch_hf_tokens = None
@@ -180,6 +189,10 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         num_devices=num_devices,
         qaic_config=qaic_config,
     )
+    # Build the reference runner from the *transformed* config: qaic_config transforms such as
+    # KV-head replication / blocking mutate qeff_model.config.num_key_value_heads, and the
+    # reference KV-cache buffers must be sized to match, or the PyTorch-KV leg scatters into a
+    # wrongly-shaped cache. (model_hf.config still holds the pre-transform head count.)
     api_runner = ApiRunner(
         batch_size,
         tokenizer,
@@ -230,7 +243,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
             prefill_seq_len=prompt_len,
             ctx_len=ctx_len,
             num_devices=num_devices,
-            mxfp6=False,
+            mxfp6_matmul=False,
             aic_enable_depth_first=False,
             num_speculative_tokens=num_speculative_tokens,
             enable_qnn=enable_qnn,
@@ -296,7 +309,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         "prefill_seq_len": prompt_len,
         "ctx_len": ctx_len,
         "num_devices": num_devices,
-        "mxfp6": False,
+        "mxfp6_matmul": False,
         "aic_enable_depth_first": False,
         "num_speculative_tokens": num_speculative_tokens,
         "enable_qnn": enable_qnn,
