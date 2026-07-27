@@ -1,7 +1,7 @@
 # CLI API Reference
 
 ```{NOTE}
-Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group`` should be in single quotes e.g.  ``'--device_group [0]'``
+Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_ids`` should be in single quotes e.g.  ``'--device_ids [0]'``
 ```
 
 (infer_api)=

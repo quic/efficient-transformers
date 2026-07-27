@@ -14,7 +14,7 @@ base_model_name = "mistralai/Mistral-7B-v0.1"
 seq_len = 128
 ctx_len = 256
 full_batch_size = 4
-device_group = [0]
+device_ids = [0]
 
 ## STEP 1 -- init base model
 qeff_model = QEffAutoPeftModelForCausalLM.from_pretrained(
@@ -42,7 +42,7 @@ qpc_path = qeff_model.compile(
     full_batch_size=full_batch_size,
     prefill_seq_len=seq_len,
     ctx_len=ctx_len,
-    num_devices=len(device_group),
+    num_devices=len(device_ids),
     num_cores=16,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
@@ -53,7 +53,7 @@ qpc_path = qeff_model.compile(
 #     batch_size=2,
 #     prefill_seq_len=seq_len,
 #     ctx_len=ctx_len,
-#     num_devices=len(device_group),
+#     num_devices=len(device_ids),
 #     num_cores=16,
 #     mxfp6_matmul=True,
 #     mxint8_kv_cache=True,
@@ -74,7 +74,7 @@ prompts = [
 qeff_model.generate(
     tokenizer=load_hf_tokenizer(pretrained_model_name_or_path=base_model_name),
     prompts=prompts,
-    device_ids=device_group,
+    device_ids=device_ids,
     prompt_to_adapter_mapping=[
         "gsm8k",
         "tldr_content_gen",

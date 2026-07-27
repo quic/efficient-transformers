@@ -133,7 +133,7 @@ python -m QEfficient.cloud.infer \
     --prompt_len 128 \
     --ctx_len 512 \
     --num_cores 16 \
-    --device_group [0] \
+    --device_ids [0] \
     --prompt "Write a short story about AI" \
     --mxfp6 \
     --mxint8_kv_cache \
@@ -178,7 +178,7 @@ python -m QEfficient.cloud.compile \
     --prompt_len 128 \
     --ctx_len 512 \
     --num_cores 16 \
-    --device_group [0] \
+    --device_ids [0] \
     --mxfp6 \
     --mos 1 \
     --aic_enable_depth_first
@@ -197,7 +197,7 @@ python -m QEfficient.cloud.execute \
     --model_name meta-llama/Llama-3.1-8B \
     --qpc_path ./qpc_output/qpcs \
     --prompt "Write a short story about AI" \
-    --device_group [0]
+    --device_ids [0]
 ```
 
 This uses the pre-compiled QPC for fast inference. You can run this multiple times with different prompts without recompiling.
@@ -214,7 +214,7 @@ This uses the pre-compiled QPC for fast inference. You can run this multiple tim
 | `--ctx_len` | Maximum context length (input + output) | 128 | `512` |
 | `--batch_size` | Batch size for inference | 1 | `1` |
 | `--num_cores` | AI 100 cores to use | 16 | `16` or `14` |
-| `--device_group` | Device IDs to use | `[0]` | `[0]` or `[0,1,2,3]` |
+| `--device_ids` | Device IDs to use | `[0]` | `[0]` or `[0,1,2,3]` |
 | `--mxfp6` | Enable MXFP6 quantization | False | Add flag to enable |
 | `--mxint8_kv_cache` | Enable MXINT8 KV cache | False | Add flag to enable |
 | `--use-onnx-subfunctions` | Enable ONNX subfunctions for export/compile | False | Add flag to enable |
@@ -235,7 +235,7 @@ python -m QEfficient.cloud.infer \
     --prompt_len 128 \
     --ctx_len 512 \
     --num_cores 16 \
-    --device_group [0,1,2,3] \
+    --device_ids [0,1,2,3] \
     --prompt "Explain quantum computing" \
     --mxfp6 \
     --mxint8_kv_cache \
@@ -255,7 +255,7 @@ python -m QEfficient.cloud.infer \
     --prompt_len 128 \
     --ctx_len 512 \
     --num_cores 16 \
-    --device_group [0] \
+    --device_ids [0] \
     --prompt "Hello|Hi there|Good morning|How are you" \
     --mxfp6 \
     --mxint8_kv_cache
@@ -276,7 +276,7 @@ python -m QEfficient.cloud.infer \
     --prompt_len 128 \
     --ctx_len 512 \
     --num_cores 16 \
-    --device_group [0] \
+    --device_ids [0] \
     --prompts_txt_file_path examples/sample_prompts/prompts.txt \
     --mxfp6 \
     --mxint8_kv_cache

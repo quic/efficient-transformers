@@ -170,7 +170,7 @@ def multiprojs_spec_decode_inference(
         prefill_bsz (int): Prefill batch size.
         pretrained_model_name_or_path (str): Name of multiprojection model
         full_batch_size (Optional[int]): Full batch size.
-        device_group (List[int]): List of device IDs.
+        device_ids (List[int]): List of device IDs.
 
     Returns:
         CloudAI100ExecInfo: Execution information, including performance metrics and generated text.
@@ -352,7 +352,7 @@ def arg_parse():
         help="Target model name",
     )
     parser.add_argument("--full-batch-size", type=optional_int, default=None, help="Full batch size")
-    parser.add_argument("--device-group", type=comma_separated_ints, default="0", help="device QIDs")
+    parser.add_argument("--device-ids", type=comma_separated_ints, default="0", help="device QIDs")
     parser.add_argument("--ignore-eos-token", action="store_true")
     args = parser.parse_args()
     return args
@@ -360,7 +360,7 @@ def arg_parse():
 
 def get_session(
     pretrained_model_name_or_path,
-    device_group,
+    device_ids,
     prefill_seq_len,
     ctx_len,
     full_batch_size=None,
@@ -372,7 +372,7 @@ def get_session(
         continuous_batching=is_cb,
         qaic_config=qaic_config,
     )
-    num_devices = len(device_group)
+    num_devices = len(device_ids)
     model_qpc_path: str = qeff_model.compile(
         num_cores=16,
         num_devices=num_devices,
@@ -383,7 +383,7 @@ def get_session(
     )
     print(f"{model_qpc_path=}")
     # init qaic session
-    session = QAICInferenceSession(model_qpc_path, device_ids=device_group)
+    session = QAICInferenceSession(model_qpc_path, device_ids=device_ids)
     num_speculative_tokens = qeff_model.model.config.speculative_config["num_speculative_tokens"]
     return session, num_speculative_tokens
 
@@ -395,7 +395,7 @@ def main():
 
     session, num_speculative_tokens = get_session(
         pretrained_model_name_or_path=args.pretrained_model_name_or_path,
-        device_group=args.device_group,
+        device_ids=args.device_ids,
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
         full_batch_size=args.full_batch_size,

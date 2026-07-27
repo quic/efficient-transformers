@@ -40,7 +40,7 @@ else:
 def main(
     model_name: str,
     num_cores: int,
-    device_group: Optional[List[int]] = None,
+    device_ids: Optional[List[int]] = None,
     prompt: Optional[str] = None,  # type: ignore
     prompts_txt_file_path: Optional[str] = None,
     aic_enable_depth_first: bool = False,
@@ -65,7 +65,7 @@ def main(
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
         :num_cores (int): Number of cores to compile model on.
     ``Optional`` Args:
-        :device_group (List[int]): Device Ids to be used for compilation. If ``len(device_group) > 1``, multiple Card setup is enabled. ``Defaults to None.``
+        :device_ids (List[int]): Device Ids to be used for compilation. If ``len(device_ids) > 1``, multiple Card setup is enabled. ``Defaults to None.``
         :prompt (str): Sample prompt for the model text generation. ``Defaults to None.``
         :prompts_txt_file_path (str): Path to txt file for multiple input prompts. ``Defaults to None.``
         :aic_enable_depth_first (bool): Enables ``DFS`` with default memory size. ``Defaults to False.``
@@ -97,7 +97,7 @@ def main(
         raise RuntimeError("Continuous batching will be supported in future, please rerun without continuous batching.")
 
     qpc_dir_path = get_qpc_dir_path(
-        model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_group, full_batch_size
+        model_name, num_cores, mos, batch_size, prompt_len, ctx_len, mxfp6, mxint8, device_ids, full_batch_size
     )
     if qpc_exists(qpc_dir_path):
         logger.info(f"Pre-compiled qpc found at {qpc_dir_path}! Executing with given prompt")
@@ -119,7 +119,7 @@ def main(
             mxint8=mxint8,
             aic_enable_depth_first=aic_enable_depth_first,
             mos=mos,
-            device_group=device_group,
+            device_ids=device_ids,
             full_batch_size=full_batch_size,
         )
 
@@ -131,7 +131,7 @@ def main(
         qpc_path=qpc_dir_path,
         prompt_len=prompt_len,
         prompt=prompt,
-        device_ids=device_group,
+        device_ids=device_ids,
         prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,
         full_batch_size=full_batch_size,
@@ -215,8 +215,8 @@ if __name__ == "__main__":
         "--num_cores", "--num-cores", type=int, required=True, help="Number of cores to compile on Cloud AI 100"
     )
     parser.add_argument(
-        "--device_group",
-        "--device-group",
+        "--device_ids",
+        "--device-ids",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         help="Cloud AI 100 device ids (comma-separated) e.g. [0,1]  ",
     )

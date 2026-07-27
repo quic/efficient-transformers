@@ -227,7 +227,7 @@ def pld_spec_decode_inference(
     prefill_bsz: int,
     target_model_name: str,
     full_batch_size: Optional[int],
-    device_group: List[int],
+    device_ids: List[int],
     max_ngram_size: int,
 ) -> SpDCloudAI100ExecInfo:
     """
@@ -244,7 +244,7 @@ def pld_spec_decode_inference(
         prefill_bsz (int): Prefill batch size.
         target_model_name (str): Name of the target model.
         full_batch_size (Optional[int]): Full batch size.
-        device_group (List[int]): List of device IDs.
+        device_ids (List[int]): List of device IDs.
         max_ngram_size (int): Max ngram size.
 
     Returns:
@@ -267,7 +267,7 @@ def pld_spec_decode_inference(
         target_model_name, continuous_batching=continuous_batching, qaic_config={"speculative_model_type": "target"}
     )
 
-    num_devices = len(device_group)
+    num_devices = len(device_ids)
     target_model_qpc_path: str = target_model.compile(
         num_cores=16,
         num_devices=num_devices,
@@ -278,7 +278,7 @@ def pld_spec_decode_inference(
         num_speculative_tokens=decode_ks,
     )
     # init qaic session
-    target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=device_group)
+    target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=device_ids)
     draft_model_session = None
 
     # skip inputs/outputs buffers
@@ -531,7 +531,7 @@ def arg_parse():
     )
     parser.add_argument("--full-batch-size", type=int, default=2, help="Full batch size")
     parser.add_argument(
-        "--device-group",
+        "--device-ids",
         type=comma_separated_ints,
         default="0",
         help="comma separated device QIDs for target model (e.g., '1,2,3')",

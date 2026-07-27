@@ -50,7 +50,7 @@ python -m QEfficient.cloud.compile \
     --prompt_len 128 \
     --ctx_len 512 \
     --num_cores 16 \
-    --device_group [0] \
+    --device_ids [0] \
     --mxfp6 \
     --mos 1 \
     --aic_enable_depth_first
@@ -61,7 +61,7 @@ echo "  --batch_size: Number of prompts to process simultaneously"
 echo "  --prompt_len: Maximum input prompt length"
 echo "  --ctx_len: Maximum context length (prompt + generation)"
 echo "  --num_cores: Number of AI 100 cores to use (typically 14 or 16)"
-echo "  --device_group: Device IDs to use (e.g., [0] for single device, [0,1,2,3] for multi-device)"
+echo "  --device_ids: Device IDs to use (e.g., [0] for single device, [0,1,2,3] for multi-device)"
 echo "  --mxfp6: Enable MXFP6 quantization for better performance"
 echo "  --mos: Memory optimization strategy"
 echo "  --aic_enable_depth_first: Enable depth-first execution"
@@ -80,7 +80,7 @@ python -m QEfficient.cloud.execute \
     --model_name meta-llama/Llama-3.1-8B \
     --qpc_path ./qpc_output/qpcs \
     --prompt "Write a short story about AI" \
-    --device_group [0]
+    --device_ids [0]
 EOF
 echo ""
 echo "This uses the pre-compiled QPC for fast inference."
@@ -102,7 +102,7 @@ python -m QEfficient.cloud.infer \
     --prompt_len 128 \
     --ctx_len 512 \
     --num_cores 16 \
-    --device_group [0] \
+    --device_ids [0] \
     --prompt "Write a short story about AI" \
     --mxfp6 \
     --mxint8_kv_cache \
@@ -135,7 +135,7 @@ python -m QEfficient.cloud.infer \
     --prompt_len 128 \
     --ctx_len 512 \
     --num_cores 16 \
-    --device_group [0,1,2,3] \
+    --device_ids [0,1,2,3] \
     --prompt "Explain quantum computing" \
     --mxfp6 \
     --mxint8_kv_cache \
@@ -152,7 +152,7 @@ python -m QEfficient.cloud.infer \
     --prompt_len 128 \
     --ctx_len 512 \
     --num_cores 16 \
-    --device_group [0] \
+    --device_ids [0] \
     --prompt "Hello|Hi there|Good morning|How are you" \
     --mxfp6 \
     --mxint8_kv_cache
@@ -170,7 +170,7 @@ python -m QEfficient.cloud.infer \
     --prompt_len 128 \
     --ctx_len 512 \
     --num_cores 16 \
-    --device_group [0] \
+    --device_ids [0] \
     --prompts_txt_file_path examples/sample_prompts/prompts.txt \
     --mxfp6 \
     --mxint8_kv_cache
@@ -187,7 +187,7 @@ echo "==============="
 echo ""
 echo "Terminal Compatibility:"
 echo "  - Use bash terminal for best compatibility"
-echo "  - If using ZSH, wrap device_group in single quotes: '--device_group [0]'"
+echo "  - If using ZSH, wrap device_ids in single quotes: '--device_ids [0]'"
 echo ""
 echo "Common Parameters:"
 echo "  --model_name: HuggingFace model ID (e.g., meta-llama/Llama-3.1-8B)"
@@ -195,7 +195,7 @@ echo "  --prompt: Input text prompt"
 echo "  --prompt_len: Maximum input sequence length"
 echo "  --ctx_len: Maximum context length (input + output)"
 echo "  --num_cores: AI 100 cores (typically 14 or 16)"
-echo "  --device_group: Device IDs [0] for single, [0,1,2,3] for multi-device"
+echo "  --device_ids: Device IDs [0] for single, [0,1,2,3] for multi-device"
 echo "  --mxfp6: Enable MXFP6 quantization (recommended)"
 echo "  --mxint8_kv_cache: Enable MXINT8 KV cache (recommended)"
 echo "  --aic_enable_depth_first: Enable depth-first execution"

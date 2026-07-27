@@ -40,7 +40,7 @@ def main():
         help="Build the model on meta tensors and load weights at compile time",
     )
     parser.add_argument(
-        "--device-group",
+        "--device-ids",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         default=None,
         help="Device IDs (comma-separated), e.g. [0,1]",
@@ -64,7 +64,7 @@ def main():
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
         aic_hw_version=args.aic_hw_version,
-        num_devices=(1 if args.device_group is None else len(args.device_group)),
+        num_devices=(1 if args.device_ids is None else len(args.device_ids)),
         dynamo=True,
         use_onnx_subfunctions=True,
     )
@@ -74,7 +74,7 @@ def main():
     exec_info = model.generate(
         tokenizer=tokenizer,
         prompts=[args.prompt],
-        device_id=args.device_group,
+        device_ids=args.device_ids,
         generation_len=args.generation_len,
     )
 
