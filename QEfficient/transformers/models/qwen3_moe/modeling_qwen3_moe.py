@@ -153,8 +153,6 @@ class QEffQwen3MoeSparseMoeBlock(QEffMoEBlockMixin, Qwen3MoeSparseMoeBlock):
         MoEFlavour.DECODE_BMM,
         MoEFlavour.EXPERT_PARALLEL,
     )
-    supports_moe_prefill_blocking = True
-    supports_static_moe_prefill_chunks = True
 
     def __qeff_init__(self):
         super().__qeff_init__()

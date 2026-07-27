@@ -61,7 +61,8 @@ logger = logging.getLogger(__name__)
 
 
 _LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR = (
-    "moe_prefill_packed_chunk_size is no longer supported; use qaic_config['moe_config']['packed_chunk_size']"
+    "moe_prefill_packed_chunk_size is no longer supported; "
+    "use qaic_config['moe_config']['expert_parallel_chunk_size']"
 )
 
 
@@ -549,6 +550,7 @@ class QEFFBaseModel(ABC):
             kwargs["_layerwise_cache_probe"] = True
         if kv_cache_prefix:
             kwargs["kv_cache_prefix"] = kv_cache_prefix
+        num_devices = int(compiler_options.pop("num_devices", 1))
         if prefill_only:
             kwargs.update(
                 {
@@ -576,6 +578,7 @@ class QEFFBaseModel(ABC):
             ctx_len=ctx_len,
             seq_len=seq_len,
             bs=bs,
+            num_devices=num_devices,
             qaic_config=qaic_config,
             prefill_only=prefill_only,
             enable_chunking=enable_chunking,
@@ -867,6 +870,7 @@ class QEFFBaseModel(ABC):
         self.model, _ = OptimizedMoETransform.apply(
             self.model,
             prefill_only=bool(compiler_options.get("prefill_only", False)),
+            num_devices=num_devices,
             num_cores=num_cores,
             qaic_config=qaic_config,
             prefill_seq_len=prefill_seq_len,

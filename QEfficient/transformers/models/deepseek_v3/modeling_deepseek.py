@@ -797,8 +797,6 @@ def _deepseek_route_tokens(module: nn.Module, hidden_states: torch.Tensor):
 
 class QEffDeepseekV3MoE(QEffMoEBlockMixin, nn.Module):
     supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM)
-    supports_moe_prefill_blocking = False
-    supports_static_moe_prefill_chunks = False
     supports_moe_decode_bmm = True
 
     def __qeff_init__(

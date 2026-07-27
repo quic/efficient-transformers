@@ -149,8 +149,6 @@ class QEffGrok1MoeBlock(QEffMoEBlockMixin, nn.Module):
 
     _moe_return_router_logits = True
     supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM)
-    supports_moe_prefill_blocking = False
-    supports_static_moe_prefill_chunks = False
     supports_moe_decode_bmm = True
 
     def transform_weights(self) -> MoEWeights:

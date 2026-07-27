@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import os
 from collections import defaultdict
 from functools import partial
 from pathlib import Path
@@ -316,8 +315,6 @@ class QEffGemma4TextExperts(Gemma4TextExperts):
 
 class QEffGemma4TextMoeBlock(QEffMoEBlockMixin, nn.Module):
     supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM)
-    supports_moe_prefill_blocking = False
-    supports_static_moe_prefill_chunks = False
     supports_moe_decode_bmm = True
 
     def __init__(
@@ -514,10 +511,6 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
-
-
-EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
-EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "296"))
 
 
 class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):

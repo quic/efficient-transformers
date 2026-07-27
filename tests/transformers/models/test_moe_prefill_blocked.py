@@ -25,6 +25,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     PrefillOnlyChunkedTransform,
     PrefillOnlyTransform,
 )
+from QEfficient.transformers.moe import MoEFlavour
 
 MODEL_KWARGS = {"attn_implementation": "eager"}
 
@@ -313,7 +314,8 @@ def _make_qeff_moe_block(original_block: nn.Module, flavour_name: str, options: 
     OptimizedMoEWeightsTransform.apply(qeff_block)
     qeff_block._moe_flavour = flavour
     if flavour is MoEFlavour.EXPERT_PARALLEL:
-        qeff_block.expert_parallel_num_nsp = 2
+        qeff_block.num_parallelized_experts = 2
+        qeff_block.num_pipeline_stages = 2
         qeff_block.expert_parallel_num_packed_chunks = 2
         OptimizedMoEExpertParallelWeightsTransform.apply(qeff_block)
     return qeff_block
@@ -443,7 +445,7 @@ def test_grok1_external_moe_block_does_not_advertise_expert_parallel():
     _, transformed = ExternalOptimizedMoEMapperTransform.apply(qeff_block)
 
     assert transformed
-    assert not qeff_block.supports_moe_prefill_blocking
+    assert MoEFlavour.EXPERT_PARALLEL not in qeff_block.get_supported_moe_flavours()
     with pytest.raises(NotImplementedError, match="expert_parallel"):
         OptimizedMoEExportConfigTransform.apply(
             qeff_block,
@@ -473,14 +475,15 @@ def test_glm4_moe_blocked_prefill_forward_parity():
         chunked_model,
         prefill_only=True,
         num_cores=2,
-        qaic_config={"moe_config": {"packed_chunk_size": 256}},
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": 256}},
         prefill_seq_len=8,
     )
     OptimizedMoEExpertParallelWeightsTransform.apply(chunked_model)
     chunked_block = next(module for module in chunked_model.modules() if isinstance(module, QEffGlm4MoeMoE))
 
     assert chunked_block._moe_flavour is MoEFlavour.EXPERT_PARALLEL
-    assert chunked_block.expert_parallel_num_nsp == 2
+    assert chunked_block.num_parallelized_experts == 2
+    assert chunked_block.num_pipeline_stages == 2
     assert chunked_block.expert_parallel_num_packed_chunks == 1
 
     x = torch.randn(1, 8, config.hidden_size)
@@ -511,7 +514,7 @@ def test_glm4_moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
         prefill_seq_len=512,
         ctx_len=512,
         num_cores=2,
-        qaic_config={"moe_config": {"packed_chunk_size": 256}},
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": 256}},
     )
     onnx_path = qeff.export(
         tmp_path / "prefill-subfunction",
@@ -519,7 +522,7 @@ def test_glm4_moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
         prefill_seq_len=512,
         enable_chunking=True,
         num_cores=2,
-        qaic_config={"moe_config": {"packed_chunk_size": 256}},
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": 256}},
         use_onnx_subfunctions=True,
         offload_pt_weights=False,
     )
@@ -532,7 +535,7 @@ def test_glm4_moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
         op_counts = Counter(node.op_type for node in function_proto.node)
         assert op_counts["Sin"] == 0
         assert op_counts["Cos"] == 0
-        # prefill_seq_len=512 and packed_chunk_size=256 gives two packed chunks.
+        # prefill_seq_len=512 and expert_parallel_chunk_size=256 gives two packed chunks.
         # With n_routed_experts=4 and num_cores=2, each layer has two expert slots.
         assert op_counts["CtxGather3D"] == 12
         assert op_counts["CtxScatter3D"] == 4
@@ -569,7 +572,7 @@ def test_glm4_moe_kv_blocking_transform_and_prefill_export(tmp_path):
         enable_chunking=True,
         use_onnx_subfunctions=True,
         num_cores=2,
-        qaic_config={"moe_config": {"packed_chunk_size": 256}},
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": 256}},
         offload_pt_weights=False,
     )
     onnx_model = onnx.load(str(onnx_path), load_external_data=False)
@@ -638,14 +641,15 @@ def test_qwen3moe_blocked_forward_parity():
         chunked_model,
         prefill_only=True,
         num_cores=2,
-        qaic_config={"moe_config": {"packed_chunk_size": 256}},
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": 256}},
         prefill_seq_len=8,
     )
     OptimizedMoEExpertParallelWeightsTransform.apply(chunked_model)
     chunked = next(module for module in chunked_model.modules() if isinstance(module, QEffQwen3MoeSparseMoeBlock))
 
     assert chunked._moe_flavour is MoEFlavour.EXPERT_PARALLEL
-    assert chunked.expert_parallel_num_nsp == 2
+    assert chunked.num_parallelized_experts == 2
+    assert chunked.num_pipeline_stages == chunked.num_experts // chunked.num_parallelized_experts
     assert chunked.expert_parallel_num_packed_chunks == 1
 
     x = torch.randn(1, 8, config.hidden_size)
@@ -713,14 +717,14 @@ def test_qwen3moe_disagg_compile_uses_distinct_decode_and_prefill_onnx(tmp_path,
         prefill_seq_len=64,
         ctx_len=128,
         num_cores=2,
-        qaic_config={"moe_config": {"packed_chunk_size": 32}},
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": 32}},
     )
     prefill_onnx_path = qeff.export(
         tmp_path / "prefill-export",
         prefill_only=True,
         prefill_seq_len=64,
         num_cores=2,
-        qaic_config={"moe_config": {"packed_chunk_size": 32}},
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": 32}},
         enable_chunking=True,
         offload_pt_weights=False,
     )
@@ -730,7 +734,7 @@ def test_qwen3moe_disagg_compile_uses_distinct_decode_and_prefill_onnx(tmp_path,
         prefill_seq_len=64,
         ctx_len=128,
         num_cores=2,
-        qaic_config={"moe_config": {"packed_chunk_size": 32}},
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": 32}},
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
         prefill_only=True,
@@ -759,7 +763,7 @@ def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
         prefill_seq_len=512,
         ctx_len=512,
         num_cores=2,
-        qaic_config={"moe_config": {"packed_chunk_size": 256}},
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": 256}},
     )
     onnx_path = qeff.export(
         tmp_path / "prefill-subfunction",
@@ -767,7 +771,7 @@ def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
         enable_chunking=True,
         prefill_seq_len=512,
         num_cores=2,
-        qaic_config={"moe_config": {"packed_chunk_size": 256}},
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": 256}},
         use_onnx_subfunctions=True,
         offload_pt_weights=False,
     )
@@ -795,8 +799,12 @@ def test_qwen3moe_prefill_chunked_subfunction_export_contains_cumsum_custom_ops(
     assert "CtxScatter3D" in used_op_types
     assert "CtxGather3D" in used_op_types
     assert qeff.hash_params["moe_prefill_num_packed_chunks"] == 2
-    assert qeff.hash_params["moe_prefill_packed_chunk_size"] == 256
-    assert qeff.hash_params["moe_prefill_num_nsp"] == 2
+    assert qeff.hash_params["moe_prefill_expert_parallel_chunk_size"] == 256
+    assert qeff.hash_params["moe_prefill_num_parallelized_experts"] == 2
+    assert (
+        qeff.hash_params["moe_prefill_num_pipeline_stages"]
+        == config.num_experts // qeff.hash_params["moe_prefill_num_parallelized_experts"]
+    )
     assert [256] not in slice_starts
 
 
@@ -826,12 +834,16 @@ def test_gptoss_blocked_forward_parity():
         prefill_only=True,
         num_cores=2,
         prefill_seq_len=8,
-        qaic_config={"moe_config": {"flavour": "expert_parallel", "packed_chunk_size": 256}},
+        qaic_config={"moe_config": {"flavour": "expert_parallel", "expert_parallel_chunk_size": 256}},
     )
     blocks_chunked = [m for _, m in chunked_model.named_modules() if isinstance(m, QEffGptOssMLP)]
     assert blocks_chunked
     assert blocks_chunked[0]._moe_flavour is MoEFlavour.EXPERT_PARALLEL
-    assert blocks_chunked[0].expert_parallel_num_nsp == 2
+    assert blocks_chunked[0].num_parallelized_experts == 2
+    assert (
+        blocks_chunked[0].num_pipeline_stages
+        == blocks_chunked[0].num_experts // blocks_chunked[0].num_parallelized_experts
+    )
     assert blocks_chunked[0].expert_parallel_num_packed_chunks == 1
 
     with torch.no_grad():
@@ -970,7 +982,7 @@ def test_gptoss_prefill_chunked_export_traces_packed_chunks(tmp_path):
         prefill_seq_len=512,
         ctx_len=512,
         num_cores=2,
-        qaic_config={"moe_config": {"packed_chunk_size": 256}},
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": 256}},
     )
     onnx_path = qeff.export(
         tmp_path / "prefill-subfunction-512",
@@ -978,7 +990,7 @@ def test_gptoss_prefill_chunked_export_traces_packed_chunks(tmp_path):
         enable_chunking=True,
         prefill_seq_len=512,
         num_cores=2,
-        qaic_config={"moe_config": {"packed_chunk_size": 256}},
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": 256}},
         use_onnx_subfunctions=True,
         offload_pt_weights=False,
     )
@@ -999,7 +1011,11 @@ def test_gptoss_prefill_chunked_export_traces_packed_chunks(tmp_path):
                 slice_starts.append(constants[node.input[1]])
 
     assert qeff.hash_params["moe_prefill_num_packed_chunks"] == 2
-    assert qeff.hash_params["moe_prefill_packed_chunk_size"] == 256
-    assert qeff.hash_params["moe_prefill_num_nsp"] == 2
+    assert qeff.hash_params["moe_prefill_expert_parallel_chunk_size"] == 256
+    assert qeff.hash_params["moe_prefill_num_parallelized_experts"] == 2
+    assert (
+        qeff.hash_params["moe_prefill_num_pipeline_stages"]
+        == config.num_local_experts // qeff.hash_params["moe_prefill_num_parallelized_experts"]
+    )
     assert [256] not in slice_starts
     assert op_types.count("CtxGather3D") >= 2 * op_types.count("CtxScatter3DInt")

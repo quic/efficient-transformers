@@ -56,10 +56,14 @@ prefill_qpc_path = qeff_model.compile(
     user_tiled=True,
     num_speculative_tokens=None,
     prefill_only=True,
-    moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
     enable_chunking=True,
     use_onnx_subfunctions=True,
-    qaic_config={"enable_blocking": True, "blocking_mode": "kv", "num_kv_blocks": 2},
+    qaic_config={
+        "enable_blocking": True,
+        "blocking_mode": "kv",
+        "num_kv_blocks": 2,
+        "moe_config": {"expert_parallel_chunk_size": MOE_PREFILL_PACKED_CHUNK_SIZE},
+    },
 )
 
 inputs = tokenizer(prompt, return_tensors="np", padding=True)
