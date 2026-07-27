@@ -64,7 +64,7 @@ def _discover_onnx_jobs(base_onnx_dir: str):
 
         for f in layer_dir.iterdir():
             if f.name.startswith("DeepseekV3ForCausalLM_layer_tmp_") and f.suffix == ".onnx":
-                # device_group fixed to single device "0"
+                # device_ids fixed to single device "0"
                 onnx_jobs.append((f, layer_dir, layer_window, layer_indices, "0"))
 
     if not onnx_jobs:
@@ -99,7 +99,7 @@ def write_custom_io_yaml(path: Path, indices):
 
 
 def compile_one(job):
-    onnx_path, layer_dir, layer_window, layer_indices, device_group = job
+    onnx_path, layer_dir, layer_window, layer_indices, device_ids = job
 
     layer_tag = onnx_path.stem.replace("DeepseekV3ForCausalLM_layer_tmp_", "")
 
@@ -129,8 +129,8 @@ def compile_one(job):
         "mxint8_kv_cache",
         "--num_cores",
         "16",
-        "--device_group",
-        device_group,
+        "--device_ids",
+        device_ids,
         "--mos",
         "1",
         "--aic_enable_depth_first",
@@ -142,8 +142,7 @@ def compile_one(job):
 
     for attempt in range(1, MAX_RETRIES + 1):
         print(
-            f"[START ] layer {layer_window[0]}_{layer_window[1]} "
-            f"device {device_group} (attempt {attempt}/{MAX_RETRIES})"
+            f"[START ] layer {layer_window[0]}_{layer_window[1]} device {device_ids} (attempt {attempt}/{MAX_RETRIES})"
         )
 
         proc = None

@@ -375,7 +375,7 @@ def cloud_ai_100_exec_kv(
         import transformers
         import QEfficient
         base_path, onnx_model_path = QEfficient.export(model_name="gpt2")
-        qpc_path = QEfficient.compile(onnx_path=onnx_model_path, qpc_path=os.path.join(base_path, "qpc"), num_cores=14, device_group=[0])
+        qpc_path = QEfficient.compile(onnx_path=onnx_model_path, qpc_path=os.path.join(base_path, "qpc"), num_cores=14, device_ids=[0])
         tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")
         exec_info = QEfficient.cloud_ai_100_exec_kv(tokenizer=tokenizer, qpc_path=qpc_path, prompt="Hi there!!", device_ids=[0])
 

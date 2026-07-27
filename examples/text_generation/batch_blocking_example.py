@@ -23,7 +23,7 @@ def main():
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
     parser.add_argument(
-        "--device-group",
+        "--device-ids",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         default=[36, 37, 38, 39, 40, 41, 42, 43],
         help="Device IDs (comma-separated) e.g. [0,1]",

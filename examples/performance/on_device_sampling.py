@@ -84,7 +84,7 @@ def main(args, **kwargs):
         batch_size=args.batch_size,
         full_batch_size=args.full_batch_size,
         num_cores=args.num_cores,
-        num_devices=(0 if args.device_group is None else len(args.device_group)),
+        num_devices=(0 if args.device_ids is None else len(args.device_ids)),
         mxfp6_matmul=args.mxfp6,
         mxint8_kv_cache=args.mxint8,
         num_speculative_tokens=0,
@@ -101,7 +101,7 @@ def main(args, **kwargs):
         tokenizer=load_hf_tokenizer(pretrained_model_name_or_path=args.model_name),
         prompts=args.prompt,
         prompts_txt_file_path=args.prompts_txt_file_path,
-        device_ids=args.device_group,
+        device_ids=args.device_ids,
         generation_len=args.generation_len,
         include_sampler=include_sampler,
         return_pdfs=return_pdfs,
@@ -120,7 +120,7 @@ if __name__ == "__main__":
             --ctx-len 256 \
             --generation-len 20 \
             --full-batch-size 2 \
-            --device-group [0,1,2,3] \
+            --device-ids [0,1,2,3] \
             --num-cores 16 \
             --mxint8-kv-cache \
             --mxfp6-matmul \
@@ -140,7 +140,7 @@ if __name__ == "__main__":
             --ctx-len 256 \
             --generation-len 20 \
             --batch-size 2 \
-            --device-group [0,1,2,3] \
+            --device-ids [0,1,2,3] \
             --num-cores 16 \
             --mxint8-kv-cache \
             --mxfp6-matmul \
@@ -160,7 +160,7 @@ if __name__ == "__main__":
             --ctx-len 256 \
             --generation-len 20 \
             --full-batch-size 2 \
-            --device-group [0,1,2,3] \
+            --device-ids [0,1,2,3] \
             --num-cores 16 \
             --mxint8-kv-cache \
             --mxfp6-matmul \
@@ -201,8 +201,8 @@ if __name__ == "__main__":
         "--num_cores", "--num-cores", type=int, required=True, help="Number of cores to compile on Cloud AI 100"
     )
     parser.add_argument(
-        "--device_group",
-        "--device-group",
+        "--device_ids",
+        "--device-ids",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         help="Cloud AI 100 device ids (comma-separated) e.g. [0,1]",
     )

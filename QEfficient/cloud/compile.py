@@ -51,8 +51,8 @@ if __name__ == "__main__":
         help="Path to custom IO file",
     )
     parser.add_argument(
-        "--device_group",
-        "--device-group",
+        "--device_ids",
+        "--device-ids",
         required=True,
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         help="Cloud AI 100 device ids (comma-separated) e.g. [0,1] ",

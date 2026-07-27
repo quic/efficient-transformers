@@ -21,7 +21,7 @@ def is_networks_loaded(stdout):
     return False
 
 
-def get_available_device_id():
+def get_available_device_ids():
     """
     API to check available device id.
 

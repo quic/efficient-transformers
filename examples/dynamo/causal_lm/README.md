@@ -51,7 +51,7 @@ python examples/dynamo/causal_lm/basic_dynamo_inference.py \
 | `--num-cores` | `16` | Number of AI 100 cores |
 | `--aic-hw-version` | `ai100` | Hardware version |
 | `--num-hidden-layers` | `-1` | Override model depth (for debugging) |
-| `--device-group` | `None` | Device IDs, e.g. `[0,1]` |
+| `--device-ids` | `None` | Device IDs, e.g. `[0,1]` |
 
 This example:
 - Loads the model via `QEFFAutoModelForCausalLM.from_pretrained`

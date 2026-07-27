@@ -198,7 +198,7 @@ def test_dynamo_generate_fp16(model_type, model_id, tmp_export_dir):
     output = qeff_model.generate(
         tokenizer=tokenizer,
         prompts=["hello world"],
-        device_id=[0],
+        device_ids=[0],
     )
     assert output is not None
     assert output.generated_texts is not None
@@ -259,7 +259,7 @@ def test_dynamo_hw_hf_parity(model_type, model_id, tmp_export_dir):
     qaic_output = qeff_model.generate(
         tokenizer=tokenizer,
         prompts=["hello world"],
-        device_id=[0],
+        device_ids=[0],
     )
 
     assert qaic_output is not None, "QAIC generate returned None"
@@ -315,7 +315,7 @@ def test_dynamo_cb_generate(model_type, model_id, tmp_export_dir):
     output = qeff_model.generate(
         tokenizer=tokenizer,
         prompts=prompts,
-        device_id=[0],
+        device_ids=[0],
     )
     assert output is not None
     assert output.generated_texts is not None
