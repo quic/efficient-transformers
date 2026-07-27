@@ -927,6 +927,76 @@ def _assert_qwen_hf_qeff_ort_parity(model_type: str, tmp_path, *, prefill_only: 
         assert np.allclose(qeff_logits, ort_logits, atol=atol, rtol=1e-4)
 
 
+def _kimi_k25_prompt_inputs(processor):
+    from PIL import Image
+
+    image = Image.new("RGB", (64, 64), color=(128, 64, 32))
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": image},
+                {"type": "text", "text": "Describe."},
+            ],
+        },
+    ]
+    inputs = processor(
+        messages=messages,
+        add_generation_prompt=True,
+        tokenize=False,
+        return_tensors="pt",
+    )
+    return {name: (value.to("cpu") if torch.is_tensor(value) else value) for name, value in inputs.items()}
+
+
+def _kimi_k25_qeff_lang_inputs(qeff_model, inputs, vision_embeds):
+    seq_len = inputs["input_ids"].shape[1]
+    lang_inputs = deepcopy(qeff_model.model.get_dummy_inputs(kv_offload=True, prefill_seq_len=seq_len)["lang"])
+    lang_inputs["input_ids"] = inputs["input_ids"].clone()
+    lang_inputs["position_ids"] = torch.where(
+        inputs["attention_mask"] > 0,
+        torch.arange(seq_len, dtype=torch.int64).view(1, seq_len),
+        -1,
+    )
+    lang_inputs["vision_embeds"] = vision_embeds
+    lang_inputs["image_idx"] = torch.zeros((1, 1), dtype=torch.int64)
+    return lang_inputs
+
+
+@pytest.mark.llm_model
+def test_kimi_k25_quickcheck_hf_qeff_vision_logits_parity():
+    from tests.utils.load_kimi_utils import load_kimi_k25_layer_subset_model
+
+    model_id = "moonshotai/Kimi-K2.5"
+    try:
+        model_hf, _, processor = load_kimi_k25_layer_subset_model(num_vision_layers=1, num_text_layers=1)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    inputs = _kimi_k25_prompt_inputs(processor)
+    with torch.no_grad():
+        hf_outputs = model_hf(**inputs, use_cache=False, return_dict=True)
+        hf_logits = hf_outputs.logits[:, -1:, :].detach().float().numpy()
+
+    qeff_model = QEFFAutoModelForImageTextToText(
+        deepcopy(model_hf),
+        kv_offload=True,
+        config=model_hf.config,
+        torch_dtype=torch.float32,
+    )
+    grid_thws = inputs["grid_thws"].to(torch.int64)
+    h_shape = torch.ones((int(grid_thws[0, 1].item()),), dtype=torch.int64)
+    w_shape = torch.ones((int(grid_thws[0, 2].item()),), dtype=torch.int64)
+
+    with torch.no_grad():
+        vision_embeds = qeff_model.vision_model.model(inputs["pixel_values"], h_shape, w_shape)
+        lang_inputs = _kimi_k25_qeff_lang_inputs(qeff_model, inputs, vision_embeds)
+        qeff_logits = qeff_model.lang_model.model(**lang_inputs)[0].detach().float().numpy()
+
+    assert qeff_logits.shape == hf_logits.shape
+    assert np.allclose(hf_logits, qeff_logits, atol=1e-4, rtol=1e-4)
+
+
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     ("model_type", "model_id"),

@@ -2340,6 +2340,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         vision_inputs_fp16 = {"pixel_values", "image_masks"}
         vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
 
+        # Required for KIMI-K25
         grid_thws_val = inputs.pop("grid_thws", None)
         if grid_thws_val is not None:
             h_val = int(grid_thws_val[0, 1].item())

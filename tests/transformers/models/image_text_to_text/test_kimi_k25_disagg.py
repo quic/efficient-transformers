@@ -17,10 +17,9 @@ from PIL import Image
 
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.utils.load_kimi_utils import (
+from tests.utils.load_kimi_utils import (
     LOADED_EXPERT_IDS,
     NUM_EXPERTS_PER_TOKEN,
-    ensure_torch_fx_import_compatibility,
     load_kimi_k25_class,
     load_layer_subset_model,
     prepare_config,
@@ -120,7 +119,6 @@ def _update_retained_states(target_inputs: dict[str, np.ndarray], source_outputs
 
 def _load_kimi_subset_model():
     set_deterministic(1234)
-    ensure_torch_fx_import_compatibility()
     model_path = resolve_model_path()
     config = prepare_config(model_path)
     kimi_cls = load_kimi_k25_class(model_path)

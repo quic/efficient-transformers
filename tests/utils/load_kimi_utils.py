@@ -22,12 +22,8 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 from transformers import AutoConfig, AutoProcessor, AutoTokenizer
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
-from transformers.utils import import_utils as hf_import_utils
 
 KIMI_K25_MODEL_NAME = "moonshotai/Kimi-K2.5"
-DEFAULT_MODEL_PATH = Path(
-    "/home/huggingface_hub/models--moonshotai--Kimi-K2.5/snapshots/4d01dfe0332d63057c186e0b262165819efb6611"
-)
 NUM_VISION_LAYERS = 2
 NUM_TEXT_LAYERS = 2
 LOADED_EXPERT_IDS = (0, 1, 2, 3)
@@ -54,23 +50,6 @@ def set_deterministic(seed: int):
 def resolve_model_path(model_name: str = KIMI_K25_MODEL_NAME) -> Path:
     os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
     return Path(snapshot_download(repo_id=model_name, cache_dir=os.environ.get("HF_HUB_CACHE")))
-
-
-def ensure_torch_fx_import_compatibility():
-    if hasattr(hf_import_utils, "is_torch_fx_available"):
-        return
-
-    def _is_torch_fx_available() -> bool:
-        if not hf_import_utils.is_torch_available():
-            return False
-        try:
-            import torch.fx  # noqa: F401
-
-            return True
-        except Exception:
-            return False
-
-    hf_import_utils.is_torch_fx_available = _is_torch_fx_available
 
 
 def patch_kimi_tie_weights_compat(kimi_cls):
@@ -122,7 +101,6 @@ def patch_deepseek_init_weights_compat(kimi_cls):
 
 
 def load_kimi_k25_class(model_path_or_name):
-    ensure_torch_fx_import_compatibility()
     kimi_cls = get_class_from_dynamic_module(
         "modeling_kimi_k25.KimiK25ForConditionalGeneration",
         str(model_path_or_name),
@@ -396,7 +374,6 @@ def load_kimi_k25_layer_subset_model(
     seed: int = 1234,
 ):
     set_deterministic(seed)
-    ensure_torch_fx_import_compatibility()
     resolved_model_path = Path(model_path) if model_path is not None else resolve_model_path()
     config = prepare_config(resolved_model_path)
     kimi_cls = load_kimi_k25_class(resolved_model_path)
