@@ -282,7 +282,6 @@ class QEffGemma4TextExperts(Gemma4TextExperts):
     def __qeff_init__(self):
         # Derive gather-friendly split projections from the checkpoint's fused
         # gate_up_proj/down_proj, without changing on-disk checkpoint format.
-        # Mirrors QEffQwen3_5MoeExperts.__qeff_init__.
         gate_up_proj = self.gate_up_proj.detach()
         down_proj = self.down_proj.detach()
         self.gate_proj = nn.Parameter(gate_up_proj[:, : self.intermediate_dim, :].transpose(1, 2), requires_grad=False)
