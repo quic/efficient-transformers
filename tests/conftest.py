@@ -14,6 +14,8 @@ from pathlib import Path
 import pytest
 from transformers import logging as hf_logging
 
+pytest_plugins = ["tests.ci_perf.conftest"]
+
 from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.logging_utils import logger
 
