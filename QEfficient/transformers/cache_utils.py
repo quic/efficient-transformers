@@ -486,29 +486,33 @@ class QEffDynamicLayer(CacheLayerMixin):
         # Update the cache
         if self.keys is None:
             self.keys = key_states.reshape(
-                key_states.shape[0] * key_states.shape[1], key_states.shape[2], key_states.shape[3]
-            ).unsqueeze(0)
+                1, key_states.shape[0] * key_states.shape[1], key_states.shape[2], key_states.shape[3]
+            )
             self.values = value_states.reshape(
-                value_states.shape[0] * value_states.shape[1], value_states.shape[2], value_states.shape[3]
-            ).unsqueeze(0)
+                1, value_states.shape[0] * value_states.shape[1], value_states.shape[2], value_states.shape[3]
+            )
             self._mark_initialized(self.keys)
         else:
+            BH = key_states.shape[0] * key_states.shape[1]
+            QL = key_states.shape[2]
+            D = key_states.shape[3]
             if self.keys.shape[0] != 1:
-                self.keys = self.keys.reshape(
-                    self.keys.shape[0] * self.keys.shape[1], self.keys.shape[2], self.keys.shape[3]
-                ).unsqueeze(0)
-                self.values = self.values.reshape(
-                    self.values.shape[0] * self.values.shape[1], self.values.shape[2], self.values.shape[3]
-                ).unsqueeze(0)
+                self.keys = self.keys.reshape(1, BH, self.keys.shape[2], D)
+                self.values = self.values.reshape(1, BH, self.keys.shape[2], D)
             self._mark_initialized(self.keys)
             position_ids = cache_kwargs.get("position_ids")
+            NKV = BH / position_ids.shape[0]
+            pos_folded = position_ids.unsqueeze(1).repeat(1, NKV, 1)
+            pos_folded = pos_folded.reshape(1, BH, -1)
+            key_folded = key_states.reshape(1, BH, -1, D)
+            value_folded = value_states.reshape(1, BH, -1, D)
 
             # Scatter
-            self.keys = CtxChunkScatterBatchFunc.apply(self.keys, position_ids, key_states)
-            self.values = CtxChunkScatterBatchFunc.apply(self.values, position_ids, value_states)
+            self.keys = CtxChunkScatterBatchFunc.apply(self.keys, pos_folded, key_folded)
+            self.values = CtxChunkScatterBatchFunc.apply(self.values, pos_folded, value_folded)
 
     def update(
-        self,
+        self,   
         key_states: torch.Tensor,
         value_states: torch.Tensor,
         cache_kwargs: Optional[dict[str, Any]] = None,
