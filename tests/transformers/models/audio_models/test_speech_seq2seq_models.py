@@ -371,7 +371,7 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
 
 @pytest.mark.full_layers
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.parametrize("model_name", test_models)
 def test_full_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
     torch.manual_seed(42)
@@ -381,7 +381,7 @@ def test_full_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
 
 
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.parametrize("model_name", test_models)
 def test_few_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
     torch.manual_seed(42)
@@ -390,7 +390,7 @@ def test_few_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
 
 # =================== QNN Tests ======================
 @pytest.mark.on_qaic
-@pytest.mark.llm_model
+@pytest.mark.embedding_audio_model
 @pytest.mark.qnn
 @pytest.mark.skip(reason="Whisper is currently not supported on QNN")
 @pytest.mark.parametrize("model_name", test_models)
