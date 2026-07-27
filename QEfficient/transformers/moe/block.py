@@ -46,7 +46,13 @@ class QEffMoEBlockMixin(metaclass=ABCMeta):
     # Whether forward returns (out, router_logits) to match the HF MoE convention.
     _moe_return_router_logits: bool = False
     # Expert-parallel knobs, set by OptimizedMoETransform when flavour is EXPERT_PARALLEL.
-    expert_parallel_num_nsp: Optional[int] = None
+    num_devices: int = 1
+    cores_per_expert: int = 1
+    total_avl_cores: Optional[int] = None
+    num_pipeline_stages: Optional[int] = None
+    num_parallelized_experts: Optional[int] = None
+    experts_per_soc: Optional[int] = None
+    tree_reduce: bool = False
     expert_parallel_num_packed_chunks: int = 1
     # Set by OptimizedMoEWeightsTransform after model-local canonicalization.
     weights_transformed: bool = False
@@ -63,14 +69,6 @@ class QEffMoEBlockMixin(metaclass=ABCMeta):
     def __qeff_init__(self) -> None:
         if "weights_transformed" not in self.__dict__:
             self.weights_transformed = False
-
-    @property
-    def expert_blocking_num_nsp(self) -> Optional[int]:
-        return self.expert_parallel_num_nsp
-
-    @expert_blocking_num_nsp.setter
-    def expert_blocking_num_nsp(self, value: Optional[int]) -> None:
-        self.expert_parallel_num_nsp = value
 
     @property
     def expert_blocking_num_packed_chunks(self) -> int:
@@ -120,9 +118,8 @@ class QEffMoEBlockMixin(metaclass=ABCMeta):
 
         dense, _ = resolve_routing(routing, weights.num_experts)
         if flavour is MoEFlavour.EXPERT_PARALLEL:
-            num_nsp = getattr(self, "expert_parallel_num_nsp", None)
-            if num_nsp is None:
-                num_nsp = getattr(self, "expert_blocking_num_nsp", None) or weights.num_experts
+            num_pipeline_stages = getattr(self, "num_pipeline_stages", None) or weights.gate.shape[1]
+            num_parallelized_experts = getattr(self, "num_parallelized_experts", None) or weights.gate.shape[0]
             num_packed_chunks = getattr(
                 self,
                 "expert_parallel_num_packed_chunks",
@@ -133,7 +130,11 @@ class QEffMoEBlockMixin(metaclass=ABCMeta):
                 dense,
                 weights,
                 profile,
-                num_nsp=num_nsp,
+                num_pipeline_stages=num_pipeline_stages,
+                num_parallelized_experts=num_parallelized_experts,
+                num_devices=getattr(self, "num_devices", 1),
+                experts_per_soc=getattr(self, "experts_per_soc", None),
+                tree_reduce=getattr(self, "tree_reduce", False),
                 num_packed_chunks=num_packed_chunks,
             )
         return moe_simple_loop(x, dense, weights, profile, prescale=profile.scale_mode == "pre")

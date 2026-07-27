@@ -1424,6 +1424,59 @@ def _iter_optimized_moe_modules(model: nn.Module):
             yield module
 
 
+def _get_moe_num_experts(module: nn.Module) -> Optional[int]:
+    weights = getattr(module, "moe_weights", None)
+    if weights is not None:
+        return int(weights.num_experts)
+    num_experts = getattr(module, "num_experts", None)
+    if num_experts is not None:
+        return int(num_experts)
+    experts = getattr(module, "experts", None)
+    num_experts = getattr(experts, "num_experts", None)
+    if num_experts is not None:
+        return int(num_experts)
+    gate = getattr(module, "gate", None)
+    num_experts = getattr(gate, "num_experts", None)
+    return int(num_experts) if num_experts is not None else None
+
+
+def _resolve_expert_parallel_layout(
+    *,
+    num_experts: int,
+    num_devices: int,
+    num_cores: int,
+    cores_per_expert: int,
+) -> tuple[int, int, int, Optional[int]]:
+    if num_devices <= 0:
+        raise ValueError("num_devices must be greater than zero for MoE expert parallelism")
+    if num_cores <= 0:
+        raise ValueError("num_cores must be greater than zero for MoE expert parallelism")
+    if cores_per_expert <= 0:
+        raise ValueError("cores_per_expert must be greater than zero for MoE expert parallelism")
+    total_avl_cores = num_devices * num_cores
+    if (num_experts * cores_per_expert) % total_avl_cores != 0:
+        raise ValueError(
+            "num_experts * cores_per_expert "
+            f"({num_experts * cores_per_expert}) must be divisible by total_avl_cores ({total_avl_cores})"
+        )
+    num_pipeline_stages = (num_experts * cores_per_expert) // total_avl_cores
+    if num_pipeline_stages <= 0:
+        raise ValueError(f"num_pipeline_stages ({num_pipeline_stages}) must be greater than zero")
+    if num_experts % num_pipeline_stages != 0:
+        raise ValueError(
+            f"num_experts ({num_experts}) must be divisible by num_pipeline_stages ({num_pipeline_stages})"
+        )
+    num_parallelized_experts = num_experts // num_pipeline_stages
+    if num_parallelized_experts % num_devices != 0:
+        raise ValueError(
+            f"num_parallelized_experts ({num_parallelized_experts}) must be divisible by num_devices ({num_devices})"
+        )
+    if num_devices > 1 and num_cores % cores_per_expert != 0:
+        raise ValueError(f"num_cores ({num_cores}) must be divisible by cores_per_expert ({cores_per_expert})")
+    experts_per_soc = num_cores // cores_per_expert if num_devices > 1 else None
+    return total_avl_cores, num_pipeline_stages, num_parallelized_experts, experts_per_soc
+
+
 class OptimizedMoEMapperTransform(ModuleMappingTransform):
     """Replace in-tree MoE components with QEff implementations."""
 
@@ -1484,8 +1537,6 @@ class ExternalOptimizedMoEMapperTransform(ExternalModuleMapperTransform):
             "_moe_return_router_logits": True,
             "_moe_flavour": MoEFlavour.DECODE_BMM,
             "supported_moe_flavours": QEffGrok1MoeBlock.supported_moe_flavours,
-            "supports_moe_prefill_blocking": QEffGrok1MoeBlock.supports_moe_prefill_blocking,
-            "supports_static_moe_prefill_chunks": QEffGrok1MoeBlock.supports_static_moe_prefill_chunks,
             "supports_moe_decode_bmm": QEffGrok1MoeBlock.supports_moe_decode_bmm,
             "__qeff_init__": QEffMoEBlockMixin.__qeff_init__,
         },
@@ -1501,8 +1552,6 @@ class ExternalOptimizedMoEMapperTransform(ExternalModuleMapperTransform):
             "_moe_return_router_logits": False,
             "_moe_flavour": MoEFlavour.DECODE_BMM,
             "supported_moe_flavours": QEffDeepseekV3MoE.supported_moe_flavours,
-            "supports_moe_prefill_blocking": QEffDeepseekV3MoE.supports_moe_prefill_blocking,
-            "supports_static_moe_prefill_chunks": QEffDeepseekV3MoE.supports_static_moe_prefill_chunks,
             "supports_moe_decode_bmm": QEffDeepseekV3MoE.supports_moe_decode_bmm,
             "__qeff_init__": QEffDeepseekV3MoE.__qeff_init__,
         },
@@ -1533,6 +1582,7 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
         model: nn.Module,
         *,
         prefill_only: bool = False,
+        num_devices: int = 1,
         num_cores: int = DEFAULT_AIC_NUM_CORES,
         qaic_config: Optional[dict] = None,
         prefill_seq_len: Optional[int] = None,
@@ -1543,24 +1593,29 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
         moe_config = (qaic_config or {}).get("moe_config", {}) or {}
         requested_flavour = moe_config.get("flavour")
 
-        num_nsp = int(moe_config.get("num_nsp", num_cores))
-        packed_chunk_size_requested = (
-            "packed_chunk_size" in moe_config and moe_config.get("packed_chunk_size") is not None
+        if "num_nsp" in moe_config:
+            logger.warning("qaic_config['moe_config']['num_nsp'] is deprecated and ignored for MoE expert parallelism.")
+        cores_per_expert = int(moe_config.get("cores_per_expert", 1))
+        tree_reduce = moe_config.get("tree_reduce", False)
+        if not isinstance(tree_reduce, bool):
+            raise TypeError("qaic_config['moe_config']['tree_reduce'] must be a boolean")
+        chunk_size_key = (
+            "expert_parallel_chunk_size" if "expert_parallel_chunk_size" in moe_config else "packed_chunk_size"
         )
-        packed_chunk_size = moe_config.get("packed_chunk_size", MOE_PREFILL_PACKED_CHUNK_SIZE)
-        if packed_chunk_size is None:
-            packed_chunk_size = MOE_PREFILL_PACKED_CHUNK_SIZE
-        packed_chunk_size = int(packed_chunk_size)
-        if num_nsp <= 0:
-            raise ValueError("moe num_nsp must be greater than zero")
-        if packed_chunk_size <= 0:
-            raise ValueError("moe packed_chunk_size must be greater than zero")
+        expert_parallel_chunk_size_requested = chunk_size_key in moe_config and moe_config.get(chunk_size_key) is not None
+        expert_parallel_chunk_size = moe_config.get(chunk_size_key, MOE_PREFILL_PACKED_CHUNK_SIZE)
+        if expert_parallel_chunk_size is None:
+            expert_parallel_chunk_size = MOE_PREFILL_PACKED_CHUNK_SIZE
+        expert_parallel_chunk_size = int(expert_parallel_chunk_size)
+        if expert_parallel_chunk_size <= 0:
+            raise ValueError("moe expert_parallel_chunk_size must be greater than zero")
         compile_seq_len = prefill_seq_len or ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        num_packed_chunks = max(1, -(-compile_seq_len // packed_chunk_size))
+        num_packed_chunks = max(1, -(-compile_seq_len // expert_parallel_chunk_size))
 
         transformed = False
         flavour = None
         uses_expert_parallel = False
+        layout = None
         for module in list(_iter_optimized_moe_modules(model)):
             get_supported_moe_flavours = getattr(module, "get_supported_moe_flavours", None)
             if callable(get_supported_moe_flavours):
@@ -1575,28 +1630,60 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
             module._moe_flavour = flavour
             if flavour is MoEFlavour.EXPERT_PARALLEL:
                 uses_expert_parallel = True
-                module.expert_parallel_num_nsp = num_nsp
+                num_experts = _get_moe_num_experts(module)
+                if num_experts is None:
+                    raise AttributeError(f"{type(module).__name__} does not expose num_experts for expert parallelism")
+                layout = _resolve_expert_parallel_layout(
+                    num_experts=num_experts,
+                    num_devices=int(num_devices),
+                    num_cores=int(num_cores),
+                    cores_per_expert=cores_per_expert,
+                )
+                total_avl_cores, num_pipeline_stages, num_parallelized_experts, experts_per_soc = layout
+                module.num_experts = num_experts
+                module.num_devices = int(num_devices)
+                module.cores_per_expert = cores_per_expert
+                module.total_avl_cores = total_avl_cores
+                module.num_pipeline_stages = num_pipeline_stages
+                module.num_parallelized_experts = num_parallelized_experts
+                module.experts_per_soc = experts_per_soc
+                module.tree_reduce = tree_reduce
                 module.expert_parallel_num_packed_chunks = num_packed_chunks
-                # Backward-compatible attribute names for one transition period.
-                module.expert_blocking_num_nsp = num_nsp
+                module.expert_blocking_packed_chunk_size = expert_parallel_chunk_size
                 module.expert_blocking_num_packed_chunks = num_packed_chunks
             transformed = True
 
-        if transformed and packed_chunk_size_requested and not uses_expert_parallel:
+        if transformed and expert_parallel_chunk_size_requested and not uses_expert_parallel:
             logger.warning(
-                "qaic_config['moe_config']['packed_chunk_size'] is only used for "
+                "qaic_config['moe_config']['expert_parallel_chunk_size'] is only used for "
                 "moe flavour 'expert_parallel'; the provided value will be ignored."
+            )
+        if transformed and ("cores_per_expert" in moe_config or "tree_reduce" in moe_config) and not uses_expert_parallel:
+            logger.warning(
+                "qaic_config['moe_config']['cores_per_expert'] and "
+                "qaic_config['moe_config']['tree_reduce'] are only used for moe flavour 'expert_parallel'."
             )
 
         if transformed and hash_params is not None:
             hash_params["moe_prefill_flavour"] = (flavour or MoEFlavour.DECODE_BMM).value
-            if flavour is MoEFlavour.EXPERT_PARALLEL:
-                hash_params["moe_prefill_num_nsp"] = num_nsp
-                hash_params["moe_prefill_packed_chunk_size"] = packed_chunk_size
+            if flavour is MoEFlavour.EXPERT_PARALLEL and layout is not None:
+                total_avl_cores, num_pipeline_stages, num_parallelized_experts, _ = layout
+                hash_params["moe_prefill_total_avl_cores"] = total_avl_cores
+                hash_params["moe_prefill_cores_per_expert"] = cores_per_expert
+                hash_params["moe_prefill_tree_reduce"] = tree_reduce
+                hash_params["moe_prefill_num_pipeline_stages"] = num_pipeline_stages
+                hash_params["moe_prefill_num_parallelized_experts"] = num_parallelized_experts
+                hash_params["moe_prefill_expert_parallel_chunk_size"] = expert_parallel_chunk_size
                 hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
             else:
                 hash_params.pop("moe_prefill_num_nsp", None)
                 hash_params.pop("moe_prefill_packed_chunk_size", None)
+                hash_params.pop("moe_prefill_total_avl_cores", None)
+                hash_params.pop("moe_prefill_cores_per_expert", None)
+                hash_params.pop("moe_prefill_tree_reduce", None)
+                hash_params.pop("moe_prefill_num_pipeline_stages", None)
+                hash_params.pop("moe_prefill_num_parallelized_experts", None)
+                hash_params.pop("moe_prefill_expert_parallel_chunk_size", None)
                 hash_params.pop("moe_prefill_num_packed_chunks", None)
 
         return model, transformed
@@ -1627,10 +1714,16 @@ class OptimizedMoEExpertParallelWeightsTransform(PytorchTransform):
                 flavour = MoEFlavour(flavour)
 
             if flavour is MoEFlavour.EXPERT_PARALLEL:
-                num_nsp = getattr(module, "expert_parallel_num_nsp", None)
-                if num_nsp is None:
-                    num_nsp = getattr(module, "expert_blocking_num_nsp", None) or weights.num_experts
-                new_weights = pack_moe_weights_for_expert_parallel(weights, int(num_nsp))
+                num_pipeline_stages = getattr(module, "num_pipeline_stages", None)
+                num_parallelized_experts = getattr(module, "num_parallelized_experts", None)
+                if num_pipeline_stages is None or num_parallelized_experts is None:
+                    num_pipeline_stages = weights.gate.shape[1] if weights.gate.ndim == 4 else weights.num_experts
+                    num_parallelized_experts = weights.gate.shape[0] if weights.gate.ndim == 4 else 1
+                new_weights = pack_moe_weights_for_expert_parallel(
+                    weights,
+                    num_pipeline_stages=int(num_pipeline_stages),
+                    num_parallelized_experts=int(num_parallelized_experts),
+                )
             else:
                 new_weights = unpack_moe_weights_from_expert_parallel(weights)
 
@@ -1652,6 +1745,7 @@ class OptimizedMoETransform(PytorchTransform):
         model: nn.Module,
         *,
         prefill_only: bool = False,
+        num_devices: int = 1,
         num_cores: int = DEFAULT_AIC_NUM_CORES,
         qaic_config: Optional[dict] = None,
         prefill_seq_len: Optional[int] = None,
@@ -1663,6 +1757,7 @@ class OptimizedMoETransform(PytorchTransform):
         model, export_configured = OptimizedMoEExportConfigTransform.apply(
             model,
             prefill_only=prefill_only,
+            num_devices=num_devices,
             num_cores=num_cores,
             qaic_config=qaic_config,
             prefill_seq_len=prefill_seq_len,

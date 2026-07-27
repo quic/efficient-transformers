@@ -20,9 +20,9 @@ kernels can be model-agnostic:
 
 Expert-parallel export packs the same data as:
 
-    gate : [num_nsp, local_experts, H, I]
-    up   : [num_nsp, local_experts, H, I]
-    down : [num_nsp, local_experts, I, H]
+    gate : [num_parallelized_experts, num_pipeline_stages, H, I]
+    up   : [num_parallelized_experts, num_pipeline_stages, H, I]
+    down : [num_parallelized_experts, num_pipeline_stages, I, H]
 """
 
 from typing import Any, Callable, Iterable, Optional
@@ -130,16 +130,27 @@ def validate_canonical_moe_weights(weights: MoEWeights) -> None:
     )
 
 
-def validate_expert_parallel_moe_weights(weights: MoEWeights, num_nsp: Optional[int] = None) -> None:
+def validate_expert_parallel_moe_weights(
+    weights: MoEWeights,
+    *,
+    num_parallelized_experts: Optional[int] = None,
+    num_pipeline_stages: Optional[int] = None,
+) -> None:
     """Validate expert-parallel packed MoE weight layout."""
     if weights.gate.ndim != 4:
         raise ValueError(f"expert-parallel MoE gate weights must be 4-D, got shape {tuple(weights.gate.shape)}")
     expected_gate_shape = tuple(weights.gate.shape)
     expected_down_shape = (weights.gate.shape[0], weights.gate.shape[1], weights.gate.shape[3], weights.gate.shape[2])
-    if num_nsp is not None and weights.gate.shape[0] != num_nsp:
+    if num_parallelized_experts is not None and weights.gate.shape[0] != num_parallelized_experts:
         raise ValueError(
-            f"expert-parallel weights were packed for num_nsp={weights.gate.shape[0]}, "
-            f"but expert_parallel_num_nsp={num_nsp}"
+            "expert-parallel weights were packed for "
+            f"num_parallelized_experts={weights.gate.shape[0]}, "
+            f"but expected {num_parallelized_experts}"
+        )
+    if num_pipeline_stages is not None and weights.gate.shape[1] != num_pipeline_stages:
+        raise ValueError(
+            f"expert-parallel weights were packed for num_pipeline_stages={weights.gate.shape[1]}, "
+            f"but expected {num_pipeline_stages}"
         )
     if tuple(weights.up.shape) != expected_gate_shape:
         raise ValueError(
@@ -169,12 +180,18 @@ def validate_expert_parallel_moe_weights(weights: MoEWeights, num_nsp: Optional[
 def _pack_expert_parallel_tensor(
     tensor: Optional[torch.Tensor],
     *,
-    local_experts: int,
-    num_nsp: int,
+    num_pipeline_stages: int,
+    num_parallelized_experts: int,
 ) -> Optional[nn.Parameter]:
     if tensor is None:
         return None
-    packed = tensor.view(local_experts, num_nsp, *tensor.shape[1:]).transpose(0, 1).contiguous().detach().clone()
+    packed = (
+        tensor.view(num_pipeline_stages, num_parallelized_experts, *tensor.shape[1:])
+        .transpose(0, 1)
+        .contiguous()
+        .detach()
+        .clone()
+    )
     return nn.Parameter(packed, requires_grad=False)
 
 
@@ -184,32 +201,65 @@ def _unpack_expert_parallel_tensor(tensor: Optional[torch.Tensor]) -> Optional[t
     return tensor.transpose(0, 1).contiguous().view(tensor.shape[0] * tensor.shape[1], *tensor.shape[2:])
 
 
-def pack_moe_weights_for_expert_parallel(weights: MoEWeights, num_nsp: int) -> MoEWeights:
+def pack_moe_weights_for_expert_parallel(
+    weights: MoEWeights,
+    *,
+    num_pipeline_stages: int,
+    num_parallelized_experts: int,
+) -> MoEWeights:
     """Return weights packed for expert-parallel execution.
 
-    If ``weights`` are already packed for the same ``num_nsp`` this returns the
-    original object. If they are packed for a different ``num_nsp``, the helper
-    first restores canonical layout and then repacks.
+    The layout matches the Qwen3-VL-MoE expert-parallel path:
+    ``view(num_pipeline_stages, num_parallelized_experts, ...)`` followed by a
+    transpose to ``[num_parallelized_experts, num_pipeline_stages, ...]``.
     """
-    if num_nsp <= 0:
-        raise ValueError("expert_parallel_num_nsp must be greater than zero")
+    if num_pipeline_stages <= 0:
+        raise ValueError("num_pipeline_stages must be greater than zero")
+    if num_parallelized_experts <= 0:
+        raise ValueError("num_parallelized_experts must be greater than zero")
     if weights.gate.ndim == 4:
         validate_expert_parallel_moe_weights(weights)
-        if weights.gate.shape[0] == num_nsp:
+        if weights.gate.shape[:2] == (num_parallelized_experts, num_pipeline_stages):
             return weights
         weights = unpack_moe_weights_from_expert_parallel(weights)
     validate_canonical_moe_weights(weights)
     num_experts = weights.num_experts
-    if num_experts % num_nsp != 0:
-        raise ValueError(f"num_experts ({num_experts}) must be divisible by expert_parallel_num_nsp ({num_nsp})")
-    local_experts = num_experts // num_nsp
+    if num_experts != num_pipeline_stages * num_parallelized_experts:
+        raise ValueError(
+            "num_experts must equal num_pipeline_stages * num_parallelized_experts "
+            f"({num_pipeline_stages} * {num_parallelized_experts}), got {num_experts}"
+        )
     return MoEWeights(
-        gate=_pack_expert_parallel_tensor(weights.gate, local_experts=local_experts, num_nsp=num_nsp),
-        up=_pack_expert_parallel_tensor(weights.up, local_experts=local_experts, num_nsp=num_nsp),
-        down=_pack_expert_parallel_tensor(weights.down, local_experts=local_experts, num_nsp=num_nsp),
-        gate_bias=_pack_expert_parallel_tensor(weights.gate_bias, local_experts=local_experts, num_nsp=num_nsp),
-        up_bias=_pack_expert_parallel_tensor(weights.up_bias, local_experts=local_experts, num_nsp=num_nsp),
-        down_bias=_pack_expert_parallel_tensor(weights.down_bias, local_experts=local_experts, num_nsp=num_nsp),
+        gate=_pack_expert_parallel_tensor(
+            weights.gate,
+            num_pipeline_stages=num_pipeline_stages,
+            num_parallelized_experts=num_parallelized_experts,
+        ),
+        up=_pack_expert_parallel_tensor(
+            weights.up,
+            num_pipeline_stages=num_pipeline_stages,
+            num_parallelized_experts=num_parallelized_experts,
+        ),
+        down=_pack_expert_parallel_tensor(
+            weights.down,
+            num_pipeline_stages=num_pipeline_stages,
+            num_parallelized_experts=num_parallelized_experts,
+        ),
+        gate_bias=_pack_expert_parallel_tensor(
+            weights.gate_bias,
+            num_pipeline_stages=num_pipeline_stages,
+            num_parallelized_experts=num_parallelized_experts,
+        ),
+        up_bias=_pack_expert_parallel_tensor(
+            weights.up_bias,
+            num_pipeline_stages=num_pipeline_stages,
+            num_parallelized_experts=num_parallelized_experts,
+        ),
+        down_bias=_pack_expert_parallel_tensor(
+            weights.down_bias,
+            num_pipeline_stages=num_pipeline_stages,
+            num_parallelized_experts=num_parallelized_experts,
+        ),
     )
 
 

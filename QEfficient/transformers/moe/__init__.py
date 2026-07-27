@@ -23,8 +23,10 @@ from QEfficient.transformers.moe.flavours import (
     moe_expert_blocked,
     moe_expert_parallel,
     moe_simple_loop,
+    reduce_nsp_tree,
     resolve_routing,
     select_moe_flavour,
+    supports_moe_flavour,
 )
 from QEfficient.transformers.moe.profiles import (
     SILU_GLU_PROFILE,
@@ -52,8 +54,10 @@ __all__ = [
     "moe_expert_blocked",
     "moe_expert_parallel",
     "moe_simple_loop",
+    "reduce_nsp_tree",
     "resolve_routing",
     "select_moe_flavour",
+    "supports_moe_flavour",
     "build_matched_idx_from_cumsum",
     "cumsum_scatter_gather_update_expert_blocked",
     "SILU_GLU_PROFILE",

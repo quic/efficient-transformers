@@ -256,8 +256,6 @@ class QEffGptOssMLP(_QEffGptOssLegacyBlockedMixin, QEffMoEBlockMixin, GptOssMLP)
         MoEFlavour.DECODE_BMM,
         MoEFlavour.EXPERT_PARALLEL,
     )
-    supports_moe_prefill_blocking = True
-    supports_static_moe_prefill_chunks = True
 
     def transform_weights(self) -> MoEWeights:
         if getattr(self, "weights_transformed", False):

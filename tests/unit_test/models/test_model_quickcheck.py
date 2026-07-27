@@ -1368,7 +1368,7 @@ def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, confi
         prefill_only=True,
         enable_chunking=True,
         num_cores=2,
-        qaic_config={"moe_config": {"packed_chunk_size": 32}},
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": 32}},
         prefill_seq_len=64,
     )
 
@@ -1379,7 +1379,7 @@ def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, confi
             enable_chunking=True,
             prefill_seq_len=64,
             num_cores=2,
-            qaic_config={"moe_config": {"packed_chunk_size": 32}},
+            qaic_config={"moe_config": {"expert_parallel_chunk_size": 32}},
             use_onnx_subfunctions=True,
             offload_pt_weights=False,
         )
@@ -2371,6 +2371,7 @@ def test_moe_prefill_transform_does_not_require_enable_chunking():
     from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
         QEffQwen3VLMoeTextSparseMoeBlock,
     )
+    from QEfficient.transformers.moe import MoEFlavour
 
     for moe_cls in (
         QEffGlm4MoeMoE,
@@ -2382,8 +2383,7 @@ def test_moe_prefill_transform_does_not_require_enable_chunking():
         assert moe_cls not in PrefillOnlyChunkedTransform._module_mapping
         assert moe_cls not in RevertPrefillKeepAttentionTransform._module_mapping
         assert moe_cls not in RevertPrefillOnlyTransform._module_mapping
-        assert moe_cls.supports_moe_prefill_blocking is True
-        assert moe_cls.supports_static_moe_prefill_chunks is True
+        assert MoEFlavour.EXPERT_PARALLEL in moe_cls.supported_moe_flavours
 
 
 def test_layerwise_matches_default_path_for_qwen3_moe():
