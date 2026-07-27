@@ -1211,7 +1211,7 @@ def test_repeat_kv_quickcheck_hf_qeff_ort_parity(tmp_path):
     with torch.no_grad():
         hf_logits = model_hf(input_ids=input_ids, position_ids=position_ids).logits[:, -1:, :].detach().numpy()
 
-    qeff_model.transform(ctx_len=8, seq_len=4, bs=1, qaic_config=qeff_model.model.qaic_config)
+    qeff_model.transform(ctx_len=8, seq_len=4, bs=1, num_devices=4, qaic_config=qeff_model.model.qaic_config)
     with torch.no_grad():
         qeff_logits = qeff_model.model(**inputs).logits.detach().numpy()
 

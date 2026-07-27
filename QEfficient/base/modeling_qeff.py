@@ -137,7 +137,6 @@ class QEFFBaseModel(ABC):
             num_devices=num_devices,
             text_model_config=effective_config,
         )
-        num_replicate_kv_heads = int(num_replicate_kv_heads)
         if num_replicate_kv_heads is None or num_replicate_kv_heads <= 1:
             return 1
 

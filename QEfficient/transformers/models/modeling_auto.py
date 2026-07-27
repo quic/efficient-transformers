@@ -1615,8 +1615,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             if prefill_only and prefill_seq_len is not None and prefill_seq_len > 1:
                 offload_pt_weights = False  # keep weights resident for the decode export
             else:
-                num_replicate_kv_heads = self.lang_model.hash_params.get("num_replicate_kv_heads", 1)
-                offload_pt_weights = num_replicate_kv_heads <= 1
+                offload_pt_weights = True
 
         if not skip_lang:
             self.lang_model.export(

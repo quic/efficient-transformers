@@ -244,6 +244,7 @@ class TestRepeatKVTransformFast:
             ctx_len=64,
             seq_len=8,
             batch_size=1,
+            num_devices=4,
             qaic_config={"replicate_kv_heads": True},
         )
 
@@ -297,6 +298,7 @@ class TestRepeatKVTransformFast:
             ctx_len=64,
             seq_len=8,
             batch_size=1,
+            num_devices=4,
             qaic_config={"replicate_kv_heads": True},
         )
 
@@ -312,9 +314,9 @@ class TestRepeatKVTransformFast:
 
     def test_repeat_kv_mqa_config(self):
         qeff_model = self._tiny_llama_qeff(num_attention_heads=4, num_key_value_heads=1)
-        qeff_model.transform(ctx_len=64, seq_len=8, bs=1, qaic_config={"replicate_kv_heads": True})
+        qeff_model.transform(ctx_len=64, seq_len=8, bs=1, num_devices=4, qaic_config={"replicate_kv_heads": True})
         assert qeff_model.model.config.orig_kv_heads == 1
-        assert qeff_model.model.config.num_key_value_heads == 4
+        assert qeff_model.model.config.num_key_value_heads == 2
 
     def test_repeat_kv_mutate_is_attention_local(self):
         qeff_model = self._tiny_llama_qeff()
@@ -392,8 +394,8 @@ class TestRepeatKVTransformFast:
         mqa_cfg = self._tiny_llama_qeff(num_attention_heads=4, num_key_value_heads=1).model.config
         mha_cfg = self._tiny_llama_qeff(num_attention_heads=4, num_key_value_heads=4).model.config
         assert calculate_num_replicate_kv_heads(num_devices=4, text_model_config=gqa_cfg) == 2
-        assert calculate_num_replicate_kv_heads(num_devices=4, text_model_config=mqa_cfg) == 4
-        assert calculate_num_replicate_kv_heads(num_devices=4, text_model_config=mha_cfg) == 1
+        assert calculate_num_replicate_kv_heads(num_devices=4, text_model_config=mqa_cfg) == 2
+        assert calculate_num_replicate_kv_heads(num_devices=4, text_model_config=mha_cfg) is None
 
 
 # ---------------------------------------------------------------------------
