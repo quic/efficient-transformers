@@ -68,6 +68,7 @@ class AttentionBlockingConfig:
     prefill_blocking_mode: Optional[str] = None  # "q", "kv", "qkv" or "online"
     prefill_n_rep_chunk: Optional[int] = None
     ctx_len: Optional[int] = None
+    kv_block_unroll: Optional[int] = 1
 
 
 def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
@@ -223,6 +224,7 @@ def generic_blocked_attention_interface(
         score_mod=score_mod,
         position_bias=position_bias,
         sinks=sinks,
+        kv_block_unroll=blocking_config.kv_block_unroll,
     )
 
     return attn_output, attn_weights
