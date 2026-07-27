@@ -77,7 +77,7 @@ class QAICInferenceSession:
         :device_ids: List[int]. Device Ids to be used for compilation. if devices > 1, it enables multiple card setup.
         :activate: bool. If false, activation will be disabled. Default=True.
         :enable_debug_logs: bool. If True, It will enable debug logs. Default=False.
-        :data_path_timeout_ms: int. Host wait timeout (in ms) for a data-path response from the device. Default=120000 (120s).
+        :data_path_timeout_ms: int. Host wait timeout (in ms) for a data-path response from the device. Default=60000 (60s).
         """
         if not (is_qaicrt_imported and is_aicapi_imported):
             raise ImportError(
