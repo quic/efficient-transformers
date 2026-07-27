@@ -3859,6 +3859,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
+        # weight-free export internally uses dynamo; auto-enable it so callers
+        # don't have to pass both flags and the guard in _export() is satisfied.
+        if use_weight_free_export:
+            dynamo = True
         if (dynamo or use_weight_free_export) and not (
             getattr(self.model.config, "model_type", None) == "gpt_oss" and not self.continuous_batching
         ):

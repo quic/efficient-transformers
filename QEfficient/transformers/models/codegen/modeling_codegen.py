@@ -96,14 +96,9 @@ class QEffCodeGenAttention(CodeGenAttention):
         value = self._split_heads(value, self.num_attention_heads, self.head_dim, mp_num=mp_num)
         value = value.permute(0, 2, 1, 3)
 
-        embed_positions = self.embed_positions
-        if embed_positions.device != position_ids.device:
-            embed_positions = embed_positions.to(position_ids.device)
-            self.embed_positions = embed_positions
-
+        embed_positions = self.embed_positions.to(dtype=hidden_states.dtype, device=hidden_states.device)
         sincos = embed_positions[position_ids]
         sin, cos = torch.split(sincos, sincos.shape[-1] // 2, dim=-1)
-
         if self.rotary_dim is not None:
             k_rot = key[:, :, :, : self.rotary_dim]
             k_pass = key[:, :, :, self.rotary_dim :]

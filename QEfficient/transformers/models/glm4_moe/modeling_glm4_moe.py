@@ -100,6 +100,8 @@ def qeff_apply_rotary_pos_emb(
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
+    cos = cos.to(device=q.device)
+    sin = sin.to(device=q.device)
     cos = cos[position_ids].unsqueeze(unsqueeze_dim)
     sin = sin[position_ids].unsqueeze(unsqueeze_dim)
 
@@ -127,6 +129,8 @@ def qeff_apply_precomputed_rotary_pos_emb(
     sin: torch.Tensor,
     rotary_dim: int,
 ):
+    cos = cos.to(device=q.device)
+    sin = sin.to(device=q.device)
     q_rot, q_pass = q[..., :rotary_dim], q[..., rotary_dim:]
     k_rot, k_pass = k[..., :rotary_dim], k[..., rotary_dim:]
     half_dim = rotary_dim // 2
@@ -317,7 +321,9 @@ class QEffGlm4MoeAttention(Glm4MoeAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
     def __qeff_init__(self):
-        self.rotary_emb = QEffGlm4MoeRotaryEmbedding(config=self.config)
+        partial_rotary_factor = self.config.rope_parameters.get("partial_rotary_factor", 1.0)
+        head_dim = getattr(self.config, "head_dim", None) or self.config.hidden_size // self.config.num_attention_heads
+        self._rotary_dim = int(head_dim * partial_rotary_factor)
 
     def forward(
         self,
@@ -350,9 +356,8 @@ class QEffGlm4MoeAttention(Glm4MoeAttention):
         if sin_cached is not None and cos_cached is not None:
             sin, cos = sin_cached, cos_cached
             # detach().clone() avoids a dynamo arg-count mismatch at subfunction boundaries when tracing
-            rotary_dim = int(self.rotary_emb.cos_cached.detach().clone().shape[-1])
             query_states, key_states = qeff_apply_precomputed_rotary_pos_emb(
-                query_states, key_states, cos, sin, rotary_dim
+                query_states, key_states, cos, sin, self._rotary_dim
             )
         else:
             kv_seq_len = (
@@ -562,7 +567,9 @@ class QEffGlm4MoeModel(Glm4MoeModel):
 class QEffGlm4MoeTopkRouter(nn.Module):
     @torch.no_grad()
     def get_topk_indices(self, scores):
-        scores_for_choice = scores.view(-1, self.n_routed_experts) + self.e_score_correction_bias.unsqueeze(0)
+        scores_for_choice = scores.view(-1, self.n_routed_experts) + self.e_score_correction_bias.to(
+                    device=scores.device
+                ).unsqueeze(0)
         group_scores = (
             scores_for_choice.view(-1, self.n_group, self.n_routed_experts // self.n_group)
             .topk(2, dim=-1)[0]
@@ -603,7 +610,7 @@ class QEffGlm4MoeTopkRouter(nn.Module):
         router_scores = router_logits.sigmoid()  # (0,1), [T, 160]
 
         # Only used for choosing which experts win
-        scores_for_choice = router_scores + self.e_score_correction_bias.unsqueeze(0)  # [T, 160]
+        scores_for_choice = router_scores + self.e_score_correction_bias.to(device=router_scores.device).unsqueeze(0)  # [T, 160]
 
         # Choose top_k experts globally (top_k == num_experts_per_tok == 8)
         topk_indices = torch.topk(scores_for_choice, k=self.top_k, dim=-1, sorted=False)[1]  # [T, 8]
@@ -636,9 +643,11 @@ class QEffGlm4MoeMoE(Glm4MoeMoE):
             # Weight-free export: register shape-only placeholders on self.experts so
             # ONNX param names are model.layers.L.mlp.experts.gate_proj etc.,
             # matching the preprocessed checkpoint keys from MoEFusedExpertSplitCheckpointTransform.
-            self.experts.gate_proj = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta"))
-            self.experts.up_proj = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta"))
-            self.experts.down_proj_t = nn.Parameter(torch.empty(E, intermediate_dim, H, device="meta"))
+            # Use the source tensor's dtype so bmm inputs are consistent during tracing.
+            dtype = self.experts.gate_up_proj.dtype
+            self.experts.gate_proj = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta", dtype=dtype))
+            self.experts.up_proj = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta", dtype=dtype))
+            self.experts.down_proj_t = nn.Parameter(torch.empty(E, intermediate_dim, H, device="meta", dtype=dtype))
             self.act_fn = self.experts.act_fn
             self.num_experts = self.experts.num_experts
             return
@@ -818,7 +827,7 @@ class QEffGlm4MoeForCausalLM(Glm4MoeForCausalLM):
         hidden_states = outputs.last_hidden_state
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
-        logits = self.lm_head(hidden_states).to(hidden_states.dtype)
+        logits = self.lm_head(hidden_states).float()
 
         return CausalLMOutputWithPast(
             loss=None,

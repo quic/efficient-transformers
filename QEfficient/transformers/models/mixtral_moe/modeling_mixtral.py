@@ -81,6 +81,8 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin):
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
     # Apply rotation
+    cos = cos.to(device=q.device, dtype=q.dtype)
+    sin = sin.to(device=q.device, dtype=q.dtype)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     # Cast back to original dtype
@@ -265,9 +267,10 @@ class QEffMixtralExperts(MixtralExperts):
             # Weight-free export: register correctly-shaped placeholder parameters.
             E = self.gate_up_proj.shape[0]
             H = self.gate_up_proj.shape[2]
-            self.gate_proj = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta"))
-            self.up_proj = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta"))
-            self.down_proj_t = nn.Parameter(torch.empty(E, intermediate_dim, H, device="meta"))
+            dtype = self.gate_up_proj.dtype
+            self.gate_proj = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta",dtype=dtype))
+            self.up_proj = nn.Parameter(torch.empty(E, H, intermediate_dim, device="meta",dtype=dtype))
+            self.down_proj_t = nn.Parameter(torch.empty(E, intermediate_dim, H, device="meta",dtype=dtype))
             return
 
         # Normal export: compute derived params — values embedded in ONNX.
@@ -331,11 +334,23 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
                 break
             hidden_states_for_experts = hidden_states.to(experts_dtype) if experts_dtype else hidden_states
             if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
-                # Avoid grouped-mm ONNX incompatibility (`aten::histc`) while keeping
-                # upstream experts math/parameter layout.
-                final_hidden_states = _qeff_batched_mm_experts_forward(
-                    self.experts, hidden_states_for_experts, selected_experts, routing_weights
-                )
+                # Directly index the derived params created by __qeff_init__ so that
+                # gate_up_proj (a meta tensor for weight-free export) is never referenced
+                # in the computation graph and does not appear as an ONNX initializer.
+                T = hidden_states_for_experts.size(0)
+                H = hidden_states_for_experts.size(-1)
+                idx = selected_experts.reshape(-1)
+                gate_proj = self.experts.gate_proj[idx]    # (T*k, H, I)
+                up_proj = self.experts.up_proj[idx]         # (T*k, H, I)
+                down_proj = self.experts.down_proj_t[idx]   # (T*k, I, H)
+                expert_in = hidden_states_for_experts.unsqueeze(1).expand(-1, self.top_k, -1).contiguous().view(-1, 1, H)
+                gate = torch.bmm(expert_in, gate_proj)
+                up = torch.bmm(expert_in, up_proj)
+                intermediate = up * self.experts.act_fn(gate)
+                experts_out = torch.bmm(intermediate, down_proj)
+                experts_out = experts_out.view(T, self.top_k, H)
+                experts_out = experts_out * routing_weights.to(experts_out.dtype).unsqueeze(-1)
+                final_hidden_states = torch.einsum("bnd->bd", experts_out)
             else:
                 final_hidden_states = self.experts(hidden_states_for_experts, selected_experts, routing_weights)
             final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)

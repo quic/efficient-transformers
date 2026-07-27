@@ -452,6 +452,19 @@ class QEFFBaseModel(ABC):
         model_config = getattr(self.model, "config", None)
         dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes(dynamic_axes, model_config)
 
+        # Reorder example_inputs and dynamic_shapes to match model.forward signature order,
+        # which torch.export requires for dynamic_shapes to bind correctly.
+        sig_keys = list(inspect.signature(self.model.forward).parameters.keys())
+        sig_key_set = set(sig_keys)
+        ordered_inputs, ordered_shapes = {}, {}
+        for k in sig_keys:
+            if k in example_inputs:
+                ordered_inputs[k] = example_inputs[k]
+            if k in dynamic_shapes:
+                ordered_shapes[k] = dynamic_shapes[k]
+        example_inputs = {**ordered_inputs, **{k: v for k, v in example_inputs.items() if k not in sig_key_set}}
+        dynamic_shapes = {**ordered_shapes, **{k: v for k, v in dynamic_shapes.items() if k not in sig_key_set}}
+
         wf_export_kwargs = dict(export_kwargs)
         wf_export_kwargs.setdefault("report", False)
         wf_export_kwargs.setdefault("optimize", False)
@@ -529,15 +542,28 @@ class QEFFBaseModel(ABC):
         export_kwargs.pop("retain_full_kv", None)
         onnx_path = export_dir / f"{self.model_name}.onnx"
 
-        # Return early if ONNX already exists
+        # Resolve the weight spec path now — it is always co-located with the ONNX
+        # (same directory, named weight_spec.json). Must happen before the early-return
+        # so a cache hit restores the full export output state.
+        _weight_spec_path = onnx_path.with_name("weight_spec.json")
+
+        # Return early if ONNX already exists (restore complete export output state).
         if onnx_path.is_file():
             self.onnx_path = onnx_path
+            if _weight_spec_path.is_file():
+                self.weight_spec_path = _weight_spec_path
             return onnx_path
 
         # check if the model is in meta state or weights are offloaded
         # (skip for weight-free export which intentionally uses a meta-device model)
         if not use_weight_free_export:
             self._model_offloaded_check()
+
+        if use_weight_free_export and not dynamo:
+            raise NotImplementedError(
+                "Weight-free export requires dynamo=True. "
+                "Pass dynamo=True alongside use_weight_free_export=True."
+            )
 
         export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -663,13 +689,22 @@ class QEFFBaseModel(ABC):
             transform_kwargs = {
                 "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
                 "model_name": self.model_name,
-                "dynamic_axes": None if dynamo else dynamic_axes,  # dynamo uses dynamic_shapes, not axes
-                "onnx_export_opset": constants.get_onnx_export_opset(dynamo),
+                # Weight-free uses dynamo export path — use dynamo opset and no dynamic_axes.
+                "dynamic_axes": None if (dynamo or use_weight_free_export) else dynamic_axes,
+                "onnx_export_opset": constants.get_onnx_export_opset(dynamo or use_weight_free_export),
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
 
-            onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
+            # Weight-free exports must skip SplitTensorsTransform: that transform embeds
+            # weight data as external files, which conflicts with weights coming from the
+            # checkpoint via weight_spec.json at compile time.
+            active_transforms = [
+                t
+                for t in self._onnx_transforms
+                if not (use_weight_free_export and t is SplitTensorsTransform)
+            ]
+            onnx_transforms = OnnxTransformPipeline(transforms=active_transforms)
             model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
             # Keep this strictly layerwise-scoped so regular non-layerwise export
@@ -681,6 +716,18 @@ class QEFFBaseModel(ABC):
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )
+            # For weight-free export, embed weight_spec.json as ONNX metadata so the
+            # QAIC compiler can locate and load the external checkpoint weights at compile time.
+            if use_weight_free_export and self.weight_spec_path is not None:
+                import json as _json
+
+                from QEfficient.exporter.weight_free.core import _upsert_metadata_prop
+                from QEfficient.utils import load_json
+
+                weight_spec_json = _json.dumps(
+                    load_json(Path(self.weight_spec_path)), separators=(",", ":"), sort_keys=True
+                )
+                _upsert_metadata_prop(model, "com.qti.aisw.extdata", weight_spec_json)
             logger.info("ONNX transforms applied")
 
             onnx_path_tmp = onnx_path.with_suffix(onnx_path.suffix + ".tmp")
@@ -695,6 +742,18 @@ class QEFFBaseModel(ABC):
             raise e
 
         self.onnx_path = onnx_path
+
+        # For weight-free export, symlink the prepared checkpoint directory next to
+        # the ONNX so relative paths in weight_spec.json resolve correctly at compile time.
+        if use_weight_free_export and self.weight_spec_path is not None:
+            from QEfficient.exporter.weight_free.spec import load_weight_spec
+
+            spec = load_weight_spec(Path(self.weight_spec_path))
+            prepared_out = Path(spec.model_id)
+            symlink = onnx_path.parent / prepared_out.name
+            if prepared_out.exists() and not symlink.exists():
+                symlink.symlink_to(prepared_out)
+
         return onnx_path
 
     def get_onnx_path(

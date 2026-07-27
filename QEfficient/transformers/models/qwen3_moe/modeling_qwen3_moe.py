@@ -197,11 +197,12 @@ class QEffQwen3MoeExperts(Qwen3MoeExperts):
         if self.gate_up_proj.device.type == "meta":
             # Weight-free export: register shape-only placeholders so ONNX initializer names
             # match the preprocessed checkpoint keys from MoEFusedExpertSplitCheckpointTransform.
+            dtype = self.gate_up_proj.dtype
             E = self.gate_up_proj.shape[0]
             H = self.gate_up_proj.shape[2]
-            self.gate_proj = nn.Parameter(torch.empty(E, H, self.expert_dim, device="meta"), requires_grad=False)
-            self.up_proj = nn.Parameter(torch.empty(E, H, self.expert_dim, device="meta"), requires_grad=False)
-            self.down_proj_t = nn.Parameter(torch.empty(E, self.expert_dim, H, device="meta"), requires_grad=False)
+            self.gate_proj = nn.Parameter(torch.empty(E, H, self.expert_dim, device="meta",dtype=dtype), requires_grad=False)
+            self.up_proj = nn.Parameter(torch.empty(E, H, self.expert_dim, device="meta",dtype=dtype), requires_grad=False)
+            self.down_proj_t = nn.Parameter(torch.empty(E, self.expert_dim, H, device="meta",dtype=dtype), requires_grad=False)
             return
 
         # Normal export: compute derived params — values embedded in ONNX.

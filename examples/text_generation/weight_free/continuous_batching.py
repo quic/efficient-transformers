@@ -148,7 +148,7 @@ def main():
         num_devices=args.num_devices,
         mxfp6_matmul=args.mxfp6_matmul,
         mxint8_kv_cache=args.mxint8_kv_cache,
-        use_dynamo=True,
+        dynamo=True,
         use_onnx_subfunctions=use_subfunctions,
         use_weight_free_export=use_weight_free,
     )

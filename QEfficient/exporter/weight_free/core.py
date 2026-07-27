@@ -480,12 +480,14 @@ def export_weight_free_onnx(
         # Prepare checkpoint: stack MoE experts (if needed) and convert dtype.
         # Store next to the SOURCE checkpoint directory (not inside the hashed export dir)
         # so any model config variant pointing at the same source reuses the prepared data.
+        # Include the dtype in the directory name to avoid collisions between fp16/fp32 exports.
         target_dtype = getattr(qeff_model.model.config, "dtype", None) or torch.float32
         if target_dtype == torch.bfloat16:
             target_dtype = torch.float16
+        dtype_suffix = str(target_dtype).replace("torch.", "")  # "float16" or "float32"
         prep_pipeline = CheckpointTransformPipeline(transforms=qeff_model._checkpoint_transforms)
         source_dir = _resolve_checkpoint_dir(model_ref)
-        prepared_out = source_dir.parent / (source_dir.name + "-qeff-prepared")
+        prepared_out = source_dir.parent / (source_dir.name + f"-qeff-prepared-{dtype_suffix}")
 
         _prep_profiler = _QEffMemoryProfiler(sampling_interval=0.05, verbose=False)
         _prep_profiler.start_monitoring()
@@ -517,6 +519,7 @@ def export_weight_free_onnx(
             model_name=qeff_model.model_name,
             qeff_model=meta_qeff_model,
         )
+        _prune_unused_fake_initializers(onnx_program)
         onnx_program.save(str(tmp_onnx_path))
         save_weight_spec(resolve_weight_spec_path(tmp_onnx_path), spec)
 
