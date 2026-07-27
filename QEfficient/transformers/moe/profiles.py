@@ -11,7 +11,7 @@ A :class:`MoEProfile` packages the per-expert projection math so the shared MoE
 kernels and flavour functions stay model-agnostic. ``expert_mlp`` operates on the
 token axis at ``dim=-2`` and therefore serves all three flavours unchanged:
 
-    expert-blocked : x [num_nsp, rows, H]
+    expert-parallel : x [num_parallelized_experts, rows, H]
     decode bmm     : x [T*K, 1, H]
     simple loop    : x [T, H]   (single-expert 2-D weights)
 """

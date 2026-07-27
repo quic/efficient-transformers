@@ -66,8 +66,6 @@ from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
 
-# EXPERT_BLOCKING_NUM_NSP = 16
-# EXPERT_BLOCKING_PACKED_CHUNK_SIZE = 32
 QWEN3_5_MOE_ROPE_CACHE_EXPORT_CAP = 76800
 
 
@@ -2261,8 +2259,6 @@ class QEffQwen3_5MoeSparseMoeBlock(QEffMoEBlockMixin, Qwen3_5MoeSparseMoeBlock):
         MoEFlavour.DECODE_BMM,
         MoEFlavour.EXPERT_PARALLEL,
     )
-    supports_moe_prefill_blocking = True
-    supports_static_moe_prefill_chunks = True
 
     def __qeff_init__(self):
         super().__qeff_init__()
