@@ -69,14 +69,16 @@
       "export_params": {},
       "compile_params": {
         "prefill_seq_len": 128,
-        "ctx_len": 1024,
+        "ctx_len": 6000,
         "num_cores": 16,
         "num_devices": 4,
         "mxfp6_matmul": true,
+        "mxint8_kv_cache": true,
+        "split_model_io": true,
         "aic_hw_version": "ai100"
       },
       "generate_params": {
-        "generation_len": 25,
+        "generation_len": 100,
         "image_url": "https://picsum.photos/id/237/536/354",
         "query": "Can you describe the image in detail?"
       }

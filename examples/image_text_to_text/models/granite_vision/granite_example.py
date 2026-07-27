@@ -45,6 +45,7 @@ def run_model(
         num_cores=num_cores,
         num_devices=num_devices,
         mxfp6_matmul=False,
+        split_model_io=True,
     )
 
     ## STEP - 3 Load and process the inputs for Inference
