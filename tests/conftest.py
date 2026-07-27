@@ -266,6 +266,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "feature: mark test as a feature-specific test (SPD, sampler, prefix caching, LoRA, etc.)"
     )
+    config.addinivalue_line(
+        "markers",
+        "embedding_audio_model: mark test as a text-embedding / audio (CTC, speech-seq2seq) model test",
+    )
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -303,6 +307,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         keywords = getattr(report, "keywords", {}) or {}
         if "llm_model" in keywords:
             return "llm_model"
+        if "embedding_audio_model" in keywords:
+            return "embedding_audio_model"
         if "feature" in keywords:
             return "feature"
         return "unmarked"
@@ -328,7 +334,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
     headers = ["group", "total", "passed", "failed", "skipped", "xfailed", "xpassed", "error"]
     rows = []
-    order = ["llm_model", "feature", "unmarked"]
+    order = ["llm_model", "embedding_audio_model", "feature", "unmarked"]
     for group in order:
         if group not in group_stats:
             continue
