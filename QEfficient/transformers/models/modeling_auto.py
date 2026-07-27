@@ -3722,9 +3722,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         enable_chunking=False,
         num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
     ) -> int:
+        from QEfficient.transformers.moe import MoEFlavour, supports_moe_flavour
+
         self.hash_params["prefill_only"] = True
         has_moe_prefill_blocking = any(
-            getattr(module, "supports_moe_prefill_blocking", False) for module in self.model.modules()
+            supports_moe_flavour(module, MoEFlavour.EXPERT_PARALLEL) for module in self.model.modules()
         )
 
         if enable_chunking:
@@ -3936,6 +3938,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("chunking", None)
                 self.hash_params.pop("moe_prefill_num_nsp", None)
                 self.hash_params.pop("moe_prefill_packed_chunk_size", None)
+                self.hash_params.pop("moe_prefill_total_avl_cores", None)
+                self.hash_params.pop("moe_prefill_cores_per_expert", None)
+                self.hash_params.pop("moe_prefill_tree_reduce", None)
+                self.hash_params.pop("moe_prefill_num_pipeline_stages", None)
+                self.hash_params.pop("moe_prefill_num_parallelized_experts", None)
+                self.hash_params.pop("moe_prefill_expert_parallel_chunk_size", None)
                 self.hash_params.pop("moe_prefill_num_packed_chunks", None)
                 self.hash_params.pop("moe_prefill_flavour", None)
                 self.hash_params.pop("chunking_seq_len", None)

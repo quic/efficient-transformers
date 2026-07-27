@@ -574,8 +574,6 @@ class QEffGlm4MoeMoE(QEffMoEBlockMixin, Glm4MoeMoE):
         MoEFlavour.DECODE_BMM,
         MoEFlavour.EXPERT_PARALLEL,
     )
-    supports_moe_prefill_blocking = True
-    supports_static_moe_prefill_chunks = True
 
     def __qeff_init__(
         self,

@@ -439,8 +439,6 @@ def _cumsum_scatter_gather_update_expert_blocked(
 
 class QEffGemma4TextMoeBlock(QEffMoEBlockMixin, nn.Module):
     supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP, MoEFlavour.DECODE_BMM)
-    supports_moe_prefill_blocking = False
-    supports_static_moe_prefill_chunks = False
     supports_moe_decode_bmm = True
 
     def __init__(

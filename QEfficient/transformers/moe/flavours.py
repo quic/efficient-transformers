@@ -26,6 +26,7 @@ from QEfficient.customop.ctx_scatter_gather import (
 )
 from QEfficient.transformers.moe.profiles import MoEProfile
 from QEfficient.transformers.moe.weights import MoEWeights, validate_expert_parallel_moe_weights
+from QEfficient.utils.logging_utils import logger
 
 
 class MoEFlavour(str, Enum):
@@ -48,6 +49,35 @@ def densify_topk(topk_indices: torch.Tensor, topk_weights: torch.Tensor, num_exp
     routing_weights = topk_weights.new_zeros((T, num_experts))
     routing_weights.scatter_(1, topk_indices, topk_weights)
     return routing_weights
+
+
+def supports_moe_flavour(module, flavour: Union[MoEFlavour, str]) -> bool:
+    """Return whether a module advertises a shared MoE flavour."""
+    flavour = MoEFlavour(flavour)
+    get_supported_moe_flavours = getattr(module, "get_supported_moe_flavours", None)
+    if callable(get_supported_moe_flavours):
+        supported_flavours = get_supported_moe_flavours()
+    else:
+        supported_flavours = getattr(module, "supported_moe_flavours", ())
+    try:
+        return flavour in tuple(MoEFlavour(supported_flavour) for supported_flavour in supported_flavours)
+    except ValueError:
+        return False
+
+
+def reduce_nsp_tree(values: torch.Tensor, num_lanes: int) -> torch.Tensor:
+    """Reduce lane outputs with the tree pattern used by Qwen3-VL-MoE expert parallelism."""
+    logger.warning(f"Reducing {values.shape} across {num_lanes} lanes using tree reduction")
+    current = values
+    width = num_lanes
+    while width > 1:
+        pair_count = width // 2
+        reduced = current[0 : 2 * pair_count : 2] + current[1 : 2 * pair_count : 2]
+        if width % 2 == 1:
+            reduced = torch.cat((reduced, current[width - 1 : width]), dim=0)
+        current = reduced
+        width = pair_count + (width % 2)
+    return current[0]
 
 
 def build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
@@ -132,12 +162,20 @@ def moe_expert_parallel(
     weights: MoEWeights,
     profile: MoEProfile,
     *,
-    num_nsp: int,
+    num_pipeline_stages: int,
+    num_parallelized_experts: int,
+    num_devices: int = 1,
+    experts_per_soc: Optional[int] = None,
+    tree_reduce: bool = False,
     num_packed_chunks: int = 1,
 ) -> torch.Tensor:
-    """Prefill expert-parallel flavour: NUM_NSP experts per block, cumsum/scatter packed."""
+    """Prefill expert-parallel flavour with branch-style expert reshaping."""
     T, H = x.shape
-    validate_expert_parallel_moe_weights(weights, num_nsp=num_nsp)
+    validate_expert_parallel_moe_weights(
+        weights,
+        num_parallelized_experts=num_parallelized_experts,
+        num_pipeline_stages=num_pipeline_stages,
+    )
     num_experts = weights.num_experts
     if routing_weights.shape != (T, num_experts):
         raise ValueError(
@@ -145,9 +183,16 @@ def moe_expert_parallel(
         )
     if weights.hidden_size != H:
         raise ValueError(f"expert-parallel hidden size mismatch: input H={H}, weights H={weights.hidden_size}")
-    local_experts = weights.gate.shape[1]
+    if num_devices <= 0:
+        raise ValueError(f"num_devices ({num_devices}) must be greater than 0")
 
-    rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
+    rw = (
+        routing_weights.transpose(0, 1)
+        .contiguous()
+        .view(num_pipeline_stages, num_parallelized_experts, T)
+        .transpose(0, 1)
+        .contiguous()
+    )
     W_g = weights.gate
     W_u = weights.up
     W_d = weights.down
@@ -155,9 +200,9 @@ def moe_expert_parallel(
     b_u = weights.up_bias
     b_d = weights.down_bias
 
-    expert_out = x.new_zeros((num_nsp, T, H))
+    expert_out = x.new_zeros((num_parallelized_experts, T, H))
     routing_weights_unsqueezed = rw.unsqueeze(-1)
-    for slot in range(local_experts):
+    for slot in range(num_pipeline_stages):
         T2Ei = rw[:, slot, :] > 0
         expert_out = cumsum_scatter_gather_update_expert_blocked(
             x=x,
@@ -173,6 +218,18 @@ def moe_expert_parallel(
             b_d=b_d[:, slot] if b_d is not None else None,
             num_packed_chunks=num_packed_chunks,
         )
+
+    if experts_per_soc is not None:
+        if num_parallelized_experts % num_devices != 0:
+            raise ValueError(
+                f"num_parallelized_experts ({num_parallelized_experts}) must be divisible by num_devices "
+                f"({num_devices})"
+            )
+        parallelized_experts_per_soc = num_parallelized_experts // num_devices
+        expert_out = torch.einsum("dpth->dth", expert_out.view(num_devices, parallelized_experts_per_soc, T, H))
+        if tree_reduce:
+            return reduce_nsp_tree(expert_out, num_devices)
+        return torch.einsum("dth->th", expert_out)
     return torch.einsum("nth->th", expert_out)
 
 
