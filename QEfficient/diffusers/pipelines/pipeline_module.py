@@ -625,7 +625,7 @@ class QEffWanTransformer(QEFFBaseModel):
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
-            offload_pt_weights=True,
+            offload_pt_weights=False,
             use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
@@ -761,7 +761,7 @@ class QEffWanUnifiedTransformer(QEFFBaseModel):
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
-            offload_pt_weights=True,
+            offload_pt_weights=False,
             use_onnx_subfunctions=use_onnx_subfunctions,
         )
 
