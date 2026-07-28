@@ -521,14 +521,12 @@ class QEffKimiK25DecoderWrapper(nn.Module):
 
             inputs_embeds = merged_inputs_embeds
             attention_mask = merged_attention_mask
-            merged_image_tokens = (
-                torch._shape_as_tensor(vision_embeds_for_state)[:1]
-                .view(1, 1)
-                .to(device=image_idx.device, dtype=torch.int64)
+            merged_image_tokens = torch.full(
+                (1, 1), vision_embeds_for_state.shape[0], device=image_idx.device, dtype=torch.int64
             )
             default_image_idx = torch.clamp(merged_image_tokens - 1, min=0)
-            input_batch = torch._shape_as_tensor(input_ids)[:1].view(1, 1).to(device=image_idx.device)
-            image_idx_batch = torch._shape_as_tensor(image_idx)[:1].view(1, 1).to(device=image_idx.device)
+            input_batch = torch.full((1, 1), input_ids.shape[0], device=image_idx.device, dtype=torch.int64)
+            image_idx_batch = torch.full((1, 1), image_idx.shape[0], device=image_idx.device, dtype=torch.int64)
             use_default_image_idx = torch.logical_and(torch.logical_not(selected_any), input_batch != image_idx_batch)
             effective_image_idx = torch.where(use_default_image_idx, default_image_idx, image_idx)
             if position_ids is None:
@@ -577,6 +575,8 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             output_kvs = getattr(outputs, "compressed_kvs", None)
         else:
             output_kvs = getattr(outputs, "past_key_values", None)
+        if vision_embeds_for_state is not None:
+            vision_embeds_for_state = vision_embeds_for_state + torch.zeros_like(vision_embeds_for_state)
         image_idx_output = image_idx[:1, :1] if image_idx is not None else image_idx
         return logits, vision_embeds_for_state, image_idx_output, output_kvs
 
@@ -602,8 +602,9 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
 
         target_device = inputs_embeds.device
         image_features = image_features.to(target_device)
-        image_shape = torch._shape_as_tensor(image_features).to(device=input_ids.device, dtype=input_ids.dtype)
-        num_image_tokens = image_shape[0]
+        num_image_tokens = torch.full(
+            (1, 1), image_features.shape[0], device=input_ids.device, dtype=input_ids.dtype
+        )
 
         image_token_mask = input_ids == image_token_index
         non_image_mask = ~image_token_mask

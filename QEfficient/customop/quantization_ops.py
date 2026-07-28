@@ -9,12 +9,14 @@ import onnxscript
 import torch
 from onnx import TensorProto
 
+from QEfficient.customop.onnxscript_utils import qeff_custom_op
+from QEfficient.customop.utils import select_interface
 from QEfficient.utils import constants
 
-ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
+ops = getattr(onnxscript, "opset" + str(constants.ONNX_LEGACY_EXPORT_OPSET))
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qti.aisw.onnx", 1))
+@qeff_custom_op("com.qti.aisw.onnx", 1)
 def CastToUInt4(weight_packed: onnxscript.UINT8) -> onnxscript.UINT8:
     """
     Unpack packed uint8 weights into uint4 values and cast output to UINT4.
@@ -100,6 +102,10 @@ class CastToUInt4Func(torch.autograd.Function):
         return output
 
 
+def cast_to_uint4(weight_packed: torch.Tensor) -> torch.Tensor:
+    return select_interface(CastToUInt4Func.apply, torch.ops.qefficient.cast_to_uint4)(weight_packed)
+
+
 class DequantizeLinearFunc(torch.autograd.Function):
     """
     Emits a standard ONNX DequantizeLinear node (ai.onnx domain, not custom).
@@ -147,3 +153,18 @@ class DequantizeLinearFunc(torch.autograd.Function):
             axis_i=2,
             block_size_i=block_size,
         )
+
+def dequantize_linear(
+    weight_unpacked: torch.Tensor, scale: torch.Tensor, zeros: torch.Tensor, block_size: int
+) -> torch.Tensor:
+    if torch._dynamo.is_compiling():
+        return torch.onnx.ops.symbolic(
+            "::DequantizeLinear",
+            (weight_unpacked, scale, zeros),
+            {"axis": 2, "block_size": block_size},
+            dtype=scale.dtype,
+            shape=weight_unpacked.shape,
+            version=18,
+        )
+    return DequantizeLinearFunc.apply(weight_unpacked, scale, zeros, block_size)
+
