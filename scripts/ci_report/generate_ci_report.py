@@ -291,15 +291,28 @@ _NO_MODEL = "(no model param)"
 # either matches exactly (``cb``, ``nocb``) or starts with the given prefix
 # followed by digits (``kwargs4``, ``decode_ks0``). Keep this list conservative:
 # too eager and we hide a genuine model slug; too lax and we surface junk.
-_NON_MODEL_EXACT = frozenset({
-    "cb", "nocb",
-    "subfunc", "non-subfunc", "non_subfunc",
-    "pref+decode", "prefill_only", "prefill-only",
-    "blocking", "non-blocking", "non_blocking",
-    "qv", "bs4",
-    "nan", "inf", "-inf",
-    "true", "false",
-})
+_NON_MODEL_EXACT = frozenset(
+    {
+        "cb",
+        "nocb",
+        "subfunc",
+        "non-subfunc",
+        "non_subfunc",
+        "pref+decode",
+        "prefill_only",
+        "prefill-only",
+        "blocking",
+        "non-blocking",
+        "non_blocking",
+        "qv",
+        "bs4",
+        "nan",
+        "inf",
+        "-inf",
+        "true",
+        "false",
+    }
+)
 _NON_MODEL_PREFIXES = ("kwargs", "decode_ks", "actual_proposals", "torch_dtype")
 
 
@@ -322,7 +335,7 @@ def _is_non_model_token(token):
     if _is_number_token(t):
         return True
     for prefix in _NON_MODEL_PREFIXES:
-        if t.startswith(prefix) and t[len(prefix):].lstrip("-_").isdigit():
+        if t.startswith(prefix) and t[len(prefix) :].lstrip("-_").isdigit():
             return True
     return False
 
@@ -348,7 +361,7 @@ def normalize_model(param_id):
 
     first_segment = param_id.split("-", 1)[0]
     if first_segment.startswith("module="):
-        return first_segment[len("module="):] or _NO_MODEL
+        return first_segment[len("module=") :] or _NO_MODEL
 
     # Strip leading enum/flag segments (``True``/``False``/``cb``/``nocb``/…) so
     # boolean prefixes from ``@pytest.mark.parametrize("full_batch", [True, False])``
@@ -837,9 +850,7 @@ def load_report_from_console(log_path, meta):
         for nodeid, dur in slow_durations.items():
             if nodeid in seen_ids:
                 continue
-            seeded.append(
-                _testcase_from_nodeid(nodeid, Outcome.PASSED, dur, stage.spec.display, seeded=True)
-            )
+            seeded.append(_testcase_from_nodeid(nodeid, Outcome.PASSED, dur, stage.spec.display, seeded=True))
             seen_ids.add(nodeid)
         stage.cases = seeded
 
@@ -869,8 +880,7 @@ def load_report_from_console(log_path, meta):
     if unknown_basenames:
         report.meta.setdefault("console_warnings", []).append(
             f"{len(unknown_basenames)} xml marker(s) in the console log did not match a "
-            "known stage basename and were dropped: "
-            + ", ".join(repr(b) for b in unknown_basenames)
+            "known stage basename and were dropped: " + ", ".join(repr(b) for b in unknown_basenames)
         )
     if not markers:
         report.meta.setdefault("console_warnings", []).append(
@@ -1475,7 +1485,9 @@ def main(argv=None):
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
     }
     report = (
-        load_report_from_console(args.console_log, meta) if args.console_log else load_report(args.xml_dir, args.pattern, meta)
+        load_report_from_console(args.console_log, meta)
+        if args.console_log
+        else load_report(args.xml_dir, args.pattern, meta)
     )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
