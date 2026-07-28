@@ -14,6 +14,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+
+# import requests
 import torch
 from PIL import Image
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor
@@ -23,12 +25,13 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 # MODEL_NAME = "tiny-random/qwen3-vl-moe"
 MODEL_NAME = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-PREFILL_SEQ_LEN = 64
-CTX_LEN = 2048
+PREFILL_SEQ_LEN = 128
+CTX_LEN = 4096
 BATCH_SIZE = 1
-GENERATION_LEN = 25
+GENERATION_LEN = 40
+# IMAGE_SIZE = (1600, 1056)
 IMAGE_SIZE = (536, 354)
-TEXT_PROMPT = "Describe all the colors seen in the image."
+TEXT_PROMPT = "Describe  the image."
 
 VISION_INPUTS = {
     "pixel_values",
@@ -77,10 +80,13 @@ def _load_hf_model_from_pretrained(config):
     return model
 
 
-def _build_config(dtype: str = "float16"):
+def _build_config(dtype: str = "float32"):
     config = AutoConfig.from_pretrained(MODEL_NAME, trust_remote_code=True)
     config.dtype = dtype
     config.torch_dtype = getattr(torch, dtype)
+    config.vision_config.depth = 9
+    config.text_config.num_hidden_layers = 4
+    config.vision_config.deepstack_visual_indexes = [8]
     return config
 
 
@@ -271,19 +277,24 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
     hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32"))
     processor = AutoProcessor.from_pretrained(MODEL_NAME, trust_remote_code=True)
 
+    # image_url = "https://thumbs.dreamstime.com/z/story-2962090.jpg"
+
+    # image = Image.open(requests.get(image_url, stream=True).raw)
     image = Image.new("RGB", IMAGE_SIZE, color=(127, 127, 127))
+
     messages = _prepare_messages(image)
     common_inputs = _prepare_processor_inputs(processor, messages)
     hf_tokens = _run_hf_torch_fp32(hf_model, processor, messages)
-
     hf_model.config.dtype = "float32"
     hf_model.config.torch_dtype = torch.float32
+    if hasattr(hf_model.config, "text_config"):
+        hf_model.config.text_config.dtype = "float32"
+        hf_model.config.text_config.torch_dtype = torch.float32
     qeff_model = QEFFAutoModelForImageTextToText(
         hf_model,
-        attn_implementation="eager",
         kv_offload=True,
         config=hf_model.config,
-        dtype=torch.float32,
+        torch_dtype=torch.float32,
         layerwise=False,
     )
 
@@ -297,7 +308,7 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
             height=image.height,
             width=image.width,
             num_cores=16,
-            num_devices=2,
+            num_devices=1,
             mos=1,
             aic_enable_depth_first=True,
             skip_vision=False,
@@ -316,10 +327,12 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
             height=image.height,
             width=image.width,
             num_cores=16,
-            num_devices=2,
+            num_devices=1,
             retain_full_kv=True,
             split_retained_state_io=True,
             mos=1,
+            # mxfp6_matmul=True,
+            # mxint8_kv_cache=True,
             aic_enable_depth_first=True,
             prefill_only=False,
             skip_vision=True,
@@ -336,12 +349,13 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
             height=image.height,
             width=image.width,
             num_cores=16,
-            num_devices=8,
-            retain_full_kv=True,
+            num_devices=2,
+            # mxfp6_matmul=True,
+            # mxint8_kv_cache=True,
             split_retained_state_io=True,
             mos=1,
             aic_enable_depth_first=True,
-            mdp_num_partitions=4,
+            mdp_num_partitions=2,
             prefill_only=True,
             enable_chunking=True,
             skip_vision=True,
@@ -368,11 +382,11 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
     finally:
         for session in sessions:
             session.deactivate()
-        cleanup_paths = list(compiled_onnx_paths.values()) or [
-            getattr(qeff_model.vision_model, "onnx_path", None),
-            getattr(qeff_model.lang_model, "onnx_path", None),
-        ]
-        manual_cleanup([path for path in cleanup_paths if path is not None])
+        # cleanup_paths = list(compiled_onnx_paths.values()) or [
+        #     getattr(qeff_model.vision_model, "onnx_path", None),
+        #     getattr(qeff_model.lang_model, "onnx_path", None),
+        # ]
+        # manual_cleanup([path for path in cleanup_paths if path is not None])
 
     assert qaic_tokens.shape == (BATCH_SIZE, GENERATION_LEN)
     assert hf_tokens.shape == (BATCH_SIZE, GENERATION_LEN)
@@ -382,6 +396,10 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
     matches = hf_tokens == qaic_tokens
     num_matched = int(matches.all(axis=0).cumprod().sum())  # leading run matched across all rows
     print(f"HF Torch fp32 tokens   : {hf_tokens.tolist()}")
+    print("HF output token:")
+    print(processor.tokenizer.batch_decode(hf_tokens))
+    print("QAIC ouptut tokens     : ")
+    print(processor.tokenizer.batch_decode(qaic_tokens))
     print(f"Disagg QAIC DMA tokens : {qaic_tokens.tolist()}")
     print(f"Matched leading tokens : {num_matched}/{GENERATION_LEN}")
 
