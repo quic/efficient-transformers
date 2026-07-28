@@ -1,0 +1,7647 @@
+{
+  "causal_lm": {
+    "IlyasMoutawwakil/tiny-random-LlavaForConditionalGeneration": {
+      "cb_float16_pl1024_cl2048_gl8_f553f84e_d7516079d95c": {
+        "config_fp": "f553f84e",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ]
+        ],
+        "timestamp": "2026-07-28T11:19:43.630367",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_f553f84e_d7516079d95c"
+      },
+      "cb_float16_pl1024_cl2048_gl8_f553f84e_d85a14d7e723": {
+        "config_fp": "f553f84e",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ]
+        ],
+        "timestamp": "2026-07-28T11:14:39.248348",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_f553f84e_d85a14d7e723"
+      },
+      "cb_float32_pl1024_cl2048_gl8_f553f84e_15c7e131249f": {
+        "config_fp": "f553f84e",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            7305,
+            29048,
+            4782,
+            18837,
+            10653,
+            28124,
+            5745,
+            12568
+          ],
+          [
+            7305,
+            29048,
+            4782,
+            18837,
+            10653,
+            28124,
+            5745,
+            12568
+          ],
+          [
+            7305,
+            29048,
+            4782,
+            18837,
+            10653,
+            28124,
+            5745,
+            12568
+          ],
+          [
+            7305,
+            29048,
+            4782,
+            18837,
+            10653,
+            28124,
+            5745,
+            12568
+          ]
+        ],
+        "timestamp": "2026-07-28T11:04:04.853516",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_f553f84e_15c7e131249f"
+      }
+    },
+    "Qwen/Qwen2-0.5B": {
+      "cb_float32_pl8_cl32_glNone_73618ec9_852f894ecc38": {
+        "config_fp": "73618ec9",
+        "continuous_batching": true,
+        "ctx_len": 32,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 24,
+        "generation_len": null,
+        "prompt_len": 8,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ]
+        ],
+        "timestamp": "2026-07-28T11:16:08.529164",
+        "variant_key": "cb_float32_pl8_cl32_glNone_73618ec9_852f894ecc38"
+      },
+      "nocb_float32_pl8_cl32_glNone_73618ec9_e7361df9bf50": {
+        "config_fp": "73618ec9",
+        "continuous_batching": false,
+        "ctx_len": 32,
+        "dtype": "torch.float32",
+        "full_batch_size": null,
+        "gen_len": 24,
+        "generation_len": null,
+        "prompt_len": 8,
+        "prompts": [
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374
+        ],
+        "timestamp": "2026-07-28T11:15:35.626996",
+        "variant_key": "nocb_float32_pl8_cl32_glNone_73618ec9_e7361df9bf50"
+      }
+    },
+    "TheBloke/Llama-2-7B-GPTQ": {
+      "cb_float32_pl8_cl32_glNone_184613ca_52d6c7e0eaf7": {
+        "config_fp": "184613ca",
+        "continuous_batching": true,
+        "ctx_len": 32,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 24,
+        "generation_len": null,
+        "prompt_len": 8,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            593,
+            21961,
+            6604,
+            27237,
+            3514,
+            9716,
+            7654,
+            31096,
+            16627,
+            311,
+            16627,
+            311,
+            16627,
+            30562,
+            31654,
+            11586,
+            31637,
+            13591,
+            30322,
+            824,
+            5668,
+            20168,
+            23922,
+            10711
+          ],
+          [
+            593,
+            21961,
+            6604,
+            27237,
+            3514,
+            9716,
+            7654,
+            31096,
+            16627,
+            311,
+            16627,
+            311,
+            16627,
+            30562,
+            31654,
+            11586,
+            31637,
+            13591,
+            30322,
+            824,
+            5668,
+            20168,
+            23922,
+            10711
+          ],
+          [
+            593,
+            21961,
+            6604,
+            27237,
+            3514,
+            9716,
+            7654,
+            31096,
+            16627,
+            311,
+            16627,
+            311,
+            16627,
+            30562,
+            31654,
+            11586,
+            31637,
+            13591,
+            30322,
+            824,
+            5668,
+            20168,
+            23922,
+            10711
+          ],
+          [
+            593,
+            21961,
+            6604,
+            27237,
+            3514,
+            9716,
+            7654,
+            31096,
+            16627,
+            311,
+            16627,
+            311,
+            16627,
+            30562,
+            31654,
+            11586,
+            31637,
+            13591,
+            30322,
+            824,
+            5668,
+            20168,
+            23922,
+            10711
+          ]
+        ],
+        "timestamp": "2026-07-28T11:10:08.790262",
+        "variant_key": "cb_float32_pl8_cl32_glNone_184613ca_52d6c7e0eaf7"
+      },
+      "nocb_float32_pl8_cl32_glNone_184613ca_2450fb314e4f": {
+        "config_fp": "184613ca",
+        "continuous_batching": false,
+        "ctx_len": 32,
+        "dtype": "torch.float32",
+        "full_batch_size": null,
+        "gen_len": 24,
+        "generation_len": null,
+        "prompt_len": 8,
+        "prompts": [
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          593,
+          21961,
+          6604,
+          27237,
+          3514,
+          9716,
+          7654,
+          31096,
+          16627,
+          311,
+          16627,
+          311,
+          16627,
+          30562,
+          31654,
+          11586,
+          31637,
+          13591,
+          30322,
+          824,
+          5668,
+          20168,
+          23922,
+          10711
+        ],
+        "timestamp": "2026-07-28T11:04:36.649418",
+        "variant_key": "nocb_float32_pl8_cl32_glNone_184613ca_2450fb314e4f"
+      }
+    },
+    "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ": {
+      "cb_float32_pl8_cl32_glNone_f7b9f6f3_ac2523bfba69": {
+        "config_fp": "f7b9f6f3",
+        "continuous_batching": true,
+        "ctx_len": 32,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 24,
+        "generation_len": null,
+        "prompt_len": 8,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            593,
+            10617,
+            27707,
+            15073,
+            1249,
+            11908,
+            16293,
+            15290,
+            22701,
+            16912,
+            10807,
+            14441,
+            24070,
+            4774,
+            2716,
+            2548,
+            12605,
+            27983,
+            12135,
+            423,
+            3944,
+            973,
+            2454,
+            8576
+          ],
+          [
+            593,
+            10617,
+            27707,
+            15073,
+            1249,
+            11908,
+            16293,
+            15290,
+            22701,
+            16912,
+            10807,
+            14441,
+            24070,
+            4774,
+            2716,
+            2548,
+            12605,
+            27983,
+            12135,
+            423,
+            3944,
+            973,
+            2454,
+            8576
+          ],
+          [
+            593,
+            10617,
+            27707,
+            15073,
+            1249,
+            11908,
+            16293,
+            15290,
+            22701,
+            16912,
+            10807,
+            14441,
+            24070,
+            4774,
+            2716,
+            2548,
+            12605,
+            27983,
+            12135,
+            423,
+            3944,
+            973,
+            2454,
+            8576
+          ],
+          [
+            593,
+            10617,
+            27707,
+            15073,
+            1249,
+            11908,
+            16293,
+            15290,
+            22701,
+            16912,
+            10807,
+            14441,
+            24070,
+            4774,
+            2716,
+            2548,
+            12605,
+            27983,
+            12135,
+            423,
+            3944,
+            973,
+            2454,
+            8576
+          ]
+        ],
+        "timestamp": "2026-07-28T11:07:56.603675",
+        "variant_key": "cb_float32_pl8_cl32_glNone_f7b9f6f3_ac2523bfba69"
+      },
+      "nocb_float32_pl8_cl32_glNone_f7b9f6f3_40b47d444567": {
+        "config_fp": "f7b9f6f3",
+        "continuous_batching": false,
+        "ctx_len": 32,
+        "dtype": "torch.float32",
+        "full_batch_size": null,
+        "gen_len": 24,
+        "generation_len": null,
+        "prompt_len": 8,
+        "prompts": [
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          593,
+          10617,
+          27707,
+          15073,
+          1249,
+          11908,
+          16293,
+          15290,
+          22701,
+          16912,
+          10807,
+          14441,
+          24070,
+          4774,
+          2716,
+          2548,
+          12605,
+          27983,
+          12135,
+          423,
+          3944,
+          973,
+          2454,
+          8576
+        ],
+        "timestamp": "2026-07-28T11:03:13.159788",
+        "variant_key": "nocb_float32_pl8_cl32_glNone_f7b9f6f3_40b47d444567"
+      }
+    },
+    "TinyLlama/TinyLlama-1.1B-Chat-v1.0": {
+      "cb_float32_pl8_cl32_glNone_86141d4e_351bc9b693d0": {
+        "config_fp": "86141d4e",
+        "continuous_batching": true,
+        "ctx_len": 32,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 24,
+        "generation_len": null,
+        "prompt_len": 8,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            11217,
+            24405,
+            29643,
+            26072,
+            6106,
+            4742,
+            5213,
+            21644,
+            2641,
+            4430,
+            7856,
+            4691,
+            20876,
+            16246,
+            25684,
+            19187,
+            22561,
+            5089,
+            31592,
+            12323,
+            13209,
+            23704,
+            9859,
+            16853
+          ],
+          [
+            11217,
+            24405,
+            29643,
+            26072,
+            6106,
+            4742,
+            5213,
+            21644,
+            2641,
+            4430,
+            7856,
+            4691,
+            20876,
+            16246,
+            25684,
+            19187,
+            22561,
+            5089,
+            31592,
+            12323,
+            13209,
+            23704,
+            9859,
+            16853
+          ],
+          [
+            11217,
+            24405,
+            29643,
+            26072,
+            6106,
+            4742,
+            5213,
+            21644,
+            2641,
+            4430,
+            7856,
+            4691,
+            20876,
+            16246,
+            25684,
+            19187,
+            22561,
+            5089,
+            31592,
+            12323,
+            13209,
+            23704,
+            9859,
+            16853
+          ],
+          [
+            11217,
+            24405,
+            29643,
+            26072,
+            6106,
+            4742,
+            5213,
+            21644,
+            2641,
+            4430,
+            7856,
+            4691,
+            20876,
+            16246,
+            25684,
+            19187,
+            22561,
+            5089,
+            31592,
+            12323,
+            13209,
+            23704,
+            9859,
+            16853
+          ]
+        ],
+        "timestamp": "2026-07-28T11:15:53.037085",
+        "variant_key": "cb_float32_pl8_cl32_glNone_86141d4e_351bc9b693d0"
+      },
+      "nocb_float32_pl8_cl32_glNone_86141d4e_98ca8b3c5406": {
+        "config_fp": "86141d4e",
+        "continuous_batching": false,
+        "ctx_len": 32,
+        "dtype": "torch.float32",
+        "full_batch_size": null,
+        "gen_len": 24,
+        "generation_len": null,
+        "prompt_len": 8,
+        "prompts": [
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          11217,
+          24405,
+          29643,
+          26072,
+          6106,
+          4742,
+          5213,
+          21644,
+          2641,
+          4430,
+          7856,
+          4691,
+          20876,
+          16246,
+          25684,
+          19187,
+          22561,
+          5089,
+          31592,
+          12323,
+          13209,
+          23704,
+          9859,
+          16853
+        ],
+        "timestamp": "2026-07-28T11:15:20.137425",
+        "variant_key": "nocb_float32_pl8_cl32_glNone_86141d4e_98ca8b3c5406"
+      }
+    },
+    "hf-internal-testing/tiny-random-CodeGenForCausalLM": {
+      "cb_float16_pl1024_cl2048_gl8_bb18e641_19c98095a6e7": {
+        "config_fp": "bb18e641",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            893,
+            416,
+            669,
+            95,
+            246,
+            549,
+            874,
+            154
+          ],
+          [
+            893,
+            416,
+            669,
+            95,
+            246,
+            549,
+            874,
+            154
+          ],
+          [
+            893,
+            416,
+            669,
+            95,
+            246,
+            549,
+            874,
+            154
+          ],
+          [
+            893,
+            416,
+            669,
+            95,
+            246,
+            549,
+            874,
+            154
+          ]
+        ],
+        "timestamp": "2026-07-28T11:17:47.938856",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_bb18e641_19c98095a6e7"
+      },
+      "cb_float16_pl1024_cl2048_gl8_bb18e641_a9fa995a6525": {
+        "config_fp": "bb18e641",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            893,
+            416,
+            669,
+            95,
+            246,
+            549,
+            874,
+            154
+          ],
+          [
+            893,
+            416,
+            669,
+            95,
+            246,
+            549,
+            874,
+            154
+          ],
+          [
+            893,
+            416,
+            669,
+            95,
+            246,
+            549,
+            874,
+            154
+          ],
+          [
+            893,
+            416,
+            669,
+            95,
+            246,
+            549,
+            874,
+            154
+          ],
+          [
+            893,
+            416,
+            669,
+            95,
+            246,
+            549,
+            874,
+            154
+          ],
+          [
+            893,
+            416,
+            669,
+            95,
+            246,
+            549,
+            874,
+            154
+          ],
+          [
+            893,
+            416,
+            669,
+            95,
+            246,
+            549,
+            874,
+            154
+          ],
+          [
+            893,
+            416,
+            669,
+            95,
+            246,
+            549,
+            874,
+            154
+          ]
+        ],
+        "timestamp": "2026-07-28T11:03:35.720325",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_bb18e641_a9fa995a6525"
+      },
+      "cb_float32_pl1024_cl2048_gl8_bb18e641_c23a32062eef": {
+        "config_fp": "bb18e641",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            284,
+            194,
+            153,
+            657,
+            784,
+            26,
+            991,
+            714
+          ],
+          [
+            284,
+            194,
+            153,
+            657,
+            784,
+            26,
+            991,
+            714
+          ],
+          [
+            284,
+            194,
+            153,
+            657,
+            784,
+            26,
+            991,
+            714
+          ],
+          [
+            284,
+            194,
+            153,
+            657,
+            784,
+            26,
+            991,
+            714
+          ]
+        ],
+        "timestamp": "2026-07-28T11:11:37.230930",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_bb18e641_c23a32062eef"
+      }
+    },
+    "hf-internal-testing/tiny-random-FalconForCausalLM": {
+      "cb_float16_pl1024_cl2048_gl8_73cb78a7_89cb8496dee3": {
+        "config_fp": "73cb78a7",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638
+          ],
+          [
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638
+          ],
+          [
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638
+          ],
+          [
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638
+          ],
+          [
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638
+          ],
+          [
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638
+          ],
+          [
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638
+          ],
+          [
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638
+          ]
+        ],
+        "timestamp": "2026-07-28T11:03:53.963740",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_73cb78a7_89cb8496dee3"
+      },
+      "cb_float16_pl1024_cl2048_gl8_73cb78a7_95be70eb4d4c": {
+        "config_fp": "73cb78a7",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638
+          ],
+          [
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638
+          ],
+          [
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638
+          ],
+          [
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638,
+            638
+          ]
+        ],
+        "timestamp": "2026-07-28T11:18:06.289255",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_73cb78a7_95be70eb4d4c"
+      },
+      "cb_float32_pl1024_cl2048_gl8_73cb78a7_3e3fb8513bcf": {
+        "config_fp": "73cb78a7",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            304,
+            304,
+            304,
+            304,
+            304,
+            304,
+            304,
+            304
+          ],
+          [
+            304,
+            304,
+            304,
+            304,
+            304,
+            304,
+            304,
+            304
+          ],
+          [
+            304,
+            304,
+            304,
+            304,
+            304,
+            304,
+            304,
+            304
+          ],
+          [
+            304,
+            304,
+            304,
+            304,
+            304,
+            304,
+            304,
+            304
+          ]
+        ],
+        "timestamp": "2026-07-28T11:11:55.545159",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_73cb78a7_3e3fb8513bcf"
+      }
+    },
+    "hf-internal-testing/tiny-random-GPT2LMHeadModel": {
+      "cb_float16_pl1024_cl2048_gl8_f5049719_526a7e7afd21": {
+        "config_fp": "f5049719",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            729
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            729
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            729
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            729
+          ]
+        ],
+        "timestamp": "2026-07-28T11:13:06.229300",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_f5049719_526a7e7afd21"
+      },
+      "cb_float16_pl1024_cl2048_gl8_f5049719_80db31cdd750": {
+        "config_fp": "f5049719",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            729
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            729
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            729
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            729
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            729
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            729
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            729
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            729
+          ]
+        ],
+        "timestamp": "2026-07-28T11:18:20.354092",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_f5049719_80db31cdd750"
+      },
+      "cb_float32_pl1024_cl2048_gl8_f5049719_f69bdbe75874": {
+        "config_fp": "f5049719",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ]
+        ],
+        "timestamp": "2026-07-28T11:02:25.928719",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_f5049719_f69bdbe75874"
+      }
+    },
+    "hf-internal-testing/tiny-random-GPTBigCodeForCausalLM": {
+      "cb_float16_pl1024_cl2048_gl8_7f14a177_1c356c61ef8f": {
+        "config_fp": "7f14a177",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692
+          ],
+          [
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692
+          ],
+          [
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692
+          ],
+          [
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692
+          ]
+        ],
+        "timestamp": "2026-07-28T11:19:00.020080",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_7f14a177_1c356c61ef8f"
+      },
+      "cb_float16_pl1024_cl2048_gl8_7f14a177_394db4f04987": {
+        "config_fp": "7f14a177",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692
+          ],
+          [
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692
+          ],
+          [
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692
+          ],
+          [
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692
+          ],
+          [
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692
+          ],
+          [
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692
+          ],
+          [
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692
+          ],
+          [
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692,
+            692
+          ]
+        ],
+        "timestamp": "2026-07-28T11:04:50.110411",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_7f14a177_394db4f04987"
+      },
+      "cb_float32_pl1024_cl2048_gl8_7f14a177_4094beb54f47": {
+        "config_fp": "7f14a177",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            364,
+            441,
+            441,
+            441,
+            441,
+            441,
+            441,
+            441
+          ],
+          [
+            364,
+            441,
+            441,
+            441,
+            441,
+            441,
+            441,
+            441
+          ],
+          [
+            364,
+            441,
+            441,
+            441,
+            441,
+            441,
+            441,
+            441
+          ],
+          [
+            364,
+            441,
+            441,
+            441,
+            441,
+            441,
+            441,
+            441
+          ]
+        ],
+        "timestamp": "2026-07-28T11:12:52.531626",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_7f14a177_4094beb54f47"
+      }
+    },
+    "hf-internal-testing/tiny-random-GPTJForCausalLM": {
+      "cb_float16_pl1024_cl2048_gl8_3f300e75_b6bd0b641675": {
+        "config_fp": "3f300e75",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            927,
+            414,
+            282,
+            657,
+            594,
+            595,
+            201,
+            864
+          ],
+          [
+            927,
+            414,
+            282,
+            657,
+            594,
+            595,
+            201,
+            864
+          ],
+          [
+            927,
+            414,
+            282,
+            657,
+            594,
+            595,
+            201,
+            864
+          ],
+          [
+            927,
+            414,
+            282,
+            657,
+            594,
+            595,
+            201,
+            864
+          ],
+          [
+            927,
+            414,
+            282,
+            657,
+            594,
+            595,
+            201,
+            864
+          ],
+          [
+            927,
+            414,
+            282,
+            657,
+            594,
+            595,
+            201,
+            864
+          ],
+          [
+            927,
+            414,
+            282,
+            657,
+            594,
+            595,
+            201,
+            864
+          ],
+          [
+            927,
+            414,
+            282,
+            657,
+            594,
+            595,
+            201,
+            864
+          ]
+        ],
+        "timestamp": "2026-07-28T11:03:17.658800",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_3f300e75_b6bd0b641675"
+      },
+      "cb_float16_pl1024_cl2048_gl8_3f300e75_dd2cd6119d28": {
+        "config_fp": "3f300e75",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            927,
+            414,
+            282,
+            657,
+            594,
+            595,
+            201,
+            864
+          ],
+          [
+            927,
+            414,
+            282,
+            657,
+            594,
+            595,
+            201,
+            864
+          ],
+          [
+            927,
+            414,
+            282,
+            657,
+            594,
+            595,
+            201,
+            864
+          ],
+          [
+            927,
+            414,
+            282,
+            657,
+            594,
+            595,
+            201,
+            864
+          ]
+        ],
+        "timestamp": "2026-07-28T11:17:29.744656",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_3f300e75_dd2cd6119d28"
+      },
+      "cb_float32_pl1024_cl2048_gl8_3f300e75_baf02ad0f95e": {
+        "config_fp": "3f300e75",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            189,
+            656,
+            896,
+            284,
+            194,
+            127,
+            784,
+            26
+          ],
+          [
+            189,
+            656,
+            896,
+            284,
+            194,
+            127,
+            784,
+            26
+          ],
+          [
+            189,
+            656,
+            896,
+            284,
+            194,
+            127,
+            784,
+            26
+          ],
+          [
+            189,
+            656,
+            896,
+            284,
+            194,
+            127,
+            784,
+            26
+          ]
+        ],
+        "timestamp": "2026-07-28T11:11:18.559938",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_3f300e75_baf02ad0f95e"
+      }
+    },
+    "hf-internal-testing/tiny-random-Gemma2ForCausalLM": {
+      "cb_float16_pl1024_cl2048_gl8_4382ce87_2a7e623c0471": {
+        "config_fp": "4382ce87",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "The capital city of France is called",
+          "My name is",
+          "The capital city of France is called"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            79979,
+            183451,
+            183451,
+            134418,
+            134418,
+            37375,
+            37375,
+            37375
+          ],
+          [
+            255945,
+            255945,
+            255945,
+            25443,
+            25443,
+            25443,
+            25443,
+            25443
+          ],
+          [
+            79979,
+            183451,
+            183451,
+            134418,
+            134418,
+            37375,
+            37375,
+            37375
+          ],
+          [
+            255945,
+            255945,
+            255945,
+            25443,
+            25443,
+            25443,
+            25443,
+            25443
+          ]
+        ],
+        "timestamp": "2026-07-28T10:59:11.769034",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_4382ce87_2a7e623c0471"
+      },
+      "cb_float16_pl1024_cl2048_gl8_4382ce87_86c5b61df33c": {
+        "config_fp": "4382ce87",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            79979,
+            183451,
+            183451,
+            134418,
+            134418,
+            37375,
+            37375,
+            37375
+          ],
+          [
+            79979,
+            183451,
+            183451,
+            134418,
+            134418,
+            37375,
+            37375,
+            37375
+          ],
+          [
+            79979,
+            183451,
+            183451,
+            134418,
+            134418,
+            37375,
+            37375,
+            37375
+          ],
+          [
+            79979,
+            183451,
+            183451,
+            134418,
+            134418,
+            37375,
+            37375,
+            37375
+          ]
+        ],
+        "timestamp": "2026-07-28T11:17:34.252029",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_4382ce87_86c5b61df33c"
+      },
+      "cb_float16_pl1024_cl2048_gl8_4382ce87_e3730441f2fa": {
+        "config_fp": "4382ce87",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            79979,
+            183451,
+            183451,
+            134418,
+            134418,
+            37375,
+            37375,
+            37375
+          ],
+          [
+            79979,
+            183451,
+            183451,
+            134418,
+            134418,
+            37375,
+            37375,
+            37375
+          ],
+          [
+            79979,
+            183451,
+            183451,
+            134418,
+            134418,
+            37375,
+            37375,
+            37375
+          ],
+          [
+            79979,
+            183451,
+            183451,
+            134418,
+            134418,
+            37375,
+            37375,
+            37375
+          ],
+          [
+            79979,
+            183451,
+            183451,
+            134418,
+            134418,
+            37375,
+            37375,
+            37375
+          ],
+          [
+            79979,
+            183451,
+            183451,
+            134418,
+            134418,
+            37375,
+            37375,
+            37375
+          ],
+          [
+            79979,
+            183451,
+            183451,
+            134418,
+            134418,
+            37375,
+            37375,
+            37375
+          ],
+          [
+            79979,
+            183451,
+            183451,
+            134418,
+            134418,
+            37375,
+            37375,
+            37375
+          ]
+        ],
+        "timestamp": "2026-07-28T10:59:04.681349",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_4382ce87_e3730441f2fa"
+      },
+      "cb_float32_pl1024_cl2048_gl8_4382ce87_0aa5912145d1": {
+        "config_fp": "4382ce87",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            103166,
+            155618,
+            155618,
+            155618,
+            38776,
+            38776,
+            38776,
+            38776
+          ],
+          [
+            103166,
+            155618,
+            155618,
+            155618,
+            38776,
+            38776,
+            38776,
+            38776
+          ],
+          [
+            103166,
+            155618,
+            155618,
+            155618,
+            38776,
+            38776,
+            38776,
+            38776
+          ],
+          [
+            103166,
+            155618,
+            155618,
+            155618,
+            38776,
+            38776,
+            38776,
+            38776
+          ]
+        ],
+        "timestamp": "2026-07-28T11:06:32.588683",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_4382ce87_0aa5912145d1"
+      }
+    },
+    "hf-internal-testing/tiny-random-GraniteForCausalLM": {
+      "cb_float16_pl1024_cl2048_gl8_b3808677_c0e18fba0b7c": {
+        "config_fp": "b3808677",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            36329,
+            19437,
+            6267,
+            2261,
+            46061,
+            8765,
+            42787,
+            13711
+          ],
+          [
+            36329,
+            19437,
+            6267,
+            2261,
+            46061,
+            8765,
+            42787,
+            13711
+          ],
+          [
+            36329,
+            19437,
+            6267,
+            2261,
+            46061,
+            8765,
+            42787,
+            13711
+          ],
+          [
+            36329,
+            19437,
+            6267,
+            2261,
+            46061,
+            8765,
+            42787,
+            13711
+          ]
+        ],
+        "timestamp": "2026-07-28T11:17:39.558229",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_b3808677_c0e18fba0b7c"
+      },
+      "cb_float16_pl1024_cl2048_gl8_b3808677_df2f06d25cec": {
+        "config_fp": "b3808677",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            36329,
+            19437,
+            6267,
+            2261,
+            46061,
+            8765,
+            42787,
+            13711
+          ],
+          [
+            36329,
+            19437,
+            6267,
+            2261,
+            46061,
+            8765,
+            42787,
+            13711
+          ],
+          [
+            36329,
+            19437,
+            6267,
+            2261,
+            46061,
+            8765,
+            42787,
+            13711
+          ],
+          [
+            36329,
+            19437,
+            6267,
+            2261,
+            46061,
+            8765,
+            42787,
+            13711
+          ],
+          [
+            36329,
+            19437,
+            6267,
+            2261,
+            46061,
+            8765,
+            42787,
+            13711
+          ],
+          [
+            36329,
+            19437,
+            6267,
+            2261,
+            46061,
+            8765,
+            42787,
+            13711
+          ],
+          [
+            36329,
+            19437,
+            6267,
+            2261,
+            46061,
+            8765,
+            42787,
+            13711
+          ],
+          [
+            36329,
+            19437,
+            6267,
+            2261,
+            46061,
+            8765,
+            42787,
+            13711
+          ]
+        ],
+        "timestamp": "2026-07-28T11:01:47.854670",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_b3808677_df2f06d25cec"
+      },
+      "cb_float32_pl1024_cl2048_gl8_b3808677_be0b36ed4b6e": {
+        "config_fp": "b3808677",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            34584,
+            1237,
+            9178,
+            7078,
+            36516,
+            18563,
+            26648,
+            5353
+          ],
+          [
+            34584,
+            1237,
+            9178,
+            7078,
+            36516,
+            18563,
+            26648,
+            5353
+          ],
+          [
+            34584,
+            1237,
+            9178,
+            7078,
+            36516,
+            18563,
+            26648,
+            5353
+          ],
+          [
+            34584,
+            1237,
+            9178,
+            7078,
+            36516,
+            18563,
+            26648,
+            5353
+          ]
+        ],
+        "timestamp": "2026-07-28T11:09:28.744035",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_b3808677_be0b36ed4b6e"
+      }
+    },
+    "hf-internal-testing/tiny-random-LlamaForCausalLM": {
+      "cb_float16_pl1024_cl2048_gl8_f553f84e_5de8cb3e7f6b": {
+        "config_fp": "f553f84e",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "The capital city of France is called",
+          "My name is",
+          "The capital city of France is called"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            25436,
+            6585,
+            18464,
+            5266,
+            21714,
+            4452,
+            11779,
+            30435
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            25436,
+            6585,
+            18464,
+            5266,
+            21714,
+            4452,
+            11779,
+            30435
+          ]
+        ],
+        "timestamp": "2026-07-28T10:57:09.972388",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_f553f84e_5de8cb3e7f6b"
+      },
+      "cb_float16_pl1024_cl2048_gl8_f553f84e_d7516079d95c": {
+        "config_fp": "f553f84e",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ]
+        ],
+        "timestamp": "2026-07-28T11:18:38.556529",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_f553f84e_d7516079d95c"
+      },
+      "cb_float16_pl1024_cl2048_gl8_f553f84e_d85a14d7e723": {
+        "config_fp": "f553f84e",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ],
+          [
+            29696,
+            6181,
+            8407,
+            30731,
+            3778,
+            1723,
+            1166,
+            27003
+          ]
+        ],
+        "timestamp": "2026-07-28T11:13:24.088676",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_f553f84e_d85a14d7e723"
+      },
+      "cb_float32_pl1024_cl2048_gl8_f553f84e_15c7e131249f": {
+        "config_fp": "f553f84e",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            7305,
+            29048,
+            4782,
+            18837,
+            10653,
+            28124,
+            5745,
+            12568
+          ],
+          [
+            7305,
+            29048,
+            4782,
+            18837,
+            10653,
+            28124,
+            5745,
+            12568
+          ],
+          [
+            7305,
+            29048,
+            4782,
+            18837,
+            10653,
+            28124,
+            5745,
+            12568
+          ],
+          [
+            7305,
+            29048,
+            4782,
+            18837,
+            10653,
+            28124,
+            5745,
+            12568
+          ]
+        ],
+        "timestamp": "2026-07-28T11:02:43.913216",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_f553f84e_15c7e131249f"
+      }
+    },
+    "hf-internal-testing/tiny-random-MistralForCausalLM": {
+      "cb_float16_pl1024_cl2048_gl8_6a3eb30f_09bd57ce1ea1": {
+        "config_fp": "6a3eb30f",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            1668,
+            22857,
+            12812,
+            28436,
+            9119,
+            9659,
+            28586,
+            9255
+          ],
+          [
+            1668,
+            22857,
+            12812,
+            28436,
+            9119,
+            9659,
+            28586,
+            9255
+          ],
+          [
+            1668,
+            22857,
+            12812,
+            28436,
+            9119,
+            9659,
+            28586,
+            9255
+          ],
+          [
+            1668,
+            22857,
+            12812,
+            28436,
+            9119,
+            9659,
+            28586,
+            9255
+          ],
+          [
+            1668,
+            22857,
+            12812,
+            28436,
+            9119,
+            9659,
+            28586,
+            9255
+          ],
+          [
+            1668,
+            22857,
+            12812,
+            28436,
+            9119,
+            9659,
+            28586,
+            9255
+          ],
+          [
+            1668,
+            22857,
+            12812,
+            28436,
+            9119,
+            9659,
+            28586,
+            9255
+          ],
+          [
+            1668,
+            22857,
+            12812,
+            28436,
+            9119,
+            9659,
+            28586,
+            9255
+          ]
+        ],
+        "timestamp": "2026-07-28T11:01:28.714806",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_6a3eb30f_09bd57ce1ea1"
+      },
+      "cb_float16_pl1024_cl2048_gl8_6a3eb30f_7e8ae56d89b9": {
+        "config_fp": "6a3eb30f",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            1668,
+            22857,
+            12812,
+            28436,
+            9119,
+            9659,
+            28586,
+            9255
+          ],
+          [
+            1668,
+            22857,
+            12812,
+            28436,
+            9119,
+            9659,
+            28586,
+            9255
+          ],
+          [
+            1668,
+            22857,
+            12812,
+            28436,
+            9119,
+            9659,
+            28586,
+            9255
+          ],
+          [
+            1668,
+            22857,
+            12812,
+            28436,
+            9119,
+            9659,
+            28586,
+            9255
+          ]
+        ],
+        "timestamp": "2026-07-28T11:17:20.652516",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_6a3eb30f_7e8ae56d89b9"
+      },
+      "cb_float32_pl1024_cl2048_gl8_6a3eb30f_45b64d070f28": {
+        "config_fp": "6a3eb30f",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            12476,
+            3405,
+            31075,
+            17007,
+            20593,
+            9463,
+            18805,
+            30941
+          ],
+          [
+            12476,
+            3405,
+            31075,
+            17007,
+            20593,
+            9463,
+            18805,
+            30941
+          ],
+          [
+            12476,
+            3405,
+            31075,
+            17007,
+            20593,
+            9463,
+            18805,
+            30941
+          ],
+          [
+            12476,
+            3405,
+            31075,
+            17007,
+            20593,
+            9463,
+            18805,
+            30941
+          ]
+        ],
+        "timestamp": "2026-07-28T11:09:09.326607",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_6a3eb30f_45b64d070f28"
+      }
+    },
+    "hf-internal-testing/tiny-random-MptForCausalLM": {
+      "cb_float16_pl1024_cl2048_gl8_b992beea_6eb45a3b9540": {
+        "config_fp": "b992beea",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ],
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ],
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ],
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ],
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ],
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ],
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ],
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ]
+        ],
+        "timestamp": "2026-07-28T11:04:12.644958",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_b992beea_6eb45a3b9540"
+      },
+      "cb_float16_pl1024_cl2048_gl8_b992beea_9397a187da87": {
+        "config_fp": "b992beea",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "The capital city of France is called",
+          "My name is",
+          "The capital city of France is called"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ],
+          [
+            268,
+            268,
+            268,
+            268,
+            268,
+            268,
+            268,
+            268
+          ],
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ],
+          [
+            268,
+            268,
+            268,
+            268,
+            268,
+            268,
+            268,
+            268
+          ]
+        ],
+        "timestamp": "2026-07-28T11:01:47.610361",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_b992beea_9397a187da87"
+      },
+      "cb_float16_pl1024_cl2048_gl8_b992beea_b001d7a63800": {
+        "config_fp": "b992beea",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ],
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ],
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ],
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ]
+        ],
+        "timestamp": "2026-07-28T11:18:24.278467",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_b992beea_b001d7a63800"
+      },
+      "cb_float32_pl1024_cl2048_gl8_b992beea_ba28df14c8ea": {
+        "config_fp": "b992beea",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ],
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ],
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ],
+          [
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365,
+            365
+          ]
+        ],
+        "timestamp": "2026-07-28T11:12:16.109874",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_b992beea_ba28df14c8ea"
+      }
+    },
+    "hf-internal-testing/tiny-random-Olmo2ForCausalLM": {
+      "cb_float16_pl1024_cl2048_gl8_cd0ec592_0cb576a79c5a": {
+        "config_fp": "cd0ec592",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            35859,
+            95703,
+            57971,
+            78572,
+            59539,
+            36308,
+            40362,
+            1138
+          ],
+          [
+            35859,
+            95703,
+            57971,
+            78572,
+            59539,
+            36308,
+            40362,
+            1138
+          ],
+          [
+            35859,
+            95703,
+            57971,
+            78572,
+            59539,
+            36308,
+            40362,
+            1138
+          ],
+          [
+            35859,
+            95703,
+            57971,
+            78572,
+            59539,
+            36308,
+            40362,
+            1138
+          ]
+        ],
+        "timestamp": "2026-07-28T11:17:10.765623",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_cd0ec592_0cb576a79c5a"
+      },
+      "cb_float16_pl1024_cl2048_gl8_cd0ec592_ec513607a585": {
+        "config_fp": "cd0ec592",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            35859,
+            95703,
+            57971,
+            78572,
+            59539,
+            36308,
+            40362,
+            1138
+          ],
+          [
+            35859,
+            95703,
+            57971,
+            78572,
+            59539,
+            36308,
+            40362,
+            1138
+          ],
+          [
+            35859,
+            95703,
+            57971,
+            78572,
+            59539,
+            36308,
+            40362,
+            1138
+          ],
+          [
+            35859,
+            95703,
+            57971,
+            78572,
+            59539,
+            36308,
+            40362,
+            1138
+          ],
+          [
+            35859,
+            95703,
+            57971,
+            78572,
+            59539,
+            36308,
+            40362,
+            1138
+          ],
+          [
+            35859,
+            95703,
+            57971,
+            78572,
+            59539,
+            36308,
+            40362,
+            1138
+          ],
+          [
+            35859,
+            95703,
+            57971,
+            78572,
+            59539,
+            36308,
+            40362,
+            1138
+          ],
+          [
+            35859,
+            95703,
+            57971,
+            78572,
+            59539,
+            36308,
+            40362,
+            1138
+          ]
+        ],
+        "timestamp": "2026-07-28T11:02:58.289842",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_cd0ec592_ec513607a585"
+      },
+      "cb_float32_pl1024_cl2048_gl8_cd0ec592_67c1f522c807": {
+        "config_fp": "cd0ec592",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            93119,
+            40536,
+            40536,
+            61028,
+            12830,
+            1410,
+            14257,
+            92547
+          ],
+          [
+            93119,
+            40536,
+            40536,
+            61028,
+            12830,
+            1410,
+            14257,
+            92547
+          ],
+          [
+            93119,
+            40536,
+            40536,
+            61028,
+            12830,
+            1410,
+            14257,
+            92547
+          ],
+          [
+            93119,
+            40536,
+            40536,
+            61028,
+            12830,
+            1410,
+            14257,
+            92547
+          ]
+        ],
+        "timestamp": "2026-07-28T11:10:59.266943",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_cd0ec592_67c1f522c807"
+      }
+    },
+    "hf-internal-testing/tiny-random-PhiForCausalLM": {
+      "cb_float16_pl1024_cl2048_gl8_03df034d_180981745c33": {
+        "config_fp": "03df034d",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            776,
+            371,
+            1014,
+            983,
+            982,
+            990,
+            11,
+            709
+          ],
+          [
+            776,
+            371,
+            1014,
+            983,
+            982,
+            990,
+            11,
+            709
+          ],
+          [
+            776,
+            371,
+            1014,
+            983,
+            982,
+            990,
+            11,
+            709
+          ],
+          [
+            776,
+            371,
+            1014,
+            983,
+            982,
+            990,
+            11,
+            709
+          ]
+        ],
+        "timestamp": "2026-07-28T11:15:14.904776",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_03df034d_180981745c33"
+      },
+      "cb_float16_pl1024_cl2048_gl8_03df034d_ab0d11d88805": {
+        "config_fp": "03df034d",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            776,
+            371,
+            1014,
+            983,
+            982,
+            990,
+            11,
+            709
+          ],
+          [
+            776,
+            371,
+            1014,
+            983,
+            982,
+            990,
+            11,
+            709
+          ],
+          [
+            776,
+            371,
+            1014,
+            983,
+            982,
+            990,
+            11,
+            709
+          ],
+          [
+            776,
+            371,
+            1014,
+            983,
+            982,
+            990,
+            11,
+            709
+          ],
+          [
+            776,
+            371,
+            1014,
+            983,
+            982,
+            990,
+            11,
+            709
+          ],
+          [
+            776,
+            371,
+            1014,
+            983,
+            982,
+            990,
+            11,
+            709
+          ],
+          [
+            776,
+            371,
+            1014,
+            983,
+            982,
+            990,
+            11,
+            709
+          ],
+          [
+            776,
+            371,
+            1014,
+            983,
+            982,
+            990,
+            11,
+            709
+          ]
+        ],
+        "timestamp": "2026-07-28T10:56:47.830151",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_03df034d_ab0d11d88805"
+      },
+      "cb_float32_pl1024_cl2048_gl8_03df034d_6b0e0356ae4c": {
+        "config_fp": "03df034d",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            543,
+            870,
+            20,
+            492,
+            925,
+            374,
+            632,
+            252
+          ],
+          [
+            543,
+            870,
+            20,
+            492,
+            925,
+            374,
+            632,
+            252
+          ],
+          [
+            543,
+            870,
+            20,
+            492,
+            925,
+            374,
+            632,
+            252
+          ],
+          [
+            543,
+            870,
+            20,
+            492,
+            925,
+            374,
+            632,
+            252
+          ]
+        ],
+        "timestamp": "2026-07-28T11:04:42.006359",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_03df034d_6b0e0356ae4c"
+      }
+    },
+    "hf-internal-testing/tiny-random-Starcoder2ForCausalLM": {
+      "cb_float16_pl1024_cl2048_gl8_6e2a41d5_e60200c75847": {
+        "config_fp": "6e2a41d5",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ]
+        ],
+        "timestamp": "2026-07-28T11:04:31.450009",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_6e2a41d5_e60200c75847"
+      },
+      "cb_float16_pl1024_cl2048_gl8_6e2a41d5_e9921e6b2489": {
+        "config_fp": "6e2a41d5",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ]
+        ],
+        "timestamp": "2026-07-28T11:18:41.851046",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_6e2a41d5_e9921e6b2489"
+      },
+      "cb_float16_pl1024_cl2048_gl8_7c6f879d_83a32b1fb684": {
+        "config_fp": "7c6f879d",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "The capital city of France is called",
+          "My name is",
+          "The capital city of France is called"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            267,
+            267,
+            267,
+            267,
+            267,
+            267,
+            267,
+            267
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            267,
+            267,
+            267,
+            267,
+            267,
+            267,
+            267,
+            267
+          ]
+        ],
+        "timestamp": "2026-07-28T11:02:07.056300",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_7c6f879d_83a32b1fb684"
+      },
+      "cb_float32_pl1024_cl2048_gl8_6e2a41d5_321d05aebcf0": {
+        "config_fp": "6e2a41d5",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ],
+          [
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364,
+            364
+          ]
+        ],
+        "timestamp": "2026-07-28T11:12:33.911506",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_6e2a41d5_321d05aebcf0"
+      }
+    },
+    "ibm-granite/granite-3.1-1b-a400m-base": {
+      "cb_float16_pl1024_cl2048_gl8_96d9cfb6_9094bf4c6bfc": {
+        "config_fp": "96d9cfb6",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "The capital city of France is called",
+          "My name is",
+          "The capital city of France is called"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ],
+          [
+            3823,
+            3823,
+            3823,
+            3823,
+            3823,
+            3823,
+            3823,
+            3823
+          ],
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ],
+          [
+            3823,
+            3823,
+            3823,
+            3823,
+            3823,
+            3823,
+            3823,
+            3823
+          ]
+        ],
+        "timestamp": "2026-07-28T11:00:59.344167",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_96d9cfb6_9094bf4c6bfc"
+      },
+      "cb_float16_pl1024_cl2048_gl8_d94e749e_2e69d314a092": {
+        "config_fp": "d94e749e",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ],
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ],
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ],
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ],
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ],
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ],
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ],
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ]
+        ],
+        "timestamp": "2026-07-28T11:02:11.043555",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_d94e749e_2e69d314a092"
+      },
+      "cb_float16_pl1024_cl2048_gl8_d94e749e_308be9e42872": {
+        "config_fp": "d94e749e",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ],
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ],
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ],
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ]
+        ],
+        "timestamp": "2026-07-28T11:16:22.645926",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_d94e749e_308be9e42872"
+      },
+      "cb_float32_pl1024_cl2048_gl8_d94e749e_81cd62a2694e": {
+        "config_fp": "d94e749e",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ],
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ],
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ],
+          [
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438,
+            438
+          ]
+        ],
+        "timestamp": "2026-07-28T11:09:50.325225",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_d94e749e_81cd62a2694e"
+      }
+    },
+    "katuni4ka/tiny-random-internvl2": {
+      "cb_float16_pl1024_cl2048_gl8_17fce929_42cf2b687630": {
+        "config_fp": "17fce929",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ]
+        ],
+        "timestamp": "2026-07-28T11:00:07.189444",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_17fce929_42cf2b687630"
+      },
+      "cb_float16_pl1024_cl2048_gl8_17fce929_bc0a1eadca52": {
+        "config_fp": "17fce929",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ]
+        ],
+        "timestamp": "2026-07-28T11:18:35.426266",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_17fce929_bc0a1eadca52"
+      },
+      "cb_float32_pl1024_cl2048_gl8_17fce929_5a31632b4470": {
+        "config_fp": "17fce929",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ]
+        ],
+        "timestamp": "2026-07-28T11:07:35.999473",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_17fce929_5a31632b4470"
+      }
+    },
+    "katuni4ka/tiny-random-llava-next": {
+      "cb_float16_pl1024_cl2048_gl8_8f1c27a3_2d58788ddbf0": {
+        "config_fp": "8f1c27a3",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            25795,
+            24955,
+            8606,
+            20568,
+            23759,
+            7135,
+            6579,
+            25496
+          ],
+          [
+            25795,
+            24955,
+            8606,
+            20568,
+            23759,
+            7135,
+            6579,
+            25496
+          ],
+          [
+            25795,
+            24955,
+            8606,
+            20568,
+            23759,
+            7135,
+            6579,
+            25496
+          ],
+          [
+            25795,
+            24955,
+            8606,
+            20568,
+            23759,
+            7135,
+            6579,
+            25496
+          ],
+          [
+            25795,
+            24955,
+            8606,
+            20568,
+            23759,
+            7135,
+            6579,
+            25496
+          ],
+          [
+            25795,
+            24955,
+            8606,
+            20568,
+            23759,
+            7135,
+            6579,
+            25496
+          ],
+          [
+            25795,
+            24955,
+            8606,
+            20568,
+            23759,
+            7135,
+            6579,
+            25496
+          ],
+          [
+            25795,
+            24955,
+            8606,
+            20568,
+            23759,
+            7135,
+            6579,
+            25496
+          ]
+        ],
+        "timestamp": "2026-07-28T11:19:18.517407",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_8f1c27a3_2d58788ddbf0"
+      },
+      "cb_float16_pl1024_cl2048_gl8_8f1c27a3_84d5b43439ab": {
+        "config_fp": "8f1c27a3",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            25795,
+            24955,
+            8606,
+            20568,
+            23759,
+            7135,
+            6579,
+            25496
+          ],
+          [
+            25795,
+            24955,
+            8606,
+            20568,
+            23759,
+            7135,
+            6579,
+            25496
+          ],
+          [
+            25795,
+            24955,
+            8606,
+            20568,
+            23759,
+            7135,
+            6579,
+            25496
+          ],
+          [
+            25795,
+            24955,
+            8606,
+            20568,
+            23759,
+            7135,
+            6579,
+            25496
+          ]
+        ],
+        "timestamp": "2026-07-28T11:14:57.095367",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_8f1c27a3_84d5b43439ab"
+      },
+      "cb_float32_pl1024_cl2048_gl8_8f1c27a3_5a3d25d23c33": {
+        "config_fp": "8f1c27a3",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            31872,
+            29791,
+            11525,
+            24914,
+            21864,
+            9985,
+            22043,
+            8649
+          ],
+          [
+            31872,
+            29791,
+            11525,
+            24914,
+            21864,
+            9985,
+            22043,
+            8649
+          ],
+          [
+            31872,
+            29791,
+            11525,
+            24914,
+            21864,
+            9985,
+            22043,
+            8649
+          ],
+          [
+            31872,
+            29791,
+            11525,
+            24914,
+            21864,
+            9985,
+            22043,
+            8649
+          ]
+        ],
+        "timestamp": "2026-07-28T11:04:23.515000",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_8f1c27a3_5a3d25d23c33"
+      }
+    },
+    "llamafactory/tiny-random-Llama-4": {
+      "cb_float16_pl1024_cl2048_gl8_7d90fbff_3d57d2bd6ed0": {
+        "config_fp": "7d90fbff",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            145004,
+            5355,
+            189056,
+            5355,
+            5355,
+            5355,
+            5355,
+            38676
+          ],
+          [
+            145004,
+            5355,
+            189056,
+            5355,
+            5355,
+            5355,
+            5355,
+            38676
+          ],
+          [
+            145004,
+            5355,
+            189056,
+            5355,
+            5355,
+            5355,
+            5355,
+            38676
+          ],
+          [
+            145004,
+            5355,
+            189056,
+            5355,
+            5355,
+            5355,
+            5355,
+            38676
+          ],
+          [
+            145004,
+            5355,
+            189056,
+            5355,
+            5355,
+            5355,
+            5355,
+            38676
+          ],
+          [
+            145004,
+            5355,
+            189056,
+            5355,
+            5355,
+            5355,
+            5355,
+            38676
+          ],
+          [
+            145004,
+            5355,
+            189056,
+            5355,
+            5355,
+            5355,
+            5355,
+            38676
+          ],
+          [
+            145004,
+            5355,
+            189056,
+            5355,
+            5355,
+            5355,
+            5355,
+            38676
+          ]
+        ],
+        "timestamp": "2026-07-28T11:18:59.197369",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_7d90fbff_3d57d2bd6ed0"
+      },
+      "cb_float16_pl1024_cl2048_gl8_7d90fbff_ccbc08708bf6": {
+        "config_fp": "7d90fbff",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            145004,
+            5355,
+            189056,
+            5355,
+            5355,
+            5355,
+            5355,
+            38676
+          ],
+          [
+            145004,
+            5355,
+            189056,
+            5355,
+            5355,
+            5355,
+            5355,
+            38676
+          ],
+          [
+            145004,
+            5355,
+            189056,
+            5355,
+            5355,
+            5355,
+            5355,
+            38676
+          ],
+          [
+            145004,
+            5355,
+            189056,
+            5355,
+            5355,
+            5355,
+            5355,
+            38676
+          ]
+        ],
+        "timestamp": "2026-07-28T11:13:58.436573",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_7d90fbff_ccbc08708bf6"
+      },
+      "cb_float32_pl1024_cl2048_gl8_7d90fbff_6e0ded72e091": {
+        "config_fp": "7d90fbff",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            164686,
+            178807,
+            87983,
+            35731,
+            43213,
+            77078,
+            166238,
+            191734
+          ],
+          [
+            164686,
+            178807,
+            87983,
+            35731,
+            43213,
+            77078,
+            166238,
+            191734
+          ],
+          [
+            164686,
+            178807,
+            87983,
+            35731,
+            43213,
+            77078,
+            166238,
+            191734
+          ],
+          [
+            164686,
+            178807,
+            87983,
+            35731,
+            43213,
+            77078,
+            166238,
+            191734
+          ]
+        ],
+        "timestamp": "2026-07-28T11:03:06.229029",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_7d90fbff_6e0ded72e091"
+      }
+    },
+    "neuralmagic/Llama-3.2-3B-Instruct-FP8": {
+      "cb_float32_pl8_cl32_glNone_db857f75_25d3bb2d5f74": {
+        "config_fp": "db857f75",
+        "continuous_batching": true,
+        "ctx_len": 32,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 24,
+        "generation_len": null,
+        "prompt_len": 8,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ]
+        ],
+        "timestamp": "2026-07-28T11:11:25.806428",
+        "variant_key": "cb_float32_pl8_cl32_glNone_db857f75_25d3bb2d5f74"
+      },
+      "nocb_float32_pl8_cl32_glNone_db857f75_c3aaafb135d8": {
+        "config_fp": "db857f75",
+        "continuous_batching": false,
+        "ctx_len": 32,
+        "dtype": "torch.float32",
+        "full_batch_size": null,
+        "gen_len": 24,
+        "generation_len": null,
+        "prompt_len": 8,
+        "prompts": [
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374,
+          374
+        ],
+        "timestamp": "2026-07-28T11:05:47.798623",
+        "variant_key": "nocb_float32_pl8_cl32_glNone_db857f75_c3aaafb135d8"
+      }
+    },
+    "neuralmagic/Qwen2-0.5B-Instruct-FP8": {
+      "cb_float32_pl8_cl32_glNone_2f9b2312_467953cdd965": {
+        "config_fp": "2f9b2312",
+        "continuous_batching": true,
+        "ctx_len": 32,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 24,
+        "generation_len": null,
+        "prompt_len": 8,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            406,
+            113921,
+            113102,
+            82375,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357
+          ],
+          [
+            406,
+            113921,
+            113102,
+            82375,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357
+          ],
+          [
+            406,
+            113921,
+            113102,
+            82375,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357
+          ],
+          [
+            406,
+            113921,
+            113102,
+            82375,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357,
+            84357
+          ]
+        ],
+        "timestamp": "2026-07-28T11:12:11.403754",
+        "variant_key": "cb_float32_pl8_cl32_glNone_2f9b2312_467953cdd965"
+      },
+      "nocb_float32_pl8_cl32_glNone_2f9b2312_962b2fea1c72": {
+        "config_fp": "2f9b2312",
+        "continuous_batching": false,
+        "ctx_len": 32,
+        "dtype": "torch.float32",
+        "full_batch_size": null,
+        "gen_len": 24,
+        "generation_len": null,
+        "prompt_len": 8,
+        "prompts": [
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          406,
+          113921,
+          113102,
+          82375,
+          84357,
+          84357,
+          84357,
+          84357,
+          84357,
+          84357,
+          84357,
+          84357,
+          84357,
+          84357,
+          84357,
+          84357,
+          84357,
+          84357,
+          84357,
+          84357,
+          84357,
+          84357,
+          84357,
+          84357
+        ],
+        "timestamp": "2026-07-28T11:06:38.661318",
+        "variant_key": "nocb_float32_pl8_cl32_glNone_2f9b2312_962b2fea1c72"
+      }
+    },
+    "onnx-internal-testing/tiny-random-Qwen2ForCausalLM": {
+      "cb_float16_pl1024_cl2048_gl8_6bca6d89_d430ac0480c0": {
+        "config_fp": "6bca6d89",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "The capital city of France is called",
+          "My name is",
+          "The capital city of France is called"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575
+          ],
+          [
+            111445,
+            111445,
+            111445,
+            111445,
+            111445,
+            111445,
+            111445,
+            111445
+          ],
+          [
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575
+          ],
+          [
+            111445,
+            111445,
+            111445,
+            111445,
+            111445,
+            111445,
+            111445,
+            111445
+          ]
+        ],
+        "timestamp": "2026-07-28T10:59:31.501384",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_6bca6d89_d430ac0480c0"
+      },
+      "cb_float16_pl1024_cl2048_gl8_f75d0bb9_2d849bd8dfc6": {
+        "config_fp": "f75d0bb9",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575
+          ],
+          [
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575
+          ],
+          [
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575
+          ],
+          [
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575
+          ],
+          [
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575
+          ],
+          [
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575
+          ],
+          [
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575
+          ],
+          [
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575
+          ]
+        ],
+        "timestamp": "2026-07-28T10:59:46.663387",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_f75d0bb9_2d849bd8dfc6"
+      },
+      "cb_float16_pl1024_cl2048_gl8_f75d0bb9_d6ef22526216": {
+        "config_fp": "f75d0bb9",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575
+          ],
+          [
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575
+          ],
+          [
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575
+          ],
+          [
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575,
+            8575
+          ]
+        ],
+        "timestamp": "2026-07-28T11:18:14.907474",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_f75d0bb9_d6ef22526216"
+      },
+      "cb_float32_pl1024_cl2048_gl8_f75d0bb9_b6a8536d2fcd": {
+        "config_fp": "f75d0bb9",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ]
+        ],
+        "timestamp": "2026-07-28T11:07:15.694246",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_f75d0bb9_b6a8536d2fcd"
+      }
+    },
+    "tiny-random/gemma-3": {
+      "cb_float16_pl1024_cl2048_gl8_e9e2bac1_9e03ba4a81cb": {
+        "config_fp": "e9e2bac1",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            6413,
+            171675,
+            171675,
+            171675,
+            243664,
+            67890,
+            11600,
+            67890
+          ],
+          [
+            6413,
+            171675,
+            171675,
+            171675,
+            243664,
+            67890,
+            11600,
+            67890
+          ],
+          [
+            6413,
+            171675,
+            171675,
+            171675,
+            243664,
+            67890,
+            11600,
+            67890
+          ],
+          [
+            6413,
+            171675,
+            171675,
+            171675,
+            243664,
+            67890,
+            11600,
+            67890
+          ]
+        ],
+        "timestamp": "2026-07-28T11:17:54.470157",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_e9e2bac1_9e03ba4a81cb"
+      },
+      "cb_float16_pl1024_cl2048_gl8_e9e2bac1_bab490acf25a": {
+        "config_fp": "e9e2bac1",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            6413,
+            171675,
+            171675,
+            171675,
+            243664,
+            67890,
+            11600,
+            67890
+          ],
+          [
+            6413,
+            171675,
+            171675,
+            171675,
+            243664,
+            67890,
+            11600,
+            67890
+          ],
+          [
+            6413,
+            171675,
+            171675,
+            171675,
+            243664,
+            67890,
+            11600,
+            67890
+          ],
+          [
+            6413,
+            171675,
+            171675,
+            171675,
+            243664,
+            67890,
+            11600,
+            67890
+          ],
+          [
+            6413,
+            171675,
+            171675,
+            171675,
+            243664,
+            67890,
+            11600,
+            67890
+          ],
+          [
+            6413,
+            171675,
+            171675,
+            171675,
+            243664,
+            67890,
+            11600,
+            67890
+          ],
+          [
+            6413,
+            171675,
+            171675,
+            171675,
+            243664,
+            67890,
+            11600,
+            67890
+          ],
+          [
+            6413,
+            171675,
+            171675,
+            171675,
+            243664,
+            67890,
+            11600,
+            67890
+          ]
+        ],
+        "timestamp": "2026-07-28T10:59:26.078065",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_e9e2bac1_bab490acf25a"
+      },
+      "cb_float32_pl1024_cl2048_gl8_e9e2bac1_fb88da6e87da": {
+        "config_fp": "e9e2bac1",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            34120,
+            111792,
+            133828,
+            133828,
+            133828,
+            133828,
+            116281,
+            116281
+          ],
+          [
+            34120,
+            111792,
+            133828,
+            133828,
+            133828,
+            133828,
+            116281,
+            116281
+          ],
+          [
+            34120,
+            111792,
+            133828,
+            133828,
+            133828,
+            133828,
+            116281,
+            116281
+          ],
+          [
+            34120,
+            111792,
+            133828,
+            133828,
+            133828,
+            133828,
+            116281,
+            116281
+          ]
+        ],
+        "timestamp": "2026-07-28T11:06:54.764847",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_e9e2bac1_fb88da6e87da"
+      }
+    },
+    "tiny-random/glm-4-moe": {
+      "cb_float16_pl1024_cl2048_gl8_2917af49_b03c9892bc96": {
+        "config_fp": "2917af49",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520
+          ],
+          [
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520
+          ],
+          [
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520
+          ],
+          [
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520
+          ]
+        ],
+        "timestamp": "2026-07-28T11:17:59.183843",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_2917af49_b03c9892bc96"
+      },
+      "cb_float16_pl1024_cl2048_gl8_2917af49_ec530bcfdc23": {
+        "config_fp": "2917af49",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520
+          ],
+          [
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520
+          ],
+          [
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520
+          ],
+          [
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520
+          ],
+          [
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520
+          ],
+          [
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520
+          ],
+          [
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520
+          ],
+          [
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520,
+            47520
+          ]
+        ],
+        "timestamp": "2026-07-28T11:05:09.415883",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_2917af49_ec530bcfdc23"
+      },
+      "cb_float32_pl1024_cl2048_gl8_2917af49_5cd675108ef5": {
+        "config_fp": "2917af49",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            139706,
+            139706,
+            139706,
+            139706,
+            139706,
+            67912,
+            67912,
+            67912
+          ],
+          [
+            139706,
+            139706,
+            139706,
+            139706,
+            139706,
+            67912,
+            67912,
+            67912
+          ],
+          [
+            139706,
+            139706,
+            139706,
+            139706,
+            139706,
+            67912,
+            67912,
+            67912
+          ],
+          [
+            139706,
+            139706,
+            139706,
+            139706,
+            139706,
+            67912,
+            67912,
+            67912
+          ]
+        ],
+        "timestamp": "2026-07-28T11:13:11.668533",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_2917af49_5cd675108ef5"
+      }
+    },
+    "tiny-random/phi-4": {
+      "cb_float16_pl1024_cl2048_gl8_f3cce570_9181088a3761": {
+        "config_fp": "f3cce570",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            93860,
+            57508,
+            469,
+            20772,
+            44418,
+            932,
+            76634,
+            7990
+          ],
+          [
+            93860,
+            57508,
+            469,
+            20772,
+            44418,
+            932,
+            76634,
+            7990
+          ],
+          [
+            93860,
+            57508,
+            469,
+            20772,
+            44418,
+            932,
+            76634,
+            7990
+          ],
+          [
+            93860,
+            57508,
+            469,
+            20772,
+            44418,
+            932,
+            76634,
+            7990
+          ],
+          [
+            93860,
+            57508,
+            469,
+            20772,
+            44418,
+            932,
+            76634,
+            7990
+          ],
+          [
+            93860,
+            57508,
+            469,
+            20772,
+            44418,
+            932,
+            76634,
+            7990
+          ],
+          [
+            93860,
+            57508,
+            469,
+            20772,
+            44418,
+            932,
+            76634,
+            7990
+          ],
+          [
+            93860,
+            57508,
+            469,
+            20772,
+            44418,
+            932,
+            76634,
+            7990
+          ]
+        ],
+        "timestamp": "2026-07-28T10:57:06.501066",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_f3cce570_9181088a3761"
+      },
+      "cb_float16_pl1024_cl2048_gl8_f3cce570_eb1b0698328f": {
+        "config_fp": "f3cce570",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            93860,
+            57508,
+            469,
+            20772,
+            44418,
+            932,
+            76634,
+            7990
+          ],
+          [
+            93860,
+            57508,
+            469,
+            20772,
+            44418,
+            932,
+            76634,
+            7990
+          ],
+          [
+            93860,
+            57508,
+            469,
+            20772,
+            44418,
+            932,
+            76634,
+            7990
+          ],
+          [
+            93860,
+            57508,
+            469,
+            20772,
+            44418,
+            932,
+            76634,
+            7990
+          ]
+        ],
+        "timestamp": "2026-07-28T11:15:34.071126",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_f3cce570_eb1b0698328f"
+      },
+      "cb_float32_pl1024_cl2048_gl8_f3cce570_508dd5410a54": {
+        "config_fp": "f3cce570",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            75073,
+            98384,
+            24392,
+            4742,
+            66393,
+            19089,
+            2863,
+            74130
+          ],
+          [
+            75073,
+            98384,
+            24392,
+            4742,
+            66393,
+            19089,
+            2863,
+            74130
+          ],
+          [
+            75073,
+            98384,
+            24392,
+            4742,
+            66393,
+            19089,
+            2863,
+            74130
+          ],
+          [
+            75073,
+            98384,
+            24392,
+            4742,
+            66393,
+            19089,
+            2863,
+            74130
+          ]
+        ],
+        "timestamp": "2026-07-28T11:05:00.455462",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_f3cce570_508dd5410a54"
+      }
+    },
+    "tiny-random/qwen2.5": {
+      "cb_float16_pl1024_cl2048_gl8_30d631e1_ef84c812e3f2": {
+        "config_fp": "30d631e1",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "The capital city of France is called",
+          "My name is",
+          "The capital city of France is called"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            144752,
+            43118,
+            115196,
+            27915,
+            41621,
+            60802,
+            10,
+            113416
+          ],
+          [
+            136546,
+            68416,
+            90027,
+            50237,
+            66607,
+            84319,
+            116897,
+            72525
+          ],
+          [
+            144752,
+            43118,
+            115196,
+            27915,
+            41621,
+            60802,
+            10,
+            113416
+          ],
+          [
+            136546,
+            68416,
+            90027,
+            50237,
+            66607,
+            84319,
+            116897,
+            72525
+          ]
+        ],
+        "timestamp": "2026-07-28T10:59:51.345158",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_30d631e1_ef84c812e3f2"
+      },
+      "cb_float16_pl1024_cl2048_gl8_619e7657_394232ef0031": {
+        "config_fp": "619e7657",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            144752,
+            43118,
+            115196,
+            27915,
+            41621,
+            60802,
+            10,
+            113416
+          ],
+          [
+            144752,
+            43118,
+            115196,
+            27915,
+            41621,
+            60802,
+            10,
+            113416
+          ],
+          [
+            144752,
+            43118,
+            115196,
+            27915,
+            41621,
+            60802,
+            10,
+            113416
+          ],
+          [
+            144752,
+            43118,
+            115196,
+            27915,
+            41621,
+            60802,
+            10,
+            113416
+          ],
+          [
+            144752,
+            43118,
+            115196,
+            27915,
+            41621,
+            60802,
+            10,
+            113416
+          ],
+          [
+            144752,
+            43118,
+            115196,
+            27915,
+            41621,
+            60802,
+            10,
+            113416
+          ],
+          [
+            144752,
+            43118,
+            115196,
+            27915,
+            41621,
+            60802,
+            10,
+            113416
+          ],
+          [
+            144752,
+            43118,
+            115196,
+            27915,
+            41621,
+            60802,
+            10,
+            113416
+          ]
+        ],
+        "timestamp": "2026-07-28T11:00:27.504290",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_619e7657_394232ef0031"
+      },
+      "cb_float16_pl1024_cl2048_gl8_619e7657_4e26ba0f28d7": {
+        "config_fp": "619e7657",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            144752,
+            43118,
+            115196,
+            27915,
+            41621,
+            60802,
+            10,
+            113416
+          ],
+          [
+            144752,
+            43118,
+            115196,
+            27915,
+            41621,
+            60802,
+            10,
+            113416
+          ],
+          [
+            144752,
+            43118,
+            115196,
+            27915,
+            41621,
+            60802,
+            10,
+            113416
+          ],
+          [
+            144752,
+            43118,
+            115196,
+            27915,
+            41621,
+            60802,
+            10,
+            113416
+          ]
+        ],
+        "timestamp": "2026-07-28T11:18:55.955920",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_619e7657_4e26ba0f28d7"
+      },
+      "cb_float32_pl1024_cl2048_gl8_619e7657_ea40acc1d045": {
+        "config_fp": "619e7657",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            95359,
+            45759,
+            2708,
+            5329,
+            123681,
+            85245,
+            12980,
+            150720
+          ],
+          [
+            95359,
+            45759,
+            2708,
+            5329,
+            123681,
+            85245,
+            12980,
+            150720
+          ],
+          [
+            95359,
+            45759,
+            2708,
+            5329,
+            123681,
+            85245,
+            12980,
+            150720
+          ],
+          [
+            95359,
+            45759,
+            2708,
+            5329,
+            123681,
+            85245,
+            12980,
+            150720
+          ]
+        ],
+        "timestamp": "2026-07-28T11:08:00.979014",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_619e7657_ea40acc1d045"
+      }
+    },
+    "tiny-random/qwen3": {
+      "cb_float16_pl1024_cl2048_gl8_8205743d_768cfda30290": {
+        "config_fp": "8205743d",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ]
+        ],
+        "timestamp": "2026-07-28T11:18:58.341098",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_8205743d_768cfda30290"
+      },
+      "cb_float16_pl1024_cl2048_gl8_8205743d_db7d2d8189af": {
+        "config_fp": "8205743d",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ]
+        ],
+        "timestamp": "2026-07-28T11:00:47.283037",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_8205743d_db7d2d8189af"
+      },
+      "cb_float16_pl1024_cl2048_gl8_ed37eaf4_60d812d34041": {
+        "config_fp": "ed37eaf4",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "The capital city of France is called",
+          "My name is",
+          "The capital city of France is called"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            2598,
+            2598,
+            2598,
+            2598,
+            2598,
+            2598,
+            2598,
+            2598
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            2598,
+            2598,
+            2598,
+            2598,
+            2598,
+            2598,
+            2598,
+            2598
+          ]
+        ],
+        "timestamp": "2026-07-28T11:00:11.575871",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_ed37eaf4_60d812d34041"
+      },
+      "cb_float32_pl1024_cl2048_gl8_8205743d_8d77d9330722": {
+        "config_fp": "8205743d",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ],
+          [
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374,
+            374
+          ]
+        ],
+        "timestamp": "2026-07-28T11:08:20.869266",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_8205743d_8d77d9330722"
+      }
+    },
+    "tiny-random/qwen3-moe": {
+      "cb_float16_pl1024_cl2048_gl8_6c512527_8e1dac0ce854": {
+        "config_fp": "6c512527",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200
+          ],
+          [
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200
+          ],
+          [
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200
+          ],
+          [
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200
+          ],
+          [
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200
+          ],
+          [
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200
+          ],
+          [
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200
+          ],
+          [
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200
+          ]
+        ],
+        "timestamp": "2026-07-28T11:01:07.563229",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_6c512527_8e1dac0ce854"
+      },
+      "cb_float16_pl1024_cl2048_gl8_6c512527_bcd7ca088bd6": {
+        "config_fp": "6c512527",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200
+          ],
+          [
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200
+          ],
+          [
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200
+          ],
+          [
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200
+          ]
+        ],
+        "timestamp": "2026-07-28T11:19:18.858238",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_6c512527_bcd7ca088bd6"
+      },
+      "cb_float16_pl1024_cl2048_gl8_e0ab46ac_c257541b8dc1": {
+        "config_fp": "e0ab46ac",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "The capital city of France is called",
+          "My name is",
+          "The capital city of France is called"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200
+          ],
+          [
+            2598,
+            2598,
+            2598,
+            2598,
+            2598,
+            2598,
+            2598,
+            2598
+          ],
+          [
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200,
+            39200
+          ],
+          [
+            2598,
+            2598,
+            2598,
+            2598,
+            2598,
+            2598,
+            2598,
+            2598
+          ]
+        ],
+        "timestamp": "2026-07-28T11:00:32.362178",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_e0ab46ac_c257541b8dc1"
+      },
+      "cb_float32_pl1024_cl2048_gl8_6c512527_6a0baec061e3": {
+        "config_fp": "6c512527",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            90982,
+            90982,
+            90982,
+            90982,
+            90982,
+            90982,
+            90982,
+            90982
+          ],
+          [
+            90982,
+            90982,
+            90982,
+            90982,
+            90982,
+            90982,
+            90982,
+            90982
+          ],
+          [
+            90982,
+            90982,
+            90982,
+            90982,
+            90982,
+            90982,
+            90982,
+            90982
+          ],
+          [
+            90982,
+            90982,
+            90982,
+            90982,
+            90982,
+            90982,
+            90982,
+            90982
+          ]
+        ],
+        "timestamp": "2026-07-28T11:08:43.587443",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_6c512527_6a0baec061e3"
+      }
+    },
+    "unsloth/gemma-2b": {
+      "cb_float16_pl1024_cl2048_gl8_1e92bc3f_26addbde737f": {
+        "config_fp": "1e92bc3f",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 8,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ]
+        ],
+        "timestamp": "2026-07-28T10:58:05.946666",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_1e92bc3f_26addbde737f"
+      },
+      "cb_float16_pl1024_cl2048_gl8_1e92bc3f_686bef25b41c": {
+        "config_fp": "1e92bc3f",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ]
+        ],
+        "timestamp": "2026-07-28T11:16:33.485817",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_1e92bc3f_686bef25b41c"
+      },
+      "cb_float16_pl1024_cl2048_gl8_8283ddb6_1452f36335db": {
+        "config_fp": "8283ddb6",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float16",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "The capital city of France is called",
+          "My name is",
+          "The capital city of France is called"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            3151,
+            3151,
+            3151,
+            3151,
+            3151,
+            3151,
+            3151,
+            3151
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            3151,
+            3151,
+            3151,
+            3151,
+            3151,
+            3151,
+            3151,
+            3151
+          ]
+        ],
+        "timestamp": "2026-07-28T10:58:10.505371",
+        "variant_key": "cb_float16_pl1024_cl2048_gl8_8283ddb6_1452f36335db"
+      },
+      "cb_float32_pl1024_cl2048_gl8_1e92bc3f_32a639d03c91": {
+        "config_fp": "1e92bc3f",
+        "continuous_batching": true,
+        "ctx_len": 2048,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 8,
+        "generation_len": 8,
+        "prompt_len": 1024,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ]
+        ],
+        "timestamp": "2026-07-28T11:05:31.991818",
+        "variant_key": "cb_float32_pl1024_cl2048_gl8_1e92bc3f_32a639d03c91"
+      },
+      "cb_float32_pl8_cl32_glNone_f2c6a1b3_46e20f582a36": {
+        "config_fp": "f2c6a1b3",
+        "continuous_batching": true,
+        "ctx_len": 32,
+        "dtype": "torch.float32",
+        "full_batch_size": 4,
+        "gen_len": 24,
+        "generation_len": null,
+        "prompt_len": 8,
+        "prompts": [
+          "My name is",
+          "My name is",
+          "My name is",
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ],
+          [
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603,
+            603
+          ]
+        ],
+        "timestamp": "2026-07-28T11:02:46.908153",
+        "variant_key": "cb_float32_pl8_cl32_glNone_f2c6a1b3_46e20f582a36"
+      },
+      "nocb_float32_pl8_cl32_glNone_f2c6a1b3_7e3017d4d8bc": {
+        "config_fp": "f2c6a1b3",
+        "continuous_batching": false,
+        "ctx_len": 32,
+        "dtype": "torch.float32",
+        "full_batch_size": null,
+        "gen_len": 24,
+        "generation_len": null,
+        "prompt_len": 8,
+        "prompts": [
+          "My name is"
+        ],
+        "pytorch_hf_tokens": [
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603,
+          603
+        ],
+        "timestamp": "2026-07-28T11:00:58.543347",
+        "variant_key": "nocb_float32_pl8_cl32_glNone_f2c6a1b3_7e3017d4d8bc"
+      }
+    }
+  }
+}
