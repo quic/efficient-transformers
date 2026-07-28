@@ -561,8 +561,7 @@ class QEFFBaseModel(ABC):
 
         if use_weight_free_export and not dynamo:
             raise NotImplementedError(
-                "Weight-free export requires dynamo=True. "
-                "Pass dynamo=True alongside use_weight_free_export=True."
+                "Weight-free export requires dynamo=True. Pass dynamo=True alongside use_weight_free_export=True."
             )
 
         export_dir.mkdir(parents=True, exist_ok=True)
@@ -700,9 +699,7 @@ class QEFFBaseModel(ABC):
             # weight data as external files, which conflicts with weights coming from the
             # checkpoint via weight_spec.json at compile time.
             active_transforms = [
-                t
-                for t in self._onnx_transforms
-                if not (use_weight_free_export and t is SplitTensorsTransform)
+                t for t in self._onnx_transforms if not (use_weight_free_export and t is SplitTensorsTransform)
             ]
             onnx_transforms = OnnxTransformPipeline(transforms=active_transforms)
             model, transformed = onnx_transforms.apply(model, **transform_kwargs)

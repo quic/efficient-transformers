@@ -568,8 +568,8 @@ class QEffGlm4MoeTopkRouter(nn.Module):
     @torch.no_grad()
     def get_topk_indices(self, scores):
         scores_for_choice = scores.view(-1, self.n_routed_experts) + self.e_score_correction_bias.to(
-                    device=scores.device
-                ).unsqueeze(0)
+            device=scores.device
+        ).unsqueeze(0)
         group_scores = (
             scores_for_choice.view(-1, self.n_group, self.n_routed_experts // self.n_group)
             .topk(2, dim=-1)[0]
@@ -610,7 +610,9 @@ class QEffGlm4MoeTopkRouter(nn.Module):
         router_scores = router_logits.sigmoid()  # (0,1), [T, 160]
 
         # Only used for choosing which experts win
-        scores_for_choice = router_scores + self.e_score_correction_bias.to(device=router_scores.device).unsqueeze(0)  # [T, 160]
+        scores_for_choice = router_scores + self.e_score_correction_bias.to(device=router_scores.device).unsqueeze(
+            0
+        )  # [T, 160]
 
         # Choose top_k experts globally (top_k == num_experts_per_tok == 8)
         topk_indices = torch.topk(scores_for_choice, k=self.top_k, dim=-1, sorted=False)[1]  # [T, 8]

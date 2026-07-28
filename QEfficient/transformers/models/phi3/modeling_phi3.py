@@ -67,8 +67,9 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin):
     """
 
     # Apply rotation
-    cos = cos.to(device=q.device, dtype=q.dtype)
-    sin = sin.to(device=q.device, dtype=q.dtype)
+    if cos.device != q.device:
+        cos = cos.to(device=q.device)
+        sin = sin.to(device=q.device)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     # Cast back to original dtype

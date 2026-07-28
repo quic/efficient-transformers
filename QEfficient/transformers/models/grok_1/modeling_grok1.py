@@ -149,9 +149,7 @@ class QEffGrok1MoeBlock(nn.Module):
             self.experts.register_parameter(
                 "gate_proj", nn.Parameter(torch.empty(E, hidden_dim, ffn_dim, device="meta"))
             )
-            self.experts.register_parameter(
-                "up_proj", nn.Parameter(torch.empty(E, hidden_dim, ffn_dim, device="meta"))
-            )
+            self.experts.register_parameter("up_proj", nn.Parameter(torch.empty(E, hidden_dim, ffn_dim, device="meta")))
             self.experts.register_parameter(
                 "down_proj_t", nn.Parameter(torch.empty(E, ffn_dim, hidden_dim, device="meta"))
             )

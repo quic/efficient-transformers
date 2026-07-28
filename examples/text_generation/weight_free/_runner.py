@@ -26,6 +26,7 @@ Output JSON shape
     "error": null
 }
 """
+
 from __future__ import annotations
 
 import argparse
@@ -98,30 +99,26 @@ def _export_dir_size_gb(onnx_path: Path) -> float:
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--model_name", required=True)
-    p.add_argument("--mode", default="basic", choices=["basic", "cb", "ccl", "cb_ccl"],
-                   help="Test mode.")
-    p.add_argument("--weight_free", action="store_true",
-                   help="Use weight-free (meta-device) export.")
+    p.add_argument("--mode", default="basic", choices=["basic", "cb", "ccl", "cb_ccl"], help="Test mode.")
+    p.add_argument("--weight_free", action="store_true", help="Use weight-free (meta-device) export.")
     p.add_argument("--ctx_len", type=int, default=128)
     p.add_argument("--prefill_seq_len", type=int, default=1)
     p.add_argument("--generation_len", type=int, default=100)
     p.add_argument("--num_devices", type=int, default=1)
     p.add_argument("--num_cores", type=int, default=16)
-    p.add_argument("--full_batch_size", type=int, default=4,
-                   help="CB pool size (continuous batching modes only).")
+    p.add_argument("--full_batch_size", type=int, default=4, help="CB pool size (continuous batching modes only).")
     p.add_argument("--mxfp6_matmul", action="store_true")
     p.add_argument("--mxint8_kv_cache", action="store_true")
-    p.add_argument("--ccl_values", type=str, default=None,
-                   help="Comma-separated CCL context lengths, e.g. '64,128'. "
-                        "Defaults to [ctx_len//2, ctx_len].")
-    p.add_argument("--layers", type=int, default=None,
-                   help="Override num_hidden_layers for fast testing.")
-    p.add_argument("--output_dir", required=True,
-                   help="Root directory for ONNX and QPC artifacts.")
-    p.add_argument("--prompts", type=str, default=None,
-                   help="Pipe-separated prompts. Defaults to built-in set.")
-    p.add_argument("--no_subfunctions", action="store_true",
-                   help="Disable ONNX subfunction extraction.")
+    p.add_argument(
+        "--ccl_values",
+        type=str,
+        default=None,
+        help="Comma-separated CCL context lengths, e.g. '64,128'. Defaults to [ctx_len//2, ctx_len].",
+    )
+    p.add_argument("--layers", type=int, default=None, help="Override num_hidden_layers for fast testing.")
+    p.add_argument("--output_dir", required=True, help="Root directory for ONNX and QPC artifacts.")
+    p.add_argument("--prompts", type=str, default=None, help="Pipe-separated prompts. Defaults to built-in set.")
+    p.add_argument("--no_subfunctions", action="store_true", help="Disable ONNX subfunction extraction.")
     return p.parse_args()
 
 
@@ -239,13 +236,10 @@ def main() -> None:
         # module-level variables. Only populated for weight-free export.
         if args.weight_free:
             from QEfficient.exporter.weight_free import core as _wf_core
+
             if getattr(_wf_core, "_checkpoint_prep_ran", False):
-                result["transform_duration_seconds"] = round(
-                    _wf_core._last_prep_duration_seconds, 3
-                )
-                result["transform_peak_rss_mb"] = round(
-                    _wf_core._last_prep_peak_rss_mb, 4
-                )
+                result["transform_duration_seconds"] = round(_wf_core._last_prep_duration_seconds, 3)
+                result["transform_peak_rss_mb"] = round(_wf_core._last_prep_peak_rss_mb, 4)
 
         # ── Phase 3: Compile (ONNX → QPC) ─────────────────────────────────
         profiler.mark_operation("Model Compilation")
@@ -291,10 +285,10 @@ def main() -> None:
             # Capture QPC inference performance metrics from exec_info
             pm = exec_info.perf_metrics
             bs = exec_info.batch_size
-            result["perf_ttft_seconds"]         = round(pm.prefill_time, 3)
+            result["perf_ttft_seconds"] = round(pm.prefill_time, 3)
             result["perf_decode_tokens_per_sec"] = round(pm.decode_perf * bs, 2)
-            result["perf_total_tokens_per_sec"]  = round(pm.total_perf  * bs, 2)
-            result["perf_e2e_time_seconds"]      = round(pm.total_time, 3)
+            result["perf_total_tokens_per_sec"] = round(pm.total_perf * bs, 2)
+            result["perf_e2e_time_seconds"] = round(pm.total_time, 3)
 
         except Exception as gen_exc:
             result["completions"] = []

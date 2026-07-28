@@ -48,12 +48,12 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalL
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--model_name", required=True, help="HuggingFace model ID or local checkpoint path.")
-    p.add_argument("--prompt", default="What is faith?", help="Prompt string for inference.")
+    p.add_argument("--prompt", default="Hello, how are you?", help="Prompt string for inference.")
     p.add_argument("--prompt_len", type=int, default=32, help="Padded prompt length (tokens).")
     p.add_argument("--ctx_len", type=int, default=256, help="KV cache context length (tokens).")
     p.add_argument("--prefill_seq_len", type=int, default=1, help="Prefill sequence length for compile.")
     p.add_argument("--num_cores", type=int, default=16, help="Number of QAIC cores.")
-    p.add_argument("--num_devices", type=int, default=1, help="Number of QAIC devices.")
+    p.add_argument("--num_devices", type=int, default=4, help="Number of QAIC devices.")
     p.add_argument("--output_dir", default="test_models/weightfree_verify", help="Output directory for ONNX and QPC.")
     p.add_argument("--layers", type=int, default=None, help="Override num_hidden_layers for fast testing.")
     p.add_argument("--no_weight_free", action="store_true", help="Use regular dynamo export instead of weight-free.")
@@ -61,7 +61,12 @@ def parse_args():
     p.add_argument("--no_subfunctions", action="store_true", help="Disable ONNX subfunction extraction.")
     p.add_argument("--mxfp6_matmul", action="store_true", help="Enable MXFP6 matmul quantisation.")
     p.add_argument("--mxint8_kv_cache", action="store_true", help="Enable MXINT8 KV cache quantisation.")
-    p.add_argument("--dtype", choices=["float16", "float32"], default="float16", help="Dtype for model weights (float16 or float32).")
+    p.add_argument(
+        "--dtype",
+        choices=["float16", "float32"],
+        default="float32",
+        help="Dtype for model weights (float16 or float32).",
+    )
     return p.parse_args()
 
 
