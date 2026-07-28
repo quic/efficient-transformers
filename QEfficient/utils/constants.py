@@ -114,8 +114,9 @@ def get_onnx_export_opset(dynamo: bool = False) -> int:
 COMPILER = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw"]
 
 
-# Qualcomm PCI vendor ID and known Cloud AI device IDs.
-_QUALCOMM_PCI_VENDOR_ID = "17cb"
+# Known Qualcomm Cloud AI PCI device IDs (from lspci output).
+# NOTE: These device IDs may change with future hardware revisions; update
+# both sets when new Qualcomm Cloud AI hardware variants are introduced.
 _AIC200_PCI_DEVICE_IDS = {"a110"}
 _AIC100_PCI_DEVICE_IDS = {"a100", "a0dc"}
 
@@ -123,17 +124,18 @@ _AIC100_PCI_DEVICE_IDS = {"a100", "a0dc"}
 def _detect_hw_version_via_lspci() -> str:
     """Probe PCI devices to detect Qualcomm Cloud AI hardware generation.
 
-    Runs ``lspci -n`` (numeric vendor/device IDs) and searches for Qualcomm
-    Cloud AI PCI device IDs.  Returns ``"ai200"`` when an AI200 device is
-    found, ``"ai100"`` when an AI100 device is found, and ``"ai100"`` as the
-    safe default when ``lspci`` is unavailable or no matching device is found.
+    Runs ``lspci`` and filters lines containing ``"Qualcomm"``, then matches
+    the device ID token to distinguish AI200 from AI100.  Returns ``"ai200"``
+    when an AI200 device is found, ``"ai100"`` when an AI100 device is found,
+    and ``"ai100"`` as the safe default when ``lspci`` is unavailable or no
+    matching device is found.
 
     Returns:
         str: ``"ai200"`` if an AI200 PCI device is detected, otherwise ``"ai100"``.
     """
     try:
         result = subprocess.run(
-            ["lspci", "-n"],
+            ["lspci"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -143,10 +145,14 @@ def _detect_hw_version_via_lspci() -> str:
         return "ai100"
 
     for line in output.splitlines():
-        # lspci -n lines look like: "01:00.0 0200: 17cb:a0dc (rev 01)"
-        match = re.search(rf"{_QUALCOMM_PCI_VENDOR_ID}:([0-9a-fA-F]+)", line, re.IGNORECASE)
-        if match:
-            device_id = match.group(1).lower()
+        # lspci lines look like:
+        #   "76:00.0 Processing accelerators: Qualcomm Technologies, Inc Device a110 (rev 01)"
+        #   "03:00.0 Processing accelerators: Qualcomm Device a100"
+        if "qualcomm" not in line.lower():
+            continue
+        device_match = re.search(r"\bDevice\s+([0-9a-fA-F]+)", line, re.IGNORECASE)
+        if device_match:
+            device_id = device_match.group(1).lower()
             if device_id in _AIC200_PCI_DEVICE_IDS:
                 return "ai200"
             if device_id in _AIC100_PCI_DEVICE_IDS:
