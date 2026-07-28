@@ -5,7 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-import os
 from collections import defaultdict
 from pathlib import Path
 from typing import List, Optional, Type, Union
@@ -426,8 +425,8 @@ class QEffPrefillChunkedGemma4TextExperts(Gemma4TextExperts):
         )
         expert_weights.scatter_add_(1, top_k_index, top_k_weights)
         expert_weights = expert_weights.to(x.dtype)
-        num_nsp = EXPERT_BLOCKING_NUM_NSP
-        packed_chunk_size = EXPERT_BLOCKING_PACKED_CHUNK_SIZE
+        num_nsp = getattr(self, "expert_blocking_num_nsp", self.num_experts)
+        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
         if self.num_experts % num_nsp != 0:
             raise ValueError(
                 f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})"
@@ -606,10 +605,6 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
-
-
-EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
-EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
 
 
 class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
@@ -1434,11 +1429,13 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         **kwargs,
     ):
         seq_len = kwargs.get("prefill_seq_len")
+        bs = kwargs.get("batch_size")
         if seq_len is None:
             seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         seq_len = int(seq_len)
-
-        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        if bs is None:
+            bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        bs = int(bs)
         fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
         max_patches = self._get_vision_max_patches()
         mm_tokens_per_image = self._get_mm_tokens_per_image()
