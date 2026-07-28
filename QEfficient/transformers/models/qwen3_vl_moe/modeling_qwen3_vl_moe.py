@@ -1271,7 +1271,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         )
 
         if batch_fold:
-            kv_cache_shape = [1, kv_cache_shape[0] * kv_cache_shape[1], *kv_cache_shape[2:]]
+            kv_cache_shape = [1, kv_cache_shape[0] * kv_cache_shape[1], kv_cache_shape[2], kv_cache_shape[3]]
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         for i in range(self.model.config.text_config.num_hidden_layers):
