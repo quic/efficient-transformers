@@ -37,9 +37,6 @@ parse_expert_ids = load_kimi_utils.parse_expert_ids
 prepare_config = load_kimi_utils.prepare_config
 set_deterministic = load_kimi_utils.set_deterministic
 
-DEFAULT_MODEL_PATH = Path(
-    "/home/huggingface_hub/models--moonshotai--Kimi-K2.5/snapshots/4d01dfe0332d63057c186e0b262165819efb6611"
-)
 PREFILL_SEQ_LEN = 512
 CTX_LEN = 2048
 BS = 1
@@ -48,7 +45,7 @@ GENERATION_LEN = 10
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run Kimi K2.5 vision disaggregated vision -> prefill -> decode flow.")
-    parser.add_argument("--model-path", type=Path, default=DEFAULT_MODEL_PATH)
+    parser.add_argument("--model-path", type=Path, required=True)
     parser.add_argument(
         "--full-model",
         action="store_true",

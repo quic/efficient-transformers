@@ -853,8 +853,15 @@ class QEffDeepseekV3MoE(nn.Module):
     def __qeff_init__(
         self,
     ):
+        if hasattr(self, "all_gate_qweight") and not hasattr(self, "experts"):
+            return
+
         # Get common parameters from first expert
         first_expert = self.experts[0]
+        self._qeff_quantized_experts = hasattr(first_expert.gate_proj, "bits")
+        if not self._qeff_quantized_experts:
+            return
+
         self.bits = first_expert.gate_proj.bits
         self.group_size = first_expert.gate_proj.group_size
         self.act_fn = first_expert.act_fn
@@ -941,6 +948,7 @@ class QEffDeepseekV3MoE(nn.Module):
         self.all_down_gidx = torch.nn.Parameter(
             torch.stack([exp.down_proj.g_idx for exp in self.experts], dim=0), requires_grad=False
         )
+        del self.experts
 
     def moe_old(
         self,
@@ -1121,12 +1129,10 @@ class QEffDeepseekV3MoE(nn.Module):
         return torch.einsum("abc,ab->ac", selected_out, topk_weights)
 
     def forward(self, hidden_states):
-        print("Using new MoE forward with weights as activations")
         residuals = hidden_states
         orig_shape = hidden_states.shape
         topk_indices, topk_weights, router_probs, router_weights = self.gate(hidden_states)
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
-        # hidden_states = self.moe_weights_as_activations(hidden_states, router_probs, router_weights).view(*orig_shape)
         hidden_states = self.moe_waa_unpack(hidden_states, topk_indices, topk_weights).view(*orig_shape)
         hidden_states = hidden_states + self.shared_experts(residuals)
         return hidden_states
@@ -1136,8 +1142,15 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
     def __qeff_init__(
         self,
     ):
+        if hasattr(self, "all_gate_qweight") and not hasattr(self, "experts"):
+            return
+
         # Get common parameters from first expert
         first_expert = self.experts[0]
+        self._qeff_quantized_experts = hasattr(first_expert.gate_proj, "bits")
+        if not self._qeff_quantized_experts:
+            return
+
         self.bits = first_expert.gate_proj.bits
         self.group_size = first_expert.gate_proj.group_size
         self.act_fn = first_expert.act_fn
@@ -1224,6 +1237,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         self.all_down_gidx = torch.nn.Parameter(
             torch.stack([exp.down_proj.g_idx for exp in self.experts], dim=0), requires_grad=False
         )
+        del self.experts
 
     def _cumsum_scatter_gather_update_expert_blocked(
         self,
