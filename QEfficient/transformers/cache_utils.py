@@ -501,9 +501,8 @@ class QEffDynamicLayer(CacheLayerMixin):
                 self.values = self.values.reshape(1, BH, self.keys.shape[2], D)
             self._mark_initialized(self.keys)
             position_ids = cache_kwargs.get("position_ids")
-            NKV = BH / position_ids.shape[0]
-            pos_folded = position_ids.unsqueeze(1).repeat(1, NKV, 1)
-            pos_folded = pos_folded.reshape(1, BH, -1)
+            NKV = (BH / position_ids.shape[0]).int().item()
+            pos_folded = position_ids.unsqueeze(1).repeat(1, NKV, QL).reshape(1, BH, QL)
             key_folded = key_states.reshape(1, BH, -1, D)
             value_folded = value_states.reshape(1, BH, -1, D)
 
