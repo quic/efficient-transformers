@@ -10,7 +10,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import List, Optional, Type, Union
 
-import numpy as np
 import onnx
 import torch
 import torch.nn as nn
@@ -31,7 +30,6 @@ from transformers.models.gemma4.modeling_gemma4 import (
     eager_attention_forward,
 )
 
-from QEfficient.base.onnx_transforms import FP16ClipTransform
 from QEfficient.customop.ctx_scatter_gather import (
     CtxGatherFunc3DGeneralized,
     CtxScatterFunc3DGeneralized,
@@ -327,9 +325,7 @@ def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
     valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
     valid_dest = valid_prefix - 1
     scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
-    # Once the compiler fix for ConstantOfShape(INT32_MAX) is available, this
-    # can be switched back to ``torch.full_like(token_idx, int32_max)``.
-    matched_idx = int32_max_scalar.expand_as(token_idx)
+    matched_idx = torch.full_like(token_idx, int32_max)
     matched_idx = CtxScatterFunc3DInt.apply(
         matched_idx.unsqueeze(-1),
         scatter_pos,
@@ -430,8 +426,8 @@ class QEffPrefillChunkedGemma4TextExperts(Gemma4TextExperts):
         )
         expert_weights.scatter_add_(1, top_k_index, top_k_weights)
         expert_weights = expert_weights.to(x.dtype)
-        num_nsp = getattr(self, "expert_blocking_num_nsp", self.num_experts)
-        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
+        num_nsp = EXPERT_BLOCKING_NUM_NSP
+        packed_chunk_size = EXPERT_BLOCKING_PACKED_CHUNK_SIZE
         if self.num_experts % num_nsp != 0:
             raise ValueError(
                 f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})"
@@ -613,7 +609,7 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
 
 
 EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
-EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "296"))
+EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
 
 
 class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
@@ -1431,13 +1427,21 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         return past_key_values
 
     def get_dummy_inputs(
-        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        **kwargs,
     ):
+        seq_len = kwargs.get("prefill_seq_len")
+        if seq_len is None:
+            seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        seq_len = int(seq_len)
+
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
         max_patches = self._get_vision_max_patches()
         mm_tokens_per_image = self._get_mm_tokens_per_image()
-        seq_len = max(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, mm_tokens_per_image + 32)
         patch_dim = getattr(self.config.vision_config, "patch_size", 16) ** 2 * 3
 
         image_position_ids = torch.full((bs, max_patches, 2), -1, dtype=torch.int64)
@@ -1479,42 +1483,3 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         if kv_offload:
             return {"vision": vision_inputs, "lang": lang_inputs}
         return {**vision_inputs, **lang_inputs}
-
-    def remove_fp16clip_transform_if_disabled(self, effective_fp16clip: bool):
-        """
-        Remove FP16ClipTransform from ONNX transforms when FP16 clipping is disabled.
-        """
-        if not effective_fp16clip:
-            # ---- language model
-            if hasattr(self, "lang_model") and hasattr(self.lang_model, "_onnx_transforms"):
-                self.lang_model._onnx_transforms = [
-                    t for t in self.lang_model._onnx_transforms if t is not FP16ClipTransform
-                ]
-
-            # ---- vision model (optional)
-            if getattr(self, "vision_model", None) is not None:
-                if hasattr(self.vision_model, "_onnx_transforms"):
-                    self.vision_model._onnx_transforms = [
-                        t for t in self.vision_model._onnx_transforms if t is not FP16ClipTransform
-                    ]
-
-    def normalize_generated_ids(self, generated_ids):
-        array = np.asarray(generated_ids)
-        if array.dtype == object:
-            array = np.asarray([np.asarray(row).reshape(-1) for row in generated_ids], dtype=np.int64)
-        array = np.asarray(array)
-        if array.ndim == 1:
-            array = array.reshape(1, -1)
-        elif array.ndim > 2:
-            array = array.reshape(array.shape[0], -1)
-        return array.astype(np.int64, copy=False)
-
-    def effective_lens(
-        self, prefill_seq_len: int, ctx_len: int, prompt_len: int, generation_len: int, skip_vision: bool
-    ):
-        effective_ctx_len = max(ctx_len, prompt_len + generation_len)
-        if skip_vision:
-            effective_prefill_seq_len = prefill_seq_len
-        else:
-            effective_prefill_seq_len = max(prefill_seq_len, prompt_len)
-        return effective_prefill_seq_len, effective_ctx_len
