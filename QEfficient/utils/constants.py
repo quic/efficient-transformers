@@ -114,13 +114,55 @@ def get_onnx_export_opset(dynamo: bool = False) -> int:
 COMPILER = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw"]
 
 
+# Qualcomm PCI vendor ID and known Cloud AI device IDs.
+_QUALCOMM_PCI_VENDOR_ID = "17cb"
+_AIC200_PCI_DEVICE_IDS = {"a110"}
+_AIC100_PCI_DEVICE_IDS = {"a100", "a0dc"}
+
+
+def _detect_hw_version_via_lspci() -> str:
+    """Probe PCI devices to detect Qualcomm Cloud AI hardware generation.
+
+    Runs ``lspci -n`` (numeric vendor/device IDs) and searches for Qualcomm
+    Cloud AI PCI device IDs.  Returns ``"ai200"`` when an AI200 device is
+    found, ``"ai100"`` when an AI100 device is found, and ``"ai100"`` as the
+    safe default when ``lspci`` is unavailable or no matching device is found.
+
+    Returns:
+        str: ``"ai200"`` if an AI200 PCI device is detected, otherwise ``"ai100"``.
+    """
+    try:
+        result = subprocess.run(
+            ["lspci", "-n"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        output = result.stdout
+    except Exception:
+        return "ai100"
+
+    for line in output.splitlines():
+        # lspci -n lines look like: "01:00.0 0200: 17cb:a0dc (rev 01)"
+        match = re.search(rf"{_QUALCOMM_PCI_VENDOR_ID}:([0-9a-fA-F]+)", line, re.IGNORECASE)
+        if match:
+            device_id = match.group(1).lower()
+            if device_id in _AIC200_PCI_DEVICE_IDS:
+                return "ai200"
+            if device_id in _AIC100_PCI_DEVICE_IDS:
+                return "ai100"
+
+    return "ai100"
+
+
 def get_default_aic_hw_version() -> str:
     """Detect the AIC hardware version from the first available device.
 
     Runs ``qaic-util -q`` and inspects the ``NSP IMAGE_VARIANT`` field of the
     first device (QID 0) to determine whether the hardware is ``ai100`` or
-    ``ai200``.  Falls back to ``"ai100"`` when no device is found or the tool
-    is unavailable.
+    ``ai200``.  When ``qaic-util`` is unavailable, falls back to probing PCI
+    devices via ``lspci | grep Qualcomm`` and matching known Qualcomm Cloud AI
+    PCI device IDs.  Returns ``"ai100"`` when neither method yields a result.
 
     Returns:
         str: ``"ai200"`` if an AI200 device is detected, otherwise ``"ai100"``.
@@ -135,14 +177,14 @@ def get_default_aic_hw_version() -> str:
         )
         output = result.stdout
     except Exception:
-        return "ai100"
+        return _detect_hw_version_via_lspci()
 
     match = re.search(r"NSP IMAGE_VARIANT\s*:\s*(\S+)", output)
     if match:
         variant = match.group(1).upper()
         if "AIC200" in variant:
             return "ai200"
-    return "ai100"
+    return _detect_hw_version_via_lspci()
 
 
 DEFAULT_AIC_HW_VERSION = get_default_aic_hw_version()
