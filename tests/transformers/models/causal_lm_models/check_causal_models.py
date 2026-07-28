@@ -31,6 +31,12 @@ from QEfficient.utils.run_utils import ApiRunner
 from QEfficient.utils.test_utils import ModelConfig, load_hf_causal_lm_model
 
 from ..check_model_results import dump_and_compare_results
+from ..golden_utils import config_fingerprint, golden_variant_key, resolve_hf_golden
+
+# The QAIC LLM CI stage runs only the on-device leg and compares it against a committed
+# golden HF reference. The CPU reference legs (torch-KV "qeff_hf" and ONNXRuntime) are
+# retained for debugging / on-demand parity checks but are skipped unless this is set.
+_RUN_CPU_REFERENCES = os.environ.get("QEFF_RUN_CPU_REFERENCES") == "1"
 
 
 @contextmanager
@@ -203,7 +209,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         full_batch_size if continuous_batching else None,
         dtype=torch_dtype,
     )
-    if not compile_only and continuous_batching is False:
+    if _RUN_CPU_REFERENCES and not compile_only and continuous_batching is False:
         pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
     if (
@@ -211,17 +217,53 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         and model_name not in ModelConfig.SWIFTKV_MODELS
         and model_name not in ModelConfig.EXTERNAL_MODELS
     ):
-        if continuous_batching:
-            pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch_CB(model_hf)
-            pytorch_hf_tokens = np.vstack(pytorch_hf_tokens)
-        else:
-            pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
+        # The HF PyTorch reference is a pure function of the model + effective config, so it
+        # is served from a committed golden and generated once on first use. It is unaffected
+        # by qaic_config (blocking / CCL / speculative / KV replication), which is why a single
+        # golden is reused across every QAIC variant of this model.
+        config_fp = config_fingerprint(qeff_model.config)
+        variant_key = golden_variant_key(
+            continuous_batching=continuous_batching,
+            torch_dtype=torch_dtype,
+            prompt_len=prompt_len,
+            ctx_len=ctx_len,
+            generation_len=generation_len,
+            full_batch_size=full_batch_size if continuous_batching else None,
+            prompts=prompts,
+            config_fp=config_fp,
+        )
+
+        def _compute_hf_tokens():
+            if continuous_batching:
+                return np.vstack(api_runner.run_hf_model_on_pytorch_CB(model_hf))
+            return api_runner.run_hf_model_on_pytorch(model_hf)
+
+        pytorch_hf_tokens = resolve_hf_golden(
+            family="causal_lm",
+            model_name=model_name,
+            variant_key=variant_key,
+            params={
+                "config_fp": config_fp,
+                "continuous_batching": continuous_batching,
+                "dtype": str(torch_dtype),
+                "prompt_len": prompt_len,
+                "ctx_len": ctx_len,
+                "generation_len": generation_len,
+                "full_batch_size": full_batch_size if continuous_batching else None,
+                "prompts": prompts,
+            },
+            compute_fn=_compute_hf_tokens,
+        )
 
     with _model_export_compile_lock(model_name):
         onnx_model_path = qeff_model.export(use_onnx_subfunctions=use_onnx_subfunctions)
-        if not compile_only and continuous_batching is False:
+        if _RUN_CPU_REFERENCES and not compile_only and continuous_batching is False:
             ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
             gen_len = ort_tokens.shape[-1]
+        elif continuous_batching is False and pytorch_hf_tokens is not None:
+            # Golden path (non-CB): ORT is not run, so take the generation length from the HF
+            # reference (HF and ORT emit the same token count). CB keeps its own gen_len.
+            gen_len = pytorch_hf_tokens.shape[-1]
 
         if pytorch_hf_tokens is not None and ort_tokens is not None:
             assert (pytorch_hf_tokens == ort_tokens).all(), (
@@ -292,12 +334,26 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     else:
         cloud_ai_100_tokens = exec_info.generated_ids[0][:, :gen_len]
         if prefill_only:
+            if ort_tokens is None:
+                raise RuntimeError(
+                    "prefill_only comparison requires the ORT reference leg; rerun with QEFF_RUN_CPU_REFERENCES=1."
+                )
             assert (ort_tokens[0][0] == cloud_ai_100_tokens[0][0]).all(), (
                 "prefill run output tokens don't match for ONNXRT output and Cloud AI 100 output."
             )
         else:
-            assert (ort_tokens == cloud_ai_100_tokens).all(), (
-                "Tokens don't match for ONNXRT output and Cloud AI 100 output."
+            # Prefer the live ORT reference when it was run; otherwise fall back to the
+            # committed golden HF tokens. The golden is shape (gen_len,) and broadcasts
+            # against the (1, gen_len) cloud output exactly as the HF<->ORT assert did.
+            reference_tokens = ort_tokens if ort_tokens is not None else pytorch_hf_tokens
+            reference_name = "ONNXRT" if ort_tokens is not None else "golden HF PyTorch"
+            if reference_tokens is None:
+                raise RuntimeError(
+                    f"No reference tokens available for {model_name}: no golden HF output and "
+                    "CPU reference legs are disabled. Rerun with QEFF_RUN_CPU_REFERENCES=1."
+                )
+            assert (reference_tokens == cloud_ai_100_tokens).all(), (
+                f"Tokens don't match for {reference_name} output and Cloud AI 100 output."
             )
 
     manual_cleanup(onnx_model_path)  # Clean up the model files after the tests are done.
