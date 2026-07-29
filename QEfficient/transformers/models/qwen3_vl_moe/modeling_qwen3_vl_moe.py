@@ -400,8 +400,8 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
         bsz, q_len, _ = hidden_states.size()
-        query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
-        key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+        query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2))
+        key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2))
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
         if is_layerwise_active():
