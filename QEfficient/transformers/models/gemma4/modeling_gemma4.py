@@ -390,13 +390,35 @@ class QEffPrefillChunkedGemma4TextExperts(Gemma4TextExperts):
     supports_moe_prefill_blocking = True
 
     def __qeff_init__(self):
+        H = self.hidden_dim
         # Derive gather-friendly split projections from the checkpoint's fused
         # gate_up_proj/down_proj, without changing on-disk checkpoint format.
         gate_up_proj = self.gate_up_proj.detach()
         down_proj = self.down_proj.detach()
-        self.gate_proj = nn.Parameter(gate_up_proj[:, : self.intermediate_dim, :].transpose(1, 2), requires_grad=False)
-        self.up_proj = nn.Parameter(gate_up_proj[:, self.intermediate_dim :, :].transpose(1, 2), requires_grad=False)
-        self.down_proj_t = nn.Parameter(down_proj.transpose(1, 2), requires_grad=False)
+        self.gate_proj_t = gate_up_proj[:, : self.intermediate_dim, :].transpose(1, 2)
+        self.up_proj_t = gate_up_proj[:, self.intermediate_dim :, :].transpose(1, 2)
+        self.num_nsp = getattr(self, "expert_blocking_num_nsp", self.num_experts)
+        if self.num_experts % self.num_nsp != 0:
+            raise ValueError(
+                f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({self.num_nsp})"
+            )
+        self.local_experts = self.num_experts // self.num_nsp
+        self.W_g = nn.Parameter(
+            self.gate_proj_t.view(self.local_experts, self.num_nsp, H, -1).transpose(0, 1).contiguous().clone(),
+            requires_grad=False,
+        )
+        self.W_u = nn.Parameter(
+            self.up_proj_t.view(self.local_experts, self.num_nsp, H, -1).transpose(0, 1).contiguous().clone(),
+            requires_grad=False,
+        )
+        self.W_d = nn.Parameter(
+            down_proj.transpose(1, 2)
+            .view(self.local_experts, self.num_nsp, -1, H)
+            .transpose(0, 1)
+            .contiguous()
+            .clone(),
+            requires_grad=False,
+        )
 
     def forward(
         self,
@@ -416,6 +438,8 @@ class QEffPrefillChunkedGemma4TextExperts(Gemma4TextExperts):
 
         T = x.shape[0]
 
+        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
+
         # Build dense routing weights [T, E] from top-k indices/weights
         expert_weights = torch.zeros(
             T,
@@ -425,27 +449,23 @@ class QEffPrefillChunkedGemma4TextExperts(Gemma4TextExperts):
         )
         expert_weights.scatter_add_(1, top_k_index, top_k_weights)
         expert_weights = expert_weights.to(x.dtype)
-        num_nsp = getattr(self, "expert_blocking_num_nsp", self.num_experts)
-        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
-        if self.num_experts % num_nsp != 0:
-            raise ValueError(
-                f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})"
-            )
-        local_experts = self.num_experts // num_nsp
-        rw = expert_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        W_g = self.gate_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_u = self.up_proj.view(local_experts, num_nsp, H, -1).transpose(0, 1).contiguous()
-        W_d = self.down_proj_t.view(local_experts, num_nsp, -1, H).transpose(0, 1).contiguous()
-        expert_out = x.new_zeros((num_nsp, T, H))
+        expert_out = x.new_zeros((self.num_nsp, T, H))
+        rw = (
+            expert_weights.transpose(0, 1)
+            .contiguous()
+            .view(self.local_experts, self.num_nsp, T)
+            .transpose(0, 1)
+            .contiguous()
+        )
         routing_weights_unsqueezed = rw.unsqueeze(-1)
-        for slot in range(local_experts):
+        for slot in range(self.local_experts):
             T2Ei = rw[:, slot, :] > 0
             expert_out = _cumsum_scatter_gather_update_expert_blocked(
                 x=x,
                 T2Ei=T2Ei,
-                W_g=W_g[:, slot],
-                W_u=W_u[:, slot],
-                W_d=W_d[:, slot],
+                W_g=self.W_g[:, slot],
+                W_u=self.W_u[:, slot],
+                W_d=self.W_d[:, slot],
                 routing_weight=routing_weights_unsqueezed[:, slot],
                 expert_out=expert_out,
                 act_fn=self.act_fn,
@@ -1428,8 +1448,8 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         continuous_batching: bool = False,
         **kwargs,
     ):
-        seq_len = kwargs.get("prefill_seq_len")
-        bs = kwargs.get("batch_size")
+        seq_len = kwargs.get("prefill_seq_len", None)
+        bs = kwargs.get("batch_size", None)
         if seq_len is None:
             seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         seq_len = int(seq_len)

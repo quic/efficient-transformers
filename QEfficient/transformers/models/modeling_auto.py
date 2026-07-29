@@ -42,6 +42,7 @@ from QEfficient.generation.text_generation_inference import (
 )
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 from QEfficient.transformers.modeling_utils import (
+    DYNAMIC_PREFILL_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
     _configure_proxy_for_model,
@@ -1576,13 +1577,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
-            if prefill_only:
+            if prefill_only and enable_chunking:
                 self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
                 for module in self.model.modules():
                     if getattr(module, "supports_moe_prefill_blocking", False):
                         module.expert_blocking_num_nsp = num_cores
                         module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
-                if self.model.config.model_type in {"gemma4"}:
+                        if hasattr(module, "__qeff_init__"):
+                            module.__qeff_init__()
+                if self.model.config.model_type in DYNAMIC_PREFILL_SEQ_LEN_SUPPORTED_MODEL_ARCH:
                     seq_len = max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
