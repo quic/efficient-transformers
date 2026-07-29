@@ -71,12 +71,6 @@ from QEfficient.utils.logging_utils import logger
 # EXPERT_BLOCKING_NUM_NSP = 16
 # EXPERT_BLOCKING_PACKED_CHUNK_SIZE = 32
 QWEN3_5_MOE_ROPE_CACHE_EXPORT_CAP = 76800
-QWEN3_5_MOE_DEFAULT_MROPE_SECTION = [11, 11, 10]
-
-
-def _get_mrope_section(config) -> List[int]:
-    rope_parameters = getattr(config, "rope_parameters", None) or getattr(config, "rope_scaling", None) or {}
-    return rope_parameters.get("mrope_section", QWEN3_5_MOE_DEFAULT_MROPE_SECTION)
 
 
 def _expand_mrope_position_ids(position_ids, cache_position, batch_size):
@@ -302,7 +296,7 @@ class QEffQwen3_5MoeTextRotaryEmbedding(Qwen3_5MoeTextRotaryEmbedding):
             device=self.inv_freq.device,
             dtype=torch.get_default_dtype(),
         )
-        self.mrope_section = _get_mrope_section(config)
+        self.mrope_section = config.rope_parameters.get("mrope_section", [11, 11, 10])
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
@@ -1230,7 +1224,8 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
         hidden_states = inputs_embeds
 
-        mrope_section = _get_mrope_section(self.config)
+        rope_parameters = getattr(self.config, "rope_parameters", {}) or {}
+        mrope_section = rope_parameters.get("mrope_section", [11, 11, 10])
         cos, sin = qeff_prepare_mrope_cos_sin(
             self.cos_cached, self.sin_cached, rotary_position_ids, mrope_section, dtype=hidden_states.dtype
         )

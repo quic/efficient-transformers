@@ -237,9 +237,13 @@ class QEffPrefillOnlyGptOssMLP(GptOssMLP):
             gate = (hidden @ W_g) + b_g  # [T, I]
             up = (hidden @ W_u) + b_u  # [T, I]
 
-            # Apply GptOss activation with clamping
-            gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
-            up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
+            # Apply GptOss activation with clamping. Use minimum/maximum instead of clamp
+            # so the exported graph emits Min/Max rather than a Clip node: the AI100 ONNX
+            # importer rejects fp16 Clip ("Unhandled ElemKind in Clip operation").
+            gate = torch.minimum(gate, gate.new_full((), self.experts.limit))
+            gate = torch.maximum(gate, gate.new_full((), torch.finfo(torch.float16).min))
+            up = torch.minimum(up, up.new_full((), self.experts.limit))
+            up = torch.maximum(up, up.new_full((), -self.experts.limit))
 
             # GLU activation
             glu = gate * torch.sigmoid(gate * self.experts.alpha)
@@ -491,9 +495,14 @@ class QEffGptOssMLP(GptOssMLP):
         gate = torch.bmm(expert_in, gate_proj) + gate_proj_bias.unsqueeze(1)
         up = torch.bmm(expert_in, up_proj) + up_proj_bias.unsqueeze(1)
 
-        # Apply activation with clamping
-        gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
-        up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
+        # Apply activation with clamping. Use minimum/maximum instead of clamp so the
+        # exported graph emits Min/Max rather than a Clip node: the AI100 ONNX importer
+        # rejects fp16 Clip ("Unhandled ElemKind in Clip operation"), which blocks the
+        # fp16 export/compile path this model runs under.
+        gate = torch.minimum(gate, gate.new_full((), self.experts.limit))
+        gate = torch.maximum(gate, gate.new_full((), torch.finfo(torch.float16).min))
+        up = torch.minimum(up, up.new_full((), self.experts.limit))
+        up = torch.maximum(up, up.new_full((), -self.experts.limit))
 
         # GLU activation
         glu = gate * torch.sigmoid(gate * self.experts.alpha)

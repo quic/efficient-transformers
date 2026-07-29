@@ -94,3 +94,6 @@ qeff_models
 .agents/
 .claude/
 dbg.log
+
+# Golden-store write-lock dir (runtime artifact; see tests/.../golden_utils.py)
+tests/golden_outputs/.locks/
