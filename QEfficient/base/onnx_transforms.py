@@ -156,6 +156,37 @@ class CustomOpTransform(BaseOnnxTransform):
                     cls._ensure_opset_imports(model, node.domain, 1)
 
 
+class CastToUInt4OutputTypeTransform(BaseOnnxTransform):
+    """Correct Dynamo-emitted CastToUInt4 value-info to logical UINT4.
+
+    PyTorch fake tensors cannot carry UINT4 dtype, so Dynamo annotates the
+    custom-op node outputs as UINT8 even though the ONNXScript function returns
+    UINT4. QAIC consumes the graph-level value-info for quantized dequantization,
+    so keep the node metadata consistent with the function body.
+    """
+
+    @classmethod
+    def apply(cls, model: ModelProto) -> bool:
+        cast_outputs = {
+            output_name
+            for node in model.graph.node
+            if node.domain == "com.qti.aisw.onnx" and node.op_type == "CastToUInt4"
+            for output_name in node.output
+        }
+        if not cast_outputs:
+            return False
+
+        transformed = False
+        for value in list(model.graph.value_info) + list(model.graph.output) + list(model.graph.input):
+            if value.name not in cast_outputs:
+                continue
+            tensor_type = value.type.tensor_type
+            if tensor_type.elem_type != TensorProto.UINT4:
+                tensor_type.elem_type = TensorProto.UINT4
+                transformed = True
+        return transformed
+
+
 class RemovePrefix(BaseOnnxTransform):
     @classmethod
     def apply(cls, model: ModelProto) -> bool:
@@ -647,6 +678,9 @@ class OnnxTransformPipeline(BaseOnnxTransform):
             applied[CustomOpTransform] = CustomOpTransform.apply(
                 model, onnx_export_opset=kwargs.get("onnx_export_opset", constants.ONNX_LEGACY_EXPORT_OPSET)
             )
+
+        if CastToUInt4OutputTypeTransform in requested:
+            applied[CastToUInt4OutputTypeTransform] = CastToUInt4OutputTypeTransform.apply(model)
 
         if RenameFunctionOutputsTransform in requested:
             applied[RenameFunctionOutputsTransform] = RenameFunctionOutputsTransform.apply(

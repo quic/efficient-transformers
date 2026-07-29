@@ -30,7 +30,7 @@ from transformers import (
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
-from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
+from QEfficient.base.onnx_transforms import CastToUInt4OutputTypeTransform, FP16ClipTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
@@ -1214,7 +1214,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         VlmKVOffloadTransform,
         SplitGateUpWeightsTransform,
     ]
-    _onnx_transforms = []
+    _onnx_transforms = [CastToUInt4OutputTypeTransform]
 
     def __init__(self, model, qaic_config: Optional[dict] = None, **kwargs):
         """
@@ -2349,8 +2349,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             }
         }
 
-        vision_inputs_fp16 = {"pixel_values", "image_masks"}
-        vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
+        for input_name in ("pixel_values", "image_masks"):
+            if input_name not in vision_inputs or input_name not in vision_session.binding_index_map:
+                continue
+            binding = vision_session.bindings[vision_session.binding_index_map[input_name]]
+            vision_inputs[input_name] = vision_inputs[input_name].astype(
+                vision_session.aic_to_np_dtype_mapping[binding.type]
+            )
 
         # Required for KIMI-K25
         grid_thws_val = inputs.pop("grid_thws", None)

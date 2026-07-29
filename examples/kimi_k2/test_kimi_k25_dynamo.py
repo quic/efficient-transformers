@@ -39,7 +39,7 @@ from QEfficient.utils.load_kimi_utils import (
 )
 
 TEXT_PROMPT = "Describe this image."
-NEW_GENERATION_TOKENS = 2
+NEW_GENERATION_TOKENS = 10
 CTX_LEN = 1024
 PREFILL_SEQ_LEN = 2
 
@@ -178,6 +178,84 @@ def _greedy_generate_hf(model, inputs, max_new_tokens: int) -> torch.Tensor:
     return torch.cat(new_tokens, dim=1)
 
 
+@torch.no_grad()
+def _greedy_generate_qeff(qeff_model, inputs, args) -> torch.Tensor:
+    prefill_seq_len = args.prefill_seq_len
+    generated_ids = inputs["input_ids"].to(torch.long)
+    attention_mask = inputs["attention_mask"].to(torch.long)
+    grid_thws = inputs["grid_thws"].to(torch.long)
+
+    h_shape = torch.ones(int(grid_thws[0, 1].item()), dtype=torch.int64)
+    w_shape = torch.ones(int(grid_thws[0, 2].item()), dtype=torch.int64)
+    vision_embeds = qeff_model.vision_model.model(
+        inputs["pixel_values"].to(qeff_model.model.config.torch_dtype),
+        h_shape,
+        w_shape,
+    ).detach()
+
+    input_ids_length = generated_ids.shape[1]
+    num_chunks = -(input_ids_length // -prefill_seq_len)
+    padded_len = num_chunks * prefill_seq_len
+    generated_ids = torch.nn.functional.pad(
+        generated_ids,
+        (0, padded_len - input_ids_length),
+        "constant",
+        qeff_model.model.config.pad_token_id,
+    )
+    attention_mask = torch.nn.functional.pad(attention_mask, (0, padded_len - input_ids_length), "constant", 0)
+    position_ids = torch.where(
+        attention_mask.bool(),
+        torch.arange(padded_len, dtype=torch.long).view(1, -1),
+        torch.full((generated_ids.shape[0], padded_len), -1, dtype=torch.long),
+    )
+
+    export_inputs, _, _ = get_component_export_args(qeff_model, prefill_seq_len)
+    compressed_kvs = [
+        [cache_tensor.clone()[: generated_ids.shape[0]] for cache_tensor in layer_cache]
+        for layer_cache in export_inputs["lang"]["compressed_kvs"]
+    ]
+    image_idx = torch.zeros((generated_ids.shape[0], 1), dtype=torch.int64)
+    new_tokens = []
+
+    logits = None
+    for chunk_idx in range(num_chunks):
+        start = chunk_idx * prefill_seq_len
+        end = start + prefill_seq_len
+        logits, _, image_idx_output, compressed_kvs = qeff_model.lang_model.model(
+            input_ids=generated_ids[:, start:end],
+            position_ids=position_ids[:, start:end],
+            vision_embeds=vision_embeds,
+            image_idx=image_idx,
+            compressed_kvs=compressed_kvs,
+        )
+        if image_idx_output is not None:
+            image_idx = image_idx_output
+
+    next_token = logits.argmax(2)
+    if next_token.ndim == 2 and next_token.shape[1] > 1:
+        next_token = next_token[:, -1:]
+    new_tokens.append(next_token)
+
+    decode_position_ids = position_ids.max(dim=-1, keepdim=True).values + 1
+    for _ in range(1, args.generation_len):
+        logits, _, image_idx_output, compressed_kvs = qeff_model.lang_model.model(
+            input_ids=next_token,
+            position_ids=decode_position_ids,
+            vision_embeds=vision_embeds,
+            image_idx=image_idx,
+            compressed_kvs=compressed_kvs,
+        )
+        if image_idx_output is not None:
+            image_idx = image_idx_output
+        next_token = logits.argmax(2)
+        if next_token.ndim == 2 and next_token.shape[1] > 1:
+            next_token = next_token[:, -1:]
+        new_tokens.append(next_token)
+        decode_position_ids = decode_position_ids + 1
+
+    return torch.cat(new_tokens, dim=1)
+
+
 def _build_generation_inputs(processor, image, args, dtype):
     messages = [
         {
@@ -276,7 +354,7 @@ def _make_args(device_ids: list[int]) -> SimpleNamespace:
     )
 
 
-def check_kimi_k25_dynamo_hf_vs_qaic():
+def check_kimi_k25_dynamo_hf_vs_qeff_vs_qaic():
     os.environ.setdefault("HF_HUB_CACHE", "/home/huggingface_hub")
     os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
 
@@ -299,6 +377,14 @@ def check_kimi_k25_dynamo_hf_vs_qaic():
     print("HF:", _decode_tokens(tokenizer, hf_tokens), "\n", hf_tokens)
 
     qeff_model, qaic_config = _build_qeff_model_from_hf(model, args)
+    qeff_tokens = _greedy_generate_qeff(qeff_model, _clone_inputs(inputs), args).cpu()
+    print("QEFF:", _decode_tokens(tokenizer, qeff_tokens), "\n", qeff_tokens)
+
+    assert torch.equal(hf_tokens, qeff_tokens), (
+        "HF and QEff PyTorch tokens do not match for the Dynamo export wrapper path: "
+        f"hf={hf_tokens.tolist()}, qeff={qeff_tokens.tolist()}"
+    )
+
     export_inputs, output_names, dynamic_axes = get_component_export_args(qeff_model, args.prefill_seq_len)
     exported_paths = export_components(qeff_model, export_inputs, output_names, dynamic_axes, args)
     qpc_paths = compile_components(qeff_model, exported_paths, image, qaic_config, args)
@@ -319,8 +405,8 @@ def check_kimi_k25_dynamo_hf_vs_qaic():
         return
 
     mismatch_message = (
-        "HF and QAIC tokens do not match for the Dynamo exported and compiled model: "
-        f"hf={hf_tokens.tolist()}, qaic={qaic_tokens.tolist()}"
+        "HF/QEff and QAIC tokens do not match for the Dynamo exported and compiled model: "
+        f"hf={hf_tokens.tolist()}, qeff={qeff_tokens.tolist()}, qaic={qaic_tokens.tolist()}"
     )
     if _env_bool("KIMI_K25_DYNAMO_STRICT_HF_QAIC", False):
         raise AssertionError(mismatch_message)
@@ -333,9 +419,9 @@ def check_kimi_k25_dynamo_hf_vs_qaic():
     assert qaic_tokens.shape == hf_tokens.shape, "HF and QAIC generated token shapes do not match"
 
 
-def test_kimi_k25_dynamo_hf_vs_qaic():
-    check_kimi_k25_dynamo_hf_vs_qaic()
+def test_kimi_k25_dynamo_hf_vs_qeff_vs_qaic():
+    check_kimi_k25_dynamo_hf_vs_qeff_vs_qaic()
 
 
 if __name__ == "__main__":
-    check_kimi_k25_dynamo_hf_vs_qaic()
+    check_kimi_k25_dynamo_hf_vs_qeff_vs_qaic()

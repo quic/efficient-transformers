@@ -8,6 +8,7 @@
 import onnxscript
 import torch
 from onnx import TensorProto
+from onnxscript.onnx_types import UINT4
 
 from QEfficient.customop.onnxscript_utils import qeff_custom_op
 from QEfficient.customop.utils import select_interface
@@ -17,7 +18,7 @@ ops = getattr(onnxscript, "opset" + str(constants.ONNX_LEGACY_EXPORT_OPSET))
 
 
 @qeff_custom_op("com.qti.aisw.onnx", 1)
-def CastToUInt4(weight_packed: onnxscript.UINT8) -> onnxscript.UINT8:
+def CastToUInt4(weight_packed: onnxscript.UINT8) -> UINT4:
     """
     Unpack packed uint8 weights into uint4 values and cast output to UINT4.
     Supports N-D input: all leading dimensions are preserved; only the last
