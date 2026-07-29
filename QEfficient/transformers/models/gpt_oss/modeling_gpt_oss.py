@@ -36,11 +36,7 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
     past_key_value_update,
 )
-from QEfficient.customop.ctx_scatter_gather import (
-    CtxGatherFunc3DGeneralized,
-    CtxScatterFunc3DGeneralized,
-    CtxScatterFunc3DInt,
-)
+from QEfficient.customop import ctx_gather_3d_generalized, ctx_scatter_3d_generalized, ctx_scatter_3d_int
 from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -68,7 +64,7 @@ def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
     valid_dest = valid_prefix - 1
     scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
     matched_idx = torch.full_like(token_idx, int32_max)
-    matched_idx = CtxScatterFunc3DInt.apply(
+    matched_idx = ctx_scatter_3d_int(
         matched_idx.unsqueeze(-1),
         scatter_pos,
         token_idx.unsqueeze(-1),
@@ -118,7 +114,7 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
         packed_stop = packed_start + packed_chunk_size
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
-        x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
+        x_chunk = ctx_gather_3d_generalized(x_expanded, chunk_matched_idx)
 
         gate = (x_chunk @ W_g) + b_g.unsqueeze(1)
         up = (x_chunk @ W_u) + b_u.unsqueeze(1)
@@ -128,10 +124,10 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
         intermediate = (up + 1) * glu
         down_chunk = (intermediate @ W_d) + b_d.unsqueeze(1)
 
-        rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
+        rw_chunk = ctx_gather_3d_generalized(routing_weight, chunk_matched_idx)
         down_chunk = down_chunk * rw_chunk
 
-        expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
+        expert_out_chunk = ctx_gather_3d_generalized(expert_out, chunk_matched_idx)
         updated_chunk = expert_out_chunk + down_chunk
 
         chunk_valid_rows = torch.clamp(
@@ -142,7 +138,7 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
         updated_chunk = torch.where(
             (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
         )
-        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
+        expert_out = ctx_scatter_3d_generalized(expert_out, chunk_matched_idx, updated_chunk)
 
     return expert_out
 
@@ -683,9 +679,12 @@ def eager_attention_forward(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
+            attention_mask,
+            torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
+            attn_weights,
         )
 
     sinks = module.sinks.reshape(1, -1, 1, 1).expand(query.shape[0], -1, query.shape[-2], -1)
@@ -747,8 +746,11 @@ def opt_eager_attention_forward_blocked(
             attn_mask_block = attention_mask[:, :, qi : qi + real_q_len, :]
 
         scores = torch.matmul(q_block, k_block.transpose(2, 3)) * scaling
+
         curr_attn_weights = torch.where(
-            attn_mask_block, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), scores
+            attn_mask_block,
+            torch.full_like(scores, MIN_MASKED_ATTENTION_VALUE, dtype=scores.dtype),
+            scores,
         )
         sinks = module.sinks.reshape(1, -1, 1, 1).expand(
             curr_attn_weights.shape[0], -1, curr_attn_weights.shape[-2], -1
