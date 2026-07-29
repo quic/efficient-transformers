@@ -7,7 +7,7 @@
 
 import onnxscript
 import torch
-from onnx import TensorProto
+from onnx import ModelProto, TensorProto
 from onnxscript.onnx_types import UINT4
 
 from QEfficient.customop.onnxscript_utils import qeff_custom_op
@@ -105,6 +105,35 @@ class CastToUInt4Func(torch.autograd.Function):
 
 def cast_to_uint4(weight_packed: torch.Tensor) -> torch.Tensor:
     return select_interface(CastToUInt4Func.apply, torch.ops.qefficient.cast_to_uint4)(weight_packed)
+
+
+def update_cast_to_uint4_output_types(model: ModelProto) -> bool:
+    """Correct exported CastToUInt4 value-info to logical UINT4.
+
+    PyTorch fake tensors cannot carry UINT4 dtype, so Dynamo annotates the
+    custom-op node outputs as UINT8 even though the ONNXScript function returns
+    UINT4. QAIC consumes the graph-level value-info for quantized
+    dequantization, so keep the node metadata consistent with the custom-op
+    body.
+    """
+    cast_outputs = {
+        output_name
+        for node in model.graph.node
+        if node.domain == "com.qti.aisw.onnx" and node.op_type == "CastToUInt4"
+        for output_name in node.output
+    }
+    if not cast_outputs:
+        return False
+
+    transformed = False
+    for value in list(model.graph.value_info) + list(model.graph.output) + list(model.graph.input):
+        if value.name not in cast_outputs:
+            continue
+        tensor_type = value.type.tensor_type
+        if tensor_type.elem_type != TensorProto.UINT4:
+            tensor_type.elem_type = TensorProto.UINT4
+            transformed = True
+    return transformed
 
 
 class DequantizeLinearFunc(torch.autograd.Function):

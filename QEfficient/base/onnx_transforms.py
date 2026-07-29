@@ -45,7 +45,7 @@ from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxScatterFuncCB3D,
 )
 from QEfficient.customop.onnxscript_utils import get_onnxscript_func
-from QEfficient.customop.quantization_ops import CastToUInt4, CastToUInt4Func
+from QEfficient.customop.quantization_ops import CastToUInt4, CastToUInt4Func, update_cast_to_uint4_output_types
 from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
 from QEfficient.utils import constants
 from QEfficient.utils.constants import FILE_CHUNK_SIZE_DEFAULT, SIZE_THRESHOLD_DEFAULT
@@ -154,37 +154,6 @@ class CustomOpTransform(BaseOnnxTransform):
                 if node.domain:
                     cls._ensure_opset_imports(fn, node.domain, 1)
                     cls._ensure_opset_imports(model, node.domain, 1)
-
-
-class CastToUInt4OutputTypeTransform(BaseOnnxTransform):
-    """Correct Dynamo-emitted CastToUInt4 value-info to logical UINT4.
-
-    PyTorch fake tensors cannot carry UINT4 dtype, so Dynamo annotates the
-    custom-op node outputs as UINT8 even though the ONNXScript function returns
-    UINT4. QAIC consumes the graph-level value-info for quantized dequantization,
-    so keep the node metadata consistent with the function body.
-    """
-
-    @classmethod
-    def apply(cls, model: ModelProto) -> bool:
-        cast_outputs = {
-            output_name
-            for node in model.graph.node
-            if node.domain == "com.qti.aisw.onnx" and node.op_type == "CastToUInt4"
-            for output_name in node.output
-        }
-        if not cast_outputs:
-            return False
-
-        transformed = False
-        for value in list(model.graph.value_info) + list(model.graph.output) + list(model.graph.input):
-            if value.name not in cast_outputs:
-                continue
-            tensor_type = value.type.tensor_type
-            if tensor_type.elem_type != TensorProto.UINT4:
-                tensor_type.elem_type = TensorProto.UINT4
-                transformed = True
-        return transformed
 
 
 class RemovePrefix(BaseOnnxTransform):
@@ -628,7 +597,7 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         **kwargs,
     ) -> Tuple[ModelProto, bool]:
         if not self.transforms:
-            return model, False
+            return model, update_cast_to_uint4_output_types(model)
 
         # Same logic as before, but replace `transforms` with `self.transforms`
         mapping: Dict[str, Tuple[TensorProto, str]] = {}
@@ -679,8 +648,7 @@ class OnnxTransformPipeline(BaseOnnxTransform):
                 model, onnx_export_opset=kwargs.get("onnx_export_opset", constants.ONNX_LEGACY_EXPORT_OPSET)
             )
 
-        if CastToUInt4OutputTypeTransform in requested:
-            applied[CastToUInt4OutputTypeTransform] = CastToUInt4OutputTypeTransform.apply(model)
+        cast_to_uint4_types_updated = update_cast_to_uint4_output_types(model)
 
         if RenameFunctionOutputsTransform in requested:
             applied[RenameFunctionOutputsTransform] = RenameFunctionOutputsTransform.apply(
@@ -699,4 +667,4 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         for t, done in applied.items():
             logger.info(f"Transform '{t.__name__}' applied={done}")
 
-        return model, any(applied.values())
+        return model, any(applied.values()) or cast_to_uint4_types_updated
