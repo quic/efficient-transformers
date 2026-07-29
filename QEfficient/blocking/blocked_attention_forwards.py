@@ -328,7 +328,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
         )
         
         attn_weights_block = torch.where(
-            causal_mask, torch.full_like(attn_weights_block, float(MIN_MASKED_ATTENTION_VALUE)), attn_weights_block
+            causal_mask, torch.full_like(attn_weights_block, -3.0e4), attn_weights_block
         )
 
         # causal_mask = causal_mask.repeat(1, 1, num_kv_groups, 1)
@@ -338,7 +338,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
         exp_block = torch.exp(attn_weights_block - max_block.unsqueeze(-1))
         if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
             max_block = torch.where(
-                skip_future, torch.full_like(max_block, float(MIN_MASKED_ATTENTION_VALUE)), max_block
+                skip_future, torch.full_like(max_block, -3.0e4), max_block
             )
             exp_block = torch.where(skip_future, torch.zeros_like(exp_block), exp_block)
 
