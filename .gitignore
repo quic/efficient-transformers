@@ -102,3 +102,6 @@ docs/xet
 **/time-passes.log
 **/custom_io_fp16.yaml
 dbg.log
+
+# Golden-store write-lock dir (runtime artifact; see tests/.../golden_utils.py)
+tests/golden_outputs/.locks/

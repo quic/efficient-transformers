@@ -400,9 +400,7 @@ FEATURE_COLUMNS = [
     (
         "cb",
         "Cont. Batch",
-        lambda fn, fn_tok, p, p_tok: (
-            ("cb" in fn_tok or "cb" in p_tok) and "nocb" not in fn_tok and "nocb" not in p_tok
-        ),
+        lambda fn, fn_tok, p, p_tok: ("cb" in fn_tok or "cb" in p_tok) and "nocb" not in fn_tok and "nocb" not in p_tok,
     ),
     ("ccl", "CCL", lambda fn, fn_tok, p, p_tok: "ccl" in fn_tok or "ccl" in p_tok),
     (
