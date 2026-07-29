@@ -482,6 +482,12 @@ class QEffTextGenerationBase:
         self.full_batch_size = (
             full_batch_size if full_batch_size else self._fetch_full_batch_size()
         )  # Check and fetch full batch size if CB is enabled
+        # Decode input batch actually driven each step. Defaults to full_batch_size (B_max) so plain
+        # continuous batching is unchanged; dynamic batching sets it to a smaller compiled batch to
+        # run a live batch b <= B_max over the fixed-B_max KV cache via a length-b batch_index.
+        self.decode_batch_size = self.full_batch_size
+        # Decode input batch sizes the QPC was compiled for (dynamic batching exposes several).
+        self._compiled_batch_sizes = self._fetch_compiled_batch_sizes()
 
         # Initialize the storage variables.
         self.batch_index = None
@@ -517,22 +523,67 @@ class QEffTextGenerationBase:
         self,
     ):
         """
-        Fetches the full batch size from the session's bindings or allowed shapes.
+        Fetches the full batch size (B_max, the retained KV-cache capacity) from the session.
+
+        B_max is the batch dim (axis 0) of the retained-state KV cache, which is pinned to a single
+        value across every specialization in the QPC. Reading it from a retained-state binding
+        (rather than the ``batch_index`` input axis) is correct even for dynamic batching, where the
+        decode *input* batch varies over ``batch_size=[...]`` and ``max(batch_size)`` may be smaller
+        than the true KV capacity ``full_batch_size``.
 
         Returns:
-        full_batch_size: The full batch size fetched from the session's bindings or allowed shapes. If "batch_index" is not
-        in the session's binding index map, full_batch_size will be None.
+        full_batch_size: The full batch size fetched from the session's bindings or allowed shapes. If
+        neither a "batch_index" input nor a retained-state binding is present (i.e. continuous batching
+        is not enabled), full_batch_size will be None.
 
         """
-        full_batch_size = None
-        if "batch_index" in self._session.binding_index_map:
+        if "batch_index" not in self._session.binding_index_map:
+            return None
+        # Prefer the retained KV-cache batch dim (true B_max, constant across specs).
+        kv_index = next(
+            (idx for name, idx in self._session.binding_index_map.items() if is_retained_state_name(name)),
+            None,
+        )
+        if kv_index is not None:
             if self._session.allowed_shapes:
-                full_batch_size, _ = [
-                    x[self._session.binding_index_map["batch_index"]][1][0] for x in self._session.allowed_shapes
-                ]
-            else:
-                full_batch_size, _ = self._session.bindings[self._session.binding_index_map["batch_index"]].dims
+                return self._session.allowed_shapes[0][kv_index][1][0]
+            return self._session.bindings[kv_index].dims[0]
+        # Fallback: no retained-state binding exposed. The batch_index input axis equals B_max for
+        # plain continuous batching; take the max across decode specs as a best effort.
+        if self._session.allowed_shapes:
+            return max(x[self._session.binding_index_map["batch_index"]][1][0] for x in self._session.allowed_shapes)
+        full_batch_size, _ = self._session.bindings[self._session.binding_index_map["batch_index"]].dims
         return full_batch_size
+
+    def _fetch_compiled_batch_sizes(self):
+        """
+        Fetches the sorted set of decode *input* batch sizes the QPC was compiled for.
+
+        For a dynamic-batching QPC (``batch_size=[...]`` at compile time) this returns each compiled
+        decode input batch (e.g. ``[1, 2, 4]``); for an ordinary QPC it returns the single batch size.
+        Used to pick and validate the live execution batch at runtime.
+
+        Only decode specializations are considered. Under continuous batching the prefill spec has an
+        ``input_ids`` batch dim of 1 that is never a selectable decode batch, so specs whose
+        ``input_ids`` seq_len equals ``prefill_seq_len`` are excluded to avoid admitting a batch size
+        that has no decode specialization.
+
+        Returns:
+            list[int]: Sorted, de-duplicated decode input batch sizes, or None if unavailable.
+        """
+        if not self._session.allowed_shapes:
+            return None
+        input_ids_idx = self._session.binding_index_map["input_ids"]
+        decode_batch_sizes = {
+            shape[input_ids_idx][1][0]
+            for shape in self._session.allowed_shapes
+            if shape[input_ids_idx][1][1] != self._prefill_seq_len
+        }
+        # Fall back to all specs if every shape looks like a prefill spec (e.g. decode-only QPC where
+        # prefill_seq_len == decode seq_len), so the method never returns an empty set.
+        if not decode_batch_sizes:
+            decode_batch_sizes = {shape[input_ids_idx][1][0] for shape in self._session.allowed_shapes}
+        return sorted(decode_batch_sizes)
 
     def _fetch_batch_size_prefill_seq_len(
         self,
@@ -622,7 +673,7 @@ class QEffTextGenerationBase:
         Returns:
             dict: The decode inputs.
         """
-        batch_size = self.full_batch_size if self.full_batch_size is not None else self.batch_size
+        batch_size = self.decode_batch_size if self.decode_batch_size is not None else self.batch_size
         decode_inputs = {}
         if self.is_tlm:
             position_ids = np.full((batch_size, self._decode_seq_len), -1, dtype=np.int64)
@@ -647,10 +698,12 @@ class QEffTextGenerationBase:
 
         if self._prompt_to_lora_id_mapping_decode:
             if self.full_batch_size:
-                first_batch_lora_ids = [self._prompt_to_lora_id_mapping_decode[i] for i in range(self.full_batch_size)]
-                decode_inputs["lora_ids"] = np.array(first_batch_lora_ids, dtype=np.int64).reshape(
-                    self.full_batch_size, 1
-                )
+                # Size lora_ids to the live decode batch (decode_batch_size), matching input_ids /
+                # position_ids / batch_index above. Under dynamic batching decode_batch_size may be a
+                # smaller compiled batch than full_batch_size (B_max); using B_max here would emit a
+                # lora_ids batch dim that mismatches the other decode inputs.
+                first_batch_lora_ids = [self._prompt_to_lora_id_mapping_decode[i] for i in range(batch_size)]
+                decode_inputs["lora_ids"] = np.array(first_batch_lora_ids, dtype=np.int64).reshape(batch_size, 1)
             else:
                 batch_lora_ids = [self._prompt_to_lora_id_mapping_decode.popleft() for i in range(self.batch_size)]
                 decode_inputs["lora_ids"] = np.array(batch_lora_ids, dtype=np.int64).reshape(self.batch_size, 1)
@@ -737,7 +790,7 @@ class QEffTextGenerationBase:
             generation_len (int): The generation length.
 
         """
-        for decode_batch_id in range(self.full_batch_size):
+        for decode_batch_id in range(self.decode_batch_size):
             next_prompt = prompt_queue.popleft()
 
             # run prefill for num_chunks
@@ -884,19 +937,19 @@ class QEffTextGenerationBase:
 
         # Set output placeholders for decode
         self._set_output_buffers(
-            batch_size=self.full_batch_size,
+            batch_size=self.decode_batch_size,
             sequence_length=self._decode_seq_len,
         )
 
         # Generate flag for tracking progress for each batch ID
-        current_decode_ongoing = np.full((self.full_batch_size, 1), True)
+        current_decode_ongoing = np.full((self.decode_batch_size, 1), True)
 
         # Generate an array for maintaining the tokens generated in each batch ID
-        generated_id_current_index = np.ones((self.full_batch_size, 1), np.int64)
+        generated_id_current_index = np.ones((self.decode_batch_size, 1), np.int64)
 
         # Generate a batch ID map for mapping the batch ID if input > full_batch_size.
         # This ID map will be used for storing all generated tokens
-        batch_id_map = {i: i for i in range(self.full_batch_size)}
+        batch_id_map = {i: i for i in range(self.decode_batch_size)}
         decode_pause_time = 0
         # Prepare decode inputs inputs.
         decode_inputs = self.prepare_decode_inputs()
@@ -911,7 +964,7 @@ class QEffTextGenerationBase:
             # Prepare inputs for next iteration
             next_token_id = self._fetch_next_token_id(outputs)
 
-            for decode_batch_id in range(self.full_batch_size):
+            for decode_batch_id in range(self.decode_batch_size):
                 if (
                     next_token_id[decode_batch_id, -1] == self.tokenizer.eos_token_id
                     or generated_id_current_index[decode_batch_id] >= self.generation_len[decode_batch_id]
@@ -932,7 +985,7 @@ class QEffTextGenerationBase:
                         generated_id_current_index[decode_batch_id] = 1
 
                         self._set_output_buffers(
-                            batch_size=self.full_batch_size,
+                            batch_size=self.decode_batch_size,
                             sequence_length=self._decode_seq_len,
                         )
                         decode_pause_time += perf_counter() - start
@@ -1116,11 +1169,46 @@ class TextGeneration:
     def perf_metrics(self):
         return self._perf_metrics
 
+    def _resolve_execution_batch_size(self, execution_batch_size: Optional[int]) -> int:
+        """
+        Resolves the live decode batch for continuous-batching execution.
+
+        For a dynamic-batching QPC compiled with several decode input batches, an explicit
+        ``execution_batch_size`` must be one of the compiled batches; when omitted, the largest
+        compiled decode batch is used (all decode slots active). For an ordinary continuous-batching
+        QPC this returns ``full_batch_size``.
+
+        Args:
+            execution_batch_size (Optional[int]): Requested live decode batch, or None to auto-select.
+
+        Returns:
+            int: The decode batch to drive each step.
+        """
+        compiled = self._qaic_model._compiled_batch_sizes
+        if execution_batch_size is None:
+            # Default to the largest compiled *decode* batch (all decode slots active). This is not
+            # necessarily full_batch_size: dynamic batching only requires max(batch_size) <= B_max, so
+            # a QPC compiled with batch_size=[1,2], full_batch_size=4 has no decode spec at batch 4.
+            # Falling back to full_batch_size only when the compiled set is unavailable keeps plain
+            # continuous batching unchanged.
+            return max(compiled) if compiled else self._full_batch_size
+        if compiled is not None and execution_batch_size not in compiled:
+            raise ValueError(
+                f"execution_batch_size={execution_batch_size} is not a compiled decode batch size "
+                f"{compiled}. Recompile with this batch size, or pass one of the compiled values."
+            )
+        if execution_batch_size > self._full_batch_size:
+            raise ValueError(
+                f"execution_batch_size={execution_batch_size} exceeds full_batch_size={self._full_batch_size}."
+            )
+        return execution_batch_size
+
     def _setup_model_execution_inputs(
         self,
         prompt: List[str],
         generation_len: Optional[int] = None,
         prompt_to_lora_id_mapping: Optional[List[int]] = None,
+        execution_batch_size: Optional[int] = None,
     ):
         """
         This method should be called to set/reset inputs
@@ -1128,10 +1216,13 @@ class TextGeneration:
             :prompt (List[str]): prompts for the model text generation
             :generation_len (Optional[int], optional): Number of tokens to be generated.
             :prompt_to_lora_id_mapping (Optional[List[int]], optional): Mapping to associate prompts with their respective LoRA adapter.
+            :execution_batch_size (Optional[int], optional): Number of decode slots driven per step.
+                Defaults to full_batch_size (continuous batching) or the compiled batch size.
         """
-        execution_batch_size = (
-            self._full_batch_size if self._full_batch_size is not None else self._qaic_model.batch_size
-        )
+        if execution_batch_size is None:
+            execution_batch_size = (
+                self._full_batch_size if self._full_batch_size is not None else self._qaic_model.batch_size
+            )
         max_gen_length = self._ctx_len if not generation_len else max(self._ctx_len, generation_len)
 
         # Create a prompt queue.
@@ -1193,6 +1284,7 @@ class TextGeneration:
         prompt: List[str],
         generation_len: Optional[int] = None,
         prompt_to_lora_id_mapping: Optional[List[int]] = None,
+        execution_batch_size: Optional[int] = None,
     ):
         """
         Executes the model using continuous batching.
@@ -1202,12 +1294,18 @@ class TextGeneration:
             :prompt (List[str]): The list of prompts for the model.
             :generation_len (Optional[int], optional): The generation length.
             :prompt_to_lora_id_mapping (Optional[List[int]], optional): Mapping to associate prompts with their respective LoRA adapter.
+            :execution_batch_size (Optional[int], optional): Live decode batch b <= full_batch_size for
+                dynamic batching. Defaults to full_batch_size (plain continuous batching).
 
         Returns:
         :tuple: A tuple containing performance metrics and generated texts.
         """
-        self._setup_model_execution_inputs(prompt, generation_len, prompt_to_lora_id_mapping)
-        self._qaic_model.batch_index = np.arange(self._full_batch_size).reshape(-1, 1)
+        exec_bs = self._resolve_execution_batch_size(execution_batch_size)
+        self._qaic_model.decode_batch_size = exec_bs
+        self._setup_model_execution_inputs(
+            prompt, generation_len, prompt_to_lora_id_mapping, execution_batch_size=exec_bs
+        )
+        self._qaic_model.batch_index = np.arange(exec_bs).reshape(-1, 1)
         start = perf_counter()
         self._qaic_model.run_prefill_for_all_inputs(self._prompt_queue, generation_len)
 
@@ -1282,6 +1380,7 @@ class TextGeneration:
         stream: bool = True,
         automation: Optional[bool] = False,
         prompt_to_lora_id_mapping: Optional[List[int]] = None,
+        execution_batch_size: Optional[int] = None,
     ):
         """
         Executes the model for a given list of prompts and a specified generation length.
@@ -1291,6 +1390,9 @@ class TextGeneration:
             generation_len (Optional[int], optional): The generation length.
             stream (Optional[bool], optional): Boolean flag to enable stream output to console.
             prompt_to_lora_id_mapping (Optional[List[int]], optional): Mapping to associate prompts with their respective LoRA adapter.
+            execution_batch_size (Optional[int], optional): Dynamic batching only. Live decode batch
+                b <= full_batch_size to drive, which must be one of the compiled decode batch sizes.
+                Defaults to full_batch_size (all decode slots active).
         Returns:
             latency_stats (tuple): A tuple containing the generated texts, performance metrics.
         """
@@ -1298,9 +1400,13 @@ class TextGeneration:
         if self._full_batch_size is not None:
             logger.warning("Streamer is currently unavailable for continuous batch execution.")
             perf_metrics, generated_texts = self._continuous_batching_execution(
-                prompt, generation_len, prompt_to_lora_id_mapping
+                prompt, generation_len, prompt_to_lora_id_mapping, execution_batch_size
             )
         else:
+            if execution_batch_size is not None:
+                raise ValueError(
+                    "execution_batch_size is only supported for continuous-batching (dynamic-batching) QPCs."
+                )
             if stream:
                 print("\nPrompt : " + prompt[0] + "\nCompletion :", flush=True, end="")
             perf_metrics, generated_texts = self._regular_model_execution(

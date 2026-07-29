@@ -222,6 +222,46 @@ class TestQEFFAutoModelForCausalLMSpecializations:
         # The result should reflect the speculative tokens in some way
         assert "ctx_len" in result
 
+    def test_build_decode_specialization_batch_size_from_kv_cache_batch_size(self):
+        """Non-CB decode spec batch_size is taken from kv_cache_batch_size."""
+        qeff = self._make_qeff()
+        result = qeff.build_decode_specialization(ctx_len=32, batch_size=4, kv_cache_batch_size=4, full_batch_size=None)
+        assert result["batch_size"] == 4
+
+    def test_build_decode_specialization_ccl_and_num_speculative_tokens_together(self):
+        """build_decode_specialization accepts comp_ctx_lengths and num_speculative_tokens simultaneously."""
+        qeff = self._make_qeff()
+        qeff.is_tlm = True
+        result = qeff.build_decode_specialization(
+            ctx_len=128,
+            batch_size=1,
+            kv_cache_batch_size=1,
+            full_batch_size=None,
+            comp_ctx_lengths=64,
+            num_speculative_tokens=3,
+            prefill_seq_len=32,
+        )
+        assert result is not None
+        assert result["seq_len"] == 4  # k+1
+        assert result["comp_ctx_lengths"] == 64
+
+    def test_build_decode_specialization_dynamic_batch_pins_kv_at_bmax(self):
+        """Dynamic batching: decode input batch == decode_input_batch_size, KV batch == full_batch_size."""
+        from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
+        qeff = QEFFAutoModelForCausalLM(make_tiny_gpt2(), continuous_batching=True)
+        result = qeff.build_decode_specialization(
+            ctx_len=128,
+            batch_size=2,
+            kv_cache_batch_size=4,
+            full_batch_size=4,
+            decode_input_batch_size=2,
+        )
+        assert result is not None
+        # Input axis follows the live batch; retained KV batch stays pinned at B_max.
+        assert result["batch_size"] == 2
+        assert result["full_batch_size"] == 4
+
 
 # ---------------------------------------------------------------------------
 # Tests: QEFFAutoModelForCausalLM prefill toggle

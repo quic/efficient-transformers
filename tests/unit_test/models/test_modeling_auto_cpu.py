@@ -1283,3 +1283,202 @@ class TestTLMMultiSpecSpecializations:
         decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
         assert len(decode_specs) == 1, f"Expected 1 decode spec for scalar 0, got: {decode_specs}"
         assert decode_specs[0]["seq_len"] == 1  # k=0 → seq_len=1
+
+
+# ---------------------------------------------------------------------------
+# Dynamic-batching specialization unit tests (batch_size as list)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.cpu_only
+@pytest.mark.causal_lm
+class TestDynamicBatchSpecializations:
+    """Tests for dynamic-batching decode specializations (batch_size as a list).
+
+    Dynamic batching rides the continuous-batching export path: every decode specialization keeps
+    the retained KV cache pinned at ``full_batch_size`` (B_max) while only the decode *input* batch
+    axis varies over the requested list. This is what makes a single QPC legal on QAIC (one retained
+    state shape) — see docs/qaic/dynamic_batching/finding_and_pivot.md.
+    """
+
+    @staticmethod
+    def _capture_specializations(qeff, **compile_kwargs):
+        """Run compile() with _compile mocked and return the captured specializations list."""
+        from unittest.mock import patch
+
+        captured = {}
+        with patch.object(
+            type(qeff),
+            "_compile",
+            side_effect=lambda *args, **kw: (
+                captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"
+            ),
+        ):
+            qeff.compile(**compile_kwargs)
+        assert captured.get("specializations") is not None, "_compile was not reached"
+        return captured["specializations"]
+
+    @staticmethod
+    def _decode_specs(specs, prefill_seq_len=32):
+        return [s for s in specs if s.get("seq_len", 0) != prefill_seq_len]
+
+    def test_list_batch_size_produces_one_decode_spec_per_batch(self):
+        """batch_size=[1, 2, 4] → 3 decode specs whose input batch is {1, 2, 4}."""
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
+        specs = self._capture_specializations(
+            qeff, prefill_seq_len=32, ctx_len=128, batch_size=[1, 2, 4], full_batch_size=4
+        )
+        decode_specs = self._decode_specs(specs)
+        assert len(decode_specs) == 3
+        assert {s["batch_size"] for s in decode_specs} == {1, 2, 4}
+
+    def test_all_decode_specs_share_kv_batch_bmax(self):
+        """Retained KV batch (full_batch_size) must be identical (=B_max) across every decode spec.
+
+        This is the regression guard for the hardware failure in finding_and_pivot.md: the earlier
+        attempt sized KV per-batch, giving inconsistent retained state. Here KV is pinned at B_max.
+        """
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
+        specs = self._capture_specializations(
+            qeff, prefill_seq_len=32, ctx_len=128, batch_size=[1, 2, 4], full_batch_size=4
+        )
+        # Every specialization (prefill + decode) must carry full_batch_size == 4.
+        assert {s["full_batch_size"] for s in specs} == {4}
+        # Prefill runs at input batch 1 under continuous batching.
+        prefill_specs = [s for s in specs if s.get("seq_len", 0) == 32]
+        assert len(prefill_specs) == 1
+        assert prefill_specs[0]["batch_size"] == 1
+        assert prefill_specs[0]["full_batch_size"] == 4
+
+    def test_int_batch_size_backward_compat(self):
+        """batch_size=2 as a plain int (continuous batching) → one decode spec, KV=full_batch_size."""
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
+        specs = self._capture_specializations(qeff, prefill_seq_len=32, ctx_len=128, batch_size=2, full_batch_size=4)
+        decode_specs = self._decode_specs(specs)
+        assert len(decode_specs) == 1
+        # Plain int under continuous batching keeps the legacy behavior: input batch == full_batch_size.
+        assert decode_specs[0]["batch_size"] == 4
+        assert decode_specs[0]["full_batch_size"] == 4
+
+    def test_default_batch_size_legacy_shape(self):
+        """No batch_size, no continuous batching → 1 prefill + 1 decode spec, decode batch 1."""
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model)
+        specs = self._capture_specializations(qeff, prefill_seq_len=32, ctx_len=128)
+        decode_specs = self._decode_specs(specs)
+        prefill_specs = [s for s in specs if s.get("seq_len", 0) == 32]
+        assert len(prefill_specs) == 1
+        assert len(decode_specs) == 1
+        assert decode_specs[0]["batch_size"] == 1
+
+    def test_batch_size_times_spec_len_product(self):
+        """TLM batch_size=[1,2] × num_speculative_tokens=[1,3] → 4 decode specs (2×2 product)."""
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(
+            model, continuous_batching=True, qaic_config={"speculative_model_type": "target"}
+        )
+        specs = self._capture_specializations(
+            qeff,
+            prefill_seq_len=32,
+            ctx_len=128,
+            batch_size=[1, 2],
+            full_batch_size=2,
+            num_speculative_tokens=[1, 3],
+        )
+        decode_specs = self._decode_specs(specs)
+        assert len(decode_specs) == 4
+        # seq_len = k+1 → {2, 4}; input batch_size → {1, 2}; KV pinned at B_max=2.
+        assert {(s["batch_size"], s["seq_len"]) for s in decode_specs} == {(1, 2), (1, 4), (2, 2), (2, 4)}
+        assert {s["full_batch_size"] for s in decode_specs} == {2}
+
+    def test_batch_size_with_ccl_rejected(self):
+        """Dynamic batching + CCL is rejected (compiler cannot disambiguate identifying inputs)."""
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
+        with pytest.raises(ValueError, match="comp_ctx_lengths"):
+            qeff.compile(
+                prefill_seq_len=32,
+                ctx_len=2048,
+                batch_size=[1, 2],
+                full_batch_size=2,
+                comp_ctx_lengths_decode=[1024, 2048],
+            )
+
+    def test_tlm_multispec_with_ccl_rejected(self):
+        """TLM multi-spec (num_speculative_tokens list) + CCL must be rejected at compile time.
+
+        CCL crossed with a co-varying seq_len axis produces decode specs the QAIC compiler cannot
+        disambiguate ("No input that uniquely identifies specialization" — finding_and_pivot.md §8,
+        Case 3). We reject early with a clear ValueError instead of deferring to the compiler.
+        """
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(
+            model, continuous_batching=True, qaic_config={"speculative_model_type": "target"}
+        )
+        with pytest.raises(ValueError, match="comp_ctx_lengths"):
+            qeff.compile(
+                prefill_seq_len=32,
+                ctx_len=2048,
+                full_batch_size=1,
+                comp_ctx_lengths_decode=[1024, 2048],
+                num_speculative_tokens=[1, 3],
+            )
+
+    def test_scalar_spec_len_with_ccl_still_allowed(self):
+        """A plain int num_speculative_tokens still combines with CCL (single seq_len, CCL varies alone)."""
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(
+            model, continuous_batching=True, qaic_config={"speculative_model_type": "target"}
+        )
+        specs = self._capture_specializations(
+            qeff,
+            prefill_seq_len=32,
+            ctx_len=2048,
+            full_batch_size=1,
+            comp_ctx_lengths_decode=[1024, 2048],
+            num_speculative_tokens=3,
+        )
+        decode_specs = self._decode_specs(specs)
+        # One seq_len (k=3 → 4) crossed with two CCL values → 2 decode specs, CCL is the sole discriminator.
+        assert {s["seq_len"] for s in decode_specs} == {4}
+        assert {s["comp_ctx_lengths"] for s in decode_specs} == {1024, 2048}
+
+    def test_batch_ccl_spec_len_combo_rejected(self):
+        """batch_size list + CCL + num_speculative_tokens → ValueError (CCL cannot combine with a batch list)."""
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(
+            model, continuous_batching=True, qaic_config={"speculative_model_type": "target"}
+        )
+        with pytest.raises(ValueError, match="comp_ctx_lengths"):
+            qeff.compile(
+                prefill_seq_len=32,
+                ctx_len=2048,
+                batch_size=[1, 2],
+                full_batch_size=2,
+                comp_ctx_lengths_decode=[1024, 2048],
+                num_speculative_tokens=[1, 3],
+            )
+
+    def test_list_batch_size_rejected_without_continuous_batching(self):
+        """batch_size list without continuous_batching → ValueError (non-CB cannot decouple axes)."""
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model)
+        with pytest.raises(ValueError, match="continuous_batching=True"):
+            qeff.compile(prefill_seq_len=32, ctx_len=128, batch_size=[1, 2])
+
+    def test_list_batch_size_requires_full_batch_size(self):
+        """batch_size list + continuous_batching but no full_batch_size → TypeError."""
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
+        with pytest.raises(TypeError, match="full_batch_size"):
+            qeff.compile(prefill_seq_len=32, ctx_len=128, batch_size=[1, 2])
+
+    def test_batch_size_exceeding_full_batch_size_rejected(self):
+        """Any batch_size value > full_batch_size (B_max) → ValueError."""
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
+        with pytest.raises(ValueError, match="full_batch_size"):
+            qeff.compile(prefill_seq_len=32, ctx_len=128, batch_size=[1, 2, 8], full_batch_size=4)

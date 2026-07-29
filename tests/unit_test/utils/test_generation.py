@@ -967,6 +967,112 @@ class TestContinuousBatching:
 
 
 # ---------------------------------------------------------------------------
+# Tests: Dynamic batching runtime helpers (batch_index KV-slicing)
+#   Exercises _fetch_full_batch_size / _fetch_compiled_batch_sizes /
+#   _resolve_execution_batch_size for a QPC compiled with several decode input
+#   batches while the retained KV cache is pinned at B_max. All CPU-only via a
+#   mocked session (allowed_shapes carry the compiled specialization shapes).
+# ---------------------------------------------------------------------------
+
+
+class TestDynamicBatchRuntime:
+    """Runtime resolution of the live decode batch for a dynamic-batching QPC.
+
+    Regression guards for the code-review fixes: the largest *decode* batch (not B_max) is the
+    default; the prefill spec's batch-1 input must not be admitted as a decode batch; and B_max is
+    read from the retained KV cache, not the input-axis batch_index.
+    See docs/qaic/dynamic_batching/code_review_findings.md.
+    """
+
+    def _make_dynamic_batch_instance(self, decode_batches, full_batch_size):
+        """Mocked QEffTextGenerationBase for a QPC with decode specs over `decode_batches`,
+        KV pinned at `full_batch_size` (B_max). allowed_shapes carry one CB prefill spec (input
+        batch 1) plus one decode spec per requested decode batch; the retained past_key binding
+        carries B_max on its batch axis."""
+        from QEfficient.generation.text_generation_inference import QEffTextGenerationBase, TextGeneration
+
+        tok = _make_tokenizer()
+        mock_session = _make_mock_session(
+            batch_size=max(decode_batches),
+            prefill_seq_len=PREFILL_LEN,
+            ctx_len=CTX_LEN,
+            full_batch_size=full_batch_size,
+            force_seq_len=1,
+        )
+        # Append a retained-state KV binding (batch axis = B_max) and a batch_index input.
+        for name, dims in (("past_key.0", [full_batch_size, 4, CTX_LEN, 8]), ("batch_index", [full_batch_size, 1])):
+            b = MagicMock()
+            b.name, b.dims, b.dir, b.type = name, dims, "input", 1
+            b.size = int(np.prod(dims)) * 4
+            mock_session.bindings.append(b)
+            mock_session.binding_index_map[name] = len(mock_session.bindings) - 1
+        mock_session.input_names.append("batch_index")
+
+        ii = mock_session.binding_index_map["input_ids"]
+        pk = mock_session.binding_index_map["past_key.0"]
+        bi = mock_session.binding_index_map["batch_index"]
+        lg = mock_session.binding_index_map["logits"]
+
+        def _shape_row(input_batch, seq_len):
+            row = [None] * len(mock_session.bindings)
+            row[ii] = (4, [input_batch, seq_len])
+            row[pk] = (4, [full_batch_size, 4, CTX_LEN, 8])  # KV batch axis = B_max, constant
+            row[bi] = (4, [input_batch, 1])
+            row[lg] = (4, [input_batch, seq_len, VOCAB_SIZE])
+            return row
+
+        # CB prefill spec has input batch 1; one decode spec per compiled decode batch.
+        allowed = [_shape_row(1, PREFILL_LEN)]
+        allowed += [_shape_row(b, 1) for b in decode_batches]
+        mock_session.allowed_shapes = allowed
+
+        with patch(
+            "QEfficient.generation.text_generation_inference.QAICInferenceSession",
+            return_value=mock_session,
+        ):
+            base = QEffTextGenerationBase(
+                tokenizer=tok, qpc_path="/fake/path/model.qpc", ctx_len=CTX_LEN, full_batch_size=full_batch_size
+            )
+            gen = object.__new__(TextGeneration)
+            gen._qaic_model = base
+            gen._full_batch_size = base.full_batch_size
+        return base, gen
+
+    def test_compiled_batch_sizes_excludes_prefill(self):
+        """The prefill spec's input batch (1) must not leak into the compiled decode batch set."""
+        base, _ = self._make_dynamic_batch_instance(decode_batches=[2, 4], full_batch_size=4)
+        assert base._compiled_batch_sizes == [2, 4]
+
+    def test_full_batch_size_reads_kv_capacity_not_input_axis(self):
+        """B_max is read from the retained KV batch axis (4), not max input batch (2)."""
+        base, _ = self._make_dynamic_batch_instance(decode_batches=[1, 2], full_batch_size=4)
+        assert base.full_batch_size == 4
+
+    def test_resolve_default_uses_largest_compiled_decode_batch(self):
+        """Default execution batch is the largest compiled decode batch, not B_max."""
+        _, gen = self._make_dynamic_batch_instance(decode_batches=[1, 2], full_batch_size=4)
+        assert gen._resolve_execution_batch_size(None) == 2
+
+    def test_resolve_explicit_compiled_batch_accepted(self):
+        _, gen = self._make_dynamic_batch_instance(decode_batches=[1, 2, 4], full_batch_size=4)
+        assert gen._resolve_execution_batch_size(2) == 2
+
+    def test_resolve_uncompiled_batch_rejected(self):
+        """A batch with no decode spec (e.g. the prefill-only 1 when it isn't a decode batch, or 3)
+        is rejected up front rather than deferred to a runtime spec-match failure."""
+        _, gen = self._make_dynamic_batch_instance(decode_batches=[2, 4], full_batch_size=4)
+        with pytest.raises(ValueError, match="not a compiled decode batch size"):
+            gen._resolve_execution_batch_size(3)
+        with pytest.raises(ValueError, match="not a compiled decode batch size"):
+            gen._resolve_execution_batch_size(1)
+
+    def test_resolve_batch_exceeding_bmax_rejected(self):
+        _, gen = self._make_dynamic_batch_instance(decode_batches=[2, 4], full_batch_size=4)
+        with pytest.raises(ValueError, match="not a compiled decode batch size"):
+            gen._resolve_execution_batch_size(8)
+
+
+# ---------------------------------------------------------------------------
 # Tests: _fetch_next_token_id
 # ---------------------------------------------------------------------------
 
