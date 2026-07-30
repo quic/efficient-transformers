@@ -241,8 +241,6 @@ class QEffMixtralAttention(MixtralAttention):
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 position_ids=position_ids,
-                block_table=block_table,
-                slot_id=slot_id,
             )
             attn_output, attn_weights = eager_attention_forward(
                 self,
