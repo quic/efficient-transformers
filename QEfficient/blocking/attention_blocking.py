@@ -97,8 +97,6 @@ def past_key_value_update(
     comp_ctx_lengths: Optional[torch.LongTensor] = None,
     batch_index: Optional[torch.LongTensor] = None,
     position_ids: Optional[torch.LongTensor] = None,
-    block_table: Optional[torch.LongTensor] = None,
-    slot_id: Optional[torch.LongTensor] = None,
     sliding_window: Optional[int] = None,
 ):
     if past_key_value is not None:
@@ -195,8 +193,6 @@ def generic_blocked_attention_interface(
                 comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 position_ids=position_ids,
-                block_table=block_table,
-                slot_id=slot_id,
                 sliding_window=sliding_window,
             )
 
