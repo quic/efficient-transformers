@@ -36,6 +36,15 @@ pipeline {
             defaultValue: 'ALL',
             description: 'Select which test stages you want to run (all run by default)'
         )
+        choice(
+            name: 'MODEL_TIER',
+            choices: [
+                'all',
+                'priority',
+                'legacy'
+            ],
+            description: 'Which model tier to test. all = full matrix (default); priority = only the actively-developed families declared in tests/configs/model_tiers.json; legacy = everything else. Edit that file to move a model between tiers.'
+        )
         booleanParam(name: 'RUN_HL_APIS', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_FEATURE', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_EMBEDDING_AUDIO', defaultValue: true, description: 'Run text-embedding and audio (CTC / speech-seq2seq) model tests')
@@ -54,6 +63,10 @@ pipeline {
     environment {
         TEST_FILTER = testFilter(params.TEST_PROFILE)
         QAIC_N      = "${params.QAIC_WORKERS}"
+        // Consumed by the tier hook in tests/conftest.py. Passed on each `docker exec`
+        // rather than the `docker run` above, because the container is created in the
+        // Install stage and `docker run -e` cannot carry a per-stage value.
+        MODEL_TIER  = "${params.MODEL_TIER}"
     }
 
     stages {
@@ -87,7 +100,7 @@ pipeline {
                     steps {
                        timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 60, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                            sh '''
-                           sudo docker exec ${BUILD_TAG} bash -c "
+                           sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
                            mkdir -p $PWD/Non_cli_qaic &&
@@ -105,7 +118,7 @@ pipeline {
                     steps {
                        timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 240, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                            sh '''
-                           sudo docker exec ${BUILD_TAG} bash -c "
+                           sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
                            mkdir -p $PWD/Non_qaic_llm &&
@@ -127,7 +140,7 @@ pipeline {
             steps {
                 timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 120, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Non_qaic_feature &&
@@ -145,7 +158,7 @@ pipeline {
             steps {
                 timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 120, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Non_qaic_embedding_audio &&
@@ -163,7 +176,7 @@ pipeline {
             steps {
                 timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 180, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Non_cli_qaic_multimodal &&
@@ -181,7 +194,7 @@ pipeline {
             steps {
                 timeout(time: 20, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Non_cli_qaic_reranker &&
@@ -200,7 +213,7 @@ pipeline {
             steps {
                 timeout(time: 120, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Non_cli_qaic_diffusion &&
@@ -241,7 +254,7 @@ pipeline {
             steps {
                 timeout(time: 240, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     pip install -r examples/dynamo/causal_lm/requirements.txt &&

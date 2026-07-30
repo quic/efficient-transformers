@@ -1,0 +1,61 @@
+{
+  "_comment": [
+    "Model tier registry -- the single place that decides which models a CI run tests.",
+    "Selected at run time via the QEFF_MODEL_TIER env var (all | priority | legacy),",
+    "wired to the MODEL_TIER Jenkins parameter. 'all' is the default and tests everything.",
+    "",
+    "Only the priority tier is declared. Legacy is defined by EXCLUSION: any model that",
+    "is not matched here is legacy. That direction is deliberate -- onboarding a new model",
+    "can never silently drop out of CI, the worst case is it lands in the legacy tier.",
+    "",
+    "To move a model between tiers, edit this file only. No test or Jenkinsfile change.",
+    "  model_types  primary key. Matched against the 'model_type' field already carried by",
+    "               test config entries, so new checkpoints of a listed family are picked up",
+    "               automatically. A NEW family (e.g. qwen3_7) still needs adding here.",
+    "  markers      for suites whose models are pipelines behind a pytest marker rather than",
+    "               config entries (diffusers). Must be a subset of model_markers below.",
+    "  model_names  escape hatch for entries that carry no 'model_type' (grok-1, SwiftKV,",
+    "               the text-embedding models). Exact Hugging Face card match."
+  ],
+  "_model_markers_comment": [
+    "Every pytest marker that identifies a model family rather than a capability.",
+    "This is the marker UNIVERSE: a test carrying one of these markers is a model test and",
+    "is tiered by marker. Markers also listed under priority.markers are priority; the rest",
+    "are legacy. Do not list capability markers (on_qaic, diffusion_models, multimodal...) --",
+    "those describe how a test runs, not which model it covers, and listing one would make",
+    "every test in that stage tierable."
+  ],
+  "model_markers": [
+    "wan",
+    "wan_i2v",
+    "flux"
+  ],
+  "priority": {
+    "model_types": [
+      "qwen2",
+      "qwen2_5_vl",
+      "qwen3",
+      "qwen3_moe",
+      "qwen3_vl",
+      "qwen3_vl_moe",
+      "qwen3_5",
+      "qwen3_5_text",
+      "qwen3_5_moe",
+      "qwen3_5_moe_text",
+      "llama4",
+      "llama4_text",
+      "gpt_oss",
+      "gemma4"
+    ],
+    "markers": [
+      "wan",
+      "wan_i2v"
+    ],
+    "model_names": [
+      "jinaai/jina-embeddings-v2-base-code",
+      "sentence-transformers/nli-bert-base-cls-pooling",
+      "openai/whisper-tiny",
+      "facebook/wav2vec2-base-960h"
+    ]
+  }
+}
