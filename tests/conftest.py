@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+import functools
+import json
 import logging as py_logging
 import os
 import shutil
@@ -270,6 +272,255 @@ def pytest_configure(config):
         "markers",
         "embedding_audio_model: mark test as a text-embedding / audio (CTC, speech-seq2seq) model test",
     )
+
+    # Validate QEFF_MODEL_TIER here rather than in the collection hook. pytest_configure
+    # runs in the controller AND in every pytest-xdist worker before collection, and a
+    # pytest.UsageError raised here is reported cleanly; the same error raised inside
+    # pytest_collection_modifyitems crashes an xdist worker with an INTERNALERROR. When a
+    # real tier is selected, build the identity index now so a conflicting model_type in
+    # tests/configs fails fast at configure time instead of mid-collection. With the
+    # default tier (all) the index is never built, so default runs are untouched.
+    tier = (os.environ.get("QEFF_MODEL_TIER") or _TIER_ALL).strip().lower()
+    if tier not in _VALID_TIERS:
+        raise pytest.UsageError(f"Invalid QEFF_MODEL_TIER={tier!r}. Expected one of: {', '.join(_VALID_TIERS)}.")
+    if tier != _TIER_ALL:
+        _model_identity_index()
+
+
+# ---------------------------------------------------------------------------
+# Model tiering (QEFF_MODEL_TIER)
+# ---------------------------------------------------------------------------
+# Narrows the *model matrix* a run covers, so a per-PR job can test only the
+# actively-developed families instead of every onboarded architecture.
+#
+#   all       (default) every model -- unchanged historical behaviour
+#   priority  only models matched by tests/configs/model_tiers.json
+#   legacy    only models NOT matched there
+#
+# Filtering happens once here, at collection, rather than in the ~96 parametrize
+# sites across the suite. Tests that carry no model identity (unit tests, CLI,
+# feature/infra tests) are never deselected: tiering may only narrow the model
+# matrix, never drop infrastructure coverage.
+
+_TIER_ALL = "all"
+_TIER_PRIORITY = "priority"
+_TIER_LEGACY = "legacy"
+_VALID_TIERS = (_TIER_ALL, _TIER_PRIORITY, _TIER_LEGACY)
+
+_TIER_REGISTRY_PATH = Path(__file__).parent / "configs" / "model_tiers.json"
+_CONFIG_DIR = Path(__file__).parent / "configs"
+
+# Parameter names that carry a model identity, in resolution order. A dict param
+# (``model_config``) is authoritative because it holds ``model_type`` directly;
+# the string params are resolved through the config index built below.
+_MODEL_PARAM_KEYS = ("model_config", "model_name", "model_id", "model", "model_type")
+
+# Config entry fields that can identify a model. ``model_name`` is the primary
+# identity; the rest are aliases resolved in a second pass, because some suites
+# parametrize on ``entry["id"]`` (e.g. "CB qwen") rather than a Hugging Face card,
+# and those entries carry no ``model_type`` of their own.
+_ENTRY_PRIMARY_NAME_FIELD = "model_name"
+_ENTRY_ALIAS_FIELDS = ("id",)
+_ENTRY_REFERENT_FIELDS = ("model_name", "target_model_name", "draft_model_name")
+
+
+@functools.lru_cache(maxsize=1)
+def _priority_tier_spec():
+    """Load the priority tier declaration from ``tests/configs/model_tiers.json``."""
+    with open(_TIER_REGISTRY_PATH, "r") as handle:
+        registry = json.load(handle)
+    priority = registry.get(_TIER_PRIORITY, {})
+    return (
+        frozenset(priority.get("model_types", ())),
+        frozenset(priority.get("markers", ())),
+        frozenset(priority.get("model_names", ())),
+    )
+
+
+@functools.lru_cache(maxsize=1)
+def _model_marker_universe():
+    """Every pytest marker that identifies a model family rather than a capability.
+
+    A test carrying one of these is a model test even when it has no model parameter
+    (the diffusers pipelines), so it can be tiered. Capability markers such as
+    ``on_qaic`` or ``diffusion_models`` are deliberately absent: they describe how a
+    test runs, not which model it covers.
+    """
+    with open(_TIER_REGISTRY_PATH, "r") as handle:
+        registry = json.load(handle)
+    return frozenset(registry.get("model_markers", ()))
+
+
+@functools.lru_cache(maxsize=1)
+def _model_identity_index():
+    """Map every model identifier found in ``tests/configs/*.json`` to its ``model_type``.
+
+    Built in two passes. The first indexes ``model_name`` -> ``model_type`` and records
+    bare-string entries (audio / sequence-classification cards that carry no metadata)
+    as untyped. The second resolves alias keys (an entry's ``id``) by chaining through
+    the model the entry actually refers to, so a suite parametrizing on ``"CB qwen"``
+    still resolves to ``qwen2`` via that entry's ``target_model_name``.
+
+    A key mapping to ``None`` is known but untyped -- it can only be tiered by an
+    explicit ``model_names`` listing. Raises ``pytest.UsageError`` if one card is given
+    two different ``model_type`` values across configs, which would tier inconsistently.
+    """
+    entries = []
+    index = {}
+    for config_path in sorted(_CONFIG_DIR.glob("*.json")):
+        if config_path == _TIER_REGISTRY_PATH:
+            continue
+        try:
+            with open(config_path, "r") as handle:
+                config_data = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(config_data, dict):
+            continue
+        for entry_list in config_data.values():
+            if not isinstance(entry_list, list):
+                continue
+            for entry in entry_list:
+                if isinstance(entry, str):
+                    # Bare-string entry (audio / sequence-classification configs): a
+                    # Hugging Face card with no model_type. Record it so it can be tiered
+                    # by an explicit model_names listing; never clobber a typed entry.
+                    index.setdefault(entry, None)
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                entries.append(entry)
+                name = entry.get(_ENTRY_PRIMARY_NAME_FIELD)
+                if not isinstance(name, str):
+                    continue
+                model_type = entry.get("model_type")
+                previous = index.get(name)
+                if previous is not None and model_type is not None and previous != model_type:
+                    # The same card carrying two model_types would tier inconsistently
+                    # depending on config file iteration order. Fail loudly at build time.
+                    raise pytest.UsageError(
+                        f"Conflicting model_type for {name!r} in tests/configs: "
+                        f"{previous!r} vs {model_type!r}. A card must map to one model_type."
+                    )
+                # Keep the first non-null model_type seen for a name: a card can appear
+                # in several lists and only some of them carry the field.
+                if previous is None:
+                    index[name] = model_type
+
+    for entry in entries:
+        for alias_field in _ENTRY_ALIAS_FIELDS:
+            alias = entry.get(alias_field)
+            if not isinstance(alias, str) or index.get(alias) is not None:
+                continue
+            model_type = entry.get("model_type")
+            if model_type is None:
+                # Untyped alias (SPD entries): inherit from the model it points at.
+                for referent_field in _ENTRY_REFERENT_FIELDS:
+                    referent = entry.get(referent_field)
+                    if isinstance(referent, str) and index.get(referent) is not None:
+                        model_type = index[referent]
+                        break
+            index[alias] = model_type
+
+    return index
+
+
+def _is_priority_model(model_type, model_name, marker_names):
+    """True when a resolved model identity belongs to the priority tier."""
+    priority_types, priority_markers, priority_names = _priority_tier_spec()
+    if marker_names & priority_markers:
+        return True
+    if model_type is not None and model_type in priority_types:
+        return True
+    return model_name is not None and model_name in priority_names
+
+
+def _resolve_item_model(item):
+    """Extract ``(model_type, model_name)`` for a collected test item.
+
+    Returns ``None`` when the item carries no model identity at all -- such items are
+    tier-agnostic and must never be deselected. A test with no model parameter but
+    with a model-family marker (the diffusers pipelines) resolves to ``(None, None)``:
+    tierable, with the marker alone deciding the tier.
+    """
+    params = getattr(getattr(item, "callspec", None), "params", None) or {}
+    model_type = None
+    model_name = None
+
+    for key in _MODEL_PARAM_KEYS:
+        if key not in params:
+            continue
+        value = params[key]
+        if isinstance(value, dict):
+            # Registry-style dict param: authoritative, carries model_type directly.
+            model_type = model_type or value.get("model_type")
+            model_name = model_name or value.get("model_name")
+        elif isinstance(value, str):
+            if key == "model_type":
+                model_type = model_type or value
+            else:
+                model_name = model_name or value
+
+    if model_type is None and model_name is None:
+        # No model parameter. Only tierable if a model-family marker identifies it.
+        if {marker.name for marker in item.iter_markers()} & _model_marker_universe():
+            return None, None
+        return None
+
+    if model_type is None:
+        # A bare string param: resolve through the config index. An unknown name
+        # leaves model_type None, which _is_priority_model treats as non-priority.
+        model_type = _model_identity_index().get(model_name)
+
+    return model_type, model_name
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items):
+    """Deselect model tests outside the tier requested by ``QEFF_MODEL_TIER``.
+
+    Runs ``trylast`` so it sees the stage's true selection: the builtin ``mark`` plugin
+    applies ``-m`` / ``-k`` in its own ``pytest_collection_modifyitems`` at default order,
+    which runs *before* this one. Tiering must narrow whatever that leaves, not the full
+    pre-``-m`` collection.
+    """
+    tier = (os.environ.get("QEFF_MODEL_TIER") or _TIER_ALL).strip().lower()
+    # Tier already validated in pytest_configure; re-normalise defensively.
+    if tier not in _VALID_TIERS or tier == _TIER_ALL:
+        return
+
+    want_priority = tier == _TIER_PRIORITY
+    kept, deselected = [], []
+    for item in items:
+        resolved = _resolve_item_model(item)
+        if resolved is None:
+            # No model identity -- unit/CLI/feature/infra test. Always kept.
+            kept.append(item)
+            continue
+        model_type, model_name = resolved
+        marker_names = {marker.name for marker in item.iter_markers()}
+        if _is_priority_model(model_type, model_name, marker_names) == want_priority:
+            kept.append(item)
+        else:
+            deselected.append(item)
+
+    if not kept and deselected:
+        # Tiering emptied a stage that DID collect model tests (e.g. Reranker under
+        # legacy: every model is priority). Deselecting them all would leave pytest with
+        # nothing collected and exit 5, failing the Jenkins stage for a legitimately
+        # empty tier. Convert to skips so the stage passes clean and reports what was
+        # skipped. A stage that was already empty (typo'd -m, no model tests) is left to
+        # exit 5 as before, because deselected is empty here.
+        skip_marker = pytest.mark.skip(reason=f"QEFF_MODEL_TIER={tier}: no {tier}-tier model tests in this stage")
+        for item in deselected:
+            item.add_marker(skip_marker)
+        logger.info("QEFF_MODEL_TIER=%s: stage has no %s-tier model tests; skipping %d", tier, tier, len(deselected))
+        return
+
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = kept
+    logger.info("QEFF_MODEL_TIER=%s: selected %d model tests, deselected %d", tier, len(kept), len(deselected))
 
 
 def pytest_sessionfinish(session, exitstatus):
