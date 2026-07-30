@@ -225,8 +225,6 @@ def past_key_value_update(
         cache_kwargs = {
             "batch_index": batch_index,
             "position_ids": position_ids,
-            "block_table": block_table,
-            "slot_id": slot_id,
         }
         if sliding_window is not None:
             cache_kwargs.update(
