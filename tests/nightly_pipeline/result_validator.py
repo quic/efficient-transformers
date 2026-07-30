@@ -15,8 +15,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .model_age_utils import get_model_age, is_newer_model, load_validated_models_config
+
 COMMON_COLUMNS = [
     "model_name",
+    "model_age",
     "status",
     "failure_reason",
     "export_time_before",
@@ -51,6 +54,17 @@ SIZE_UNITS = {
     "MB": 1024**2,
     "GB": 1024**3,
     "TB": 1024**4,
+}
+
+NIGHTLY_TEST_FAILURES_FILE = "nightly_test_failures.json"
+
+MODEL_CLASS_TO_REPORT_CLASS = {
+    "audio_embedding_model_configs": "audio_embedding_model",
+    "audio_model_configs": "audio_model",
+    "causal_pipeline_configs": "causal_model",
+    "embedding_model_configs": "embedding_model",
+    "image_text_to_text_model_configs": "image_text_to_text_model",
+    "sequence_model_configs": "sequence_model",
 }
 
 FAMILY_SPECS = {
@@ -142,6 +156,23 @@ def validate_artifact_file(
     return rows
 
 
+def load_recorded_test_failure_rows(artifacts_dir: Path, model_class: str) -> list[dict[str, Any]]:
+    failure_file = artifacts_dir / NIGHTLY_TEST_FAILURES_FILE
+    if not failure_file.exists():
+        return []
+
+    report_class = MODEL_CLASS_TO_REPORT_CLASS.get(model_class)
+    if report_class is None:
+        return []
+
+    failures = load_json(failure_file)
+    rows = []
+    for row in failures.values():
+        if isinstance(row, dict) and row.get("model_class") == report_class:
+            rows.append(row)
+    return sorted(rows, key=lambda row: row.get("model_name", ""))
+
+
 def validate_artifacts(
     current_artifacts: dict[str, Any],
     previous_artifacts: dict[str, Any],
@@ -149,12 +180,17 @@ def validate_artifacts(
     tolerances: ValidationTolerances,
 ) -> list[dict[str, Any]]:
     rows = []
+    validated_models_config = load_validated_models_config()
     for model_name, current_payload in sorted(current_artifacts.items()):
         previous_payload = previous_artifacts.get(model_name)
         if previous_payload is None:
-            rows.append(_current_only_model_row(model_name, current_payload, model_class))
+            rows.append(_current_only_model_row(model_name, current_payload, model_class, validated_models_config))
             continue
-        rows.append(_validate_model(model_name, current_payload, previous_payload, model_class, tolerances))
+        rows.append(
+            _validate_model(
+                model_name, current_payload, previous_payload, model_class, tolerances, validated_models_config
+            )
+        )
     return rows
 
 
@@ -192,7 +228,7 @@ def get_csv_columns(model_class: str) -> list[str]:
 
 
 def all_rows_passed(rows: list[dict[str, Any]]) -> bool:
-    return all(row.get("status") == "passed" for row in rows)
+    return all(row.get("status") in {"passed", "warning"} for row in rows)
 
 
 def _validate_model(
@@ -201,11 +237,13 @@ def _validate_model(
     previous_payload: dict[str, Any],
     model_class: str,
     tolerances: ValidationTolerances,
+    validated_models_config: dict[str, Any],
 ) -> dict[str, Any]:
     columns = get_csv_columns(model_class)
     spec = _get_family_spec(model_class)
     row = {column: "N/A" for column in columns}
     row["model_name"] = model_name
+    row["model_age"] = get_model_age(model_name, model_class, validated_models_config)
 
     _add_percentage_metric(row, "export_time", previous_payload.get("export_time"), current_payload.get("export_time"))
     _add_percentage_metric(
@@ -223,15 +261,23 @@ def _validate_model(
         _add_text_values(row, spec, previous_payload, current_payload, text_assertion_required)
 
     failures = _collect_failures(row, spec, tolerances)
-    row["status"] = "failed" if failures else "passed"
+    if not failures:
+        row["status"] = "passed"
+    elif is_newer_model(model_name, model_class, validated_models_config):
+        row["status"] = "failed"
+    else:
+        row["status"] = "warning"
     row["failure_reason"] = "; ".join(failures) if failures else ""
     return row
 
 
-def _current_only_model_row(model_name: str, current_payload: dict[str, Any], model_class: str) -> dict[str, Any]:
+def _current_only_model_row(
+    model_name: str, current_payload: dict[str, Any], model_class: str, validated_models_config: dict[str, Any]
+) -> dict[str, Any]:
     spec = _get_family_spec(model_class)
     row = {column: "N/A" for column in get_csv_columns(model_class)}
     row["model_name"] = model_name
+    row["model_age"] = get_model_age(model_name, model_class, validated_models_config)
 
     _add_percentage_metric(row, "export_time", None, current_payload.get("export_time"))
     _add_percentage_metric(row, "compile_time", None, current_payload.get("compile_time"))

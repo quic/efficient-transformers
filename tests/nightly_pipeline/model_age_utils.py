@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
+"""Helpers for classifying nightly models as older or newer."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+MODEL_AGE_ENV_VAR = "NIGHTLY_MODEL_AGE"
+MODEL_AGE_OLDER = "older"
+MODEL_AGE_NEWER = "newer"
+MODEL_AGE_UNKNOWN = "unknown"
+
+PIPELINE_ROOT = Path(__file__).resolve().parent
+VALIDATED_MODELS_PATH = PIPELINE_ROOT / "configs" / "validated_models.json"
+
+MODEL_CLASS_TO_MODEL_KEY = {
+    "audio_embedding_model_configs": "audio_embedding_models",
+    "audio_model_configs": "audio_models",
+    "causal_pipeline_configs": "causal_lm_models",
+    "embedding_model_configs": "embedding_models",
+    "image_text_to_text_model_configs": "image_text_to_text_models",
+    "sequence_model_configs": "sequence_models",
+}
+
+CSV_CLASS_TO_MODEL_KEY = {
+    "audio_embedding_model": "audio_embedding_models",
+    "audio_model": "audio_models",
+    "causal_model": "causal_lm_models",
+    "embedding_model": "embedding_models",
+    "image_text_to_text_model": "image_text_to_text_models",
+    "sequence_model": "sequence_models",
+}
+
+
+def load_validated_models_config() -> dict[str, Any]:
+    with VALIDATED_MODELS_PATH.open("r", encoding="utf-8") as file:
+        return json.load(file)
+
+
+def get_model_key(model_class: str) -> str:
+    return MODEL_CLASS_TO_MODEL_KEY.get(model_class, CSV_CLASS_TO_MODEL_KEY.get(model_class, model_class))
+
+
+def get_newer_models(config: dict[str, Any], model_key: str) -> set[str]:
+    model_age_groups = config.get("model_age_groups", {})
+    newer_models = model_age_groups.get("newer_models", {})
+    return set(newer_models.get(model_key, []))
+
+
+def get_model_age(model_name: str, model_class: str, config: dict[str, Any] | None = None) -> str:
+    config = config or load_validated_models_config()
+    model_key = get_model_key(model_class)
+    if model_name in get_newer_models(config, model_key):
+        return MODEL_AGE_NEWER
+    if model_name in set(config.get(model_key, [])):
+        return MODEL_AGE_OLDER
+    return MODEL_AGE_UNKNOWN
+
+
+def is_newer_model(model_name: str, model_class: str, config: dict[str, Any] | None = None) -> bool:
+    return get_model_age(model_name, model_class, config) == MODEL_AGE_NEWER
+
+
+def filter_models_by_age(models: list[str], model_key: str, requested_age: str | None = None) -> list[str]:
+    requested_age = (requested_age or os.environ.get(MODEL_AGE_ENV_VAR, "")).strip().lower()
+    if requested_age not in {MODEL_AGE_OLDER, MODEL_AGE_NEWER}:
+        return models
+
+    config = load_validated_models_config()
+    newer_models = get_newer_models(config, model_key)
+    if requested_age == MODEL_AGE_NEWER:
+        return [model_name for model_name in models if model_name in newer_models]
+    return [model_name for model_name in models if model_name not in newer_models]

@@ -10,6 +10,8 @@ import os
 import pytest
 import torch
 
+from .model_age_utils import MODEL_AGE_ENV_VAR
+
 MODEL_CLASS_SKIP_ENV_VARS = {
     "causal_pipeline_configs": "SKIP_CAUSAL_LM_MODELS",
     "image_text_to_text_model_configs": "SKIP_IMAGE_TEXT_MODELS",
@@ -94,6 +96,11 @@ def parse_skipped_models(raw_value):
     if not raw_value:
         return set()
     return {model_name.strip() for model_name in raw_value.split(",") if model_name.strip()}
+
+
+def nightly_pytest_id(model_name):
+    model_age = os.environ.get(MODEL_AGE_ENV_VAR, "all")
+    return f"{model_age}:{model_name}"
 
 
 NIGHTLY_SKIPPED_MODELS = {

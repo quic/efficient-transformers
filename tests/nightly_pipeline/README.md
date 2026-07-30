@@ -230,7 +230,7 @@ python scripts/nightly_email_report.py \
   --build-status "$BUILD_RESULT"
 ```
 
-The report contains build metadata, QAIC apps/platform/factory SDK versions from `/opt/qti-aic/tools/qaic-version-util` with XML fallback, optional QNN SDK details from `$QNN_SDK_ROOT/sdk.yaml`, aggregate pass/fail counts, and one Outlook-safe inline table per model class.
+The report contains one combined build and SDK details table, QAIC apps/platform/factory SDK versions from `/opt/qti-aic/tools/qaic-version-util` with XML fallback, aggregate pass/warning/fail counts, and one Outlook-safe inline table per model class. Older model failures are reported as orange warnings and do not fail Jenkins; newer model failures remain red and fail the nightly report.
 
 For Jenkins Email Extension, set content type to HTML and use the generated file as the message body, for example:
 

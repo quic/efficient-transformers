@@ -19,7 +19,12 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional
+
+try:
+    from .model_age_utils import MODEL_AGE_UNKNOWN
+except ImportError:  # pragma: no cover - supports direct script execution in Jenkins.
+    from model_age_utils import MODEL_AGE_UNKNOWN
 
 try:
     import yaml
@@ -50,6 +55,7 @@ QAIC_APPS_XML = "/opt/qti-aic/versions/apps.xml"
 QAIC_PLATFORM_XML = "/opt/qti-aic/versions/platform.xml"
 QNN_SDK_ENV_VAR = "QNN_SDK_ROOT"
 QNN_SDK_YAML = "sdk.yaml"
+NIGHTLY_TEST_FAILURES_FILE = "nightly_test_failures.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -200,7 +206,36 @@ def load_validation_rows(artifacts_dir: Path) -> Dict[str, List[Dict[str, str]]]
         with path.open("r", encoding="utf-8", newline="") as file:
             rows = list(csv.DictReader(file))
         class_rows[csv_class_key(path)] = rows
+    merge_test_failure_rows(class_rows, artifacts_dir)
     return class_rows
+
+
+def merge_test_failure_rows(class_rows: Dict[str, List[Dict[str, str]]], artifacts_dir: Path) -> None:
+    failures = load_json(artifacts_dir / NIGHTLY_TEST_FAILURES_FILE)
+    if not failures:
+        return
+
+    existing_models = {
+        (class_key, row.get("model_name"))
+        for class_key, rows in class_rows.items()
+        for row in rows
+        if row.get("model_name")
+    }
+    for row in failures.values():
+        if not isinstance(row, dict):
+            continue
+        class_key = str(row.get("model_class") or "")
+        model_name = str(row.get("model_name") or "")
+        if not class_key or not model_name or (class_key, model_name) in existing_models:
+            continue
+        class_rows.setdefault(class_key, []).append(
+            {
+                "model_name": model_name,
+                "model_age": str(row.get("model_age") or MODEL_AGE_UNKNOWN),
+                "status": str(row.get("status") or "warning"),
+                "failure_reason": str(row.get("failure_reason") or "pytest test failed"),
+            }
+        )
 
 
 def is_current_only(row: Dict[str, str]) -> bool:
@@ -208,18 +243,20 @@ def is_current_only(row: Dict[str, str]) -> bool:
     if "previous model artifact not found" in reason or "comparison skipped" in reason:
         return True
     before_fields = [value for key, value in row.items() if key.endswith("_before")]
-    return bool(before_fields) and all((value or "").strip().upper() in {"N/A", "NA", ""} for value in before_fields)
+    return bool(before_fields) and all(str(value or "").strip().upper() in {"N/A", "NA", ""} for value in before_fields)
 
 
 def summarize_rows(rows: List[Dict[str, str]]) -> Dict[str, Any]:
     total = len(rows)
     passed = sum(1 for row in rows if (row.get("status") or "").lower() == "passed")
+    warning = sum(1 for row in rows if (row.get("status") or "").lower() == "warning")
     failed = sum(1 for row in rows if (row.get("status") or "").lower() == "failed")
     current_only = sum(1 for row in rows if is_current_only(row))
-    pass_rate = (passed / total * 100.0) if total else 0.0
+    pass_rate = ((passed + warning) / total * 100.0) if total else 0.0
     return {
         "total": total,
         "passed": passed,
+        "warning": warning,
         "failed": failed,
         "current_only": current_only,
         "pass_rate": pass_rate,
@@ -334,12 +371,13 @@ def html_escape(value: Any) -> str:
 
 def status_badge(status: str) -> str:
     normalized = (status or "unknown").lower()
+    display_status = normalized.replace("_", " ")
     color = "#6b7280"
     if normalized == "passed":
         color = "#15803d"
     elif normalized == "failed":
         color = "#b91c1c"
-    elif normalized in {"partial", "unstable"}:
+    elif normalized in {"partial", "unstable", "warning", "passed_with_warnings"}:
         color = "#a16207"
 
     return (
@@ -347,7 +385,7 @@ def status_badge(status: str) -> str:
         'style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;display:inline-table;">'
         f'<tr><td bgcolor="{color}" style="background-color:{color};color:#ffffff;font-family:Arial,Helvetica,sans-serif;'
         'font-size:12px;font-weight:bold;line-height:16px;padding:3px 8px;text-align:center;white-space:nowrap;">'
-        f"{html_escape(status.upper())}</td></tr></table>"
+        f"{html_escape(display_status.upper())}</td></tr></table>"
     )
 
 
@@ -423,14 +461,16 @@ def build_summary(class_rows: Dict[str, List[Dict[str, str]]]) -> Dict[str, Any]
     class_summaries = {class_key: summarize_rows(rows) for class_key, rows in class_rows.items()}
     total = sum(summary["total"] for summary in class_summaries.values())
     passed = sum(summary["passed"] for summary in class_summaries.values())
+    warning = sum(summary["warning"] for summary in class_summaries.values())
     failed = sum(summary["failed"] for summary in class_summaries.values())
     current_only = sum(summary["current_only"] for summary in class_summaries.values())
     return {
         "total": total,
         "passed": passed,
+        "warning": warning,
         "failed": failed,
         "current_only": current_only,
-        "pass_rate": (passed / total * 100.0) if total else 0.0,
+        "pass_rate": ((passed + warning) / total * 100.0) if total else 0.0,
         "model_classes": class_summaries,
     }
 
@@ -440,6 +480,8 @@ def overall_status(summary: Dict[str, Any], explicit_status: Optional[str]) -> s
         return explicit_status.lower()
     if summary["failed"]:
         return "failed"
+    if summary.get("warning"):
+        return "passed_with_warnings"
     if summary["total"] == 0:
         return "partial"
     return "passed"
@@ -460,36 +502,28 @@ def render_html(
     generated_at = dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     title_status = str(metadata.get("status", "unknown")).upper()
 
-    overview_rows = [
+    build_sdk_rows = [
         ["Build Status", status_badge(str(metadata.get("status", "unknown")))],
         ["Job", html_escape(metadata.get("job_name"))],
         ["Build Number", html_escape(metadata.get("build_number"))],
         ["Build URL", html_escape(metadata.get("build_url"))],
         ["Node", html_escape(metadata.get("node_name"))],
-        ["Trigger", html_escape(metadata.get("trigger"))],
         ["Branch", html_escape(metadata.get("branch"))],
         ["PR Number", html_escape(metadata.get("pr_number"))],
         ["Commit ID", html_escape(metadata.get("commit_id"))],
-        ["Commit Message", html_escape(metadata.get("commit_message"))],
         ["Docker Image", html_escape(metadata.get("docker_image"))],
+        ["QAIC Apps Version", html_escape(environment.get("qaic_apps_version", "N/A"))],
+        ["QAIC Platform Version", html_escape(environment.get("qaic_platform_version", "N/A"))],
+        ["QAIC Factory Version", html_escape(environment.get("qaic_factory_version", "N/A"))],
+        ["QNN SDK Root", html_escape(environment.get("qnn_sdk_root", "N/A"))],
+        ["QEfficient", html_escape(environment.get("qefficient_version", "N/A"))],
+        ["Torch", html_escape(environment.get("torch_version", "N/A"))],
+        ["Transformers", html_escape(environment.get("transformers_version", "N/A"))],
         ["Artifacts Dir", html_escape(metadata.get("artifacts_dir"))],
         ["Previous Artifacts Dir", html_escape(metadata.get("previous_artifacts_dir"))],
         ["Start Time", html_escape(metadata.get("start_time"))],
         ["End Time", html_escape(metadata.get("end_time"))],
         ["Total Duration", html_escape(metadata.get("total_duration"))],
-    ]
-
-    sdk_rows = [
-        ["QAIC Apps Version", html_escape(environment.get("qaic_apps_version", "N/A"))],
-        ["QAIC Platform Version", html_escape(environment.get("qaic_platform_version", "N/A"))],
-        ["QAIC Factory Version", html_escape(environment.get("qaic_factory_version", "N/A"))],
-        ["QAIC SDK Source", html_escape(environment.get("qaic_sdk_source", "N/A"))],
-        ["QNN SDK Root", html_escape(environment.get("qnn_sdk_root", "N/A"))],
-        ["QNN SDK Details", html_escape(environment.get("qnn_sdk_details", "N/A"))],
-        ["Python", html_escape(environment.get("python_version", "N/A"))],
-        ["QEfficient", html_escape(environment.get("qefficient_version", "N/A"))],
-        ["Torch", html_escape(environment.get("torch_version", "N/A"))],
-        ["Transformers", html_escape(environment.get("transformers_version", "N/A"))],
     ]
 
     summary_rows = []
@@ -501,42 +535,19 @@ def render_html(
                 html_escape(label),
                 html_escape(class_summary["total"]),
                 html_escape(class_summary["passed"]),
+                html_escape(class_summary["warning"]),
                 html_escape(class_summary["failed"]),
                 html_escape(class_summary["current_only"]),
                 html_escape(f"{class_summary['pass_rate']:.1f}%"),
                 artifact_link(artifacts_dir, class_key, "validation.csv"),
             ]
         )
-        summary_classes.append("failed" if class_summary["failed"] else "passed")
-
-    failures: List[Tuple[str, Dict[str, str]]] = []
-    perf_failures: List[Tuple[str, Dict[str, str]]] = []
-    current_only_rows: List[Tuple[str, Dict[str, str]]] = []
-    for class_key, rows in class_rows.items():
-        label = MODEL_CLASS_LABELS.get(class_key, class_key)
-        for row in rows:
-            reason = row.get("failure_reason") or ""
-            if (row.get("status") or "").lower() == "failed":
-                failures.append((label, row))
-                if "prefill_time_pct_diff" in reason or "decode_perf_pct_diff" in reason:
-                    perf_failures.append((label, row))
-            if is_current_only(row):
-                current_only_rows.append((label, row))
-
-    spotlight_rows = [
-        [html_escape(model_class), html_escape(row.get("model_name")), html_escape(row.get("failure_reason"))]
-        for model_class, row in failures[:5]
-    ] or [["No validation failures", "", ""]]
-
-    perf_rows = [
-        [html_escape(model_class), html_escape(row.get("model_name")), html_escape(row.get("failure_reason"))]
-        for model_class, row in perf_failures[:10]
-    ] or [["No performance regression failures", "", ""]]
-
-    current_only_table_rows = [
-        [html_escape(model_class), html_escape(row.get("model_name")), html_escape(row.get("failure_reason"))]
-        for model_class, row in current_only_rows[:20]
-    ] or [["No current-only comparisons", "", ""]]
+        if class_summary["failed"]:
+            summary_classes.append("failed")
+        elif class_summary["warning"]:
+            summary_classes.append("warning")
+        else:
+            summary_classes.append("passed")
 
     detail_sections = []
     for class_key, rows in class_rows.items():
@@ -548,13 +559,14 @@ def render_html(
             detail_rows.append(
                 [
                     html_escape(row.get("model_name")),
+                    html_escape(row.get("model_age") or "unknown"),
                     status_badge(status),
                     html_escape(row.get("failure_reason") or ""),
                 ]
             )
             row_classes.append("failed" if status == "failed" else "passed" if status == "passed" else "warning")
         detail_sections.append(
-            subsection(label, table(["Model Name", "Status", "Failure Reason"], detail_rows, row_classes))
+            subsection(label, table(["Model Name", "Model Age", "Status", "Failure Reason"], detail_rows, row_classes))
         )
 
     pass_rate_text = f"{summary['pass_rate']:.1f}%"
@@ -563,8 +575,9 @@ def render_html(
         'style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;">'
         f"<tr>{metric_card(summary['total'], 'Total Models')}"
         f"{metric_card(summary['passed'], 'Passed', '#15803d')}"
+        f"{metric_card(summary['warning'], 'Warnings', '#a16207')}"
         f"{metric_card(summary['failed'], 'Failed', '#b91c1c')}"
-        f"{metric_card(pass_rate_text, 'Pass Rate')}</tr></table>"
+        f"{metric_card(pass_rate_text, 'Pass + Warning Rate')}</tr></table>"
     )
     detail_html = (
         "".join(detail_sections)
@@ -577,27 +590,16 @@ def render_html(
     sections_html = "".join(
         [
             section("Validation Metrics", metrics_html),
-            section("Build Details", table(["Field", "Value"], overview_rows)),
-            section("SDK and Runtime Details", table(["Field", "Value"], sdk_rows)),
+            section("Build and SDK Details", table(["Field", "Value"], build_sdk_rows)),
+            section("Model Class Details", detail_html),
             section(
                 "Validation Summary",
                 table(
-                    ["Model Class", "Total", "Passed", "Failed", "Current-only", "Pass Rate", "CSV"],
+                    ["Model Class", "Total", "Passed", "Warnings", "Failed", "Current-only", "Pass Rate", "CSV"],
                     summary_rows,
                     summary_classes,
                 ),
             ),
-            section(
-                "Failure Spotlight",
-                table(
-                    ["Model Class", "Model Name", "Failure Reason"], spotlight_rows, ["failed"] * len(spotlight_rows)
-                ),
-            ),
-            section("Performance Regression Watch", table(["Model Class", "Model Name", "Failure Reason"], perf_rows)),
-            section(
-                "Current-only Comparisons", table(["Model Class", "Model Name", "Reason"], current_only_table_rows)
-            ),
-            section("Model Class Details", detail_html),
         ]
     )
 

@@ -10,7 +10,16 @@ from pathlib import Path
 
 import pytest
 
-from .result_validator import ValidationTolerances, all_rows_passed, load_validation_tolerances, validate_artifact_file
+from .nightly_email_report import build_summary, render_html
+from .result_validator import (
+    ValidationTolerances,
+    all_rows_passed,
+    load_recorded_test_failure_rows,
+    load_validation_tolerances,
+    validate_artifact_file,
+    validate_artifacts,
+    write_validation_csv,
+)
 
 MODEL_ARTIFACTS = [
     ("causal_pipeline_configs", "causal_model_artifacts.json", "causal_model_validation.csv"),
@@ -38,7 +47,12 @@ def test_validate_nightly_results(model_class, artifact_filename, csv_filename, 
             previous_artifact_file = previous_artifacts_path / artifact_filename
     output_csv_file = artifacts_dir / csv_filename
 
-    assert current_artifact_file.exists(), f"Current nightly artifact file is missing: {current_artifact_file}"
+    if not current_artifact_file.exists():
+        rows = load_recorded_test_failure_rows(artifacts_dir, model_class)
+        assert rows, f"Current nightly artifact file is missing: {current_artifact_file}"
+        write_validation_csv(output_csv_file, model_class, rows)
+        assert all_rows_passed(rows), _failure_summary(model_class, rows)
+        return
     if previous_artifact_file is not None:
         assert previous_artifact_file.exists(), f"Previous nightly artifact file is missing: {previous_artifact_file}"
 
@@ -56,3 +70,94 @@ def test_validate_nightly_results(model_class, artifact_filename, csv_filename, 
 def _failure_summary(model_class, rows):
     failures = [f"{row['model_name']}: {row['failure_reason']}" for row in rows if row.get("status") != "passed"]
     return f"Nightly validation failed for {model_class}: " + " | ".join(failures)
+
+
+def _causal_payload(generated_ids):
+    return {
+        "export_time": 1.0,
+        "compile_time": 1.0,
+        "size": "1 MB",
+        "generated_texts": "hello",
+        "generated_ids": generated_ids,
+        "perf_metrics": {
+            "prefill_time": 1.0,
+            "decode_perf": 1.0,
+            "total_perf": 1.0,
+            "total_time": 1.0,
+        },
+    }
+
+
+def test_older_model_validation_failure_is_warning():
+    rows = validate_artifacts(
+        {"openai-community/gpt2": _causal_payload([100, 101])},
+        {"openai-community/gpt2": _causal_payload([1, 2])},
+        "causal_pipeline_configs",
+        ValidationTolerances(token_mad_tolerance=0.0),
+    )
+
+    assert rows[0]["model_age"] == "older"
+    assert rows[0]["status"] == "warning"
+    assert all_rows_passed(rows)
+
+
+def test_newer_model_validation_failure_is_failed():
+    rows = validate_artifacts(
+        {"Qwen/Qwen3-30B-A3B-Instruct-2507": _causal_payload([100, 101])},
+        {"Qwen/Qwen3-30B-A3B-Instruct-2507": _causal_payload([1, 2])},
+        "causal_pipeline_configs",
+        ValidationTolerances(token_mad_tolerance=0.0),
+    )
+
+    assert rows[0]["model_age"] == "newer"
+    assert rows[0]["status"] == "failed"
+    assert not all_rows_passed(rows)
+
+
+def test_report_layout_and_warning_summary(tmp_path):
+    class_rows = {
+        "causal_model": [
+            {"model_name": "openai-community/gpt2", "model_age": "older", "status": "warning", "failure_reason": "old"},
+            {
+                "model_name": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+                "model_age": "newer",
+                "status": "passed",
+                "failure_reason": "",
+            },
+        ]
+    }
+    summary = build_summary(class_rows)
+    metadata = {
+        "status": "passed_with_warnings",
+        "job_name": "nightly",
+        "build_number": "1",
+        "build_url": "http://jenkins/build/1",
+        "node_name": "node",
+        "branch": "main",
+        "pr_number": "N/A",
+        "commit_id": "abc123",
+        "docker_image": "qeff:test",
+        "artifacts_dir": str(tmp_path),
+        "previous_artifacts_dir": "previous",
+        "start_time": "start",
+        "end_time": "end",
+        "total_duration": "1m",
+    }
+    environment = {
+        "qaic_apps_version": "apps",
+        "qaic_platform_version": "platform",
+        "qaic_factory_version": "factory",
+        "qnn_sdk_root": "/qnn",
+        "qefficient_version": "1.0",
+        "torch_version": "2.0",
+        "transformers_version": "4.0",
+    }
+
+    html = render_html(class_rows, summary, metadata, environment, tmp_path)
+
+    assert "Failure Spotlight" not in html
+    assert "Performance Regression Watch" not in html
+    assert "Current-only Comparisons" not in html
+    assert "Build and SDK Details" in html
+    assert "Warnings" in html
+    assert html.index("Model Class Details") < html.index("Validation Summary")

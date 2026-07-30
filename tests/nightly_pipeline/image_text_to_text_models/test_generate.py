@@ -25,13 +25,14 @@ from transformers import (
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils.test_utils import InternProcessor, ModelConfig
 
+from ..model_age_utils import filter_models_by_age
 from ..nightly_utils import get_onnx_and_qpc_size, pre_generate_utils
 
 model_config_path = os.path.join(os.path.dirname(__file__), "../configs/validated_models.json")
 with open(model_config_path, "r") as f:
     config = json.load(f)
 
-test_models = config["image_text_to_text_models"]
+test_models = filter_models_by_age(config["image_text_to_text_models"], "image_text_to_text_models")
 
 
 @pytest.mark.parametrize("model_name", test_models)
