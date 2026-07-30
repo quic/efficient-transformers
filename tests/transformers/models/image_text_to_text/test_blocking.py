@@ -80,13 +80,14 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     mdp_num_partitions: Optional[int] = None,
     mdp_strategy: Optional[str] = None,
     use_onnx_subfunctions: bool = False,
+    decode_only: bool = False,
 ):
-    prompt_len = model_config_dict[model_name]["prompt_len"]
+    prompt_len = model_config_dict[model_name]["prompt_len"] if not decode_only else 1
     ctx_len = model_config_dict[model_name]["ctx_len"]
     img_size = model_config_dict[model_name].get("img_size")
     img_url = model_config_dict[model_name]["img_url"]
     query = model_config_dict[model_name]["text_prompt"]
-    batch_size = model_config_dict[model_name]["batch_size"]
+    batch_size = model_config_dict[model_name]["batch_size"] 
 
     max_gen_len = NEW_GENERATION_TOKENS
     pytorch_kv_tokens = None
