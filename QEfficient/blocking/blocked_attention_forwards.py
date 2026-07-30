@@ -364,11 +364,12 @@ def blocked_kv_attention_forward_decode_headpar_batch(
     block_out = torch.einsum("nbtdk->btdk", (block_weight.unsqueeze(-1) * out_stacked))
     # block_out = (block_weight.unsqueeze(-1) * out_stacked).sum(dim=0)
     output = block_out / block_sum.unsqueeze(-1)  # [1, BH, num_kv_groups*seq_len, D]
-    return output.reshape(batch_size, num_kv_heads, num_kv_groups, seq_len, head_dim).reshape(
+    attn_output = output.reshape(batch_size, num_kv_heads, num_kv_groups, seq_len, head_dim).reshape(
         batch_size, num_heads, seq_len, head_dim
-    ), None
+    )
 
-
+    return attn_output.transpose(1, 2).contiguous(), None
+    
 def blocked_kv_attention_forward_decode_headpar_batch_unroll(
     module: nn.Module,
     query: torch.Tensor,

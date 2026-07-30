@@ -339,7 +339,7 @@ class QEffDynamicLayer(CacheLayerMixin):
             ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
             v_out = CtxGatherFuncBlockedKV.apply(v_out, ctx_indices)
 
-        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=v_out.dtype), v_out)
         return v_out
 
     def read_only_blocked_V_batch(self, start_index, end_index, cache_kwargs):
@@ -381,7 +381,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         ctx_indices = ctx_indices.expand(1, BH, T_block)
         v_out = CtxGatherFuncBlockedKVBatch.apply(v_out, ctx_indices)
 
-        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=v_out.dtype), v_out)
         return v_out
 
     def read_only_blockedKV(self, start_index, end_index, cache_kwargs):
