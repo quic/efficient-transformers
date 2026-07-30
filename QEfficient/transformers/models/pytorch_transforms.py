@@ -100,11 +100,19 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeForCausalLM,
     GraniteMoeModel,
     GraniteMoeMoE,
-    GraniteMoeParallelExperts,
     GraniteMoeRMSNorm,
     GraniteMoeRotaryEmbedding,
-    GraniteMoeTopKGating,
 )
+try:
+    from transformers.models.granitemoe.modeling_granitemoe import (
+        GraniteMoeParallelExperts,
+        GraniteMoeTopKGating,
+    )
+except ImportError:
+    from transformers.models.granitemoe.modeling_granitemoe import (
+        GraniteMoeExperts as GraniteMoeParallelExperts,
+        GraniteMoeTopKRouter as GraniteMoeTopKGating,
+    )
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
     LlamaDecoderLayer,
