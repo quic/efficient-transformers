@@ -41,7 +41,7 @@ tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
 PREFILL_SEQ_LEN = 1024
-CTX_LEN = 2048 * 2
+CTX_LEN = 10240 # 2048 * 2
 BS = 256
 
 NUM_KV_BLOCKS = 4
@@ -107,7 +107,7 @@ decode_qpc_path = qeff_model.compile(
     height=354,
     width=536,
     num_cores=16,
-    num_devices=8,
+    num_devices=16,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     split_model_io=True,  # This should be used for disagg serving via VLLM
@@ -116,7 +116,7 @@ decode_qpc_path = qeff_model.compile(
     prefill_only=False,
     expert_parallel=True,  # This forces the model to use expert parallelism for the MoE layers
     tree_reduce=True,  # This enables tree reduction for the MoE layers, which can improve performance when using multiple devices
-    cores_per_expert=1,  # number_of_parallelized_experts_per_device = total_experts * cores_per_expert / total_cores , total_cores = num_devices * num_cores, number_of_pipline_stages = total_experts / number_of_parallelized_experts_per_device
+    cores_per_expert=2,  # number_of_parallelized_experts_per_device = total_experts * cores_per_expert / total_cores , total_cores = num_devices * num_cores, number_of_pipline_stages = total_experts / number_of_parallelized_experts_per_device
     skip_vision=True,
     use_onnx_subfunctions=False,
     layerwise=False,
