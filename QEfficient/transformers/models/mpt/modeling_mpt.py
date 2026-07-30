@@ -108,8 +108,6 @@ class QEffMptAttention(MptAttention):
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
             position_ids=position_ids,
-            block_table=block_table,
-            slot_id=slot_id,
         )
 
         attention_scores = torch.matmul(query_states, key_states.transpose(-1, -2)) * self.softmax_scale
