@@ -93,6 +93,14 @@ def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section, dtype=None
     return cos, sin
 
 
+def rotate_half_constant(x):
+    """Rotates half the hidden dims of the input."""
+    x1 = x[..., : 64]
+    x2 = x[..., 64 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+
 def qeff_apply_rotary_pos_emb(q, k, cos, sin):
     """Applies Rotary Position Embedding with Multimodal Sections to the query and key tensors (https://qwenlm.github.io/blog/qwen2-vl/).
 
@@ -113,8 +121,8 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
+    q_embed = (q * cos) + (rotate_half_constant(q) * sin)
+    k_embed = (k * cos) + (rotate_half_constant(k) * sin)
 
     return q_embed.to(q.dtype), k_embed.to(k.dtype)
 
@@ -398,10 +406,11 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         **_unused_kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         input_shape = hidden_states.shape[:-1]
+        BS, SL, _ = hidden_states.shape
         hidden_shape = (*input_shape, -1, self.head_dim)
         bsz, q_len, _ = hidden_states.size()
         query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2))
-        key_states = self.k_norm(self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2))
+        key_states = self.k_norm(self.k_proj(hidden_states).view(BS, SL, self.config.num_key_value_heads, self.head_dim).transpose(1, 2))
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
         if is_layerwise_active():

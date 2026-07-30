@@ -1645,10 +1645,10 @@ class QEffHybridCacheForGPTOSS:
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
         if batch_index is not None:
-            k_out = CtxGatherFuncBlockedKVCB.apply(k_out, batch_index, ctx_indices)
+            k_out = ctx_gather_blocked_kv_cb(k_out, batch_index, ctx_indices)
         else:
             ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
-            k_out = CtxGatherFuncBlockedKV.apply(k_out, ctx_indices)
+            k_out = ctx_gather_blocked_kv(k_out, ctx_indices)
 
         return k_out
 
