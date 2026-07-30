@@ -4,6 +4,7 @@
 #
 
 import copy
+import json
 import os
 import sys
 from functools import lru_cache
@@ -20,6 +21,7 @@ from torch import nn
 
 from QEfficient.transformers.embeddings.embedding_utils import PooledModel
 from QEfficient.transformers.models.pytorch_transforms import PoolingTransform
+from QEfficient.utils import load_json
 from QEfficient.utils.export_utils import (
     _cleanup_onnx_subfunctions,
     _setup_onnx_subfunctions,
@@ -609,3 +611,14 @@ def load_weight_free_ort_inputs(
 
 def log_weight_free_export(onnx_path: Path) -> None:
     logger.info(f"Weight-free ONNX exported to {onnx_path} with spec {resolve_weight_spec_path(onnx_path)}")
+
+
+def embed_weight_spec_as_metadata(model, weight_spec_path) -> None:
+    """Embed weight_spec.json into the ONNX model as com.qti.aisw.extdata metadata.
+
+    The QAIC compiler reads this key to locate and load external checkpoint weights
+    at compile time. Separating this from the private _upsert_metadata_prop keeps
+    the base exporter free of knowledge about the QAIC-specific metadata key.
+    """
+    weight_spec_json = json.dumps(load_json(Path(weight_spec_path)), separators=(",", ":"), sort_keys=True)
+    _upsert_metadata_prop(model, "com.qti.aisw.extdata", weight_spec_json)

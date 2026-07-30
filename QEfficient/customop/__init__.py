@@ -22,6 +22,11 @@ from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxScatterFuncCB,
     CtxScatterFuncCB3D,
 )
+
+# Import dynamo_ops to register torch.ops.qefficient.* custom ops at package
+# load time.  These ops must be registered before any model forward pass that
+# uses select_interface, which evaluates torch.ops.qefficient.<op> eagerly.
+from QEfficient.customop.dynamo_ops import DYNAMO_CUSTOM_OP_TABLE  # noqa: F401
 from QEfficient.customop.rms_norm import CustomRMSNormAIC, GemmaCustomRMSNormAIC
 from QEfficient.customop.utils import (
     ctx_gather,

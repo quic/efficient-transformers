@@ -7,7 +7,9 @@
 
 import argparse
 
-from transformers import AutoConfig, AutoTokenizer
+import torch
+from accelerate import init_empty_weights
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 
@@ -20,7 +22,11 @@ def main():
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=128, help="Context length")
     parser.add_argument("--dynamo", action="store_true", help="Export via dynamo")
-    parser.add_argument("--use_weight_free_export", action="store_true", help="Export via Weight-free")
+    parser.add_argument(
+        "--use-weight-free-export",
+        action="store_true",
+        help="Export via weight-free (meta-device, no weights in RAM during export)",
+    )
     parser.add_argument("--use-onnx-subfunctions", action="store_true", help="Use subfunctions while exporting")
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
@@ -33,14 +39,21 @@ def main():
     )
     args = parser.parse_args()
 
-    # Load tokenizer and model
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     config = AutoConfig.from_pretrained(args.model_name)
     if args.num_hidden_layers > 0:
         config.num_hidden_layers = args.num_hidden_layers
-    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, config=config)
 
-    # Compile the model
+    if args.use_weight_free_export:
+        # Build on meta device — no weights loaded into RAM.
+        # The QAIC compiler loads weights from the checkpoint at compile time.
+        config.dtype = torch.float16
+        with init_empty_weights():
+            hf_model = AutoModelForCausalLM.from_config(config, attn_implementation="eager")
+        model = QEFFAutoModelForCausalLM(hf_model, pretrained_model_name_or_path=args.model_name)
+    else:
+        model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, config=config)
+
     qpc_path = model.compile(
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
@@ -53,7 +66,6 @@ def main():
     )
     print(f"Model compiled to: {qpc_path}")
 
-    # Generate text
     exec_info = model.generate(
         tokenizer=tokenizer,
         prompts=[args.prompt],

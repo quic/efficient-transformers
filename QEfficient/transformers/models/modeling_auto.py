@@ -1631,7 +1631,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         ):
             logits_index = output_names["lang"].index("logits")
             output_names["lang"][logits_index] = "next_tokens"
-            inputs["lang"], output_names["lang"], dynamic_axes["lang"], _ = get_sampling_inputs_and_outputs(
+            inputs["lang"], output_names["lang"], dynamic_axes["lang"] = get_sampling_inputs_and_outputs(
                 example_inputs=inputs["lang"],
                 output_names=output_names["lang"],
                 dynamic_axes=dynamic_axes["lang"],
@@ -3652,6 +3652,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         _resolve_torch_dtype(kwargs)
         if layerwise:
+            warnings.warn(
+                "layerwise export is deprecated and will be removed in a future release. "
+                "Use weight-free export (use_weight_free_export=True) instead, which provides "
+                "the same memory benefit without the complexity of per-window re-export.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             # Layer-wise mode: build the outer model on the meta device. The
             # caller still gets a typed wrapper, but no checkpoint weights are
             # pulled into RAM. compile()/export() rebuilds a real per-window
@@ -3835,6 +3842,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
 
         if layerwise:
+            warnings.warn(
+                "layerwise export is deprecated and will be removed in a future release. "
+                "Use weight-free export (use_weight_free_export=True) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             return self._run_layerwise(
                 final_compile=False,
                 layerwise_window_size=layerwise_window_size,
@@ -4041,7 +4054,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             dynamic_axes["num_logits_to_keep"] = {0: "num_logits_to_keep"}
 
         if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
-            example_inputs, output_names, dynamic_axes, _ = get_sampling_inputs_and_outputs(
+            example_inputs, output_names, dynamic_axes = get_sampling_inputs_and_outputs(
                 example_inputs=example_inputs,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
@@ -4374,6 +4387,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         """
         if layerwise:
+            warnings.warn(
+                "layerwise export is deprecated and will be removed in a future release. "
+                "Use weight-free export (use_weight_free_export=True) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             return self._run_layerwise(
                 final_compile=True,
                 layerwise_window_size=layerwise_window_size,
