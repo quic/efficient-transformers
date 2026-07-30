@@ -469,6 +469,7 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
                 if token_key_states is not None and token_value_states is not None:
                     past_key_values.shared_layers_token[self.layer_idx] = token_key_states, token_value_states
 
+        kv_target_length = key_states.shape[-2]
         if (
             mm_token_type_ids is not None
             and hidden_states.shape[1] != 1
@@ -477,7 +478,14 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
             attention_mask = _build_bidirectional_vision_attention_mask(
                 position_ids=position_ids,
                 mm_token_type_ids=mm_token_type_ids,
-                target_length=key_states.shape[-2],
+                target_length=kv_target_length,
+                dtype=query_states.dtype,
+                sliding_window=self.sliding_window,
+            )
+        else:
+            attention_mask = _build_additive_attention_mask(
+                position_ids=position_ids,
+                target_length=kv_target_length,
                 dtype=query_states.dtype,
                 sliding_window=self.sliding_window,
             )
@@ -623,12 +631,12 @@ class QEffGemma4TextModel(Gemma4TextModel):
                 target_length = (
                     min(self.config.sliding_window, self.config.max_position_embeddings)
                     if sliding_window
-                    else inputs_embeds.shape[1]
+                    else int(inputs_embeds.shape[1])
                 )
                 if past_key_values is not None and len(past_key_values.layers) > i:
                     layer_keys = past_key_values.layers[i].keys
                     if layer_keys is not None and layer_keys.numel() > 0:
-                        target_length = layer_keys.shape[-2]
+                        target_length = int(layer_keys.shape[-2])
                 layer_attention_mask = _build_additive_attention_mask(
                     position_ids=position_ids,
                     target_length=target_length,
@@ -917,7 +925,7 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
             if layer_type == "sliding_attention":
                 n_heads = config.num_key_value_heads
                 d_head = config.head_dim
-                layer_seq_len = min(config.sliding_window, seq_len)
+                layer_seq_len = config.sliding_window
             else:
                 use_alternative_attention = getattr(config, "attention_k_eq_v", False)
                 n_heads = (
@@ -1298,7 +1306,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
             if layer_type == "sliding_attention":
                 n_heads = config.num_key_value_heads
                 d_head = config.head_dim
-                layer_seq_len = min(config.sliding_window, seq_len)
+                layer_seq_len = config.sliding_window
             else:
                 use_alternative_attention = getattr(config, "attention_k_eq_v", False)
                 n_heads = (
