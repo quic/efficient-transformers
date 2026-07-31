@@ -375,7 +375,7 @@ def build_transformer_blocking_config_for_transform(
         "ctx_len",
         "batch_fold",
         "prefill_n_rep_chunk",
-        "kv_block_unroll"
+        "kv_block_unroll",
     ):
         if qaic_config.get(param) is not None:
             setattr(blocking_config, param, qaic_config.get(param))
