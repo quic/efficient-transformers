@@ -622,3 +622,26 @@ def embed_weight_spec_as_metadata(model, weight_spec_path) -> None:
     """
     weight_spec_json = json.dumps(load_json(Path(weight_spec_path)), separators=(",", ":"), sort_keys=True)
     _upsert_metadata_prop(model, "com.qti.aisw.extdata", weight_spec_json)
+
+
+def link_prepared_checkpoint_dir(onnx_path: Path, weight_spec_path: Path) -> None:
+    """Place the prepared checkpoint directory next to the ONNX export.
+
+    Weight specs store checkpoint files relative to the prepared model directory.
+    Keeping this link beside the ONNX lets the compiler resolve those paths when
+    it consumes the embedded weight spec.
+    """
+    spec = load_weight_spec(Path(weight_spec_path))
+    prepared_out = Path(spec.model_id)
+    symlink = Path(onnx_path).parent / prepared_out.name
+    if prepared_out.exists() and not symlink.exists():
+        try:
+            symlink.symlink_to(prepared_out)
+        except OSError as exc:
+            logger.warning(
+                "Could not create symlink %s -> %s: %s. "
+                "Checkpoint files may not resolve at compile time if paths are relative.",
+                symlink,
+                prepared_out,
+                exc,
+            )
