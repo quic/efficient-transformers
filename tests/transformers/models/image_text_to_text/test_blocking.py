@@ -63,6 +63,7 @@ test_mm_moe_models = [model["model_name"] for model in multimodal_models if "moe
 
 NEW_GENERATION_TOKENS = 10
 
+
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
     manual_cleanup: callable,
@@ -81,13 +82,14 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     mdp_strategy: Optional[str] = None,
     use_onnx_subfunctions: bool = False,
     decode_only: bool = False,
+    moe_prefill_packed_chunk_size: Optional[int] = None,
 ):
     prompt_len = model_config_dict[model_name]["prompt_len"] if not decode_only else 1
     ctx_len = model_config_dict[model_name]["ctx_len"]
     img_size = model_config_dict[model_name].get("img_size")
     img_url = model_config_dict[model_name]["img_url"]
     query = model_config_dict[model_name]["text_prompt"]
-    batch_size = model_config_dict[model_name]["batch_size"] 
+    batch_size = model_config_dict[model_name]["batch_size"]
 
     max_gen_len = NEW_GENERATION_TOKENS
     pytorch_kv_tokens = None
@@ -168,6 +170,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         "use_onnx_subfunctions": use_onnx_subfunctions,
         "split-model-io": True,
     }
+    if moe_prefill_packed_chunk_size is not None:
+        compile_kwargs["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
 
     mdp_compile_kwargs = {}
     if mdp_num_partitions is not None:
