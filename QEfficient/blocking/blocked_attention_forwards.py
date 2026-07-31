@@ -326,7 +326,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
             .expand(1, BH, seq_len, num_kv_groups, kv_len_block)
             .reshape(1, BH, seq_len * num_kv_groups, kv_len_block)
         )
-        
+
         attn_weights_block = torch.where(
             causal_mask, torch.full_like(attn_weights_block, float(MIN_MASKED_ATTENTION_VALUE)), attn_weights_block
         )

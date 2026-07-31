@@ -95,10 +95,9 @@ def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section, dtype=None
 
 def rotate_half_constant(x):
     """Rotates half the hidden dims of the input."""
-    x1 = x[..., : 64]
-    x2 = x[..., 64 :]
+    x1 = x[..., :64]
+    x2 = x[..., 64:]
     return torch.cat((-x2, x1), dim=-1)
-
 
 
 def qeff_apply_rotary_pos_emb(q, k, cos, sin):
@@ -410,7 +409,9 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         hidden_shape = (*input_shape, -1, self.head_dim)
         bsz, q_len, _ = hidden_states.size()
         query_states = self.q_norm(self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2))
-        key_states = self.k_norm(self.k_proj(hidden_states).view(BS, SL, self.config.num_key_value_heads, self.head_dim).transpose(1, 2))
+        key_states = self.k_norm(
+            self.k_proj(hidden_states).view(BS, SL, self.config.num_key_value_heads, self.head_dim).transpose(1, 2)
+        )
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
         if is_layerwise_active():
