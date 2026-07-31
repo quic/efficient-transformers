@@ -246,16 +246,15 @@ class TestQEFFAutoModelForCausalLMSpecializations:
         assert result["comp_ctx_lengths"] == 64
 
     def test_build_decode_specialization_dynamic_batch_pins_kv_at_bmax(self):
-        """Dynamic batching: decode input batch == decode_input_batch_size, KV batch == full_batch_size."""
+        """Dynamic batching: decode input batch == batch_size, KV batch == full_batch_size."""
         from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 
         qeff = QEFFAutoModelForCausalLM(make_tiny_gpt2(), continuous_batching=True)
         result = qeff.build_decode_specialization(
             ctx_len=128,
-            batch_size=2,
-            kv_cache_batch_size=4,
+            batch_size=2,  # live decode input batch
+            kv_cache_batch_size=4,  # retained KV pinned at B_max
             full_batch_size=4,
-            decode_input_batch_size=2,
         )
         assert result is not None
         # Input axis follows the live batch; retained KV batch stays pinned at B_max.
