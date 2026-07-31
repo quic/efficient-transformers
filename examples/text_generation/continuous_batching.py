@@ -7,9 +7,7 @@
 
 import argparse
 
-import torch
-from accelerate import init_empty_weights
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 
@@ -20,7 +18,7 @@ def main():
     parser.add_argument(
         "--prompts",
         type=str,
-        default="Hello! How can I help?|Hi there! What's up?|Hey! Need assistance?|Welcome! How can I support you today?",
+        default="Hello! How can I help?|Hi there! What’s up?|Hey! Need assistance?|Welcome! How can I support you today?",
         help="Pipe-separated prompts for batch processing",
     )
     parser.add_argument("--prefill-seq-len", type=int, default=128, help="Prefill sequence length")
@@ -28,11 +26,6 @@ def main():
     parser.add_argument("--num-hidden-layers", type=int, default=4, help="Num hidden layers")
     parser.add_argument("--full-batch-size", type=int, default=4, help="Full batch size for continuous batching")
     parser.add_argument("--dynamo", action="store_true", help="Export via dynamo")
-    parser.add_argument(
-        "--use-weight-free-export",
-        action="store_true",
-        help="Export via weight-free (meta-device, no weights in RAM during export)",
-    )
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
     parser.add_argument(
@@ -43,28 +36,17 @@ def main():
     )
     args = parser.parse_args()
 
+    # Parse prompts
     prompt_list = args.prompts.split("|")
     print(f"Processing {len(prompt_list)} prompts with continuous batching")
 
+    # Load tokenizer and model with continuous batching enabled
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    model = QEFFAutoModelForCausalLM.from_pretrained(
+        args.model_name, num_hidden_layers=args.num_hidden_layers, continuous_batching=True
+    )
 
-    if args.use_weight_free_export:
-        config = AutoConfig.from_pretrained(args.model_name)
-        config.dtype = torch.float16
-        if args.num_hidden_layers > 0:
-            config.num_hidden_layers = args.num_hidden_layers
-        with init_empty_weights():
-            hf_model = AutoModelForCausalLM.from_config(config, attn_implementation="eager")
-        model = QEFFAutoModelForCausalLM(
-            hf_model,
-            pretrained_model_name_or_path=args.model_name,
-            continuous_batching=True,
-        )
-    else:
-        model = QEFFAutoModelForCausalLM.from_pretrained(
-            args.model_name, num_hidden_layers=args.num_hidden_layers, continuous_batching=True
-        )
-
+    # Compile the model with full_batch_size for continuous batching
     qpc_path = model.compile(
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
@@ -72,11 +54,11 @@ def main():
         num_cores=args.num_cores,
         num_devices=(1 if args.device_group is None else len(args.device_group)),
         dynamo=args.dynamo,
-        use_weight_free_export=args.use_weight_free_export,
         use_onnx_subfunctions=True,
     )
     print(f"Model compiled to: {qpc_path}")
 
+    # Generate text for all prompts
     exec_info = model.generate(
         tokenizer=tokenizer,
         prompts=prompt_list,
@@ -84,6 +66,7 @@ def main():
         generation_len=args.generation_len,
     )
 
+    # Display results
     print("\n" + "=" * 80)
     for i, (prompt, generated) in enumerate(zip(prompt_list, exec_info.generated_texts)):
         print(f"\nPrompt {i + 1}: {prompt}")
