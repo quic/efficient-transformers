@@ -511,7 +511,7 @@ class QEffDynamicLayer(CacheLayerMixin):
             self.values = CtxChunkScatterBatchFunc.apply(self.values, pos_folded, value_folded)
 
     def update(
-        self,   
+        self,
         key_states: torch.Tensor,
         value_states: torch.Tensor,
         cache_kwargs: Optional[dict[str, Any]] = None,
