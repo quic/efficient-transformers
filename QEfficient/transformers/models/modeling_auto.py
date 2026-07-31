@@ -1582,11 +1582,18 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 for module in self.model.modules():
                     if getattr(module, "supports_moe_prefill_blocking", False):
                         module.expert_blocking_num_nsp = num_cores
-                        module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
+                        if prefill_seq_len % moe_prefill_packed_chunk_size == 0:
+                            module.expert_blocking_packed_chunk_size = prefill_seq_len // moe_prefill_packed_chunk_size
+                        else:
+                            raise ValueError("Prefill_seq_len must be divisible by moe_prefill_packed_chunk_size")
                         if hasattr(module, "__qeff_init__"):
                             module.__qeff_init__()
                 if self.model.config.model_type in DYNAMIC_PREFILL_SEQ_LEN_SUPPORTED_MODEL_ARCH:
-                    seq_len = max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+                    seq_len = (
+                        seq_len
+                        if prefill_seq_len % moe_prefill_packed_chunk_size == 0
+                        else moe_prefill_packed_chunk_size
+                    )
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
         onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": bs}

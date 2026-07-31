@@ -342,7 +342,7 @@ def _cumsum_scatter_gather_update_expert_blocked(
     routing_weight: torch.Tensor,
     expert_out: torch.Tensor,
     act_fn,
-    packed_chunk_size: int,
+    num_packed_chunks: int,
 ) -> torch.Tensor:
     """Cumsum-scatter-gather-update expert helper for NSP-blocked dispatch.
 
@@ -351,18 +351,24 @@ def _cumsum_scatter_gather_update_expert_blocked(
     scatters the weighted output back to original token positions.
     """
     batch_size, seq_len = T2Ei.shape
-    packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
-
+    num_packed_chunks = max(1, int(num_packed_chunks))
+    assert seq_len % num_packed_chunks == 0, (
+        f"seq_len={seq_len} must be divisible by num_packed_chunks={num_packed_chunks}"
+    )
+    packed_chunk_size = seq_len // num_packed_chunks
     matched_idx = _build_matched_idx_from_cumsum(T2Ei)
     valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
-    row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
-    for packed_start in range(0, seq_len, packed_chunk_size):
-        packed_stop = packed_start + packed_chunk_size
+    for chunk_idx in range(num_packed_chunks):
+        packed_start = chunk_idx * packed_chunk_size
+        if chunk_idx == num_packed_chunks - 1:
+            packed_stop = seq_len
+        else:
+            packed_stop = packed_start + packed_chunk_size
+        chunk_rows = packed_stop - packed_start
+        row_range = torch.arange(chunk_rows, dtype=torch.int32, device=x.device).unsqueeze(0)
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
-
         x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
-
         gate_prime = x_chunk @ W_g
         up_prime = x_chunk @ W_u
         down_chunk = (up_prime * act_fn(gate_prime)) @ W_d
@@ -438,7 +444,7 @@ class QEffPrefillChunkedGemma4TextExperts(Gemma4TextExperts):
 
         T = x.shape[0]
 
-        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
+        num_packed_chunks = getattr(self, "expert_blocking_packed_chunk_size", T)
 
         # Build dense routing weights [T, E] from top-k indices/weights
         expert_weights = torch.zeros(
@@ -469,7 +475,7 @@ class QEffPrefillChunkedGemma4TextExperts(Gemma4TextExperts):
                 routing_weight=routing_weights_unsqueezed[:, slot],
                 expert_out=expert_out,
                 act_fn=self.act_fn,
-                packed_chunk_size=packed_chunk_size,
+                num_packed_chunks=num_packed_chunks,
             )
         expert_output = torch.einsum("ijk->jk", expert_out)
         if reshape_back:
