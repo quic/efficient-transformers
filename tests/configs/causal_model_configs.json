@@ -845,7 +845,7 @@
       "supports_disagg": true,
       "supports_blocking": false,
       "num_hidden_layers": 2,
-      "known_export_or_compile_issue": "GPT-OSS subfunction compile currently fails in qaic-compile with unsupported Clip datatype handling."
+      "known_ccl_export_or_compile_issue": "GPT-OSS get_specializations does not honor comp_ctx_lengths_* kwargs; QPC binding mismatches runtime comp_ctx_lengths buffer at load time."
     },
     {
       "id": "glm4_moe_text",
