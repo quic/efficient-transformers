@@ -314,9 +314,7 @@ def CtxChunkScatterBatch(
     # coords [0, head_flat, pos] -> indices [1, BH, QL, 3]
     # ops.Zeros is not supported by QAIC compiler; use head_flat_exp * 0 for int64 zeros.
     batch_zero = ops.Mul(head_flat_exp, zero)  # [1, BH, QL, 1] of int64 zeros
-    indices = ops.Concat(
-        batch_zero, head_flat_exp, pos_exp, axis=3
-    )  # [1, BH, QL, 3]
+    indices = ops.Concat(batch_zero, head_flat_exp, pos_exp, axis=3)  # [1, BH, QL, 3]
 
     return ops.ScatterND(data, indices, updates)
 
@@ -351,9 +349,7 @@ class CtxChunkScatterBatchFunc(torch.autograd.Function):
         position_ids: torch.Value,
         updates: torch.Value,
     ) -> torch.Value:
-        return g.onnxscript_op(
-            CtxChunkScatterBatch, data, position_ids, updates
-        ).setTypeAs(data)
+        return g.onnxscript_op(CtxChunkScatterBatch, data, position_ids, updates).setTypeAs(data)
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qti.aisw.onnx", 1))
