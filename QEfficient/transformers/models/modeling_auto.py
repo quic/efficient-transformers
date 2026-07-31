@@ -1754,7 +1754,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         )
 
         if batch_fold:
-            seq_len = 1
+            seq_len = 1 if seq_len else None
 
         onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": kwargs.get("batch_size", bs), "batch_fold": batch_fold}
 
