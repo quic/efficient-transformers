@@ -32,7 +32,7 @@ import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
-from QEfficient.exporter.weight_free.transforms import (
+from QEfficient.exporter.weight_free.checkpoint_transforms import (
     DtypeConversionCheckpointTransform,
     GptOssMxfp4ExpertDequantSplitCheckpointTransform,
     MoEExpertStackingCheckpointTransform,

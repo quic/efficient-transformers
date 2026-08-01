@@ -3,24 +3,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 
-"""
-Checkpoint transforms for weight-free ONNX export.
+"""Checkpoint preparation transforms for weight-free ONNX export.
 
-Two transforms are provided, selected in priority order by CheckpointTransformPipeline:
-
-  MoEExpertStackingCheckpointTransform  — stacks per-expert HF keys into batched
-    tensors AND converts dtype, all in a single read pass over the checkpoint.
-    Skipped automatically (is_applicable=False) for dense models.
-
-  DtypeConversionCheckpointTransform    — converts all floating-point tensors to
-    target_dtype. Used as the fallback path for dense models.
-
-Usage on model classes (mirrors _pytorch_transforms / _onnx_transforms)::
-
-    _checkpoint_transforms = [
-        MoEExpertStackingCheckpointTransform,   # no-op for dense (is_applicable=False)
-        DtypeConversionCheckpointTransform,     # fallback for dense models
-    ]
+CheckpointTransformPipeline selects the first applicable transform and stops.
+Layout transforms rewrite HF checkpoint keys to match QEff-derived parameters;
+DtypeConversionCheckpointTransform is only used when the source floating-point
+dtype does not already match the exported ONNX input dtype.
 """
 
 import json
@@ -129,19 +117,42 @@ _SENTINEL = ".checkpoint_prepared"
 # ---------------------------------------------------------------------------
 
 
-def _convert_bin_to_safetensors(src: Path) -> None:
-    """Load a .bin checkpoint via transformers and re-save as safetensors in place.
+def _safetensors_dtype_to_torch(dtype: str) -> Optional[torch.dtype]:
+    return {
+        "BF16": torch.bfloat16,
+        "F16": torch.float16,
+        "F32": torch.float32,
+        "F64": torch.float64,
+    }.get(dtype)
+
+
+def _requires_dtype_conversion(src: Path, weight_map: Dict[str, str], target_dtype: torch.dtype) -> bool:
+    for shard_name in sorted(set(weight_map.values())):
+        with safe_open(str(src / shard_name), framework="pt") as handle:
+            for key in handle.keys():
+                dtype = _safetensors_dtype_to_torch(handle.get_slice(key).get_dtype())
+                if dtype is not None and dtype != target_dtype:
+                    return True
+    return False
+
+
+def _convert_bin_to_safetensors(src: Path, out: Path) -> None:
+    """Load a .bin checkpoint via transformers and re-save as safetensors under ``out``.
 
     Uses save_pretrained(safe_serialization=True) which correctly handles tied
     weights and multi-shard layouts, writing model.safetensors (single file) or
     model-NNNNN-of-MMMMM.safetensors + model.safetensors.index.json (multi-shard).
-    Idempotent — the caller already verified no safetensors files exist before calling.
     """
     import gc
 
     from transformers import AutoConfig, AutoModelForCausalLM
 
-    logger.info(f"No safetensors files found in {src}. Auto-converting .bin → safetensors (one-time).")
+    if bool(list(out.glob("*.safetensors"))) or (out / "model.safetensors.index.json").exists():
+        return
+
+    out.mkdir(parents=True, exist_ok=True)
+    _copy_aux_files(src, out)
+    logger.info(f"No safetensors files found in {src}. Auto-converting .bin → safetensors in {out}.")
     config = AutoConfig.from_pretrained(str(src), trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
         str(src),
@@ -149,10 +160,10 @@ def _convert_bin_to_safetensors(src: Path) -> None:
         low_cpu_mem_usage=True,
         trust_remote_code=True,
     )
-    model.save_pretrained(str(src), safe_serialization=True)
+    model.save_pretrained(str(out), safe_serialization=True)
     del model
     gc.collect()
-    logger.info(f"Conversion complete — safetensors files written to {src}")
+    logger.info(f"Conversion complete — safetensors files written to {out}")
 
 
 def _read_weight_map(src: Path) -> Dict[str, str]:
@@ -223,7 +234,7 @@ class BaseCheckpointTransform:
         raise NotImplementedError
 
     @classmethod
-    def is_applicable(cls, weight_map: Dict[str, str]) -> bool:
+    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
         """Return True if this transform should run for the given checkpoint."""
         return True
 
@@ -241,6 +252,16 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
     MoEExpertStackingCheckpointTransform handles dtype conversion as part
     of its own single pass and this transform is never reached.
     """
+
+    @classmethod
+    def is_applicable(
+        cls,
+        weight_map: Dict[str, str],
+        src: Optional[Path] = None,
+        target_dtype: torch.dtype = torch.float32,
+        **kwargs,
+    ) -> bool:
+        return src is None or _requires_dtype_conversion(Path(src), weight_map, target_dtype)
 
     @classmethod
     def apply(
@@ -331,7 +352,7 @@ class _LayerStacker:
 
     def stack(self, target_dtype: torch.dtype) -> Dict[str, torch.Tensor]:
         # Output in the exact layout that model __qeff_init__ creates so
-        # _promote_initializers_and_build_spec finds an exact checkpoint key match.
+        # promote_initializers_and_build_spec finds an exact checkpoint key match.
         #   _gate [E, I, H] → transpose(1,2) → gate_proj  [E, H, I]
         #   _up   [E, I, H] → transpose(1,2) → up_proj    [E, H, I]
         #   _down [E, H, I] → transpose(1,2) → down_proj_t [E, I, H]
@@ -366,7 +387,7 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
         *.experts.down_proj_t [E, I, H]   (down weights, transposed)
 
     matching the derived parameter layout that QEff MoE model __qeff_init__
-    creates, so _promote_initializers_and_build_spec finds an exact key match.
+    creates, so promote_initializers_and_build_spec finds an exact key match.
     Non-expert keys receive dtype conversion in the same pass.
 
     Parallelism:
@@ -379,11 +400,12 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
     """
 
     EXPERT_RE = re.compile(
-        r"^(.+\.layers\.(\d+)\..+?\.experts)\.(\d+)\.(gate_proj|up_proj|down_proj|linear|linear_v|linear_1|w1|w2|w3)\.weight$"
+        r"^(.+\.layers\.(\d+)\..+?\.experts)\.(\d+)\."
+        r"(gate_proj|up_proj|down_proj|linear|linear_v|linear_1|w1|w2|w3)\.weight$"
     )
 
     @classmethod
-    def is_applicable(cls, weight_map: Dict[str, str]) -> bool:
+    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
         return any(cls.EXPERT_RE.match(k) for k in weight_map)
 
     @classmethod
@@ -531,12 +553,15 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
             _atomic_save(tensors, out / new_base_name_for[shard_name])
 
         # Phase 3: mixed I/O + memory — one thread per shard, capped at CPU count.
-        n_workers_base = max_workers_base if max_workers_base is not None else min(len(base_shard_list), _cpu_count())
+        n_workers_base = (
+            max_workers_base if max_workers_base is not None else max(1, min(len(base_shard_list), _cpu_count()))
+        )
         logger.info(f"  Converting {len(base_shard_list)} base shards → {target_dtype} | workers={n_workers_base}...")
-        with ThreadPoolExecutor(max_workers=n_workers_base) as ex:
-            futures_base = [ex.submit(_convert_base, s, keys) for s, keys in by_shard_base.items()]
-            for fut in as_completed(futures_base):
-                fut.result()
+        if base_shard_list:
+            with ThreadPoolExecutor(max_workers=n_workers_base) as ex:
+                futures_base = [ex.submit(_convert_base, s, keys) for s, keys in by_shard_base.items()]
+                for fut in as_completed(futures_base):
+                    fut.result()
 
         for key, shard_name in base_entries.items():
             new_weight_map[key] = new_base_name_for[shard_name]
@@ -574,7 +599,7 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
         *.experts.down_proj_bias [E, H]       (dtype-converted, unchanged key)
 
     matching the derived parameter layout that QEffGptOssExperts.__qeff_init__
-    creates, so _promote_initializers_and_build_spec finds an exact key match.
+    creates, so promote_initializers_and_build_spec finds an exact key match.
     Non-expert keys receive dtype conversion in the same pass.
 
     Parallelism mirrors MoEExpertStackingCheckpointTransform:
@@ -586,7 +611,7 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
     _BLOCKS_RE = re.compile(r"^(.+\.layers\.(\d+)\..+?\.experts)\.(gate_up_proj|down_proj)_blocks$")
 
     @classmethod
-    def is_applicable(cls, weight_map: Dict[str, str]) -> bool:
+    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
         return any(cls._BLOCKS_RE.match(k) for k in weight_map)
 
     @classmethod
@@ -742,12 +767,15 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
                     tensors[key] = t.to(target_dtype) if t.is_floating_point() else t
             _atomic_save(tensors, out / new_base_name_for[shard_name])
 
-        n_base = max_workers_base if max_workers_base is not None else min(len(base_shard_list), _cpu_count())
+        n_base = (
+            max_workers_base if max_workers_base is not None else max(1, min(len(base_shard_list), _cpu_count()))
+        )
         logger.info(f"  Converting {len(base_shard_list)} base shards | workers={n_base}...")
-        with ThreadPoolExecutor(max_workers=n_base) as ex:
-            futures_base = [ex.submit(_convert_base, s, keys) for s, keys in by_shard_base.items()]
-            for fut in as_completed(futures_base):
-                fut.result()
+        if base_shard_list:
+            with ThreadPoolExecutor(max_workers=n_base) as ex:
+                futures_base = [ex.submit(_convert_base, s, keys) for s, keys in by_shard_base.items()]
+                for fut in as_completed(futures_base):
+                    fut.result()
 
         for key, shard_name in base_entries.items():
             new_weight_map[key] = new_base_name_for[shard_name]
@@ -789,7 +817,7 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
     _FUSED_DOWN_RE = re.compile(r"^(.+\.experts)\.down_proj$")
 
     @classmethod
-    def is_applicable(cls, weight_map: Dict[str, str]) -> bool:
+    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
         return any(cls._FUSED_GATE_UP_RE.match(k) for k in weight_map)
 
     @classmethod
@@ -800,6 +828,11 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
         target_dtype: torch.dtype = torch.float32,
         **kwargs,
     ) -> bool:
+        sentinel = out / _SENTINEL
+        if sentinel.exists():
+            logger.info("MoEFusedExpertSplitCheckpointTransform: prepared checkpoint exists, skipping.")
+            return False
+
         index_path = src / "model.safetensors.index.json"
         if index_path.exists():
             weight_map: Dict[str, str] = json.loads(index_path.read_text())["weight_map"]
@@ -817,6 +850,7 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
             return False
 
         out.mkdir(parents=True, exist_ok=True)
+        _copy_aux_files(src, out)
 
         new_weight_map: Dict[str, str] = {}
         for shard_name in sorted(set(weight_map.values())):
@@ -827,7 +861,8 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
             out_tensors: Dict[str, torch.Tensor] = {}
             with safe_open(str(shard_src), framework="pt") as f:
                 for key in f.keys():
-                    tensor = f.get_tensor(key).to(target_dtype)
+                    raw_tensor = f.get_tensor(key)
+                    tensor = raw_tensor.to(target_dtype) if raw_tensor.is_floating_point() else raw_tensor
                     gate_up_m = cls._FUSED_GATE_UP_RE.match(key)
                     down_m = cls._FUSED_DOWN_RE.match(key)
 
@@ -858,6 +893,7 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
         (out / "model.safetensors.index.json").write_text(
             json.dumps({"metadata": {}, "weight_map": new_weight_map}, indent=2)
         )
+        sentinel.touch()
         return True
 
 
@@ -888,16 +924,18 @@ class CheckpointTransformPipeline:
         **kwargs,
     ) -> Path:
         src, out = Path(src), Path(out)
+        if (out / _SENTINEL).exists():
+            return out
 
-        # Auto-convert .bin checkpoints to safetensors on first use.
-        # Idempotent: skipped on subsequent runs once safetensors files exist.
+        source_dir = src
         has_safetensors = bool(list(src.glob("*.safetensors"))) or (src / "model.safetensors.index.json").exists()
         if not has_safetensors and list(src.glob("*.bin")):
-            _convert_bin_to_safetensors(src)
+            source_dir = out.with_name(out.name + "-source-safetensors")
+            _convert_bin_to_safetensors(src, source_dir)
 
-        weight_map = _read_weight_map(src)
+        weight_map = _read_weight_map(source_dir)
         for transform in self.transforms:
-            if transform.is_applicable(weight_map):
-                transform.apply(src, out, target_dtype=target_dtype, **kwargs)
+            if transform.is_applicable(weight_map, src=source_dir, target_dtype=target_dtype):
+                transform.apply(source_dir, out, target_dtype=target_dtype, **kwargs)
                 return out
-        return src  # no transform applicable — source is already usable as-is
+        return source_dir  # no transform applicable — source is already usable as-is

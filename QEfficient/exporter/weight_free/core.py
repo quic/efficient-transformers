@@ -5,20 +5,16 @@
 
 import copy
 import json
-import os
-import sys
-from functools import lru_cache
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional
 
-import numpy as np
-import onnx_ir as ir
 import torch
 from accelerate import init_empty_weights
-from huggingface_hub import snapshot_download
-from safetensors import safe_open
-from torch import nn
 
+from QEfficient.exporter.weight_free.checkpoint import prepare_checkpoint_for_weight_free_export
+from QEfficient.exporter.weight_free.spec import load_weight_spec, resolve_weight_spec_path, save_weight_spec
+from QEfficient.exporter.weight_free.spec_builder import promote_initializers_and_build_spec
 from QEfficient.transformers.embeddings.embedding_utils import PooledModel
 from QEfficient.transformers.models.pytorch_transforms import PoolingTransform
 from QEfficient.utils import load_json
@@ -33,31 +29,7 @@ from QEfficient.utils.torch_patches import (
     temporarily_enable_nested_compile_regions,
 )
 
-from .spec import (
-    ExternalDataFile,
-    TiedWeightAlias,
-    WeightSpec,
-    WeightSpecInput,
-    WeightSpecLocation,
-    load_weight_spec,
-    resolve_weight_spec_path,
-    save_weight_spec,
-)
-from .transforms import CheckpointTransformPipeline
-
-# Memory profiler from scripts/memory_profiling — optional, degrades gracefully
-# if the scripts directory is not on the path or matplotlib is missing.
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "scripts"))
-try:
-    from memory_profiling import QEffMemoryProfiler as _QEffMemoryProfiler
-
-    _HAS_PROFILER = True
-except ImportError:
-    _HAS_PROFILER = False
-
-# Last checkpoint-prep profiler stats — written after every export call so
-# _runner.py can read them without text-parsing stdout.
-_last_prep_peak_rss_mb: float = 0.0
+_last_prep_peak_rss_mb: Optional[float] = None
 _last_prep_duration_seconds: float = 0.0
 _checkpoint_prep_ran: bool = False
 
@@ -72,80 +44,6 @@ def _to_meta(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _to_meta(item) for key, item in value.items()}
     return value
-
-
-@lru_cache(maxsize=None)
-def _resolve_checkpoint_dir(model_id_or_path: str) -> Path:
-    candidate = Path(model_id_or_path).expanduser()
-    if candidate.exists():
-        return candidate
-
-    # Try safetensors first (preferred format for weight-free export)
-    snapshot_dir = snapshot_download(
-        repo_id=model_id_or_path,
-        allow_patterns=["*.safetensors", "*.json"],
-        ignore_patterns=["*.onnx", "*.ot", "*.md", "*.txt", "*.pdf", "*.msgpack", "*.h5", "*.pth"],
-        resume_download=True,
-    )
-    snapshot_path = Path(snapshot_dir)
-
-    # Check if any weight files were actually downloaded (not just .json config/tokenizer files)
-    has_weights = (
-        bool(list(snapshot_path.glob("*.safetensors"))) or (snapshot_path / "model.safetensors.index.json").exists()
-    )
-
-    if not has_weights:
-        # Model has no safetensors on Hub — fall back to .bin files.
-        # CheckpointTransformPipeline.apply() will auto-convert them to safetensors on first use.
-        snapshot_dir = snapshot_download(
-            repo_id=model_id_or_path,
-            allow_patterns=["*.bin", "*.json"],
-            ignore_patterns=[
-                "*.onnx",
-                "*.ot",
-                "*.md",
-                "*.txt",
-                "*.pdf",
-                "*.msgpack",
-                "*.h5",
-                "*.pth",
-                "flax_model*",
-                "tf_model*",
-            ],
-            resume_download=True,
-        )
-
-    return Path(snapshot_dir)
-
-
-def _resolve_checkpoint_files(model_id_or_path: str) -> List[str]:
-    checkpoint_dir = _resolve_checkpoint_dir(model_id_or_path)
-    checkpoint_files = sorted(str(path) for path in checkpoint_dir.glob("*.safetensors"))
-    if not checkpoint_files:
-        raise FileNotFoundError(f"No safetensors checkpoint files found for {model_id_or_path}")
-    return checkpoint_files
-
-
-def _module_name_map(model: nn.Module) -> Dict[int, str]:
-    return {id(module): name for name, module in model.named_modules()}
-
-
-def _collect_tied_weights(model: nn.Module) -> List[TiedWeightAlias]:
-    if not getattr(model.config, "tie_word_embeddings", False):
-        return []
-
-    input_embeddings = model.get_input_embeddings()
-    output_embeddings = model.get_output_embeddings()
-    if input_embeddings is None or output_embeddings is None:
-        return []
-
-    module_names = _module_name_map(model)
-    canonical_name = module_names.get(id(input_embeddings))
-    alias_name = module_names.get(id(output_embeddings))
-    if not canonical_name or not alias_name or canonical_name == alias_name:
-        return []
-
-    return [TiedWeightAlias(alias=f"{alias_name}.weight", canonical=f"{canonical_name}.weight")]
 
 
 def _build_meta_qeff_model(qeff_model):
@@ -223,177 +121,6 @@ def _build_meta_qeff_model(qeff_model):
     return meta_qeff_model
 
 
-def _checkpoint_root(model_id_or_path: str, checkpoint_files: Sequence[str]) -> Optional[Path]:
-    if not checkpoint_files:
-        return None
-
-    candidate = Path(model_id_or_path).expanduser()
-    if candidate.exists():
-        return candidate.parent
-
-    first_checkpoint = Path(checkpoint_files[0])
-    for parent in first_checkpoint.parents:
-        if parent.name.startswith("models--"):
-            return parent.parent
-    return first_checkpoint.parent
-
-
-def _load_checkpoint_index(checkpoint_files: List[str]) -> Dict[str, str]:
-    tensor_to_file = {}
-    for checkpoint_file in checkpoint_files:
-        handle = safe_open(checkpoint_file, framework="pt")
-        for key in handle.keys():
-            tensor_to_file[key] = checkpoint_file
-    return tensor_to_file
-
-
-def _build_location(
-    checkpoint_files: Sequence[str],
-    checkpoint_file: Optional[str],
-    tensor_key: str,
-) -> Optional[WeightSpecLocation]:
-    if checkpoint_file is None:
-        return None
-
-    return WeightSpecLocation(file=list(checkpoint_files).index(checkpoint_file), key=tensor_key)
-
-
-def _find_checkpoint_key(
-    onnx_name: str,
-    checkpoint_index: Dict[str, str],
-    backbone: nn.Module,
-) -> Optional[str]:
-    """
-    Resolve an ONNX initializer name to its key in the safetensors checkpoint.
-
-    Four lookups are attempted in order:
-
-    1. Direct match — ONNX name == checkpoint key.
-       Covers decoder-only LLMs (Llama, GPT-OSS) and any model exported
-       without extra wrappers.
-
-    2. Strip our PooledModel prefix ("base_model.") and try the bare key.
-       Covers embedding models whose checkpoint was saved from the base class
-       directly (e.g. BAAI/bge-base saved from BertModel → bare keys).
-
-    3. Strip "base_model." then prepend backbone.base_model_prefix.
-       Covers embedding models whose checkpoint was saved from a task-specific
-       class (e.g. BAAI/bge-reranker saved from XLMRobertaForSequenceClassification
-       → "roberta." prefix).  HuggingFace defines base_model_prefix on every
-       model class as exactly the attribute name the task class uses to store
-       the backbone, so this is generalized — no per-model-family list needed.
-
-    4. Strip backbone.base_model_prefix from the front of the ONNX name.
-       Covers ForCausalLM models (e.g. GPT2LMHeadModel) whose checkpoint was
-       saved from the base model class (e.g. GPT2Model) so keys lack the LM
-       wrapper prefix — ONNX name "transformer.wte.weight" maps to checkpoint
-       key "wte.weight" after stripping the "transformer." prefix.
-    """
-    # 1. Direct match
-    if onnx_name in checkpoint_index:
-        return onnx_name
-
-    # Strip PooledModel's "base_model." wrapper prefix
-    stripped = onnx_name[len("base_model.") :] if onnx_name.startswith("base_model.") else onnx_name
-
-    # 2. Bare key — checkpoint saved from base class
-    if stripped in checkpoint_index:
-        return stripped
-
-    prefix = getattr(backbone, "base_model_prefix", "")
-
-    # 3. Task-class prefix — checkpoint saved from ForSequenceClassification etc.
-    if prefix:
-        prefixed = f"{prefix}.{stripped}"
-        if prefixed in checkpoint_index:
-            return prefixed
-
-    # 4. Strip base_model_prefix from ONNX name — checkpoint saved from the
-    #    base model class so keys lack the ForCausalLM wrapper prefix
-    #    (e.g. GPT2: ONNX "transformer.wte.weight" → checkpoint "wte.weight").
-    if prefix and stripped.startswith(f"{prefix}."):
-        without_prefix = stripped[len(f"{prefix}.") :]
-        if without_prefix in checkpoint_index:
-            return without_prefix
-
-    # 5. MLP attribute rename: transformers 5.x renamed 'block_sparse_moe' → 'mlp'
-    #    for Mixtral. The original checkpoint uses 'block_sparse_moe' but the model
-    #    (and ONNX) uses 'mlp'. Try the reverse substitution.
-    if ".mlp." in stripped:
-        candidate = stripped.replace(".mlp.", ".block_sparse_moe.")
-        if candidate in checkpoint_index:
-            return candidate
-
-    # 6. MoE router attribute rename: QEff wrappers may call the router 'gate'
-    #    while the checkpoint stores it as 'router' (e.g. Qwen3-MoE).
-    if stripped.endswith(".mlp.gate.weight"):
-        candidate = stripped[: -len(".gate.weight")] + ".router.weight"
-        if candidate in checkpoint_index:
-            return candidate
-    # Reverse: checkpoint calls it 'gate', ONNX uses 'router'
-    if stripped.endswith(".mlp.router.weight"):
-        candidate = stripped[: -len(".router.weight")] + ".gate.weight"
-        if candidate in checkpoint_index:
-            return candidate
-
-    return None
-
-
-def _promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name: str, qeff_model) -> WeightSpec:
-    from QEfficient.transformers.embeddings.embedding_utils import PooledModel
-
-    model_ir = onnx_program.model
-    model_names = {name for name, _ in qeff_model.model.named_parameters()}
-    model_names.update({name for name, _ in qeff_model.model.named_buffers()})
-    tied_weights = _collect_tied_weights(qeff_model.model)
-    tied_weight_map = {entry.alias: entry.canonical for entry in tied_weights}
-    checkpoint_files = _resolve_checkpoint_files(model_ref)
-    checkpoint_root = _checkpoint_root(model_ref, checkpoint_files)
-    checkpoint_index = _load_checkpoint_index(checkpoint_files)
-    relative_checkpoint_files = [
-        ExternalDataFile(
-            path=str(Path(checkpoint_file).relative_to(checkpoint_root))
-            if checkpoint_root is not None
-            else Path(checkpoint_file).name,
-            format="safetensors",
-        )
-        for checkpoint_file in checkpoint_files
-    ]
-    backbone = qeff_model.model.base_model if isinstance(qeff_model.model, PooledModel) else qeff_model.model
-    promoted_inputs: List[WeightSpecInput] = []
-
-    for name, init_value in list(model_ir.graph.initializers.items()):
-        if name not in model_names:
-            continue
-
-        onnx_name = tied_weight_map.get(name, name)
-        checkpoint_key = _find_checkpoint_key(onnx_name, checkpoint_index, backbone)
-
-        if checkpoint_key is None:
-            # Computed buffer (e.g. sin_cached, cos_cached) — leave as ONNX initializer.
-            # The compiler embeds it in the model; it is not loaded from a checkpoint file.
-            continue
-
-        location = _build_location(checkpoint_files, checkpoint_index[checkpoint_key], checkpoint_key)
-
-        model_ir.graph.inputs.append(
-            ir.Value(
-                name=name,
-                shape=init_value.shape,
-                type=ir.TensorType(init_value.dtype),
-            )
-        )
-        del model_ir.graph.initializers[name]
-        promoted_inputs.append(WeightSpecInput(name=name, location=location))
-
-    return WeightSpec(
-        model_name=model_name,
-        model_id=model_ref,
-        files=relative_checkpoint_files,
-        inputs=promoted_inputs,
-    )
-
-
 def _prune_unused_fake_initializers(onnx_program) -> None:
     """Remove FakeTensor initializers not referenced by any graph node.
 
@@ -438,6 +165,8 @@ def export_weight_free_onnx(
     export_kwargs: Dict[str, Any],
     onnx_transform_kwargs: Dict[str, Any],
 ):
+    global _checkpoint_prep_ran, _last_prep_duration_seconds, _last_prep_peak_rss_mb
+
     meta_qeff_model = _build_meta_qeff_model(qeff_model)
     cleanup_required = False
 
@@ -479,43 +208,23 @@ def export_weight_free_onnx(
         if onnx_program is None:
             raise RuntimeError("torch.onnx.export returned None for weight-free dynamo export")
 
-        # Prepare checkpoint: stack MoE experts (if needed) and convert dtype.
-        # Store next to the SOURCE checkpoint directory (not inside the hashed export dir)
-        # so any model config variant pointing at the same source reuses the prepared data.
-        # Include the dtype in the directory name to avoid collisions between fp16/fp32 exports.
         target_dtype = getattr(qeff_model.model.config, "dtype", None) or torch.float32
         if target_dtype == torch.bfloat16:
             target_dtype = torch.float16
-        dtype_suffix = str(target_dtype).replace("torch.", "")  # "float16" or "float32"
-        prep_pipeline = CheckpointTransformPipeline(transforms=qeff_model._checkpoint_transforms)
-        source_dir = _resolve_checkpoint_dir(model_ref)
-        prepared_out = source_dir.parent / (source_dir.name + f"-qeff-prepared-{dtype_suffix}")
 
-        _prep_profiler = _QEffMemoryProfiler(sampling_interval=0.05, verbose=False)
-        _prep_profiler.start_monitoring()
-        _prep_profiler.mark_operation("Checkpoint Prep")
+        prep_start = time.perf_counter()
+        prepared_model_ref = prepare_checkpoint_for_weight_free_export(meta_qeff_model, model_ref, target_dtype)
 
-        prepared_model_ref = str(
-            prep_pipeline.apply(
-                src=source_dir,
-                out=prepared_out,
-                target_dtype=target_dtype,
-            )
+        _last_prep_duration_seconds = time.perf_counter() - prep_start
+        _last_prep_peak_rss_mb = None
+        _checkpoint_prep_ran = True
+        logger.info(
+            "Weight-free checkpoint preparation completed in %.2fs: %s",
+            _last_prep_duration_seconds,
+            prepared_model_ref,
         )
 
-        _prep_profiler.stop_monitoring()
-        print(_prep_profiler.get_memory_report())
-        logger.info(_prep_profiler.get_memory_report())
-
-        # Expose prep stats as module-level variables so external runners
-        # (e.g. compare_weightfree._runner.py) can read them without parsing stdout.
-        import QEfficient.exporter.weight_free.core as _self_module
-
-        _self_module._last_prep_peak_rss_mb = _prep_profiler.peak_rss
-        _self_module._last_prep_duration_seconds = _prep_profiler.operation_durations.get("Checkpoint Prep", 0.0)
-        _self_module._checkpoint_prep_ran = True
-
-        spec = _promote_initializers_and_build_spec(
+        spec = promote_initializers_and_build_spec(
             onnx_program=onnx_program,
             model_ref=prepared_model_ref,
             model_name=qeff_model.model_name,
@@ -532,87 +241,6 @@ def export_weight_free_onnx(
     return meta_qeff_model, onnx_transform_kwargs, cleanup
 
 
-def _load_checkpoint_tensor(checkpoint_file: str, key: str) -> np.ndarray:
-    handle = safe_open(checkpoint_file, framework="pt")
-    tensor = handle.get_tensor(key).detach().cpu()
-    # numpy does not support bfloat16; cast to float32 for ORT compatibility
-    if tensor.dtype == torch.bfloat16:
-        tensor = tensor.to(torch.float32)
-    return tensor.numpy()
-
-
-def _default_weights_roots(weight_spec_path: Path, spec) -> List[Path]:
-    roots = []
-    ext_root = os.environ.get("AIC_EXTERNAL_DATA_ROOT")
-    if ext_root:
-        roots.append(Path(ext_root).expanduser())
-    roots.append(weight_spec_path.parent)
-    candidate = Path(spec.model_id).expanduser()
-    if candidate.exists():
-        roots.append(candidate.parent)
-    else:
-        checkpoint_dir = _resolve_checkpoint_dir(spec.model_id)
-        checkpoint_root = _checkpoint_root(spec.model_id, [str(path) for path in checkpoint_dir.glob("*.safetensors")])
-        if checkpoint_root is not None:
-            roots.append(checkpoint_root)
-
-    deduped_roots: List[Path] = []
-    seen = set()
-    for root in roots:
-        resolved = root.resolve()
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        deduped_roots.append(resolved)
-    return deduped_roots
-
-
-def _resolve_location_file(
-    location: WeightSpecLocation,
-    files: Sequence[ExternalDataFile],
-    candidate_roots: Sequence[Path],
-) -> Path:
-    if isinstance(location.file, int):
-        location_path = Path(files[location.file].path)
-    else:
-        location_path = Path(location.file)
-    if location_path.is_absolute():
-        return location_path
-
-    for root in candidate_roots:
-        candidate = root / location_path
-        if candidate.exists():
-            return candidate
-
-    return candidate_roots[0] / location_path if candidate_roots else location_path
-
-
-def load_weight_free_ort_inputs(
-    weight_spec_path: Path,
-    runtime_inputs: Dict[str, np.ndarray],
-    weights_root: Optional[Path] = None,
-) -> Dict[str, np.ndarray]:
-    weight_spec_path = Path(weight_spec_path)
-    spec = load_weight_spec(weight_spec_path)
-    candidate_roots = []
-    if weights_root is not None:
-        candidate_roots.append(Path(weights_root).expanduser().resolve())
-    candidate_roots.extend(_default_weights_roots(weight_spec_path, spec))
-
-    ort_inputs = dict(runtime_inputs)
-    for spec_input in spec.inputs:
-        if spec_input.name in ort_inputs:
-            continue
-        checkpoint_file = _resolve_location_file(spec_input.location, spec.files, candidate_roots)
-        ort_inputs[spec_input.name] = _load_checkpoint_tensor(str(checkpoint_file), spec_input.location.key)
-
-    return ort_inputs
-
-
-def log_weight_free_export(onnx_path: Path) -> None:
-    logger.info(f"Weight-free ONNX exported to {onnx_path} with spec {resolve_weight_spec_path(onnx_path)}")
-
-
 def embed_weight_spec_as_metadata(model, weight_spec_path) -> None:
     """Embed weight_spec.json into the ONNX model as com.qti.aisw.extdata metadata.
 
@@ -625,9 +253,9 @@ def embed_weight_spec_as_metadata(model, weight_spec_path) -> None:
 
 
 def link_prepared_checkpoint_dir(onnx_path: Path, weight_spec_path: Path) -> None:
-    """Place the prepared checkpoint directory next to the ONNX export.
+    """Place the checkpoint directory referenced by the weight spec next to the ONNX export.
 
-    Weight specs store checkpoint files relative to the prepared model directory.
+    Weight specs store checkpoint files relative to their checkpoint root.
     Keeping this link beside the ONNX lets the compiler resolve those paths when
     it consumes the embedded weight spec.
     """

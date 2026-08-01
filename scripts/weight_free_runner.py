@@ -40,15 +40,12 @@ import torch
 from accelerate import init_empty_weights
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-# QEfficient must be imported BEFORE memory_profiling.
-# core.py (weight_free exporter) tries to import memory_profiling at load time.
-# If memory_profiling is imported first it triggers QEfficient loading via
-# 'from QEfficient.utils.logging_utils import logger', creating a circular
-# import that leaves _HAS_PROFILER=False and _QEffMemoryProfiler undefined.
+# QEfficient is imported before memory_profiling so model wrappers and logging
+# are initialized before the standalone runner profiler is loaded.
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM  # noqa: E402
 
 # Memory profiler lives at <repo_root>/scripts/memory_profiling/
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 from memory_profiling import QEffMemoryProfiler  # noqa: E402
 
@@ -239,7 +236,8 @@ def main() -> None:
 
             if getattr(_wf_core, "_checkpoint_prep_ran", False):
                 result["transform_duration_seconds"] = round(_wf_core._last_prep_duration_seconds, 3)
-                result["transform_peak_rss_mb"] = round(_wf_core._last_prep_peak_rss_mb, 4)
+                if _wf_core._last_prep_peak_rss_mb is not None:
+                    result["transform_peak_rss_mb"] = round(_wf_core._last_prep_peak_rss_mb, 4)
 
         # ── Phase 3: Compile (ONNX → QPC) ─────────────────────────────────
         profiler.mark_operation("Model Compilation")
