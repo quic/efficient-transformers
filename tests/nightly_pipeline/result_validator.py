@@ -77,7 +77,6 @@ FAMILY_SPECS = {
         "text_key": "transcription",
         "mad_column": "generated_ids",
         "mad_key": "generated_ids",
-        "mad_tolerance": "token_mad_tolerance",
         "include_perf": True,
     },
     "causal_pipeline_configs": {
@@ -85,7 +84,6 @@ FAMILY_SPECS = {
         "text_key": "generated_texts",
         "mad_column": "generated_ids",
         "mad_key": "generated_ids",
-        "mad_tolerance": "token_mad_tolerance",
         "include_perf": True,
     },
     "image_text_to_text_model_configs": {
@@ -93,13 +91,11 @@ FAMILY_SPECS = {
         "text_key": "generated_text",
         "mad_column": "generated_ids",
         "mad_key": "generated_ids",
-        "mad_tolerance": "token_mad_tolerance",
         "include_perf": True,
     },
     "embedding_model_configs": {
         "mad_column": "embedding",
         "mad_key": "embedding",
-        "mad_tolerance": "embedding_mad_tolerance",
     },
     "sequence_model_configs": {
         "text_column": "prediction",
@@ -107,7 +103,6 @@ FAMILY_SPECS = {
         "compare_text": False,
         "mad_column": "generated_ids",
         "mad_key": "generated_ids",
-        "mad_tolerance": "token_mad_tolerance",
     },
 }
 
@@ -116,8 +111,7 @@ FAMILY_SPECS = {
 class ValidationTolerances:
     percentage_tolerance: float = 5.0
     perf_delta_tolerance: float = 0.1
-    token_mad_tolerance: float = 1e-2
-    embedding_mad_tolerance: float = 1e-2
+    mad_tolerance: float = 1e-2
 
 
 def load_json(filepath: Path) -> dict[str, Any]:
@@ -132,14 +126,12 @@ def load_validation_tolerances(pipeline_configs: dict[str, Any], model_class: st
     class_config = model_class_configs.get(model_class, {})
     default_percentage_tolerance = default_config.get("percentage_tolerance", 5.0)
     default_perf_delta_tolerance = default_config.get("perf_delta_tolerance", 0.1)
-    default_token_mad_tolerance = default_config.get("token_mad_tolerance", 1e-2)
-    default_embedding_mad_tolerance = default_config.get("embedding_mad_tolerance", 1e-2)
+    default_mad_tolerance = default_config.get("mad_tolerance", 1e-2)
 
     return ValidationTolerances(
         percentage_tolerance=float(class_config.get("percentage_tolerance", default_percentage_tolerance)),
         perf_delta_tolerance=float(class_config.get("perf_delta_tolerance", default_perf_delta_tolerance)),
-        token_mad_tolerance=float(class_config.get("token_mad_tolerance", default_token_mad_tolerance)),
-        embedding_mad_tolerance=float(class_config.get("embedding_mad_tolerance", default_embedding_mad_tolerance)),
+        mad_tolerance=float(class_config.get("mad_tolerance", default_mad_tolerance)),
     )
 
 
@@ -424,8 +416,7 @@ def _collect_mad_failures(
         return
 
     mad_value = row.get(f"{mad_column}_mad")
-    tolerance_name = spec["mad_tolerance"]
-    tolerance_value = getattr(tolerances, tolerance_name)
+    tolerance_value = tolerances.mad_tolerance
     if isinstance(mad_value, (int, float)):
         if mad_value > tolerance_value:
             failures.append(f"{mad_column}_mad {mad_value:.6f} exceeds {tolerance_value:.6f} tolerance")

@@ -50,6 +50,21 @@ VALIDATION_FILE_ORDER = [
     "sequence_model_validation.csv",
 ]
 
+PIPELINE_CONFIG_PATH = Path(__file__).resolve().parent / "configs" / "pipeline_configs.json"
+
+PIPELINE_CONFIG_ORDER = [
+    ("causal_model", "causal_pipeline_configs"),
+    ("image_text_to_text_model", "image_text_to_text_model_configs"),
+    ("embedding_model", "embedding_model_configs"),
+    ("audio_model", "audio_model_configs"),
+    ("audio_embedding_model", "audio_embedding_model_configs"),
+    ("sequence_model", "sequence_model_configs"),
+]
+
+REPORT_TITLE = "QEFF Nightly Report"
+DEFAULT_REPO_URL = "https://github.com/quic/efficient-transformers"
+STATUS_COLUMN_HEADER = "Status (MAD and performance within configured tolerances)"
+
 QAIC_VERSION_UTIL = "/opt/qti-aic/tools/qaic-version-util"
 QAIC_APPS_XML = "/opt/qti-aic/versions/apps.xml"
 QAIC_PLATFORM_XML = "/opt/qti-aic/versions/platform.xml"
@@ -347,6 +362,7 @@ def derive_build_metadata(
         "commit_id": commit,
         "commit_message": extract_first([r"Commit message:\s*\"([^\"]+)\"", r"^[0-9a-f]{7,40}\s+(.+)$"], log_text),
         "trigger": extract_first([r"^(Started by .+)$"], log_text),
+        "repo_url": os.environ.get("GIT_URL", DEFAULT_REPO_URL),
         "docker_image": os.environ.get("DOCKER_LATEST", environment.get("docker_image", "N/A")),
         "artifacts_dir": str(artifacts_dir),
         "previous_artifacts_dir": env_or_na("NIGHTLY_PIPELINE_PREVIOUS_ARTIFACTS_DIR"),
@@ -367,6 +383,30 @@ def short_value(value: Any, max_len: int = 180) -> str:
 
 def html_escape(value: Any) -> str:
     return html.escape(short_value(value), quote=True)
+
+
+def normalize_repo_url(repo_url: Any) -> str:
+    repo_url = short_value(repo_url).strip()
+    if not repo_url or repo_url == "N/A":
+        return DEFAULT_REPO_URL
+    if repo_url.startswith("git@github.com:"):
+        repo_url = "https://github.com/" + repo_url.split(":", 1)[1]
+    if repo_url.endswith(".git"):
+        repo_url = repo_url[:-4]
+    return repo_url if repo_url.startswith(("http://", "https://")) else DEFAULT_REPO_URL
+
+
+def html_link(url: Any, label: Any) -> str:
+    normalized_url = normalize_repo_url(url)
+    return (
+        f'<a href="{html_escape(normalized_url)}" '
+        'style="color:#2563eb;text-decoration:none;font-weight:bold;">'
+        f"{html_escape(label)}</a>"
+    )
+
+
+def bold_text(value: Any) -> str:
+    return f'<strong style="font-weight:bold;color:#0f172a;">{html_escape(value)}</strong>'
 
 
 def status_badge(status: str) -> str:
@@ -429,10 +469,19 @@ def table(headers: List[str], rows: List[List[Any]], row_classes: Optional[List[
     )
 
 
+def compact_key_value_rows(rows: List[List[Any]]) -> List[List[Any]]:
+    compact_rows = []
+    for index in range(0, len(rows), 2):
+        left = rows[index]
+        right = rows[index + 1] if index + 1 < len(rows) else ["", ""]
+        compact_rows.append([left[0], left[1], right[0], right[1]])
+    return compact_rows
+
+
 def section(title: str, body: str) -> str:
     return (
-        '<tr><td style="padding:18px 24px;border-top:1px solid #e5e7eb;">'
-        f'<h2 style="margin:0 0 12px 0;color:#0f172a;font-family:Arial,Helvetica,sans-serif;font-size:19px;'
+        '<tr><td style="padding:20px 24px;border-top:1px solid #e5e7eb;">'
+        f'<h2 style="margin:0 0 12px 0;color:#0f172a;font-family:Arial,Helvetica,sans-serif;font-size:20px;'
         f'line-height:24px;font-weight:bold;">{html_escape(title)}</h2>{body}</td></tr>'
     )
 
@@ -449,9 +498,9 @@ def metric_card(value: Any, label: str, color: str = "#111827") -> str:
         '<td width="25%" valign="top" style="padding:4px;">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         'style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;">'
-        '<tr><td bgcolor="#f8fafc" style="background-color:#f8fafc;border:1px solid #e5e7eb;padding:12px;'
+        '<tr><td bgcolor="#f8fafc" style="background-color:#f8fafc;border:1px solid #dbeafe;padding:14px;'
         'text-align:center;font-family:Arial,Helvetica,sans-serif;color:#111827;">'
-        f'<div style="font-size:24px;line-height:30px;font-weight:bold;color:{color};">{html_escape(value)}</div>'
+        f'<div style="font-size:26px;line-height:32px;font-weight:bold;color:{color};">{html_escape(value)}</div>'
         f'<div style="font-size:13px;line-height:18px;color:#334155;">{html_escape(label)}</div>'
         "</td></tr></table></td>"
     )
@@ -492,6 +541,42 @@ def artifact_link(artifacts_dir: Path, class_key: str, suffix: str) -> str:
     return html_escape(path if path.exists() else "N/A")
 
 
+def compact_config_value(value: Any) -> str:
+    if value in (None, ""):
+        return "N/A"
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        return ", ".join(f"{key}={compact_config_value(config_value)}" for key, config_value in value.items())
+    if isinstance(value, list):
+        return ", ".join(compact_config_value(item) for item in value) if value else "[]"
+    return str(value)
+
+
+def build_pipeline_config_rows() -> List[List[str]]:
+    pipeline_configs = load_json(PIPELINE_CONFIG_PATH)
+    validation_configs = pipeline_configs.get("validation_configs", {})
+    default_tolerances = validation_configs.get("default", {})
+    model_class_tolerances = validation_configs.get("model_class_tolerances", {})
+    rows = []
+
+    for report_class_key, config_key in PIPELINE_CONFIG_ORDER:
+        config_entries = pipeline_configs.get(config_key, [])
+        config = config_entries[0] if config_entries else {}
+        tolerances = {**default_tolerances, **model_class_tolerances.get(config_key, {})}
+        rows.append(
+            [
+                html_escape(MODEL_CLASS_LABELS.get(report_class_key, report_class_key)),
+                html_escape(compact_config_value(config.get("export_params", {}))),
+                html_escape(compact_config_value(config.get("compile_params", {}))),
+                html_escape(compact_config_value(config.get("generate_params", {}))),
+                html_escape(compact_config_value(tolerances)),
+            ]
+        )
+
+    return rows
+
+
 def render_html(
     class_rows: Dict[str, List[Dict[str, str]]],
     summary: Dict[str, Any],
@@ -501,9 +586,11 @@ def render_html(
 ) -> str:
     generated_at = dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     title_status = str(metadata.get("status", "unknown")).upper()
+    repo_url = normalize_repo_url(metadata.get("repo_url"))
 
     build_sdk_rows = [
         ["Build Status", status_badge(str(metadata.get("status", "unknown")))],
+        ["Repository", html_link(repo_url, "quic/efficient-transformers")],
         ["Job", html_escape(metadata.get("job_name"))],
         ["Build Number", html_escape(metadata.get("build_number"))],
         ["Build URL", html_escape(metadata.get("build_url"))],
@@ -512,10 +599,8 @@ def render_html(
         ["PR Number", html_escape(metadata.get("pr_number"))],
         ["Commit ID", html_escape(metadata.get("commit_id"))],
         ["Docker Image", html_escape(metadata.get("docker_image"))],
-        ["QAIC Apps Version", html_escape(environment.get("qaic_apps_version", "N/A"))],
-        ["QAIC Platform Version", html_escape(environment.get("qaic_platform_version", "N/A"))],
-        ["QAIC Factory Version", html_escape(environment.get("qaic_factory_version", "N/A"))],
-        ["QNN SDK Root", html_escape(environment.get("qnn_sdk_root", "N/A"))],
+        [bold_text("QAIC Apps Version"), html_escape(environment.get("qaic_apps_version", "N/A"))],
+        [bold_text("QAIC Platform Version"), html_escape(environment.get("qaic_platform_version", "N/A"))],
         ["QEfficient", html_escape(environment.get("qefficient_version", "N/A"))],
         ["Torch", html_escape(environment.get("torch_version", "N/A"))],
         ["Transformers", html_escape(environment.get("transformers_version", "N/A"))],
@@ -523,7 +608,7 @@ def render_html(
         ["Previous Artifacts Dir", html_escape(metadata.get("previous_artifacts_dir"))],
         ["Start Time", html_escape(metadata.get("start_time"))],
         ["End Time", html_escape(metadata.get("end_time"))],
-        ["Total Duration", html_escape(metadata.get("total_duration"))],
+        [bold_text("Total Duration"), html_escape(metadata.get("total_duration"))],
     ]
 
     summary_rows = []
@@ -566,7 +651,10 @@ def render_html(
             )
             row_classes.append("failed" if status == "failed" else "passed" if status == "passed" else "warning")
         detail_sections.append(
-            subsection(label, table(["Model Name", "Model Age", "Status", "Failure Reason"], detail_rows, row_classes))
+            subsection(
+                label,
+                table(["Model Name", "Model Age", STATUS_COLUMN_HEADER, "Failure Reason"], detail_rows, row_classes),
+            )
         )
 
     pass_rate_text = f"{summary['pass_rate']:.1f}%"
@@ -590,7 +678,17 @@ def render_html(
     sections_html = "".join(
         [
             section("Validation Metrics", metrics_html),
-            section("Build and SDK Details", table(["Field", "Value"], build_sdk_rows)),
+            section(
+                "Build and SDK Details",
+                table(["Field", "Value", "Field", "Value"], compact_key_value_rows(build_sdk_rows)),
+            ),
+            section(
+                "Nightly Pipeline Configuration",
+                table(
+                    ["Model Class", "Export Params", "Compile Params", "Generate Params", "Validation Tolerances"],
+                    build_pipeline_config_rows(),
+                ),
+            ),
             section("Model Class Details", detail_html),
             section(
                 "Validation Summary",
@@ -608,20 +706,22 @@ def render_html(
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Nightly Pipeline Report - {html_escape(title_status)}</title>
+<title>{html_escape(REPORT_TITLE)} - {html_escape(title_status)}</title>
 </head>
-<body bgcolor="#f8fafc" style="margin:0;padding:0;background-color:#f8fafc;color:#111827;font-family:Arial,Helvetica,sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f8fafc" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;background-color:#f8fafc;">
+<body bgcolor="#eef2ff" style="margin:0;padding:0;background-color:#eef2ff;color:#111827;font-family:Arial,Helvetica,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#eef2ff" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;background-color:#eef2ff;">
 <tr>
 <td align="center" style="padding:20px 10px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;background-color:#ffffff;border:1px solid #e5e7eb;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;background-color:#ffffff;border:1px solid #c7d2fe;max-width:1180px;">
 <tr>
-<td bgcolor="#111827" style="background-color:#111827;padding:22px 24px;font-family:Arial,Helvetica,sans-serif;color:#ffffff;">
+<td bgcolor="#0f172a" style="background-color:#0f172a;padding:24px 26px;font-family:Arial,Helvetica,sans-serif;color:#ffffff;border-bottom:4px solid #2563eb;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;">
 <tr>
 <td valign="top" style="font-family:Arial,Helvetica,sans-serif;color:#ffffff;">
-<h1 style="margin:0 0 8px 0;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:24px;line-height:30px;font-weight:bold;">Nightly Pipeline Report</h1>
+<div style="margin:0 0 8px 0;color:#93c5fd;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:16px;font-weight:bold;letter-spacing:0.08em;text-transform:uppercase;">Nightly Validation</div>
+<h1 style="margin:0 0 8px 0;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:28px;line-height:34px;font-weight:bold;">{html_escape(REPORT_TITLE)}</h1>
 <p style="margin:0;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:20px;">{html_escape(metadata.get("job_name"))} #{html_escape(metadata.get("build_number"))} &bull; {html_escape(metadata.get("branch"))} &bull; {html_escape(metadata.get("total_duration"))}</p>
+<p style="margin:6px 0 0 0;color:#bfdbfe;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:18px;">Repository: <a href="{html_escape(repo_url)}" style="color:#bfdbfe;text-decoration:underline;">{html_escape(repo_url)}</a></p>
 <p style="margin:4px 0 0 0;color:#cbd5e1;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:18px;">Generated at {html_escape(generated_at)}</p>
 </td>
 <td align="right" valign="top" style="font-family:Arial,Helvetica,sans-serif;">{status_badge(str(metadata.get("status", "unknown")))}</td>

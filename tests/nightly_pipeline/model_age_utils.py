@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 MODEL_AGE_ENV_VAR = "NIGHTLY_MODEL_AGE"
+MODEL_BATCH_INDEX_ENV_VAR = "NIGHTLY_MODEL_BATCH_INDEX"
+MODEL_BATCH_SIZE_ENV_VAR = "NIGHTLY_MODEL_BATCH_SIZE"
 MODEL_AGE_OLDER = "older"
 MODEL_AGE_NEWER = "newer"
 MODEL_AGE_UNKNOWN = "unknown"
@@ -81,3 +83,54 @@ def filter_models_by_age(models: list[str], model_key: str, requested_age: str |
     if requested_age == MODEL_AGE_NEWER:
         return [model_name for model_name in models if model_name in newer_models]
     return [model_name for model_name in models if model_name not in newer_models]
+
+
+def filter_models_for_nightly(
+    models: list[str],
+    model_key: str,
+    requested_age: str | None = None,
+    batch_index: str | int | None = None,
+    batch_size: str | int | None = None,
+) -> list[str]:
+    filtered_models = filter_models_by_age(models, model_key, requested_age)
+    parsed_batch_index = _parse_non_negative_int(
+        batch_index if batch_index is not None else os.environ.get(MODEL_BATCH_INDEX_ENV_VAR)
+    )
+    parsed_batch_size = _parse_positive_int(
+        batch_size if batch_size is not None else os.environ.get(MODEL_BATCH_SIZE_ENV_VAR)
+    )
+    if parsed_batch_index is None or parsed_batch_size is None:
+        return filtered_models
+
+    start = parsed_batch_index * parsed_batch_size
+    end = start + parsed_batch_size
+    return filtered_models[start:end]
+
+
+def count_models_by_age(models: list[str], model_key: str, requested_age: str | None = None) -> int:
+    return len(filter_models_by_age(models, model_key, requested_age))
+
+
+def _parse_non_negative_int(value: str | int | None) -> int | None:
+    parsed_value = _parse_int(value)
+    if parsed_value is None or parsed_value < 0:
+        return None
+    return parsed_value
+
+
+def _parse_positive_int(value: str | int | None) -> int | None:
+    parsed_value = _parse_int(value)
+    if parsed_value is None or parsed_value <= 0:
+        return None
+    return parsed_value
+
+
+def _parse_int(value: str | int | None) -> int | None:
+    if isinstance(value, int):
+        return value
+    if value is None:
+        return None
+    value = value.strip()
+    if not value.isdigit():
+        return None
+    return int(value)

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from .model_age_utils import filter_models_for_nightly
 from .nightly_email_report import build_summary, render_html
 from .result_validator import (
     ValidationTolerances,
@@ -93,7 +94,7 @@ def test_older_model_validation_failure_is_warning():
         {"openai-community/gpt2": _causal_payload([100, 101])},
         {"openai-community/gpt2": _causal_payload([1, 2])},
         "causal_pipeline_configs",
-        ValidationTolerances(token_mad_tolerance=0.0),
+        ValidationTolerances(mad_tolerance=0.0),
     )
 
     assert rows[0]["model_age"] == "older"
@@ -106,7 +107,7 @@ def test_newer_model_validation_failure_is_failed():
         {"Qwen/Qwen3-30B-A3B-Instruct-2507": _causal_payload([100, 101])},
         {"Qwen/Qwen3-30B-A3B-Instruct-2507": _causal_payload([1, 2])},
         "causal_pipeline_configs",
-        ValidationTolerances(token_mad_tolerance=0.0),
+        ValidationTolerances(mad_tolerance=0.0),
     )
 
     assert rows[0]["model_age"] == "newer"
@@ -136,6 +137,7 @@ def test_report_layout_and_warning_summary(tmp_path):
         "branch": "main",
         "pr_number": "N/A",
         "commit_id": "abc123",
+        "repo_url": "https://github.com/quic/efficient-transformers",
         "docker_image": "qeff:test",
         "artifacts_dir": str(tmp_path),
         "previous_artifacts_dir": "previous",
@@ -158,6 +160,53 @@ def test_report_layout_and_warning_summary(tmp_path):
     assert "Failure Spotlight" not in html
     assert "Performance Regression Watch" not in html
     assert "Current-only Comparisons" not in html
+    assert "QEFF Nightly Report" in html
+    assert "https://github.com/quic/efficient-transformers" in html
+    assert "quic/efficient-transformers" in html
     assert "Build and SDK Details" in html
+    assert "QAIC Factory Version" not in html
+    assert "QNN SDK Root" not in html
+    assert '<strong style="font-weight:bold;color:#0f172a;">QAIC Apps Version</strong>' in html
+    assert '<strong style="font-weight:bold;color:#0f172a;">QAIC Platform Version</strong>' in html
+    assert '<strong style="font-weight:bold;color:#0f172a;">Total Duration</strong>' in html
+    assert '<th bgcolor="#e2e8f0' in html
+    assert 'Field</th><th bgcolor="#e2e8f0' in html
+    assert 'Value</th><th bgcolor="#e2e8f0' in html
+    assert "Nightly Pipeline Configuration" in html
+    assert "ctx_len=128" in html
+    assert "generation_len=25" in html
+    assert "percentage_tolerance=5.0" in html
+    assert "Status (MAD and performance within configured tolerances)" in html
     assert "Warnings" in html
     assert html.index("Model Class Details") < html.index("Validation Summary")
+
+
+def test_filter_models_for_nightly_applies_age_before_batch():
+    models = [
+        "openai-community/gpt2",
+        "allenai/OLMo-2-0425-1B",
+        "tiiuae/falcon-40b",
+        "Qwen/Qwen3-30B-A3B-Instruct-2507",
+        "google/codegemma-2b",
+    ]
+
+    assert filter_models_for_nightly(models, "causal_lm_models", "older", batch_index=0, batch_size=2) == [
+        "openai-community/gpt2",
+        "tiiuae/falcon-40b",
+    ]
+    assert filter_models_for_nightly(models, "causal_lm_models", "older", batch_index=1, batch_size=2) == [
+        "google/codegemma-2b"
+    ]
+    assert filter_models_for_nightly(models, "causal_lm_models", "newer", batch_index=0, batch_size=1) == [
+        "allenai/OLMo-2-0425-1B"
+    ]
+    assert filter_models_for_nightly(models, "causal_lm_models", "newer", batch_index=1, batch_size=1) == [
+        "Qwen/Qwen3-30B-A3B-Instruct-2507"
+    ]
+
+
+def test_filter_models_for_nightly_ignores_invalid_batch_values():
+    models = ["openai-community/gpt2", "tiiuae/falcon-40b"]
+
+    assert filter_models_for_nightly(models, "causal_lm_models", "older", batch_index="bad", batch_size=1) == models
+    assert filter_models_for_nightly(models, "causal_lm_models", "older", batch_index=0, batch_size=0) == models
