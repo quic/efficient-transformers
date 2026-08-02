@@ -29,8 +29,6 @@ are:
   of HF's additive `attn_weights + attention_mask`.
 """
 
-from typing import Optional, Tuple, Type, Union
-
 import torch
 from torch import nn
 from transformers.cache_utils import Cache, EncoderDecoderCache
@@ -56,7 +54,7 @@ def eager_attention_forward(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
-    attention_mask: Optional[torch.Tensor],
+    attention_mask: torch.Tensor | None,
     scaling: float,
     dropout: float = 0.0,
     **kwargs,
@@ -89,8 +87,8 @@ class QEffCohereAsrSelfAttention(CohereAsrSelfAttention):
         self,
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: Cache | None = None,
         **kwargs,
     ):
         input_shape = hidden_states.shape[:-1]
@@ -141,17 +139,19 @@ class QEffCohereAsrCrossAttention(CohereAsrCrossAttention):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[Cache] = None,
-        input_features: Optional[torch.Tensor] = None,
+        encoder_hidden_states: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        input_features: torch.Tensor | None = None,
         **kwargs,
     ):
         bsz, tgt_len = hidden_states.shape[:-1]
-        src_len = encoder_hidden_states.shape[1]
 
         q_input_shape = (bsz, tgt_len, -1, self.head_dim)
-        kv_input_shape = (bsz, src_len, -1, self.head_dim)
+        # Use -1 for src_len so the view is dynamic at trace time — Whisper's pattern.
+        # A fixed src_len here would produce a Reshape with a concrete output shape that
+        # conflicts with the cross-cache shape (encoder_ctx_len) during qaic-compile.
+        kv_input_shape = (bsz, -1, self.config.num_key_value_heads, self.head_dim)
 
         query_states = self.q_proj(hidden_states).view(*q_input_shape).transpose(1, 2)
 
@@ -162,11 +162,22 @@ class QEffCohereAsrCrossAttention(CohereAsrCrossAttention):
             key_states_old = past_key_values[self.layer_idx][0]
             value_states_old = past_key_values[self.layer_idx][1]
 
-            key_states_new = self.k_proj(encoder_hidden_states).view(*kv_input_shape).transpose(1, 2)
-            value_states_new = self.v_proj(encoder_hidden_states).view(*kv_input_shape).transpose(1, 2)
+            key_states_computed = self.k_proj(encoder_hidden_states).view(*kv_input_shape).transpose(1, 2)
+            value_states_computed = self.v_proj(encoder_hidden_states).view(*kv_input_shape).transpose(1, 2)
 
-            # Select freshly computed or cached cross-attention K/V based on the
-            # dummy input_features shape used by the "Decode" specialization.
+            # Write newly computed K/V into the cache buffer via index_put.
+            # This produces a ScatterND ONNX node that reads from past_key_cross.{i},
+            # keeping it live in both the Encoder and Decode specialization subgraphs.
+            # Without this, past_key_cross.{i} is only used by the Where True-branch
+            # (Decode spec) and gets DCE'd in the Encoder spec, causing qaic-compile to
+            # reject the graph with "retained state input not found: past_key_cross.{i}".
+            # Matches Whisper's torch.index_put pattern exactly (see modeling_whisper.py).
+            indices = (torch.arange(bsz),)
+            key_states_new = torch.index_put(key_states_old, indices, key_states_computed)
+            value_states_new = torch.index_put(value_states_old, indices, value_states_computed)
+
+            # Select cache (Decode) or freshly written (Encode) based on the dummy
+            # input_features shape used by compiler specializations.
             key_states = torch.where(input_features.shape[2] == torch.tensor(1), key_states_old, key_states_new)
             value_states = torch.where(input_features.shape[2] == torch.tensor(1), value_states_old, value_states_new)
 
@@ -200,14 +211,14 @@ class QEffCohereAsrDecoderLayer(CohereAsrDecoderLayer):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
-        input_features: Optional[torch.Tensor] = None,
+        attention_mask: torch.Tensor | None = None,
+        encoder_hidden_states: torch.Tensor | None = None,
+        encoder_attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: Cache | None = None,
+        input_features: torch.Tensor | None = None,
         **kwargs,
-    ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
+    ) -> tuple[torch.FloatTensor, tuple[torch.FloatTensor, torch.FloatTensor] | None]:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
 
@@ -258,15 +269,15 @@ class QEffCohereAsrDecoder(CohereAsrDecoder):
 
     def forward(
         self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        use_cache: Optional[bool] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.Tensor] = None,
-        input_features: Optional[torch.Tensor] = None,
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        use_cache: bool | None = None,
+        encoder_hidden_states: torch.FloatTensor | None = None,
+        encoder_attention_mask: torch.Tensor | None = None,
+        input_features: torch.Tensor | None = None,
         **kwargs,
     ) -> BaseModelOutputWithPastAndCrossAttentions:
         encoder_hidden_states = self.proj(encoder_hidden_states)
@@ -338,23 +349,23 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
     def __qeff_init__(self):
         self.config.num_mel_bins = self.config.encoder_config.num_mel_bins
 
-    def get_submodules_for_export(self) -> Type[nn.Module]:
+    def get_submodules_for_export(self) -> type[nn.Module]:
         return {self.model.encoder.layers[0].__class__, QEffCohereAsrDecoderLayer}
 
     def forward(
         self,
-        input_features: Optional[torch.FloatTensor] = None,
-        attention_mask: Optional[torch.LongTensor] = None,
-        input_ids: Optional[torch.LongTensor] = None,
-        decoder_attention_mask: Optional[torch.LongTensor] = None,
-        encoder_outputs: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        past_key_values: Optional[Union[EncoderDecoderCache, Tuple[torch.FloatTensor]]] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
+        input_features: torch.FloatTensor | None = None,
+        attention_mask: torch.LongTensor | None = None,
+        input_ids: torch.LongTensor | None = None,
+        decoder_attention_mask: torch.LongTensor | None = None,
+        encoder_outputs: tuple[tuple[torch.FloatTensor]] | None = None,
+        past_key_values: EncoderDecoderCache | tuple[torch.FloatTensor] | None = None,
+        position_ids: torch.LongTensor | None = None,
+        labels: torch.LongTensor | None = None,
+        use_cache: bool | None = None,
+        return_dict: bool | None = None,
         **kwargs,
-    ) -> Union[Tuple[torch.Tensor], Seq2SeqLMOutput]:
+    ) -> tuple[torch.Tensor] | Seq2SeqLMOutput:
         # Parakeet's native input_features is (batch, seq_len, num_mel_bins); the runtime
         # boundary (QEFFAutoModelForSpeechSeq2Seq) presents mel-bins-major
         # (batch, num_mel_bins, feature_len), matching Whisper's Conv1d convention.
@@ -363,11 +374,37 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
         if encoder_outputs is None:
             encoder_outputs = self.model.encoder(encoder_input_features, attention_mask=attention_mask)
 
+        encoder_hidden_states = encoder_outputs.last_hidden_state
+        # Pad the encoder output to the canonical cross-KV cache length so that QAIC
+        # ScatterND shape checks pass in every compile specialization.
+        #
+        # Whisper avoids this by design: its encoder always emits encoder_ctx_len frames
+        # regardless of input length (the embed_positions broadcast expands 1-frame input
+        # to the full positional-embedding sequence).  CohereAsr's Fast Conformer emits
+        # ceil(feature_len / subsampling_factor) frames, so the Decode spec
+        # (feature_len=1 → 1 frame) produces a cross-KV tensor shorter than the cache,
+        # causing qaic-compile to reject Reshape_3's shape in the ScatterND write path.
+        #
+        # The cat produces a dynamic Pad node in ONNX (pad_size = encoder_ctx_len -
+        # encoder_hidden_states.shape[1] is resolved per specialization by QAIC), so:
+        #   Encoder spec (feature_len=5000): src_len=625, pad_size=0 → cat is a no-op
+        #   Decode spec  (feature_len=1):    src_len=1,   pad_size=624 → padded to 625
+        # Zero-padding is safe in Decode spec because the padded tail feeds only the
+        # "dead" ScatterND branch that is discarded by the torch.where selecting the cache.
+        encoder_ctx_len = (
+            self.config.encoder_config.max_position_embeddings // self.config.encoder_config.subsampling_factor
+        )
+        pad_size = encoder_ctx_len - encoder_hidden_states.shape[1]
+        padding = encoder_hidden_states.new_zeros(
+            encoder_hidden_states.shape[0], pad_size, encoder_hidden_states.shape[2]
+        )
+        encoder_hidden_states = torch.cat([encoder_hidden_states, padding], dim=1)
+
         decoder_outputs = self.model.decoder(
             input_ids=input_ids,
             attention_mask=decoder_attention_mask,
             position_ids=position_ids,
-            encoder_hidden_states=encoder_outputs.last_hidden_state,
+            encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=getattr(encoder_outputs, "attention_mask", None),
             past_key_values=past_key_values,
             use_cache=use_cache,
@@ -388,16 +425,31 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
     def get_dummy_inputs(self, **kwargs):
         bs = 1
         seq_len = int(kwargs.get("prefill_seq_len", ONNX_EXPORT_EXAMPLE_SEQ_LEN))
-        # encoder_ctx_len is the actual encoder output sequence length (after subsampling).
-        # Must be taken from encoder_config, NOT from the decoder's max_position_embeddings.
-        encoder_ctx_len = kwargs.get("encoder_ctx_len") or self.config.encoder_config.max_position_embeddings
+        # encoder_ctx_len is the encoder OUTPUT sequence length (after subsampling).
+        # encoder_config.max_position_embeddings is the INPUT length (max audio frames).
+        # Divide by subsampling_factor to get the output length used for cross-KV cache sizing.
+        subsampling_factor = self.config.encoder_config.subsampling_factor
+        encoder_ctx_len = kwargs.get("encoder_ctx_len") or (
+            self.config.encoder_config.max_position_embeddings // subsampling_factor
+        )
         encoder_feature_count = self.config.num_mel_bins
         num_key_value_heads = self.config.num_key_value_heads
         head_dim = self.config.hidden_size // self.config.num_attention_heads
         num_layers = self.config.num_hidden_layers
 
         inputs = {
-            "input_features": torch.zeros((bs, encoder_feature_count, 1), dtype=torch.float32),
+            # Use the full encoder input length (encoder_ctx_len * subsampling_factor) so
+            # that the encoder output has exactly encoder_ctx_len frames at trace time.
+            # This is necessary for the ScatterND / Reshape_3 in cross-attention to get
+            # a matching shape from the cache (past_key_cross.{i}).  feature_len=1 would
+            # produce a 1-frame encoder output, but the zero-pad in forward() corrects
+            # this to encoder_ctx_len before the cross-attention, so both specializations
+            # receive an encoder_ctx_len-frame encoder output.  Note: we still trace with
+            # the full length so the Where condition (input_features.shape[2] == 1)
+            # evaluates to False at trace time, keeping both branches in the ONNX.
+            "input_features": torch.zeros(
+                (bs, encoder_feature_count, encoder_ctx_len * subsampling_factor), dtype=torch.float32
+            ),
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
             "past_key_values": [[] for _ in range(num_layers)],
@@ -418,10 +470,12 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
         return inputs
 
     def get_specializations(self, batch_size: int, encoder_ctx_len, ctx_len, **compiler_options):
-        if encoder_ctx_len is None:
-            encoder_ctx_len = self.config.encoder_config.max_position_embeddings
-        # feature_len is the encoder INPUT length (before subsampling); encoder OUTPUT is encoder_ctx_len.
         subsampling_factor = self.config.encoder_config.subsampling_factor
+        if encoder_ctx_len is None:
+            # encoder_ctx_len = encoder OUTPUT length (after subsampling).
+            # encoder_config.max_position_embeddings is the INPUT length; divide by subsampling_factor.
+            encoder_ctx_len = self.config.encoder_config.max_position_embeddings // subsampling_factor
+        # feature_len is the encoder INPUT length (before subsampling = encoder_ctx_len * subsampling_factor).
         feature_len = encoder_ctx_len * subsampling_factor
 
         encoder_specializations = {
