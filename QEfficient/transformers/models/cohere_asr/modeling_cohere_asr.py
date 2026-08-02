@@ -156,9 +156,11 @@ class QEffCohereAsrCrossAttention(CohereAsrCrossAttention):
         query_states = self.q_proj(hidden_states).view(*q_input_shape).transpose(1, 2)
 
         if past_key_values is not None:
-            cross_attention_cache = past_key_values.cross_attention_cache
-            key_states_old = cross_attention_cache.layers[self.layer_idx].keys
-            value_states_old = cross_attention_cache.layers[self.layer_idx].values
+            # past_key_values here is already the cross_attention_cache (QEffDynamicCache),
+            # split off at the decoder-layer level — same pattern as Whisper.
+            # __getitem__ returns (keys_tensor, values_tensor) with traceable tensor identity.
+            key_states_old = past_key_values[self.layer_idx][0]
+            value_states_old = past_key_values[self.layer_idx][1]
 
             key_states_new = self.k_proj(encoder_hidden_states).view(*kv_input_shape).transpose(1, 2)
             value_states_new = self.v_proj(encoder_hidden_states).view(*kv_input_shape).transpose(1, 2)
@@ -168,8 +170,8 @@ class QEffCohereAsrCrossAttention(CohereAsrCrossAttention):
             key_states = torch.where(input_features.shape[2] == torch.tensor(1), key_states_old, key_states_new)
             value_states = torch.where(input_features.shape[2] == torch.tensor(1), value_states_old, value_states_new)
 
-            cross_attention_cache.layers[self.layer_idx].keys = key_states
-            cross_attention_cache.layers[self.layer_idx].values = value_states
+            past_key_values.layers[self.layer_idx].keys = key_states
+            past_key_values.layers[self.layer_idx].values = value_states
         else:
             key_states = self.k_proj(encoder_hidden_states).view(*kv_input_shape).transpose(1, 2)
             value_states = self.v_proj(encoder_hidden_states).view(*kv_input_shape).transpose(1, 2)
@@ -221,11 +223,16 @@ class QEffCohereAsrDecoderLayer(CohereAsrDecoderLayer):
         if encoder_hidden_states is not None:
             residual = hidden_states
             hidden_states = self.post_attention_layernorm(hidden_states)
+            # Split the cross-attention sub-cache out of the combined encoder-decoder cache
+            # before passing to encoder_attn — mirrors Whisper's decoder-layer pattern so
+            # QEffCohereAsrCrossAttention receives a QEffDynamicCache whose __getitem__
+            # indexes directly to the named past_key_cross.{i} retained-state tensors.
+            cross_attn_past_key_value = past_key_values.cross_attention_cache if past_key_values is not None else None
             hidden_states, _ = self.encoder_attn(
                 hidden_states=hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 attention_mask=encoder_attention_mask,
-                past_key_values=past_key_values,
+                past_key_values=cross_attn_past_key_value,
                 input_features=input_features,
             )
             hidden_states = residual + hidden_states
@@ -381,7 +388,9 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
     def get_dummy_inputs(self, **kwargs):
         bs = 1
         seq_len = int(kwargs.get("prefill_seq_len", ONNX_EXPORT_EXAMPLE_SEQ_LEN))
-        encoder_seq_len = self.config.max_position_embeddings
+        # encoder_ctx_len is the actual encoder output sequence length (after subsampling).
+        # Must be taken from encoder_config, NOT from the decoder's max_position_embeddings.
+        encoder_ctx_len = kwargs.get("encoder_ctx_len") or self.config.encoder_config.max_position_embeddings
         encoder_feature_count = self.config.num_mel_bins
         num_key_value_heads = self.config.num_key_value_heads
         head_dim = self.config.hidden_size // self.config.num_attention_heads
@@ -395,7 +404,7 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
         }
 
         kv_cache_shape = (bs, num_key_value_heads, seq_len, head_dim)
-        kv_cross_cache_shape = (bs, num_key_value_heads, encoder_seq_len, head_dim)
+        kv_cross_cache_shape = (bs, num_key_value_heads, encoder_ctx_len, head_dim)
 
         for i in range(num_layers):
             for self_cross in ["self", "cross"]:
@@ -410,8 +419,10 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
 
     def get_specializations(self, batch_size: int, encoder_ctx_len, ctx_len, **compiler_options):
         if encoder_ctx_len is None:
-            encoder_ctx_len = self.config.max_position_embeddings
-        feature_len = encoder_ctx_len * 2
+            encoder_ctx_len = self.config.encoder_config.max_position_embeddings
+        # feature_len is the encoder INPUT length (before subsampling); encoder OUTPUT is encoder_ctx_len.
+        subsampling_factor = self.config.encoder_config.subsampling_factor
+        feature_len = encoder_ctx_len * subsampling_factor
 
         encoder_specializations = {
             "_graph_name": "Encoder",
