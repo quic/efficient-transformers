@@ -7,6 +7,7 @@
 
 import json
 import os
+from types import SimpleNamespace
 from typing import List, Optional
 
 import numpy as np
@@ -15,7 +16,7 @@ import onnxruntime
 import pytest
 import torch
 from datasets import load_dataset
-from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+from transformers import AutoConfig, AutoModelForSpeechSeq2Seq, AutoProcessor
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForSpeechSeq2Seq
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
@@ -45,10 +46,13 @@ def load_seq2seq_model(model_config):
         ignore_patterns=["*.onnx", "*.ot", "*.md", "*.tflite", "*.pdf", "*.h5", "*.msgpack"],
     )
     kwargs = {
-        "use_cache": True,
         "attn_implementation": "eager",
         "low_cpu_mem_usage": False,
+        "dtype": torch.float32,
     }
+    config = AutoConfig.from_pretrained(model_path)
+    if hasattr(config, "use_cache"):
+        kwargs["use_cache"] = True
     n_layer = model_config.get("n_layer", -1)
     if n_layer != -1:
         kwargs["num_hidden_layers"] = n_layer
@@ -59,6 +63,8 @@ def load_seq2seq_model(model_config):
         model_path,
         **kwargs,
     )
+    if model_hf.config.decoder_start_token_id is None:
+        model_hf.config.decoder_start_token_id = model_hf.generation_config.decoder_start_token_id
     params = sum(p.numel() for p in model_hf.parameters())
     model_hf.eval()
     return model_hf, params
@@ -85,6 +91,11 @@ def run_seq2seq_pytorch_hf(
 
     # prepare inputs
     input_features = processor(inputs, sampling_rate=sample_rate, return_tensors="pt").input_features
+    if hasattr(model.config, "encoder_config"):
+        # Composite (encoder_config + decoder_config) architectures such as CohereAsr expose their
+        # plain HF forward()/generate() in the encoder's native (batch, seq_len, num_mel_bins) layout,
+        # unlike Whisper-style configs whose processor output is already mel-bins-major.
+        input_features = input_features.transpose(1, 2)
     decoder_input_ids = torch.ones((batch_size, seq_len), dtype=torch.int64) * model.config.decoder_start_token_id
     decoder_position_ids = torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(batch_size, 1)
 
@@ -105,27 +116,53 @@ def run_seq2seq_pytorch_hf(
     next_token = logits.argmax(-1)
     generated_ids[:, 1] = next_token.squeeze(1)
 
-    model_inputs["encoder_outputs"] = outputs["encoder_last_hidden_state"]
-    model_inputs["past_key_values"] = outputs["past_key_values"]
+    model_inputs["encoder_outputs"] = SimpleNamespace(
+        last_hidden_state=outputs["encoder_last_hidden_state"],
+        attention_mask=None,
+        hidden_states=None,
+        attentions=None,
+    )
+    pkv = outputs.get("past_key_values")
+    if pkv is not None:
+        model_inputs["past_key_values"] = pkv
+
+    # Track full decoded sequence for models that return no KV cache (e.g. CohereAsr plain HF).
+    # When past_key_values is absent, we must pass the full growing sequence each step so the
+    # decoder has its own token history; Whisper-style models with KV cache only need next_token.
+    has_kv_cache = pkv is not None
+    accumulated_ids = torch.tensor([[model.config.decoder_start_token_id]], dtype=torch.int64)
 
     for num_tokens in range(generation_len):
         outputs = model(**model_inputs)
         logits = outputs["logits"]
-        next_token = logits.argmax(-1)
+        next_token = logits.argmax(-1)[:, -1:]
         generated_ids[:, num_tokens + 1] = next_token.squeeze(1)
 
         if next_token[0][0] == processor.tokenizer.eos_token_id:
             break
 
-        model_inputs["decoder_input_ids"] = next_token
-        model_inputs["decoder_position_ids"] += 1
-        model_inputs["past_key_values"] = outputs["past_key_values"]
+        pkv = outputs.get("past_key_values")
+        if pkv is not None:
+            has_kv_cache = True
+            model_inputs["past_key_values"] = pkv
+            model_inputs["decoder_input_ids"] = next_token
+            model_inputs["decoder_position_ids"] = model_inputs["decoder_position_ids"][:, -1:] + 1
+        else:
+            # No KV cache: accumulate tokens and pass the full growing sequence
+            accumulated_ids = torch.cat([accumulated_ids, next_token], dim=1)
+            model_inputs["decoder_input_ids"] = accumulated_ids
+            model_inputs["decoder_position_ids"] = torch.arange(accumulated_ids.shape[1], dtype=torch.int64).unsqueeze(0)
 
     return generated_ids[0]
 
 
 def run_seq2seq_pytorch_with_kv(
-    model, processor: AutoProcessor, inputs: np.ndarray, sample_rate: int, generation_len: int
+    model,
+    processor: AutoProcessor,
+    inputs: np.ndarray,
+    sample_rate: int,
+    generation_len: int,
+    cross_ctx_len: Optional[int] = None,
 ) -> List[str]:
     """
     Run pytorch inference on model
@@ -136,6 +173,12 @@ def run_seq2seq_pytorch_with_kv(
         :inputs (np.ndarray): inputs to run the execution.
         :sample_rate (int): sampling rate at which input audio is stored in inputs (needed for processor)
         :generation_len (int): length upto which to generate
+
+    ``Optional`` Args:
+        :cross_ctx_len (int): cross-attention KV cache context length. Defaults to
+            ``config.max_source_positions`` when the config exposes it (Whisper-style);
+            composite (encoder_config + decoder_config) architectures such as CohereAsr have
+            no such static field and must pass the actual encoder output length instead.
 
     Returns:
         torch.Tensor: A list of output features generated by the model for each prompt.
@@ -158,7 +201,9 @@ def run_seq2seq_pytorch_with_kv(
 
     # prepare dummy past kvs and cross kvs
     kv_cache_shape = get_padding_shape_from_config(config, batch_size, generation_len)
-    kv_cross_cache_shape = get_padding_shape_from_config(config, batch_size, config.max_source_positions)
+    if cross_ctx_len is None:
+        cross_ctx_len = config.max_source_positions
+    kv_cross_cache_shape = get_padding_shape_from_config(config, batch_size, cross_ctx_len)
 
     for i in range(config.num_hidden_layers):
         for self_cross in ["self", "cross"]:
@@ -197,7 +242,13 @@ def run_seq2seq_pytorch_with_kv(
 
 
 def run_seq2seq_ort(
-    onnx_path, config, processor: AutoProcessor, inputs: np.ndarray, sample_rate: int, generation_len: int
+    onnx_path,
+    config,
+    processor: AutoProcessor,
+    inputs: np.ndarray,
+    sample_rate: int,
+    generation_len: int,
+    cross_ctx_len: Optional[int] = None,
 ) -> List[str]:
     """
     Run onnxruntime inference on model
@@ -208,6 +259,12 @@ def run_seq2seq_ort(
         :inputs (np.ndarray): inputs to run the execution.
         :sample_rate (int): sampling rate at which input audio is stored in inputs (needed for processor)
         :generation_len (int): length upto which to generate
+
+    ``Optional`` Args:
+        :cross_ctx_len (int): cross-attention KV cache context length. Defaults to
+            ``config.max_source_positions`` when the config exposes it (Whisper-style);
+            composite (encoder_config + decoder_config) architectures such as CohereAsr have
+            no such static field and must pass the actual encoder output length instead.
 
     Returns:
         torch.Tensor: A list of output features generated by the model for each prompt.
@@ -246,7 +303,9 @@ def run_seq2seq_ort(
 
     # prepare dummy past kvs and cross kvs
     kv_cache_shape = get_padding_shape_from_config(config, batch_size, generation_len)
-    kv_cross_cache_shape = get_padding_shape_from_config(config, batch_size, config.max_source_positions)
+    if cross_ctx_len is None:
+        cross_ctx_len = config.max_source_positions
+    kv_cross_cache_shape = get_padding_shape_from_config(config, batch_size, cross_ctx_len)
 
     pkv_names = []
     for i in range(config.num_hidden_layers):
@@ -326,13 +385,34 @@ def check_seq2seq_pytorch_vs_kv_vs_ort_vs_ai100(
 
     qeff_model = QEFFAutoModelForSpeechSeq2Seq(model_hf, pretrained_model_name_or_path=model_name)
 
-    pytorch_kv_tokens = run_seq2seq_pytorch_with_kv(qeff_model, processor, data, sample_rate, ctx_len)
+    cross_ctx_len = None
+    if not hasattr(qeff_model.model.config, "max_source_positions"):
+        # Composite (encoder_config + decoder_config) architectures such as CohereAsr expose no
+        # static cross-attention context length; derive it from an actual encoder forward pass
+        # (a decoder-side max_position_embeddings-like field produces the wrong length here).
+        encoder_input_features = processor(
+            data, sampling_rate=sample_rate, return_tensors="pt"
+        ).input_features.transpose(1, 2)
+        with torch.no_grad():
+            cross_ctx_len = qeff_model.model.model.encoder(encoder_input_features).last_hidden_state.shape[1]
+
+    pytorch_kv_tokens = run_seq2seq_pytorch_with_kv(
+        qeff_model, processor, data, sample_rate, ctx_len, cross_ctx_len=cross_ctx_len
+    )
     assert (pytorch_hf_tokens == pytorch_kv_tokens).all(), (
         "Tokens don't match for HF PyTorch model output and KV PyTorch model output"
     )
 
     qeff_model.export()
-    ort_tokens = run_seq2seq_ort(qeff_model.onnx_path, qeff_model.model.config, processor, data, sample_rate, ctx_len)
+    ort_tokens = run_seq2seq_ort(
+        qeff_model.onnx_path,
+        qeff_model.model.config,
+        processor,
+        data,
+        sample_rate,
+        ctx_len,
+        cross_ctx_len=cross_ctx_len,
+    )
     assert (pytorch_kv_tokens == ort_tokens).all(), "Tokens don't match for pytorch output and ort output"
 
     qeff_model.compile(
