@@ -1,7 +1,9 @@
+# -----------------------------------------------------------------------------
 #
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
+# ----------------------------------------------------------------------------
 
 import os
 from pathlib import Path
@@ -16,6 +18,7 @@ from QEfficient.exporter.weight_free.spec import ExternalDataFile, WeightSpecLoc
 
 
 def _load_checkpoint_tensor(checkpoint_file: str, key: str) -> np.ndarray:
+    """Load one tensor from a safetensors checkpoint as a NumPy array."""
     with safe_open(checkpoint_file, framework="pt") as handle:
         tensor = handle.get_tensor(key).detach().cpu()
     if tensor.dtype == torch.bfloat16:
@@ -24,6 +27,7 @@ def _load_checkpoint_tensor(checkpoint_file: str, key: str) -> np.ndarray:
 
 
 def _default_weights_roots(weight_spec_path: Path, spec) -> List[Path]:
+    """Return candidate roots for resolving relative checkpoint paths."""
     roots = []
     ext_root = os.environ.get("AIC_EXTERNAL_DATA_ROOT")
     if ext_root:
@@ -55,6 +59,7 @@ def _resolve_location_file(
     files: Sequence[ExternalDataFile],
     candidate_roots: Sequence[Path],
 ) -> Path:
+    """Resolve a weight-spec location to an absolute or best-effort file path."""
     location_path = Path(files[location.file].path) if isinstance(location.file, int) else Path(location.file)
     if location_path.is_absolute():
         return location_path
@@ -72,6 +77,22 @@ def load_weight_free_ort_inputs(
     runtime_inputs: Dict[str, np.ndarray],
     weights_root: Optional[Path] = None,
 ) -> Dict[str, np.ndarray]:
+    """Load external checkpoint weights and merge them with ONNX Runtime inputs.
+
+    Parameters
+    ----------
+    weight_spec_path : Path
+        Path to ``weight_spec.json`` emitted during weight-free export.
+    runtime_inputs : Dict[str, np.ndarray]
+        Dynamic inputs already prepared for ONNX Runtime inference.
+    weights_root : Optional[Path], optional
+        Explicit root directory used to resolve relative checkpoint file paths.
+
+    Returns
+    -------
+    Dict[str, np.ndarray]
+        ONNX Runtime input mapping containing dynamic inputs and external weights.
+    """
     weight_spec_path = Path(weight_spec_path)
     spec = load_weight_spec(weight_spec_path)
     candidate_roots = []

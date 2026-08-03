@@ -1,7 +1,9 @@
+# -----------------------------------------------------------------------------
 #
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
+# ----------------------------------------------------------------------------
 
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -25,6 +27,7 @@ from QEfficient.transformers.embeddings.embedding_utils import PooledModel
 
 
 def _collect_tied_weights(model: nn.Module) -> List[TiedWeightAlias]:
+    """Return aliases for tied input/output embedding weights."""
     if not getattr(model.config, "tie_word_embeddings", False):
         return []
 
@@ -90,6 +93,24 @@ def find_checkpoint_key(
 
 
 def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name: str, qeff_model) -> WeightSpec:
+    """Promote ONNX initializers to graph inputs and create the weight spec.
+
+    Parameters
+    ----------
+    onnx_program
+        Dynamo ONNX export program whose graph initializers should be promoted.
+    model_ref : str
+        Checkpoint directory or model reference used to resolve external weights.
+    model_name : str
+        Name stored in the emitted weight spec.
+    qeff_model
+        QEfficient model wrapper whose parameters and buffers define promotable weights.
+
+    Returns
+    -------
+    WeightSpec
+        Specification mapping promoted ONNX inputs to checkpoint tensor locations.
+    """
     model_ir = onnx_program.model
     model_names = {name for name, _ in qeff_model.model.named_parameters()}
     model_names.update({name for name, _ in qeff_model.model.named_buffers()})

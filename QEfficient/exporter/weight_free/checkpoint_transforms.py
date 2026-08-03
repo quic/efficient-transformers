@@ -1,7 +1,9 @@
+# -----------------------------------------------------------------------------
 #
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
+# ----------------------------------------------------------------------------
 
 """Checkpoint preparation transforms for weight-free ONNX export.
 
@@ -118,6 +120,7 @@ _SENTINEL = ".checkpoint_prepared"
 
 
 def _safetensors_dtype_to_torch(dtype: str) -> Optional[torch.dtype]:
+    """Map a safetensors dtype string to the matching torch dtype."""
     return {
         "BF16": torch.bfloat16,
         "F16": torch.float16,
@@ -127,6 +130,7 @@ def _safetensors_dtype_to_torch(dtype: str) -> Optional[torch.dtype]:
 
 
 def _requires_dtype_conversion(src: Path, weight_map: Dict[str, str], target_dtype: torch.dtype) -> bool:
+    """Return True when any floating-point checkpoint tensor differs from ``target_dtype``."""
     for shard_name in sorted(set(weight_map.values())):
         with safe_open(str(src / shard_name), framework="pt") as handle:
             for key in handle.keys():
@@ -184,12 +188,14 @@ def _read_weight_map(src: Path) -> Dict[str, str]:
 
 
 def _atomic_save(tensors: Dict[str, torch.Tensor], dst: Path) -> None:
+    """Write safetensors through a temporary file before replacing ``dst``."""
     tmp = dst.with_suffix(dst.suffix + ".tmp")
     save_file({k: v.contiguous() for k, v in tensors.items()}, str(tmp))
     tmp.replace(dst)
 
 
 def _write_index(out: Path, weight_map: Dict[str, str]) -> None:
+    """Write ``model.safetensors.index.json`` for a prepared checkpoint."""
     files = set(weight_map.values())
     total_size = sum((out / f).stat().st_size for f in files if (out / f).exists())
     index = {
@@ -200,6 +206,7 @@ def _write_index(out: Path, weight_map: Dict[str, str]) -> None:
 
 
 def _copy_aux_files(src: Path, out: Path) -> None:
+    """Copy tokenizer and config sidecar files required by ``from_pretrained``."""
     for name in _AUX_FILES:
         src_file = src / name
         if src_file.exists() and not (out / name).exists():
@@ -219,6 +226,7 @@ class BaseCheckpointTransform:
     """
 
     def __init__(self):
+        """Prevent direct instantiation of transform marker classes."""
         raise TypeError("Checkpoint transform classes are not to be instantiated.")
 
     @classmethod
@@ -261,6 +269,7 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
         target_dtype: torch.dtype = torch.float32,
         **kwargs,
     ) -> bool:
+        """Return True when dtype conversion is required for this checkpoint."""
         return src is None or _requires_dtype_conversion(Path(src), weight_map, target_dtype)
 
     @classmethod
@@ -272,6 +281,7 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
         max_workers: Optional[int] = None,
         **kwargs,
     ) -> bool:
+        """Convert checkpoint shards to ``target_dtype`` in a prepared output directory."""
         sentinel = out / _SENTINEL
         if sentinel.exists():
             logger.info("DtypeConversionCheckpointTransform: prepared checkpoint exists, skipping.")
@@ -324,6 +334,7 @@ class _LayerStacker:
     """Accumulates per-expert tensors for one MoE layer and produces batched output."""
 
     def __init__(self, prefix: str, num_experts: int):
+        """Create an accumulator for all experts in one MoE layer."""
         self.prefix = prefix
         self.num_experts = num_experts
         self._gate: Optional[torch.Tensor] = None
@@ -331,6 +342,7 @@ class _LayerStacker:
         self._down: Optional[torch.Tensor] = None
 
     def add(self, expert_idx: int, kind: str, tensor: torch.Tensor) -> None:
+        """Add one expert projection tensor to the layer accumulator."""
         # Accept qwen3-moe names (gate_proj/up_proj/down_proj),
         # grok-1 names (linear/linear_v/linear_1),
         # and Mixtral names (w1=gate, w3=up, w2=down) — map to the same accumulators.
@@ -351,6 +363,7 @@ class _LayerStacker:
             self._down[expert_idx] = tensor
 
     def stack(self, target_dtype: torch.dtype) -> Dict[str, torch.Tensor]:
+        """Return stacked expert tensors in the derived QEff checkpoint layout."""
         # Output in the exact layout that model __qeff_init__ creates so
         # promote_initializers_and_build_spec finds an exact checkpoint key match.
         #   _gate [E, I, H] → transpose(1,2) → gate_proj  [E, H, I]
@@ -406,6 +419,7 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
 
     @classmethod
     def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
+        """Return True when the checkpoint uses per-expert MoE tensor keys."""
         return any(cls.EXPERT_RE.match(k) for k in weight_map)
 
     @classmethod
@@ -419,6 +433,7 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
         max_workers_base: Optional[int] = None,
         **kwargs,
     ) -> bool:
+        """Stack per-expert MoE tensors and convert remaining tensors to ``target_dtype``."""
         sentinel = out / _SENTINEL
         if sentinel.exists():
             logger.info("MoEExpertStackingCheckpointTransform: prepared checkpoint exists, skipping.")
@@ -612,6 +627,7 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
 
     @classmethod
     def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
+        """Return True when the checkpoint contains GPT-OSS MXFP4 expert blocks."""
         return any(cls._BLOCKS_RE.match(k) for k in weight_map)
 
     @classmethod
@@ -625,6 +641,7 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
         max_workers_base: Optional[int] = None,
         **kwargs,
     ) -> bool:
+        """Dequantize GPT-OSS MXFP4 experts and split fused expert projections."""
         sentinel = out / _SENTINEL
         if sentinel.exists():
             logger.info("GptOssMxfp4ExpertDequantSplitCheckpointTransform: prepared checkpoint exists, skipping.")
@@ -767,9 +784,7 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
                     tensors[key] = t.to(target_dtype) if t.is_floating_point() else t
             _atomic_save(tensors, out / new_base_name_for[shard_name])
 
-        n_base = (
-            max_workers_base if max_workers_base is not None else max(1, min(len(base_shard_list), _cpu_count()))
-        )
+        n_base = max_workers_base if max_workers_base is not None else max(1, min(len(base_shard_list), _cpu_count()))
         logger.info(f"  Converting {len(base_shard_list)} base shards | workers={n_base}...")
         if base_shard_list:
             with ThreadPoolExecutor(max_workers=n_base) as ex:
@@ -818,6 +833,7 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
 
     @classmethod
     def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
+        """Return True when already-stacked fused MoE expert tensors are present."""
         return any(cls._FUSED_GATE_UP_RE.match(k) for k in weight_map)
 
     @classmethod
@@ -828,6 +844,7 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
         target_dtype: torch.dtype = torch.float32,
         **kwargs,
     ) -> bool:
+        """Split fused MoE expert tensors and write a prepared checkpoint."""
         sentinel = out / _SENTINEL
         if sentinel.exists():
             logger.info("MoEFusedExpertSplitCheckpointTransform: prepared checkpoint exists, skipping.")
@@ -914,6 +931,7 @@ class CheckpointTransformPipeline:
     """
 
     def __init__(self, transforms: List[Type[BaseCheckpointTransform]]):
+        """Create a priority-ordered checkpoint transform pipeline."""
         self.transforms = transforms
 
     def apply(
@@ -923,6 +941,7 @@ class CheckpointTransformPipeline:
         target_dtype: torch.dtype = torch.float32,
         **kwargs,
     ) -> Path:
+        """Apply the first matching transform and return the usable checkpoint directory."""
         src, out = Path(src), Path(out)
         if (out / _SENTINEL).exists():
             return out

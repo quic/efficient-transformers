@@ -1,7 +1,9 @@
+# -----------------------------------------------------------------------------
 #
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause
 #
+# ----------------------------------------------------------------------------
 
 import copy
 import json
@@ -35,6 +37,7 @@ _checkpoint_prep_ran: bool = False
 
 
 def _to_meta(value: Any) -> Any:
+    """Recursively move tensor-like example inputs to equivalent meta tensors."""
     if isinstance(value, torch.Tensor):
         return torch.empty_like(value, device="meta")
     if isinstance(value, tuple):
@@ -47,6 +50,7 @@ def _to_meta(value: Any) -> Any:
 
 
 def _build_meta_qeff_model(qeff_model):
+    """Build a QEfficient wrapper backed by an equivalent meta-device HF model."""
     model_ref = qeff_model.hash_params.get("pretrained_model_name_or_path")
     if not model_ref:
         raise ValueError(
@@ -165,6 +169,32 @@ def export_weight_free_onnx(
     export_kwargs: Dict[str, Any],
     onnx_transform_kwargs: Dict[str, Any],
 ):
+    """Export a QEfficient model to ONNX with checkpoint weights externalized.
+
+    Parameters
+    ----------
+    qeff_model
+        Loaded QEfficient model wrapper used as the source of config and export options.
+    tmp_onnx_path : Path
+        Temporary ONNX path where the dynamo export is saved.
+    example_inputs : Dict[str, torch.Tensor]
+        Example inputs used to trace the model.
+    input_names : List[str]
+        ONNX graph input names.
+    output_names : List[str]
+        ONNX graph output names.
+    dynamic_shapes : Dict[str, Any]
+        Dynamo export dynamic shape specification.
+    export_kwargs : Dict[str, Any]
+        Additional keyword arguments forwarded to ``torch.onnx.export``.
+    onnx_transform_kwargs : Dict[str, Any]
+        ONNX transform options carried through the export flow.
+
+    Returns
+    -------
+    tuple
+        Meta QEfficient model, updated ONNX transform kwargs, and cleanup callback.
+    """
     global _checkpoint_prep_ran, _last_prep_duration_seconds, _last_prep_peak_rss_mb
 
     meta_qeff_model = _build_meta_qeff_model(qeff_model)
@@ -235,6 +265,7 @@ def export_weight_free_onnx(
         save_weight_spec(resolve_weight_spec_path(tmp_onnx_path), spec)
 
     def cleanup():
+        """Release ONNX subfunction state created for this export, if any."""
         if cleanup_required:
             _cleanup_onnx_subfunctions(meta_qeff_model)
 
