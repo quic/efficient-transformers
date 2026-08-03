@@ -104,11 +104,14 @@ def nightly_pytest_id(model_name):
 
 
 NIGHTLY_SKIPPED_MODELS = {
-    # Vision Models
+    # Vision Models (skipped due to large size or long runtime)
     "meta-llama/Llama-4-Scout-17B-16E-Instruct",
     "meta-llama/Llama-3.2-90B-Vision-Instruct",
     "allenai/Molmo-7B-D-0924",
+    "Qwen/Qwen3-VL-235B-A22B-Instruct",
+    "Qwen/Qwen3.5-122B-A10B",
     # Causal Models
+    "zai-org/GLM-4.5",
     "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
     "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
     "mistralai/Mixtral-8x7B-v0.1",

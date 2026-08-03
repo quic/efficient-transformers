@@ -177,7 +177,7 @@ def test_generate_image_text_to_text_model(
     artifacts_update = {
         "batch_size": exec_info.batch_size,
         "generated_text": generated_text,
-        "generated_ids": cloud_ai_100_tokens,
+        "generated_ids": cloud_ai_100_tokens[0][:20],  # Converted to list by conftest serializer
         "decoder_onnx_and_qpc_dir": decoder_onnx_and_qpc_dir,
         "decoder_onnx_and_qpc_dir size": decoder_onnx_and_qpc_dir_size,
         "perf_metrics": {
