@@ -7,7 +7,7 @@
 
 from collections import defaultdict
 from pathlib import Path
-from typing import List, Optional, Type, Union
+from typing import List, Optional, Tuple, Type, Union
 
 import onnx
 import torch
@@ -27,6 +27,7 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4VisionAttention,
     apply_rotary_pos_emb,
     eager_attention_forward,
+    repeat_kv,
 )
 
 from QEfficient.customop.ctx_scatter_gather import (
@@ -96,7 +97,7 @@ def _build_additive_attention_mask(
         target_length=target_length,
         sliding_window=sliding_window,
     )
-    return causal_mask.to(dtype=dtype) * _attention_mask_min(dtype, causal_mask.device)
+    return causal_mask
 
 
 def _build_bidirectional_vision_attention_mask(
@@ -117,7 +118,7 @@ def _build_bidirectional_vision_attention_mask(
         sliding_window=sliding_window,
     )
     if mm_token_type_ids is None:
-        return base_mask.to(dtype=dtype) * _attention_mask_min(dtype, base_mask.device)
+        return base_mask
 
     is_vision = (mm_token_type_ids == 1) | (mm_token_type_ids == 2)
     is_prev_vision = torch.roll(is_vision, shifts=1, dims=-1)
@@ -134,7 +135,7 @@ def _build_bidirectional_vision_attention_mask(
 
     same_group = (vision_group_ids.unsqueeze(-1) == kv_group_ids.unsqueeze(1)) & (vision_group_ids.unsqueeze(-1) >= 0)
     attention_mask = base_mask & ~same_group.unsqueeze(1)
-    return attention_mask.to(dtype=dtype) * _attention_mask_min(dtype, attention_mask.device)
+    return attention_mask
 
 
 def apply_multidimensional_rope(
@@ -193,6 +194,40 @@ def apply_multidimensional_rope(
         unsqueeze_dim=unsqueeze_dim,
     )
     return y_grouped.reshape(*x.shape[:-1], total_rotated_channels)
+
+
+def eager_attention_forward_text(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    dropout: float = 0.0,
+    scaling: Optional[float] = None,
+    softcap: Optional[float] = None,
+    **kwargs,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    key_states = repeat_kv(key, module.num_key_value_groups)
+    value_states = repeat_kv(value, module.num_key_value_groups)
+
+    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+    if softcap is not None:
+        attn_weights = attn_weights / softcap
+        attn_weights = torch.tanh(attn_weights)
+        attn_weights = attn_weights * softcap
+
+    if attention_mask is not None:
+        attn_weights = torch.where(
+            attention_mask,
+            torch.tensor(constants.MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype),
+            attn_weights,
+        )
+
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+    attn_output = torch.matmul(attn_weights, value_states)
+    attn_output = attn_output.transpose(1, 2).contiguous()
+
+    return attn_output, attn_weights
 
 
 class QEffGemma4TextRouter(Gemma4TextRouter):
@@ -616,7 +651,7 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
                 sliding_window=self.sliding_window,
             )
 
-        attn_output, attn_weights = eager_attention_forward(
+        attn_output, attn_weights = eager_attention_forward_text(
             self,
             query_states,
             key_states,
