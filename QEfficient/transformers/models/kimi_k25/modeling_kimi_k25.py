@@ -340,9 +340,15 @@ class QEffMoonViT3dEncoder(nn.Module):
 
         new_blocks = []
         for old_block in old_blocks:
-            new_block = MoonViTEncoderLayer(**self.block_cfg, use_deterministic_attn=False)
-            new_block.load_state_dict(old_block.state_dict())
-            new_blocks.append(new_block.to(device=old_block.wqkv.weight.device, dtype=old_block.wqkv.weight.dtype))
+            old_weight = old_block.wqkv.weight
+            if old_weight.is_meta:
+                with torch.device("meta"):
+                    new_block = MoonViTEncoderLayer(**self.block_cfg, use_deterministic_attn=False)
+                new_block.load_state_dict(old_block.state_dict(), assign=True)
+            else:
+                new_block = MoonViTEncoderLayer(**self.block_cfg, use_deterministic_attn=False)
+                new_block.load_state_dict(old_block.state_dict())
+            new_blocks.append(new_block.to(device=old_weight.device, dtype=old_weight.dtype))
         self.blocks = nn.ModuleList(new_blocks)
 
 
@@ -602,9 +608,7 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
 
         target_device = inputs_embeds.device
         image_features = image_features.to(target_device)
-        num_image_tokens = torch.full(
-            (1, 1), image_features.shape[0], device=input_ids.device, dtype=input_ids.dtype
-        )
+        num_image_tokens = torch.full((1, 1), image_features.shape[0], device=input_ids.device, dtype=input_ids.dtype)
 
         image_token_mask = input_ids == image_token_index
         non_image_mask = ~image_token_mask
@@ -631,9 +635,7 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
         )
 
         image_features_for_batch = image_features.unsqueeze(0).expand(input_ids.shape[0], -1, -1)
-        media_embedding = torch.cat(
-            [image_features_for_batch, final_embedding[:, image_features.shape[0] :, :]], dim=1
-        )
+        media_embedding = torch.cat([image_features_for_batch, final_embedding[:, image_features.shape[0] :, :]], dim=1)
         media_attention_mask = torch.cat(
             [
                 torch.ones(

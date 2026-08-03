@@ -12,6 +12,7 @@ import json
 import os
 import random
 import re
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -58,7 +59,7 @@ def patch_kimi_tie_weights_compat(kimi_cls):
         return
 
     def _tie_weights_compat(self, missing_keys=None, recompute_mapping=True):
-        lm_tie_weights = getattr(self.language_model, "tie_weights")
+        lm_tie_weights = self.language_model.tie_weights
         try:
             return lm_tie_weights(missing_keys=missing_keys, recompute_mapping=recompute_mapping)
         except TypeError:
@@ -296,6 +297,7 @@ def load_layer_subset_model(
     loaded_expert_ids,
     num_experts_per_tok: int,
     dtype,
+    subset_model_path: Path | None = None,
 ):
     checkpoint_index = json.loads((model_path / "model.safetensors.index.json").read_text())
     weight_map = checkpoint_index["weight_map"]
@@ -307,8 +309,17 @@ def load_layer_subset_model(
         num_experts_per_tok=num_experts_per_tok,
     )
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        temp_model_path = Path(tmpdir)
+    tempdir_context = None
+    if subset_model_path is None:
+        tempdir_context = tempfile.TemporaryDirectory()
+        temp_model_path = Path(tempdir_context.__enter__())
+    else:
+        temp_model_path = Path(subset_model_path).expanduser().resolve()
+        if temp_model_path.exists():
+            shutil.rmtree(temp_model_path)
+        temp_model_path.mkdir(parents=True, exist_ok=True)
+
+    try:
         filtered_weight_map, subset_shards = materialize_subset_checkpoint(
             model_path=model_path,
             temp_model_path=temp_model_path,
@@ -343,6 +354,9 @@ def load_layer_subset_model(
             model, loading_info = kimi_cls.from_pretrained(str(temp_model_path), **model_kwargs)
         finally:
             kimi_cls.base_model_prefix = original_base_model_prefix
+    finally:
+        if tempdir_context is not None:
+            tempdir_context.__exit__(None, None, None)
 
     unexpected_keys = loading_info["unexpected_keys"]
     missing_keys = loading_info["missing_keys"]
@@ -372,6 +386,7 @@ def load_kimi_k25_layer_subset_model(
     num_experts_per_tok: int = NUM_EXPERTS_PER_TOKEN,
     dtype=torch.float32,
     seed: int = 1234,
+    subset_model_path: Path | None = None,
 ):
     set_deterministic(seed)
     resolved_model_path = Path(model_path) if model_path is not None else resolve_model_path()
@@ -387,6 +402,7 @@ def load_kimi_k25_layer_subset_model(
         loaded_expert_ids=loaded_expert_ids,
         num_experts_per_tok=num_experts_per_tok,
         dtype=dtype,
+        subset_model_path=subset_model_path,
     )
     model.vision_tower.patch_embed.pos_emb.interpolation_mode = "bilinear"
     return model.eval().to("cpu"), tokenizer, processor

@@ -184,6 +184,7 @@ class DequantizeLinearFunc(torch.autograd.Function):
             block_size_i=block_size,
         )
 
+
 def dequantize_linear(
     weight_unpacked: torch.Tensor, scale: torch.Tensor, zeros: torch.Tensor, block_size: int
 ) -> torch.Tensor:
@@ -197,4 +198,3 @@ def dequantize_linear(
             version=18,
         )
     return DequantizeLinearFunc.apply(weight_unpacked, scale, zeros, block_size)
-

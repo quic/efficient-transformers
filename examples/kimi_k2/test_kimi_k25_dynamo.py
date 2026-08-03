@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import copy
+import importlib.util
 import os
 import re
 import subprocess
@@ -13,7 +14,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import torch
-
 from export_kimi_k25_dynamo import (
     DEFAULT_COMPILE_DIR,
     DEFAULT_EXPORT_DIR,
@@ -24,19 +24,25 @@ from export_kimi_k25_dynamo import (
     get_component_export_args,
     load_generation_image,
     precompute_vision_rope_cache,
-    resolve_local_model_path,
     validate_dynamo_torch_version,
 )
+
 from QEfficient import QEFFAutoModelForImageTextToText
-from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.utils.load_kimi_utils import (
-    LOADED_EXPERT_IDS,
-    NUM_EXPERTS_PER_TOKEN,
-    NUM_TEXT_LAYERS,
-    NUM_VISION_LAYERS,
-    load_kimi_k25_layer_subset_model,
-    set_deterministic,
-)
+
+LOAD_KIMI_UTILS_PATH = Path(__file__).resolve().parents[2] / "tests" / "utils" / "load_kimi_utils.py"
+_load_kimi_spec = importlib.util.spec_from_file_location("load_kimi_utils", LOAD_KIMI_UTILS_PATH)
+if _load_kimi_spec is None or _load_kimi_spec.loader is None:
+    raise ImportError(f"Unable to load Kimi helpers from {LOAD_KIMI_UTILS_PATH}")
+load_kimi_utils = importlib.util.module_from_spec(_load_kimi_spec)
+_load_kimi_spec.loader.exec_module(load_kimi_utils)
+
+LOADED_EXPERT_IDS = load_kimi_utils.LOADED_EXPERT_IDS
+NUM_EXPERTS_PER_TOKEN = load_kimi_utils.NUM_EXPERTS_PER_TOKEN
+NUM_TEXT_LAYERS = load_kimi_utils.NUM_TEXT_LAYERS
+NUM_VISION_LAYERS = load_kimi_utils.NUM_VISION_LAYERS
+parse_expert_ids = load_kimi_utils.parse_expert_ids
+set_deterministic = load_kimi_utils.set_deterministic
+load_kimi_k25_layer_subset_model = load_kimi_utils.load_kimi_k25_layer_subset_model
 
 TEXT_PROMPT = "Describe this image."
 NEW_GENERATION_TOKENS = 10
@@ -46,15 +52,11 @@ PREFILL_SEQ_LEN = 2
 
 def _has_qaic_runtime_access() -> bool:
     try:
-        _ = QAICInferenceSession
-    except Exception:
-        return False
-    try:
         import qaicrt
 
         _ctx = qaicrt.Context()
         return True
-    except Exception:
+    except (ImportError, OSError, RuntimeError, AttributeError):
         return False
 
 
@@ -101,7 +103,7 @@ def _find_free_qaic_device_id() -> int | None:
             capture_output=True,
             timeout=30,
         )
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return None
 
     current_qid = None
@@ -277,7 +279,7 @@ def _build_generation_inputs(processor, image, args, dtype):
 
 
 def _load_hf_model(args):
-    model_path = resolve_local_model_path(args.model_path)
+    model_path = args.model_path
     model, tokenizer, processor = load_kimi_k25_layer_subset_model(
         model_path=model_path,
         num_vision_layers=args.num_vision_layers,
