@@ -5,12 +5,10 @@
 #
 # -----------------------------------------------------------------------------
 
-import os
 from collections import defaultdict
 from pathlib import Path
 from typing import List, Optional, Type, Union
 
-import numpy as np
 import onnx
 import torch
 import torch.nn as nn
@@ -31,7 +29,6 @@ from transformers.models.gemma4.modeling_gemma4 import (
     eager_attention_forward,
 )
 
-from QEfficient.base.onnx_transforms import FP16ClipTransform
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -279,32 +276,41 @@ class QEffGemma4CustomRMSNormAIC(nn.Module):
 
 
 class QEffGemma4TextExperts(Gemma4TextExperts):
+    def __qeff_init__(self):
+        # Derive gather-friendly split projections from the checkpoint's fused
+        # gate_up_proj/down_proj, without changing on-disk checkpoint format.
+        gate_up_proj = self.gate_up_proj.detach()
+        down_proj = self.down_proj.detach()
+        self.gate_proj = nn.Parameter(gate_up_proj[:, : self.intermediate_dim, :].transpose(1, 2), requires_grad=False)
+        self.up_proj = nn.Parameter(gate_up_proj[:, self.intermediate_dim :, :].transpose(1, 2), requires_grad=False)
+        self.down_proj_t = nn.Parameter(down_proj.transpose(1, 2), requires_grad=False)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
         top_k_index: torch.Tensor,
         top_k_weights: torch.Tensor,
     ) -> torch.Tensor:
-        gate_up_proj_t = self.gate_up_proj.transpose(1, 2)
-        gate_up_out = torch.matmul(hidden_states, gate_up_proj_t).permute(1, 0, 2)
-        gate, up = gate_up_out.chunk(2, dim=-1)
+        T, H = hidden_states.shape
+        K = top_k_index.shape[1]
+        idx = top_k_index.reshape(-1)
+
+        gate_proj = self.gate_proj[idx]  # [T*K, H, I] -- gather only the selected experts
+        up_proj = self.up_proj[idx]  # [T*K, H, I]
+        down_proj_t = self.down_proj_t[idx]  # [T*K, I, H]
+
+        xk = hidden_states.unsqueeze(1).expand(-1, K, -1).contiguous().view(-1, 1, H)  # [T*K, 1, H]
+        gate = torch.bmm(xk, gate_proj)  # [T*K, 1, I]
+        up = torch.bmm(xk, up_proj)  # [T*K, 1, I]
         activated = self.act_fn(gate) * up
 
-        down_proj_t = self.down_proj.transpose(1, 2)
-        experts_out = torch.matmul(activated.permute(1, 0, 2), down_proj_t).permute(1, 0, 2)
-        expert_weights = torch.zeros(
-            hidden_states.shape[0],
-            self.num_experts,
-            dtype=top_k_weights.dtype,
-            device=top_k_weights.device,
-        )
-        expert_weights.scatter_add_(1, top_k_index, top_k_weights)
-        weighted_experts = experts_out.transpose(1, 2)  # [tokens, hidden, num_experts]
-        combine_weights = expert_weights.to(experts_out.dtype).unsqueeze(-1)  # [tokens, num_experts, 1]
-        return torch.bmm(weighted_experts, combine_weights).squeeze(-1)
+        down = torch.bmm(activated, down_proj_t)  # [T*K, 1, H]
+        down = down.view(T, K, H) * top_k_weights.unsqueeze(-1)
+        down = torch.einsum("bnh->bh", down)
+        return down
 
 
-class QEffPrefillChunckedGemma4TextExperts(Gemma4TextExperts):
+class QEffPrefillChunkedGemma4TextExperts(Gemma4TextExperts):
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -498,10 +504,6 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
-
-
-EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
-EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "296"))
 
 
 class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
@@ -1319,13 +1321,23 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         return past_key_values
 
     def get_dummy_inputs(
-        self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, continuous_batching: bool = False
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        **kwargs,
     ):
-        bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        seq_len = kwargs.get("prefill_seq_len", None)
+        bs = kwargs.get("batch_size", None)
+        if seq_len is None:
+            seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        seq_len = int(seq_len)
+        if bs is None:
+            bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        bs = int(bs)
         fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
         max_patches = self._get_vision_max_patches()
         mm_tokens_per_image = self._get_mm_tokens_per_image()
-        seq_len = max(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, mm_tokens_per_image + 32)
         patch_dim = getattr(self.config.vision_config, "patch_size", 16) ** 2 * 3
 
         image_position_ids = torch.full((bs, max_patches, 2), -1, dtype=torch.int64)
@@ -1367,42 +1379,3 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         if kv_offload:
             return {"vision": vision_inputs, "lang": lang_inputs}
         return {**vision_inputs, **lang_inputs}
-
-    def remove_fp16clip_transform_if_disabled(self, effective_fp16clip: bool):
-        """
-        Remove FP16ClipTransform from ONNX transforms when FP16 clipping is disabled.
-        """
-        if not effective_fp16clip:
-            # ---- language model
-            if hasattr(self, "lang_model") and hasattr(self.lang_model, "_onnx_transforms"):
-                self.lang_model._onnx_transforms = [
-                    t for t in self.lang_model._onnx_transforms if t is not FP16ClipTransform
-                ]
-
-            # ---- vision model (optional)
-            if getattr(self, "vision_model", None) is not None:
-                if hasattr(self.vision_model, "_onnx_transforms"):
-                    self.vision_model._onnx_transforms = [
-                        t for t in self.vision_model._onnx_transforms if t is not FP16ClipTransform
-                    ]
-
-    def normalize_generated_ids(self, generated_ids):
-        array = np.asarray(generated_ids)
-        if array.dtype == object:
-            array = np.asarray([np.asarray(row).reshape(-1) for row in generated_ids], dtype=np.int64)
-        array = np.asarray(array)
-        if array.ndim == 1:
-            array = array.reshape(1, -1)
-        elif array.ndim > 2:
-            array = array.reshape(array.shape[0], -1)
-        return array.astype(np.int64, copy=False)
-
-    def effective_lens(
-        self, prefill_seq_len: int, ctx_len: int, prompt_len: int, generation_len: int, skip_vision: bool
-    ):
-        effective_ctx_len = max(ctx_len, prompt_len + generation_len)
-        if skip_vision:
-            effective_prefill_seq_len = prefill_seq_len
-        else:
-            effective_prefill_seq_len = max(prefill_seq_len, prompt_len)
-        return effective_prefill_seq_len, effective_ctx_len
