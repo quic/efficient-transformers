@@ -422,8 +422,13 @@ class QEFFBaseModel(ABC):
             if onnx_program is None:
                 raise RuntimeError("torch.onnx.export returned None for dynamo export")
             PruneFakeInitializersTransform.apply(onnx_program)
-            onnx_program.save(str(onnx_path))
+
+            from QEfficient.utils.onnx_save_utils import save_dynamo_onnx
+
+            save_dynamo_onnx(onnx_program, onnx_path)
         finally:
+            del onnx_program
+            gc.collect()
             if prev_invoke_fallback is None:
                 os.environ.pop("TORCH_INVOKE_ALLOW_CREATE_FALLBACK", None)
             else:
@@ -1045,6 +1050,7 @@ class QEFFBaseModel(ABC):
             onnx_path = Path(onnx_path)
             return onnx_path
         onnx_path = Path(onnx_path)
+        self.onnx_path = onnx_path
 
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
