@@ -224,11 +224,7 @@ def load_vlm_model(config):
         )
     except ValueError:
         model_hf = AutoModelForCausalLM.from_pretrained(
-            config._name_or_path,
-            low_cpu_mem_usage=False,
-            trust_remote_code=True,
-            config=config,
-            dtype=torch.float32
+            config._name_or_path, low_cpu_mem_usage=False, trust_remote_code=True, config=config, dtype=torch.float32
         )
     model_hf.eval()
     return model_hf
