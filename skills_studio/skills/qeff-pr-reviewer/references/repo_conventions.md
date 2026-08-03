@@ -24,6 +24,25 @@ The contract a PR is being judged against. When you're unsure whether something 
 
 When new code lands in a directory whose existing files don't match its purpose (e.g. ONNX surgery in `utils/`, generic cache logic referencing a specific model), raise a placement concern; cite the dir's stated purpose from this table.
 
+## File and symbol placement
+
+Where a specific *kind* of symbol belongs. All entries below are verified against the current tree — but conventions drift, so **grep to confirm before citing one in a finding**. A placement finding built on a symbol/dir that doesn't exist on main is itself a junk comment.
+
+| Kind of new symbol | Belongs in | Verified anchors |
+|---|---|---|
+| Model-family constant (ctx-len, seq-len, cap, threshold for one family) | `QEfficient/utils/constants.py`, named `<FAMILY>_<NAME>` | `INTERN_CTX_LEN`, `INTERN_PREFILL_SEQ_LEN`, `FLUX_ONNX_EXPORT_SEQ_LENGTH`, `WAV2VEC2_MAX_SEQ_LEN`, `WAN_ONNX_EXPORT_SEQ_LEN`, `CCL_START_CTX_LEN` |
+| Masked-attention fill value | reuse `MIN_MASKED_ATTENTION_VALUE` (`constants.py`, `= float("-inf")`) | — |
+| Custom torch/ONNX op + its registration | `QEfficient/customop/*.py`, re-exported from `QEfficient/customop/__init__.py` | `ctx_scatter_gather.py`, `ctx_scatter_gather_cb.py`, `rms_norm.py`, `matmulnbits.py` |
+| Test image | `docs/image/` (existing bank) | `Cloud_AI_100.png`, `girl_laughing.png` |
+| Large per-model config (yaml/json) | a `configs/` subdir beside the model, with a `[tool.setuptools.package-data]` entry | `gemma3/configs/` |
+
+**Two traps that produce junk findings — check both before writing a placement comment:**
+
+- **There is no generic `MAX_SEQ_LEN` in `constants.py`.** Seq/ctx lengths are family-prefixed. Do not recommend "reuse `MAX_SEQ_LEN`" — grep first; recommend the actual family constant or a new `<FAMILY>_<NAME>` one.
+- **Symbols introduced by the PR under review are not repo conventions.** A name like `select_interface`, `customop/utils.py`, or `DYNAMO_CUSTOM_OP_TABLE` may be added by *this* PR and absent from main. Before asserting "X already exists, reuse it," grep the tree at the base ref, not the diff.
+
+**Is a new file needed?** For every added file, ask: (a) could its content live in an existing sibling? (b) does anything on the changed code path import it (grep its basename across diff + tree — an unreferenced new module is dead scaffolding), or is it a second copy of an existing file? (c) does its content match the directory's purpose in the layout table above? Unreferenced = Issue (Blocker if it duplicates an existing file). Do not flag a file merely for being new — only after grep confirms it's unused or redundant.
+
 ## Layering / change-placement contract (read this on every PR)
 
 This is the single most-violated rule in agent-authored PRs. The repo is layered, and a change must land at the layer that *actually owns* it. Putting model-specific behavior into a shared/base layer is the default failure mode — it compiles, passes the author's one test, and quietly degrades the architecture for every other model.

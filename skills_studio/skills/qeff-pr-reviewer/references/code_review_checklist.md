@@ -58,6 +58,25 @@ Names are PEP 8 mechanical *and* semantic. A wrong-cased class is a Nit; a name 
 - Multi-line section dividers (`# ======= section =======`) inside a method → **Issue** — that's a sign the method should be split.
 - Genuine "why" comments (hidden invariant, surprising workaround) — leave alone.
 
+## Perf / redundancy smells (calibrated — each has a silent-unless guard)
+
+These are the critiques human reviewers make most often and the review historically missed. They are also the easiest to over-fire into junk, so each ships with a guard: flag the *specific* wasteful shape, never the bare pattern.
+
+- **Tensor materialized just to read metadata.** `x.detach().clone().shape`, `int(t.clone().shape[-1])` where the copy is used only for a shape/`.size()`/`.numel()`/scalar read → the copy is pure waste. **Issue.** The clean form is `int(self.rotary_emb.cos_cached.shape[-1])` (in-tree). **Guard:** the `.detach()`/`.clone()` output must be the direct and ONLY receiver of the metadata read. Never flag a `.detach()`/`.clone()` whose result is also assigned, returned, or wrapped in `nn.Parameter` — that is a real tensor, legitimate and abundant (one modeling file has ~9).
+- **`copy.deepcopy` of a live model / large module.** `self.model = copy.deepcopy(model)` right after `super().__init__(model)` (transforms then mutate a throwaway), or any deepcopy of a full model/pipeline in an init/hot path → **Issue → Blocker** if it doubles export RAM. **Guard:** target must be a materialized model/`nn.Module`/pipeline whose copy is later discarded/overwritten. Never flag `copy.deepcopy` of a dict/config/kwargs (`copy.deepcopy(kwargs)`, `copy.deepcopy(qeff_model.hash_params)` are safe idiom), a meta-device / `init_empty_weights` model (zero real memory), or a copy made to avoid mutating the caller's model before an in-place op like `tie_weights()` (`quantizer_utils.py:51`).
+- **Redundant kwarg at its default.** Passing `dtype=torch.float32` or a flag equal to the callee's documented default. **Nit → Issue** only if verified redundant AND it obscures intent. **Guard:** confirm the param exists with that default in the pinned `transformers==5.5.4`/torch version, AND the call is NOT in a `forward()`/`get_dummy_inputs`/export-glue path. Explicit `use_cache=True`/`return_dict=True`/`dtype=` in QEff `forward` overrides deliberately pin graph behavior against HF default-drift — not waste. In 5.5.4, `LlamaForCausalLM.forward` has no `return_dict` and `use_cache` defaults to `None`, so unverified "this is the default" is junk.
+- **Redundant loop / recomputation.** Iterating a collection N times where one pass suffices; recomputing a loop invariant. **Issue.** **Guard:** state the single-pass rewrite concretely.
+- **Mass-allocation waste.** `np.random.rand(...)`/`np.ones(...)`/`np.zeros(...)` for a buffer provably overwritten before its values are read (use `np.empty`); a full copy where a view/slice works. **Issue.** **Guard:** the overwrite must be visible. An all-ones mask, all-ones mask row, or any array whose values are the intended data is NOT waste — don't flag.
+
+## Code-shape / redundancy (dead or pointless structure)
+
+Verifiable, low-false-positive — flag only what grep/read confirms.
+
+- **Override that only calls super.** `def apply(cls, m): m, t = super().apply(m); return m, t` → redundant, delete it. **Issue.** (In-tree deletable example: `pytorch_transforms.py:924`.) **Guard:** redundant only when the signature is identical to the parent's, unconditional, and forwards every arg unchanged. Do NOT flag an override that narrows/renames/drops/injects a param (`get_seq_length` dropping `cache_position`, a `forward` swallowing `**kwargs`, one that sets `kwargs["lora_ids"]` first) or wraps super in an `if`/`try` — verify against the parent signature first.
+- **Dead `__init__`.** A `QEff<X>.__init__` that only calls `super().__init__(...)`, or re-assigns attributes the class-swap transform already installs → dead in the swap flow. **Issue** (Blocker if it re-inits pretrained weights). Respect the `__init__`-override exceptions in `repo_conventions.md#qeff-class-rules`.
+- **Nested `try`/`try-finally` that flattens.** A `try` whose only content is another `try`, or a `finally` doing no real cleanup → **Issue** only when nesting obscures flow. Don't flag a `finally` that does real cleanup, nor sequential (non-nested) optional-import `try` blocks.
+- **Unused import / dead constant / commented-out block.** An import or module constant the diff adds with zero references anywhere, or a commented-out block with no re-enable note. **Grep the whole tree, not just the diff** — `__init__.py` re-exports are consumed by other files. Skip `# noqa: F401`, `__all__` entries, and `__init__.py` re-export files. ruff already auto-flags F401 → treat a stray unused import as **Nit** unless en masse; a commented-out block or truly-dead constant is an **Issue.**
+
 ## Logical correctness (high-recall list)
 
 - Every `if x is None` / `is not None` flip — common AI-edit accidents.
