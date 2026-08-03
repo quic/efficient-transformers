@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import shutil
+import warnings
 from typing import Dict, List, Optional
 
 from QEfficient.utils._utils import create_json, execute_command, load_json, to_named_specializations
@@ -34,7 +35,7 @@ class QNN:
         qpc_base_path: str,
         num_cores: int,
         custom_io_path: str,
-        device_ids: Optional[List[int]] = None,
+        device_group: Optional[List[int]] = None,
         compiler_enable_depth_first: bool = False,
         compiler_max_out_channel_split: int = -1,
         compiler_mxfp6_matmul_weights: bool = True,
@@ -49,7 +50,7 @@ class QNN:
         self.onnx_path = onnx_path
         self.qpc_base_path = qpc_base_path
         self.num_cores = num_cores
-        self.device_ids = device_ids
+        self.device_group = device_group
         self.compiler_enable_depth_first = compiler_enable_depth_first
         self.compiler_max_out_channel_split = compiler_max_out_channel_split
         self.compiler_mxfp6_matmul_weights = compiler_mxfp6_matmul_weights
@@ -112,17 +113,17 @@ class QNN:
 
     def create_qnn_tensor_slicing_json(self) -> str:
         """
-        Creates tensor_slicing.json file if device_ids contains more than 1 device.
+        Creates tensor_slicing.json file if device_group contains more than 1 device.
 
         Returns:
             :str: Path to tensor_slicing.json file.
         """
         tensor_slicing = {
-            "connections": [{"devices": list(range(len(self.device_ids))), "type": "p2p"}],
+            "connections": [{"devices": list(range(len(self.device_group))), "type": "p2p"}],
             "partitions": [
                 {
                     "name": "Partition0",
-                    "devices": [{"deviceId": device} for device in range(len(self.device_ids))],
+                    "devices": [{"deviceId": device} for device in range(len(self.device_group))],
                 }
             ],
         }
@@ -159,7 +160,7 @@ class QNN:
         if self.compiler_max_out_channel_split > 0:
             qnn_compile_backend["compiler_max_out_channel_split"] = str(self.compiler_max_out_channel_split)
 
-        if self.device_ids is not None and len(self.device_ids) > 1:
+        if self.device_group is not None and len(self.device_group) > 1:
             qnn_compile_backend["compiler_mdp_load_partition_config"] = self.create_qnn_tensor_slicing_json()
 
         if self.qnn_config and QnnConstants.QNN_COMPILATION_BACKEND_STR in self.qnn_config:
@@ -326,7 +327,7 @@ def compile(
     onnx_path: str,
     qpc_base_path: str,
     num_cores: int,
-    device_ids: Optional[List[int]] = None,
+    device_group: Optional[List[int]] = None,
     aic_enable_depth_first: bool = False,
     mos: int = -1,
     mxfp6: bool = True,
@@ -341,14 +342,14 @@ def compile(
     """
     Compiles the given ``ONNX`` model using QNN compiler and saves the compiled ``qpc`` package at ``qnn_binary_dir``.
     Generates model.dlc during converter stage, qnn_compile_backend.json for backend parameters of context-binary-generator.
-    Generates tensor-slicing configuration if multiple devices are passed in ``device_ids``.
+    Generates tensor-slicing configuration if multiple devices are passed in ``device_group``.
 
     ``Mandatory`` Args:
         :onnx_path (str): Generated ``ONNX`` Model Path.
         :qpc_base_path (str): base directory for QNN compilation config & binary file.
         :num_cores (int): Number of cores to compile the model on.
     ``Optional`` Args:
-        :device_ids (List[int]): Used for finding the number of devices to compile for.
+        :device_group (List[int]): Used for finding the number of devices to compile for.
         :aic_enable_depth_first (bool): Enables ``DFS`` with default memory size. ``Defaults to False.``
         :mos (int): Effort level to reduce the on-chip memory. ``Defaults to -1.``
         :mxfp6 (bool): Enable compilation for ``MXFP6`` precision.  ``Defaults to True.``
@@ -362,6 +363,13 @@ def compile(
     Returns:
         :str: Path to compiled ``qpc`` package.
     """
+
+    if device_group is not None:
+        warnings.warn(
+            "device_group is deprecated and will be renamed to device_ids in the next release.",
+            FutureWarning,
+            stacklevel=2,
+        )
 
     if kwargs:
         logger.warning("Extra arguments to QNN compilation are not supported as of now!")
@@ -400,8 +408,8 @@ def compile(
             qnn_config_values = load_json(qnn_config)
             compile_hash.update(to_hashable(qnn_config_values))
 
-        if device_ids is not None:
-            compile_hash.update(to_hashable({"device_ids": device_ids}))
+        if device_group is not None:
+            compile_hash.update(to_hashable({"device_group": device_group}))
 
         compile_hash.update(to_hashable({"num_cores": num_cores}))
         compile_hash.update(to_hashable({"mxfp6": mxfp6}))
@@ -432,7 +440,7 @@ def compile(
         onnx_path=onnx_path,
         qpc_base_path=qpc_base_path,
         num_cores=num_cores,
-        device_ids=device_ids,
+        device_group=device_group,
         qnn_config_path=qnn_config,
         custom_io_path=custom_io_file_path,
         compiler_enable_depth_first=aic_enable_depth_first,

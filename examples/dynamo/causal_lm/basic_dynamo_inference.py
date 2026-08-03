@@ -32,7 +32,7 @@ def main():
     parser.add_argument("--num-cores", type=int, default=16, help="Number of AI 100 cores")
     parser.add_argument("--aic-hw-version", type=str, default="ai100", help="AIC hardware version")
     parser.add_argument(
-        "--device-ids",
+        "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         default=None,
         help="Device IDs (comma-separated), e.g. [0,1]",
@@ -54,7 +54,7 @@ def main():
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
         aic_hw_version=args.aic_hw_version,
-        num_devices=(1 if args.device_ids is None else len(args.device_ids)),
+        num_devices=(1 if args.device_group is None else len(args.device_group)),
         dynamo=True,
         use_onnx_subfunctions=True,
     )
@@ -64,7 +64,7 @@ def main():
     exec_info = model.generate(
         tokenizer=tokenizer,
         prompts=[args.prompt],
-        device_ids=args.device_ids,
+        device_id=args.device_group,
         generation_len=args.generation_len,
     )
 

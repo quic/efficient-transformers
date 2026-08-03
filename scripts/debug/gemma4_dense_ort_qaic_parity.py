@@ -42,7 +42,7 @@ def parse_args():
     parser.add_argument("--prompt-len", type=int, default=4)
     parser.add_argument("--ctx-len", type=int, default=8)
     parser.add_argument("--output-json", type=Path, default=None)
-    parser.add_argument("--device-ids", nargs="+", type=int, default=None)
+    parser.add_argument("--device-group", nargs="+", type=int, default=None)
     parser.add_argument("--disable-npi", action="store_true")
     parser.add_argument("--fail-on-mismatch", action="store_true")
     return parser.parse_args()
@@ -152,7 +152,7 @@ def main():
         )
 
     ort_tokens = np.asarray(api_runner.run_kv_model_on_ort(str(onnx_path))).reshape(-1)
-    qaic_tokens_full = np.asarray(api_runner.run_kv_model_on_cloud_ai_100(str(qpc_path), args.device_ids)).reshape(-1)
+    qaic_tokens_full = np.asarray(api_runner.run_kv_model_on_cloud_ai_100(str(qpc_path), args.device_group)).reshape(-1)
 
     # QAic generation output is padded to the compiled context length.
     qaic_tokens = qaic_tokens_full[: api_runner.gen_len]

@@ -184,11 +184,11 @@ class TestExecuteFunctionSignatures:
         sig = inspect.signature(main)
         assert "qpc_path" in sig.parameters
 
-    def test_main_has_device_ids(self):
+    def test_main_has_device_group(self):
         from QEfficient.cloud.execute import main
 
         sig = inspect.signature(main)
-        assert "device_ids" in sig.parameters
+        assert "device_group" in sig.parameters
 
     def test_main_has_prompt(self):
         from QEfficient.cloud.execute import main
@@ -226,6 +226,15 @@ class TestExecuteFunctionSignatures:
         sig = inspect.signature(main)
         assert "local_model_dir" in sig.parameters
 
+    def test_device_group_warns_about_next_release(self, monkeypatch):
+        import QEfficient.cloud.execute as execute
+
+        monkeypatch.setattr(execute, "load_hf_tokenizer", MagicMock())
+        monkeypatch.setattr(execute, "cloud_ai_100_exec_kv", MagicMock())
+
+        with pytest.warns(FutureWarning, match="renamed to device_ids in the next release"):
+            execute.main(model_name="gpt2", qpc_path="/path/to/qpc", device_group=[0])
+
 
 # ---------------------------------------------------------------------------
 # Tests: infer.py - function signatures
@@ -252,11 +261,11 @@ class TestInferFunctionSignatures:
         sig = inspect.signature(main)
         assert "num_cores" in sig.parameters
 
-    def test_main_has_device_ids(self):
+    def test_main_has_device_group(self):
         from QEfficient.cloud.infer import main
 
         sig = inspect.signature(main)
-        assert "device_ids" in sig.parameters
+        assert "device_group" in sig.parameters
 
     def test_main_has_prompt(self):
         from QEfficient.cloud.infer import main
@@ -599,8 +608,8 @@ class TestCompileArgumentParsing:
         parser.add_argument("--mxint8", action="store_true")
         parser.add_argument("--num_cores", "--num-cores", required=True, type=int)
         parser.add_argument(
-            "--device_ids",
-            "--device-ids",
+            "--device_group",
+            "--device-group",
             required=True,
             type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         )
@@ -619,7 +628,7 @@ class TestCompileArgumentParsing:
         with pytest.raises(SystemExit):
             parser.parse_args(["--onnx_path", "/path/to/model.onnx", "--qpc-path", "/path/to/qpc"])
 
-    def test_parser_requires_device_ids(self):
+    def test_parser_requires_device_group(self):
         parser = self._get_parser()
         with pytest.raises(SystemExit):
             parser.parse_args(["--onnx_path", "/path/to/model.onnx", "--qpc-path", "/path/to/qpc", "--num-cores", "16"])
@@ -634,7 +643,7 @@ class TestCompileArgumentParsing:
                 "/path/to/qpc",
                 "--num-cores",
                 "16",
-                "--device-ids",
+                "--device-group",
                 "[0]",
             ]
         )
@@ -651,7 +660,7 @@ class TestCompileArgumentParsing:
                 "/path/to/qpc",
                 "--num-cores",
                 "16",
-                "--device-ids",
+                "--device-group",
                 "[0]",
             ]
         )
@@ -667,7 +676,7 @@ class TestCompileArgumentParsing:
                 "/path/to/qpc",
                 "--num-cores",
                 "16",
-                "--device-ids",
+                "--device-group",
                 "[0]",
             ]
         )
@@ -683,7 +692,7 @@ class TestCompileArgumentParsing:
                 "/path/to/qpc",
                 "--num-cores",
                 "16",
-                "--device-ids",
+                "--device-group",
                 "[0]",
             ]
         )
@@ -699,7 +708,7 @@ class TestCompileArgumentParsing:
                 "/path/to/qpc",
                 "--num-cores",
                 "16",
-                "--device-ids",
+                "--device-group",
                 "[0]",
                 "--batch-size",
                 "4",
@@ -707,7 +716,7 @@ class TestCompileArgumentParsing:
         )
         assert args.batch_size == 4
 
-    def test_parser_accepts_multi_device_ids(self):
+    def test_parser_accepts_multi_device_group(self):
         parser = self._get_parser()
         args = parser.parse_args(
             [
@@ -717,11 +726,11 @@ class TestCompileArgumentParsing:
                 "/path/to/qpc",
                 "--num-cores",
                 "16",
-                "--device-ids",
+                "--device-group",
                 "[0,1,2,3]",
             ]
         )
-        assert args.device_ids == [0, 1, 2, 3]
+        assert args.device_group == [0, 1, 2, 3]
 
     def test_parser_accepts_mxfp6_flag(self):
         parser = self._get_parser()
@@ -733,7 +742,7 @@ class TestCompileArgumentParsing:
                 "/path/to/qpc",
                 "--num-cores",
                 "16",
-                "--device-ids",
+                "--device-group",
                 "[0]",
                 "--mxfp6",
             ]
@@ -750,7 +759,7 @@ class TestCompileArgumentParsing:
                 "/path/to/qpc",
                 "--num-cores",
                 "16",
-                "--device-ids",
+                "--device-group",
                 "[0]",
                 "--mxint8",
             ]
@@ -767,7 +776,7 @@ class TestCompileArgumentParsing:
                 "/path/to/qpc",
                 "--num-cores",
                 "16",
-                "--device-ids",
+                "--device-group",
                 "[0]",
                 "--aic-enable-depth-first",
             ]
@@ -784,7 +793,7 @@ class TestCompileArgumentParsing:
                 "/path/to/qpc",
                 "--num-cores",
                 "16",
-                "--device-ids",
+                "--device-group",
                 "[0]",
                 "--full-batch-size",
                 "8",
@@ -802,7 +811,7 @@ class TestCompileArgumentParsing:
                 "/path/to/qpc",
                 "--num-cores",
                 "16",
-                "--device-ids",
+                "--device-group",
                 "[0]",
             ]
         )
@@ -822,8 +831,8 @@ class TestExecuteArgumentParsing:
         parser.add_argument("--model_name", "--model-name", required=False, type=str)
         parser.add_argument("--qpc_path", "--qpc-path", required=True)
         parser.add_argument(
-            "--device_ids",
-            "--device-ids",
+            "--device_group",
+            "--device-group",
             type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         )
         parser.add_argument("--prompt", type=lambda prompt: prompt.split("|"))
@@ -865,10 +874,10 @@ class TestExecuteArgumentParsing:
         args = parser.parse_args(["--qpc_path", "/path/to/qpc", "--generation-len", "100"])
         assert args.generation_len == 100
 
-    def test_parser_accepts_device_ids(self):
+    def test_parser_accepts_device_group(self):
         parser = self._get_parser()
-        args = parser.parse_args(["--qpc_path", "/path/to/qpc", "--device-ids", "[0,1]"])
-        assert args.device_ids == [0, 1]
+        args = parser.parse_args(["--qpc_path", "/path/to/qpc", "--device-group", "[0,1]"])
+        assert args.device_group == [0, 1]
 
     def test_parser_default_generation_len_is_none(self):
         parser = self._get_parser()
@@ -946,8 +955,8 @@ class TestInferArgumentParsing:
         parser.add_argument("--ctx-len", "--ctx_len", default=128, type=int)
         parser.add_argument("--num_cores", "--num-cores", type=int, required=True)
         parser.add_argument(
-            "--device_ids",
-            "--device-ids",
+            "--device_group",
+            "--device-group",
             type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         )
         parser.add_argument("--prompt", type=lambda prompt: prompt.split("|"))
@@ -1028,41 +1037,41 @@ class TestInferArgumentParsing:
         args = parser.parse_args(["--model-name", "gpt2", "--num-cores", "16", "--prompt", "Hello|World"])
         assert args.prompt == ["Hello", "World"]
 
-    def test_parser_accepts_device_ids(self):
+    def test_parser_accepts_device_group(self):
         parser = self._get_parser()
-        args = parser.parse_args(["--model-name", "gpt2", "--num-cores", "16", "--device-ids", "[0,1]"])
-        assert args.device_ids == [0, 1]
+        args = parser.parse_args(["--model-name", "gpt2", "--num-cores", "16", "--device-group", "[0,1]"])
+        assert args.device_group == [0, 1]
 
 
 # ---------------------------------------------------------------------------
-# Tests: Device ids parsing utility
+# Tests: Device group parsing utility
 # ---------------------------------------------------------------------------
 
 
-class TestDeviceIdsParsing:
-    """Device ids lambda parser must correctly parse various formats."""
+class TestDeviceGroupParsing:
+    """Device group lambda parser must correctly parse various formats."""
 
-    def _parse_device_ids(self, s):
+    def _parse_device_group(self, s):
         return [int(x) for x in s.strip("[]").split(",")]
 
     def test_single_device(self):
-        result = self._parse_device_ids("[0]")
+        result = self._parse_device_group("[0]")
         assert result == [0]
 
     def test_two_devices(self):
-        result = self._parse_device_ids("[0,1]")
+        result = self._parse_device_group("[0,1]")
         assert result == [0, 1]
 
     def test_four_devices(self):
-        result = self._parse_device_ids("[0,1,2,3]")
+        result = self._parse_device_group("[0,1,2,3]")
         assert result == [0, 1, 2, 3]
 
     def test_device_with_spaces(self):
-        result = self._parse_device_ids("[0, 1, 2]")
+        result = self._parse_device_group("[0, 1, 2]")
         assert result == [0, 1, 2]
 
     def test_single_digit_device(self):
-        result = self._parse_device_ids("[7]")
+        result = self._parse_device_group("[7]")
         assert result == [7]
 
 

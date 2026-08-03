@@ -34,8 +34,8 @@ python speculative_decoding/draft_based.py \
     --num-speculative-tokens 4 \
     --prefill-seq-len 32 \
     --ctx-len 128 \
-    --target-device-ids 0,1 \
-    --draft-device-ids 2
+    --target-device-group 0,1 \
+    --draft-device-group 2
 ```
 errors in this example
 
@@ -84,7 +84,7 @@ python on_device_sampling.py \
     --prompt-len 128 \
     --ctx-len 256 \
     --full-batch-size 2 \
-    --device-ids 0,1,2,3 \
+    --device-group 0,1,2,3 \
     --num-cores 16 \
     --mxint8-kv-cache \
     --mxfp6-matmul \

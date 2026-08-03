@@ -29,7 +29,7 @@ def main():
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
     parser.add_argument(
-        "--device-ids",
+        "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         default=None,
         help="Device IDs (comma-separated) e.g. [0,1]",
@@ -52,7 +52,7 @@ def main():
         ctx_len=args.ctx_len,
         full_batch_size=args.full_batch_size,
         num_cores=args.num_cores,
-        num_devices=(1 if args.device_ids is None else len(args.device_ids)),
+        num_devices=(1 if args.device_group is None else len(args.device_group)),
         dynamo=args.dynamo,
         use_onnx_subfunctions=True,
     )
@@ -62,7 +62,7 @@ def main():
     exec_info = model.generate(
         tokenizer=tokenizer,
         prompts=prompt_list,
-        device_ids=args.device_ids,
+        device_ids=args.device_group,
         generation_len=args.generation_len,
     )
 

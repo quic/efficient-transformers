@@ -1062,7 +1062,7 @@ class QEFFBaseModel(ABC):
                 qpc_base_path=compile_dir,
                 specializations=specializations,
                 custom_io=custom_io,
-                device_ids=list(range(mdp_ts_num_devices)),
+                device_group=list(range(mdp_ts_num_devices)),
                 num_cores=compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES),
                 mxfp6=compiler_options.get("mxfp6_matmul", constants.DEFAULT_AIC_MXPF6_MATMUL),
                 mxint8=mxint8_kv_cache,

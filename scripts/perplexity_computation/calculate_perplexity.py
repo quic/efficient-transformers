@@ -124,8 +124,8 @@ class ONNXInferenceSession(InferenceSession):
 
 
 class QPCInferenceSession(InferenceSession):
-    def __init__(self, model_path, device_ids):
-        self.session = QAICInferenceSession(model_path, device_ids)
+    def __init__(self, model_path, device_id):
+        self.session = QAICInferenceSession(model_path, device_id)
         self._skip_buffers()
 
     def _skip_buffers(self):
@@ -355,7 +355,7 @@ def main():
     parser.add_argument("--stride", type=int, default=1024, help="Stride for dataset")
     parser.add_argument("--num_samples", type=int, default=-1, help="Number of samples to use (-1 for all)")
     parser.add_argument(
-        "--qpc_device_ids",
+        "--qpc_device_id",
         default=[0],
         type=lambda device_ids: [int(x) for x in device_ids.split(",")],
         help="QAIC device ids (comma-separated)",
@@ -383,7 +383,7 @@ def main():
     elif args.model_type == "torch":
         inference_session = PytorchInferenceSession(args.model_name)
     elif args.model_type == "qpc":
-        inference_session = QPCInferenceSession(args.model_path, args.qpc_device_ids)
+        inference_session = QPCInferenceSession(args.model_path, args.qpc_device_id)
     else:
         raise NotImplementedError
 
