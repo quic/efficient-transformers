@@ -31,7 +31,9 @@ CTX_LEN = 2048
 GENERATION_LEN = 1920
 NUM_LANG_HIDDEN_LAYER = 2
 NUM_VISION_HIDDEN_LAYER = 2
-
+# For CCL activation
+# comp_ctx_lengths_prefill=[2048]
+# comp_ctx_lengths_decode=[4096,65536]
 # NODE_PRECISION_INFO:Optional argument
 # If set to True, the NPI file will be generated automatically.
 # If a file path is provided, that file will be used for compilation.
@@ -53,6 +55,9 @@ compiler_kwargs = {
     "split_model_io": True,
     "BATCH_SIZE": BS,
     "node_precision_info": NODE_PRECISION_INFO,
+    ## For CCL activation
+    # "comp_ctx_lengths_prefill": comp_ctx_lengths_prefill,
+    # "comp_ctx_lengths_decode": comp_ctx_lengths_decode,
 }
 
 
@@ -92,6 +97,10 @@ def main():
         dtype="float32",
         kv_offload=True,
         ignore_mismatched_sizes=True,
+        ## For CCL activation
+        # qaic_config={
+        #     "ccl_enabled": True,
+        # },
     )
     remove_fp16clip_transform_if_disabled(qeff_model, True)
 
@@ -121,6 +130,7 @@ def main():
             skip_vision=SKIP_VISION,
             **compiler_kwargs,
         )
+        # print("compile_kwargs:", compile_kwargs)
         qeff_model.compile(**compile_kwargs)
 
         output = qeff_model.generate(inputs=text_inputs, generation_len=GENERATION_LEN)
@@ -160,6 +170,7 @@ def main():
         skip_model_io=True,
         **compiler_kwargs,
     )
+    # print("compile_kwargs:", compile_kwargs)
 
     qeff_model.compile(**compile_kwargs)
 
