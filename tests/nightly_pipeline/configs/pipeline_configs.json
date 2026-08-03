@@ -14,7 +14,7 @@
         "use_onnx_subfunctions": true
       },
       "generate_params": {
-        "generation_len": 25,
+        "generation_len": 200,
         "prompts": "My name is"
       }
     }
@@ -48,7 +48,7 @@
         "use_onnx_subfunctions": true
       },
       "generate_params": {
-        "generation_len": 25
+        "generation_len": 200
       }
     }
   ],
@@ -65,7 +65,7 @@
         "use_onnx_subfunctions": true
       },
       "generate_params": {
-        "generation_len": 25
+        "generation_len": 200
       }
     }
   ],
@@ -85,7 +85,7 @@
         "use_onnx_subfunctions": true
       },
       "generate_params": {
-        "generation_len": 25,
+        "generation_len": 200,
         "image_url": "https://picsum.photos/id/237/536/354",
         "query": "Can you describe the image in detail?"
       }
