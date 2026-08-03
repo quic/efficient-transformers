@@ -220,7 +220,7 @@ def load_qeff_vlm_model(
 def load_vlm_model(config):
     try:
         model_hf = AutoModelForImageTextToText.from_pretrained(
-            config._name_or_path, low_cpu_mem_usage=False, config=config
+            config._name_or_path, low_cpu_mem_usage=False, config=config, dtype=torch.float32
         )
     except ValueError:
         model_hf = AutoModelForCausalLM.from_pretrained(
@@ -228,6 +228,7 @@ def load_vlm_model(config):
             low_cpu_mem_usage=False,
             trust_remote_code=True,
             config=config,
+            dtype=torch.float32
         )
     model_hf.eval()
     return model_hf
