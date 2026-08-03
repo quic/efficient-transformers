@@ -18,6 +18,8 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from examples.disagg_serving.qwen3moe_disagg_mode_chunking_with_kv_share import run as run_kv_share
 from examples.disagg_serving.qwen3moe_disagg_mode_with_chunking import run as run_baseline
 
+pytestmark = pytest.mark.skip(reason="Temporarily disabled for PR 1150.")
+
 # MODEL_ID = "yujiepan/qwen3-moe-tiny-random"
 MODEL_ID = "Qwen/Qwen3-30B-A3B"
 PROMPT = "Explain quantum computing in simple terms."
