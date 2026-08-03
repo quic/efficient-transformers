@@ -59,8 +59,8 @@ python draft_based.py \
 python draft_based.py \
     --draft-model-name "TinyLlama/TinyLlama-1.1B-Chat-v1.0" \
     --target-model-name "meta-llama/Llama-3.1-70B" \
-    --target-device-ids 0,1,2,3 \
-    --draft-device-ids 4,5 \
+    --target-device-group 0,1,2,3 \
+    --draft-device-group 4,5 \
     --num-speculative-tokens 6
 ```
 
@@ -140,7 +140,7 @@ python multi_projection.py \
 python multi_projection.py \
     --pretrained-model-name-or-path "meta-llama/Llama-3.1-8B-Turbo" \
     --full-batch-size 4 \
-    --device-ids 0,1,2,3 \
+    --device-group 0,1,2,3 \
     --ignore-eos-token
 ```
 
@@ -158,7 +158,7 @@ python multi_projection.py \
 | `--prefill-seq-len` | Prefill chunk size | 32 | 128-256 |
 | `--ctx-len` | Max context length | 128 | 512-2048 |
 | `--num-speculative-tokens` | Candidates per iteration | 3-4 | 3-6 |
-| `--device-ids` | Device allocation | `[0]` | Multi-device for large models |
+| `--device-group` | Device allocation | `[0]` | Multi-device for large models |
 | `--full-batch-size` | Continuous batching | None | 2-8 for throughput |
 
 ## Performance Metrics Explained

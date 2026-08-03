@@ -103,6 +103,7 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeRMSNorm,
     GraniteMoeRotaryEmbedding,
 )
+
 try:
     from transformers.models.granitemoe.modeling_granitemoe import (
         GraniteMoeParallelExperts,
@@ -111,6 +112,8 @@ try:
 except ImportError:
     from transformers.models.granitemoe.modeling_granitemoe import (
         GraniteMoeExperts as GraniteMoeParallelExperts,
+    )
+    from transformers.models.granitemoe.modeling_granitemoe import (
         GraniteMoeTopKRouter as GraniteMoeTopKGating,
     )
 from transformers.models.llama.modeling_llama import (

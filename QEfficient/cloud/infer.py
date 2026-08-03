@@ -8,6 +8,7 @@
 import argparse
 import logging
 import sys
+import warnings
 from typing import List, Optional
 
 import requests
@@ -28,7 +29,7 @@ def execute_vlm_model(
     image_url: str,
     image_path: str,
     prompt: Optional[str] = None,  # type: ignore
-    device_ids: Optional[List[int]] = None,
+    device_group: Optional[List[int]] = None,
     local_model_dir: Optional[str] = None,
     cache_dir: Optional[str] = None,
     hf_token: Optional[str] = None,
@@ -55,8 +56,8 @@ def execute_vlm_model(
     ----------------
     prompt : str, optional
         Sample prompt for the model text generation. Default is None.
-    device_ids : List[int], optional
-        List of device IDs to be used for inference. If ``len(device_ids) > 1``,
+    device_group : List[int], optional
+        List of device IDs to be used for inference. If ``len(device_group) > 1``,
         multiple card setup is enabled. Default is None.
     local_model_dir : str, optional
         Path to custom model weights and config files, used if not loading from Hugging Face Hub. Default is None.
@@ -78,6 +79,12 @@ def execute_vlm_model(
         If neither ``image_url`` nor ``image_path`` is provided.
     """
     warn_deprecated_cloud_api("infer")
+    if device_group is not None:
+        warnings.warn(
+            "device_group is deprecated and will be renamed to device_ids in the next release.",
+            FutureWarning,
+            stacklevel=2,
+        )
     if not (image_url or image_path):
         raise ValueError('Neither Image URL nor Image Path is found, either provide "image_url" or "image_path"')
     raw_image = Image.open(requests.get(image_url, stream=True).raw) if image_url else Image.open(image_path)
@@ -112,7 +119,7 @@ def execute_vlm_model(
     output = qeff_model.generate(
         inputs=split_inputs,
         streamer=streamer,
-        device_ids=device_ids,
+        device_ids=device_group,
         generation_len=generation_len,
     )
     return output
@@ -121,7 +128,7 @@ def execute_vlm_model(
 def main(
     model_name: str,
     num_cores: int,
-    device_ids: Optional[List[int]] = None,
+    device_group: Optional[List[int]] = None,
     prompt: Optional[str] = None,  # type: ignore
     prompts_txt_file_path: Optional[str] = None,
     aic_enable_depth_first: bool = False,
@@ -166,8 +173,8 @@ def main(
 
     Other Parameters
     ----------------
-    device_ids : List[int], optional
-        List of device IDs to be used for compilation and inference. If ``len(device_ids) > 1``,
+    device_group : List[int], optional
+        List of device IDs to be used for compilation and inference. If ``len(device_group) > 1``,
         a multiple card setup is enabled. Default is None.
     prompt : str, optional
         Sample prompt(s) for the model text generation. For batch size > 1,
@@ -238,6 +245,12 @@ def main(
 
     """
     warn_deprecated_cloud_api("infer")
+    if device_group is not None:
+        warnings.warn(
+            "device_group is deprecated and will be renamed to device_ids in the next release.",
+            FutureWarning,
+            stacklevel=2,
+        )
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
 
     if "--mxfp6" in sys.argv and mxfp6:
@@ -282,7 +295,7 @@ def main(
         batch_size=batch_size,
         mos=mos,
         mxint8_kv_cache=mxint8,
-        num_devices=(0 if device_ids is None else len(device_ids)),
+        num_devices=(0 if device_group is None else len(device_group)),
         full_batch_size=full_batch_size,
         allow_mxint8_mdp_io=allow_mxint8_mdp_io,
         enable_qnn=enable_qnn,
@@ -306,7 +319,7 @@ def main(
             prompt=prompt,
             image_url=image_url,
             image_path=image_path,
-            device_ids=device_ids,
+            device_group=device_group,
             local_model_dir=local_model_dir,
             cache_dir=cache_dir,
             hf_token=hf_token,
@@ -322,7 +335,7 @@ def main(
         _ = qeff_model.generate(
             tokenizer,
             prompts=prompt,
-            device_ids=device_ids,
+            device_ids=device_group,
             prompts_txt_file_path=prompts_txt_file_path,
             generation_len=generation_len,
             iteration=iteration,
@@ -410,8 +423,8 @@ if __name__ == "__main__":
         "--num_cores", "--num-cores", type=int, required=True, help="Number of cores to compile on Cloud AI 100"
     )
     parser.add_argument(
-        "--device_ids",
-        "--device-ids",
+        "--device_group",
+        "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         help="Cloud AI 100 device ids (comma-separated) e.g. [0,1]  ",
     )

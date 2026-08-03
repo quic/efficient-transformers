@@ -166,8 +166,8 @@ def draft_spec_decode_inference(
     draft_model_name: str,
     target_model_name: str,
     full_batch_size: Optional[int],
-    target_device_ids: List[int],
-    draft_device_ids: List[int],
+    target_device_group: List[int],
+    draft_device_group: List[int],
     draft_model_session: Optional[QAICInferenceSession] = None,
     target_model_session: Optional[QAICInferenceSession] = None,
 ) -> SpDCloudAI100ExecInfo:
@@ -183,8 +183,8 @@ def draft_spec_decode_inference(
         draft_model_name (str): Name of the draft model.
         target_model_name (str): Name of the target model.
         full_batch_size (Optional[int]): Full batch size.
-        target_device_ids (List[int]): List of device IDs for target model.
-        draft_device_ids (List[int]): List of device IDs for draft model.
+        target_device_group (List[int]): List of device IDs for target model.
+        draft_device_group (List[int]): List of device IDs for draft model.
 
     Returns:
         SpDCloudAI100ExecInfo: Execution information, including performance metrics and generated text.
@@ -202,7 +202,7 @@ def draft_spec_decode_inference(
         target_model = AutoModelForCausalLM.from_pretrained(
             target_model_name, continuous_batching=continuous_batching, qaic_config={"speculative_model_type": "target"}
         )
-        target_num_devices = len(target_device_ids)
+        target_num_devices = len(target_device_group)
         target_model_qpc_path: str = target_model.compile(
             num_cores=11,
             num_devices=target_num_devices,
@@ -212,10 +212,10 @@ def draft_spec_decode_inference(
             full_batch_size=full_batch_size,
             num_speculative_tokens=num_speculative_tokens,
         )
-        target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=target_device_ids)
+        target_model_session = QAICInferenceSession(target_model_qpc_path, device_ids=target_device_group)
     if draft_model_session is None:
         draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, continuous_batching=continuous_batching)
-        draft_num_devices = len(draft_device_ids)
+        draft_num_devices = len(draft_device_group)
         draft_model_qpc_path: str = draft_model.compile(
             num_cores=5,
             num_devices=draft_num_devices,
@@ -225,7 +225,7 @@ def draft_spec_decode_inference(
             full_batch_size=full_batch_size,
         )
         # init qaic session
-        draft_model_session = QAICInferenceSession(draft_model_qpc_path, device_ids=draft_device_ids)
+        draft_model_session = QAICInferenceSession(draft_model_qpc_path, device_ids=draft_device_group)
 
     # skip inputs/outputs buffers
     target_model_session.skip_buffers(set([x for x in target_model_session.input_names if x.startswith("past_")]))
@@ -456,13 +456,13 @@ def arg_parse():
     )
     parser.add_argument("--full-batch-size", type=optional_int, default=None, help="Full batch size")
     parser.add_argument(
-        "--target-device-ids",
+        "--target-device-group",
         type=comma_separated_ints,
         default="0",
         help="comma separated device QIDs (e.g., '1,2,3')",
     )
     parser.add_argument(
-        "--draft-device-ids",
+        "--draft-device-group",
         type=comma_separated_ints,
         default="0",
         help="comma separated device QIDs (e.g., '1,2,3')",

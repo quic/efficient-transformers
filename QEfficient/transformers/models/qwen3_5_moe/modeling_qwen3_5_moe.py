@@ -36,6 +36,7 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     repeat_kv,
     rotate_half,
 )
+
 try:
     from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import create_recurrent_attention_mask
 except ImportError:

@@ -24,7 +24,7 @@ By default, the library exported models and Qaic Program Container (QPC) files, 
 
 ## Command Line Interface Execution
 ```{NOTE}
-Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_ids``should be in single quotes e.g.  ``'--device_ids [0]'``
+Use ``bash terminal``, else if using ``ZSH terminal`` then ``device_group``should be in single quotes e.g.  ``'--device_group [0]'``
 ```
 ### Inference
 Below are the Command Line APIs we support for infernce in the library.
@@ -50,13 +50,13 @@ Users can also use `compile` API to compile pre exported onnx models using QNN S
 
 Without QNN Config
 ```bash
-python -m QEfficient.cloud.compile --onnx_path <path to gpt2 onnx file> --qpc-path <path to save qpc files> --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_ids [0]  --prompt_len 32 --mos 1 --aic_enable_depth_first --enable_qnn
+python -m QEfficient.cloud.compile --onnx_path <path to gpt2 onnx file> --qpc-path <path to save qpc files> --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0]  --prompt_len 32 --mos 1 --aic_enable_depth_first --enable_qnn
 ```
 
 With QNN Config
 
 ```bash
-python -m QEfficient.cloud.compile --onnx_path <path to gpt2 onnx file> --qpc-path <path to save qpc files> --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_ids [0]  --prompt_len 32 --mos 1 --aic_enable_depth_first --enable_qnn QEfficient/compile/qnn_config.json
+python -m QEfficient.cloud.compile --onnx_path <path to gpt2 onnx file> --qpc-path <path to save qpc files> --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0]  --prompt_len 32 --mos 1 --aic_enable_depth_first --enable_qnn QEfficient/compile/qnn_config.json
 ```
 
 **QNN Compilation**
@@ -96,10 +96,10 @@ QNN Context Binary Stage:
 
 Once we have compiled the QPC using `infer` or `compile` API, we can now use the precompiled QPC in `execute` API to run for different prompts.
 
-Make sure to pass same `--device_ids` as used during infer. Refer [Execute API doc](#execute_api) for more details.
+Make sure to pass same `--device_group` as used during infer. Refer [Execute API doc](#execute_api) for more details.
 
 ```bash
-python -m QEfficient.cloud.execute --model_name gpt2 --qpc_path qeff_models/gpt2/qpc_qnn_16cores_1BS_32PL_128CL_1devices_mxfp6/qpcs --prompt "Once upon a time in" --device_ids [0]
+python -m QEfficient.cloud.execute --model_name gpt2 --qpc_path qeff_models/gpt2/qpc_qnn_16cores_1BS_32PL_128CL_1devices_mxfp6/qpcs --prompt "Once upon a time in" --device_group [0]
 ```
 ---
 
@@ -117,35 +117,35 @@ This is the single e2e CLI API, which takes `model_card` name as input along wit
 ```bash
 # Check out the options using the help
 python -m QEfficient.cloud.infer --help
-python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_ids [0] --prompt "My name is" --mos 1 --aic_enable_depth_first
+python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first
 ```
 
 ```bash
 # Optional: explicitly control ONNX subfunction usage
-python -m QEfficient.cloud.infer --model_name Qwen/Qwen3-30B-A3B-Instruct-2507 --batch_size 1 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_ids [0] --prompt "My name is" --use-onnx-subfunctions
+python -m QEfficient.cloud.infer --model_name Qwen/Qwen3-30B-A3B-Instruct-2507 --batch_size 1 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is" --use-onnx-subfunctions
 ```
 If executing for batch size>1,
 You can pass input prompts in single string but separate with pipe (|) symbol". Example below
 
 ```bash
-python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_ids [0] --prompt "My name is|The flat earth theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first
+python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompt "My name is|The flat earth theory is the belief that|The sun rises from" --mxfp6 --mos 1 --aic_enable_depth_first
 ```
 
 You can also pass path of txt file with input prompts when you want to run inference on lot of prompts, Example below, sample txt file(prompts.txt) is present in examples/sample_prompts folder.
 
 ```bash
-python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_ids [0] --prompts_txt_file_path examples/sample_prompts/prompts.txt --mxfp6 --mos 1 --aic_enable_depth_first
+python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 3 --prompt_len 32 --ctx_len 128 --num_cores 16 --device_group [0] --prompts_txt_file_path examples/sample_prompts/prompts.txt --mxfp6 --mos 1 --aic_enable_depth_first
 ```
 **QNN CLI Inference Command**
 
 Without QNN Config
 ```bash
-python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_ids [0] --prompt "My name is" --mos 1 --aic_enable_depth_first --enable_qnn
+python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first --enable_qnn
 ```
 
 With QNN Config
 ```bash
-python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_ids [0] --prompt "My name is" --mos 1 --aic_enable_depth_first --enable_qnn QEfficient/compile/qnn_config.json
+python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 32 --ctx_len 128 --mxfp6 --num_cores 16 --device_group [0] --prompt "My name is" --mos 1 --aic_enable_depth_first --enable_qnn QEfficient/compile/qnn_config.json
 ```
 
 **Users can also take advantage of features like multi-Qranium inference and continuous batching with QNN SDK Compilation.**

@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import argparse
+import warnings
 from typing import List, Optional
 
 from QEfficient.generation.text_generation_inference import cloud_ai_100_exec_kv
@@ -15,7 +16,7 @@ from QEfficient.utils import load_hf_tokenizer
 def main(
     model_name: str,
     qpc_path: str,
-    device_ids: List[int] = None,
+    device_group: List[int] = None,
     local_model_dir: Optional[str] = None,
     prompt: Optional[str] = None,  # type: ignore
     prompts_txt_file_path: Optional[str] = None,
@@ -40,8 +41,8 @@ def main(
 
     Other Parameters
     ----------------
-    device_ids : List[int], optional
-        List of device IDs to be used for inference. If `len(device_ids) > 1`,
+    device_group : List[int], optional
+        List of device IDs to be used for inference. If `len(device_group) > 1`,
         a multi-card setup is enabled. Default is None.
     local_model_dir : str, optional
         Path to custom model weights and config files, used if not loading tokenizer
@@ -74,9 +75,16 @@ def main(
 
     .. code-block:: bash
 
-        python -m QEfficient.cloud.execute --model-name gpt2 --qpc-path /path/to/qpc/binaries --device-ids "[0,1]" --prompt "Hello | Hi"
+        python -m QEfficient.cloud.execute --model-name gpt2 --qpc-path /path/to/qpc/binaries --device-group "[0,1]" --prompt "Hello | Hi"
 
     """
+    if device_group is not None:
+        warnings.warn(
+            "device_group is deprecated and will be renamed to device_ids in the next release.",
+            FutureWarning,
+            stacklevel=2,
+        )
+
     tokenizer = load_hf_tokenizer(
         pretrained_model_name_or_path=(local_model_dir if local_model_dir else model_name),
         cache_dir=cache_dir,
@@ -87,7 +95,7 @@ def main(
     cloud_ai_100_exec_kv(
         tokenizer=tokenizer,
         qpc_path=qpc_path,
-        device_ids=device_ids,
+        device_ids=device_group,
         prompt=prompt,
         prompts_txt_file_path=prompts_txt_file_path,
         generation_len=generation_len,
@@ -101,8 +109,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--qpc_path", "--qpc-path", required=True, help="Path to generated QPC")
     parser.add_argument(
-        "--device_ids",
-        "--device-ids",
+        "--device_group",
+        "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         help="Cloud AI 100 device ids (comma-separated) e.g. [0]",
     )

@@ -56,7 +56,7 @@ def compile_kv_model_on_cloud_ai_100(
     aic_enable_depth_first: bool,
     allow_mxint8_mdp_io: bool,
     mos: int = -1,
-    device_ids: Optional[List[int]] = None,
+    device_group: Optional[List[int]] = None,
     **kwargs,
 ) -> Tuple[bool, str]:
     """
@@ -88,8 +88,8 @@ def compile_kv_model_on_cloud_ai_100(
     ----------------
     mos : int, optional
         Effort level to reduce on-chip memory. A value greater than 0 applies this effort. Default is -1 (no effort).
-    device_ids : List[int], optional
-        List of device IDs for multi-device compilation (tensor slicing). If `len(device_ids) > 1`,
+    device_group : List[int], optional
+        List of device IDs for multi-device compilation (tensor slicing). If `len(device_group) > 1`,
         a multi-device partition configuration is generated. Default is None.
     **kwargs :
         Additional compiler options passed directly to `qaic-compile`. These are formatted as
@@ -148,13 +148,13 @@ def compile_kv_model_on_cloud_ai_100(
         command.append("-aic-enable-depth-first")
     if allow_mxint8_mdp_io:
         command.append("-allow-mxint8-mdp-io")
-    if device_ids is not None and len(device_ids) > 1:
+    if device_group is not None and len(device_group) > 1:
         mdp_ts_config = {
-            "connections": [{"devices": list(range(len(device_ids))), "type": "p2p"}],
+            "connections": [{"devices": list(range(len(device_group))), "type": "p2p"}],
             "partitions": [
                 {
                     "name": "Partition0",
-                    "devices": [{"deviceId": device, "numCores": num_cores} for device in range(len(device_ids))],
+                    "devices": [{"deviceId": device, "numCores": num_cores} for device in range(len(device_group))],
                 }
             ],
         }
@@ -182,7 +182,7 @@ def compile(
     onnx_path: str,
     qpc_path: str,
     num_cores: int,
-    device_ids: Optional[List[int]] = None,  #  FIXME: use num_devices instead
+    device_group: Optional[List[int]] = None,  #  FIXME: use num_devices instead
     aic_enable_depth_first: bool = False,
     mos: int = -1,
     batch_size: int = 1,
@@ -216,7 +216,7 @@ def compile(
 
     Other Parameters
     ----------------
-    device_ids : List[int], optional
+    device_group : List[int], optional
         List of device IDs. Used to determine the number of devices for multi-device compilation.
         Default is None.
     aic_enable_depth_first : bool, optional
@@ -269,6 +269,13 @@ def compile(
 
     """
 
+    if device_group is not None:
+        warnings.warn(
+            "device_group is deprecated and will be renamed to device_ids in the next release.",
+            FutureWarning,
+            stacklevel=2,
+        )
+
     if full_batch_size and batch_size != 1:
         raise ValueError("Only either batch_size or full_batch_size should be greater than one")
 
@@ -314,7 +321,7 @@ def compile(
             allow_mxint8_mdp_io=allow_mxint8_mdp_io,
             aic_enable_depth_first=aic_enable_depth_first,
             mos=mos,
-            device_ids=device_ids,
+            device_group=device_group,
             qnn_config=qnn_config,
             specializations=(load_json(specialization_json_path))["specializations"],
             custom_io=load_yaml(custom_io_file_path),
@@ -331,7 +338,7 @@ def compile(
             aic_enable_depth_first=aic_enable_depth_first,
             allow_mxint8_mdp_io=allow_mxint8_mdp_io,
             mos=mos,
-            device_ids=device_ids,
+            device_group=device_group,
             **kwargs,
         )
         if kwargs.get("io_encrypt", None):
