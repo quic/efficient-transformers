@@ -121,6 +121,7 @@ VLM_EXPORT_MODEL_IDS = {
 TINY_TEXT_EMBEDDING_MODEL_ID = "hf-internal-testing/tiny-random-BertModel"
 TINY_AUDIO_CTC_MODEL_ID = "hf-internal-testing/tiny-random-wav2vec2"
 TINY_WHISPER_MODEL_ID = "hf-internal-testing/tiny-random-WhisperForConditionalGeneration"
+TINY_COHERE_ASR_MODEL_ID = "CohereLabs/cohere-transcribe-03-2026"
 TINY_SEQ_CLASSIFICATION_MODEL_ID = "ydshieh/tiny-random-BertForSequenceClassification"
 TINY_AWQ_MODEL_ID = "optimum-intel-internal-testing/tiny-mixtral-AWQ-4bit"
 
@@ -1230,6 +1231,22 @@ def test_whisper_export_smoke(tmp_path):
 
     qeff_model = QEFFAutoModelForSpeechSeq2Seq(model_hf, pretrained_model_name_or_path=TINY_WHISPER_MODEL_ID)
     onnx_path = _run_whisper_export_smoke(qeff_model, tmp_path / "whisper")
+
+    assert onnx_path.name.endswith(".onnx")
+
+
+@pytest.mark.llm_model
+def test_cohere_asr_export_smoke(tmp_path):
+    model_hf = AutoModelForSpeechSeq2Seq.from_pretrained(
+        TINY_COHERE_ASR_MODEL_ID,
+        **MODEL_KWARGS,
+        low_cpu_mem_usage=False,
+        torch_dtype=torch.float32,
+    )
+    model_hf.eval()
+
+    qeff_model = QEFFAutoModelForSpeechSeq2Seq(model_hf, pretrained_model_name_or_path=TINY_COHERE_ASR_MODEL_ID)
+    onnx_path = _run_whisper_export_smoke(qeff_model, tmp_path / "cohere_asr")
 
     assert onnx_path.name.endswith(".onnx")
 
