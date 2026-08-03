@@ -615,9 +615,12 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
             token_key_states, token_value_states = key_states, value_states
 
         if past_key_values is not None:
-            if comp_ctx_lengths is not None and attention_mask is not None:
-                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-                cache_kwargs["CCL"] = attention_mask.shape[-1]
+            if comp_ctx_lengths is not None:
+                if attention_mask is not None:
+                    attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                    cache_kwargs["CCL"] = attention_mask.shape[-1]
+                elif self.sliding_window is None:
+                    cache_kwargs["CCL"] = comp_ctx_lengths.shape[-1]
             if self.is_kv_shared_layer:
                 if token_key_states is not None and token_value_states is not None:
                     key_states, value_states = past_key_values.update(
