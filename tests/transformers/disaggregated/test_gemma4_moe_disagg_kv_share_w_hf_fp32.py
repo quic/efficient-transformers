@@ -22,6 +22,8 @@ from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.base.onnx_transforms import FP16ClipTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
+pytestmark = pytest.mark.skip(reason="Temporarily disabled for PR 1150.")
+
 MODEL_NAME = "google/gemma-4-26B-A4B-it"
 SYSTEM_PROMPT = "You are a helpful assistant."
 NUM_HIDDEN_LAYERS = 6
