@@ -572,6 +572,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
     def __qeff_init__(self):
         self.chunk_gated_delta_rule = self.torch_chunk_gated_delta_rule_qeff
+        self.chunk_gated_delta_solver = "recursive_sns"
         chunk_size = 64  # must match what's used in the function
 
         # Precompute all constant masks — no triu/tril with diagonal args at runtime
@@ -604,6 +605,101 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         # eye: identity matrix
         self.register_buffer("_eye", torch.eye(chunk_size), persistent=False)
+
+    def _solve_chunk_attn_original(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        for i in range(1, chunk_size):
+            row = attn[..., i, :i].clone()
+            sub = attn[..., :i, :i].clone()
+            attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
+        return attn + eye.to(dtype=attn.dtype, device=attn.device)
+
+    def _solve_chunk_attn_recursive_sns(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+        acc_dtype = attn.dtype
+        I64 = eye.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        A64 = attn.masked_fill(mask, 0).to(acc_dtype)
+        ns_iters = int(math.log2(chunk_size)) + 4
+
+        def _ns_solve(L: torch.Tensor) -> torch.Tensor:
+            X = I64.clone()
+            for _ in range(ns_iters):
+                R = I64 - ((I64 - L) @ X)
+                ck = X + (X @ R).masked_fill(~strict_lower, 0)
+                X = ck.masked_fill(~strict_lower, 0) + I64
+            return X
+
+        default_depth = max(1, (int(math.ceil(math.log2(chunk_size))) - 1) // 2)
+        depth = getattr(self, "recursive_sns_depth", None)
+        depth = default_depth if depth is None else int(depth)
+        depth = max(1, depth)
+
+        X = _ns_solve(A64 * (0.5**depth))
+        for _ in range(depth):
+            M = (X - I64).masked_fill(~strict_lower, 0)
+            Z = _ns_solve(M)
+            X = (Z @ X).masked_fill(~strict_lower, 0) + I64
+        return X.to(attn.dtype)
+
+    def _solve_chunk_attn_scaled_newton_schulz(
+        self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int
+    ):
+        strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+        attn_1 = attn.clone()
+        acc_dtype = attn.dtype
+        I64 = eye.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        A64 = attn_1.masked_fill(mask, 0).to(acc_dtype)
+        ns_iters = int(math.log2(chunk_size)) + 4
+        As = 0.5 * A64
+
+        Xs = I64.clone()
+        for _ in range(ns_iters):
+            Rs = I64 - ((I64 - As) @ Xs)
+            ck = Xs + (Xs @ Rs).masked_fill(~strict_lower, 0)
+            Xs = ck.masked_fill(~strict_lower, 0) + I64
+
+        M = (Xs - I64).masked_fill(~strict_lower, 0)
+        Z = I64.clone()
+        for _ in range(ns_iters):
+            Rz = I64 - ((I64 - M) @ Z)
+            ck = Z + (Z @ Rz).masked_fill(~strict_lower, 0)
+            Z = ck.masked_fill(~strict_lower, 0) + I64
+
+        X = (Z @ Xs).masked_fill(~strict_lower, 0) + I64
+        return X.to(attn.dtype)
+
+    def _solve_chunk_attn_factorized(self, attn: torch.Tensor, eye: torch.Tensor):
+        eye = eye.to(dtype=attn.dtype, device=attn.device)
+        L = eye.clone()
+        Apow = attn
+        K = 32
+        for _ in range(int(math.log2(K))):
+            L = L @ (eye + Apow)
+            Apow = Apow @ Apow
+        return L
+
+    def _solve_chunk_attn_horner(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        A = attn.masked_fill(mask, 0)
+        acc_dtype = torch.float32
+        A64 = A.to(acc_dtype)
+        I64 = eye.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+        K = chunk_size - 1
+        S64 = I64.clone()
+        for _ in range(K):
+            S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
+        return S64.to(A.dtype)
+
+    def _solve_chunk_attn(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        solver = getattr(self, "chunk_gated_delta_solver", "recursive_sns")
+        if solver == "original":
+            return self._solve_chunk_attn_original(attn, mask, eye, chunk_size)
+        if solver == "factorized":
+            return self._solve_chunk_attn_factorized(attn, eye)
+        if solver == "horner":
+            return self._solve_chunk_attn_horner(attn, mask, eye, chunk_size)
+        if solver == "scaled_newton_schulz":
+            return self._solve_chunk_attn_scaled_newton_schulz(attn, mask, eye, chunk_size)
+        return self._solve_chunk_attn_recursive_sns(attn, mask, eye, chunk_size)
 
     def torch_chunk_gated_delta_rule_qeff(
         self,
@@ -695,78 +791,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         decay_mask = decay_mask * (~mask_strict).float()  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
-        # for i in range(1, chunk_size):
-        #     row = attn[..., i, :i].clone()
-        #     sub = attn[..., :i, :i].clone()
-        #     # attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
-        #     attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
-        # attn = attn + eye.to(dtype=attn.dtype, device=attn.device)
-
-        ## Recursive Scaled Newton-Schulz ##
-        strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
-        acc_dtype = attn.dtype
-        I_base = eye if eye is not None else torch.eye(chunk_size, device=attn.device, dtype=acc_dtype)
-        I64 = I_base.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
-        A64 = attn.masked_fill(mask, 0).to(acc_dtype)
-        ns_iters = int(math.log2(chunk_size)) + 4
-
-        def _ns_solve(L: torch.Tensor) -> torch.Tensor:
-            X = I64.clone()
-            for _ in range(ns_iters):
-                R = I64 - ((I64 - L) @ X)
-                ck = X + (X @ R).masked_fill(~strict_lower, 0)
-                X = ck.masked_fill(~strict_lower, 0) + I64
-            return X
-
-        default_depth = max(1, (int(math.ceil(math.log2(chunk_size))) - 1) // 2)
-        depth = getattr(self, "recursive_sns_depth", None)
-        depth = default_depth if depth is None else int(depth)
-        depth = max(1, depth)
-
-        X = _ns_solve(A64 * (0.5**depth))
-        for _ in range(depth):
-            M = (X - I64).masked_fill(~strict_lower, 0)
-            Z = _ns_solve(M)
-            X = (Z @ X).masked_fill(~strict_lower, 0) + I64
-        attn = X.to(attn.dtype)
-
-        ## Approximation code ##
-        # A = attn
-        # L = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)
-        # Ak = A
-
-        # K = 16
-        # for _ in range(K):
-        #     L = L + Ak
-        #     Ak = Ak @ A
-
-        # attn = L
-
-        ## Factorized Approximation code ##
-        # eye = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)  #
-        # L = eye.clone()
-        # Apow = attn
-
-        # K = 32
-        # for _ in range(int(math.log2(K))):
-        #     L = L @ (eye + Apow)
-        #     Apow = Apow @ Apow  # square for next power
-
-        # attn = L
-
-        # Horners Method
-        # A = attn.masked_fill(mask, 0)
-        # acc_dtype = torch.float32
-        # A64 = A.to(acc_dtype)
-        # I64 = torch.eye(chunk_size, device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
-        # strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
-
-        # K = chunk_size - 1
-        # S64 = I64.clone()
-        # for _ in range(K):
-        #     S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
-
-        # attn = S64.to(A.dtype)
+        I_base = eye if eye is not None else torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)
+        attn = self._solve_chunk_attn(attn=attn, mask=mask, eye=I_base, chunk_size=chunk_size)
 
         value = attn @ v_beta
         k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))
