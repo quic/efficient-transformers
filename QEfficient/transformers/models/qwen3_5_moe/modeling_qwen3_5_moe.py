@@ -606,6 +606,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # eye: identity matrix
         self.register_buffer("_eye", torch.eye(chunk_size), persistent=False)
 
+    # TODO: It would be better to use it directly from HF
     def _solve_chunk_attn_original(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
         for i in range(1, chunk_size):
             row = attn[..., i, :i].clone()
@@ -613,7 +614,9 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
         return attn + eye.to(dtype=attn.dtype, device=attn.device)
 
-    def _solve_chunk_attn_recursive_sns(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+    def _solve_chunk_attn_recursive_sns(
+        self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int
+    ):
         strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
         acc_dtype = attn.dtype
         I64 = eye.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)

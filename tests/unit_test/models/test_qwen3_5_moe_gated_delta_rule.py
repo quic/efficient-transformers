@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 import torch
 
 from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import QEffQwen3_5MoeGatedDeltaNet
@@ -48,7 +55,12 @@ def _run_chunk_rule(solver: str, chunk_size: int = 8):
         ones_lower=None,
         eye=eye,
     )
-    return output, final_state, (batch_size, seq_len, num_heads, v_head_dim), (batch_size, num_heads, k_head_dim, v_head_dim)
+    return (
+        output,
+        final_state,
+        (batch_size, seq_len, num_heads, v_head_dim),
+        (batch_size, num_heads, k_head_dim, v_head_dim),
+    )
 
 
 def test_torch_chunk_gated_delta_rule_qeff_output_and_state_shapes():
@@ -70,6 +82,7 @@ def test_torch_chunk_gated_delta_rule_qeff_supports_all_solver_modes():
 
 def test_torch_chunk_gated_delta_rule_qeff_recursive_sns_matches_original_max_abs_dev():
     output_recursive, _, _, _ = _run_chunk_rule("recursive_sns")
+    # TODO: It would be better to test directly between original HF vs QEFF instead of making copy of original code snippet within qeff.
     output_original, _, _, _ = _run_chunk_rule("original")
 
     max_abs_dev = (output_recursive - output_original).abs().max().item()
