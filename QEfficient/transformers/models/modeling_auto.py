@@ -2094,16 +2094,28 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
             custom_io_lang = _filter_custom_io_for_onnx(custom_io_lang, self.lang_model.onnx_path)
 
+            # get_specializations lays the language specs out as
+            # [prefill specs..., decode specs...], with one spec per CCL value when
+            # CCL is enabled. The disagg prefill/decode QPCs must therefore keep the
+            # whole prefill/decode slice (not just the first/last spec), otherwise all
+            # but one CCL value is silently dropped.
+            lang_specs = specializations["lang"]
             if prefill_only:
-                specializations = specializations["lang"][:1]
+                if self.comp_ctx_lengths_prefill is not None:
+                    specializations = lang_specs[: len(self.comp_ctx_lengths_prefill)]
+                else:
+                    specializations = lang_specs[:1]
                 qpc_key = "lang_prefill_qpc_path"
             elif prefill_seq_len == 1 and not (
                 self.continuous_batching and full_batch_size is not None and full_batch_size != batch_size
             ):
-                specializations = specializations["lang"][-1:]
+                if self.comp_ctx_lengths_decode is not None:
+                    specializations = lang_specs[-len(self.comp_ctx_lengths_decode) :]
+                else:
+                    specializations = lang_specs[-1:]
                 qpc_key = "lang_decode_qpc_path"
             else:
-                specializations = specializations["lang"]
+                specializations = lang_specs
                 qpc_key = "lang_qpc_path"
 
             lang_qpc_path = self.lang_model._compile(
