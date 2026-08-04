@@ -759,41 +759,35 @@ def opt_eager_attention_forward_blocked(
     return output, output
 
 
-def _prepare_gpt_oss_attention_mask(
-    decoder_layer: GptOssDecoderLayer,
-    causal_mask: torch.Tensor,
-    sliding_mask: torch.Tensor,
-    position_ids: torch.LongTensor,
-    dtype: torch.dtype,
-) -> torch.Tensor:
-    self_attn = decoder_layer.self_attn
-    if self_attn.sliding_window is None:
-        attention_mask = causal_mask
-    elif isinstance(self_attn, QEffPrefillOnlyChunkedGptOssAttention):
-        ctx_len = position_ids.shape[1] + self_attn.sliding_window
-        ctx_indices = torch.arange(ctx_len)
-        first_pos_idx = position_ids[0][0]
-        add_idx = torch.where(first_pos_idx >= self_attn.sliding_window, first_pos_idx - self_attn.sliding_window, 0)
-        ctx_indices += add_idx
-        attention_mask = sliding_mask[:, :, :, ctx_indices]
-    else:
-        attention_mask = sliding_mask
-
-    blocking_config = getattr(self_attn, "attn_blocking_config", AttentionBlockingConfig())
-    use_blocking = (
-        isinstance(self_attn, QEffGptOssAttention)
-        and blocking_config is not None
-        and (blocking_config.mode != BlockingMode.NONE)
-        and (self_attn.sliding_window is None)
-    )
-    if use_blocking:
-        return attention_mask
-
+def _to_gpt_oss_additive_attention_mask(attention_mask: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
     return torch.where(
         attention_mask,
         torch.full_like(attention_mask, MIN_MASKED_ATTENTION_VALUE, dtype=dtype),
         torch.zeros_like(attention_mask, dtype=dtype),
     )
+
+
+def _use_gpt_oss_boolean_attention_mask(self_attn: GptOssAttention) -> bool:
+    blocking_config = getattr(self_attn, "attn_blocking_config", AttentionBlockingConfig())
+    return (
+        isinstance(self_attn, QEffGptOssAttention)
+        and blocking_config is not None
+        and (blocking_config.mode != BlockingMode.NONE)
+        and (self_attn.sliding_window is None)
+    )
+
+
+def _prepare_gpt_oss_sliding_chunked_attention_mask(
+    sliding_mask: torch.Tensor,
+    position_ids: torch.LongTensor,
+    sliding_window: int,
+) -> torch.Tensor:
+    ctx_len = position_ids.shape[1] + sliding_window
+    ctx_indices = torch.arange(ctx_len, device=position_ids.device)
+    first_pos_idx = position_ids[0][0]
+    add_idx = torch.where(first_pos_idx >= sliding_window, first_pos_idx - sliding_window, 0)
+    ctx_indices += add_idx
+    return sliding_mask[:, :, :, ctx_indices]
 
 
 class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
@@ -1130,18 +1124,30 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         all_self_attns = () if output_attentions else None
         sin = self.sin_cached[position_ids].unsqueeze(1)
         cos = self.cos_cached[position_ids].unsqueeze(1)
+        full_attention_mask = _to_gpt_oss_additive_attention_mask(causal_mask, hidden_states.dtype)
+        sliding_attention_mask = _to_gpt_oss_additive_attention_mask(sliding_mask, hidden_states.dtype)
+        if isinstance(self.layers[0].self_attn, QEffPrefillOnlyChunkedGptOssAttention):
+            chunked_sliding_mask = _prepare_gpt_oss_sliding_chunked_attention_mask(
+                sliding_mask=sliding_mask,
+                position_ids=position_ids,
+                sliding_window=self.config.sliding_window,
+            )
+            sliding_attention_mask = _to_gpt_oss_additive_attention_mask(chunked_sliding_mask, hidden_states.dtype)
 
         for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
-            layer_attention_mask = _prepare_gpt_oss_attention_mask(
-                decoder_layer=decoder_layer,
-                causal_mask=causal_mask,
-                sliding_mask=sliding_mask,
-                position_ids=position_ids,
-                dtype=hidden_states.dtype,
-            )
+            self_attn = decoder_layer.self_attn
+            if self_attn.sliding_window is None:
+                if _use_gpt_oss_boolean_attention_mask(self_attn):
+                    layer_attention_mask = causal_mask
+                else:
+                    layer_attention_mask = full_attention_mask
+            elif isinstance(self_attn, QEffPrefillOnlyChunkedGptOssAttention):
+                layer_attention_mask = sliding_attention_mask
+            else:
+                layer_attention_mask = sliding_attention_mask
 
             layer_outputs = decoder_layer(
                 hidden_states,
@@ -1239,18 +1245,23 @@ class QEffGptOssModel(GptOssModel):
         all_self_attns = () if output_attentions else None
         sin = self.sin_cached[position_ids].unsqueeze(1)
         cos = self.cos_cached[position_ids].unsqueeze(1)
+        full_attention_mask = _to_gpt_oss_additive_attention_mask(causal_mask, hidden_states.dtype)
+        sliding_attention_mask = _to_gpt_oss_additive_attention_mask(sliding_mask, hidden_states.dtype)
 
         for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
-            layer_attention_mask = _prepare_gpt_oss_attention_mask(
-                decoder_layer=decoder_layer,
-                causal_mask=causal_mask,
-                sliding_mask=sliding_mask,
-                position_ids=position_ids,
-                dtype=hidden_states.dtype,
-            )
+            self_attn = decoder_layer.self_attn
+            if self_attn.sliding_window is None:
+                if _use_gpt_oss_boolean_attention_mask(self_attn):
+                    layer_attention_mask = causal_mask
+                else:
+                    layer_attention_mask = full_attention_mask
+            elif isinstance(self_attn, QEffPrefillOnlyChunkedGptOssAttention):
+                layer_attention_mask = sliding_attention_mask
+            else:
+                layer_attention_mask = sliding_attention_mask
 
             layer_outputs = decoder_layer(
                 hidden_states,
