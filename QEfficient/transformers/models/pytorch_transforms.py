@@ -150,6 +150,8 @@ from transformers.models.mixtral.modeling_mixtral import (
     MixtralModel,
     MixtralRMSNorm,
     MixtralSparseMoeBlock,
+    MixtralTopKRouter,
+    MixtralExperts
 )
 from transformers.models.mllama.modeling_mllama import (
     MllamaCrossAttentionDecoderLayer,
@@ -483,10 +485,13 @@ from QEfficient.transformers.models.mistral3.modeling_mistral3 import (
 )
 from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
     QEffMixtralAttention,
+    QEffPrefillChunkedMixtralSparseMoeBlock,
     QeffMixtralDecoderLayer,
     QEffMixtralForCausalLM,
     QEffMixtralModel,
     QEffMixtralSparseMoeBlock,
+    QEffMixtralTopKRouter,
+    QEffMixtralExperts,
 )
 from QEfficient.transformers.models.mllama.modeling_mllama import (
     QEffMllamaCrossAttentionDecoderLayer,
@@ -850,6 +855,8 @@ class KVCacheTransform(ModuleMappingTransform):
         MixtralDecoderLayer: QeffMixtralDecoderLayer,
         MixtralModel: QEffMixtralModel,
         MixtralForCausalLM: QEffMixtralForCausalLM,
+        MixtralTopKRouter: QEffMixtralTopKRouter,
+        MixtralExperts: QEffMixtralExperts,
         # Mpt
         MptAttention: QEffMptAttention,
         MptBlock: QEffMptBlock,
@@ -945,6 +952,7 @@ class PrefillOnlyTransform(ModuleMappingTransform):
         QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyGptOssMLP,
         QEffGlm4MoeMoE: QEffPrefillChunkedGlm4MoeMoE,
+        QEffMixtralSparseMoeBlock: QEffPrefillChunkedMixtralSparseMoeBlock,
         QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
         QEffQwen3VLMoeTextSparseMoeBlock: QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
         QEffQwen3_5MoeSparseMoeBlock: QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
@@ -957,6 +965,8 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssMLP: QEffPrefillOnlyChunkedGptOssMLP,
+        # Mixtral
+        QEffMixtralSparseMoeBlock: QEffPrefillChunkedMixtralSparseMoeBlock,
         # Qwen3Moe
         QEffQwen3MoeSparseMoeBlock: QEffPrefillChunkedQwen3MoeSparseMoeBlock,
         # Qwen3 VL Moe
@@ -978,6 +988,8 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffPrefillOnlyGptOssMLP: QEffGptOssMLP,
         QEffPrefillOnlyChunkedGptOssMLP: QEffGptOssMLP,
+        # Mixtral
+        QEffPrefillChunkedMixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
         # Qwen3Moe
         QEffPrefillChunkedQwen3MoeSparseMoeBlock: QEffQwen3MoeSparseMoeBlock,
         # GLM4 Moe

@@ -7,6 +7,7 @@
 
 """PyTorch Mixtral model."""
 
+import math
 from typing import List, Optional, Tuple, Type, Union
 
 import torch
@@ -22,10 +23,12 @@ from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
     MixtralConfig,
     MixtralDecoderLayer,
+    MixtralExperts,
     MixtralForCausalLM,
     MixtralModel,
     MixtralRotaryEmbedding,
     MixtralSparseMoeBlock,
+    MixtralTopKRouter,
     load_balancing_loss_func,
     repeat_kv,
     rotate_half,
@@ -37,6 +40,7 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
     past_key_value_update,
 )
+from QEfficient.customop import ctx_gather_3d_generalized, ctx_scatter_3d_generalized, ctx_scatter_3d_int
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -111,58 +115,81 @@ def eager_attention_forward(
     return attn_output, attn_weights
 
 
-def _qeff_batched_mm_experts_forward(
-    self: torch.nn.Module,
-    hidden_states: torch.Tensor,
-    top_k_index: torch.Tensor,
-    top_k_weights: torch.Tensor,
+
+def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
+    """Build packed->original token index."""
+    batch_size, seq_len = T2Ei.shape
+    int32_max = torch.iinfo(torch.int32).max
+    int32_max_scalar = torch.tensor(int32_max, dtype=torch.int32, device=T2Ei.device)
+    token_idx = torch.arange(seq_len, dtype=torch.int32, device=T2Ei.device).unsqueeze(0).expand(batch_size, -1)
+    valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
+    valid_dest = valid_prefix - 1
+    scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
+    matched_idx = torch.full_like(token_idx, int32_max)
+    matched_idx = ctx_scatter_3d_int(
+        matched_idx.unsqueeze(-1),
+        scatter_pos,
+        token_idx.unsqueeze(-1),
+    ).squeeze(-1)
+    return matched_idx
+
+
+def _cumsum_scatter_gather_update_mixtral_expert_blocked(
+    x: torch.Tensor,
+    T2Ei: torch.Tensor,
+    W_g: torch.Tensor,
+    W_u: torch.Tensor,
+    W_d: torch.Tensor,
+    b_g: Optional[torch.Tensor],
+    b_u: Optional[torch.Tensor],
+    b_d: Optional[torch.Tensor],
+    routing_weight: torch.Tensor,
+    expert_out: torch.Tensor,
+    act_fn,
+    packed_chunk_size: int,
 ) -> torch.Tensor:
-    """Like batched_mm_experts_forward but replaces masked_fill_ with torch.where
-    so ONNX Where node gets consistent f32 types on both value inputs."""
-    device = hidden_states.device
-    num_top_k = top_k_index.size(-1)
-    num_tokens = hidden_states.size(0)
-    hidden_dim = hidden_states.size(-1)
+    """Cumsum-scatter-gather-update expert helper for Mixtral NSP-blocked dispatch."""
+    batch_size, seq_len = T2Ei.shape
+    packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
 
-    token_idx = torch.arange(num_tokens, device=device).unsqueeze(1).expand(-1, num_top_k).reshape(-1)
-    sample_weights = top_k_weights.reshape(-1)
-    expert_ids = top_k_index.reshape(-1)
+    matched_idx = _build_matched_idx_from_cumsum(T2Ei)
+    valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
+    row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
+    x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
 
-    invalid_mask = expert_ids >= self.num_experts
-    expert_ids = expert_ids.clamp(0, self.num_experts - 1)
+    for packed_start in range(0, seq_len, packed_chunk_size):
+        packed_stop = packed_start + packed_chunk_size
+        chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
-    selected_hidden_states = hidden_states[token_idx]
+        x_chunk = ctx_gather_3d_generalized(x_expanded, chunk_matched_idx)
 
-    if self.has_gate:
-        selected_weights = self.gate_up_proj[expert_ids]
-        selected_biases = self.gate_up_proj_bias[expert_ids] if self.has_bias else None
-    else:
-        selected_weights = self.up_proj[expert_ids]
-        selected_biases = self.up_proj_bias[expert_ids] if self.has_bias else None
+        gate = x_chunk @ W_g
+        up = x_chunk @ W_u
+        if b_g is not None:
+            gate = gate + b_g.unsqueeze(1)
+        if b_u is not None:
+            up = up + b_u.unsqueeze(1)
+        down_chunk = (up * act_fn(gate)) @ W_d
+        if b_d is not None:
+            down_chunk = down_chunk + b_d.unsqueeze(1)
 
-    proj_out = _batched_linear(
-        selected_hidden_states, selected_weights, bias=selected_biases, is_transposed=self.is_transposed
-    )
+        rw_chunk = ctx_gather_3d_generalized(routing_weight, chunk_matched_idx)
+        down_chunk = down_chunk * rw_chunk
 
-    if self.has_gate:
-        proj_out = self._apply_gate(proj_out)
-    else:
-        proj_out = self.act_fn(proj_out)
+        expert_out_chunk = ctx_gather_3d_generalized(expert_out, chunk_matched_idx)
+        updated_chunk = expert_out_chunk + down_chunk
 
-    selected_weights = self.down_proj[expert_ids]
-    selected_biases = self.down_proj_bias[expert_ids] if self.has_bias else None
+        chunk_valid_rows = torch.clamp(
+            valid_rows - packed_start,
+            min=torch.zeros_like(valid_rows),
+            max=torch.full_like(valid_rows, packed_chunk_size),
+        )
+        updated_chunk = torch.where(
+            (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
+        )
+        expert_out = ctx_scatter_3d_generalized(expert_out, chunk_matched_idx, updated_chunk)
 
-    proj_out = _batched_linear(proj_out, selected_weights, bias=selected_biases, is_transposed=self.is_transposed)
-
-    weighted_out = proj_out * sample_weights.unsqueeze(-1)
-    # Use torch.where instead of masked_fill_ so the ONNX Where node sees
-    # consistent f32 types on both value branches (zeros_like inherits dtype).
-    weighted_out = torch.where(
-        invalid_mask.unsqueeze(-1), torch.zeros_like(weighted_out, dtype=weighted_out.dtype), weighted_out
-    )
-
-    final_hidden_states = weighted_out.view(num_tokens, num_top_k, hidden_dim).sum(dim=1)
-    return final_hidden_states.to(hidden_states.dtype)
+    return expert_out
 
 
 class QEffMixtralAttention(MixtralAttention):
@@ -247,6 +274,43 @@ MIXTRAL_ATTENTION_CLASSES = {
 }
 
 
+class QEffMixtralTopKRouter(MixtralTopKRouter):
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
+        router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
+        router_logits = torch.nn.functional.softmax(router_logits.float(), dim=-1).to(router_logits.dtype)
+        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
+        router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
+        router_top_value = router_top_value.to(router_logits.dtype)
+        router_scores = router_top_value
+        return router_logits, router_scores, router_indices
+
+
+class QEffMixtralExperts(MixtralExperts):
+    def __qeff_init__(self):
+        self.expert_dim = getattr(self, "intermediate_dim", self.gate_up_proj.shape[-2] // 2)
+        gate_up_proj = self.gate_up_proj.detach()
+        down_proj = self.down_proj.detach()
+        # import ipdb; ipdb.set_trace()
+        # Keep zero-copy aliases as Parameters (no clone) to avoid duplicating weights.
+        self.gate_proj = nn.Parameter(gate_up_proj[:, : self.expert_dim, :].transpose(1, 2), requires_grad=False)
+        self.up_proj = nn.Parameter(gate_up_proj[:, self.expert_dim :, :].transpose(1, 2), requires_grad=False)
+        self.down_proj_t = nn.Parameter(down_proj.transpose(1, 2), requires_grad=False)
+        gate_up_proj_bias = getattr(self, "gate_up_proj_bias", None)
+        self.gate_proj_bias = (
+            nn.Parameter(gate_up_proj_bias[:, : self.expert_dim].detach(), requires_grad=False)
+            if gate_up_proj_bias is not None
+            else None
+        )
+        self.up_proj_bias = (
+            nn.Parameter(gate_up_proj_bias[:, self.expert_dim :].detach(), requires_grad=False)
+            if gate_up_proj_bias is not None
+            else None
+        )
+        down_proj_bias = getattr(self, "down_proj_bias", None)
+        self.down_proj_t_bias = nn.Parameter(down_proj_bias.detach(), requires_grad=False) if down_proj_bias is not None else None
+
+
 class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
     """
     This implementation is
@@ -259,68 +323,111 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
     and memory on padding.
     """
 
+    def __qeff_init__(self):
+        self.top_k = getattr(self.gate, "top_k", getattr(self, "top_k", 2))
+        self.norm_topk_prob = getattr(self.gate, "norm_topk_prob", False)
+        self.num_experts = int(getattr(self.experts, "num_experts", getattr(self.gate, "num_experts", 0)))
+
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """Mixtral MoE forward compatible with both pre-v5 and v5 gate/experts APIs."""
+        """Qwen3-MoE style packed sparse forward path for Mixtral."""
         batch_size, sequence_length, hidden_dim = hidden_states.shape
-        if self.training and getattr(self, "jitter_noise", 0) > 0:
-            hidden_states = hidden_states * torch.empty_like(hidden_states).uniform_(
-                1.0 - self.jitter_noise, 1.0 + self.jitter_noise
-            )
-        hidden_states = hidden_states.view(-1, hidden_dim)
-        gate_dtype = getattr(getattr(self.gate, "weight", None), "dtype", hidden_states.dtype)
-        gate_out = self.gate(hidden_states.to(gate_dtype))
+        hidden_states_reshaped = hidden_states.view(-1, hidden_dim)
+        router_logits, routing_weights, selected_experts = self.gate(hidden_states_reshaped)
+        routing_weights = routing_weights.to(hidden_states_reshaped.dtype)
 
-        if isinstance(gate_out, tuple) and len(gate_out) >= 3:
-            router_logits, routing_weights, selected_experts = gate_out[0], gate_out[1], gate_out[2]
+        num_top_k = selected_experts.size(-1)
+        idx = selected_experts.reshape(-1)
+        invalid_mask = idx >= self.num_experts
+        idx = idx.clamp(0, self.num_experts - 1)
+
+        gate_proj = self.experts.gate_proj[idx]
+        up_proj = self.experts.up_proj[idx]
+        down_proj = self.experts.down_proj_t[idx]
+
+        expert_in = hidden_states_reshaped.unsqueeze(1).expand(-1, num_top_k, -1).contiguous().view(-1, 1, hidden_dim)
+        gate = torch.bmm(expert_in, gate_proj)
+        up = torch.bmm(expert_in, up_proj)
+        gate_bias = getattr(self.experts, "gate_proj_bias", None)
+        up_bias = getattr(self.experts, "up_proj_bias", None)
+        down_bias = getattr(self.experts, "down_proj_t_bias", None)
+        if gate_bias is not None:
+            gate = gate + gate_bias[idx].unsqueeze(1)
+            up = up + up_bias[idx].unsqueeze(1)
+        intermediate = up * getattr(self.experts, "act_fn", F.silu)(gate)
+        experts_out = torch.bmm(intermediate, down_proj).squeeze(1)
+        if down_bias is not None:
+            experts_out = experts_out + down_bias[idx]
+
+        experts_out = experts_out * routing_weights.reshape(-1, 1).to(experts_out.dtype)
+        experts_out = torch.where(
+            invalid_mask.unsqueeze(-1), torch.zeros_like(experts_out, dtype=experts_out.dtype), experts_out
+        )
+        final_hidden_states = torch.einsum("tkh->th", experts_out.view(-1, num_top_k, hidden_dim)).reshape(
+            batch_size, sequence_length, hidden_dim
+        )
+        return final_hidden_states, router_logits
+
+
+class QEffPrefillChunkedMixtralSparseMoeBlock(MixtralSparseMoeBlock):
+    supports_moe_prefill_blocking = True
+
+    def __qeff_init__(self):
+        self.top_k = getattr(self.gate, "top_k", getattr(self, "top_k", 2))
+        self.norm_topk_prob = getattr(self.gate, "norm_topk_prob", False)
+        self.num_experts = int(getattr(self.gate, "num_experts", self.experts.gate_proj.shape[0]))
+
+    def forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        batch_size, sequence_length, hidden_dim = hidden_states.shape
+        T = batch_size * sequence_length
+        x = hidden_states.view(T, hidden_dim)
+        router_logits, top_w, top_i = self.gate(x)
+        top_w = top_w.to(x.dtype)
+        routing_weights = torch.zeros_like(router_logits)
+        routing_weights.scatter_(1, top_i, top_w)
+
+        num_experts = self.num_experts
+        num_nsp = getattr(self, "expert_blocking_num_nsp", num_experts)
+        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
+        if num_experts % num_nsp != 0:
+            # Auto-adjust to a valid divisor so disagg compile settings like
+            # num_cores=16 still work for models with fewer experts (e.g. Mixtral has 8).
+            num_nsp = max(1, math.gcd(num_experts, num_nsp))
+
+        local_experts = num_experts // num_nsp
+        rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
+        W_g = self.experts.gate_proj.view(local_experts, num_nsp, hidden_dim, -1).transpose(0, 1).contiguous()
+        W_u = self.experts.up_proj.view(local_experts, num_nsp, hidden_dim, -1).transpose(0, 1).contiguous()
+        W_d = self.experts.down_proj_t.view(local_experts, num_nsp, -1, hidden_dim).transpose(0, 1).contiguous()
+        gate_proj_bias = getattr(self.experts, "gate_proj_bias", None)
+        up_proj_bias = getattr(self.experts, "up_proj_bias", None)
+        down_proj_bias = getattr(self.experts, "down_proj_t_bias", None)
+        if gate_proj_bias is not None:
+            b_g = gate_proj_bias.view(local_experts, num_nsp, -1).transpose(0, 1).contiguous()
+            b_u = up_proj_bias.view(local_experts, num_nsp, -1).transpose(0, 1).contiguous()
         else:
-            router_logits = gate_out[0] if isinstance(gate_out, tuple) else gate_out
-            routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
-            routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
-            routing_weights /= torch.einsum("bi->b", routing_weights)[:, None]
-            routing_weights = routing_weights.to(hidden_states.dtype)
+            b_g = b_u = None
+        b_d = down_proj_bias.view(local_experts, num_nsp, hidden_dim).transpose(0, 1).contiguous() if down_proj_bias is not None else None
 
-        # transformers>=5.3 uses MixtralExperts aggregate with call signature
-        # experts(hidden_states, top_k_index, top_k_weights)
-        if callable(self.experts) and not hasattr(self.experts, "__getitem__"):
-            experts_dtype = None
-            for param in self.experts.parameters():
-                experts_dtype = param.dtype
-                break
-            hidden_states_for_experts = hidden_states.to(experts_dtype) if experts_dtype else hidden_states
-            if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
-                # Avoid grouped-mm ONNX incompatibility (`aten::histc`) while keeping
-                # upstream experts math/parameter layout.
-                final_hidden_states = _qeff_batched_mm_experts_forward(
-                    self.experts, hidden_states_for_experts, selected_experts, routing_weights
-                )
-            else:
-                final_hidden_states = self.experts(hidden_states_for_experts, selected_experts, routing_weights)
-            final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
-            return final_hidden_states, router_logits
-
-        # Backward compatible path for older expert containers.
-        final_hidden_states = torch.zeros_like(hidden_states)
-        B, K = selected_experts.shape
-        E = int(getattr(self, "num_experts", getattr(self.experts, "num_experts", self.gate.weight.shape[0])))
-        flat = selected_experts.reshape(-1)
-        mask = torch.zeros((B * K, E), dtype=torch.int64)
-        mask[torch.arange(B * K), flat] = 1
-        expert_mask = mask.view(B, K, E).permute(2, 1, 0)
-
-        for expert_idx in range(E):
-            expert_layer = self.experts[expert_idx]
-            expert_mask_tr = expert_mask[expert_idx].transpose(0, 1)
-            scale = torch.einsum("be,be->b", routing_weights, expert_mask_tr.to(self.gate.weight.dtype))[:, None]
-            current_hidden_states = expert_layer(hidden_states) * scale
-            current_hidden_states = torch.where(
-                torch.einsum("be,be->b", routing_weights, expert_mask_tr.to(routing_weights.dtype)).to(torch.bool)[
-                    :, None
-                ],
-                current_hidden_states,
-                torch.zeros_like(current_hidden_states),
+        expert_out = x.new_zeros((num_nsp, T, hidden_dim))
+        routing_weights_unsqueezed = rw.unsqueeze(-1)
+        act_fn = getattr(self.experts, "act_fn", F.silu)
+        for slot in range(local_experts):
+            T2Ei = rw[:, slot, :] > 0
+            expert_out = _cumsum_scatter_gather_update_mixtral_expert_blocked(
+                x=x,
+                T2Ei=T2Ei,
+                W_g=W_g[:, slot],
+                W_u=W_u[:, slot],
+                W_d=W_d[:, slot],
+                b_g=b_g[:, slot] if b_g is not None else None,
+                b_u=b_u[:, slot] if b_u is not None else None,
+                b_d=b_d[:, slot] if b_d is not None else None,
+                routing_weight=routing_weights_unsqueezed[:, slot],
+                expert_out=expert_out,
+                act_fn=act_fn,
+                packed_chunk_size=packed_chunk_size,
             )
-            final_hidden_states = final_hidden_states + current_hidden_states
-        final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
+        final_hidden_states = torch.einsum("nth->th", expert_out).reshape(batch_size, sequence_length, hidden_dim)
         return final_hidden_states, router_logits
 
 
