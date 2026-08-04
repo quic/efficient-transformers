@@ -24,6 +24,7 @@ from QEfficient.base.onnx_transforms import (
     CustomOpTransform,
     FP16ClipTransform,
     OnnxTransformPipeline,
+    PreTransposeLinearWeightsTransform,
     PruneFakeInitializersTransform,
     RenameFunctionOutputsTransform,
     SplitTensorsTransform,
@@ -406,6 +407,7 @@ class QEFFBaseModel(ABC):
 
         prev_invoke_fallback = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
         os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = "1"
+        onnx_program = None
         try:
             onnx_program = torch.onnx.export(
                 self.model,
@@ -422,12 +424,16 @@ class QEFFBaseModel(ABC):
             if onnx_program is None:
                 raise RuntimeError("torch.onnx.export returned None for dynamo export")
             PruneFakeInitializersTransform.apply(onnx_program)
+            PreTransposeLinearWeightsTransform.apply(onnx_program)
 
-            from QEfficient.utils.onnx_save_utils import save_dynamo_onnx
+            from QEfficient.utils.onnx_save_utils_portable import save_dynamo_onnx_portable
 
-            save_dynamo_onnx(onnx_program, onnx_path)
+            save_dynamo_onnx_portable(onnx_program, onnx_path)
+            # from QEfficient.utils.onnx_save_utils import save_dynamo_onnx
+            # save_dynamo_onnx(onnx_program, onnx_path)
         finally:
-            del onnx_program
+            if onnx_program is not None:
+                del onnx_program
             gc.collect()
             if prev_invoke_fallback is None:
                 os.environ.pop("TORCH_INVOKE_ALLOW_CREATE_FALLBACK", None)

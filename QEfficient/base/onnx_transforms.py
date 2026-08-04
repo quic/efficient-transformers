@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import numpy as np
 import onnx
+import onnx_ir
 import torch
 from onnx import ModelProto, TensorProto, external_data_helper, numpy_helper
 
@@ -579,6 +580,110 @@ class PruneFakeInitializersTransform(BaseOnnxTransform):
                 del initializers[name]
                 pruned = True
         return pruned
+
+
+class PreTransposeLinearWeightsTransform(BaseOnnxTransform):
+    """Fold ``Transpose(weight) -> MatMul`` into a pre-transposed initializer, before serialisation.
+
+    torch.export/dynamo represents ``F.linear(x, weight)`` via its literal ATen
+    decomposition, ``x @ weight.T``, emitting an explicit ``Transpose`` node on the
+    weight ahead of the ``MatMul``. The legacy TorchScript-symbolic exporter instead
+    constant-folds ``weight.T`` at export time and stores the transposed bytes
+    directly in the initializer, so no Transpose node is ever emitted. The AIC
+    compiler's MXFP6 weight-quantization pass appears to require weights to feed a
+    MatMul directly, so the extra Transpose node prevents quantization and inflates
+    qpc size for dynamo exports.
+
+    Unlike a graph-only Gemm(transB=1) rewrite, this preserves N-D/batched MatMul
+    semantics (Gemm only supports 2D operands, but decoder-layer activations here
+    are 3D: [batch, seq, hidden]) by physically transposing the initializer's data
+    instead of changing the op — reproducing exactly what the legacy exporter
+    already does.
+
+    Operates on the torch.onnx.ONNXProgram object returned by dynamo export (its
+    onnx_ir.Model), before serialisation, so weight tensors are still ordinary
+    in-memory arrays rather than external-data references — no per-tensor lazy
+    loading is needed, unlike a post-onnx.load ModelProto-based transform would.
+
+    Decoder-layer weights live inside local Functions (e.g. QEffLlamaDecoderLayer),
+    called once per layer with a different initializer bound at the same argument
+    position each time. The Transpose/MatMul pair itself lives once in the shared
+    function body; only the bound initializers differ per call site.
+    """
+
+    @classmethod
+    def apply(cls, onnx_program) -> bool:
+        changed = False
+        for fn in onnx_program.model.functions.values():
+            if cls._fold_function(fn, onnx_program.model.graph):
+                changed = True
+        return changed
+
+    @classmethod
+    def _fold_function(cls, fn, top_level_graph) -> bool:
+        fn_inputs = list(fn.inputs)
+        changed = False
+
+        for node in list(fn):
+            if node.op_type != "MatMul":
+                continue
+            weight_value = node.inputs[1]
+            if weight_value is None:
+                continue
+            transpose_node = weight_value.producer()
+            if transpose_node is None or transpose_node.op_type != "Transpose":
+                continue
+            transposed_arg = transpose_node.inputs[0]
+            if transposed_arg is None or transposed_arg not in fn_inputs:
+                # Only fold transposes of function-input (i.e. weight) values —
+                # not transposes of computed activations.
+                continue
+            if len(weight_value.uses()) != 1:
+                # The transposed value must be consumed only by this MatMul, or
+                # removing the Transpose would break its other consumers.
+                continue
+
+            perm = transpose_node.attributes.get("perm")
+            if perm is not None and list(perm.value) != [1, 0]:
+                # Only a plain 2D transpose is being folded here.
+                continue
+
+            arg_position = fn_inputs.index(transposed_arg)
+            if not cls._transpose_bound_initializers(fn, top_level_graph, arg_position):
+                # Could not prove every call site binds a real initializer at this
+                # argument position — skip folding to avoid silently corrupting
+                # a case fed by a computed activation instead.
+                continue
+
+            node.replace_input_with(1, transposed_arg)
+            fn.remove(transpose_node, safe=True)
+            changed = True
+
+        return changed
+
+    @staticmethod
+    def _transpose_bound_initializers(fn, top_level_graph, arg_position) -> bool:
+        call_nodes = [node for node in top_level_graph if node.op_type == fn.name]
+        if not call_nodes:
+            return False
+
+        bound_values = []
+        for call_node in call_nodes:
+            if arg_position >= len(call_node.inputs):
+                return False
+            bound_value = call_node.inputs[arg_position]
+            if bound_value is None or not bound_value.is_initializer() or bound_value.const_value is None:
+                return False
+            bound_values.append(bound_value)
+
+        for value in bound_values:
+            array = value.const_value.numpy()
+            transposed = np.ascontiguousarray(array.T)
+            new_tensor = onnx_ir.Tensor(transposed, name=value.name)
+            value.const_value = new_tensor
+            value.shape = new_tensor.shape
+
+        return True
 
 
 class OnnxTransformPipeline(BaseOnnxTransform):

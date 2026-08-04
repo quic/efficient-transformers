@@ -7,6 +7,7 @@
 
 import argparse
 
+import torch
 from transformers import AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
@@ -14,17 +15,19 @@ from QEfficient import QEFFAutoModelForCausalLM
 
 def main():
     parser = argparse.ArgumentParser(description="Continuous batching inference")
-    parser.add_argument("--model-name", type=str, default="Qwen/Qwen2-1.5B-Instruct", help="HuggingFace model ID")
+    parser.add_argument(
+        "--model-name", type=str, default="meta-llama/Llama-3.3-70B-Instruct", help="HuggingFace model ID"
+    )
     parser.add_argument(
         "--prompts",
         type=str,
-        default="Hello! How can I help?|Hi there! What’s up?|Hey! Need assistance?|Welcome! How can I support you today?",
+        default="Hello! How can I help?|Hi there! What’s up?|Hey! Need assistance?|Welcome! How can I support you today?|what is physics?|Welcome! water or soda?|What is chemistry?|What is maths?",
         help="Pipe-separated prompts for batch processing",
     )
-    parser.add_argument("--prefill-seq-len", type=int, default=128, help="Prefill sequence length")
-    parser.add_argument("--ctx-len", type=int, default=512, help="Context length")
+    parser.add_argument("--prefill-seq-len", type=int, default=1024, help="Prefill sequence length")
+    parser.add_argument("--ctx-len", type=int, default=2048, help="Context length")
     parser.add_argument("--num-hidden-layers", type=int, default=4, help="Num hidden layers")
-    parser.add_argument("--full-batch-size", type=int, default=4, help="Full batch size for continuous batching")
+    parser.add_argument("--full-batch-size", type=int, default=8, help="Full batch size for continuous batching")
     parser.add_argument("--dynamo", action="store_true", help="Export via dynamo")
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
@@ -43,7 +46,9 @@ def main():
     # Load tokenizer and model with continuous batching enabled
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     model = QEFFAutoModelForCausalLM.from_pretrained(
-        args.model_name, num_hidden_layers=args.num_hidden_layers, continuous_batching=True
+        args.model_name,
+        continuous_batching=True,
+        torch_dtype=torch.float16,
     )
 
     # Compile the model with full_batch_size for continuous batching
@@ -52,9 +57,10 @@ def main():
         ctx_len=args.ctx_len,
         full_batch_size=args.full_batch_size,
         num_cores=args.num_cores,
-        num_devices=(1 if args.device_group is None else len(args.device_group)),
+        num_devices=8,
         dynamo=args.dynamo,
         use_onnx_subfunctions=True,
+        mxfp6_matmul=True,
     )
     print(f"Model compiled to: {qpc_path}")
 
