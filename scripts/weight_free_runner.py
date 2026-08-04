@@ -110,17 +110,12 @@ def _parse_args() -> argparse.Namespace:
         "--ccl_values",
         type=str,
         default=None,
-        help="Comma-separated CCL context lengths, e.g. '1024,2048,4096'. Defaults to [1024, 2048, ctx_len].",
+        help="Comma-separated CCL context lengths, e.g. '64,128'. Defaults to [ctx_len//2, ctx_len].",
     )
     p.add_argument("--layers", type=int, default=None, help="Override num_hidden_layers for fast testing.")
     p.add_argument("--output_dir", required=True, help="Root directory for ONNX and QPC artifacts.")
     p.add_argument("--prompts", type=str, default=None, help="Pipe-separated prompts. Defaults to built-in set.")
     p.add_argument("--no_subfunctions", action="store_true", help="Disable ONNX subfunction extraction.")
-    p.add_argument(
-        "--skip_compile",
-        action="store_true",
-        help="Export only; skip compile and inference. Useful for isolating checkpoint-prep timing.",
-    )
     return p.parse_args()
 
 
@@ -161,14 +156,14 @@ def main() -> None:
         prompts = args.prompts.split("|") if args.prompts else DEFAULT_PROMPTS
         use_subfunctions = not args.no_subfunctions
         continuous_batching = args.mode in ("cb", "cb_ccl")
-        ccl_mode = args.mode in ("ccl", "cb_ccl")
+        ccl_mode = args.mode == "ccl"
 
         # CCL context lengths
         if ccl_mode:
             if args.ccl_values:
                 ccl_list = [int(x) for x in args.ccl_values.split(",")]
             else:
-                ccl_list = sorted({1024, 2048, args.ctx_len})
+                ccl_list = sorted({args.ctx_len // 2, args.ctx_len})
         else:
             ccl_list = None
 
@@ -224,7 +219,7 @@ def main() -> None:
         onnx_path = Path(
             qeff_model.export(
                 export_dir=str(export_dir),
-                dynamo=True,
+                use_dynamo=True,
                 use_weight_free_export=args.weight_free,
                 use_onnx_subfunctions=use_subfunctions,
                 offload_pt_weights=True,
@@ -245,62 +240,59 @@ def main() -> None:
                     result["transform_peak_rss_mb"] = round(_wf_core._last_prep_peak_rss_mb, 4)
 
         # ── Phase 3: Compile (ONNX → QPC) ─────────────────────────────────
-        if args.skip_compile:
-            result["exit_code"] = 0
-        else:
-            profiler.mark_operation("Model Compilation")
-            t_compile = time.perf_counter()
+        profiler.mark_operation("Model Compilation")
+        t_compile = time.perf_counter()
 
-            compile_kwargs: dict = dict(
-                onnx_path=str(onnx_path),
-                compile_dir=str(compile_dir),
-                prefill_seq_len=args.prefill_seq_len,
-                ctx_len=args.ctx_len,
-                num_devices=args.num_devices,
-                num_cores=args.num_cores,
-                mxfp6_matmul=args.mxfp6_matmul,
-                mxint8_kv_cache=args.mxint8_kv_cache,
-                dynamo=True,
-                use_onnx_subfunctions=use_subfunctions,
-                use_weight_free_export=args.weight_free,
+        compile_kwargs: dict = dict(
+            onnx_path=str(onnx_path),
+            compile_dir=str(compile_dir),
+            prefill_seq_len=args.prefill_seq_len,
+            ctx_len=args.ctx_len,
+            num_devices=args.num_devices,
+            num_cores=args.num_cores,
+            mxfp6_matmul=args.mxfp6_matmul,
+            mxint8_kv_cache=args.mxint8_kv_cache,
+            use_dynamo=True,
+            use_onnx_subfunctions=use_subfunctions,
+            use_weight_free_export=args.weight_free,
+        )
+        if continuous_batching:
+            compile_kwargs["full_batch_size"] = args.full_batch_size
+        if ccl_list is not None:
+            compile_kwargs["comp_ctx_lengths_prefill"] = ccl_list
+            compile_kwargs["comp_ctx_lengths_decode"] = ccl_list
+
+        qpc_path = Path(qeff_model.compile(**compile_kwargs))
+
+        result["compile_duration_seconds"] = round(time.perf_counter() - t_compile, 3)
+        result["qpc_dir_size_gb"] = _dir_size_gb(qpc_path)
+
+        # ── Phase 4: Inference ─────────────────────────────────────────────
+        profiler.mark_operation("Inference")
+
+        active_prompts = prompts if continuous_batching else prompts[:1]
+        try:
+            exec_info = qeff_model.generate(
+                prompts=active_prompts,
+                tokenizer=tokenizer,
+                automation=True,
+                generation_len=args.generation_len,
             )
-            if continuous_batching:
-                compile_kwargs["full_batch_size"] = args.full_batch_size
-            if ccl_list is not None:
-                compile_kwargs["comp_ctx_lengths_prefill"] = ccl_list
-                compile_kwargs["comp_ctx_lengths_decode"] = ccl_list
+            result["completions"] = list(exec_info.generated_texts)
 
-            qpc_path = Path(qeff_model.compile(**compile_kwargs))
+            # Capture QPC inference performance metrics from exec_info
+            pm = exec_info.perf_metrics
+            bs = exec_info.batch_size
+            result["perf_ttft_seconds"] = round(pm.prefill_time, 3)
+            result["perf_decode_tokens_per_sec"] = round(pm.decode_perf * bs, 2)
+            result["perf_total_tokens_per_sec"] = round(pm.total_perf * bs, 2)
+            result["perf_e2e_time_seconds"] = round(pm.total_time, 3)
 
-            result["compile_duration_seconds"] = round(time.perf_counter() - t_compile, 3)
-            result["qpc_dir_size_gb"] = _dir_size_gb(qpc_path)
+        except Exception as gen_exc:
+            result["completions"] = []
+            result["error"] = f"inference error: {gen_exc}"
 
-            # ── Phase 4: Inference ─────────────────────────────────────────
-            profiler.mark_operation("Inference")
-
-            active_prompts = prompts if continuous_batching else prompts[:1]
-            try:
-                exec_info = qeff_model.generate(
-                    prompts=active_prompts,
-                    tokenizer=tokenizer,
-                    automation=True,
-                    generation_len=args.generation_len,
-                )
-                result["completions"] = list(exec_info.generated_texts)
-
-                # Capture QPC inference performance metrics from exec_info
-                pm = exec_info.perf_metrics
-                bs = exec_info.batch_size
-                result["perf_ttft_seconds"] = round(pm.prefill_time, 3)
-                result["perf_decode_tokens_per_sec"] = round(pm.decode_perf * bs, 2)
-                result["perf_total_tokens_per_sec"] = round(pm.total_perf * bs, 2)
-                result["perf_e2e_time_seconds"] = round(pm.total_time, 3)
-
-            except Exception as gen_exc:
-                result["completions"] = []
-                result["error"] = f"inference error: {gen_exc}"
-
-            result["exit_code"] = 0
+        result["exit_code"] = 0
 
     except Exception as exc:
         result["error"] = str(exc)
