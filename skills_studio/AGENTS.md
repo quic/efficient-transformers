@@ -123,3 +123,7 @@ Use a skill when the task matches its description. Open the `SKILL.md` for the f
   including module mappers, external method mappers, mutators, bespoke transforms,
   registration, and transform tests.
   (`skills_studio/skills/qeff-transform-authoring/SKILL.md`)
+- `qeff-pr-reviewer` — Review a PR, branch, or diff in this repo as the senior
+  maintainer would: catch AI-slop, design-correctness violations (Auto class,
+  transform registration, hash plumbing), and CONTRIBUTING.md test/example/doc gaps.
+  (`skills_studio/skills/qeff-pr-reviewer/SKILL.md`)
