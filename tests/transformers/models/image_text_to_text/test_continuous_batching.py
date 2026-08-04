@@ -56,6 +56,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
+    kv_cache_batch_size: Optional[int] = None,
 ):
     prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
@@ -66,6 +67,14 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     n_layer = num_hidden_layers
     batch_size = model_config_dict[model_name]["batch_size"]
     full_batch_size = model_config_dict[model_name]["full_batch_size"]
+    # Prefix caching sizes the KV cache from kv_cache_batch_size, and the decode
+    # specialization records that value as its full_batch_size (modeling_auto.py:4149/4215).
+    # The runtime reads the batch count back from the QPC, so the running batch has to match
+    # kv_cache_batch_size or prefill runs out of prompts -- exactly like the causal-LM helper,
+    # which sets `full_batch_size = kv_cache_batch_size or 4` (check_causal_models.py:175).
+    # The image/prompt lists below are tiled to full_batch_size, so they follow along.
+    if kv_cache_batch_size is not None:
+        full_batch_size = kv_cache_batch_size
     max_gen_len = NEW_GENERATION_TOKENS
 
     if config is None:
@@ -128,6 +137,10 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         "mxfp6_matmul": False,
         "split-model-io": True,
     }
+    # Sizes the KV cache independently of full_batch_size (prefix caching). Left out unless
+    # requested so the default CB runs keep inferring it from full_batch_size.
+    if kv_cache_batch_size is not None:
+        compile_kwargs["kv_cache_batch_size"] = kv_cache_batch_size
     if model_name in ["qwen2_5_vl", "qwen3_vl", "qwen3_vl_moe", "qwen3_5", "qwen3_5_moe", "gemma4"]:
         compile_kwargs["use_onnx_subfunctions"] = True
 
@@ -248,19 +261,28 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         assert (pytorch_hf_tokens[i] == qpc_tokens[i]).all(), (
             f"Tokens don't match for prompt {i} between HF and QPC output for same prompts"
         )
+    # The distinct-prompt leg runs full_batch_size prompts. Prefix caching bumps
+    # full_batch_size above the config's 2-entry prompt/image lists, so tile them to
+    # full_batch_size (modulo) exactly as the causal helper does (check_causal_models.py:177).
+    # A no-op when full_batch_size == len(queries) (the plain-CB case), so existing CB runs
+    # are unchanged; without it the shorter lists under-fill the prompt queue and prefill
+    # pops an empty deque (vlm_generation.py:935).
+    diff_images = [images[i % len(images)] for i in range(full_batch_size)]
+    diff_queries = [queries[i % len(queries)] for i in range(full_batch_size)]
+    diff_image_urls = [image_urls[i % len(image_urls)] for i in range(full_batch_size)]
     if model_name in ModelConfig.MOLMO_MODELS:
         pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(
-            model_hf, images, queries, generation_config=generation_config
+            model_hf, diff_images, diff_queries, generation_config=generation_config
         )
     else:
-        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, images, queries)
+        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, diff_images, diff_queries)
 
     print("QPC Outputs (QAIC):")
     exec_info = qeff_model.generate(
         tokenizer=tokenizer,
         processor=processor,
-        images=image_urls,
-        prompts=queries,
+        images=diff_image_urls,
+        prompts=diff_queries,
         generation_len=max_gen_len,
         image_height=image_height,
         image_width=image_width,
@@ -343,4 +365,55 @@ def test_dummy_image_text_to_text_pytorch_vs_ai100_continuous_batching(model_nam
             num_hidden_layers=model_config_dict[model_name]["num_layers"],
             kv_offload=kv_offload,
             manual_cleanup=manual_cleanup,
+        )
+
+
+# Larger than every config's full_batch_size (2) so the KV-cache buffer is sized apart from
+# the plain-CB default and the kv_cache_batch_size compile arg is genuinely exercised. Capped
+# at 4: Qwen-VL runs the shared base CB decode loop (run_continuous_batching_decode), which
+# indexes the 4-D mrope decode_pos_ids `(4, batch, 1)` on axis 0 by decode_batch_id
+# (text_generation_inference.py:964), so a running batch >4 IndexErrors. This is a pre-existing
+# Qwen-VL CB ceiling -- reproducible with the plain CB test at full_batch_size=8 -- not a
+# prefix-caching bug. The causal side runs 8; VLMs stay at 4 until that loop is generalized.
+PREFIX_CACHING_KV_CACHE_BATCH_SIZE = 4
+
+
+@pytest.mark.dummy_layers
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("model_name", test_mm_models)
+@pytest.mark.parametrize("kv_offload", [True])  # TODO: Add support for kv_offload=False
+def test_dummy_image_text_to_text_prefix_caching_cb(model_name, kv_offload, manual_cleanup):
+    """Prefix-caching (``kv_cache_batch_size``) parity for VLMs.
+
+    Mirrors ``test_per_pr_causal_fp16_subfunction_cb_prefix_caching`` on the causal-LM side.
+    Lives with the CB tests because ``compile()`` rejects ``kv_cache_batch_size`` unless
+    continuous batching is on.
+    """
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to some issues.")
+    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
+        pytest.skip("These models require kv_offload=True for testing.")
+
+    torch.manual_seed(42)
+    hf_config = None
+    if model_name in ModelConfig.STANDARD_VLM_MODELS:
+        model_type = model_config_dict[model_name].get("model_type", None)
+        custom_config = model_config_dict[model_name].get("additional_params", {})
+        hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
+        hf_config.name_or_path = model_name
+        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
+            model_name,
+            kv_offload=kv_offload,
+            config=hf_config,
+            manual_cleanup=manual_cleanup,
+            kv_cache_batch_size=PREFIX_CACHING_KV_CACHE_BATCH_SIZE,
+        )
+    else:
+        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
+            model_name,
+            num_hidden_layers=model_config_dict[model_name]["num_layers"],
+            kv_offload=kv_offload,
+            manual_cleanup=manual_cleanup,
+            kv_cache_batch_size=PREFIX_CACHING_KV_CACHE_BATCH_SIZE,
         )
