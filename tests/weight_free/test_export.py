@@ -22,6 +22,7 @@ from __future__ import annotations
 import pytest
 
 from QEfficient.exporter.weight_free import resolve_weight_spec_path
+from QEfficient.utils import get_num_layers_from_config
 from QEfficient.utils.run_utils import ApiRunner
 
 from ._helpers import (
@@ -59,9 +60,6 @@ def test_weight_free_export_onnx_structure(model_type, model_id, tmp_export_dir)
 
     CPU-only. No QAIC hardware or weight injection required.
     """
-    if model_type == "gpt_oss":
-        pytest.xfail()
-
     try:
         # Build meta-device model — no weights loaded, only shapes.
         # pretrained_model_name_or_path is carried in the QEff model so the export
@@ -107,9 +105,6 @@ def test_weight_free_export_ort_parity(model_type, model_id, tmp_export_dir):
 
     CPU-only. No QAIC hardware required.
     """
-    if model_type == "gpt_oss":
-        pytest.xfail()
-
     try:
         model_hf = load_hf_model(model_id)
         tokenizer = load_tokenizer(model_id)
@@ -132,8 +127,10 @@ def test_weight_free_export_ort_parity(model_type, model_id, tmp_export_dir):
     # Weight-free export uses a meta-device model — no weights in the ONNX.
     # The real weights are read from the HF cache at ORT inference time via
     # load_weight_free_ort_inputs(weight_spec_path, inputs).
+    # The exported model must have the same layer count as model_hf, or the
+    # HF PT and ORT token streams come from architecturally different models.
     try:
-        qeff_model = build_meta_qeff_model(model_id)
+        qeff_model = build_meta_qeff_model(model_id, num_hidden_layers=get_num_layers_from_config(model_hf.config))
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
 

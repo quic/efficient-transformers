@@ -70,7 +70,7 @@ def main():
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
         aic_hw_version=args.aic_hw_version,
-        num_devices=(1 if args.device_group is None else len(args.device_group)),
+        num_devices=(2 if args.device_group is None else len(args.device_group)),
         dynamo=True,
         use_weight_free_export=args.use_weight_free_export,
         use_onnx_subfunctions=True,
