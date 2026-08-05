@@ -1559,6 +1559,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 kv_offload=True,
                 continuous_batching=self.continuous_batching,
                 comp_ctx_lengths=self.comp_ctx_lengths_decode,
+                prefill_seq_len=prefill_seq_len,
             )
             dynamic_axes = self.model.get_onnx_dynamic_axes(
                 kv_offload=True,
@@ -1569,6 +1570,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             inputs = self.model.get_dummy_inputs(
                 kv_offload=True,
                 comp_ctx_lengths=self.comp_ctx_lengths_decode,
+                prefill_seq_len=prefill_seq_len,
             )
             dynamic_axes = self.model.get_onnx_dynamic_axes(
                 kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
