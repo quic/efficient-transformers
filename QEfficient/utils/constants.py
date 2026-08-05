@@ -6,9 +6,9 @@
 # -----------------------------------------------------------------------------
 
 import os
-import re
-import subprocess
 from dataclasses import dataclass
+
+from QEfficient.utils.hw_detection import get_default_aic_hw_version
 
 UTILS_DIR = os.path.dirname(os.path.abspath(__file__))
 QEFF_DIR = os.path.dirname(UTILS_DIR)
@@ -112,86 +112,6 @@ def get_onnx_export_opset(dynamo: bool = False) -> int:
 
 
 COMPILER = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw"]
-
-
-# Known Qualcomm Cloud AI PCI device IDs (from lspci output).
-# NOTE: These device IDs may change with future hardware revisions; update
-# both sets when new Qualcomm Cloud AI hardware variants are introduced.
-_AIC200_PCI_DEVICE_IDS = {"a110"}
-_AIC100_PCI_DEVICE_IDS = {"a100", "a0dc"}
-
-
-def _detect_hw_version_via_lspci() -> str:
-    """Probe PCI devices to detect Qualcomm Cloud AI hardware generation.
-
-    Runs ``lspci`` and filters lines containing ``"Qualcomm"``, then matches
-    the device ID token to distinguish AI200 from AI100.  Returns ``"ai200"``
-    when an AI200 device is found, ``"ai100"`` when an AI100 device is found,
-    and ``"ai100"`` as the safe default when ``lspci`` is unavailable or no
-    matching device is found.
-
-    Returns:
-        str: ``"ai200"`` if an AI200 PCI device is detected, otherwise ``"ai100"``.
-    """
-    try:
-        result = subprocess.run(
-            ["lspci"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        output = result.stdout
-    except Exception:
-        return "ai100"
-
-    for line in output.splitlines():
-        # lspci lines look like:
-        #   "76:00.0 Processing accelerators: Qualcomm Technologies, Inc Device a110 (rev 01)"
-        #   "03:00.0 Processing accelerators: Qualcomm Device a100"
-        if "qualcomm" not in line.lower():
-            continue
-        device_match = re.search(r"\bDevice\s+([0-9a-fA-F]+)", line, re.IGNORECASE)
-        if device_match:
-            device_id = device_match.group(1).lower()
-            if device_id in _AIC200_PCI_DEVICE_IDS:
-                return "ai200"
-            if device_id in _AIC100_PCI_DEVICE_IDS:
-                return "ai100"
-
-    return "ai100"
-
-
-def get_default_aic_hw_version() -> str:
-    """Detect the AIC hardware version from the first available device.
-
-    Runs ``qaic-util -q`` and inspects the ``NSP IMAGE_VARIANT`` field of the
-    first device (QID 0) to determine whether the hardware is ``ai100`` or
-    ``ai200``.  When ``qaic-util`` is unavailable, falls back to probing PCI
-    devices via ``lspci | grep Qualcomm`` and matching known Qualcomm Cloud AI
-    PCI device IDs.  Returns ``"ai100"`` when neither method yields a result.
-
-    Returns:
-        str: ``"ai200"`` if an AI200 device is detected, otherwise ``"ai100"``.
-    """
-    qaic_util = "/opt/qti-aic/tools/qaic-util"
-    try:
-        result = subprocess.run(
-            [qaic_util, "-q"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        output = result.stdout
-    except Exception:
-        return _detect_hw_version_via_lspci()
-
-    match = re.search(r"NSP IMAGE_VARIANT\s*:\s*(\S+)", output)
-    if match:
-        variant = match.group(1).upper()
-        if "AIC200" in variant:
-            return "ai200"
-    return _detect_hw_version_via_lspci()
-
 
 DEFAULT_AIC_HW_VERSION = get_default_aic_hw_version()
 ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL = 100
