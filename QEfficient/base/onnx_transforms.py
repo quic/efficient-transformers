@@ -580,6 +580,35 @@ class PruneFakeInitializersTransform(BaseOnnxTransform):
         return pruned
 
 
+class RenameWsubNodesTransform(BaseOnnxTransform):
+    """Name local-function operators from their semantic layer parameters."""
+
+    _LAYER_PARAMETER_RE = re.compile(r"(?:^|\.)layers\.\d+\.(?P<role>.+)\.weight$")
+    _WEIGHTED_OPS = {"MatMul", "Gemm", "CustomRMSNorm"}
+
+    @classmethod
+    def apply(cls, model: ModelProto) -> bool:
+        transformed = False
+        for function in model.functions:
+            function_inputs = set(function.input)
+            for node in function.node:
+                if node.op_type not in cls._WEIGHTED_OPS:
+                    continue
+                for input_name in node.input[1:]:
+                    if input_name not in function_inputs:
+                        continue
+                    match = cls._LAYER_PARAMETER_RE.search(input_name)
+                    if match is None:
+                        continue
+                    role = match.group("role").replace(".", "/")
+                    semantic_name = f"{role}/{node.op_type}"
+                    if node.name != semantic_name:
+                        node.name = semantic_name
+                        transformed = True
+                    break
+        return transformed
+
+
 class OnnxTransformPipeline(BaseOnnxTransform):
     """Pipeline to apply multiple ONNX transformations in sequence."""
 
@@ -652,6 +681,9 @@ class OnnxTransformPipeline(BaseOnnxTransform):
             applied[RenameFunctionOutputsTransform] = RenameFunctionOutputsTransform.apply(
                 model, layer_idx=kwargs.get("layer_idx", 0)
             )
+
+        if RenameWsubNodesTransform in requested:
+            applied[RenameWsubNodesTransform] = RenameWsubNodesTransform.apply(model)
 
         if PreserveNestedCacheRetainedStateTransform in requested:
             applied[PreserveNestedCacheRetainedStateTransform] = PreserveNestedCacheRetainedStateTransform.apply(model)
