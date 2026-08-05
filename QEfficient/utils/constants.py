@@ -8,7 +8,7 @@
 import os
 from dataclasses import dataclass
 
-from QEfficient.utils.hw_detection import get_default_aic_hw_version
+from QEfficient.utils.hardware_utils import get_default_aic_hw_version
 
 UTILS_DIR = os.path.dirname(os.path.abspath(__file__))
 QEFF_DIR = os.path.dirname(UTILS_DIR)
