@@ -81,7 +81,6 @@ def get_default_aic_hw_version() -> str:
 
     match = re.search(r"NSP IMAGE_VARIANT\s*:\s*(\S+)", output)
     if match:
-        breakpoint()
         variant = match.group(1).upper()
         if "AIC200" in variant:
             return "ai200"
