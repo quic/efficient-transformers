@@ -376,4 +376,18 @@ def build_transformer_blocking_config_for_transform(
         if qaic_config.get("skip_kv", False) and enable_blocking:
             blocking_config.skip_kv = qaic_config.get("skip_kv")
 
+        if qaic_config.get("skip_softmax", False) and enable_blocking:
+            blocking_config.skip_softmax = bool(qaic_config.get("skip_softmax"))
+            if qaic_config.get("skip_softmax_scale", None) is not None:
+                blocking_config.skip_softmax_scale = float(qaic_config.get("skip_softmax_scale"))
+            blocking_config.skip_softmax_prefill_scale = float(
+                qaic_config.get("skip_softmax_prefill_scale", blocking_config.skip_softmax_prefill_scale)
+            )
+            blocking_config.skip_softmax_decode_scale = float(
+                qaic_config.get("skip_softmax_decode_scale", blocking_config.skip_softmax_decode_scale)
+            )
+            blocking_config.skip_softmax_min_keep_blocks = int(
+                qaic_config.get("skip_softmax_min_keep_blocks", blocking_config.skip_softmax_min_keep_blocks)
+            )
+
     return blocking_config

@@ -42,6 +42,72 @@ def _normalize_int(value: Optional[torch.Tensor | int]) -> int:
     return int(value) if value is not None else 0
 
 
+def _get_skip_softmax_log_lambda(
+    *,
+    skip_softmax: bool,
+    query: torch.Tensor,
+    ctx_len: int,
+    skip_softmax_scale: Optional[float] = None,
+    skip_softmax_prefill_scale: float = 1.0,
+    skip_softmax_decode_scale: float = 1.0,
+) -> Optional[torch.Tensor]:
+    if not skip_softmax:
+        return None
+
+    if skip_softmax_scale is not None:
+        scale = skip_softmax_scale
+    else:
+        scale = skip_softmax_decode_scale if query.shape[2] == 1 else skip_softmax_prefill_scale
+    if scale <= 0:
+        return None
+
+    lambda_eff = torch.tensor(float(scale) / max(1.0, float(ctx_len)), dtype=torch.float32, device=query.device)
+    lambda_eff = torch.clamp(lambda_eff, min=torch.finfo(torch.float32).tiny)
+    return torch.log(lambda_eff)
+
+
+def _compute_skip_softmax_mask(
+    *,
+    block_max: torch.Tensor,
+    current_max: torch.Tensor,
+    current_denominator: torch.Tensor,
+    log_lambda: torch.Tensor,
+    block_idx: int,
+    min_keep_blocks: int,
+) -> torch.Tensor:
+    if block_idx < max(0, int(min_keep_blocks)):
+        return torch.zeros_like(block_max, dtype=torch.bool)
+
+    running_max = torch.maximum(current_max, block_max)
+    has_prior_contribution = current_denominator > 0
+    return ((block_max.to(torch.float32) - running_max.to(torch.float32)) < log_lambda) & has_prior_contribution
+
+
+def _build_skip_mask(
+    *,
+    attn_weights_block: torch.Tensor,
+    current_max: torch.Tensor,
+    current_denominator: torch.Tensor,
+    skip_softmax_log_lambda: Optional[torch.Tensor],
+    block_idx: int,
+    skip_softmax_min_keep_blocks: int,
+    skip_future: Optional[torch.Tensor],
+) -> Optional[torch.Tensor]:
+    skip_mask = None
+    if skip_softmax_log_lambda is not None:
+        skip_mask = _compute_skip_softmax_mask(
+            block_max=attn_weights_block.max(dim=3).values,
+            current_max=current_max,
+            current_denominator=current_denominator,
+            log_lambda=skip_softmax_log_lambda,
+            block_idx=block_idx,
+            min_keep_blocks=skip_softmax_min_keep_blocks,
+        )
+    if skip_future is not None:
+        skip_mask = skip_future if skip_mask is None else (skip_mask | skip_future)
+    return skip_mask
+
+
 def update_running_softmax(
     current_max: torch.Tensor,
     attn_weights_block: torch.Tensor,
@@ -49,7 +115,8 @@ def update_running_softmax(
     output: torch.Tensor,
     v_block: torch.Tensor,
     skip_kv: bool = False,
-    skip_future: Optional(torch.Tensor) = None,
+    skip_future: Optional[torch.Tensor] = None,
+    skip_mask: Optional[torch.Tensor] = None,
 ):
     # Update Running row maximum
     prev_max = current_max
@@ -78,10 +145,13 @@ def update_running_softmax(
             * torch.exp(delta_max.unsqueeze(-1))
         )
 
-    if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
-        current_max = torch.where(skip_future, prev_max, current_max_updated)
-        current_denominator = torch.where(skip_future, prev_denominator, current_denominator_updated)
-        output = torch.where(skip_future.unsqueeze(-1), prev_output, output_updated)
+    if skip_mask is None and skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+        skip_mask = skip_future
+
+    if skip_mask is not None:
+        current_max = torch.where(skip_mask, prev_max, current_max_updated)
+        current_denominator = torch.where(skip_mask, prev_denominator, current_denominator_updated)
+        output = torch.where(skip_mask.unsqueeze(-1), prev_output, output_updated)
     else:
         # Eager mode
         current_max = current_max_updated
@@ -107,6 +177,11 @@ def blocked_kv_attention_forward(
     skip_kv: bool = False,
     position_bias: Optional[torch.Tensor] = None,
     sinks: Optional[torch.Tensor] = None,
+    skip_softmax: bool = False,
+    skip_softmax_scale: Optional[float] = None,
+    skip_softmax_prefill_scale: float = 1.0,
+    skip_softmax_decode_scale: float = 1.0,
+    skip_softmax_min_keep_blocks: int = 1,
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """Compute attention by streaming key/value cache blocks through running softmax.
@@ -143,6 +218,15 @@ def blocked_kv_attention_forward(
     # needed for GPT-OSS
     if sinks is not None:
         sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
+
+    skip_softmax_log_lambda = _get_skip_softmax_log_lambda(
+        skip_softmax=skip_softmax,
+        query=query,
+        ctx_len=past_seen_tokens,
+        skip_softmax_scale=skip_softmax_scale,
+        skip_softmax_prefill_scale=skip_softmax_prefill_scale,
+        skip_softmax_decode_scale=skip_softmax_decode_scale,
+    )
 
     for j in range(num_kv_blocks):
         start_index = j * kv_block_size
@@ -194,8 +278,25 @@ def blocked_kv_attention_forward(
         if mask_block is not None:
             attn_weights_block = torch.where(mask_block, masked_tensor, attn_weights_block)
 
+        skip_mask = _build_skip_mask(
+            attn_weights_block=attn_weights_block,
+            current_max=current_max,
+            current_denominator=current_denominator,
+            skip_softmax_log_lambda=skip_softmax_log_lambda,
+            block_idx=j,
+            skip_softmax_min_keep_blocks=skip_softmax_min_keep_blocks,
+            skip_future=skip_future,
+        )
+
         current_max, current_denominator, output = update_running_softmax(
-            current_max, attn_weights_block, current_denominator, output, v_block_states, skip_kv, skip_future
+            current_max,
+            attn_weights_block,
+            current_denominator,
+            output,
+            v_block_states,
+            skip_kv,
+            skip_future,
+            skip_mask,
         )
 
     # If present, apply Attention Sinks, needed for GPT-OSS
@@ -226,6 +327,11 @@ def blocked_qkv_attention_forward(
     skip_kv: bool = False,
     position_bias: Optional[torch.Tensor] = None,
     sinks: Optional[torch.Tensor] = None,
+    skip_softmax: bool = False,
+    skip_softmax_scale: Optional[float] = None,
+    skip_softmax_prefill_scale: float = 1.0,
+    skip_softmax_decode_scale: float = 1.0,
+    skip_softmax_min_keep_blocks: int = 1,
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """Compute attention by streaming query and key/value blocks.
@@ -258,6 +364,15 @@ def blocked_qkv_attention_forward(
     # needed for GPT-OSS
     if sinks is not None:
         sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
+
+    skip_softmax_log_lambda = _get_skip_softmax_log_lambda(
+        skip_softmax=skip_softmax,
+        query=query,
+        ctx_len=past_seen_tokens,
+        skip_softmax_scale=skip_softmax_scale,
+        skip_softmax_prefill_scale=skip_softmax_prefill_scale,
+        skip_softmax_decode_scale=skip_softmax_decode_scale,
+    )
 
     for q_block_idx in range(num_q_blocks):
         q_start = q_block_positions[q_block_idx]
@@ -328,6 +443,16 @@ def blocked_qkv_attention_forward(
                 attn_mask_block = mask_block[:, :, q_start : q_start + q_len_block, :]
                 attn_weights_block = torch.where(attn_mask_block, masked_tensor, attn_weights_block)
 
+            skip_mask = _build_skip_mask(
+                attn_weights_block=attn_weights_block,
+                current_max=current_max,
+                current_denominator=current_denominator,
+                skip_softmax_log_lambda=skip_softmax_log_lambda,
+                block_idx=j,
+                skip_softmax_min_keep_blocks=skip_softmax_min_keep_blocks,
+                skip_future=skip_future,
+            )
+
             current_max, current_denominator, output_blocks = update_running_softmax(
                 current_max,
                 attn_weights_block,
@@ -336,6 +461,7 @@ def blocked_qkv_attention_forward(
                 v_block_states,
                 skip_kv,
                 skip_future,
+                skip_mask,
             )
 
         # If present, apply Attention Sinks, needed for GPT-OSS
@@ -369,6 +495,11 @@ def blocked_hqkv_attention_forward(
     skip_kv: bool = False,
     position_bias: Optional[torch.Tensor] = None,
     sinks: Optional[torch.Tensor] = None,
+    skip_softmax: bool = False,
+    skip_softmax_scale: Optional[float] = None,
+    skip_softmax_prefill_scale: float = 1.0,
+    skip_softmax_decode_scale: float = 1.0,
+    skip_softmax_min_keep_blocks: int = 1,
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     # Initialize Running Maximum and Denominator
@@ -398,6 +529,15 @@ def blocked_hqkv_attention_forward(
     # needed for GPT-OSS
     if sinks is not None:
         sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
+
+    skip_softmax_log_lambda = _get_skip_softmax_log_lambda(
+        skip_softmax=skip_softmax,
+        query=query,
+        ctx_len=past_seen_tokens,
+        skip_softmax_scale=skip_softmax_scale,
+        skip_softmax_prefill_scale=skip_softmax_prefill_scale,
+        skip_softmax_decode_scale=skip_softmax_decode_scale,
+    )
 
     # Process each head block independently
     for head_block_idx in range(num_head_blocks):
@@ -484,8 +624,25 @@ def blocked_hqkv_attention_forward(
                     mask_block_g = mask_block[:, :, q_start : q_start + q_len_block, :]
                     attn_weights_block = torch.where(mask_block_g, masked_tensor, attn_weights_block)
 
+                skip_mask = _build_skip_mask(
+                    attn_weights_block=attn_weights_block,
+                    current_max=current_max,
+                    current_denominator=current_denominator,
+                    skip_softmax_log_lambda=skip_softmax_log_lambda,
+                    block_idx=j,
+                    skip_softmax_min_keep_blocks=skip_softmax_min_keep_blocks,
+                    skip_future=skip_future,
+                )
+
                 current_max, current_denominator, output_blocks = update_running_softmax(
-                    current_max, attn_weights_block, current_denominator, output_blocks, v_g, skip_kv, skip_future
+                    current_max,
+                    attn_weights_block,
+                    current_denominator,
+                    output_blocks,
+                    v_g,
+                    skip_kv,
+                    skip_future,
+                    skip_mask,
                 )
             # If present, apply Attention Sinks, needed for GPT-OSS
             if sinks is not None:
@@ -527,6 +684,11 @@ def blocked_bhqkv_attention_forward(
     skip_kv: bool = False,
     position_bias: Optional[torch.Tensor] = None,
     sinks: Optional[torch.Tensor] = None,
+    skip_softmax: bool = False,
+    skip_softmax_scale: Optional[float] = None,
+    skip_softmax_prefill_scale: float = 1.0,
+    skip_softmax_decode_scale: float = 1.0,
+    skip_softmax_min_keep_blocks: int = 1,
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     # Initialize Running Maximum and Denominator
@@ -563,6 +725,15 @@ def blocked_bhqkv_attention_forward(
     # needed for GPT-OSS
     if sinks is not None:
         sinks = sinks.reshape(1, -1, 1, 1).expand(batch_size, -1, seq_len, -1)
+
+    skip_softmax_log_lambda = _get_skip_softmax_log_lambda(
+        skip_softmax=skip_softmax,
+        query=query,
+        ctx_len=past_seen_tokens,
+        skip_softmax_scale=skip_softmax_scale,
+        skip_softmax_prefill_scale=skip_softmax_prefill_scale,
+        skip_softmax_decode_scale=skip_softmax_decode_scale,
+    )
 
     # Process each head block independently
     for head_block_idx in range(num_head_blocks):
@@ -665,8 +836,25 @@ def blocked_bhqkv_attention_forward(
                         ]
                         attn_weights_block = torch.where(mask_block_g, masked_tensor, attn_weights_block)
 
+                    skip_mask = _build_skip_mask(
+                        attn_weights_block=attn_weights_block,
+                        current_max=current_max,
+                        current_denominator=current_denominator,
+                        skip_softmax_log_lambda=skip_softmax_log_lambda,
+                        block_idx=j,
+                        skip_softmax_min_keep_blocks=skip_softmax_min_keep_blocks,
+                        skip_future=skip_future,
+                    )
+
                     current_max, current_denominator, output_blocks = update_running_softmax(
-                        current_max, attn_weights_block, current_denominator, output_blocks, v_g, skip_kv, skip_future
+                        current_max,
+                        attn_weights_block,
+                        current_denominator,
+                        output_blocks,
+                        v_g,
+                        skip_kv,
+                        skip_future,
+                        skip_mask,
                     )
                 batch_output_blocks.append(output_blocks)
                 batch_attn_blocks.append(attn_weights_block)
@@ -848,6 +1036,11 @@ def blocked_kv_mla_attention_forward(
     skip_kv: bool = False,
     position_bias: Optional[torch.Tensor] = None,
     sinks: Optional[torch.Tensor] = None,
+    skip_softmax: bool = False,
+    skip_softmax_scale: Optional[float] = None,
+    skip_softmax_prefill_scale: float = 1.0,
+    skip_softmax_decode_scale: float = 1.0,
+    skip_softmax_min_keep_blocks: int = 1,
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     # Initialize result tensor
@@ -877,6 +1070,15 @@ def blocked_kv_mla_attention_forward(
 
     position_ids = cache_kwargs.get("position_ids")
     current_position = position_ids.max(dim=-1).values
+
+    skip_softmax_log_lambda = _get_skip_softmax_log_lambda(
+        skip_softmax=skip_softmax,
+        query=query,
+        ctx_len=ctx_len,
+        skip_softmax_scale=skip_softmax_scale,
+        skip_softmax_prefill_scale=skip_softmax_prefill_scale,
+        skip_softmax_decode_scale=skip_softmax_decode_scale,
+    )
 
     for j in range(num_kv_blocks):
         start_index = j * kv_block_size
@@ -931,6 +1133,15 @@ def blocked_kv_mla_attention_forward(
             attn_weights_block = torch.matmul(query, krope_nope.transpose(2, 3)) * scaling
             # [1, 64, q_len, 576] X [1, 1, 576, kv_block_size] -> [1, 64, q_len, kv_block_size]
             attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
+            skip_mask = _build_skip_mask(
+                attn_weights_block=attn_weights_block,
+                current_max=current_max,
+                current_denominator=current_denominator,
+                skip_softmax_log_lambda=skip_softmax_log_lambda,
+                block_idx=j,
+                skip_softmax_min_keep_blocks=skip_softmax_min_keep_blocks,
+                skip_future=skip_future,
+            )
             current_max, current_denominator, output = update_running_softmax(
                 current_max,
                 attn_weights_block,
@@ -939,6 +1150,7 @@ def blocked_kv_mla_attention_forward(
                 compressed_kv_block,
                 skip_kv,
                 skip_future,
+                skip_mask,
             )  # [1, 64, q_len, kv_block_size] X [1, 1, kv_block_size, 512] -> [1, 64, q_len, 512]
         else:
             knope = torch.matmul(compressed_kv_block, per_head_k_up_normal)
@@ -951,6 +1163,15 @@ def blocked_kv_mla_attention_forward(
             krope_nope = torch.cat((knope, k_pe_block), dim=-1)
             attn_weights_block = torch.matmul(query, krope_nope.transpose(2, 3)) * scaling
             attn_weights_block = torch.where(causal_mask_block, masked_tensor, attn_weights_block)
+            skip_mask = _build_skip_mask(
+                attn_weights_block=attn_weights_block,
+                current_max=current_max,
+                current_denominator=current_denominator,
+                skip_softmax_log_lambda=skip_softmax_log_lambda,
+                block_idx=j,
+                skip_softmax_min_keep_blocks=skip_softmax_min_keep_blocks,
+                skip_future=skip_future,
+            )
             current_max, current_denominator, output = update_running_softmax(
                 current_max,
                 attn_weights_block,
@@ -959,6 +1180,7 @@ def blocked_kv_mla_attention_forward(
                 compressed_kv_block,
                 skip_kv,
                 skip_future,
+                skip_mask,
             )
 
     attn_output = torch.matmul(output, per_head_v_up)
