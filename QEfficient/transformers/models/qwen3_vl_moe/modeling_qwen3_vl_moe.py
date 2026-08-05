@@ -1171,10 +1171,10 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
                 }
             )
 
-        if comp_ctx_lengths_prefill is not None:
+        if comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
             lang = []
 
-            for i in range(0, len(comp_ctx_lengths_prefill)):
+            for i in range(0, len(comp_ctx_lengths_prefill or [])):
                 lang_prefill = {
                     "batch_size": 1 if continuous_batching else batch_size,
                     "seq_len": prefill_seq_len,
@@ -1194,7 +1194,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
 
                 lang.append(lang_prefill)
 
-            for i in range(0, len(comp_ctx_lengths_decode)):
+            for i in range(0, len(comp_ctx_lengths_decode or [])):
                 lang_decode = {
                     "batch_size": full_batch_size if continuous_batching else batch_size,
                     "seq_len": "1",
