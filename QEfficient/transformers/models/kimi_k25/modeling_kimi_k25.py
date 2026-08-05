@@ -478,7 +478,11 @@ class QEffKimiK25DecoderWrapper(nn.Module):
         use_cache: Optional[bool] = None,
         **kwargs,
     ) -> Tuple:
-        inputs_embeds = self.model.get_input_embeddings()(input_ids)
+        if inputs_embeds is None:
+            inputs_embeds = self.model.get_input_embeddings()(input_ids)
+        else:
+            inputs_embeds = inputs_embeds
+
         vision_embeds_for_state = None
         if vision_embeds is not None:
             if vision_embeds.dim() == 3:

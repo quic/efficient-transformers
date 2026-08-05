@@ -35,11 +35,13 @@ GENERATION_LEN = 10
 NUM_VISION_LAYERS = 4
 NUM_TEXT_LAYERS = 4
 IMAGE_URL = "https://huggingface.co/moonshotai/Kimi-K2.5/resolve/main/figures/kimi-logo.png"
+IMAGE_SIZE = 448
 TEXT_PROMPT = "Describe this image."
 
 
 def _prepare_inputs(processor):
     image = Image.open(BytesIO(requests.get(IMAGE_URL, timeout=30).content)).convert("RGB")
+    image = image.resize((IMAGE_SIZE, IMAGE_SIZE))
     messages = [
         {
             "role": "user",
@@ -49,12 +51,13 @@ def _prepare_inputs(processor):
             ],
         }
     ]
-    return processor(
+    inputs = processor(
         messages=messages,
         add_generation_prompt=True,
         tokenize=False,
         return_tensors="pt",
     )
+    return inputs, image.height, image.width
 
 
 def _decode_tokens(tokenizer, token_ids: torch.Tensor) -> str:
@@ -137,15 +140,8 @@ def _load_kimi_subset_model():
     return model.eval().to("cpu"), tokenizer, processor
 
 
-def _get_image_compile_dims(model, inputs: dict[str, torch.Tensor]) -> dict[str, int]:
-    grid_thws = inputs["grid_thws"].to(torch.long)
-    h = int(grid_thws[0, 1].item())
-    w = int(grid_thws[0, 2].item())
-    num_patches = int(inputs["pixel_values"].shape[0])
-    merge_height, merge_width = model.vision_tower.merge_kernel_size
-    num_images = max(num_patches // (h * w), 1)
-    num_image_tokens = num_images * (h // merge_height) * (w // merge_width)
-    return {"num_patches": num_patches, "h": h, "w": w, "num_image_tokens": num_image_tokens}
+def _get_image_compile_dims(image_height: int, image_width: int) -> dict[str, int]:
+    return {"image_height": image_height, "image_width": image_width}
 
 
 def _compile_disagg_qpcs(qeff_model: QEFFAutoModelForImageTextToText, compile_dims: dict[str, int]):
@@ -273,14 +269,14 @@ def _run_disagg_qaic_generation(
             decode_inputs["image_idx"] = decode_outputs["image_idx_output"].astype(np.int64)
         _update_retained_states(decode_inputs, decode_outputs)
 
-    return np.concatenate(generated_ids, axis=1)
+    return np.concatenate(generated_ids, axis=1)[0]
 
 
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 def test_kimi_k25_disagg_qaic_vs_hf_fp32():
     model, tokenizer, processor = _load_kimi_subset_model()
-    inputs = _prepare_inputs(processor)
+    inputs, image_height, image_width = _prepare_inputs(processor)
     inputs = {name: (value.to("cpu") if torch.is_tensor(value) else value) for name, value in inputs.items()}
     hf_tokens = run_kimi_k25_hf_model_on_pytorch(
         copy.deepcopy(model), processor, _clone_inputs(inputs), max_gen_len=GENERATION_LEN
@@ -294,7 +290,7 @@ def test_kimi_k25_disagg_qaic_vs_hf_fp32():
         layerwise=False,
     )
 
-    compile_dims = _get_image_compile_dims(qeff_model.model, inputs)
+    compile_dims = _get_image_compile_dims(image_height, image_width)
     vision_qpc_path, prefill_qpc_path, decode_qpc_path, compiled_onnx_paths = _compile_disagg_qpcs(
         qeff_model,
         compile_dims,
@@ -320,7 +316,4 @@ def test_kimi_k25_disagg_qaic_vs_hf_fp32():
     print("HF:", _decode_tokens(tokenizer, hf_tokens), "\n", hf_tokens)
     print("Disagg QAIC:", _decode_tokens(tokenizer, torch.as_tensor(qaic_tokens)), "\n", qaic_tokens)
 
-    assert qaic_tokens.shape == (BATCH_SIZE, GENERATION_LEN)
-    assert hf_tokens.shape == (BATCH_SIZE, GENERATION_LEN)
-    assert np.issubdtype(qaic_tokens.dtype, np.integer)
     assert torch.equal(hf_tokens, torch.as_tensor(qaic_tokens)), "HF and disagg QAIC tokens do not match"

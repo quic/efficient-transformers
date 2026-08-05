@@ -18,6 +18,7 @@ This file intentionally uses two coverage tiers:
      but do not yet have a stable CPU runtime parity path in the consolidated test
 """
 
+import json
 import logging
 import os
 import shutil
@@ -33,6 +34,7 @@ import onnx
 import onnxruntime as ort
 import pytest
 import torch
+from torch import nn
 from transformers import (
     AutoConfig,
     AutoModel,
@@ -963,13 +965,62 @@ def _kimi_k25_qeff_lang_inputs(qeff_model, inputs, vision_embeds):
     return lang_inputs
 
 
+class _KimiSyntheticQuantLinear(nn.Module):
+    def __init__(self, linear: nn.Linear):
+        super().__init__()
+        if linear.in_features % 2 != 0:
+            raise ValueError("Synthetic int4 fixture requires an even input dimension")
+
+        self.in_features = linear.in_features
+        self.out_features = linear.out_features
+        self.bits = 4
+        self.group_size = 1
+        self.act_order = None
+        self.register_buffer(
+            "qweight", torch.full((linear.out_features, linear.in_features // 2), 0x99, dtype=torch.uint8)
+        )
+        self.register_buffer(
+            "qzeros", torch.full((linear.out_features, linear.in_features // 2), 0x88, dtype=torch.uint8)
+        )
+        self.register_buffer("scales", linear.weight.detach().clone().to(torch.float32))
+        self.register_buffer("g_idx", torch.arange(linear.in_features, dtype=torch.int32))
+        if linear.bias is None:
+            self.bias = None
+        else:
+            self.register_buffer("bias", linear.bias.detach().clone().to(torch.float32))
+
+    def forward(self, inputs):
+        output = torch.matmul(inputs.float(), self.scales.transpose(0, 1).float())
+        if self.bias is not None:
+            output = output + self.bias.to(output.dtype)
+        return output.to(inputs.dtype)
+
+
+def _install_kimi_synthetic_quant_experts(model):
+    for module in model.modules():
+        experts = getattr(module, "experts", None)
+        if experts is None:
+            continue
+        for expert in experts:
+            for projection_name in ("gate_proj", "up_proj", "down_proj"):
+                projection = getattr(expert, projection_name, None)
+                if isinstance(projection, nn.Linear):
+                    setattr(expert, projection_name, _KimiSyntheticQuantLinear(projection))
+
+
 @pytest.mark.llm_model
 def test_kimi_k25_quickcheck_hf_qeff_vision_logits_parity():
-    from tests.utils.load_kimi_utils import load_kimi_k25_layer_subset_model
+    from tests.utils.load_kimi_utils import get_kimi_k25_test_config, load_kimi_k25_model_from_config
 
     model_id = "moonshotai/Kimi-K2.5"
+    config_path = Path(__file__).parents[2] / "configs" / "image_text_model_configs.json"
+    model_configs = json.loads(config_path.read_text())["image_text_models"]
+    model_config_dict = {model["model_name"]: model for model in model_configs}
+
     try:
-        model_hf, _, processor = load_kimi_k25_layer_subset_model(num_vision_layers=1, num_text_layers=1)
+        config = get_kimi_k25_test_config(model_id, model_config_dict)
+        model_hf, _, processor = load_kimi_k25_model_from_config(config)
+        _install_kimi_synthetic_quant_experts(model_hf)
     except Exception as exc:
         _skip_on_model_fetch_error(exc, model_id)
 
