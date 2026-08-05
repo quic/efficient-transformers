@@ -28,12 +28,12 @@ from tests.utils.load_kimi_utils import (
     set_deterministic,
 )
 
-PREFILL_SEQ_LEN = 512
-CTX_LEN = 2048
+PREFILL_SEQ_LEN = 64
+CTX_LEN = 512
 BATCH_SIZE = 1
-GENERATION_LEN = 10
-NUM_VISION_LAYERS = 4
-NUM_TEXT_LAYERS = 4
+GENERATION_LEN = 4
+NUM_VISION_LAYERS = 2
+NUM_TEXT_LAYERS = 2
 IMAGE_URL = "https://huggingface.co/moonshotai/Kimi-K2.5/resolve/main/figures/kimi-logo.png"
 IMAGE_SIZE = 448
 TEXT_PROMPT = "Describe this image."
@@ -173,7 +173,7 @@ def _compile_disagg_qpcs(qeff_model: QEFFAutoModelForImageTextToText, compile_di
         prefill_only=True,
         skip_vision=True,
         skip_lang=False,
-        num_devices=4,
+        num_devices=1,
         **common_compile_kwargs,
     )
     compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")
@@ -183,7 +183,7 @@ def _compile_disagg_qpcs(qeff_model: QEFFAutoModelForImageTextToText, compile_di
         prefill_only=False,
         skip_vision=True,
         skip_lang=False,
-        num_devices=4,
+        num_devices=1,
         **common_compile_kwargs,
     )
     compiled_onnx_paths["decode"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "decode")

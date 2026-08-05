@@ -570,7 +570,7 @@ class QEffCompressedTensorsConfig(CompressedTensorsConfig):
             )
 
     def to_dict(self):
-        if self.quantization_config.format == "pack-quantized":
+        if getattr(self.quantization_config, "format", None) == "pack-quantized":
             return super().to_dict()
 
         return {

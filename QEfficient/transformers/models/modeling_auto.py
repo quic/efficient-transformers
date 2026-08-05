@@ -2470,6 +2470,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             if self._write_io_dir is not None:
                 write_io_files(lang_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
 
+        if "image_idx_output" in outputs:
+            lang_inputs["image_idx"] = chunk_inputs["image_idx"]
+
         prefill_time = perf_counter() - lang_start + vision_end - vision_start
         # Skip inputs/outputs again
         lang_session.skip_buffers(
@@ -4072,10 +4075,15 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.hash_params["kv_cache_prefix"] = kv_cache_prefix
 
         if prefill_only:
-            assert prefill_seq_len is not None, "prefill_seq_len must be provided when prefill_only is True"
-            num_q_blocks_ffn = prefill_seq_len // constants.EXPERT_BLOCKING_PACKED_CHUNK_SIZE
+            effective_prefill_seq_len = (
+                prefill_seq_len if prefill_seq_len is not None else seq_len if enable_chunking else None
+            )
+            assert effective_prefill_seq_len is not None, "prefill_seq_len must be provided when prefill_only is True"
+            num_q_blocks_ffn = effective_prefill_seq_len // constants.EXPERT_BLOCKING_PACKED_CHUNK_SIZE
             num_q_blocks_ffn = num_q_blocks_ffn if num_q_blocks_ffn > 0 else 1
-            setattr(self.model.model, "num_q_blocks_ffn", num_q_blocks_ffn)
+            model_body = getattr(self.model, "model", None)
+            if model_body is not None:
+                setattr(model_body, "num_q_blocks_ffn", num_q_blocks_ffn)
 
         if QEFFBaseModel._layerwise_active:
             return self._export_layerwise(
