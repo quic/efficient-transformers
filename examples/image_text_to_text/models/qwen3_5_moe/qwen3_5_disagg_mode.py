@@ -53,6 +53,9 @@ PREFILL_SEQ_LEN = 64
 CTX_LEN = 4096
 BS = 1
 
+if PREFILL_SEQ_LEN > 64:
+    os.environ["QEFF_QWEN35_FORCE_UNROLL_SEQ"] = str(PREFILL_SEQ_LEN)
+
 # Enable KV blocking for full-attention layers with 2 KV blocks
 # To disable KV blocking, comment out the qaic_config line below
 # Set skip_kv=True to skip future KV blocks during inference (optimization)

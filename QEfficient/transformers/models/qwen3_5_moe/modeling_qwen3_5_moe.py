@@ -746,7 +746,16 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         batch_size, num_heads, sequence_length, k_head_dim = key.shape
         v_head_dim = value.shape[-1]
-        pad_size = (chunk_size - sequence_length % chunk_size) % chunk_size
+        effective_sequence_length = sequence_length
+        forced_unroll_seq = int(os.environ.get("QEFF_QWEN35_FORCE_UNROLL_SEQ", "0") or 0)
+        # Export-only override to force a larger unrolled chunk loop count in ONNX
+        # while keeping runtime outputs trimmed to the true sequence length.
+        if torch.onnx.is_in_onnx_export() and forced_unroll_seq > 0:
+            effective_sequence_length = max(sequence_length, forced_unroll_seq)
+        total_sequence_length = effective_sequence_length + (
+            (chunk_size - effective_sequence_length % chunk_size) % chunk_size
+        )
+        pad_size = total_sequence_length - sequence_length
         # query = F.pad(query, (0, 0, 0, pad_size))
         # key = F.pad(key, (0, 0, 0, pad_size))
         # value = F.pad(value, (0, 0, 0, pad_size))
@@ -761,7 +770,6 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         # ck = g.clone()
         g = F.pad(g, (0, pad_size), mode="constant", value=0.0)
-        total_sequence_length = sequence_length + pad_size
         scale = 1 / (query.shape[-1] ** 0.5)
         query = query * scale
 
