@@ -244,7 +244,8 @@ class TestRepeatKVTransformFast:
             ctx_len=64,
             seq_len=8,
             batch_size=1,
-            qaic_config={"num_replicate_kv_heads": 2},
+            num_devices=4,
+            qaic_config={"replicate_kv_heads": True},
         )
 
         text_model_after = get_text_model(qeff_model.model)
@@ -297,7 +298,8 @@ class TestRepeatKVTransformFast:
             ctx_len=64,
             seq_len=8,
             batch_size=1,
-            qaic_config={"num_replicate_kv_heads": 2},
+            num_devices=4,
+            qaic_config={"replicate_kv_heads": True},
         )
 
         text_model_after = get_text_model(qeff_model.model)
@@ -312,9 +314,9 @@ class TestRepeatKVTransformFast:
 
     def test_repeat_kv_mqa_config(self):
         qeff_model = self._tiny_llama_qeff(num_attention_heads=4, num_key_value_heads=1)
-        qeff_model.transform(ctx_len=64, seq_len=8, bs=1, qaic_config={"num_replicate_kv_heads": 4})
+        qeff_model.transform(ctx_len=64, seq_len=8, bs=1, num_devices=4, qaic_config={"replicate_kv_heads": True})
         assert qeff_model.model.config.orig_kv_heads == 1
-        assert qeff_model.model.config.num_key_value_heads == 4
+        assert qeff_model.model.config.num_key_value_heads == 2
 
     def test_repeat_kv_mutate_is_attention_local(self):
         qeff_model = self._tiny_llama_qeff()
@@ -337,12 +339,12 @@ class TestRepeatKVTransformFast:
 
     def test_repeat_kv_rejects_mha_config(self):
         qeff_model = self._tiny_llama_qeff(num_attention_heads=4, num_key_value_heads=4)
-        with pytest.raises(ValueError, match="supported only for GQA/MQA"):
-            qeff_model.transform(ctx_len=64, seq_len=8, bs=1, qaic_config={"num_replicate_kv_heads": 2})
+        qeff_model.transform(ctx_len=64, seq_len=8, bs=1, qaic_config={"replicate_kv_heads": True})
+        assert qeff_model.model.config.num_key_value_heads == 4
 
     def test_repeat_kv_idempotent_for_same_repeat(self):
         qeff_model = self._tiny_llama_qeff()
-        qaic_config = {"num_replicate_kv_heads": 2}
+        qaic_config = {"replicate_kv_heads": True}
         qeff_model.transform(ctx_len=64, seq_len=8, bs=1, qaic_config=qaic_config)
         first_shape = get_projection_layer(
             get_attention_module(qeff_model.model.model.layers[0]), ("k_proj",)
@@ -384,7 +386,7 @@ class TestRepeatKVTransformFast:
         model_hf = AutoModelForImageTextToText.from_config(cfg)
         qeff_model = QEFFAutoModelForImageTextToText(copy.deepcopy(model_hf), kv_offload=True, qaic_config={})
         assert not hasattr(qeff_model.vision_model.model, "config")
-        qeff_model.vision_model.transform(ctx_len=64, seq_len=8, bs=1, qaic_config={"num_replicate_kv_heads": 2})
+        qeff_model.vision_model.transform(ctx_len=64, seq_len=8, bs=1, qaic_config={"replicate_kv_heads": True})
         assert qeff_model.vision_model.hash_params["num_replicate_kv_heads"] == 1
 
     def test_calculate_num_replicate_kv_heads_for_gqa_mqa_and_mha(self):
@@ -392,8 +394,8 @@ class TestRepeatKVTransformFast:
         mqa_cfg = self._tiny_llama_qeff(num_attention_heads=4, num_key_value_heads=1).model.config
         mha_cfg = self._tiny_llama_qeff(num_attention_heads=4, num_key_value_heads=4).model.config
         assert calculate_num_replicate_kv_heads(num_devices=4, text_model_config=gqa_cfg) == 2
-        assert calculate_num_replicate_kv_heads(num_devices=4, text_model_config=mqa_cfg) == 4
-        assert calculate_num_replicate_kv_heads(num_devices=4, text_model_config=mha_cfg) == 1
+        assert calculate_num_replicate_kv_heads(num_devices=4, text_model_config=mqa_cfg) == 2
+        assert calculate_num_replicate_kv_heads(num_devices=4, text_model_config=mha_cfg) is None
 
 
 # ---------------------------------------------------------------------------
