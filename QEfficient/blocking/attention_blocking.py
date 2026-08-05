@@ -79,10 +79,15 @@ def past_key_value_update(
     comp_ctx_lengths: Optional[torch.LongTensor] = None,
     batch_index: Optional[torch.LongTensor] = None,
     position_ids: Optional[torch.LongTensor] = None,
+    past_seen_tokens: Optional[int] = None,
     sliding_window: Optional[int] = None,
 ):
     if past_key_value is not None:
-        cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+        cache_kwargs = {
+            "batch_index": batch_index,
+            "position_ids": position_ids,
+            "past_seen_tokens": past_seen_tokens,
+        }
         if sliding_window is not None:
             cache_kwargs.update(
                 {
@@ -148,6 +153,7 @@ def generic_blocked_attention_interface(
                 batch_index=batch_index,
                 position_ids=position_ids,
                 sliding_window=sliding_window,
+                past_seen_tokens=past_seen_tokens,
             )
 
     strategy = _STRATEGIES.get(blocking_config.mode)
