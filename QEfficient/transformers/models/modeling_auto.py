@@ -2470,9 +2470,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             if self._write_io_dir is not None:
                 write_io_files(lang_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
 
-        if "image_idx_output" in outputs:
-            lang_inputs["image_idx"] = chunk_inputs["image_idx"]
-
         prefill_time = perf_counter() - lang_start + vision_end - vision_start
         # Skip inputs/outputs again
         lang_session.skip_buffers(
