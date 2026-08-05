@@ -22,6 +22,7 @@ from QEfficient.base.onnx_transforms import (
     PreserveNestedCacheRetainedStateTransform,
     RenameFunctionOutputsTransform,
     RenameRepeatedSubgraphTransform,
+    RenameWsubNodesTransform,
 )
 from QEfficient.transformers.cache_utils import InvalidIndexProvider
 from QEfficient.utils.cache import QEFF_HOME
@@ -375,7 +376,7 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
         }
     )
     if getattr(qeff_model, "_use_onnx_subfunctions", False):
-        copy_of_hash_params["onnx_subfunction_version"] = 2
+        copy_of_hash_params["onnx_subfunction_version"] = 3
     # Generate hash from relevant parameters
     export_hash, filtered_hash_params = create_export_hash(
         model_params=copy_of_hash_params,
@@ -421,7 +422,7 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
     orig_hash_subfunction_version = qeff_model.hash_params.get("onnx_subfunction_version")
     qeff_model._use_onnx_subfunctions = True
     qeff_model.hash_params["use_onnx_subfunctions"] = True
-    qeff_model.hash_params["onnx_subfunction_version"] = 2
+    qeff_model.hash_params["onnx_subfunction_version"] = 3
     # TorchScript patches are irrelevant on the dynamo path.
     if not dynamo:
         apply_torch_patches()
@@ -468,6 +469,8 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
             qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
         if CustomOpTransform not in qeff_model._onnx_transforms:
             qeff_model._onnx_transforms.append(CustomOpTransform)
+        if RenameWsubNodesTransform not in qeff_model._onnx_transforms:
+            qeff_model._onnx_transforms.append(RenameWsubNodesTransform)
 
     # TODO: Handle this in the modelling class QEFFTransformersBase, remove from here.
     decoder_layer_classes = get_decoder_layer_classes_for_export(qeff_model.model)
