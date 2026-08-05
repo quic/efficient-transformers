@@ -47,6 +47,10 @@ def pre_export_compile_utils(model_name, model_class, get_pipeline_config):
     export_params = pipeline_configs[model_class][0].get("export_params", {})
     compile_params = pipeline_configs[model_class][0].get("compile_params", {})
 
+    env_num_cores = os.getenv("NUM_CORES")
+    if env_num_cores is not None:
+        compile_params["num_cores"] = int(env_num_cores)
+
     return export_params, compile_params
 
 
@@ -59,6 +63,10 @@ def pre_generate_utils(model_name, model_class, get_pipeline_config, model_artif
     compile_params = pipeline_configs[model_class][0].get("compile_params", {})
     generate_params = pipeline_configs[model_class][0].get("generate_params", {})
 
+    env_num_cores = os.getenv("NUM_CORES")
+    if env_num_cores is not None:
+        compile_params["num_cores"] = int(env_num_cores)
+        
     # Retrieve onnx_path from previous stage
     if model_name not in model_artifacts or "onnx_path" not in model_artifacts[model_name]:
         pytest.skip(f"ONNX path not available for {model_name}. Run export and compile first.")
