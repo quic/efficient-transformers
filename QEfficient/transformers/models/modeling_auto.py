@@ -4875,7 +4875,15 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         str
             Path to the generated ONNX graph file.
         """
-        inputs = self.model.get_dummy_inputs()
+        # Forward encoder_ctx_len so get_dummy_inputs traces with the correct window size.
+        # Without this the Reshape nodes in cross-attention get baked with the default
+        # encoder_ctx_len (from config.max_position_embeddings / subsampling_factor),
+        # causing a shape mismatch at qaic-compile when a different encoder_ctx_len is
+        # passed to compile().
+        dummy_input_kwargs = {}
+        if "encoder_ctx_len" in kwargs:
+            dummy_input_kwargs["encoder_ctx_len"] = kwargs["encoder_ctx_len"]
+        inputs = self.model.get_dummy_inputs(**dummy_input_kwargs)
         dynamic_axes = self.model.get_onnx_dynamic_axes()
         output_names = self.model.get_output_names()
         return self._export(

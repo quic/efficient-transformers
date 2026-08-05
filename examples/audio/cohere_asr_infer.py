@@ -119,8 +119,10 @@ def main():
         "logits": np.zeros((hw_model.batch_size, 1, hw_model.model.config.vocab_size), dtype=np.float32)
     })
 
-    # Encode run
+    # Encode run — timed separately (TTFT numerator)
+    encode_start = time.time()
     outputs = hw_model.qpc_session.run(inp)
+    encode_elapsed = time.time() - encode_start
 
     # Switch to Decode spec
     inp["input_features"] = np.zeros(
@@ -173,9 +175,10 @@ def main():
     print(f"\n[{time.time()-t0:.1f}s] === RESULT ===")
     print(f"  Transcription : {text!r}")
     print(f"  New tokens    : {len(new_tokens)}")
+    print(f"  Encode (TTFT) : {encode_elapsed*1000:.1f} ms")
     if len(new_tokens) > 1:
         tok_per_sec = (len(new_tokens) - 1) / decode_elapsed
-        print(f"  Decode speed  : {tok_per_sec:.1f} tok/s")
+        print(f"  Decode speed  : {tok_per_sec:.1f} tok/s  ({decode_elapsed*1000:.0f} ms total)")
     print(f"  Total elapsed : {time.time()-t0:.1f}s")
 
 
