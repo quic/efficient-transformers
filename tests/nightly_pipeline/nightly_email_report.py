@@ -63,7 +63,7 @@ PIPELINE_CONFIG_ORDER = [
 
 REPORT_TITLE = "QEFF Nightly Report"
 DEFAULT_REPO_URL = "https://github.com/quic/efficient-transformers"
-STATUS_COLUMN_HEADER = "Status (MAD and performance within configured tolerances)"
+STATUS_COLUMN_HEADER = "Status (output MAD, performance, and onnx/qpc size within configured tolerances)"
 
 QAIC_VERSION_UTIL = "/opt/qti-aic/tools/qaic-version-util"
 QAIC_APPS_XML = "/opt/qti-aic/versions/apps.xml"

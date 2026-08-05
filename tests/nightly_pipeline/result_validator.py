@@ -28,6 +28,7 @@ COMMON_COLUMNS = [
     "compile_time_after",
     "onnx_qpc_size_before",
     "onnx_qpc_size_after",
+    "onnx_qpc_size_pct_diff",
 ]
 
 PERF_COLUMNS = [
@@ -377,12 +378,27 @@ def _percentage_difference(before: float | None, after: float | None) -> float |
 def _collect_failures(row: dict[str, Any], spec: dict[str, Any], tolerances: ValidationTolerances) -> list[str]:
     failures = []
 
+    _collect_size_metric_failure(failures, row, tolerances)
+
     for metric in sorted(PERF_VALIDATION_METRICS):
         _collect_perf_metric_failure(failures, row, metric, tolerances)
 
     _collect_mad_failures(failures, row, spec, tolerances)
     _collect_assertion_failures(failures, row, spec)
     return failures
+
+
+def _collect_size_metric_failure(failures: list[str], row: dict[str, Any], tolerances: ValidationTolerances) -> None:
+    pct_diff = row.get("onnx_qpc_size_pct_diff")
+    if not isinstance(pct_diff, (int, float)):
+        return
+
+    if abs(pct_diff) <= tolerances.percentage_tolerance:
+        return
+
+    failures.append(
+        f"onnx_qpc_size_pct_diff {abs(pct_diff):.2f}% exceeds {tolerances.percentage_tolerance:.2f}% tolerance"
+    )
 
 
 def _collect_perf_metric_failure(
