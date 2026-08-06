@@ -1452,3 +1452,34 @@ class BlockingAttentionTransform:
             elif module.__class__.__name__.endswith("Attention") and type(module) not in supported_attention_classes:
                 warnings.warn(f"Blocking is not yet supported for {type(module)}.")
         return model, transformed
+
+
+class GatedDeltaConfigTransform:
+    @classmethod
+    def apply(cls, model: nn.Module, gated_delta_config: Optional[dict] = None) -> Tuple[nn.Module, bool]:
+        if not gated_delta_config:
+            return model, False
+
+        chunk_size = gated_delta_config.get("chunk_size")
+        force_unroll_seq = int(gated_delta_config.get("force_unroll_seq", 0) or 0)
+        chunk_size = int(chunk_size) if chunk_size is not None else None
+
+        if chunk_size is None and force_unroll_seq == 0:
+            return model, False
+
+        target_modules = [m for m in model.modules() if hasattr(m, "torch_chunk_gated_delta_rule_qeff")]
+        if not target_modules:
+            return model, False
+
+        transformed = False
+        for module in target_modules:
+            if chunk_size is not None and chunk_size > 0:
+                module.qeff_chunk_size = chunk_size
+                if hasattr(module, "__qeff_init__"):
+                    module.__qeff_init__()
+                transformed = True
+
+            module.qeff_force_unroll_seq = force_unroll_seq
+            transformed = True
+
+        return model, transformed
