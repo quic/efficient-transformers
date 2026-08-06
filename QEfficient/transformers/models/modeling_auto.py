@@ -67,11 +67,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import (
     AwqToMatmulNbitsTransform,
-    FP8BlockWiseDequantLinearToLinearTransform,
-    FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
-    FP8DeQuantLinearToLinearTransform,
     GPTQToMatmulNbitsTransform,
-    Mxfp4GptOssExpertDequantizeTransform,
 )
 from QEfficient.utils import (
     apply_kv_cache_prefix,
@@ -1205,8 +1201,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
-        FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
-        FP8BlockWiseDequantLinearToLinearTransform,
+        # FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
+        # FP8BlockWiseDequantLinearToLinearTransform,
         CustomOpsTransform,
         KVCacheTransform,
         VlmKVOffloadTransform,
@@ -3422,8 +3418,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
-        FP8DeQuantLinearToLinearTransform,
-        Mxfp4GptOssExpertDequantizeTransform,
+        # FP8DeQuantLinearToLinearTransform,
+        # Mxfp4GptOssExpertDequantizeTransform,
         CustomOpsTransform,
         KVCacheTransform,
         SplitGateUpWeightsTransform,

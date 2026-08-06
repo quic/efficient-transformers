@@ -62,6 +62,35 @@ from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 logger = logging.getLogger(__name__)
 
 
+def _build_blocked_translation_table(model: "torch.nn.Module") -> dict:
+    """Walk *model* and collect all unique FP8 blocked-dequant block-size pairs.
+
+    Returns a dict mapping torch.ops.qefficient.fp8_dequantize_blocked.default
+    to the appropriate concrete onnxscript translation function for the dynamo
+    custom_translation_table.
+
+    Since onnxscript cannot use dynamic int parameters as Constant node values,
+    we use pre-written concrete functions for each (row_bs, col_bs) pair
+    (see QEfficient/customop/fp8_dequantize.py).  Returns an empty dict when the
+    model contains no FP8BlockWiseDequantLinear layers.
+    """
+    from QEfficient.customop.fp8_dequantize import get_blocked_fn
+    from QEfficient.transformers.quantizers.quantizer_compressed_tensors import FP8BlockWiseDequantLinear
+
+    table = {}
+    for module in model.modules():
+        if isinstance(module, FP8BlockWiseDequantLinear):
+            row_bs, col_bs = module.weight_block_size
+            try:
+                fn = get_blocked_fn(row_bs, col_bs)
+                # Blocked functions are compiled directly for opset-21 (dynamo only),
+                # not via qeff_custom_op, so they are already the dynamo variant.
+                table[torch.ops.qefficient.fp8_dequantize_blocked.default] = fn
+            except ValueError:
+                pass  # unsupported size — TorchScript symbolic handles it
+    return table
+
+
 def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) -> None:
     """Rename a graph value everywhere it can be referenced in an ONNX graph."""
     if old_name == new_name:
@@ -405,6 +434,7 @@ class QEFFBaseModel(ABC):
         export_kwargs["custom_translation_table"] = {
             **(export_kwargs.pop("custom_translation_table", None) or {}),
             **DYNAMO_CUSTOM_OP_TABLE,
+            **_build_blocked_translation_table(self.model),
         }
 
         prev_invoke_fallback = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
