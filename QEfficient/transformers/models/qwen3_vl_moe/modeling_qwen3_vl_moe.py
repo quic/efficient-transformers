@@ -95,8 +95,10 @@ def qeff_prepare_mrope_cos_sin(cos, sin, position_ids, mrope_section, dtype=None
 
 def rotate_half_constant(x):
     """Rotates half the hidden dims of the input."""
-    x1 = x[..., :64]
-    x2 = x[..., 64:]
+    _, _, _, hs = x.size()
+    half_dim = hs // 2
+    x1 = x[..., :half_dim]
+    x2 = x[..., half_dim:]
     return torch.cat((-x2, x1), dim=-1)
 
 

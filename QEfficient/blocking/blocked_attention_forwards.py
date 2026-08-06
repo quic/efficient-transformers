@@ -308,43 +308,30 @@ def blocked_kv_attention_forward_decode_headpar_batch(
 
         attn_weights_block = torch.matmul(query_flat, k_block.transpose(3, 2)) * scaling
 
-        # Causal mask: [B, 1, T_block] -> [B, num_kv_heads, 1, T_block] -> [1, BH, 1, T_block]
-        causal_mask = (
-            torch.arange(kv_len_block, device=query.device).view(1, 1, kv_len_block)
-            > (position_ids - start_index)[:, :, None]
+        # _create_causal_mask returns [B, 1, seq_len, T_block]; fold to [1, BH, G*seq_len, T_block].
+        causal_mask = _create_causal_mask(
+            position_ids=position_ids,
+            target_length=end_index,
+            sliding_window=sliding_window,
+            start_index=start_index,
         )
-        # [B, 1, T_block] -> [B, num_kv_heads, seq_len, T_block] -> [1, BH, seq_len, T_block]
         causal_mask = (
-            causal_mask.unsqueeze(1)
-            .expand(batch_size, num_kv_heads, seq_len, kv_len_block)
+            causal_mask.expand(batch_size, num_kv_heads, seq_len, kv_len_block)
             .reshape(1, BH, seq_len, kv_len_block)
-        )
-        # [1, BH, seq_len, T_block] -> [1, BH, num_kv_groups*seq_len, T_block]
-        # (tile, not interleave — query_flat's m-axis is rep-major/seq-minor: m = r*seq_len + q_pos)
-        causal_mask = (
-            causal_mask.unsqueeze(3)
+            .unsqueeze(3)
             .expand(1, BH, seq_len, num_kv_groups, kv_len_block)
             .reshape(1, BH, seq_len * num_kv_groups, kv_len_block)
         )
+        attn_weights_block = attn_weights_block.masked_fill(causal_mask, -3.0e4)
 
-        attn_weights_block = torch.where(
-            causal_mask, torch.full_like(attn_weights_block, float(MIN_MASKED_ATTENTION_VALUE)), attn_weights_block
-        )
-
-        # causal_mask = causal_mask.repeat(1, 1, num_kv_groups, 1)
-        # attn_weights_block = attn_weights_block.masked_fill(causal_mask, float(MIN_MASKED_ATTENTION_VALUE))
-
-        max_block = attn_weights_block.max(dim=-1).values
+        max_block = attn_weights_block.max(dim=3).values
         exp_block = torch.exp(attn_weights_block - max_block.unsqueeze(-1))
         if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
-            max_block = torch.where(
-                skip_future, torch.full_like(max_block, float(MIN_MASKED_ATTENTION_VALUE)), max_block
-            )
+            max_block = torch.where(skip_future, torch.full_like(max_block, -3.0e4), max_block)
             exp_block = torch.where(skip_future, torch.zeros_like(exp_block), exp_block)
 
         # Read V: [B, num_kv_heads, T_block, D] -> [1, BH, T_block, D]
         v_block = past_key_value.read_only_blocked_V_batch(start_index, end_index, layer_idx, cache_kwargs)
-        # sum_block = exp_block.sum(dim=-1)
         sum_block = torch.einsum("btdn->btd", exp_block)
         out_block = torch.matmul(exp_block, v_block)
         if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
@@ -360,9 +347,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
     block_max = max_stacked.max(dim=0).values
     block_weight = torch.exp(max_stacked - block_max.unsqueeze(0))
     block_sum = torch.einsum("nbtd->btd", (block_weight * sum_stacked))
-    # block_sum = (block_weight * sum_stacked).sum(dim=0)
-    block_out = torch.einsum("nbtdk->btdk", (block_weight.unsqueeze(-1) * out_stacked))
-    # block_out = (block_weight.unsqueeze(-1) * out_stacked).sum(dim=0)
+    block_out = torch.einsum("nbtdk->btdk", (block_weight.unsqueeze(4) * out_stacked))
     output = block_out / block_sum.unsqueeze(-1)  # [1, BH, num_kv_groups*seq_len, D]
     attn_output = output.reshape(batch_size, num_kv_heads, num_kv_groups, seq_len, head_dim).reshape(
         batch_size, num_heads, seq_len, head_dim
@@ -812,6 +797,7 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
     position_bias: Optional[torch.Tensor] = None,
     sinks: Optional[torch.Tensor] = None,
     configured_split: Optional[int] = None,
+    ctx_len: int,
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     B, NQH, QL, D_abs = query.shape
@@ -823,7 +809,6 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
     Hkv = NQH // num_kv_groups
     n_rep_chunk = n_rep
 
-    ctx_len = QL
     position_ids = cache_kwargs.get("position_ids")
     kv_block_size = -(-ctx_len // num_kv_blocks)
 
@@ -1048,6 +1033,7 @@ def blocked_qkv_attention_forward(
     use_causal_mask: bool = False,
     sliding_window: Optional[int] = None,
     skip_kv: bool = False,
+    ctx_len: Optional[int] = None,
     position_bias: Optional[torch.Tensor] = None,
     sinks: Optional[torch.Tensor] = None,
     **kwargs,
@@ -1060,15 +1046,17 @@ def blocked_qkv_attention_forward(
     # Initialize Running Maximum and Denominator
     batch_size, num_heads, seq_len, DH = query.shape
 
-    past_seen_tokens = cache_kwargs.get("past_seen_tokens")
+    if ctx_len is None:
+        raise ValueError("`ctx_len` is required for blocked QKV attention.")
+    past_seen_tokens = ctx_len
     if torch.onnx.is_in_onnx_export():
         attention_mask = None
         use_causal_mask = True
     position_ids = cache_kwargs.get("position_ids")
 
-    num_q_blocks = max(1, num_q_blocks)
+    num_q_blocks = max(1, num_q_blocks) if num_q_blocks else 1
     q_block_positions = [-(-i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
-    num_kv_blocks = max(1, num_kv_blocks)
+    num_kv_blocks = max(1, num_kv_blocks) if num_kv_blocks else 1
     kv_block_size = -(-past_seen_tokens // num_kv_blocks)
 
     q_output_blocks = []
@@ -1191,6 +1179,7 @@ def blocked_hqkv_attention_forward(
     use_causal_mask: bool = False,
     sliding_window: Optional[int] = None,
     skip_kv: bool = False,
+    ctx_len: Optional[int] = None,
     position_bias: Optional[torch.Tensor] = None,
     sinks: Optional[torch.Tensor] = None,
     **kwargs,
@@ -1198,7 +1187,9 @@ def blocked_hqkv_attention_forward(
     # Initialize Running Maximum and Denominator
     batch_size, num_heads, seq_len, DH = query.shape
 
-    past_seen_tokens = cache_kwargs.get("past_seen_tokens")
+    if ctx_len is None:
+        raise ValueError("`ctx_len` is required for blocked HQKV attention.")
+    past_seen_tokens = ctx_len
     if torch.onnx.is_in_onnx_export():
         attention_mask = None
         use_causal_mask = True
@@ -1206,10 +1197,10 @@ def blocked_hqkv_attention_forward(
     if head_block_size <= 0:
         head_block_size = num_heads
     num_head_blocks = math.ceil(num_heads / head_block_size)
-    num_q_blocks = max(1, num_q_blocks)
+    num_q_blocks = max(1, num_q_blocks) if num_q_blocks else 1
     q_block_positions = [-(-i * seq_len) // num_q_blocks for i in range(num_q_blocks)]
     num_kv_blocks = max(1, num_kv_blocks)
-    kv_block_size = -(-past_seen_tokens // num_kv_blocks)
+    kv_block_size = -(-past_seen_tokens // num_kv_blocks) if num_kv_blocks else 1
 
     h_output_blocks = []
     h_attn_blocks = []
@@ -1349,6 +1340,7 @@ def blocked_bhqkv_attention_forward(
     use_causal_mask: bool = False,
     sliding_window: Optional[int] = None,
     skip_kv: bool = False,
+    ctx_len: Optional[int] = None,
     position_bias: Optional[torch.Tensor] = None,
     sinks: Optional[torch.Tensor] = None,
     **kwargs,
@@ -1356,7 +1348,9 @@ def blocked_bhqkv_attention_forward(
     # Initialize Running Maximum and Denominator
     batch_size, num_heads, seq_len, DH = query.shape
 
-    past_seen_tokens = cache_kwargs.get("past_seen_tokens")
+    if ctx_len is None:
+        raise ValueError("`ctx_len` is required for blocked BHQKV attention.")
+    past_seen_tokens = ctx_len
     if torch.onnx.is_in_onnx_export():
         attention_mask = None
         use_causal_mask = True
