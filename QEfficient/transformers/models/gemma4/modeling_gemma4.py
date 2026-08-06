@@ -8,7 +8,7 @@
 import math
 from collections import defaultdict
 from pathlib import Path
-from typing import List, Optional, Type, Union
+from typing import List, Optional, Tuple, Type, Union
 
 import onnx
 import torch
@@ -28,8 +28,14 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4VisionAttention,
     apply_rotary_pos_emb,
     eager_attention_forward,
+    repeat_kv,
 )
 
+from QEfficient.customop.ctx_scatter_gather import (
+    CtxGatherFunc3DGeneralized,
+    CtxScatterFunc3DGeneralized,
+    CtxScatterFunc3DInt,
+)
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -94,7 +100,7 @@ def _build_additive_attention_mask(
         target_length=target_length,
         sliding_window=sliding_window,
     )
-    return causal_mask.to(dtype=dtype) * _attention_mask_min(dtype, causal_mask.device)
+    return causal_mask
 
 
 def _build_bidirectional_vision_attention_mask(
@@ -115,7 +121,7 @@ def _build_bidirectional_vision_attention_mask(
         sliding_window=sliding_window,
     )
     if mm_token_type_ids is None:
-        return base_mask.to(dtype=dtype) * _attention_mask_min(dtype, base_mask.device)
+        return base_mask
 
     is_vision = (mm_token_type_ids == 1) | (mm_token_type_ids == 2)
     is_prev_vision = torch.roll(is_vision, shifts=1, dims=-1)
@@ -132,7 +138,7 @@ def _build_bidirectional_vision_attention_mask(
 
     same_group = (vision_group_ids.unsqueeze(-1) == kv_group_ids.unsqueeze(1)) & (vision_group_ids.unsqueeze(-1) >= 0)
     attention_mask = base_mask & ~same_group.unsqueeze(1)
-    return attention_mask.to(dtype=dtype) * _attention_mask_min(dtype, attention_mask.device)
+    return attention_mask
 
 
 def apply_multidimensional_rope(
@@ -191,6 +197,40 @@ def apply_multidimensional_rope(
         unsqueeze_dim=unsqueeze_dim,
     )
     return y_grouped.reshape(*x.shape[:-1], total_rotated_channels)
+
+
+def eager_attention_forward_text(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+    dropout: float = 0.0,
+    scaling: Optional[float] = None,
+    softcap: Optional[float] = None,
+    **kwargs,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    key_states = repeat_kv(key, module.num_key_value_groups)
+    value_states = repeat_kv(value, module.num_key_value_groups)
+
+    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+    if softcap is not None:
+        attn_weights = attn_weights / softcap
+        attn_weights = torch.tanh(attn_weights)
+        attn_weights = attn_weights * softcap
+
+    if attention_mask is not None:
+        attn_weights = torch.where(
+            attention_mask,
+            torch.tensor(constants.MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype),
+            attn_weights,
+        )
+
+    attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+    attn_output = torch.matmul(attn_weights, value_states)
+    attn_output = attn_output.transpose(1, 2).contiguous()
+
+    return attn_output, attn_weights
 
 
 class QEffGemma4TextRouter(Gemma4TextRouter):
@@ -313,7 +353,117 @@ class QEffGemma4TextExperts(Gemma4TextExperts):
         return down
 
 
+def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
+    """Build packed->original token index"""
+    batch_size, seq_len = T2Ei.shape
+    int32_max = torch.iinfo(torch.int32).max
+    int32_max_scalar = torch.tensor(int32_max, dtype=torch.int32, device=T2Ei.device)
+    token_idx = torch.arange(seq_len, dtype=torch.int32, device=T2Ei.device).unsqueeze(0).expand(batch_size, -1)
+    valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
+    valid_dest = valid_prefix - 1
+    scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
+    matched_idx = torch.full_like(token_idx, int32_max)
+    matched_idx = CtxScatterFunc3DInt.apply(
+        matched_idx.unsqueeze(-1),
+        scatter_pos,
+        token_idx.unsqueeze(-1),
+    ).squeeze(-1)
+    return matched_idx
+
+
+def _cumsum_scatter_gather_update_expert_blocked(
+    x: torch.Tensor,
+    T2Ei: torch.Tensor,
+    W_g: torch.Tensor,
+    W_u: torch.Tensor,
+    W_d: torch.Tensor,
+    routing_weight: torch.Tensor,
+    expert_out: torch.Tensor,
+    act_fn,
+    num_packed_chunks: int,
+) -> torch.Tensor:
+    """Cumsum-scatter-gather-update expert helper for NSP-blocked dispatch.
+
+    Accumulates one local expert's contribution in-place onto ``expert_out``.
+    Uses a packed/cumsum layout so the MLP runs only over active rows, then
+    scatters the weighted output back to original token positions.
+    """
+    batch_size, seq_len = T2Ei.shape
+    num_packed_chunks = max(1, int(num_packed_chunks))
+    assert seq_len % num_packed_chunks == 0, (
+        f"seq_len={seq_len} must be divisible by num_packed_chunks={num_packed_chunks}"
+    )
+    packed_chunk_size = seq_len // num_packed_chunks
+    matched_idx = _build_matched_idx_from_cumsum(T2Ei)
+    valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
+    x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
+    for chunk_idx in range(num_packed_chunks):
+        packed_start = chunk_idx * packed_chunk_size
+        if chunk_idx == num_packed_chunks - 1:
+            packed_stop = seq_len
+        else:
+            packed_stop = packed_start + packed_chunk_size
+        chunk_rows = packed_stop - packed_start
+        row_range = torch.arange(chunk_rows, dtype=torch.int32, device=x.device).unsqueeze(0)
+        chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
+        x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
+        gate_prime = x_chunk @ W_g
+        up_prime = x_chunk @ W_u
+        down_chunk = (up_prime * act_fn(gate_prime)) @ W_d
+
+        rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
+        down_chunk = down_chunk * rw_chunk
+
+        expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
+        updated_chunk = expert_out_chunk + down_chunk
+
+        chunk_valid_rows = torch.clamp(
+            valid_rows - packed_start,
+            min=torch.zeros_like(valid_rows),
+            max=torch.full_like(valid_rows, packed_chunk_size),
+        )
+        updated_chunk = torch.where(
+            (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
+        )
+        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
+
+    return expert_out
+
+
 class QEffPrefillChunkedGemma4TextExperts(Gemma4TextExperts):
+    supports_moe_prefill_blocking = True
+
+    def __qeff_init__(self):
+        H = self.hidden_dim
+        # Derive gather-friendly split projections from the checkpoint's fused
+        # gate_up_proj/down_proj, without changing on-disk checkpoint format.
+        gate_up_proj = self.gate_up_proj.detach()
+        down_proj = self.down_proj.detach()
+        self.gate_proj_t = gate_up_proj[:, : self.intermediate_dim, :].transpose(1, 2)
+        self.up_proj_t = gate_up_proj[:, self.intermediate_dim :, :].transpose(1, 2)
+        self.num_nsp = getattr(self, "expert_blocking_num_nsp", self.num_experts)
+        if self.num_experts % self.num_nsp != 0:
+            raise ValueError(
+                f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({self.num_nsp})"
+            )
+        self.local_experts = self.num_experts // self.num_nsp
+        self.W_g = nn.Parameter(
+            self.gate_proj_t.view(self.local_experts, self.num_nsp, H, -1).transpose(0, 1).contiguous().clone(),
+            requires_grad=False,
+        )
+        self.W_u = nn.Parameter(
+            self.up_proj_t.view(self.local_experts, self.num_nsp, H, -1).transpose(0, 1).contiguous().clone(),
+            requires_grad=False,
+        )
+        self.W_d = nn.Parameter(
+            down_proj.transpose(1, 2)
+            .view(self.local_experts, self.num_nsp, -1, H)
+            .transpose(0, 1)
+            .contiguous()
+            .clone(),
+            requires_grad=False,
+        )
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -332,6 +482,8 @@ class QEffPrefillChunkedGemma4TextExperts(Gemma4TextExperts):
 
         T = x.shape[0]
 
+        num_packed_chunks = getattr(self, "expert_blocking_packed_chunk_size", T)
+
         # Build dense routing weights [T, E] from top-k indices/weights
         expert_weights = torch.zeros(
             T,
@@ -341,21 +493,32 @@ class QEffPrefillChunkedGemma4TextExperts(Gemma4TextExperts):
         )
         expert_weights.scatter_add_(1, top_k_index, top_k_weights)
         expert_weights = expert_weights.to(x.dtype)
-        out = x.new_zeros((T, H))
-        for e in range(self.num_experts):
-            w = expert_weights[:, e].unsqueeze(-1)  # [T, 1]
-
-            # gate_up_proj[e]: [2I, H], down_proj[e]: [H, I] (matching your original matmuls)
-            gate_up = x @ self.gate_up_proj[e].transpose(0, 1)  # [T, 2I]
-            gate, up = gate_up.chunk(2, dim=-1)  # [T, I], [T, I]
-            activated = self.act_fn(gate) * up  # [T, I]
-            down = activated @ self.down_proj[e].transpose(0, 1)  # [T, H]
-
-            out += down * w
-
+        expert_out = x.new_zeros((self.num_nsp, T, H))
+        rw = (
+            expert_weights.transpose(0, 1)
+            .contiguous()
+            .view(self.local_experts, self.num_nsp, T)
+            .transpose(0, 1)
+            .contiguous()
+        )
+        routing_weights_unsqueezed = rw.unsqueeze(-1)
+        for slot in range(self.local_experts):
+            T2Ei = rw[:, slot, :] > 0
+            expert_out = _cumsum_scatter_gather_update_expert_blocked(
+                x=x,
+                T2Ei=T2Ei,
+                W_g=self.W_g[:, slot],
+                W_u=self.W_u[:, slot],
+                W_d=self.W_d[:, slot],
+                routing_weight=routing_weights_unsqueezed[:, slot],
+                expert_out=expert_out,
+                act_fn=self.act_fn,
+                num_packed_chunks=num_packed_chunks,
+            )
+        expert_output = torch.einsum("ijk->jk", expert_out)
         if reshape_back:
-            return out.view(B, S, H)
-        return out
+            return expert_output.view(B, S, H)
+        return expert_output
 
 
 class QEffGemma4VisionAttention(Gemma4VisionAttention):
@@ -455,9 +618,12 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
             token_key_states, token_value_states = key_states, value_states
 
         if past_key_values is not None:
-            if comp_ctx_lengths is not None and attention_mask is not None:
-                attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
-                cache_kwargs["CCL"] = attention_mask.shape[-1]
+            if comp_ctx_lengths is not None:
+                if attention_mask is not None:
+                    attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
+                    cache_kwargs["CCL"] = attention_mask.shape[-1]
+                elif self.sliding_window is None:
+                    cache_kwargs["CCL"] = comp_ctx_lengths.shape[-1]
             if self.is_kv_shared_layer:
                 if token_key_states is not None and token_value_states is not None:
                     key_states, value_states = past_key_values.update(
@@ -495,7 +661,7 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
                 sliding_window=self.sliding_window,
             )
 
-        attn_output, attn_weights = eager_attention_forward(
+        attn_output, attn_weights = eager_attention_forward_text(
             self,
             query_states,
             key_states,
