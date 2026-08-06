@@ -220,14 +220,11 @@ def load_qeff_vlm_model(
 def load_vlm_model(config):
     try:
         model_hf = AutoModelForImageTextToText.from_pretrained(
-            config._name_or_path, low_cpu_mem_usage=False, config=config
+            config._name_or_path, low_cpu_mem_usage=False, config=config, dtype=torch.float32
         )
     except ValueError:
         model_hf = AutoModelForCausalLM.from_pretrained(
-            config._name_or_path,
-            low_cpu_mem_usage=False,
-            trust_remote_code=True,
-            config=config,
+            config._name_or_path, low_cpu_mem_usage=False, trust_remote_code=True, config=config, dtype=torch.float32
         )
     model_hf.eval()
     return model_hf
@@ -498,7 +495,7 @@ class ModelConfig:
         "Qwen/Qwen3-VL-Reranker-2B",
         "Qwen/Qwen3-VL-Reranker-8B",
         "Qwen/Qwen3.5-0.8B",
-        "Qwen/Qwen3.5-35B-A3B",
+        "Qwen/Qwen3.6-35B-A3B",
         "tiny-random/gemma-4-dense",
         "tiny-random/gemma-4-moe",
     }
