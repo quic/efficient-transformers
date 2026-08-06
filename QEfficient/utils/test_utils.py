@@ -15,6 +15,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageText
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils import hf_download
+from QEfficient.utils.dtype_utils import cast_non_quantized_tensors, resolve_torch_dtype
 
 
 def get_custom_n_layers(model_name):
@@ -59,12 +60,9 @@ def load_hf_causal_lm_model(
             torch_dtype=torch_dtype,
             trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
         )
-
-    try:
-        model_hf = model_hf.to(torch_dtype)
-        model_hf.config.torch_dtype = torch_dtype
-    except ValueError:
-        pass
+    fallback_dtype = resolve_torch_dtype(torch_dtype)
+    cast_non_quantized_tensors(model_hf, fallback_dtype)
+    model_hf.config.torch_dtype = fallback_dtype
     model_hf.eval()
     return model_hf
 
@@ -222,11 +220,14 @@ def load_qeff_vlm_model(
 def load_vlm_model(config):
     try:
         model_hf = AutoModelForImageTextToText.from_pretrained(
-            config._name_or_path, low_cpu_mem_usage=False, config=config, dtype=torch.float32
+            config._name_or_path, low_cpu_mem_usage=False, config=config
         )
     except ValueError:
         model_hf = AutoModelForCausalLM.from_pretrained(
-            config._name_or_path, low_cpu_mem_usage=False, trust_remote_code=True, config=config, dtype=torch.float32
+            config._name_or_path,
+            low_cpu_mem_usage=False,
+            trust_remote_code=True,
+            config=config,
         )
     model_hf.eval()
     return model_hf
@@ -453,6 +454,9 @@ class ModelConfig:
     QUANTIZED_MODELS = {
         "neuralmagic/Qwen2-0.5B-Instruct-FP8",
         "neuralmagic/Llama-3.2-3B-Instruct-FP8",
+        "neuralmagic/Llama-3.2-3B-Instruct-FP8-dynamic",
+        "RedHatAI/Llama-3.2-3B-Instruct-FP8-dynamic",
+        "Qwen/Qwen3-0.6B-FP8",
         "TheBloke/Llama-2-7B-GPTQ",
         "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",
     }
@@ -498,7 +502,7 @@ class ModelConfig:
         "Qwen/Qwen3-VL-Reranker-2B",
         "Qwen/Qwen3-VL-Reranker-8B",
         "Qwen/Qwen3.5-0.8B",
-        "Qwen/Qwen3.6-35B-A3B",
+        "Qwen/Qwen3.5-35B-A3B",
         "tiny-random/gemma-4-dense",
         "tiny-random/gemma-4-moe",
     }
