@@ -752,22 +752,23 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         batch_size, num_heads, sequence_length, k_head_dim = key.shape
         v_head_dim = value.shape[-1]
         pad_size = (chunk_size - sequence_length % chunk_size) % chunk_size
-        # query = F.pad(query, (0, 0, 0, pad_size))
-        # key = F.pad(key, (0, 0, 0, pad_size))
-        # value = F.pad(value, (0, 0, 0, pad_size))
-        # beta = F.pad(beta, (0, pad_size))
-
-        # # ck = g.clone()
-        # g = F.pad(g, (0, pad_size))
-        query = F.pad(query, (0, 0, 0, pad_size), mode="constant", value=0.0)
-        key = F.pad(key, (0, 0, 0, pad_size), mode="constant", value=0.0)
-        value = F.pad(value, (0, 0, 0, pad_size), mode="constant", value=0.0)
-        beta = F.pad(beta, (0, pad_size), mode="constant", value=0.0)
-
-        # ck = g.clone()
-        g = F.pad(g, (0, pad_size), mode="constant", value=0.0)
+        # QAIC's LoadPad kernel only supports float32/int32/int64 inputs, so bf16/fp16
+        # tensors are padded via torch.cat with a zero tensor instead of F.pad.
+        query = torch.cat(
+            [query, torch.zeros(*query.shape[:2], pad_size, query.shape[3], dtype=query.dtype, device=query.device)],
+            dim=2,
+        )
+        key = torch.cat(
+            [key, torch.zeros(*key.shape[:2], pad_size, key.shape[3], dtype=key.dtype, device=key.device)], dim=2
+        )
+        value = torch.cat(
+            [value, torch.zeros(*value.shape[:2], pad_size, value.shape[3], dtype=value.dtype, device=value.device)],
+            dim=2,
+        )
+        beta = torch.cat([beta, torch.zeros(*beta.shape[:2], pad_size, dtype=beta.dtype, device=beta.device)], dim=2)
+        g = torch.cat([g, torch.zeros(*g.shape[:2], pad_size, dtype=g.dtype, device=g.device)], dim=2)
         total_sequence_length = sequence_length + pad_size
-        scale = 1 / (query.shape[-1] ** 0.5)
+        scale = 1 / (self.head_k_dim**0.5)
         query = query * scale
 
         v_beta = value * beta.unsqueeze(-1)
@@ -854,7 +855,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         v = value.float()
 
-        scale = 1.0 / (q.shape[-1] ** 0.5)
+        scale = 1.0 / (self.head_k_dim**0.5)
         q = q * scale  # (B, T, H, d_k)
 
         # For T=1 decode, this is a single step
