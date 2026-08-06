@@ -650,6 +650,7 @@ class QEFFBaseModel(ABC):
         num_devices: int = 1,
         cores_per_expert: Optional[int] = None,
         tree_reduce: Optional[bool] = None,
+        mdp_num_partitions: Optional[int] = 1,
         **compiler_options,
     ):
         kwargs = {
