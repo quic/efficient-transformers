@@ -1440,7 +1440,7 @@ class QEffGemma4DynamicCache(QEffDynamicCache):
         # `num_experts` is used as the differentiator because, among the 4
         # known Gemma4 variants, it is populated only for the 26B model (all
         # other variants report `num_experts=None`).
-        
+
         self._use_ring_buffer_fix = getattr(config, "num_experts", None) is not None
 
         if ddp_cache_data is not None:
@@ -1543,7 +1543,7 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
 
         if self._use_ring_buffer_fix:
             # --- Corrected sliding-window ring-buffer path -------------------
-           
+
             # Gemma4/HF keeps sliding-window cache storage as a ring buffer and
             # relies on the attention mask to express which logical positions each
             # physical slot represents. Do not rotate/gather the returned KV here:
@@ -1604,7 +1604,7 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
         else:
             # --- Original (pre-fix) sliding-window ring-buffer path ----------
             # Preserved unchanged for all Gemma4 variants other than the 26B model (31B, E2B, E4B)
-            
+
             kv_position_ids = torch.where(
                 position_ids == -1, position_ids, _remainder_with_symbolic_divisor(position_ids, layer_ctx_len)
             )
@@ -1616,7 +1616,9 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
 
             valid_mask = (kv_position_ids != -1).unsqueeze(1).unsqueeze(-1)
             key_states = torch.where(valid_mask, key_states, torch.zeros_like(key_states, dtype=key_states.dtype))
-            value_states = torch.where(valid_mask, value_states, torch.zeros_like(value_states, dtype=value_states.dtype))
+            value_states = torch.where(
+                valid_mask, value_states, torch.zeros_like(value_states, dtype=value_states.dtype)
+            )
 
             if batch_index is not None:
                 invalid_scatter_index = torch.iinfo(torch.int32).max
@@ -1639,7 +1641,9 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
 
             all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
             rolling_indices = torch.where(
-                all_indices > layer_ctx_len - 1, _remainder_with_symbolic_divisor(all_indices, layer_ctx_len), all_indices
+                all_indices > layer_ctx_len - 1,
+                _remainder_with_symbolic_divisor(all_indices, layer_ctx_len),
+                all_indices,
             )
             rolling_indices = rolling_indices[:ctx_len]
             use_rolling_indices = position_ids.max() >= (layer_ctx_len - 1)
