@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 
 import math
-import os
 from collections import defaultdict
 from pathlib import Path
 from typing import List, Optional, Type, Union
