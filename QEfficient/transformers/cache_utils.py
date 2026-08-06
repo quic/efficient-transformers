@@ -238,10 +238,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
 
-        if torch.onnx.is_in_onnx_export():
-            invalid_idx_value = torch.iinfo(torch.int32).max
-        else:
-            invalid_idx_value = 0
+        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
 
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
@@ -298,10 +295,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1).expand(B, Hkv, 1).reshape(1, BH, 1)
         invalid_mask = ctx_indices > gather_limit
 
-        if torch.onnx.is_in_onnx_export():
-            invalid_idx_value = torch.iinfo(torch.int32).max
-        else:
-            invalid_idx_value = 0
+        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
 
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
         ctx_indices = ctx_indices.expand(1, BH, T_block)
@@ -335,10 +329,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
         invalid_mask = ctx_indices > gather_limit
 
-        if torch.onnx.is_in_onnx_export():
-            invalid_idx_value = torch.iinfo(torch.int32).max
-        else:
-            invalid_idx_value = 0
+        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
 
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
@@ -348,7 +339,7 @@ class QEffDynamicLayer(CacheLayerMixin):
             ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
             v_out = ctx_gather_blocked_kv(v_out, ctx_indices)
 
-        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
         return v_out
 
     def read_only_blocked_V_batch(self, start_index, end_index, cache_kwargs):
@@ -380,17 +371,14 @@ class QEffDynamicLayer(CacheLayerMixin):
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1).expand(B, Hkv, 1).reshape(1, BH, 1)
         invalid_mask = ctx_indices > gather_limit
 
-        if torch.onnx.is_in_onnx_export():
-            invalid_idx_value = torch.iinfo(torch.int32).max
-        else:
-            invalid_idx_value = 0
+        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
 
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
         ctx_indices = ctx_indices.expand(1, BH, T_block)
         v_out = CtxGatherFuncBlockedKVBatch.apply(v_out, ctx_indices)
 
-        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=v_out.dtype), v_out)
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
         return v_out
 
     def read_only_blockedKV(self, start_index, end_index, cache_kwargs):
@@ -1676,10 +1664,10 @@ class QEffHybridCacheForGPTOSS:
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
         if batch_index is not None:
-            v_out = CtxGatherFuncBlockedKVCB.apply(v_out, batch_index, ctx_indices)
+            v_out = ctx_gather_blocked_kv_cb(v_out, batch_index, ctx_indices)
         else:
             ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
-            v_out = CtxGatherFuncBlockedKV.apply(v_out, ctx_indices)
+            v_out = ctx_gather_blocked_kv(v_out, ctx_indices)
 
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
         return v_out

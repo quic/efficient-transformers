@@ -380,6 +380,9 @@ def build_transformer_blocking_config_for_transform(
         if qaic_config.get(param) is not None:
             setattr(blocking_config, param, qaic_config.get(param))
 
+    if qaic_config.get("ctx_len") is None:
+        blocking_config.ctx_len = ctx_len
+
     if qaic_config.get("kv_blocking_headpar_split") is not None:
         kv_blocking_headpar_split = qaic_config.get("kv_blocking_headpar_split")
         # if default head parallel split, we split based on num cores
