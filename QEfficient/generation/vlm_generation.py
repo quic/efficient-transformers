@@ -20,7 +20,7 @@ Key enhancements:
 
 from collections import deque
 from time import perf_counter
-from typing import Any
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import torch
@@ -80,24 +80,24 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
     def __init__(
         self,
         qeff_model,
-        tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
+        tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
         processor: AutoImageProcessor,
         lang_qpc_path: str,
         vision_qpc_path: str,
-        device_id: list[int] | None = None,
-        ctx_len: int | None = None,
-        comp_ctx_lengths_prefill: list[int] | None = None,
-        comp_ctx_lengths_decode: list[int] | None = None,
+        device_id: Optional[List[int]] = None,
+        ctx_len: Optional[int] = None,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
         enable_debug_logs: bool = False,
-        write_io_dir: str | None = None,
-        full_batch_size: int | None = None,
-        image_height: int | None = None,
-        image_width: int | None = None,
+        write_io_dir: Optional[str] = None,
+        full_batch_size: Optional[int] = None,
+        image_height: Optional[int] = None,
+        image_width: Optional[int] = None,
         is_tlm: bool = False,
         include_sampler: bool = False,
         return_pdfs: bool = False,
         include_guided_decoding: bool = False,
-        sampling_params: dict[str, Any] | None = None,
+        sampling_params: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize vision-language generation with enhanced capabilities
@@ -201,7 +201,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         # Setup vision buffer skipping
         self._setup_vision_buffer_skipping()
 
-    def _get_vision_config(self) -> dict[str, Any]:
+    def _get_vision_config(self) -> Dict[str, Any]:
         """
         Derive vision config from session
 
@@ -363,11 +363,11 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
     def _execute_chunked_prefill(
         self,
-        lang_inputs: dict[str, np.ndarray],
+        lang_inputs: Dict[str, np.ndarray],
         num_chunks: int,
-        decode_batch_id: np.ndarray | None = None,
+        decode_batch_id: Optional[np.ndarray] = None,
         prefill_logit_bs: int = 1,
-    ) -> dict[str, np.ndarray]:
+    ) -> Dict[str, np.ndarray]:
         """
         Execute chunked prefill with language inputs
 
@@ -579,12 +579,12 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
     def generate(
         self,
-        images: list[str],
-        prompts: list[str],
+        images: List[str],
+        prompts: List[str],
         inputs: torch.Tensor = None,
-        num_frames: int | None = None,
-        multi_specs: bool | None = None,
-        generation_len: int | None = None,
+        num_frames: Optional[int] = None,
+        multi_specs: Optional[bool] = None,
+        generation_len: Optional[int] = None,
         stream: bool = True,
         **kwargs,
     ) -> CloudAI100ExecInfo:
@@ -627,7 +627,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             return self._generate_regular_batching(vision_prompts, generation_len, stream, **kwargs)
 
     def run_prefill_multi_frame_specialization(
-        self, inputs: torch.Tensor | None, num_frames: int | None = 1, generation_len: int = None
+        self, inputs: Optional[torch.Tensor], num_frames: Optional[int] = 1, generation_len: int = None
     ):
         """
         Run prefill for multi-frame specialization. This is a special case where we have a fixed number of frames
@@ -799,10 +799,10 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
     def _generate_multi_frame_specialization(
         self,
-        inputs: torch.Tensor | None,
-        num_frames: int | None = 1,
+        inputs: Optional[torch.Tensor],
+        num_frames: Optional[int] = 1,
         generation_len: int = None,
-        stream: list[str] = None,
+        stream: List[str] = None,
     ):
 
         exec_batch_size = self.batch_size
@@ -1115,7 +1115,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         )
 
     def generate_stream_tokens(
-        self, images: list[str], prompts: list[str], generation_len: int | None = None, **kwargs
+        self, images: List[str], prompts: List[str], generation_len: Optional[int] = None, **kwargs
     ):
         """
         Enable token-by-token streaming for vision models (new capability)
