@@ -40,7 +40,7 @@ processor = AutoProcessor.from_pretrained(model_id)
 
 ENABLE_FP16_CLIP = True
 remove_fp16clip_transform_if_disabled(qeff_model, ENABLE_FP16_CLIP)
-PREFILL_SEQ_LEN = 296
+PREFILL_SEQ_LEN = 256
 CTX_LEN = 4096
 BS = 1
 gemma_vision_dir = Path(__file__).resolve().parent.parent
@@ -57,6 +57,7 @@ if not skip_vision:
         num_devices=1,
         mos=1,
         mxfp6_matmul=True,
+        mxint8_kv_cache=True,
         aic_enable_depth_first=True,
         skip_vision=skip_vision,
         split_model_io=True,
@@ -77,6 +78,8 @@ prefill_qpc_path = qeff_model.compile(
     node_precision_info=True,
     prefill_only=True,
     enable_chunking=True,
+    moe_prefill_packed_chunk_size=256,
+    use_onnx_subfunctions=True,
     skip_vision=True,
 )
 
@@ -93,6 +96,7 @@ decode_qpc_path = qeff_model.compile(
     aic_enable_depth_first=True,
     node_precision_info=True,
     prefill_only=False,
+    use_onnx_subfunctions=True,
     skip_vision=True,
 )
 
