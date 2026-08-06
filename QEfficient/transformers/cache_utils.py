@@ -13,6 +13,8 @@ import torch
 from transformers.cache_utils import Cache, CacheLayerMixin, EncoderDecoderCache
 
 from QEfficient.customop import (
+    CtxChunkScatterBatchFunc,
+    CtxGatherFuncBlockedKVBatch,
     ctx_gather,
     ctx_gather_3d,
     ctx_gather_blocked_kv,
@@ -23,8 +25,6 @@ from QEfficient.customop import (
     ctx_scatter_3d,
     ctx_scatter_cb,
     ctx_scatter_cb_3d,
-    CtxChunkScatterBatchFunc,
-    CtxGatherFuncBlockedKVBatch,
 )
 
 

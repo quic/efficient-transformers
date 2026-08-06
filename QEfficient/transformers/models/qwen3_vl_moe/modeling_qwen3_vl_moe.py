@@ -31,7 +31,6 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
     Qwen3VLMoeVisionModel,
     apply_rotary_pos_emb_vision,
     repeat_kv,
-    rotate_half,
 )
 
 from QEfficient.blocking.attention_blocking import (
