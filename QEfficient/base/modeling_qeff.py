@@ -125,15 +125,18 @@ class QEFFBaseModel(ABC):
         if model_config is None or qaic_config is None or "EncoderWrapper" in self.model.__class__.__name__:
             return 1
 
-        num_replicate_kv_heads = qaic_config.get("num_replicate_kv_heads")
-        if num_replicate_kv_heads is None:
-            num_replicate_kv_heads = calculate_num_replicate_kv_heads(
-                num_devices=num_devices,
-                text_model_config=model_config,
-            )
-        if num_replicate_kv_heads is not None:
-            num_replicate_kv_heads = int(num_replicate_kv_heads)
-            qaic_config["num_replicate_kv_heads"] = num_replicate_kv_heads
+        replicate_kv_heads = qaic_config.get("replicate_kv_heads", False)
+
+        if not replicate_kv_heads:
+            return 1
+
+        text_config = getattr(model_config, "text_config", None)
+        effective_config = text_config if text_config is not None else model_config
+
+        num_replicate_kv_heads = calculate_num_replicate_kv_heads(
+            num_devices=num_devices,
+            text_model_config=effective_config,
+        )
         if num_replicate_kv_heads is None or num_replicate_kv_heads <= 1:
             return 1
 
