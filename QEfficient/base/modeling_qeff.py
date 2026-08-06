@@ -635,6 +635,7 @@ class QEFFBaseModel(ABC):
         num_devices: int = 1,
         cores_per_expert: Optional[int] = None,
         tree_reduce: Optional[bool] = None,
+        mdp_num_partitions: Optional[int] = 1,
         **compiler_options,
     ):
         kwargs = {
@@ -655,6 +656,7 @@ class QEFFBaseModel(ABC):
             kwargs["num_cores"] = compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
             kwargs["cores_per_expert"] = 1 if cores_per_expert is None else cores_per_expert
             kwargs["tree_reduce"] = False if tree_reduce is None else tree_reduce
+            kwargs["mdp_num_partitions"] = 1 if mdp_num_partitions is None else mdp_num_partitions
             kwargs["moe_prefill_packed_chunk_size"] = (
                 constants.MOE_PREFILL_PACKED_CHUNK_SIZE
                 if moe_prefill_packed_chunk_size is None
@@ -1062,6 +1064,7 @@ class QEFFBaseModel(ABC):
                     expert_parallel=expert_parallel,
                     cores_per_expert=cores_per_expert,
                     tree_reduce=tree_reduce,
+                    mdp_num_partitions=mdp_num_partitions,
                     _layerwise_cache_probe=layerwise_cache_probe,
                     kv_cache_prefix=kv_cache_prefix,
                     **compiler_options,
