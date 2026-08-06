@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 MODEL_AGE_ENV_VAR = "NIGHTLY_MODEL_AGE"
+NEWER_MODELS_ONLY_ENV_VAR = "NIGHTLY_NEWER_MODELS_ONLY"
 MODEL_BATCH_INDEX_ENV_VAR = "NIGHTLY_MODEL_BATCH_INDEX"
 MODEL_BATCH_SIZE_ENV_VAR = "NIGHTLY_MODEL_BATCH_SIZE"
 MODEL_AGE_OLDER = "older"
@@ -75,6 +76,12 @@ def is_newer_model(model_name: str, model_class: str, config: dict[str, Any] | N
 
 def filter_models_by_age(models: list[str], model_key: str, requested_age: str | None = None) -> list[str]:
     requested_age = (requested_age or os.environ.get(MODEL_AGE_ENV_VAR, "")).strip().lower()
+    if _newer_models_only_enabled():
+        if requested_age == MODEL_AGE_OLDER:
+            return []
+        if requested_age not in {MODEL_AGE_OLDER, MODEL_AGE_NEWER}:
+            requested_age = MODEL_AGE_NEWER
+
     if requested_age not in {MODEL_AGE_OLDER, MODEL_AGE_NEWER}:
         return models
 
@@ -109,6 +116,10 @@ def filter_models_for_nightly(
 
 def count_models_by_age(models: list[str], model_key: str, requested_age: str | None = None) -> int:
     return len(filter_models_by_age(models, model_key, requested_age))
+
+
+def _newer_models_only_enabled() -> bool:
+    return os.environ.get(NEWER_MODELS_ONLY_ENV_VAR, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _parse_non_negative_int(value: str | int | None) -> int | None:

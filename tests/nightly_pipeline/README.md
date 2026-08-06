@@ -151,6 +151,15 @@ pytest tests/nightly_pipeline/causal_lm_models/test_generate.py
 pytest tests/nightly_pipeline/test_result_validation.py
 ```
 
+To run only the newer-model subset from `configs/validated_models.json`, set:
+
+```bash
+export NIGHTLY_NEWER_MODELS_ONLY=true
+```
+
+When this variable is enabled, the default model selection is narrowed to newer models and older-model batches are
+empty. If the variable is unset, the nightly suite keeps the existing older-then-newer flow.
+
 ### Runtime Model Skips
 
 Freestyle jobs can skip selected models without editing `validated_models.json` by passing comma-separated model names

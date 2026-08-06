@@ -139,9 +139,14 @@
                 "Qwen/Qwen2.5-VL-3B-Instruct"
             ],
             "embedding_models": [
+                "BAAI/bge-base-en-v1.5"
             ],
-            "audio_models": [],
-            "audio_embedding_models": [],
+            "audio_models": [
+                "openai/whisper-tiny"
+            ],
+            "audio_embedding_models": [
+                "facebook/wav2vec2-base"
+            ],
             "sequence_models": [
                 "meta-llama/Llama-Prompt-Guard-2-22M"
             ]
