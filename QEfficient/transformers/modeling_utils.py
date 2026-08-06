@@ -215,7 +215,10 @@ qeff_supported_architectures = ModelArchitectures(
 DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma3", "gemma3_text", "gemma4_text", "llama4", "llama4_text"}
 
 # This is for supporting different modelling classes specially written for prefill-only model
-SPECIALIZED_DISAGG_SERVING_MODEL_ARCH = {"gpt_oss", "qwen3_moe", "glm4_moe", "kimi_k2", "kimi_k25"}
+SPECIALIZED_DISAGG_SERVING_MODEL_ARCH = {"gpt_oss", "qwen3_moe", "glm4_moe", "kimi_k2", "kimi_k25", "gemma4"}
+
+# This is for supporting dynamic prefill sequence length for prefill_only model
+DYNAMIC_PREFILL_SEQ_LEN_SUPPORTED_MODEL_ARCH = {"gemma4"}
 
 _PROXY_ONLY_ONNX_TRANSFORMS = (FP16ClipTransform, SplitTensorsTransform)
 
