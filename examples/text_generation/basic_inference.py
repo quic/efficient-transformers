@@ -41,13 +41,16 @@ def main():
 
     # Compile the model
     qpc_path = model.compile(
-        prefill_seq_len=args.prefill_seq_len,
-        ctx_len=args.ctx_len,
+        onnx_path="/home/smedhe/llama_singlefile_v6/llama_export-9b6728ed2187ac03/LlamaForCausalLM.onnx",
+        batch_size=8,
+        prefill_seq_len=1024,
+        ctx_len=2048,
         num_cores=args.num_cores,
         aic_hw_version=args.aic_hw_version,
-        num_devices=(1 if args.device_group is None else len(args.device_group)),
+        num_devices=8,
         dynamo=args.dynamo,
         use_onnx_subfunctions=args.use_onnx_subfunctions,
+        mxfp6_matmul=True,
     )
     print(f"Model compiled to: {qpc_path}")
 
