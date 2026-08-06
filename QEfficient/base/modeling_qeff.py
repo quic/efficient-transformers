@@ -24,7 +24,6 @@ from QEfficient.base.onnx_transforms import (
     CustomOpTransform,
     FP16ClipTransform,
     OnnxTransformPipeline,
-    PreTransposeLinearWeightsTransform,
     PruneFakeInitializersTransform,
     RenameFunctionOutputsTransform,
     SplitTensorsTransform,
@@ -424,7 +423,6 @@ class QEFFBaseModel(ABC):
             if onnx_program is None:
                 raise RuntimeError("torch.onnx.export returned None for dynamo export")
             PruneFakeInitializersTransform.apply(onnx_program)
-            PreTransposeLinearWeightsTransform.apply(onnx_program)
 
             from QEfficient.utils.onnx_save_utils_portable import save_dynamo_onnx_portable
 
