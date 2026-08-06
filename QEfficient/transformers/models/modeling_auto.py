@@ -127,6 +127,8 @@ def _configure_vlm_moe_expert_parallel(
     cores_per_expert: int,
     tree_reduce: bool,
     moe_prefill_packed_chunk_size: int,
+    prefill_only: bool = False,
+    mdp_num_partitions: Optional[int] = 1,
 ) -> None:
     if num_devices <= 0:
         raise ValueError("`num_devices` must be greater than 0 when configuring MoE expert parallelism.")
@@ -137,7 +139,19 @@ def _configure_vlm_moe_expert_parallel(
     if not isinstance(tree_reduce, bool):
         raise TypeError("`tree_reduce` must be a boolean.")
 
-    total_avl_cores = num_devices * num_cores
+    num_ts_devices = num_devices
+    if prefill_only:
+        if mdp_num_partitions is None:
+            mdp_num_partitions = 1
+        if mdp_num_partitions <= 0:
+            raise ValueError("`mdp_num_partitions` must be greater than 0 when configuring MoE expert parallelism.")
+        if num_devices % mdp_num_partitions != 0:
+            raise ValueError(
+                f"num_devices ({num_devices}) must be divisible by mdp_num_partitions ({mdp_num_partitions}) so "
+                "every prefill pipeline partition gets the same number of tensor-sliced devices."
+            )
+        num_ts_devices = num_devices // mdp_num_partitions
+    total_avl_cores = num_ts_devices * num_cores
     if expert_parallel:
         hash_params["expert_parallel"] = True
         hash_params["moe_prefill_total_avl_cores"] = total_avl_cores
@@ -190,20 +204,20 @@ def _configure_vlm_moe_expert_parallel(
                 f"num_experts ({num_experts}) must be divisible by num_pipeline_stages ({num_pipeline_stages})."
             )
         num_parallelized_experts = num_experts // num_pipeline_stages
-        if num_parallelized_experts % num_devices != 0:
+        if num_parallelized_experts % num_ts_devices != 0:
             raise ValueError(
                 f"num_parallelized_experts ({num_parallelized_experts}) must be divisible by num_devices "
-                f"({num_devices})."
+                f"({num_ts_devices})."
             )
-        if num_devices > 1 and num_cores % cores_per_expert != 0:
+        if num_ts_devices > 1 and num_cores % cores_per_expert != 0:
             raise ValueError(f"num_cores ({num_cores}) must be divisible by cores_per_expert ({cores_per_expert}).")
         module.num_experts = num_experts
-        module.num_devices = num_devices
+        module.num_devices = num_ts_devices
         module.cores_per_expert = cores_per_expert
         module.total_avl_cores = total_avl_cores
         module.num_pipeline_stages = num_pipeline_stages
         module.num_parallelized_experts = num_parallelized_experts
-        module.experts_per_soc = num_cores // cores_per_expert if num_devices > 1 else None
+        module.experts_per_soc = num_cores // cores_per_expert if num_ts_devices > 1 else None
         module.tree_reduce = tree_reduce
         module.expert_blocking_num_nsp = num_parallelized_experts
         module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
@@ -1389,6 +1403,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         cores_per_expert: int = 1,
         tree_reduce: bool = False,
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
+        mdp_num_partitions: Optional[int] = 1,
         kv_cache_prefix: Optional[str] = None,
         **kwargs,
     ):
@@ -1436,6 +1451,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             cores_per_expert=cores_per_expert,
             tree_reduce=tree_reduce,
             moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+            prefill_only=bool(prefill_only),
+            mdp_num_partitions=mdp_num_partitions,
         )
 
         if QEfficient.base.modeling_qeff.QEFFBaseModel._layerwise_active:
@@ -1677,6 +1694,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         cores_per_expert: int = 1,
         tree_reduce: bool = False,
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
+        mdp_num_partitions: Optional[int] = 1,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
@@ -1719,6 +1737,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 cores_per_expert=cores_per_expert,
                 tree_reduce=tree_reduce,
                 moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+                mdp_num_partitions=mdp_num_partitions,
                 layerwise_window_size=layerwise_window_size,
                 kv_cache_prefix=kv_cache_prefix,
                 **kwargs,
@@ -1839,6 +1858,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 cores_per_expert=cores_per_expert,
                 tree_reduce=tree_reduce,
                 moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+                mdp_num_partitions=mdp_num_partitions,
                 prefill_seq_len=prefill_seq_len,
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
@@ -2253,6 +2273,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 cores_per_expert=cores_per_expert,
                 tree_reduce=tree_reduce,
                 moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+                mdp_num_partitions=compiler_options.get("mdp_num_partitions", 1),
                 prefill_seq_len=prefill_seq_len,
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
@@ -2947,6 +2968,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         cores_per_expert: int = 1,
         tree_reduce: bool = False,
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
+        mdp_num_partitions: Optional[int] = 1,
         kv_cache_prefix: Optional[str] = None,
         **kwargs,
     ) -> str:
@@ -2986,6 +3008,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             cores_per_expert=cores_per_expert,
             tree_reduce=tree_reduce,
             moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+            prefill_only=bool(prefill_only),
+            mdp_num_partitions=mdp_num_partitions,
         )
 
         inputs = self.model.get_dummy_inputs(comp_ctx_lengths=self.comp_ctx_lengths_decode)
