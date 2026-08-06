@@ -5,6 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
+import math
 import os
 from collections import defaultdict
 from pathlib import Path
@@ -36,10 +37,12 @@ from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
+from QEfficient.utils.logging_utils import logger
 
 _FP16_CLAMP_MIN = -65504.0
 _FP16_CLAMP_MAX = 65504.0
 _DISABLE_EXPORT_FP16_CLAMP = False
+_MAX_VISION_SIZE = 0
 
 
 def _is_onnx_export() -> bool:
@@ -1076,11 +1079,6 @@ class QEffGemma4EncoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.model.vision_model = self.model.model.vision_tower
-        self.mm_tokens_per_image = getattr(
-            self.model.config,
-            "mm_tokens_per_image",
-            getattr(self.model.config.vision_config, "default_output_length", 280),
-        )
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {self.model.model.vision_tower.encoder.layers[0].__class__}
@@ -1110,7 +1108,7 @@ class QEffGemma4EncoderWrapper(nn.Module):
                 position_ids=image_position_ids,
             )
 
-        output_length = getattr(vision_tower.config, "default_output_length", None)
+        output_length = _MAX_VISION_SIZE
         if output_length is None:
             output_length = pixel_values.shape[-2] // (
                 vision_tower.config.pooling_kernel_size * vision_tower.config.pooling_kernel_size
@@ -1127,13 +1125,9 @@ class QEffGemma4EncoderWrapper(nn.Module):
         vision_embeds = self.model.model.embed_vision(inputs_embeds=hidden_states)
         if vision_embeds.dim() == 2:
             vision_embeds = vision_embeds.unsqueeze(0)
-
-        # Keep the encoder output fixed-shape for dual-QPC export/compile.
-        # Gemma4 uses vision_config.default_output_length/image_seq_length
-        # image placeholders (280), while the vision pooler may emit extra
-        # padded bins for the max-patch canvas.
         del pooler_mask
-        return vision_embeds[:, : self.mm_tokens_per_image, :]
+        # Keep encoder output fixed-shape for dual-QPC export/compile.
+        return vision_embeds[:, :output_length, :]
 
 
 class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
@@ -1144,15 +1138,20 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
     _NPI_BAD_OUTPUT_TOKENS = QEffGemma4ForCausalLM._NPI_BAD_OUTPUT_TOKENS
     _NPI_EXCLUDED_OPS = QEffGemma4ForCausalLM._NPI_EXCLUDED_OPS
 
-    def _get_vision_max_patches(self) -> int:
+    def _get_vision_max_patches(self, vision_soft_tokens_per_image) -> int:
         pooling_kernel_size = getattr(self.config.vision_config, "pooling_kernel_size", 3)
-        default_output_length = getattr(self.config.vision_config, "default_output_length", 280)
-        return default_output_length * pooling_kernel_size * pooling_kernel_size
+        return vision_soft_tokens_per_image * pooling_kernel_size * pooling_kernel_size
 
-    def _get_mm_tokens_per_image(self) -> int:
-        return getattr(
-            self.config, "mm_tokens_per_image", getattr(self.config.vision_config, "default_output_length", 280)
-        )
+    def choose_gemma4_max_soft_tokens(self, height, width):
+        pooling_kernel_size = getattr(self.config.vision_config, "pooling_kernel_size", 3)
+        patch_size = getattr(self.config.vision_config, "patch_size", 3)
+        tile = patch_size * pooling_kernel_size  # 48
+        needed = math.ceil(height / tile) * math.ceil(width / tile)
+        supported = constants.SUPPORTED_NUM_SOFT_TOKENS_PER_IMAGE
+        for budget in supported:
+            if needed <= budget:
+                return budget
+        return supported[-1]  # fallback to max
 
     def get_qeff_vision_encoder(self):
         return QEffGemma4EncoderWrapper(self)
@@ -1187,6 +1186,8 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         img_size: int,
         comp_ctx_lengths_prefill: Optional[List[int]] = None,
         comp_ctx_lengths_decode: Optional[List[int]] = None,
+        height: int | list[int] = None,
+        width: int | list[int] = None,
         kv_offload: bool = False,
         continuous_batching: bool = False,
         kv_cache_batch_size: Optional[int] = None,
@@ -1195,25 +1196,25 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
     ):
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 32
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
-        max_patches = self._get_vision_max_patches()
         user_vision_size = compiler_options.pop("vision_size", None)
-        if user_vision_size:
-            if user_vision_size >= ctx_len:
-                raise ValueError("vision_size must be less than ctx_len")
-            vision_size = user_vision_size
-        else:
-            vision_size = self._get_mm_tokens_per_image()
+        if height is None or width is None:
+            height = constants.GEMMA4_HEIGHT
+            width = constants.GEMMA4_WIDTH
+            logger.warning(
+                f"Setting height and width to be {height} and {width} respectively, as it was neither passed nor found in vision_config"
+            )
 
-        vision = [{"batch_size": batch_size, "max_patches": max_patches}]
+        height = [height] if isinstance(height, int) else height
+        width = [width] if isinstance(width, int) else width
 
-        def build_lang_prefill_spec(comp_ctx_lengths: Optional[int] = None):
+        def build_lang_prefill_spec(comp_ctx_lengths: int | None = None):
             spec = {
                 "batch_size": 1 if continuous_batching else batch_size,
                 "seq_len": prefill_seq_len,
                 "ctx_len": ctx_len,
                 "sliding_window": self.model.language_model.config.sliding_window,
                 "vision_batch_size": batch_size,
-                "vision_size": vision_size,
+                "vision_size": _MAX_VISION_SIZE,
             }
             if comp_ctx_lengths is not None:
                 spec["comp_ctx_lengths"] = comp_ctx_lengths
@@ -1232,7 +1233,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 "ctx_len": ctx_len,
                 "sliding_window": self.model.language_model.config.sliding_window,
                 "vision_batch_size": batch_size,
-                "vision_size": vision_size,
+                "vision_size": _MAX_VISION_SIZE,
             }
             if comp_ctx_lengths is not None:
                 spec["comp_ctx_lengths"] = comp_ctx_lengths
@@ -1242,9 +1243,22 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 spec["batch_size"] = kv_cache_batch_size or batch_size
             return spec
 
-        if comp_ctx_lengths_prefill and comp_ctx_lengths_decode:
-            lang = [build_lang_prefill_spec(length) for length in comp_ctx_lengths_prefill]
-            lang.extend(build_lang_decode_spec(length) for length in comp_ctx_lengths_decode)
+        vision = []
+
+        global _MAX_VISION_SIZE
+        for h, w in zip(height, width):
+            if user_vision_size:
+                vision_size = user_vision_size
+            else:
+                vision_size = self.choose_gemma4_max_soft_tokens(h, w)
+            _MAX_VISION_SIZE = max(_MAX_VISION_SIZE, vision_size)
+            if vision_size >= ctx_len:
+                raise ValueError("vision_size must be less than ctx_len")
+            max_patches = self._get_vision_max_patches(vision_size)
+            vision.append({"batch_size": batch_size, "max_patches": max_patches, "vision_size": vision_size})
+        if comp_ctx_lengths_prefill or comp_ctx_lengths_decode:
+            lang = [build_lang_prefill_spec(length) for length in (comp_ctx_lengths_prefill or [])]
+            lang.extend(build_lang_decode_spec(length) for length in (comp_ctx_lengths_decode or []))
         else:
             lang = [build_lang_prefill_spec(), build_lang_decode_spec()]
         if kv_offload:
@@ -1322,8 +1336,8 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
     ):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         fbs = constants.ONNX_EXPORT_EXAMPLE_FBS
-        max_patches = self._get_vision_max_patches()
-        mm_tokens_per_image = self._get_mm_tokens_per_image()
+        mm_tokens_per_image = _MAX_VISION_SIZE
+        max_patches = self._get_vision_max_patches(mm_tokens_per_image)
         seq_len = max(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, mm_tokens_per_image + 32)
         patch_dim = getattr(self.config.vision_config, "patch_size", 16) ** 2 * 3
 
