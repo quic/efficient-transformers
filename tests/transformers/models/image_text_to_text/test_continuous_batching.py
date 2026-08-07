@@ -34,7 +34,6 @@ from QEfficient.utils.test_utils import (
     set_num_layers_vlm,
 )
 from tests.utils.load_kimi_utils import (
-    get_kimi_k25_test_config,
     is_kimi_k25,
     load_kimi_k25_layer_subset_model,
     load_kimi_k25_model_from_config,
@@ -85,13 +84,12 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
             continuous_batching=True,
         )
     elif is_kimi_k25(model_name):
-        if config is None:
-            config = get_kimi_k25_test_config(model_name, model_config_dict)
         model_hf, tokenizer, processor = load_kimi_k25_model_from_config(config)
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
             kv_offload=kv_offload,
             config=model_hf.config,
+            torch_dtype=torch.float32,
             continuous_batching=True,
         )
     elif config is None:
@@ -216,7 +214,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         )
         compile_kwargs["img_size"] = img_size
     elif is_kimi_k25(model_name):
-        image_urls = [image_urls[0]] * len(queries)
         for img_url in image_urls:
             image = Image.open(requests.get(img_url, stream=True).raw).convert("RGB")
             images.append(image)
@@ -301,6 +298,9 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         )
     else:
         if is_kimi_k25(model_name):
+            # Kimi-K2.5 is compiled for the first image shape in this test; QPC generation resizes
+            # each image to that shape, so resize HF reference images the same way while keeping content different.
+            images = [image.resize((image_width, image_height)) for image in images]
             pytorch_hf_tokens = run_kimi_k25_hf_model_on_pytorch_CB(
                 copy.deepcopy(model_hf), processor, images, queries, max_gen_len
             )

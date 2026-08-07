@@ -20,6 +20,8 @@ from PIL import Image
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
+# By default, this script loads a compact Kimi-K2.5 subset: 2 vision layers,
+# 2 text layers, and only the first 4 routed experts.
 LOAD_KIMI_UTILS_PATH = Path(__file__).resolve().parents[4] / "tests" / "utils" / "load_kimi_utils.py"
 _load_kimi_spec = importlib.util.spec_from_file_location("load_kimi_utils", LOAD_KIMI_UTILS_PATH)
 if _load_kimi_spec is None or _load_kimi_spec.loader is None:
@@ -32,10 +34,9 @@ NUM_EXPERTS_PER_TOKEN = load_kimi_utils.NUM_EXPERTS_PER_TOKEN
 NUM_TEXT_LAYERS = load_kimi_utils.NUM_TEXT_LAYERS
 NUM_VISION_LAYERS = load_kimi_utils.NUM_VISION_LAYERS
 load_kimi_k25_class = load_kimi_utils.load_kimi_k25_class
-load_layer_subset_model = load_kimi_utils.load_layer_subset_model
-parse_expert_ids = load_kimi_utils.parse_expert_ids
+load_kimi_k25_layer_subset_model = load_kimi_utils.load_kimi_k25_layer_subset_model
 prepare_config = load_kimi_utils.prepare_config
-set_deterministic = load_kimi_utils.set_deterministic
+parse_expert_ids = load_kimi_utils.parse_expert_ids
 
 PREFILL_SEQ_LEN = 512
 CTX_LEN = 2048
@@ -287,24 +288,20 @@ def _run_disagg_generation(
 
 
 def _load_model(args):
-    set_deterministic(1234)
-    config = prepare_config(args.model_path)
-    kimi_cls = load_kimi_k25_class(args.model_path)
-
-    model_kwargs = {
-        "config": config,
-        "trust_remote_code": True,
-        "attn_implementation": "eager",
-        "torch_dtype": torch.float32,
-    }
 
     if args.full_model:
+        config = prepare_config(args.model_path)
+        kimi_cls = load_kimi_k25_class(args.model_path)
+        model_kwargs = {
+            "config": config,
+            "trust_remote_code": True,
+            "attn_implementation": "eager",
+            "torch_dtype": torch.float32,
+        }
         model, tokenizer, processor = kimi_cls.from_pretrained(str(args.model_path), **model_kwargs)
     elif args.num_vision_layers is not None and args.num_text_layers is not None:
-        model, tokenizer, processor = load_layer_subset_model(
+        model, tokenizer, processor = load_kimi_k25_layer_subset_model(
             model_path=args.model_path,
-            kimi_cls=kimi_cls,
-            config=config,
             num_vision_layers=args.num_vision_layers,
             num_text_layers=args.num_text_layers,
             loaded_expert_ids=args.expert_ids,

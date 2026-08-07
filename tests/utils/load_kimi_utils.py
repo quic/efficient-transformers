@@ -16,6 +16,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import torch
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
@@ -24,6 +25,8 @@ from transformers import AutoConfig, AutoProcessor, AutoTokenizer
 from transformers.cache_utils import Cache, DynamicCache
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
+# Default Kimi-K2.5 test scripts load a compact subset: 2 vision layers,
+# 2 text layers, and only the first 4 routed experts.
 KIMI_K25_MODEL_NAME = "moonshotai/Kimi-K2.5"
 NUM_VISION_LAYERS = 2
 NUM_TEXT_LAYERS = 2
@@ -38,8 +41,6 @@ def is_kimi_k25(model_name: str) -> bool:
 
 
 def set_deterministic(seed: int):
-    import numpy as np
-
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -149,10 +150,6 @@ def load_kimi_k25_class(model_path_or_name):
     return kimi_cls
 
 
-def patch_kimi_k25_remote_code_compat(config):
-    return load_kimi_k25_class(config._name_or_path)
-
-
 def prepare_config(model_path: Path):
     config = AutoConfig.from_pretrained(str(model_path), trust_remote_code=True)
 
@@ -183,12 +180,12 @@ def get_kimi_k25_test_config(model_name: str, model_config_dict):
     config.vision_config.torch_dtype = torch.float32
     config.vision_config.dtype = torch.float32
 
-    patch_kimi_k25_remote_code_compat(config)
+    load_kimi_k25_class(config._name_or_path)
     return config
 
 
 def load_kimi_k25_model_from_config(config):
-    kimi_cls = patch_kimi_k25_remote_code_compat(config)
+    kimi_cls = load_kimi_k25_class(config._name_or_path)
     model = kimi_cls._from_config(config)
     torch_dtype = getattr(model.config, "torch_dtype", None)
     if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
@@ -198,11 +195,6 @@ def load_kimi_k25_model_from_config(config):
     tokenizer = AutoTokenizer.from_pretrained(KIMI_K25_MODEL_NAME, trust_remote_code=True)
     processor = AutoProcessor.from_pretrained(KIMI_K25_MODEL_NAME, trust_remote_code=True)
     return model, tokenizer, processor
-
-
-def get_kimi_k25_num_image_tokens(config, grid_thws):
-    merge_height, merge_width = config.vision_config.merge_kernel_size
-    return int(grid_thws[0, 1].item() // merge_height) * int(grid_thws[0, 2].item() // merge_width)
 
 
 def parse_expert_ids(value: str):

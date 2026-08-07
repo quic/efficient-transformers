@@ -182,7 +182,7 @@ class DeepseekV3YarnRotaryEmbedding(DeepseekV3RotaryEmbedding):
 
 
 # Copied from transformers.models.llama.modeling_llama.apply_rotary_pos_emb
-def orig_apply_rotary_pos_emb(q, k, cos, sin):  # , position_ids, unsqueeze_dim=1):
+def orig_apply_rotary_pos_emb(q, k, cos, sin):
     """Applies Rotary Position Embedding to the query and key tensors.
 
     Args:

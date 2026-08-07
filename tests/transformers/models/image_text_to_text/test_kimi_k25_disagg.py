@@ -35,13 +35,11 @@ GENERATION_LEN = 4
 NUM_VISION_LAYERS = 2
 NUM_TEXT_LAYERS = 2
 IMAGE_URL = "https://huggingface.co/moonshotai/Kimi-K2.5/resolve/main/figures/kimi-logo.png"
-IMAGE_SIZE = 448
 TEXT_PROMPT = "Describe this image."
 
 
 def _prepare_inputs(processor):
     image = Image.open(BytesIO(requests.get(IMAGE_URL, timeout=30).content)).convert("RGB")
-    image = image.resize((IMAGE_SIZE, IMAGE_SIZE))
     messages = [
         {
             "role": "user",
