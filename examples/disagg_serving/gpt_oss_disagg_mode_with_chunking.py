@@ -112,8 +112,6 @@ for i in range(num_chunks):
         inputs[f"past_value.{i}"] = qpc_out[f"past_value.{i}_RetainedState"]
 print(f"ttft={(time.time() - loop_start):.3f}")
 
-exit(0)
-
 all_outputs.append(np.argmax(qpc_out["logits"]))
 decode_inputs = {
     "input_ids": np.argmax(qpc_out["logits"]).reshape(1, 1),
