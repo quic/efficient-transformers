@@ -247,6 +247,8 @@ class CtxGatherFunc(torch.autograd.Function):
 
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value, comp_ctx_len: int) -> torch.Value:
+        if not isinstance(comp_ctx_len, torch.Value):
+            comp_ctx_len = g.op("Constant", value_t=torch.tensor(comp_ctx_len, dtype=torch.int64))
         return g.onnxscript_op(CtxGather, data, ctx_indices, comp_ctx_len).setTypeAs(data)
 
 
