@@ -1255,7 +1255,6 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         routing_weight: torch.Tensor,
         expert_out: torch.Tensor,
         packed_chunk_size: int,
-        num_q_ffn_blocks: Optional[int] = None,
     ) -> torch.Tensor:
         """Cumsum-scatter-gather-update expert helper for NSP-blocked dispatch.
 
@@ -1274,24 +1273,13 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         batch_size, seq_len = T2Ei.shape
         packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
 
-        if num_q_ffn_blocks is not None:
-            assert seq_len % num_q_ffn_blocks == 0, "Something went wrong"
-            packed_chunk_size = seq_len // num_q_ffn_blocks
-        else:
-            num_q_ffn_blocks = seq_len // packed_chunk_size
-
         matched_idx = _build_matched_idx_from_cumsum(T2Ei)
         valid_rows = torch.einsum("bi->b", T2Ei.to(torch.int32)).unsqueeze(1)
         row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
         x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
 
-        for chunk_idx in range(num_q_ffn_blocks):
-            packed_start = chunk_idx * packed_chunk_size
-            if chunk_idx == num_q_ffn_blocks - 1:
-                packed_stop = seq_len
-            else:
-                packed_stop = packed_start + packed_chunk_size
-
+        for packed_start in range(0, seq_len, packed_chunk_size):
+            packed_stop = packed_start + packed_chunk_size
             chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
             x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
@@ -1350,7 +1338,6 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         x: torch.Tensor,
         local_T2E: torch.Tensor,
         routing_weights: torch.Tensor,
-        num_q_ffn_blocks: Optional[int] = None,
     ) -> torch.Tensor:
         T, H = x.shape
         num_nsp = EXPERT_BLOCKING_NUM_NSP
@@ -1437,13 +1424,10 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
                 routing_weight=routing_weights_unsqueezed[:, slot],
                 expert_out=expert_out,
                 packed_chunk_size=EXPERT_BLOCKING_PACKED_CHUNK_SIZE,
-                num_q_ffn_blocks=num_q_ffn_blocks,
             )
         return torch.einsum("bij->ij", expert_out)
 
-    def forward(
-        self, hidden_states: torch.Tensor, num_q_ffn_blocks: Optional[int] = None
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         topk_idx, topk_weight, _, _ = self.gate(hidden_states)
         B, S, H = hidden_states.shape
         T = B * S
@@ -1463,7 +1447,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             routing_weights = (eq.to(topk_weight.dtype) * topk_weight.unsqueeze(0).unsqueeze(0)).sum(dim=-1)
 
             expert_out = self._forward_expert_blocked(
-                x=x, local_T2E=local_T2E, routing_weights=routing_weights, num_q_ffn_blocks=num_q_ffn_blocks
+                x=x, local_T2E=local_T2E, routing_weights=routing_weights
             ) + self.shared_experts(hidden_states)
             return expert_out.view(B, S, H)
 
@@ -1500,7 +1484,6 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         mla_absorption: Optional[Dict[str, bool]] = None,
-        num_q_ffn_blocks: Optional[int] = None,
         sin_cached=None,
         cos_cached=None,
         **kwargs,
@@ -1547,10 +1530,7 @@ class QEffDeepseekV3DecoderLayer(nn.Module):
 
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
-        if num_q_ffn_blocks is not None and self.mlp.__class__.__name__ == "DeepseekV3MoE":
-            hidden_states = self.mlp(hidden_states, num_q_ffn_blocks)
-        else:
-            hidden_states = self.mlp(hidden_states)
+        hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
 
         outputs = (hidden_states,)
@@ -1655,7 +1635,6 @@ class QEffDeepseekV3Model(nn.Module):
 
         sin = self.sin_cached[position_ids].unsqueeze(1)
         cos = self.cos_cached[position_ids].unsqueeze(1)
-        num_q_ffn_blocks = getattr(self, "num_q_blocks_ffn", None)
         for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -1672,7 +1651,6 @@ class QEffDeepseekV3Model(nn.Module):
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
                 mla_absorption=mla_absorption,
-                num_q_ffn_blocks=num_q_ffn_blocks,
                 sin_cached=sin,
                 cos_cached=cos,
                 **kwargs,

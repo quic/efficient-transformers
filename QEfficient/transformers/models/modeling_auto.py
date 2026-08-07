@@ -4115,17 +4115,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
             self.hash_params["kv_cache_prefix"] = kv_cache_prefix
 
-        if prefill_only:
-            effective_prefill_seq_len = (
-                prefill_seq_len if prefill_seq_len is not None else seq_len if enable_chunking else None
-            )
-            assert effective_prefill_seq_len is not None, "prefill_seq_len must be provided when prefill_only is True"
-            num_q_blocks_ffn = effective_prefill_seq_len // constants.EXPERT_BLOCKING_PACKED_CHUNK_SIZE
-            num_q_blocks_ffn = num_q_blocks_ffn if num_q_blocks_ffn > 0 else 1
-            model_body = getattr(self.model, "model", None)
-            if model_body is not None:
-                setattr(model_body, "num_q_blocks_ffn", num_q_blocks_ffn)
-
         if QEFFBaseModel._layerwise_active:
             return self._export_layerwise(
                 example_inputs,
