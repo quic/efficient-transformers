@@ -24,6 +24,7 @@ import torch
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 
 from QEfficient.utils import constants
+from QEfficient.utils.logging_utils import logger
 
 
 def _check_similarity(first_block_residuals: torch.Tensor, prev_first_block_residuals: torch.Tensor) -> torch.Tensor:
@@ -228,6 +229,7 @@ def run_wan_non_unified_first_block_cache_denoise(
     callback_on_step_end_tensor_inputs: List[str],
     cache_threshold_high: Optional[float] = None,
     cache_threshold_low: Optional[float] = None,
+    magcache_runtime: Optional[Any] = None,
 ):
     """
     Cache-aware non-unified WAN denoise loop.
@@ -308,12 +310,19 @@ def run_wan_non_unified_first_block_cache_denoise(
                     "cache_threshold": np.array(stage_cache_threshold, dtype=np.float32),
                 }
 
-            with current_model.cache_context("cond"):
+            def _run_first_block_cache_step(stream_name: str, inputs: Dict[str, np.ndarray]) -> torch.Tensor:
+                if magcache_runtime is not None and magcache_runtime.should_skip(stream_name):
+                    cached_residual = magcache_runtime.get_cached_residual(stream_name)
+                    magcache_runtime.complete_skip(stream_name)
+                    if magcache_runtime.verbose:
+                        logger.info(f"MagCache skip: step={i}, stream={stream_name}, t={float(t):.2f}")
+                    return latents.to(cached_residual.dtype) + cached_residual
+
                 start_transformer_step_time = time.perf_counter()
-                outputs = current_transformer_module.qpc_session.run(inputs_aic)
+                outputs = current_transformer_module.qpc_session.run(inputs)
                 end_transformer_step_time = time.perf_counter()
                 transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
-                noise_pred = pipeline._reshape_noise_prediction(
+                noise_pred_step = pipeline._reshape_noise_prediction(
                     outputs,
                     batch_size,
                     post_patch_num_frames,
@@ -324,22 +333,19 @@ def run_wan_non_unified_first_block_cache_denoise(
                     p_w,
                 )
 
+                if magcache_runtime is not None:
+                    residual = noise_pred_step - latents.to(noise_pred_step.dtype)
+                    magcache_runtime.complete_call(stream_name, residual)
+                    if magcache_runtime.verbose:
+                        logger.info(f"MagCache run: step={i}, stream={stream_name}, t={float(t):.2f}")
+                return noise_pred_step
+
+            with current_model.cache_context("cond"):
+                noise_pred = _run_first_block_cache_step("cond", inputs_aic)
+
             if pipeline.do_classifier_free_guidance:
                 with current_model.cache_context("uncond"):
-                    start_transformer_step_time = time.perf_counter()
-                    outputs = current_transformer_module.qpc_session.run(inputs_aic2)
-                    end_transformer_step_time = time.perf_counter()
-                    transformer_perf.append(end_transformer_step_time - start_transformer_step_time)
-                    noise_uncond = pipeline._reshape_noise_prediction(
-                        outputs,
-                        batch_size,
-                        post_patch_num_frames,
-                        post_patch_height,
-                        post_patch_width,
-                        p_t,
-                        p_h,
-                        p_w,
-                    )
+                    noise_uncond = _run_first_block_cache_step("uncond", inputs_aic2)
                     noise_pred = noise_uncond + current_guidance_scale * (noise_pred - noise_uncond)
 
             latents = pipeline.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
