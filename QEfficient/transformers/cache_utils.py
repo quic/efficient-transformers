@@ -300,7 +300,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
 
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
-        
+
         if batch_index is not None:
             k_out = CtxGatherFuncBlockedKVBatchCB.apply(k_out, batch_index, ctx_indices)
         else:
@@ -491,7 +491,7 @@ class QEffDynamicLayer(CacheLayerMixin):
             self._mark_initialized(self.keys)
         else:
             BH = key_states.shape[0] * key_states.shape[1]
-            QL = key_states.shape[2]
+            # QL = key_states.shape[2]
             D = key_states.shape[3]
             if self.keys.shape[0] != 1:
                 self.keys = self.keys.reshape(1, BH, self.keys.shape[2], D)
