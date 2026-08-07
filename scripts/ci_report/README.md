@@ -5,18 +5,23 @@ self-contained `ci_report.html` — a top summary for reviewers/maintainers plus
 per-test drill-down for the PR owner. It is **pure Python standard library** (no pip installs),
 so it runs in the CI container venv as-is.
 
-Layout: KPI strip → **Scenario coverage matrix** (model × per-PR end-to-end scenario grid) →
-**Feature coverage matrix** (model × feature grid, causal-LM only) → Stage summary →
-By model / config → Failures → per-stage detail → Slowest. The matrices sit directly under
-the KPIs so reviewers can see which per-PR scenarios and capabilities passed on which models
-without scrolling; scenarios come first because one cell answers the whole
-dtype+subfunction+CB+feature question, and the feature grid then breaks the same run down
-into atomic capabilities.
+Layout: KPI strip → **Failures & Errors** → **Coverage by category** (per-model-category
+tiles: Causal LM · Vision-Language · Embedding · Audio · Sequence/Reranker · Diffusion,
+split Dense vs Mixture-of-Experts where that axis is real) → **Feature coverage matrix**
+(model × feature grid, causal-LM only) → Stage summary → By model / config →
+per-stage detail → Slowest. The Failures section sits directly under the KPIs so a
+reviewer sees the actual defect first; the Coverage-by-category section then answers
+"is all intended functionality covered?" — every category in the roster shows up even
+when it produced zero rows (rendered as **Not Run** rather than silently omitted), and
+compile-only cells (dashed purple) mark tests that verified build success only, with no
+on-device parity check.
 
 ## Generate the bundled sample
 
 The `sample/` directory holds synthetic per-stage XML fixtures (not from a real run) that
-exercise passes, failures with tracebacks, an error, an xfail, skips, and "Not Run" stages.
+exercise passes, failures with tracebacks, an error, an xfail, skips, Dense + MoE causal
+models, a MoE VLM card, a diffusion pipeline row, and a Dynamo stage — enough to exercise
+every category tile plus the compile-only badge.
 
 ```bash
 python3 scripts/ci_report/generate_ci_report.py \
@@ -27,7 +32,9 @@ python3 scripts/ci_report/generate_ci_report.py \
     --build-url https://jenkins.example/job/qeff/42/
 ```
 
-Open `scripts/ci_report/sample/ci_report.html` in a browser.
+Open `scripts/ci_report/sample/ci_report.html` in a browser. The same fixtures back the
+generator's focused test (`scripts/ci_report/test_generate_ci_report.py`, run with
+`pytest scripts/ci_report/test_generate_ci_report.py`).
 
 ## Generate from a real run
 

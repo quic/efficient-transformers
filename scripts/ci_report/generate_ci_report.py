@@ -39,6 +39,7 @@ import html
 import os
 import re
 import sys
+import traceback
 import xml.etree.ElementTree as ET
 from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
@@ -83,7 +84,7 @@ class StageSpec:
     order: int
 
 
-# Full 9-stage roster in pipeline order, keyed by the per-stage JUnit XML basename.
+# Full 10-stage roster in pipeline order, keyed by the per-stage JUnit XML basename.
 # This is the source of truth for the stage list, so absent files render as "Not Run".
 STAGE_MAP = OrderedDict(
     [
@@ -112,7 +113,11 @@ STAGE_MAP = OrderedDict(
         ),
         ("tests_log_diffusion.xml", StageSpec("QAIC Diffusion", "diffusion_models", "RUN_QAIC_DIFFUSION", 7)),
         ("tests_log3.xml", StageSpec("CLI", "(cli and not qnn) and (not finetune)", "RUN_CLI", 8)),
-        ("tests_log_finetune.xml", StageSpec("Finetune", "(finetune)", "RUN_FINETUNE", 9)),
+        (
+            "tests_log_dynamo_qaic.xml",
+            StageSpec("QAIC Dynamo", "(dynamo) and (on_qaic) and <PROFILE>", "RUN_DYNAMO_QAIC", 9),
+        ),
+        ("tests_log_finetune.xml", StageSpec("Finetune", "(finetune)", "RUN_FINETUNE", 10)),
     ]
 )
 
@@ -369,6 +374,11 @@ def normalize_model(param_id):
     segments = param_id.split("-")
     while segments and _is_non_model_token(segments[0]):
         segments = segments[1:]
+    # Trailing bool/flag suffixes (``…-True``/``…-False``) leak in the same way for
+    # HF-card param ids (``llava-hf/llava-1.5-7b-hf-True``); strip them too so the
+    # by-model rollup, Dense/MoE oracle, and coverage tiles see one row per card.
+    while len(segments) > 1 and _is_non_model_token(segments[-1]):
+        segments = segments[:-1]
     trimmed = "-".join(segments)
 
     if "/" in trimmed:
@@ -380,6 +390,66 @@ def normalize_model(param_id):
         if not _is_non_model_token(token):
             return token
     return _NO_MODEL
+
+
+# ── Model categories ─────────────────────────────────────────────────────────
+
+# Fixed roster of the model categories a per-PR run exercises, in display order.
+# Each entry is (path_substring, label). A testcase is assigned to the FIRST entry
+# whose substring appears in its module_path, so this is the source of truth for
+# the category list: a category with zero tests in a run still renders (as "Not
+# Run" / "0 tests"), exactly like STAGE_MAP does for stages, so a silent coverage
+# gap can never masquerade as a pass.
+#
+# module_path is the reliable key (it survives the XML, merged-XML and console-log
+# load paths); marker/stage are NOT — reranker carries the ``multimodal`` marker
+# yet runs as its own stage, and sequence-classification carries ``llm_model`` and
+# runs in the QAIC-LLM stage, so grouping on either would misfile both. Order
+# matters only where one path is a substring of another; the current set is
+# disjoint. Anything unmatched (CLI, finetune, unit/infra tests) falls to OTHER.
+CATEGORY_OTHER = "Other"
+# Category labels as named constants so the per-category Dense/MoE oracle and the
+# renderers reference them by name rather than by repeated string literals.
+CAT_CAUSAL = "Causal LM"
+CAT_VLM = "Vision-Language (VLM)"
+CAT_EMBEDDING = "Embedding"
+CAT_AUDIO = "Audio"
+CAT_SEQ_RERANKER = "Sequence / Reranker"
+CAT_DIFFUSION = "Diffusion"
+
+CATEGORY_ROSTER = [
+    ("models/causal_lm_models/", CAT_CAUSAL),
+    ("models/image_text_to_text/", CAT_VLM),
+    ("models/embedding_models/", CAT_EMBEDDING),
+    ("models/audio_models/", CAT_AUDIO),
+    ("models/sequence_models/", CAT_SEQ_RERANKER),
+    ("models/reranker/", CAT_SEQ_RERANKER),
+    ("/diffusers/", CAT_DIFFUSION),
+]
+
+# Display order for categories, de-duplicated from the roster (Sequence / Reranker
+# maps two paths to one label). OTHER is appended last and rendered only when it
+# actually holds rows: it is the reconciling bucket for tests that belong to no
+# model category (CLI, finetune, unit/infra, Dynamo) so the per-tile totals in the
+# Coverage section always sum to the KPI Total. Without it a reviewer reading the
+# tiles would conclude those tests never ran.
+CATEGORY_ORDER = list(OrderedDict((label, None) for _sub, label in CATEGORY_ROSTER))
+COVERAGE_CATEGORY_ORDER = CATEGORY_ORDER + [CATEGORY_OTHER]
+
+
+def category_of(module_path):
+    """Return the model-category label for a test's ``module_path``.
+
+    Matches the first :data:`CATEGORY_ROSTER` entry whose path substring occurs in
+    ``module_path``; returns :data:`CATEGORY_OTHER` for anything unmatched (CLI,
+    finetune, unit/infra tests) or an empty path (console rows collapsed to
+    module-level). Never raises — an unknown path is a bucket, not an error.
+    """
+    path = module_path or ""
+    for substring, label in CATEGORY_ROSTER:
+        if substring in path:
+            return label
+    return CATEGORY_OTHER
 
 
 # ── Feature coverage ───────────────────────────────────────────────────────────
@@ -456,6 +526,54 @@ SCENARIO_COLUMNS = [
     ("test_per_pr_causal_moe_disagg_fp16_subfunction_cb_ccl", "MoE disagg · CCL"),
     ("test_per_pr_causal_speculative_tlm_fp16_subfunction_cb", "+ Speculation (TLM)"),
 ]
+
+# VLM per-PR scenario columns. VLM test functions are split across three per-PR profile
+# variants (``test_full_*``, ``test_few_*``, ``test_dummy_*``) that pin the same scenario
+# to different layer-count profiles. The report should show one column per scenario
+# regardless of which profile the run picked, so cells key on the *profile-stripped*
+# test_fn (see :func:`_vlm_scenario_key`). Columns cover baseline parity + continuous
+# batching + prefix caching + CCL / blocking dual-QPC + bf16 / MoE-MDP compile-only.
+VLM_SCENARIO_COLUMNS = [
+    ("image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100", "Baseline"),
+    ("image_text_to_text_pytorch_vs_ai100_continuous_batching", "+ CB"),
+    ("image_text_to_text_prefix_caching_cb", "+ Prefix cache CB"),
+    ("image_text_to_text_ccl_dual_qpc", "+ CCL dual-QPC"),
+    ("image_text_to_text_blocking_dual_qpc", "+ Blocking dual-QPC"),
+    ("image_text_to_text_bf16_compile_only", "BF16 · compile-only"),
+    ("image_text_to_text_onnx_mdp_compile_only", "MoE MDP · compile-only"),
+]
+
+# Per-PR profile prefixes stripped from a VLM test-fn to derive its scenario key.
+# ``test_full_image_text_to_text_ccl_dual_qpc`` and ``test_dummy_image_text_to_text_ccl_dual_qpc``
+# both collapse to ``image_text_to_text_ccl_dual_qpc`` so they share one column.
+_VLM_TESTFN_PROFILE_PREFIXES = ("test_full_", "test_few_", "test_dummy_")
+
+
+def _vlm_scenario_key(test_fn):
+    """Strip the per-PR profile prefix from a VLM test-fn to get its scenario key.
+
+    Returns the empty string when ``test_fn`` doesn't carry one of the known VLM
+    profile prefixes (so unrelated VLM tests — reference/qnn/custom — don't collide
+    with a curated scenario column).
+    """
+    for prefix in _VLM_TESTFN_PROFILE_PREFIXES:
+        if test_fn.startswith(prefix):
+            return test_fn[len(prefix) :]
+    return ""
+
+
+# Scenario-column keys where a pass means "compiled" (no on-device output verification):
+# BF16/FP32 export lanes, ONNX-MDP compile-only, etc. Rendered with a distinct
+# ``compile-only`` badge so a green cell here is not mistaken for parity confirmation.
+# Keys are the SCENARIO / VLM_SCENARIO column keys (test-fn or profile-stripped test-fn).
+_COMPILE_ONLY_SCENARIOS = frozenset(
+    {
+        "test_per_pr_causal_bf16_subfunction_cb_ccl_compile_only",
+        "test_per_pr_causal_fp32_export_fp16_compile_subfunction_cb_ccl",
+        "image_text_to_text_bf16_compile_only",
+        "image_text_to_text_onnx_mdp_compile_only",
+    }
+)
 
 # Severity order for reducing many test outcomes in one (model, feature) cell to a single
 # status: a red cell always wins over a green one for the same capability.
@@ -925,6 +1043,18 @@ CSS = """
   tr.group-row td{background:#eef1f5;border-bottom:1px solid #d1d5da;padding:6px 10px;font-size:.7em;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#3a4149}
   tr.group-row .group-count{color:#8b949e;font-weight:600}
   tr.group-row:hover td{background:#eef1f5}
+  th.compile-only,td.compile-only{background:#f6f0ff}
+  th.compile-only::after{content:' *';color:#8256d0}
+  .badge.b-compile{color:#4c1d95;background:#ede4ff;border:1px dashed #b39ddb}
+  details.cat{border:1px solid #e1e4e8;border-radius:8px;margin:10px 0;overflow:hidden}
+  details.cat>summary{cursor:pointer;padding:10px 14px;font-weight:600;background:#f6f8fa;list-style:none;display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+  details.cat>summary::-webkit-details-marker{display:none}
+  details.cat>summary::before{content:'\\25B8';color:#57606a}
+  details.cat[open]>summary::before{content:'\\25BE'}
+  details.cat>summary .cat-label{font-size:1em;color:#1a1a2e}
+  details.cat>summary .cat-tally{color:#57606a;font-size:.82em;font-weight:500;font-variant-numeric:tabular-nums}
+  details.cat>summary .cat-splits{color:#57606a;font-size:.78em;font-weight:500}
+  details.cat>.cat-body{padding:12px 14px}
   details.stage{border:1px solid #e1e4e8;border-radius:8px;margin:10px 0;overflow:hidden}
   details.stage>summary{cursor:pointer;padding:10px 14px;font-weight:600;background:#f6f8fa;list-style:none}
   details.stage>summary::-webkit-details-marker{display:none}
@@ -1141,6 +1271,8 @@ def render_coverage_matrix(report):
     for tc in report.all_cases:
         if tc.seeded:
             continue
+        if category_of(tc.module_path) != CAT_CAUSAL:
+            continue
         model = normalize_model(tc.param_id)
         if model == _NO_MODEL:
             continue
@@ -1188,45 +1320,74 @@ def render_coverage_matrix(report):
 # normalized slug does not literally contain "moe" (Mixtral and GPT-OSS are always MoE).
 _MOE_FAMILY_TOKENS = ("mixtral", "gpt_oss", "gpt-oss")
 
+# Known Mixture-of-Experts VLM cards. Causal per-PR ids embed "moe" in the slug so a
+# substring test suffices there, but VLM parametrize ids are raw HF cards
+# (``Qwen/Qwen3-VL-30B-A3B-Instruct``) with no "moe" token, so the slug rule would
+# wrongly file them as Dense. This set is the report-side mirror of the test's own
+# selection (``[m for m in image_text_models if "moe" in m["model_type"]]`` in
+# tests/configs/image_text_model_configs.json); a new MoE VLM needs one line here.
+_MOE_VLM_CARDS = frozenset(
+    {
+        "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        "Qwen/Qwen3.5-35B-A3B",
+    }
+)
 
-def _scenario_group(model):
-    """Bucket a scenario-matrix model into ``"MoE"`` or ``"Dense"``.
+# Categories whose models split meaningfully on Dense vs Mixture-of-Experts — the
+# axis that drives QEff export/compile behaviour. Categories NOT listed here have
+# no MoE variants (embedding / audio / sequence / diffusion), so they render as a
+# single flat group with no empty "MoE (0)" bucket.
+_MOE_SPLIT_CATEGORIES = frozenset({CAT_CAUSAL, CAT_VLM})
 
-    The per-PR causal models split cleanly on Mixture-of-Experts vs dense — the axis
-    that actually drives QEff export/compile behaviour. Detection is purely on the
-    normalized model slug (e.g. ``gpt_oss_moe_text``, ``mixtral_moe_text``): a literal
-    ``moe`` substring covers the common case, and a small known-family set catches the
-    MoE architectures whose slug omits ``moe``.
-    """
+
+def _is_moe_slug(model):
+    """True when a normalized model slug denotes MoE via a literal token or known family."""
     slug = model.lower()
-    if "moe" in slug or any(tok in slug for tok in _MOE_FAMILY_TOKENS):
-        return "MoE"
-    return "Dense"
+    return "moe" in slug or any(tok in slug for tok in _MOE_FAMILY_TOKENS)
 
 
-def render_scenario_matrix(report):
-    """Render a model × per-PR-scenario grid, one aggregated status glyph per cell.
+def moe_group_for(category, model):
+    """Return ``"MoE"``/``"Dense"`` for a model in ``category``, or ``None`` to not group.
 
-    Columns are the named per-PR end-to-end scenarios (SCENARIO_COLUMNS) — each a single
-    ``test_per_pr_causal_*`` function that pins a whole dtype+subfunction+CB+feature combo —
-    so one cell answers "did this scenario run+verify pass on this model?" without the reader
-    reassembling atomic feature columns. Cells key on ``tc.test_fn`` (exact match), aggregating
-    across that scenario's parametrizations for the model. Same exclusions and cell/row rules as
-    the Feature coverage matrix: seeded placeholders and ``(no model param)`` are dropped, cells
-    reduce to the most-severe outcome, failing/most-covered rows float to the top.
+    The MoE oracle is per-category because the signal that survives into the report
+    differs by category (see :data:`_MOE_VLM_CARDS`): causal slugs carry "moe", VLM
+    cards don't. Categories with no MoE variants return ``None`` so the renderer skips
+    grouping entirely rather than drawing an empty MoE group.
     """
-    # cells[model][test_fn] -> Counter of outcomes; models with no scenario hits never appear.
-    scenario_fns = {fn for fn, _display in SCENARIO_COLUMNS}
+    if category not in _MOE_SPLIT_CATEGORIES:
+        return None
+    if category == CAT_VLM:
+        return "MoE" if model in _MOE_VLM_CARDS else "Dense"
+    return "MoE" if _is_moe_slug(model) else "Dense"
+
+
+def _render_scenario_matrix_body(cases, category, columns, empty_msg=""):
+    """Render a model × scenario matrix for one category, or ``""`` when empty.
+
+    Shared code path for both the causal Scenario matrix and the per-category
+    matrices in the new Coverage-by-category section. Cells aggregate outcomes
+    per (model, column-key); compile-only columns are visually distinguished
+    via :data:`_COMPILE_ONLY_SCENARIOS`; rows are grouped Dense/MoE per
+    :func:`moe_group_for` when the category has a real MoE axis, otherwise a
+    flat list. Fail-first row / group ordering, ``seeded`` + ``_NO_MODEL``
+    exclusions, and fixed-width ``.scol`` headers are enforced here.
+
+    ``cases`` — pre-filtered iterable of ``TestCase`` (already scoped to this
+    category by the caller). ``columns`` is the ``[(key, display)]`` list; for
+    causal, ``key`` is ``tc.test_fn``. For VLM, callers pass a wrapper that
+    translates ``tc.test_fn`` into the profile-stripped key before lookup.
+    """
+    col_keys = {key for key, _display in columns}
     cells = OrderedDict()
-    for tc in report.all_cases:
-        if tc.seeded or tc.test_fn not in scenario_fns:
+    for tc, matrix_key in cases:
+        if tc.seeded or matrix_key not in col_keys:
             continue
         model = normalize_model(tc.param_id)
         if model == _NO_MODEL:
             continue
-        cells.setdefault(model, {}).setdefault(tc.test_fn, Counter())[tc.outcome] += 1
+        cells.setdefault(model, {}).setdefault(matrix_key, Counter())[tc.outcome] += 1
     if not cells:
-        return ""
+        return empty_msg
 
     def _lit_columns(model_cells):
         return sum(1 for c in model_cells.values() if c)
@@ -1234,57 +1395,422 @@ def render_scenario_matrix(report):
     def _fail_count(model_cells):
         return sum(c[Outcome.FAILED] + c[Outcome.ERROR] for c in model_cells.values())
 
-    # Failing models first (fastest reviewer signal); then most-covered models; alphabetical last.
     ordered = sorted(cells.items(), key=lambda item: (-_fail_count(item[1]), -_lit_columns(item[1]), item[0]))
 
-    # Bucket rows into Dense / MoE groups (the axis that drives QEff export/compile) while
-    # keeping the fail-first ordering within each group. Group order also floats the bucket
-    # with failures to the top, then falls back to a fixed Dense-before-MoE order.
     grouped = OrderedDict()
-    for model, by_fn in ordered:
-        grouped.setdefault(_scenario_group(model), []).append((model, by_fn))
-    group_fail = {g: sum(_fail_count(by_fn) for _m, by_fn in members) for g, members in grouped.items()}
-    _GROUP_RANK = {"Dense": 0, "MoE": 1}
-    group_order = sorted(grouped, key=lambda g: (-group_fail[g], _GROUP_RANK.get(g, 99), g))
+    any_grouped = False
+    for model, by_key in ordered:
+        group = moe_group_for(category, model)
+        if group is None:
+            grouped.setdefault("_flat", []).append((model, by_key))
+        else:
+            any_grouped = True
+            grouped.setdefault(group, []).append((model, by_key))
+    group_fail = {g: sum(_fail_count(by_k) for _m, by_k in members) for g, members in grouped.items()}
+    _GROUP_RANK = {"Dense": 0, "MoE": 1, "_flat": 99}
+    group_order = sorted(grouped, key=lambda g: (-group_fail[g], _GROUP_RANK.get(g, 50), g))
 
-    # Headers carry only each scenario's short delta label; the shared base lives in the
-    # caption and the exact test-function name rides in the tooltip. The fixed-width .scol
-    # keeps the row compact instead of forcing horizontal scroll.
     header_cells = "".join(
-        f"<th class='num scol' title='{esc(fn)}'>{esc(display)}</th>" for fn, display in SCENARIO_COLUMNS
+        f"<th class='num scol{' compile-only' if key in _COMPILE_ONLY_SCENARIOS else ''}' title='{esc(key)}'>"
+        f"{esc(display)}</th>"
+        for key, display in columns
     )
-    rows = [
-        "    <h2>Scenario coverage matrix</h2>",
-        '    <div class="note" style="background:#f6f8fa;border-color:#e1e4e8;color:#57606a">'
-        "Per-PR end-to-end run + output-verification scenarios (causal-LM only), grouped by "
-        "<strong>Dense</strong> vs <strong>Mixture-of-Experts</strong> architecture. Every scenario shares the "
-        "base <code>causal &middot; subfunction &middot; CB &middot; FP16 export</code>; each column shows only "
-        "its delta &mdash; a leading <code>+</code> adds that feature to the base, while a label without "
-        "<code>+</code> pins a different dtype/mode. A model appears when at least one scenario ran against it. "
-        "Cells reduce to the most-severe outcome across that scenario's parametrizations; hover a cell for the "
-        "raw counts, or a column header for the exact test function."
-        "</div>",
-        f"    <table><thead><tr><th>Model / Config</th>{header_cells}</tr></thead><tbody>",
-    ]
-    group_colspan = 1 + len(SCENARIO_COLUMNS)
+    rows = [f"    <table><thead><tr><th>Model / Config</th>{header_cells}</tr></thead><tbody>"]
+    group_colspan = 1 + len(columns)
     for group in group_order:
         members = grouped[group]
-        rows.append(
-            f'      <tr class="group-row"><td colspan="{group_colspan}">'
-            f'{esc(group)} <span class="group-count">({len(members)})</span></td></tr>'
-        )
-        for model, by_fn in members:
+        if any_grouped and group != "_flat":
+            rows.append(
+                f'      <tr class="group-row"><td colspan="{group_colspan}">'
+                f'{esc(group)} <span class="group-count">({len(members)})</span></td></tr>'
+            )
+        for model, by_key in members:
             tds = [f"      <tr><td><code>{esc(model)}</code></td>"]
-            for fn, _display in SCENARIO_COLUMNS:
-                tds.append(_coverage_cell(by_fn.get(fn)))
+            for key, _display in columns:
+                tds.append(_coverage_cell(by_key.get(key), compile_only=(key in _COMPILE_ONLY_SCENARIOS)))
             tds.append("</tr>")
             rows.append("".join(tds))
     rows.append("    </tbody></table>")
     return "\n".join(rows)
 
 
-def _coverage_cell(counter):
-    """Render one matrix cell: a status glyph reduced from all outcomes hitting the cell."""
+def _render_rollup_body(cases):
+    """Render a flat models × single-parity-column rollup for a category, or ``""``.
+
+    Used for Embedding / Audio / Sequence-Reranker where a scenario split would
+    fabricate columns. Each row is one model; the single cell reduces every
+    hit for that model to its worst outcome via :data:`_CELL_SEVERITY`. Seeded
+    rows and ``_NO_MODEL`` unit tests are excluded.
+    """
+    agg = OrderedDict()
+    for tc in cases:
+        if tc.seeded:
+            continue
+        model = normalize_model(tc.param_id)
+        if model == _NO_MODEL:
+            continue
+        agg.setdefault(model, Counter())[tc.outcome] += 1
+    if not agg:
+        return ""
+
+    def _fail_count(c):
+        return c[Outcome.FAILED] + c[Outcome.ERROR]
+
+    ordered = sorted(agg.items(), key=lambda item: (-_fail_count(item[1]), item[0]))
+    rows = [
+        "    <table><thead><tr><th>Model / Config</th>"
+        "<th class='num'>Pass</th><th class='num'>Fail</th><th class='num'>Skip</th>"
+        "<th class='num'>XFail</th><th>Parity</th></tr></thead><tbody>"
+    ]
+    for model, c in ordered:
+        failed = _fail_count(c) > 0
+        rows.append(
+            f"      <tr><td><code>{esc(model)}</code></td>"
+            f'<td class="num">{c[Outcome.PASSED]}</td>'
+            f'<td class="num">{c[Outcome.FAILED] + c[Outcome.ERROR]}</td>'
+            f'<td class="num">{c[Outcome.SKIPPED]}</td>'
+            f'<td class="num">{c[Outcome.XFAIL]}</td>'
+            f"<td>{status_pill(True, failed, False)}</td></tr>"
+        )
+    rows.append("    </tbody></table>")
+    return "\n".join(rows)
+
+
+def _render_pipeline_list_body(cases, header="Pipeline test", show_models=False):
+    """Render a flat test-fn list, or ``""`` when empty.
+
+    Used where a model × scenario matrix would always be empty:
+
+    * Diffusion tests are fixture-based (``test_wan_pipeline(wan_pipeline)``) with
+      no model param. xfail is surfaced honestly (``flux`` is xfail today for the
+      BF16 export gap) so it is not misread as parity confirmation.
+    * The ``Other`` reconciling bucket (CLI / finetune / unit / Dynamo) has no
+      model-category axis worth a grid.
+
+    Rows are keyed on ``module::test_fn`` rather than ``test_fn`` alone: the same
+    function name can legitimately appear in two modules (Dynamo and causal both
+    define export/compile tests), and collapsing them would merge unrelated
+    results into one row.
+
+    ``show_models=True`` adds a Models column listing each row's parametrized
+    models. Use it where the tile header advertises a model count (``Other``):
+    a count the reader cannot see in the body is unverifiable. Fixture-based
+    categories (diffusion) have no model param, so they leave it off.
+    """
+    per_fn = OrderedDict()
+    models_by_fn = OrderedDict()
+    for tc in cases:
+        if tc.seeded or not tc.test_fn:
+            continue
+        module = (tc.module_path or "").rsplit("/", 1)[-1]
+        key = f"{module}::{tc.test_fn}" if module else tc.test_fn
+        per_fn.setdefault(key, Counter())[tc.outcome] += 1
+        model = normalize_model(tc.param_id)
+        if model != _NO_MODEL:
+            models_by_fn.setdefault(key, []).append(model)
+    if not per_fn:
+        return ""
+
+    def _sort_key(item):
+        _fn, c = item
+        return (-(c[Outcome.FAILED] + c[Outcome.ERROR]), item[0])
+
+    model_th = "<th>Models</th>" if show_models else ""
+    rows = [
+        f"    <table><thead><tr><th>{esc(header)}</th>{model_th}"
+        "<th class='num'>Runs</th><th>Outcome</th></tr></thead><tbody>"
+    ]
+    for fn, c in sorted(per_fn.items(), key=_sort_key):
+        outcome = max(c, key=lambda o: (_CELL_SEVERITY[o], c[o]))
+        _label, cls = BADGE[outcome]
+        tip = ", ".join(f"{c[o]} {o.value}" for o in Outcome if c[o])
+        total = sum(c.values())
+        model_td = ""
+        if show_models:
+            seen = list(OrderedDict.fromkeys(models_by_fn.get(fn, [])))
+            cell = (
+                ", ".join(f"<code>{esc(m)}</code>" for m in seen)
+                if seen
+                else '<span style="color:#8b949e">&mdash;</span>'
+            )
+            model_td = f"<td>{cell}</td>"
+        rows.append(
+            f"      <tr><td><code>{esc(fn)}</code></td>{model_td}"
+            f'<td class="num">{total}</td>'
+            f'<td><span class="badge {cls}" title="{esc(tip)}">{esc(BADGE[outcome][0])}</span></td></tr>'
+        )
+    rows.append("    </tbody></table>")
+    return "\n".join(rows)
+
+
+# Presentation-mode dispatch for :func:`render_category_section`.
+# ``matrix`` renders a model × curated-scenario grid (causal, VLM);
+# ``rollup`` renders a flat models × single-parity column list (embedding, audio,
+# sequence-reranker) — a scenario split there would fabricate columns;
+# ``pipeline`` renders a fixture-based test-fn list (diffusion — no model param).
+_CATEGORY_MODE = {
+    CAT_CAUSAL: ("matrix", SCENARIO_COLUMNS),
+    CAT_VLM: ("matrix", VLM_SCENARIO_COLUMNS),
+    CAT_EMBEDDING: ("rollup", None),
+    CAT_AUDIO: ("rollup", None),
+    CAT_SEQ_RERANKER: ("rollup", None),
+    CAT_DIFFUSION: ("pipeline", None),
+    # Non-model tests (CLI / finetune / unit / Dynamo) have no model or scenario
+    # axis worth a grid; list them by test so the bucket is auditable, not opaque.
+    CATEGORY_OTHER: ("pipeline", None),
+}
+
+
+def _category_cases(report):
+    """Group non-seeded ``TestCase`` by category label, including :data:`CATEGORY_OTHER`.
+
+    Returned dict is keyed by category label and always contains every entry in
+    :data:`COVERAGE_CATEGORY_ORDER` (zero-row categories map to an empty list, so
+    the caller can render them as "Not Run / 0 tests" instead of silently omitting).
+    ``Other`` collects everything with no model category (CLI / finetune / unit /
+    Dynamo) so the per-tile totals reconcile against the KPI Total.
+    """
+    by_cat = OrderedDict((label, []) for label in COVERAGE_CATEGORY_ORDER)
+    for tc in report.all_cases:
+        if tc.seeded:
+            continue
+        label = category_of(tc.module_path)
+        if label in by_cat:
+            by_cat[label].append(tc)
+    return by_cat
+
+
+def _category_stage_notes(report):
+    """Collect distinct partial-attribution stage notes per category.
+
+    Propagates a stage's console-log ``note`` (e.g. "only slowest-N tests are
+    attributable") to every category it touched, so a "0 tests" category driven
+    by console-log attribution loss is not misread as a coverage hole.
+    """
+    notes = OrderedDict((label, []) for label in COVERAGE_CATEGORY_ORDER)
+    for st in report.ran_stages:
+        if not st.note:
+            continue
+        seen_here = set()
+        for tc in st.cases:
+            label = category_of(tc.module_path)
+            if label in notes and label not in seen_here:
+                seen_here.add(label)
+                if st.note not in notes[label]:
+                    notes[label].append(f"{st.spec.display}: {st.note}")
+    return notes
+
+
+# Which categories each stage feeds, keyed by the per-stage JUnit XML basename.
+# Needed only for stages that did NOT run: they have no cases, so the category
+# they would have fed cannot be inferred from the data. Without this a category
+# renders a confident PASS from its other stages while a whole feeding stage was
+# skipped — the tile would overstate coverage. Only stages with a real category
+# mapping are listed; CLI / Dynamo / Finetune feed the ``Other`` bucket.
+_STAGE_FEEDS_CATEGORIES = {
+    "tests_log1.xml": (CAT_CAUSAL,),
+    "tests_log2.xml": (CAT_CAUSAL, CAT_SEQ_RERANKER),
+    # (on_qaic) and (feature) — SPD/PLD, prefix-caching and sampler tests all run
+    # against causal models, so a skipped Feature stage is a causal coverage gap.
+    "tests_log2_feature.xml": (CAT_CAUSAL,),
+    "tests_log_embedding_audio.xml": (CAT_EMBEDDING, CAT_AUDIO),
+    "tests_log6.xml": (CAT_VLM,),
+    "tests_log_reranker.xml": (CAT_SEQ_RERANKER,),
+    "tests_log_diffusion.xml": (CAT_DIFFUSION,),
+}
+
+
+def _category_not_run_stages(report):
+    """Map category label → display names of stages that feed it but did not run.
+
+    Lets a tile say "PASS, but the Feature stage never ran" instead of implying
+    the category was fully exercised. Stage state is authoritative here: a stage
+    that produced no XML is a coverage gap, not a pass.
+    """
+    gaps = OrderedDict((label, []) for label in COVERAGE_CATEGORY_ORDER)
+    for basename, spec in STAGE_MAP.items():
+        categories = _STAGE_FEEDS_CATEGORIES.get(basename)
+        if not categories:
+            continue
+        stage = next((st for st in report.stages if st.spec.display == spec.display), None)
+        if stage is not None and stage.ran:
+            continue
+        for label in categories:
+            if label in gaps:
+                gaps[label].append(spec.display)
+    return gaps
+
+
+def _category_dense_moe_split(category, cases):
+    """Return ``(dense_models, moe_models)`` counts for a category, or ``None``.
+
+    ``None`` means the category has no MoE axis (embedding/audio/etc.) and the
+    Dense/MoE presence indicator should be suppressed in the header entirely.
+    """
+    if category not in _MOE_SPLIT_CATEGORIES:
+        return None
+    dense, moe = set(), set()
+    for tc in cases:
+        model = normalize_model(tc.param_id)
+        if model == _NO_MODEL:
+            continue
+        group = moe_group_for(category, model)
+        if group == "MoE":
+            moe.add(model)
+        elif group == "Dense":
+            dense.add(model)
+    return len(dense), len(moe)
+
+
+def render_category_section(report):
+    """Render the top-level **Coverage by category** section.
+
+    Iterates :data:`CATEGORY_ORDER` in fixed order (roster discipline). Each
+    category renders as one ``<details class="cat">``; the summary line always
+    shows run-state / total / pass / fail / skip / xfail / model count and
+    Dense+MoE presence where applicable, so a reviewer can spot a coverage
+    gap without expanding. Auto-opens iff the category has a failure or is
+    Not Run. Empty categories still appear (never silently omitted).
+    """
+    by_cat = _category_cases(report)
+    notes_by_cat = _category_stage_notes(report)
+    gaps_by_cat = _category_not_run_stages(report)
+
+    # A category "did not run" when none of the stages likely to feed it produced
+    # any parseable rows. Rather than probe stage→category mapping (fragile), we
+    # infer "not run" from "no test cases arrived for this category AND at least
+    # one relevant stage failed to produce parseable results OR the whole run is
+    # missing that stage". Simpler and safer: if the total-cases count for a
+    # category is zero we still show it as "Not Run" — the reader gets the gap
+    # signal either way.
+    rows = ["    <h2>Coverage by category</h2>"]
+    rows.append(
+        '    <div class="note" style="background:#f6f8fa;border-color:#e1e4e8;color:#57606a">'
+        "One row per model category running in QEfficient, split <strong>Dense</strong> vs "
+        "<strong>Mixture-of-Experts</strong> where that axis is real. Compile-only cells (dashed "
+        "purple) verify build success only &mdash; no on-device parity check. A category with "
+        "zero rows still appears as <em>Not Run</em>. Tests belonging to no model category "
+        "(CLI / finetune / unit / Dynamo) are collected under <em>Other</em>, so these tallies "
+        "sum to the KPI <strong>Total</strong> above."
+        "</div>"
+    )
+
+    for category in COVERAGE_CATEGORY_ORDER:
+        cases = by_cat.get(category, [])
+        counts = Counter(tc.outcome for tc in cases)
+        total = sum(counts.values())
+        # ``Other`` is a reconciling bucket, not part of the fixed roster: it appears
+        # only when it holds rows. Every real category renders even at zero rows.
+        if category == CATEGORY_OTHER and total == 0:
+            continue
+        failed = counts[Outcome.FAILED] + counts[Outcome.ERROR] > 0
+        has_run = total > 0
+        pill = status_pill(has_run, failed, empty=(has_run is False and total == 0))
+        # Model tally (excludes _NO_MODEL and seeded, matching the matrix/rollup filters).
+        models = {
+            normalize_model(tc.param_id) for tc in cases if not tc.seeded and normalize_model(tc.param_id) != _NO_MODEL
+        }
+        split = _category_dense_moe_split(category, cases)
+        tally_bits = []
+        if total:
+            tally_bits.append(f"{total} tests" if total != 1 else "1 test")
+            for o in (Outcome.PASSED, Outcome.FAILED, Outcome.ERROR, Outcome.SKIPPED, Outcome.XFAIL):
+                if counts[o]:
+                    tally_bits.append(f"{counts[o]} {o.value}")
+            # Fixture-driven categories (diffusion) parametrize no model, so a model
+            # count of zero is a property of the test style, not a coverage hole —
+            # omit it rather than printing a misleading "0 models".
+            if models:
+                tally_bits.append(f"{len(models)} models" if len(models) != 1 else "1 model")
+        else:
+            tally_bits.append("0 tests")
+        tally_str = " &middot; ".join(esc(b) for b in tally_bits)
+        splits_str = ""
+        if split is not None:
+            dense_n, moe_n = split
+            splits_str = f'<span class="cat-splits">Dense {dense_n} &middot; MoE {moe_n}</span>'
+
+        open_attr = " open" if failed or not has_run else ""
+        rows.append(f'    <details class="cat"{open_attr}>')
+        rows.append(
+            f'      <summary>{pill}<span class="cat-label">{esc(category)}</span>'
+            f'<span class="cat-tally">{tally_str}</span>{splits_str}</summary>'
+        )
+        rows.append('      <div class="cat-body">')
+
+        for note in notes_by_cat.get(category, []):
+            rows.append(f'        <div class="note">&#9432; {esc(note)}</div>')
+
+        # A stage that feeds this category but produced no XML is a coverage gap the
+        # tile's own pass/fail tally cannot express — surface it as a warning so a
+        # green tile is never read as "fully exercised".
+        gap_stages = gaps_by_cat.get(category, [])
+        if gap_stages and has_run:
+            listed = ", ".join(esc(name) for name in gap_stages)
+            rows.append(
+                f'        <div class="note">&#9888; Partial coverage &mdash; {listed} '
+                f"did not run, so tests it would have contributed to this category are missing. "
+                f"The status above reflects only the stages that ran.</div>"
+            )
+
+        if category == CATEGORY_OTHER:
+            rows.append(
+                '        <div class="note" style="background:#f6f8fa;border-color:#e1e4e8;color:#57606a">'
+                "Not a model category &mdash; these are the CLI, finetune, unit/infra and Dynamo tests "
+                "that carry no model-category path. Listed so the per-category totals above reconcile "
+                "against the KPI <strong>Total</strong>; see the stage detail for the full breakdown."
+                "</div>"
+            )
+
+        if not has_run:
+            rows.append(
+                '        <div class="note" style="background:#f6f8fa;border-color:#e1e4e8;color:#57606a">'
+                "No test rows arrived for this category in the current run. "
+                "The category is part of the fixed coverage roster, so it is surfaced here "
+                "rather than silently omitted &mdash; check the stage summary for the owning stage's status."
+                "</div>"
+            )
+            rows.append("      </div>")
+            rows.append("    </details>")
+            continue
+
+        mode, columns = _CATEGORY_MODE.get(category, ("rollup", None))
+        body = ""
+        if mode == "matrix":
+            if category == CAT_VLM:
+                keyed = [(tc, _vlm_scenario_key(tc.test_fn)) for tc in cases]
+            else:
+                keyed = [(tc, tc.test_fn) for tc in cases]
+            body = _render_scenario_matrix_body(keyed, category, columns)
+            if not body:
+                body = (
+                    '        <div class="note" style="background:#f6f8fa;border-color:#e1e4e8;color:#57606a">'
+                    f"{total} tests ran in this category, but none matched the curated per-PR scenario columns. "
+                    "See the by-model rollup or the stage detail for the full run."
+                    "</div>"
+                )
+        elif mode == "rollup":
+            body = _render_rollup_body(cases)
+        elif mode == "pipeline":
+            is_other = category == CATEGORY_OTHER
+            header = "Test" if is_other else "Pipeline test"
+            body = _render_pipeline_list_body(cases, header=header, show_models=is_other)
+
+        if body:
+            rows.append(body)
+        rows.append("      </div>")
+        rows.append("    </details>")
+
+    return "\n".join(rows)
+
+
+def _coverage_cell(counter, compile_only=False):
+    """Render one matrix cell: a status glyph reduced from all outcomes hitting the cell.
+
+    ``compile_only=True`` marks the cell as verifying compile success only (no
+    on-device output check). The pass badge switches to a distinct dashed style
+    (``b-compile``) so a green cell here is visibly not parity-confirmed.
+    """
     if not counter:
         return '<td class="num" style="color:#8b949e">&mdash;</td>'
     outcome = max(counter, key=lambda o: (_CELL_SEVERITY[o], counter[o]))
@@ -1296,8 +1822,16 @@ def _coverage_cell(counter):
         Outcome.XFAIL: "xfail",
         Outcome.SKIPPED: "skip",
     }[outcome]
+    if compile_only and outcome == Outcome.PASSED:
+        cls = "b-compile"
+        glyph = "compiled"
     tip = ", ".join(f"{counter[o]} {o.value}" for o in Outcome if counter[o])
-    return f'<td class="num"><span class="badge {cls}" title="{esc(tip)}">{glyph}</span></td>'
+    if compile_only:
+        tip = (
+            ("compile-only (no on-device parity check); " + tip) if tip else "compile-only (no on-device parity check)"
+        )
+    td_cls = "num compile-only" if compile_only else "num"
+    return f'<td class="{td_cls}"><span class="badge {cls}" title="{esc(tip)}">{glyph}</span></td>'
 
 
 def render_failures(report):
@@ -1397,19 +1931,27 @@ def render_footer(report):
 
 
 def build_document(report):
-    """Assemble the full standalone HTML document string."""
-    # Order matters: reviewers want the per-PR end-to-end verdict as fast as possible, so the
-    # Scenario coverage matrix (whole dtype+feature combinations, one cell per scenario) sits
-    # directly under the KPI strip, followed by the Feature coverage matrix that breaks the same
-    # run down into atomic capabilities, then the Stage summary. By-model / Failures /
-    # Stage detail / Slowest follow for the PR owner's drill-down.
+    """Assemble the full standalone HTML document string.
+
+    Section order follows the consumer's strict priority (see the redesign plan):
+    ``Verdict + KPI strip`` answers "did anything fail?" in one glance; the
+    ``Failures & Errors`` section comes next so a failing run surfaces the
+    actual defect immediately. The new ``Coverage by category`` section then
+    answers "is all intended functionality covered?" across every model
+    category (Causal / VLM / Embedding / Audio / Sequence-Reranker / Diffusion),
+    Dense/MoE split where the axis is real. The ``Feature coverage matrix`` and
+    ``By model / config`` tables provide the atomic drill-down; stage detail
+    and slowest are the tail. The causal Scenario matrix is no longer rendered
+    standalone — it lives inside ``Coverage by category`` under the ``Causal LM``
+    tile so the two views cannot diverge.
+    """
     sections = [
         render_kpis(report),
-        render_scenario_matrix(report),
+        render_failures(report),
+        render_category_section(report),
         render_coverage_matrix(report),
         render_stage_summary(report),
         render_by_model(report),
-        render_failures(report),
         render_stage_detail(report),
         render_slowest(report),
         render_footer(report),
@@ -1471,33 +2013,44 @@ def parse_args(argv=None):
 
 
 def main(argv=None):
-    args = parse_args(argv)
-    meta = {
-        "title": args.title,
-        "pr": args.pr,
-        "commit": args.commit,
-        "branch": args.branch,
-        "profile": args.profile,
-        "repo_url": args.repo_url.rstrip("/"),
-        "build_url": args.build_url,
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-    }
-    report = (
-        load_report_from_console(args.console_log, meta)
-        if args.console_log
-        else load_report(args.xml_dir, args.pattern, meta)
-    )
-    output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(build_document(report), encoding="utf-8")
+    try:
+        args = parse_args(argv)
+        meta = {
+            "title": args.title,
+            "pr": args.pr,
+            "commit": args.commit,
+            "branch": args.branch,
+            "profile": args.profile,
+            "repo_url": args.repo_url.rstrip("/"),
+            "build_url": args.build_url,
+            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        }
+        report = (
+            load_report_from_console(args.console_log, meta)
+            if args.console_log
+            else load_report(args.xml_dir, args.pattern, meta)
+        )
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(build_document(report), encoding="utf-8")
 
-    t = report.totals
-    print(
-        f"Wrote {output} — verdict={report.verdict} "
-        f"(passed={t[Outcome.PASSED]}, failed={t[Outcome.FAILED]}, error={t[Outcome.ERROR]}, "
-        f"skipped={t[Outcome.SKIPPED]}, xfail={t[Outcome.XFAIL]}) "
-        f"across {len(report.ran_stages)}/{len(report.stages)} stages."
-    )
+        t = report.totals
+        print(
+            f"Wrote {output} — verdict={report.verdict} "
+            f"(passed={t[Outcome.PASSED]}, failed={t[Outcome.FAILED]}, error={t[Outcome.ERROR]}, "
+            f"skipped={t[Outcome.SKIPPED]}, xfail={t[Outcome.XFAIL]}) "
+            f"across {len(report.ran_stages)}/{len(report.stages)} stages."
+        )
+    except SystemExit as exc:
+        # argparse raises SystemExit on --help / bad flags; already printed usage to stderr.
+        # Jenkins post{always{}} needs a zero exit regardless.
+        if exc.code not in (0, None):
+            print(f"generate_ci_report: argument parsing failed (code={exc.code})", file=sys.stderr)
+    except BaseException as exc:
+        # Never let a report-generation failure break Jenkins post{always{}}.
+        # Print the traceback to stderr so it lands in the console log for triage.
+        print(f"generate_ci_report: unhandled error while producing the report: {exc!r}", file=sys.stderr)
+        traceback.print_exc()
     return 0
 
 
