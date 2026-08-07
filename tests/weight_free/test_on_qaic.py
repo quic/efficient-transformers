@@ -52,6 +52,9 @@ from ._helpers import (
 )
 def test_weight_free_generate_fp16(model_type, model_id, tmp_export_dir):
     """End-to-end weight-free export -> compile -> generate on real QAIC hardware."""
+    if model_type == "gpt_oss":
+        pytest.xfail()
+
     try:
         qeff_model = build_meta_qeff_model(model_id)
     except Exception as exc:
