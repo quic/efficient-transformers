@@ -19,6 +19,7 @@ from transformers.models.phi3.modeling_phi3 import (
     Phi3Config,
     Phi3DecoderLayer,
     Phi3ForCausalLM,
+    Phi3MLP,
     Phi3Model,
     Phi3RotaryEmbedding,
     repeat_kv,
@@ -65,7 +66,6 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin):
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
 
-    # Apply rotation
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     # Cast back to original dtype
@@ -161,6 +161,14 @@ class QEffPhi3Attention(Phi3Attention):
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
+
+
+class QEffPhi3MLP(Phi3MLP):
+    """
+    Subclass of Phi3MLP provided so that module-replacement transforms can target it
+    (e.g. for weight-free / dynamo export where the exact class identity matters).
+    The forward pass is identical to the upstream implementation.
+    """
 
 
 class QEffPhi3DecoderLayer(Phi3DecoderLayer):
@@ -294,8 +302,8 @@ class QEffPhi3Model(Phi3Model):
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             if output_hidden_states:

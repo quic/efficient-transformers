@@ -110,6 +110,7 @@ pipeline {
         booleanParam(name: 'RUN_CLI', defaultValue: true)
         booleanParam(name: 'RUN_FINETUNE', defaultValue: false)
         booleanParam(name: 'RUN_DYNAMO_QAIC', defaultValue: true, description: 'Run dynamo on-QAIC compile/generate tests (torch 2.13)')
+        booleanParam(name: 'RUN_WEIGHT_FREE_QAIC', defaultValue: true, description: 'Run weight-free on-QAIC export/compile/generate tests (torch 2.13)')
     }
 
     environment {
@@ -226,7 +227,7 @@ pipeline {
                             ${DOCKER_LATEST}:master_latest
                             sudo docker exec ${BUILD_TAG} bash -c "
                             cd /efficient-transformers &&
-                            mkdir -p /efficient-transformers/.ci-tmp/{default,export_compile,qaic_llm,qaic_feature,qaic_multimodal,qaic_reranker,qaic_diffusion,cli,dynamo_qaic,finetune} &&
+                            mkdir -p /efficient-transformers/.ci-tmp/{default,export_compile,qaic_llm,qaic_feature,qaic_multimodal,qaic_reranker,qaic_diffusion,cli,dynamo_qaic,weight_free_qaic,finetune} &&
                             rm -f /etc/apt/apt.conf.d/docker-clean &&
                             apt update &&
                             DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv python3.12-dev build-essential &&
@@ -341,7 +342,7 @@ pipeline {
                             mkdir -p /efficient-transformers/Non_cli_qaic &&
                             export TOKENIZERS_PARALLELISM=false &&
                             export QEFF_HOME=/efficient-transformers/Non_cli_qaic &&
-                            python -m pytest tests -m '(not on_qaic) and (not dynamo) and (not finetune) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 4 -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=export_compile --junitxml=tests/tests_log1.xml --durations=10 &&
+                            python -m pytest tests -m '(not on_qaic) and (not dynamo) and (not weight_free) and (not finetune) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 4 -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=export_compile --junitxml=tests/tests_log1.xml --durations=10 &&
                             junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
                             deactivate"
                             '''
@@ -361,7 +362,7 @@ pipeline {
                             export TOKENIZERS_PARALLELISM=false &&
                             export QEFF_ISOLATE_QAIC_WORKERS=1 &&
                             export QEFF_HOME=/efficient-transformers/Non_qaic_llm &&
-                            python -m pytest tests -m '(llm_model) and (not dynamo) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_llm --junitxml=tests/tests_log2.xml --durations=10 &&
+                            python -m pytest tests -m '(llm_model) and (not dynamo) and (not weight_free) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_llm --junitxml=tests/tests_log2.xml --durations=10 &&
                             junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
                             deactivate"
                             '''
@@ -456,6 +457,22 @@ pipeline {
                     mkdir -p /efficient-transformers/dynamo_qeff_qaic && export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/dynamo_qeff_qaic &&
                     python -m pytest tests/dynamo -m '(dynamo) and (on_qaic) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/dynamo/nightly -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=dynamo_qaic --junitxml=tests/tests_log_dynamo_qaic.xml --durations=10 &&
                     junitparser merge tests/tests_log_dynamo_qaic.xml tests/tests_log.xml && deactivate"
+                    '''
+                }
+            }
+        }
+
+        stage('QAIC WEIGHT FREE') {
+            when { expression { impactStageEnabled('weight_free_qaic', params.RUN_WEIGHT_FREE_QAIC) } }
+            steps {
+                timeout(time: 360, unit: 'MINUTES') {
+                    sh '''
+                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/weight_free_qaic ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers && . preflight_qeff/bin/activate && pip install -r examples/dynamo/causal_lm/requirements.txt &&
+                    mkdir -p /efficient-transformers/weight_free_qaic && export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/weight_free_qaic &&
+                    export HF_HUB_CACHE=/huggingface_hub && export HF_HUB_ENABLE_HF_TRANSFER=1 &&
+                    python -m pytest tests/weight_free -m '(on_qaic) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --dist loadgroup -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=weight_free_qaic --junitxml=tests/tests_log_weight_free_qaic.xml --durations=10 &&
+                    junitparser merge tests/tests_log_weight_free_qaic.xml tests/tests_log.xml && deactivate"
                     '''
                 }
             }
