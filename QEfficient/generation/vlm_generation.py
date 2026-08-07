@@ -245,6 +245,75 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             if is_retained_state_name(x) or x.endswith("_RetainedState")
         ]
 
+    def _find_matching_vision_spec_idx(self, vision_inputs: dict[str, np.ndarray]) -> int | None:
+        """Find the matching vision specialization index for the provided input shapes."""
+        if not getattr(self._vision_session, "allowed_shapes", None):
+            return None
+
+        for i, spec in enumerate(self._vision_session.allowed_shapes):
+            matched = True
+            for name, arr in vision_inputs.items():
+                if name not in self._vision_session.binding_index_map:
+                    continue
+                bidx = self._vision_session.binding_index_map[name]
+                if len(spec) <= bidx:
+                    matched = False
+                    break
+                expected = list(spec[bidx][1])
+                if list(arr.shape) != expected:
+                    matched = False
+                    break
+            if matched:
+                return i
+        return None
+
+    def _allocate_vision_outputs_for_spec(self, spec_idx: int):
+        """Allocate output buffers for a specific vision specialization."""
+        spec = self._vision_session.allowed_shapes[spec_idx]
+        buffers = {}
+        for output_name in self._vision_session.output_names:
+            if output_name not in self._vision_session.binding_index_map:
+                continue
+            bidx = self._vision_session.binding_index_map[output_name]
+            shape = tuple(spec[bidx][1])
+            dtype = self._vision_session.aic_to_np_dtype_mapping[self._vision_session.bindings[bidx].type]
+            buffers[output_name] = np.zeros(shape, dtype=dtype)
+        self._vision_session.set_buffers(buffers)
+
+    def _get_lang_vision_token_capacity(self) -> int | None:
+        """Returns the max vision token capacity expected by the language QPC, if available."""
+        if "vision_embeds" not in self._session.binding_index_map:
+            return None
+        v_idx = self._session.binding_index_map["vision_embeds"]
+        capacities = []
+        if getattr(self._session, "allowed_shapes", None):
+            for spec in self._session.allowed_shapes:
+                if len(spec) <= v_idx:
+                    continue
+                dims = spec[v_idx][1]
+                if len(dims) >= 2:
+                    capacities.append(int(dims[1]))
+        if capacities:
+            return max(capacities)
+        dims = tuple(self._session.bindings[v_idx].dims)
+        if len(dims) >= 2:
+            return int(dims[1])
+        return None
+
+    @staticmethod
+    def _pad_or_trim_axis(arr: np.ndarray, axis: int, target: int) -> np.ndarray:
+        """Pad with zeros or trim tensor along one axis to target length."""
+        current = arr.shape[axis]
+        if current == target:
+            return arr
+        if current > target:
+            slicer = [slice(None)] * arr.ndim
+            slicer[axis] = slice(0, target)
+            return arr[tuple(slicer)]
+        pad_width = [(0, 0)] * arr.ndim
+        pad_width[axis] = (0, target - current)
+        return np.pad(arr, pad_width=tuple(pad_width), mode="constant", constant_values=0)
+
     def run_prefill_for_all_inputs(self, prompt_queue, generation_len):
         """
         Runs prefill for all inputs in the prompt queue and updates the decode input.
@@ -620,91 +689,89 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         inputs["attention_mask"] = torch.nn.functional.pad(
             inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
         )
+        if "mm_token_type_ids" in inputs:
+            inputs["mm_token_type_ids"] = torch.nn.functional.pad(
+                inputs["mm_token_type_ids"], (0, padded_len - input_ids_length), "constant", 0
+            )
+        if "cross_attention_mask" in inputs:
+            inputs["cross_attention_mask"] = torch.nn.functional.pad(
+                inputs["cross_attention_mask"], (0, 0, 0, 0, 0, padded_len - input_ids_length)
+            )
 
         for k, v in inputs.items():
             inputs[k] = np.array(v)
 
-        vision_inputs = {
-            k: v
-            for k, v in inputs.items()
-            if k
-            in {"pixel_values", "image_masks", "image_input_idx", "valid_idx", "aspect_ratio_ids", "aspect_ratio_mask"}
-        }
+        vision_inputs = {k: v for k, v in inputs.items() if k in self._vision_session.input_names}
 
         vision_inputs_fp16 = {"pixel_values", "image_masks"}
-        vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
+        for k in vision_inputs_fp16:
+            if k in vision_inputs:
+                vision_inputs[k] = vision_inputs[k].astype("float16")
 
         vision_outputs = {}
         if vision_inputs:
-            vision_size = vision_inputs["pixel_values"].shape[0] // num_frames
-
-            pixel_values_shape = list(vision_inputs["pixel_values"][:vision_size].shape)
-
-            idx = next(
-                i for i, inner in enumerate(self._vision_session.allowed_shapes) if (2, pixel_values_shape) in inner
+            is_qwen_multiframe = (
+                self.is_qwen_vl
+                and num_frames is not None
+                and int(num_frames) > 1
+                and "pixel_values" in vision_inputs
+                and "image_grid_thw" in vision_inputs
             )
 
-            buffer_set = {
-                "vision_embeds": np.zeros(
-                    self._vision_session.allowed_shapes[idx][self._vision_session.binding_index_map["vision_embeds"]][
-                        1
-                    ],
-                    dtype=np.float16,
-                ),
-                "image_grid_thw": np.zeros(
-                    self._vision_session.allowed_shapes[idx][self._vision_session.binding_index_map["image_grid_thw"]][
-                        1
-                    ],
-                    dtype=np.int64,
-                ),
-            }
-            if "deepstack_features" in self._vision_session.binding_index_map:
-                buffer_set["deepstack_features"] = np.zeros(
-                    self._vision_session.allowed_shapes[idx][
-                        self._vision_session.binding_index_map["deepstack_features"]
-                    ][1],
-                    dtype=np.float16,
-                )
+            if is_qwen_multiframe:
+                vision_size = vision_inputs["pixel_values"].shape[0] // int(num_frames)
+                chunk_inputs = vision_inputs.copy()
+                for i in range(int(num_frames)):
+                    chunk_inputs["pixel_values"] = vision_inputs["pixel_values"][
+                        i * vision_size : (i + 1) * vision_size
+                    ]
+                    idx = self._find_matching_vision_spec_idx(chunk_inputs)
+                    if idx is None:
+                        raise ValueError(
+                            f"No matching vision specialization for chunk {i} with shapes: "
+                            f"{ {k: list(v.shape) for k, v in chunk_inputs.items()} }"
+                        )
+                    self._allocate_vision_outputs_for_spec(idx)
+                    chunk_outputs = self._vision_session.run(chunk_inputs)
+                    if i == 0:
+                        vision_outputs = chunk_outputs
+                    else:
+                        if "vision_embeds" in vision_outputs and "vision_embeds" in chunk_outputs:
+                            vision_outputs["vision_embeds"] = np.concatenate(
+                                (vision_outputs["vision_embeds"], chunk_outputs["vision_embeds"]), axis=1
+                            )
+                        if "deepstack_features" in vision_outputs and "deepstack_features" in chunk_outputs:
+                            vision_outputs["deepstack_features"] = np.concatenate(
+                                (vision_outputs["deepstack_features"], chunk_outputs["deepstack_features"]), axis=2
+                            )
+            else:
+                idx = self._find_matching_vision_spec_idx(vision_inputs)
+                if idx is None:
+                    raise ValueError(
+                        "No matching vision specialization found for shapes: "
+                        f"{ {k: list(v.shape) for k, v in vision_inputs.items()} }"
+                    )
+                self._allocate_vision_outputs_for_spec(idx)
+                vision_outputs = self._vision_session.run(vision_inputs)
 
-            self._vision_session.set_buffers(buffer_set)
-
-            chunk_inputs = vision_inputs.copy()
-
-            for i in range(num_frames):
-                chunk_inputs["pixel_values"] = vision_inputs["pixel_values"][i * vision_size : (i + 1) * vision_size]
-                chunk_outputs = self._vision_session.run(chunk_inputs)
-                if i == 0:
-                    vision_outputs = chunk_outputs
-                else:
-                    vision_outputs["vision_embeds"] = np.concatenate(
-                        (vision_outputs["vision_embeds"], chunk_outputs["vision_embeds"]), axis=1
+            # Language QPC expects a fixed vision token capacity. Align vision outputs to that contract.
+            lang_vision_tokens = self._get_lang_vision_token_capacity()
+            if lang_vision_tokens is not None:
+                if "vision_embeds" in vision_outputs:
+                    vision_outputs["vision_embeds"] = self._pad_or_trim_axis(
+                        vision_outputs["vision_embeds"], axis=1, target=lang_vision_tokens
+                    )
+                if "deepstack_features" in vision_outputs:
+                    vision_outputs["deepstack_features"] = self._pad_or_trim_axis(
+                        vision_outputs["deepstack_features"], axis=2, target=lang_vision_tokens
                     )
 
-            vision_outputs["vision_embeds"] = np.pad(
-                vision_outputs["vision_embeds"],
-                pad_width=(
-                    (0, 0),
-                    (0, self._session.allowed_shapes[0][1][1][1] - vision_outputs["vision_embeds"].shape[-2]),
-                    (0, 0),
-                ),  # pad axis=1 only
-                mode="constant",
-                constant_values=0,
-            )
-            if "deepstack_features" in vision_outputs:
-                vision_outputs["deepstack_features"] = np.pad(
-                    vision_outputs["deepstack_features"],
-                    pad_width=(
-                        (0, 0),
-                        (0, 0),
-                        (0, self._session.allowed_shapes[0][1][1][1] - vision_outputs["deepstack_features"].shape[-2]),
-                        (0, 0),
-                    ),  # pad axis=1 only
-                    mode="constant",
-                    constant_values=0,
-                )
-
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
-        lang_inputs.pop("attention_mask")
+        if "position_ids" in lang_inputs:
+            lang_inputs.pop("attention_mask", None)
+        else:
+            padded_len = lang_inputs["input_ids"].shape[1]
+            lang_inputs["position_ids"] = np.where(lang_inputs.pop("attention_mask"), np.arange(padded_len), -1)
 
         if self._vision_qpc_path:
             self._vision_session.deactivate()
