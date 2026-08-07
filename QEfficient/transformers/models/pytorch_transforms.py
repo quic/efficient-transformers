@@ -1299,7 +1299,10 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "forward": QEffMultiHeadDotProductAttention.forward,
         },
         # Mapping for grok1 model
-        "Grok1ModelForCausalLM": {"forward": QEffGrok1ModelForCausalLM.forward},
+        "Grok1ModelForCausalLM": {
+            "forward": QEffGrok1ModelForCausalLM.forward,
+            "get_submodules_for_export": QEffGrok1ModelForCausalLM.get_submodules_for_export,
+        },
         "Grok1Model": {
             "forward": QEffGrok1Model.forward,
             "__qeff_init__": QEffGrok1Model.__qeff_init__,
