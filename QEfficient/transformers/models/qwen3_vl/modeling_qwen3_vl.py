@@ -58,6 +58,18 @@ def _should_export_embedding_output(module) -> bool:
     return False
 
 
+def _is_single_shot_mode(module) -> bool:
+    """True when model is single-shot prefill only (reranker/embedding) — no KV cache needed."""
+    for holder in (module, getattr(module, "model", None)):
+        if holder is None:
+            continue
+        qaic_config = getattr(holder, "qaic_config", None)
+        if isinstance(qaic_config, dict):
+            if qaic_config.get("no_kv_cache", False) or qaic_config.get("export_embedding", False):
+                return True
+    return False
+
+
 def qeff_apply_interleaved_mrope(freqs, mrope_section):
     """Apply interleaved MRoPE to 3D rotary embeddings.
     Reorganizes frequency layout from chunked [TTT...HHH...WWW] to
@@ -550,7 +562,9 @@ class QEffQwen3VLTextModel(Qwen3VLTextModel):
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
-        if self.config.use_cache and not isinstance(past_key_values, Cache):
+        return_legacy_cache = False
+        effective_use_cache = use_cache if use_cache is not None else self.config.use_cache
+        if effective_use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
 
@@ -568,7 +582,11 @@ class QEffQwen3VLTextModel(Qwen3VLTextModel):
         elif position_ids.dim() == 2:
             position_ids = position_ids[None, ...].expand(3, position_ids.shape[0], -1)
 
-        target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
+        target_length = (
+            attention_mask.shape[-1]
+            if isinstance(attention_mask, torch.Tensor)
+            else (past_seen_tokens if past_seen_tokens > 0 else inputs_embeds.shape[1])
+        )
         causal_mask = _create_causal_mask(
             position_ids=position_ids[0], target_length=target_length, sliding_window=None
         )
@@ -806,7 +824,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         self,
         input_ids,
         position_ids,
-        past_key_values,
+        past_key_values=None,
         pixel_values: Optional[torch.FloatTensor] = None,
         image_idx: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
@@ -820,23 +838,29 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         selected = input_ids == self.model.config.image_token_id
         indices1 = selected.to(torch.int64).cumsum(1) - 1
         indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-        indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+        indices0 = torch.arange(selected.shape[0], device=selected.device).view(-1, 1)
         image_features_expanded = image_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
         # TODO: deepstack_features are not processed for single QPC setup yet. Will do if required.
         image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
         inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
-        outputs = self.language_model(
+
+        single_shot = _is_single_shot_mode(self)
+        outputs = self.model.language_model(
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,
-            past_key_values=past_key_values,
+            past_key_values=None if single_shot else past_key_values,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
-            use_cache=True,
+            use_cache=not single_shot,
         )
         logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        if single_shot:
+            if _should_export_embedding_output(self):
+                return logits, image_embeds, image_idx, hidden_states
+            return logits, image_embeds, image_idx
         if _should_export_embedding_output(self):
             return logits, image_embeds, image_idx, hidden_states, outputs.past_key_values
         return logits, image_embeds, image_idx, outputs.past_key_values
@@ -848,13 +872,8 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         continuous_batching: bool = False,
         **kwargs,
     ):
-        prefill_seq_len = kwargs.get("prefill_seq_len", constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-        if prefill_seq_len is None:
-            prefill_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        prefill_seq_len = int(prefill_seq_len)
-
         inputs_shapes = {}
-        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, prefill_seq_len)
+        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
         # vision_size = 1024
         vision_size = 187
         inputs_shapes["vision_embeds"] = (
@@ -866,7 +885,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         inputs_shapes["position_ids"] = (
             3,
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
-            prefill_seq_len,
+            constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
         inputs_shapes["pixel_values"] = (748, 1536)
         inputs_shapes["image_idx"] = (1, 1)
@@ -890,8 +909,8 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         )
         lang_inputs["position_ids"] = (
             (
-                torch.arange(prefill_seq_len, dtype=torch.int64)
-                .view(1, prefill_seq_len)
+                torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
+                .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
                 .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
             )
             .unsqueeze(0)
@@ -909,7 +928,7 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
             batch_size=fbs if continuous_batching else bs,
-            seq_len=prefill_seq_len,
+            seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
         )
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
@@ -930,6 +949,8 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             inputs["lang"] = lang_inputs
         else:
             lang_inputs.pop("vision_embeds")
+            if _is_single_shot_mode(self):
+                lang_inputs.pop("past_key_values")
             inputs = {**vision_inputs, **lang_inputs}
         return inputs
 
@@ -1104,8 +1125,15 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             specializations["lang"] = lang
             return specializations, compiler_options
         else:
-            lang[0].pop("vision_size")
-            lang[1].pop("vision_size")
+            # Single QPC: pixel_values and image_grid_thw are direct inputs,
+            # so the compiler needs the vision spatial symbols in every spec.
+            for lang_spec in lang:
+                lang_spec.pop("vision_size")
+                lang_spec["grid_height"] = grid_height
+                lang_spec["grid_width"] = grid_width
+                lang_spec["grid_h"] = grid_h
+                lang_spec["grid_w"] = grid_w
+                lang_spec["time"] = time
             return lang, compiler_options
 
     def get_onnx_dynamic_axes(
@@ -1149,6 +1177,12 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             dynamic_axes["lang"] = lang_dynamic_axes
         else:
             lang_dynamic_axes.pop("vision_embeds")
+            # deepstack_features are computed internally by vision encoder in single QPC — not a direct input
+            vision_dynamic_axes.pop("deepstack_features")
+            if _is_single_shot_mode(self):
+                for i in range(num_layers):
+                    lang_dynamic_axes.pop(f"past_key.{i}", None)
+                    lang_dynamic_axes.pop(f"past_value.{i}", None)
             dynamic_axes = {**vision_dynamic_axes, **lang_dynamic_axes}
         return dynamic_axes
 
@@ -1170,6 +1204,13 @@ class QEffQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             output_names["vision"] = vision_output_names
             output_names["lang"] = lang_output_names
         else:
+            if _is_single_shot_mode(self):
+                # Single-shot forward returns: (logits, image_embeds, image_idx)
+                # embedding adds hidden_states: (logits, image_embeds, image_idx, hidden_states)
+                single_shot_outputs = ["logits", "image_embeds", "image_idx_output"]
+                if _should_export_embedding_output(self):
+                    single_shot_outputs.append("embedding_output")
+                return single_shot_outputs
             lang_output_names.insert(1, "pixel_values_RetainedState")
             lang_output_names.insert(2, "image_idx_output")
             if _should_export_embedding_output(self):

@@ -173,7 +173,7 @@ class QEffQwen3VLReranker:
 
         return prepared_contexts, max_prompt_len, max_grid_h, max_grid_w
 
-    def get_compile_specs(self, inputs: Dict, ctx_len: int, prefill_seq_len: int = None) -> Dict[str, int]:
+    def get_compile_specs(self, inputs: Dict, prefill_seq_len: int = None) -> Dict[str, int]:
         """Return compile parameters required for this input batch."""
         _, max_prompt_len, max_grid_h, max_grid_w = self._collect_contexts(inputs)
         if max_prompt_len == 0:
@@ -189,9 +189,10 @@ class QEffQwen3VLReranker:
         height = max_grid_h * patch_size
         width = max_grid_w * patch_size
 
+        # ctx_len == prefill_seq_len always: reranker is single-shot prefill, no decode steps.
         return {
             "prefill_seq_len": target_prefill_seq_len,
-            "ctx_len": int(ctx_len),
+            "ctx_len": target_prefill_seq_len,
             "img_size": max(height, width),
             "height": height,
             "width": width,
@@ -264,8 +265,51 @@ class QEffQwen3VLReranker:
         lang_session.deactivate()
         return outputs["logits"]
 
-    def process(self, inputs: Dict, qpc_paths: Dict[str, str], prefill_seq_len: int) -> List[float]:
-        """Score all documents for one query on AI100 using precompiled QPCs."""
+    @staticmethod
+    def _run_ai100_single_qpc_prefill(prepared_inputs: Dict, qpc_path: str) -> np.ndarray:
+        """Run single-QPC (vision+language fused) prefill and return logits."""
+        prefill_len = prepared_inputs["position_ids"].shape[-1]
+        input_ids = prepared_inputs["input_ids"]
+        if input_ids.shape[1] < prefill_len:
+            pad = torch.full(
+                (input_ids.shape[0], prefill_len - input_ids.shape[1]),
+                1,
+                dtype=input_ids.dtype,
+                device=input_ids.device,
+            )
+            input_ids = torch.cat([input_ids, pad], dim=1)
+        else:
+            input_ids = input_ids[:, :prefill_len]
+
+        position_ids = prepared_inputs["position_ids"][..., :prefill_len]
+
+        session = QAICInferenceSession(str(qpc_path))
+
+        run_inputs = {
+            "input_ids": input_ids.detach().cpu().numpy().astype(np.int64),
+            "position_ids": position_ids.detach().cpu().numpy().astype(np.int64),
+            "image_idx": np.zeros((1, 1), dtype=np.int64),
+        }
+
+        # image_grid_thw is baked as a constant during single-QPC ONNX tracing; only
+        # pixel_values remains as a dynamic input for the vision encoder.
+        if "pixel_values" in prepared_inputs:
+            run_inputs["pixel_values"] = prepared_inputs["pixel_values"].detach().cpu().numpy().astype(np.float16)
+        else:
+            # Text-only: pass zeros with the shape fixed at compile time.
+            pv_idx = session.binding_index_map["pixel_values"]
+            run_inputs["pixel_values"] = np.zeros(session.bindings[pv_idx].dims, dtype=np.float16)
+
+        outputs = session.run(run_inputs)
+        session.deactivate()
+        return outputs["logits"]
+
+    def process(self, inputs: Dict, qpc_paths, prefill_seq_len: int) -> List[float]:
+        """Score all documents for one query on AI100 using precompiled QPCs.
+
+        Supports both dual-QPC (qpc_paths is a dict with 'vision_qpc_path' and
+        'lang_qpc_path') and single-QPC (qpc_paths is a str/Path to the combined QPC).
+        """
         prepared_contexts, max_prompt_len, _, _ = self._collect_contexts(inputs)
         if max_prompt_len == 0:
             return []
@@ -276,30 +320,40 @@ class QEffQwen3VLReranker:
                 f"prefill_seq_len ({target_prefill_seq_len}) must be >= max runtime prompt length ({max_prompt_len})."
             )
 
-        if "vision_qpc_path" not in qpc_paths or "lang_qpc_path" not in qpc_paths:
-            raise ValueError("qpc_paths must contain 'vision_qpc_path' and 'lang_qpc_path'.")
-
         prepared_contexts_with_prefill = []
-        vision_template = None
         for ctx in prepared_contexts:
             prepared_inputs = self._prepare_inputs(ctx["tokenized"], prefill_seq_len=target_prefill_seq_len)
             prepared_contexts_with_prefill.append({"prepared_inputs": prepared_inputs})
 
-            if vision_template is None and "pixel_values" in prepared_inputs and "image_grid_thw" in prepared_inputs:
-                vision_template = self._run_ai100_vision(prepared_inputs, vision_qpc_path=qpc_paths["vision_qpc_path"])
-
-        if vision_template is None:
-            raise ValueError("At least one image document is required to initialize AI100 vision buffers.")
-
+        is_dual_qpc = isinstance(qpc_paths, dict)
         scores = []
-        for ctx in prepared_contexts_with_prefill:
-            logits = self._run_ai100_prefill(
-                ctx["prepared_inputs"],
-                vision_template=vision_template,
-                lang_qpc_path=qpc_paths["lang_qpc_path"],
-                vision_qpc_path=qpc_paths["vision_qpc_path"],
-            )
-            score = self._score_from_logits(logits, self.yes_token_id, self.no_token_id)
-            scores.append(score)
+
+        if is_dual_qpc:
+            if "vision_qpc_path" not in qpc_paths or "lang_qpc_path" not in qpc_paths:
+                raise ValueError("qpc_paths must contain 'vision_qpc_path' and 'lang_qpc_path'.")
+
+            vision_template = None
+            for ctx in prepared_contexts_with_prefill:
+                if vision_template is None and "pixel_values" in ctx["prepared_inputs"]:
+                    vision_template = self._run_ai100_vision(
+                        ctx["prepared_inputs"], vision_qpc_path=qpc_paths["vision_qpc_path"]
+                    )
+
+            if vision_template is None:
+                raise ValueError("At least one image document is required to initialize AI100 vision buffers.")
+
+            for ctx in prepared_contexts_with_prefill:
+                logits = self._run_ai100_prefill(
+                    ctx["prepared_inputs"],
+                    vision_template=vision_template,
+                    lang_qpc_path=qpc_paths["lang_qpc_path"],
+                    vision_qpc_path=qpc_paths["vision_qpc_path"],
+                )
+                scores.append(self._score_from_logits(logits, self.yes_token_id, self.no_token_id))
+        else:
+            # Single QPC: vision + language fused in one compiled binary.
+            for ctx in prepared_contexts_with_prefill:
+                logits = self._run_ai100_single_qpc_prefill(ctx["prepared_inputs"], qpc_path=qpc_paths)
+                scores.append(self._score_from_logits(logits, self.yes_token_id, self.no_token_id))
 
         return scores

@@ -118,8 +118,8 @@ def test_qwen3_vl_embedder_dummy_process_smoke(monkeypatch):
     monkeypatch.setattr(QEffQwen3VLEmbedder, "_run_ai100_vision", staticmethod(_fake_run_ai100_vision))
     monkeypatch.setattr(QEffQwen3VLEmbedder, "_run_ai100_prefill", staticmethod(_fake_run_ai100_prefill))
 
-    compile_specs = embedder.get_compile_specs(inputs=[{}, {}], ctx_len=64, prefill_seq_len=12)
-    assert compile_specs == {"prefill_seq_len": 12, "ctx_len": 64, "img_size": 160, "height": 96, "width": 160}
+    compile_specs = embedder.get_compile_specs(inputs=[{}, {}], prefill_seq_len=12)
+    assert compile_specs == {"prefill_seq_len": 12, "ctx_len": 12, "img_size": 160, "height": 96, "width": 160}
 
     embeddings = embedder.process(
         inputs=[{}, {}],
@@ -130,3 +130,48 @@ def test_qwen3_vl_embedder_dummy_process_smoke(monkeypatch):
     assert tuple(embeddings.shape) == (2, 4)
     norms = torch.linalg.norm(embeddings, dim=-1)
     assert torch.allclose(norms, torch.ones_like(norms), atol=1e-6)
+
+
+@pytest.mark.embedding
+def test_qwen3_vl_embedder_single_qpc_dispatch(monkeypatch):
+    """process() with a non-dict qpc_paths uses the single-QPC path."""
+    from pathlib import Path
+
+    embedder = QEffQwen3VLEmbedder(processor=None, model=_DummyQEffModel())
+
+    contexts = [{"tokenized": {"kind": "image"}}, {"tokenized": {"kind": "text"}}]
+
+    def _fake_collect_contexts(_inputs):
+        return contexts, 8, 6, 10
+
+    def _fake_prepare_qeff_inputs(qeff_model, tokenized_inputs, prefill_seq_len):
+        del qeff_model
+        prepared = {
+            "input_ids": torch.arange(8, dtype=torch.int64).unsqueeze(0),
+            "position_ids": torch.arange(prefill_seq_len, dtype=torch.int64).reshape(1, 1, prefill_seq_len),
+        }
+        if tokenized_inputs.get("kind") == "image":
+            prepared["pixel_values"] = torch.ones((1, 3, 2, 2), dtype=torch.float32)
+        return prepared, 8
+
+    def _fake_single_qpc_prefill(prepared_inputs, qpc_path):
+        del qpc_path
+        if "pixel_values" in prepared_inputs:
+            return np.array([[1.0, 2.0, 3.0, 4.0]], dtype=np.float32)
+        return np.array([[2.0, 1.0, 0.5, 1.0]], dtype=np.float32)
+
+    monkeypatch.setattr(embedder, "_collect_contexts", _fake_collect_contexts)
+    monkeypatch.setattr(QEffQwen3VLEmbedder, "_prepare_qeff_inputs", staticmethod(_fake_prepare_qeff_inputs))
+    monkeypatch.setattr(QEffQwen3VLEmbedder, "_run_ai100_single_qpc_prefill", staticmethod(_fake_single_qpc_prefill))
+
+    # Test with string path
+    embeddings = embedder.process(inputs=[{}, {}], qpc_paths="/path/to/single.qpc", prefill_seq_len=12, normalize=True)
+    assert tuple(embeddings.shape) == (2, 4)
+    norms = torch.linalg.norm(embeddings, dim=-1)
+    assert torch.allclose(norms, torch.ones_like(norms), atol=1e-6)
+
+    # Test with Path object
+    embeddings = embedder.process(
+        inputs=[{}, {}], qpc_paths=Path("/tmp/model.qpc"), prefill_seq_len=12, normalize=False
+    )
+    assert tuple(embeddings.shape) == (2, 4)
