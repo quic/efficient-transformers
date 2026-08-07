@@ -275,7 +275,9 @@ MIXTRAL_ATTENTION_CLASSES = {
 class QEffMixtralTopKRouter(MixtralTopKRouter):
     def forward(self, hidden_states):
         hidden_states = hidden_states.reshape(-1, self.hidden_dim)
-        router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
+        compute_dtype = hidden_states.dtype
+        router_weight = self.weight if self.weight.dtype == compute_dtype else self.weight.to(compute_dtype)
+        router_logits = F.linear(hidden_states.to(compute_dtype), router_weight)  # (seq_len, num_experts)
         router_logits = torch.nn.functional.softmax(router_logits.float(), dim=-1).to(router_logits.dtype)
         router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
         router_top_value = router_top_value / torch.einsum("bk->b", router_top_value).unsqueeze(-1)
@@ -331,31 +333,38 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
         """Qwen3-MoE style packed sparse forward path for Mixtral."""
         batch_size, sequence_length, hidden_dim = hidden_states.shape
         hidden_states_reshaped = hidden_states.view(-1, hidden_dim)
+        compute_dtype = hidden_states_reshaped.dtype
         router_logits, routing_weights, selected_experts = self.gate(hidden_states_reshaped)
-        routing_weights = routing_weights.to(hidden_states_reshaped.dtype)
+        routing_weights = routing_weights.to(compute_dtype)
 
         num_top_k = selected_experts.size(-1)
         idx = selected_experts.reshape(-1)
         invalid_mask = idx >= self.num_experts
         idx = idx.clamp(0, self.num_experts - 1)
 
-        gate_proj = self.experts.gate_proj[idx]
-        up_proj = self.experts.up_proj[idx]
-        down_proj = self.experts.down_proj_t[idx]
+        gate_proj = self.experts.gate_proj[idx].to(compute_dtype)
+        up_proj = self.experts.up_proj[idx].to(compute_dtype)
+        down_proj = self.experts.down_proj_t[idx].to(compute_dtype)
 
-        expert_in = hidden_states_reshaped.unsqueeze(1).expand(-1, num_top_k, -1).contiguous().view(-1, 1, hidden_dim)
+        expert_in = (
+            hidden_states_reshaped.unsqueeze(1)
+            .expand(-1, num_top_k, -1)
+            .contiguous()
+            .view(-1, 1, hidden_dim)
+            .to(compute_dtype)
+        )
         gate = torch.bmm(expert_in, gate_proj)
         up = torch.bmm(expert_in, up_proj)
         gate_bias = getattr(self.experts, "gate_proj_bias", None)
         up_bias = getattr(self.experts, "up_proj_bias", None)
         down_bias = getattr(self.experts, "down_proj_t_bias", None)
         if gate_bias is not None:
-            gate = gate + gate_bias[idx].unsqueeze(1)
-            up = up + up_bias[idx].unsqueeze(1)
+            gate = gate + gate_bias[idx].to(compute_dtype).unsqueeze(1)
+            up = up + up_bias[idx].to(compute_dtype).unsqueeze(1)
         intermediate = up * getattr(self.experts, "act_fn", F.silu)(gate)
         experts_out = torch.bmm(intermediate, down_proj).squeeze(1)
         if down_bias is not None:
-            experts_out = experts_out + down_bias[idx]
+            experts_out = experts_out + down_bias[idx].to(compute_dtype)
 
         experts_out = experts_out * routing_weights.reshape(-1, 1).to(experts_out.dtype)
         experts_out = torch.where(
@@ -394,19 +403,26 @@ class QEffPrefillChunkedMixtralSparseMoeBlock(MixtralSparseMoeBlock):
 
         local_experts = num_experts // num_nsp
         rw = routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        W_g = self.experts.gate_proj.view(local_experts, num_nsp, hidden_dim, -1).transpose(0, 1).contiguous()
-        W_u = self.experts.up_proj.view(local_experts, num_nsp, hidden_dim, -1).transpose(0, 1).contiguous()
-        W_d = self.experts.down_proj_t.view(local_experts, num_nsp, -1, hidden_dim).transpose(0, 1).contiguous()
+        W_g = (
+            self.experts.gate_proj.view(local_experts, num_nsp, hidden_dim, -1).transpose(0, 1).contiguous().to(x.dtype)
+        )
+        W_u = self.experts.up_proj.view(local_experts, num_nsp, hidden_dim, -1).transpose(0, 1).contiguous().to(x.dtype)
+        W_d = (
+            self.experts.down_proj_t.view(local_experts, num_nsp, -1, hidden_dim)
+            .transpose(0, 1)
+            .contiguous()
+            .to(x.dtype)
+        )
         gate_proj_bias = getattr(self.experts, "gate_proj_bias", None)
         up_proj_bias = getattr(self.experts, "up_proj_bias", None)
         down_proj_bias = getattr(self.experts, "down_proj_t_bias", None)
         if gate_proj_bias is not None:
-            b_g = gate_proj_bias.view(local_experts, num_nsp, -1).transpose(0, 1).contiguous()
-            b_u = up_proj_bias.view(local_experts, num_nsp, -1).transpose(0, 1).contiguous()
+            b_g = gate_proj_bias.view(local_experts, num_nsp, -1).transpose(0, 1).contiguous().to(x.dtype)
+            b_u = up_proj_bias.view(local_experts, num_nsp, -1).transpose(0, 1).contiguous().to(x.dtype)
         else:
             b_g = b_u = None
         b_d = (
-            down_proj_bias.view(local_experts, num_nsp, hidden_dim).transpose(0, 1).contiguous()
+            down_proj_bias.view(local_experts, num_nsp, hidden_dim).transpose(0, 1).contiguous().to(x.dtype)
             if down_proj_bias is not None
             else None
         )
