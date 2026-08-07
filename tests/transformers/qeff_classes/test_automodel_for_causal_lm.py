@@ -171,10 +171,7 @@ def test_causal_lm_hash_creation(config, cb, subfunc, prefill_only, tmp_path):
         )
     model = AutoModelForCausalLM.from_config(config, **model_kwargs)
     qeff_model = QEFFAutoModelForCausalLM(model, cb)
-    export_kwargs = {"use_onnx_subfunctions": subfunc, "prefill_only": prefill_only}
-    if prefill_only:
-        export_kwargs["prefill_seq_len"] = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-    qeff_model.export(tmp_path, **export_kwargs)
+    qeff_model.export(tmp_path, use_onnx_subfunctions=subfunc, prefill_only=prefill_only)
     hash_params = {}
     hash_params["config"] = qeff_model.model.config.to_diff_dict()
     hash_params["peft_config"] = None

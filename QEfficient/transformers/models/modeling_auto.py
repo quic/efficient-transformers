@@ -3711,21 +3711,20 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
     ) -> int:
         self.hash_params["prefill_only"] = True
-        compile_seq_len = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        num_packed_chunks = max(1, -(-compile_seq_len // moe_prefill_packed_chunk_size))
-        for module in self.model.modules():
-            if getattr(module, "supports_moe_prefill_blocking", False):
-                module.expert_blocking_num_nsp = num_cores
-                module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
-                module.expert_blocking_num_packed_chunks = num_packed_chunks
-        self.hash_params["moe_prefill_num_nsp"] = num_cores
-        self.hash_params["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
-        self.hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
-        if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe", "kimi_k2", "kimi_k25"}:
-            return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-
         if enable_chunking:
             self.hash_params["chunking"] = True
+            compile_seq_len = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+            num_packed_chunks = max(1, -(-compile_seq_len // moe_prefill_packed_chunk_size))
+            for module in self.model.modules():
+                if getattr(module, "supports_moe_prefill_blocking", False):
+                    module.expert_blocking_num_nsp = num_cores
+                    module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
+                    module.expert_blocking_num_packed_chunks = num_packed_chunks
+            self.hash_params["moe_prefill_num_nsp"] = num_cores
+            self.hash_params["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
+            self.hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
+            if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe"}:
+                return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
             return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
         num_q_blocks = (
