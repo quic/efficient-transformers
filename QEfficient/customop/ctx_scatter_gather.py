@@ -309,13 +309,15 @@ def CtxChunkScatterBatch(
 
     # head_flat = 0..BH-1 along the BH axis: [1, BH, QL, 1]
     head_flat = ops.Range(zero, bh, one)  # [BH]
-    head_flat_exp = ops.Expand(ops.Unsqueeze(head_flat, [0, 2, 3]),
-                               ops.Concat(one, bh, seq_len, one, axis=0))  # [1, BH, QL, 1]
+    head_flat_exp = ops.Expand(
+        ops.Unsqueeze(head_flat, [0, 2, 3]), ops.Concat(one, bh, seq_len, one, axis=0)
+    )  # [1, BH, QL, 1]
 
     # position_ids [B, QL] -> [1, BH, QL, 1] (each batch's pos tiled over its NKVH heads)
-    pos_i64 = ops.Cast(position_ids, to=7)                              # [B, QL]
-    pos_tiled = ops.Expand(ops.Unsqueeze(pos_i64, [1]),
-                           ops.Concat(batch_size, num_heads, seq_len, axis=0))  # [B, NKVH, QL]
+    pos_i64 = ops.Cast(position_ids, to=7)  # [B, QL]
+    pos_tiled = ops.Expand(
+        ops.Unsqueeze(pos_i64, [1]), ops.Concat(batch_size, num_heads, seq_len, axis=0)
+    )  # [B, NKVH, QL]
     pos_exp = ops.Reshape(pos_tiled, ops.Concat(one, bh, seq_len, one, axis=0))  # [1, BH, QL, 1]
 
     # coords [0, head_flat, pos] -> indices [1, BH, QL, 3]
@@ -356,9 +358,7 @@ class CtxChunkScatterBatchFunc(torch.autograd.Function):
         position_ids: torch.Value,
         updates: torch.Value,
     ) -> torch.Value:
-        return g.onnxscript_op(
-            CtxChunkScatterBatch, data, position_ids, updates
-        ).setTypeAs(data)
+        return g.onnxscript_op(CtxChunkScatterBatch, data, position_ids, updates).setTypeAs(data)
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qti.aisw.onnx", 1))
