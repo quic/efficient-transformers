@@ -573,38 +573,31 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
     def __qeff_init__(self):
         self.chunk_gated_delta_rule = self.torch_chunk_gated_delta_rule_qeff
         self.chunk_gated_delta_solver = "recursive_sns"
-        chunk_size = 64  # must match what's used in the function
+        chunk_size = int(getattr(self, "qeff_chunk_size", 64) or 64)
+        if chunk_size <= 0:
+            chunk_size = 64
+        self.qeff_chunk_size = chunk_size
 
-        # Precompute all constant masks — no triu/tril with diagonal args at runtime
-        # mask_causal: upper triangular including diagonal (diagonal=0)
-        # = triu(ones, diagonal=0)
         mask_causal = torch.zeros(chunk_size, chunk_size, dtype=torch.bool)
         for i in range(chunk_size):
             for j in range(i, chunk_size):
                 mask_causal[i, j] = True
-        self.register_buffer("_mask_causal", mask_causal, persistent=False)
-        # shape: (C, C), True above diagonal inclusive
 
-        # mask_strict: strict upper triangular (diagonal=1)
-        # = triu(ones, diagonal=1)
         mask_strict = torch.zeros(chunk_size, chunk_size, dtype=torch.bool)
         for i in range(chunk_size):
             for j in range(i + 1, chunk_size):
                 mask_strict[i, j] = True
-        self.register_buffer("_mask_strict", mask_strict, persistent=False)
-        # shape: (C, C), True strictly above diagonal
 
-        # ones_lower: lower triangular all-ones for cumsum replacement
-        # = tril(ones, diagonal=0)
         ones_lower = torch.zeros(chunk_size, chunk_size)
         for i in range(chunk_size):
             for j in range(i + 1):
                 ones_lower[i, j] = 1.0
-        self.register_buffer("_ones_lower", ones_lower, persistent=False)
-        # shape: (C, C)
 
-        # eye: identity matrix
-        self.register_buffer("_eye", torch.eye(chunk_size), persistent=False)
+        eye = torch.eye(chunk_size)
+        self.register_buffer("_mask_causal", mask_causal, persistent=False)
+        self.register_buffer("_mask_strict", mask_strict, persistent=False)
+        self.register_buffer("_ones_lower", ones_lower, persistent=False)
+        self.register_buffer("_eye", eye, persistent=False)
 
     # TODO: It would be better to use it directly from HF
     def _solve_chunk_attn_original(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
@@ -746,7 +739,17 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         batch_size, num_heads, sequence_length, k_head_dim = key.shape
         v_head_dim = value.shape[-1]
-        pad_size = (chunk_size - sequence_length % chunk_size) % chunk_size
+        effective_sequence_length = sequence_length
+        forced_unroll_seq = int(getattr(self, "qeff_force_unroll_seq", 0) or 0)
+
+        # Export-only override to force a larger unrolled chunk loop count in ONNX
+        # while keeping runtime outputs trimmed to the true sequence length.
+        if torch.onnx.is_in_onnx_export() and forced_unroll_seq > 0:
+            effective_sequence_length = max(sequence_length, forced_unroll_seq)
+        total_sequence_length = effective_sequence_length + (
+            (chunk_size - effective_sequence_length % chunk_size) % chunk_size
+        )
+        pad_size = total_sequence_length - sequence_length
         # query = F.pad(query, (0, 0, 0, pad_size))
         # key = F.pad(key, (0, 0, 0, pad_size))
         # value = F.pad(value, (0, 0, 0, pad_size))
@@ -761,7 +764,6 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         # ck = g.clone()
         g = F.pad(g, (0, pad_size), mode="constant", value=0.0)
-        total_sequence_length = sequence_length + pad_size
         scale = 1 / (query.shape[-1] ** 0.5)
         query = query * scale
 
@@ -1014,6 +1016,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 g=g,
                 beta=beta,
                 position_ids=position_ids,
+                chunk_size=getattr(self, "qeff_chunk_size", 64),
                 initial_state=recurrent_state,
                 output_final_state=True,
                 use_qk_l2norm_in_kernel=True,
@@ -1053,6 +1056,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 value,
                 g=g,
                 beta=beta,
+                chunk_size=getattr(self, "qeff_chunk_size", 64),
                 initial_state=None,
                 output_final_state=False,
                 use_qk_l2norm_in_kernel=True,

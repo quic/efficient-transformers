@@ -14,7 +14,7 @@ import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import onnx
 import torch
@@ -29,7 +29,10 @@ from QEfficient.base.onnx_transforms import (
     SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
-from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
+from QEfficient.blocking.blocking_configurator import (
+    build_gated_delta_config_for_transform,
+    build_transformer_blocking_config_for_transform,
+)
 from QEfficient.compile.mdp_generator import (
     MdpStrategy,
     generate_disagg_mdp_config,
@@ -40,6 +43,7 @@ from QEfficient.customop.dynamo_ops import DYNAMO_CUSTOM_OP_TABLE
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
+    GatedDeltaConfigTransform,
     ReplicateKVHeadTransform,
 )
 from QEfficient.utils import (
@@ -77,7 +81,7 @@ def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) ->
             value_info.name = new_name
 
 
-def _restore_retained_state_output_names(model: onnx.ModelProto, output_names: List[str]) -> None:
+def _restore_retained_state_output_names(model: onnx.ModelProto, output_names: list[str]) -> None:
     """Restore retained-state output names when ONNX subfunction transforms rewrite them."""
     for output_idx, expected_name in enumerate(output_names):
         if output_idx >= len(model.graph.output):
@@ -92,7 +96,7 @@ def _restore_retained_state_output_names(model: onnx.ModelProto, output_names: L
             _rename_graph_value(model.graph, current_name, expected_name)
 
 
-def _restore_output_names_exact(model: onnx.ModelProto, output_names: List[str]) -> None:
+def _restore_output_names_exact(model: onnx.ModelProto, output_names: list[str]) -> None:
     """Force graph output names to match ``output_names`` by positional index."""
     for output_idx, expected_name in enumerate(output_names):
         if output_idx >= len(model.graph.output):
@@ -115,13 +119,13 @@ class QEFFBaseModel(ABC):
     _end = 0
     _total_layers = None
     _layerwise_active = False
-    _pytorch_transforms: List[PytorchTransform]
+    _pytorch_transforms: list[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
 
-    def _transform_names(self) -> List[str]:
+    def _transform_names(self) -> list[str]:
         return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
 
-    def maybe_apply_replicate_kv_transform(self, model_config, num_devices: int, qaic_config: Optional[dict]) -> int:
+    def maybe_apply_replicate_kv_transform(self, model_config, num_devices: int, qaic_config: dict | None) -> int:
         if model_config is None or qaic_config is None or "EncoderWrapper" in self.model.__class__.__name__:
             return 1
 
@@ -157,9 +161,9 @@ class QEFFBaseModel(ABC):
         self.model = model
         self.config = model.config
         self.hash_params = create_model_params(self, **kwargs)
-        self.onnx_path: Optional[str] = None
-        self.qpc_path: Optional[str] = None
-        self.qpc_session: Optional[QAICInferenceSession] = None
+        self.onnx_path: str | None = None
+        self.qpc_path: str | None = None
+        self.qpc_session: QAICInferenceSession | None = None
         self.model_architecture = (
             (arch := getattr(self.model.config, "architectures", None)) and len(arch) > 0 and arch[0]
         ) or None
@@ -289,7 +293,7 @@ class QEFFBaseModel(ABC):
 
     @property
     @abstractmethod
-    def get_model_config(self) -> Dict:
+    def get_model_config(self) -> dict:
         """
         Get the model configuration as a dictionary.
 
@@ -299,10 +303,9 @@ class QEFFBaseModel(ABC):
         Returns:
             Dict: The configuration dictionary of the underlying model
         """
-        pass
 
     @abstractmethod
-    def export(self, export_dir: Optional[str] = None) -> Path:
+    def export(self, export_dir: str | None = None) -> Path:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
 
@@ -353,11 +356,11 @@ class QEFFBaseModel(ABC):
     def _export_via_legacy(
         self,
         onnx_path: Path,
-        example_inputs: Dict[str, torch.Tensor],
-        input_names: List[str],
-        output_names: List[str],
-        dynamic_axes: Dict,
-        export_kwargs: Dict,
+        example_inputs: dict[str, torch.Tensor],
+        input_names: list[str],
+        output_names: list[str],
+        dynamic_axes: dict,
+        export_kwargs: dict,
     ) -> None:
         """Export via TorchScript symbolic tracing (dynamo=False)."""
         with layerwise_safe_onnx_export_patches(enabled=bool(QEFFBaseModel._layerwise_active)):
@@ -377,11 +380,11 @@ class QEFFBaseModel(ABC):
     def _export_via_dynamo(
         self,
         onnx_path: Path,
-        example_inputs: Dict[str, torch.Tensor],
-        input_names: List[str],
-        output_names: List[str],
-        dynamic_shapes: Optional[Dict],
-        export_kwargs: Dict,
+        example_inputs: dict[str, torch.Tensor],
+        input_names: list[str],
+        output_names: list[str],
+        dynamic_shapes: dict | None,
+        export_kwargs: dict,
     ) -> None:
         """Export via torch.export (dynamo=True) with custom op translation."""
         # Reorder example_inputs and dynamic_shapes to match model.forward signature order,
@@ -435,15 +438,15 @@ class QEFFBaseModel(ABC):
     @export_wrapper
     def _export(
         self,
-        example_inputs: Dict[str, torch.Tensor],
-        output_names: List[str],
-        dynamic_axes: Dict[str, Dict[int, str]],
-        onnx_transform_kwargs: Optional[Dict[str, Any]] = None,
-        export_dir: Optional[str] = None,
+        example_inputs: dict[str, torch.Tensor],
+        output_names: list[str],
+        dynamic_axes: dict[str, dict[int, str]],
+        onnx_transform_kwargs: dict[str, Any] | None = None,
+        export_dir: str | None = None,
         offload_pt_weights: bool = True,
-        prefill_only: Optional[bool] = False,
+        prefill_only: bool | None = False,
         dynamo: bool = False,
-        dynamic_shapes: Optional[Dict[str, Dict[int, Any]]] = None,
+        dynamic_shapes: dict[str, dict[int, Any]] | None = None,
         **export_kwargs,
     ) -> str:
         """
@@ -621,16 +624,16 @@ class QEFFBaseModel(ABC):
 
     def get_onnx_path(
         self,
-        prefill_only: Optional[bool] = False,
-        enable_chunking: Optional[bool] = False,
-        specializations: Optional[List[Dict[str, int]]] = None,
-        offload_pt_weights: Optional[bool] = True,
-        use_onnx_subfunctions: Optional[bool] = False,
-        dynamo: Optional[bool] = False,
-        retain_full_kv: Optional[bool] = False,
-        qaic_config: Optional[dict] = None,
-        moe_prefill_packed_chunk_size: Optional[int] = None,
-        kv_cache_prefix: Optional[str] = None,
+        prefill_only: bool | None = False,
+        enable_chunking: bool | None = False,
+        specializations: list[dict[str, int]] | None = None,
+        offload_pt_weights: bool | None = True,
+        use_onnx_subfunctions: bool | None = False,
+        dynamo: bool | None = False,
+        retain_full_kv: bool | None = False,
+        qaic_config: dict | None = None,
+        moe_prefill_packed_chunk_size: int | None = None,
+        kv_cache_prefix: str | None = None,
         **compiler_options,
     ):
         kwargs = {
@@ -685,14 +688,14 @@ class QEFFBaseModel(ABC):
     @export_wrapper
     def _export_layerwise(
         self,
-        example_inputs: Dict[str, torch.Tensor],
-        output_names: List[str],
-        dynamic_axes: Dict[str, Dict[int, str]],
-        onnx_transform_kwargs: Optional[Dict[str, any]] = None,
-        export_dir: Optional[str] = None,
+        example_inputs: dict[str, torch.Tensor],
+        output_names: list[str],
+        dynamic_axes: dict[str, dict[int, str]],
+        onnx_transform_kwargs: dict[str, any] | None = None,
+        export_dir: str | None = None,
         offload_pt_weights: bool = True,
-        prefill_only: Optional[bool] = False,
-        kv_cache_prefix: Optional[str] = None,
+        prefill_only: bool | None = False,
+        kv_cache_prefix: str | None = None,
         **export_kwargs,
     ) -> str:
         cache_probe = export_kwargs.pop("_layerwise_cache_probe", False)
@@ -914,11 +917,11 @@ class QEFFBaseModel(ABC):
 
     def transform(
         self,
-        ctx_len: Optional[int] = None,
-        seq_len: Optional[int] = None,
-        bs: Optional[int] = 1,
+        ctx_len: int | None = None,
+        seq_len: int | None = None,
+        bs: int | None = 1,
         num_devices: int = 1,
-        qaic_config: Optional[dict] = None,
+        qaic_config: dict | None = None,
         **compiler_options,
     ):
         # Apply the transformations that are dependent on compilation parameters
@@ -949,6 +952,12 @@ class QEFFBaseModel(ABC):
         if blocking_config is not None:
             self.model, _ = BlockingAttentionTransform.apply(self.model, attn_blocking_config=blocking_config)
             self.hash_params["blocking_kwargs"] = blocking_config
+        gated_delta_config = build_gated_delta_config_for_transform(seq_len=seq_len, qaic_config=qaic_config)
+        self.model, gated_delta_transformed = GatedDeltaConfigTransform.apply(
+            self.model, gated_delta_config=gated_delta_config
+        )
+        if gated_delta_transformed:
+            self.hash_params["gated_delta_kwargs"] = gated_delta_config
         if qaic_config is not None:
             self.hash_params["qaic_config"] = qaic_config
         self.hash_params["num_replicate_kv_heads"] = effective_num_replicate_kv_heads
@@ -956,26 +965,26 @@ class QEFFBaseModel(ABC):
     @dump_qconfig
     def _compile(
         self,
-        onnx_path: Optional[str] = None,
-        compile_dir: Optional[str] = None,
+        onnx_path: str | None = None,
+        compile_dir: str | None = None,
         *,
         mxint8_kv_cache: bool = False,
-        specializations: Optional[List[Dict[str, int]]] = None,
-        custom_io: Optional[Dict[str, str]] = None,
+        specializations: list[dict[str, int]] | None = None,
+        custom_io: dict[str, str] | None = None,
         mdp_ts_num_devices: int = 1,
-        mdp_num_partitions: Optional[int] = 1,
-        num_speculative_tokens: Optional[Union[int, List[int]]] = None,
-        enable_qnn: Optional[bool] = False,
-        qnn_config: Optional[str] = None,
+        mdp_num_partitions: int | None = 1,
+        num_speculative_tokens: int | list[int] | None = None,
+        enable_qnn: bool | None = False,
+        qnn_config: str | None = None,
         use_onnx_subfunctions: bool = False,
         dynamo: bool = False,
-        prefill_only: Optional[str] = None,
-        offload_pt_weights: Optional[bool] = True,
-        enable_chunking: Optional[bool] = False,
-        retain_full_kv: Optional[bool] = None,
-        qaic_config: Optional[dict] = None,
-        specialization_module_name: Optional[str] = None,
-        kv_cache_prefix: Optional[str] = None,
+        prefill_only: str | None = None,
+        offload_pt_weights: bool | None = True,
+        enable_chunking: bool | None = False,
+        retain_full_kv: bool | None = None,
+        qaic_config: dict | None = None,
+        specialization_module_name: str | None = None,
+        kv_cache_prefix: str | None = None,
         **compiler_options,
     ) -> str:
         """
