@@ -67,7 +67,10 @@ from QEfficient.transformers.models.pytorch_transforms import (
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import (
     AwqToMatmulNbitsTransform,
+    FP8BlockWiseDequantLinearToLinearTransform,
+    FP8DeQuantLinearToLinearTransform,
     GPTQToMatmulNbitsTransform,
+    Mxfp4GptOssExpertDequantizeTransform,
 )
 from QEfficient.utils import (
     apply_kv_cache_prefix,
@@ -3418,8 +3421,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     _pytorch_transforms = [
         AwqToMatmulNbitsTransform,
         GPTQToMatmulNbitsTransform,
-        # FP8DeQuantLinearToLinearTransform,
-        # Mxfp4GptOssExpertDequantizeTransform,
+        FP8DeQuantLinearToLinearTransform,
+        FP8BlockWiseDequantLinearToLinearTransform,
+        Mxfp4GptOssExpertDequantizeTransform,
         CustomOpsTransform,
         KVCacheTransform,
         SplitGateUpWeightsTransform,
