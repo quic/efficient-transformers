@@ -79,7 +79,7 @@ prefill_qpc_path = qeff_model.compile(
     prefill_only=True,
     enable_chunking=True,
     moe_prefill_packed_chunk_size=256,
-    use_onnx_subfunctions=True,
+    use_onnx_subfunctions=False,
     skip_vision=True,
 )
 
@@ -96,7 +96,7 @@ decode_qpc_path = qeff_model.compile(
     aic_enable_depth_first=True,
     node_precision_info=True,
     prefill_only=False,
-    use_onnx_subfunctions=True,
+    use_onnx_subfunctions=False,
     skip_vision=True,
 )
 
