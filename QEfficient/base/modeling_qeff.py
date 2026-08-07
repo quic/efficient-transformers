@@ -14,7 +14,7 @@ import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Type, Union
 
 import onnx
 import torch
@@ -117,6 +117,7 @@ class QEFFBaseModel(ABC):
     _layerwise_active = False
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
+    _checkpoint_transforms: List[Type] = []
 
     def _transform_names(self) -> List[str]:
         return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
@@ -160,6 +161,7 @@ class QEFFBaseModel(ABC):
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
+        self.weight_spec_path: Optional[str] = None
         self.model_architecture = (
             (arch := getattr(self.model.config, "architectures", None)) and len(arch) > 0 and arch[0]
         ) or None
@@ -432,6 +434,78 @@ class QEFFBaseModel(ABC):
             else:
                 os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = prev_invoke_fallback
 
+    def _export_via_weightfree(
+        self,
+        tmp_onnx_path: Path,
+        example_inputs: Dict[str, torch.Tensor],
+        input_names: List[str],
+        output_names: List[str],
+        dynamic_axes: Dict,
+        export_kwargs: Dict,
+        onnx_transform_kwargs: Optional[Dict] = None,
+    ):
+        """Export through the weight-free dynamo path with checkpoint-backed weights."""
+        from QEfficient.customop.dynamo_ops import DYNAMO_CUSTOM_OP_TABLE
+        from QEfficient.exporter.weight_free.core import export_weight_free_onnx
+        from QEfficient.utils.export_utils import convert_dynamic_axes_to_dynamic_shapes
+
+        model_config = getattr(self.model, "config", None)
+        dynamic_shapes = convert_dynamic_axes_to_dynamic_shapes(dynamic_axes, model_config)
+
+        sig_keys = list(inspect.signature(self.model.forward).parameters.keys())
+        sig_key_set = set(sig_keys)
+        ordered_inputs, ordered_shapes = {}, {}
+        for key in sig_keys:
+            if key in example_inputs:
+                ordered_inputs[key] = example_inputs[key]
+            if key in dynamic_shapes:
+                ordered_shapes[key] = dynamic_shapes[key]
+        example_inputs = {
+            **ordered_inputs,
+            **{key: value for key, value in example_inputs.items() if key not in sig_key_set},
+        }
+        dynamic_shapes = {
+            **ordered_shapes,
+            **{key: value for key, value in dynamic_shapes.items() if key not in sig_key_set},
+        }
+
+        wf_export_kwargs = dict(export_kwargs)
+        wf_export_kwargs.setdefault("report", False)
+        wf_export_kwargs.setdefault("optimize", False)
+        wf_export_kwargs["dynamo"] = True
+        wf_export_kwargs["opset_version"] = constants.ONNX_DYNAMO_EXPORT_OPSET
+        wf_export_kwargs["custom_translation_table"] = {
+            **(wf_export_kwargs.pop("custom_translation_table", None) or {}),
+            **DYNAMO_CUSTOM_OP_TABLE,
+        }
+
+        export_func = export_weight_free_onnx
+        if self.model.__class__.__name__ in {"QEffKimiK25DecoderWrapper", "QEffKimiK25EncoderWrapper"}:
+            from QEfficient.exporter.weight_free.core import export_loaded_model_weight_free_onnx
+
+            export_func = export_loaded_model_weight_free_onnx
+
+        prev_invoke_fallback = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
+        os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = "1"
+        try:
+            _, updated_onnx_transform_kwargs, cleanup = export_func(
+                qeff_model=self,
+                tmp_onnx_path=tmp_onnx_path,
+                example_inputs=example_inputs,
+                input_names=input_names,
+                output_names=output_names,
+                dynamic_shapes=dynamic_shapes,
+                export_kwargs=wf_export_kwargs,
+                onnx_transform_kwargs=onnx_transform_kwargs or {},
+            )
+        finally:
+            if prev_invoke_fallback is None:
+                os.environ.pop("TORCH_INVOKE_ALLOW_CREATE_FALLBACK", None)
+            else:
+                os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = prev_invoke_fallback
+
+        return updated_onnx_transform_kwargs, cleanup
+
     @export_wrapper
     def _export(
         self,
@@ -444,6 +518,7 @@ class QEFFBaseModel(ABC):
         prefill_only: Optional[bool] = False,
         dynamo: bool = False,
         dynamic_shapes: Optional[Dict[str, Dict[int, Any]]] = None,
+        use_weight_free_export: bool = False,
         **export_kwargs,
     ) -> str:
         """
@@ -476,14 +551,21 @@ class QEFFBaseModel(ABC):
         # TODO: Hack for retain_full_kv, handle this outside
         export_kwargs.pop("retain_full_kv", None)
         onnx_path = export_dir / f"{self.model_name}.onnx"
+        weight_spec_path = onnx_path.with_name("weight_spec.json")
 
         # Return early if ONNX already exists
         if onnx_path.is_file():
             self.onnx_path = onnx_path
+            if weight_spec_path.is_file():
+                self.weight_spec_path = str(weight_spec_path)
             return onnx_path
 
         # check if the model is in meta state or weights are offloaded
-        self._model_offloaded_check()
+        if not use_weight_free_export:
+            self._model_offloaded_check()
+
+        if use_weight_free_export and not dynamo:
+            raise NotImplementedError("Weight-free export requires dynamo=True.")
 
         export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -556,8 +638,28 @@ class QEFFBaseModel(ABC):
             dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
             input_names = aligned_input_names
 
+        cleanup_fn = None
         try:
-            if dynamo:
+            if use_weight_free_export:
+                tmp_onnx_dir = export_dir / "onnx_weightfree_tmp"
+                tmp_onnx_dir.mkdir(parents=True, exist_ok=True)
+                tmp_onnx_path = tmp_onnx_dir / onnx_path.name
+                onnx_transform_kwargs, cleanup_fn = self._export_via_weightfree(
+                    tmp_onnx_path=tmp_onnx_path,
+                    example_inputs=example_inputs,
+                    input_names=input_names,
+                    output_names=output_names,
+                    dynamic_axes=dynamic_axes,
+                    export_kwargs=export_kwargs,
+                    onnx_transform_kwargs=onnx_transform_kwargs,
+                )
+                shutil.move(str(tmp_onnx_path), str(onnx_path))
+                tmp_weight_spec = tmp_onnx_dir / "weight_spec.json"
+                if tmp_weight_spec.exists():
+                    shutil.move(str(tmp_weight_spec), str(weight_spec_path))
+                    self.weight_spec_path = str(weight_spec_path)
+                shutil.rmtree(tmp_onnx_dir, ignore_errors=True)
+            elif dynamo:
                 self._export_via_dynamo(
                     onnx_path,
                     example_inputs,
@@ -576,7 +678,8 @@ class QEFFBaseModel(ABC):
                     export_kwargs,
                 )
             logger.info("PyTorch export successful")
-            self._offload_model_weights(offload_pt_weights)
+            if not use_weight_free_export:
+                self._offload_model_weights(offload_pt_weights)
             model = onnx.load(onnx_path, load_external_data=False)
 
             needs_external_tensor_data = any(
@@ -585,13 +688,18 @@ class QEFFBaseModel(ABC):
             transform_kwargs = {
                 "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
                 "model_name": self.model_name,
-                "dynamic_axes": None if dynamo else dynamic_axes,  # dynamo uses dynamic_shapes, not axes
-                "onnx_export_opset": constants.get_onnx_export_opset(dynamo),
+                "dynamic_axes": None if (dynamo or use_weight_free_export) else dynamic_axes,
+                "onnx_export_opset": constants.get_onnx_export_opset(dynamo or use_weight_free_export),
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
 
-            onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
+            active_transforms = [
+                transform
+                for transform in self._onnx_transforms
+                if not (use_weight_free_export and transform is SplitTensorsTransform)
+            ]
+            onnx_transforms = OnnxTransformPipeline(transforms=active_transforms)
             model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
             # Keep this strictly layerwise-scoped so regular non-layerwise export
@@ -603,6 +711,15 @@ class QEFFBaseModel(ABC):
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(self._transform_names()))
             )
+            if use_weight_free_export and self.weight_spec_path is not None:
+                import json as _json
+
+                from QEfficient.exporter.weight_free.core import _upsert_metadata_prop
+
+                weight_spec_json = _json.dumps(
+                    load_json(Path(self.weight_spec_path)), separators=(",", ":"), sort_keys=True
+                )
+                _upsert_metadata_prop(model, "com.qti.aisw.extdata", weight_spec_json)
             logger.info("ONNX transforms applied")
 
             onnx_path_tmp = onnx_path.with_suffix(onnx_path.suffix + ".tmp")
@@ -615,8 +732,19 @@ class QEFFBaseModel(ABC):
         except Exception as e:
             logger.error(f"ONNX export or transforms failed: {e}")
             raise e
+        finally:
+            if cleanup_fn is not None:
+                cleanup_fn()
 
         self.onnx_path = onnx_path
+        if use_weight_free_export and self.weight_spec_path is not None:
+            from QEfficient.exporter.weight_free.spec import load_weight_spec
+
+            spec = load_weight_spec(Path(self.weight_spec_path))
+            prepared_out = Path(spec.model_id)
+            symlink = onnx_path.parent / prepared_out.name
+            if prepared_out.exists() and not symlink.exists():
+                symlink.symlink_to(prepared_out)
         return onnx_path
 
     def get_onnx_path(
@@ -631,6 +759,7 @@ class QEFFBaseModel(ABC):
         qaic_config: Optional[dict] = None,
         moe_prefill_packed_chunk_size: Optional[int] = None,
         kv_cache_prefix: Optional[str] = None,
+        use_weight_free_export: bool = False,
         **compiler_options,
     ):
         kwargs = {
@@ -638,6 +767,7 @@ class QEFFBaseModel(ABC):
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "dynamo": dynamo,
             "retain_full_kv": retain_full_kv,
+            "use_weight_free_export": use_weight_free_export,
         }
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
         if layerwise_cache_probe:
@@ -1009,6 +1139,7 @@ class QEFFBaseModel(ABC):
 
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
         moe_prefill_packed_chunk_size = compiler_options.pop("moe_prefill_packed_chunk_size", None)
+        use_weight_free_export = compiler_options.pop("use_weight_free_export", False)
 
         for removed_option in ("compile_only", "compile-only"):
             if removed_option in compiler_options:
@@ -1040,6 +1171,7 @@ class QEFFBaseModel(ABC):
                     moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                     _layerwise_cache_probe=layerwise_cache_probe,
                     kv_cache_prefix=kv_cache_prefix,
+                    use_weight_free_export=use_weight_free_export,
                     **compiler_options,
                 )
         if QEFFBaseModel._layerwise_active:

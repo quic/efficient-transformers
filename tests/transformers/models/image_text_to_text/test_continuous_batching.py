@@ -33,6 +33,13 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
+from tests.utils.load_kimi_utils import (
+    get_kimi_k25_test_config,
+    is_kimi_k25,
+    load_kimi_k25_layer_subset_model,
+    load_kimi_k25_model_from_config,
+    run_kimi_k25_hf_model_on_pytorch_CB,
+)
 
 _session = requests.Session()
 _session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=1)))
@@ -59,7 +66,6 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
 ):
     prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
-    max_gen_len = (NEW_GENERATION_TOKENS,)
     img_size = model_config_dict[model_name].get("img_size")
     image_urls = model_config_dict[model_name]["img_url_list"]
     queries = model_config_dict[model_name]["text_prompt_list"]
@@ -68,7 +74,27 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     full_batch_size = model_config_dict[model_name]["full_batch_size"]
     max_gen_len = NEW_GENERATION_TOKENS
 
-    if config is None:
+    if is_kimi_k25(model_name) and config is None:
+        model_hf, tokenizer, processor = load_kimi_k25_layer_subset_model()
+        config = model_hf.config
+        qeff_model = QEFFAutoModelForImageTextToText(
+            copy.deepcopy(model_hf),
+            kv_offload=kv_offload,
+            config=model_hf.config,
+            torch_dtype=torch.float32,
+            continuous_batching=True,
+        )
+    elif is_kimi_k25(model_name):
+        if config is None:
+            config = get_kimi_k25_test_config(model_name, model_config_dict)
+        model_hf, tokenizer, processor = load_kimi_k25_model_from_config(config)
+        qeff_model = QEFFAutoModelForImageTextToText(
+            copy.deepcopy(model_hf),
+            kv_offload=kv_offload,
+            config=model_hf.config,
+            continuous_batching=True,
+        )
+    elif config is None:
         config = AutoConfig.from_pretrained(
             model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS
         )
@@ -189,6 +215,26 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
             model_hf, image_list, prompt_list, generation_config
         )
         compile_kwargs["img_size"] = img_size
+    elif is_kimi_k25(model_name):
+        image_urls = [image_urls[0]] * len(queries)
+        for img_url in image_urls:
+            image = Image.open(requests.get(img_url, stream=True).raw).convert("RGB")
+            images.append(image)
+
+        image_list = [images[0]] * full_batch_size
+        prompt_list = [queries[0]] * full_batch_size
+        pytorch_hf_tokens = run_kimi_k25_hf_model_on_pytorch_CB(
+            copy.deepcopy(model_hf), processor, image_list, prompt_list, max_gen_len
+        )
+        image_height = images[0].height
+        image_width = images[0].width
+        compile_kwargs.update(
+            {
+                "prefill_seq_len": 1,
+                "image_height": image_height,
+                "image_width": image_width,
+            }
+        )
     else:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
         use_fast = model_name != "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
@@ -231,6 +277,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         compile_kwargs["img_size"] = img_size
 
     qeff_model.compile(**compile_kwargs)
+
     print("QPC Outputs (QAIC):")
     exec_info = qeff_model.generate(
         tokenizer=tokenizer,
@@ -253,7 +300,12 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
             model_hf, images, queries, generation_config=generation_config
         )
     else:
-        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, images, queries)
+        if is_kimi_k25(model_name):
+            pytorch_hf_tokens = run_kimi_k25_hf_model_on_pytorch_CB(
+                copy.deepcopy(model_hf), processor, images, queries, max_gen_len
+            )
+        else:
+            pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, images, queries)
 
     print("QPC Outputs (QAIC):")
     exec_info = qeff_model.generate(

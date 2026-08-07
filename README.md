@@ -13,6 +13,7 @@
 
 *Latest news* :fire: <br>
 
+- [07/2026] Added support for Kimi-K2.5 vision-language model [moonshotai/Kimi-K2.5](https://huggingface.co/moonshotai/Kimi-K2.5) via `QEFFAutoModelForImageTextToText`.
 - [07/2026] Added `dynamo` flag to `QEFFAutoModelForCausalLM.export()` to support `torch.onnx.export` dynamo-based ONNX export for CausalLM models
 - [06/2026] Added support for Gemma4 models, [google/gemma-4-E2B-it](https://huggingface.co/google/gemma-4-E2B), [google/gemma-4-26B-A4B-it](https://huggingface.co/google/gemma-4-26B-A4B-it)
 - [06/2026] Added support for Qwen3.6 model [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B)
