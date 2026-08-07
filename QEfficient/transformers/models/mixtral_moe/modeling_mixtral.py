@@ -292,8 +292,10 @@ class QEffMixtralExperts(MixtralExperts):
         gate_up_proj = self.gate_up_proj.detach()
         down_proj = self.down_proj.detach()
         # Keep zero-copy aliases as Parameters (no clone) to avoid duplicating weights.
-        self.gate_proj = nn.Parameter(gate_up_proj[:, : self.expert_dim, :].transpose(1, 2), requires_grad=False)
-        self.up_proj = nn.Parameter(gate_up_proj[:, self.expert_dim :, :].transpose(1, 2), requires_grad=False)
+        self.gate_proj = nn.Parameter(
+            gate_up_proj[:, : self.expert_dim, :].transpose(1, 2), requires_grad=False
+        ).clone()
+        self.up_proj = nn.Parameter(gate_up_proj[:, self.expert_dim :, :].transpose(1, 2), requires_grad=False).clone()
         self.down_proj_t = nn.Parameter(down_proj.transpose(1, 2), requires_grad=False)
         gate_up_proj_bias = getattr(self, "gate_up_proj_bias", None)
         self.gate_proj_bias = (
