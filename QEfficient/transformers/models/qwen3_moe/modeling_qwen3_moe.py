@@ -72,7 +72,6 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-
     # Apply rotation
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
@@ -191,6 +190,25 @@ class QEffQwen3MoeTopKRouter(Qwen3MoeTopKRouter):
 class QEffQwen3MoeExperts(Qwen3MoeExperts):
     def __qeff_init__(self):
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
+
+        if self.gate_up_proj.device.type == "meta":
+            # Weight-free export: register shape-only placeholders so ONNX initializer names
+            # match the preprocessed checkpoint keys from MoEFusedExpertSplitCheckpointTransform.
+            dtype = self.gate_up_proj.dtype
+            E = self.gate_up_proj.shape[0]
+            H = self.gate_up_proj.shape[2]
+            self.gate_proj = nn.Parameter(
+                torch.empty(E, H, self.expert_dim, device="meta", dtype=dtype), requires_grad=False
+            )
+            self.up_proj = nn.Parameter(
+                torch.empty(E, H, self.expert_dim, device="meta", dtype=dtype), requires_grad=False
+            )
+            self.down_proj_t = nn.Parameter(
+                torch.empty(E, self.expert_dim, H, device="meta", dtype=dtype), requires_grad=False
+            )
+            return
+
+        # Normal export: compute derived params — values embedded in ONNX.
         gate_up_proj = self.gate_up_proj.detach()
         down_proj = self.down_proj.detach()
         self.gate_proj = nn.Parameter(
@@ -481,8 +499,8 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
         for layer_idx, decoder_layer in enumerate(self.layers):
             if layer_idx < start or layer_idx >= end:

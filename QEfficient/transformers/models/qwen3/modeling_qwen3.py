@@ -85,7 +85,6 @@ def qeff_apply_rotary_pos_emb(q, k, cos, sin):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
-
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
 
@@ -322,8 +321,8 @@ class QEffQwen3Model(Qwen3Model):
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
         for decoder_layer in self.layers:
             if output_hidden_states:
