@@ -1443,6 +1443,7 @@ class QEffGemma4DynamicCache(QEffDynamicCache):
                     key_states,
                     value_states,
                     is_sliding=self._is_sliding_layer(layer_idx),
+                    sliding_window=self._sliding_window_len(layer_idx),
                 )
 
     def _is_sliding_layer(self, layer_idx: int) -> bool:
@@ -1451,9 +1452,20 @@ class QEffGemma4DynamicCache(QEffDynamicCache):
             layer_types is not None and layer_idx < len(layer_types) and layer_types[layer_idx] == "sliding_attention"
         )
 
+    def _sliding_window_len(self, layer_idx: int) -> Optional[int]:
+        if not self._is_sliding_layer(layer_idx):
+            return None
+        return getattr(self.config, "sliding_window", None)
+
     def append_new_layers(self, layer_idx: int) -> None:
         while len(self.layers) <= layer_idx:
-            self.layers.append(QEffGemma4DynamicLayer(is_sliding=self._is_sliding_layer(len(self.layers))))
+            new_layer_idx = len(self.layers)
+            self.layers.append(
+                QEffGemma4DynamicLayer(
+                    is_sliding=self._is_sliding_layer(new_layer_idx),
+                    sliding_window=self._sliding_window_len(new_layer_idx),
+                )
+            )
 
     @classmethod
     def from_legacy_cache(
@@ -1469,6 +1481,7 @@ class QEffGemma4DynamicCache(QEffDynamicCache):
                     key_states,
                     value_states,
                     is_sliding=cache._is_sliding_layer(layer_idx),
+                    sliding_window=cache._sliding_window_len(layer_idx),
                 )
         return cache
 
@@ -1485,20 +1498,26 @@ class QEffGemma4DynamicCache(QEffDynamicCache):
                 key_states,
                 value_states,
                 is_sliding=cache._is_sliding_layer(layer_idx),
+                sliding_window=cache._sliding_window_len(layer_idx),
             )
         return cache
 
 
 class QEffGemma4DynamicLayer(QEffDynamicLayer):
-    def __init__(self, is_sliding: bool = False):
+    def __init__(self, is_sliding: bool = False, sliding_window: Optional[int] = None):
         super().__init__()
         self.is_sliding = is_sliding
+        self.sliding_window = sliding_window
 
     @classmethod
     def from_tensors(
-        cls, key_states: torch.Tensor, value_states: torch.Tensor, is_sliding: bool = False
+        cls,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        is_sliding: bool = False,
+        sliding_window: Optional[int] = None,
     ) -> "QEffGemma4DynamicLayer":
-        layer = cls(is_sliding=is_sliding)
+        layer = cls(is_sliding=is_sliding, sliding_window=sliding_window)
         layer.keys = key_states
         layer.values = value_states
         layer._mark_initialized(key_states)
@@ -1522,7 +1541,9 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
         self._mark_initialized(self.keys)
         position_ids = cache_kwargs.get("position_ids")
         batch_index = cache_kwargs.get("batch_index", None)
-        layer_ctx_len = self.keys.shape[2]
+        layer_ctx_len = self.sliding_window or cache_kwargs.get("sliding_window")
+        if layer_ctx_len is None:
+            layer_ctx_len = self.keys.shape[2]
 
         kv_position_ids = torch.where(
             position_ids == -1, position_ids, _remainder_with_symbolic_divisor(position_ids, layer_ctx_len)
@@ -1548,8 +1569,11 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
 
         k_out, v_out = self.keys, self.values
 
-        ctx_len = cache_kwargs.get("CCL", k_out.shape[2])
-        ctx_len = min(layer_ctx_len, ctx_len)
+        ctx_len = cache_kwargs.get("CCL")
+        if ctx_len is None:
+            ctx_len = layer_ctx_len
+        else:
+            ctx_len = min(layer_ctx_len, ctx_len)
         ctx_indices = torch.arange(ctx_len, dtype=kv_position_ids.dtype)[None, None, ...]
         gather_limit = kv_position_ids.max(1, keepdim=True).values.unsqueeze(1).to(position_ids.dtype)
         invalid_mask = ctx_indices > gather_limit
@@ -1565,8 +1589,11 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
         final_indices = torch.where(use_rolling_indices, rolling_indices, ctx_indices)
 
         if batch_index is not None:
-            k_out = ctx_gather_cb(k_out, batch_index, final_indices, ctx_len)
-            v_out = ctx_gather_cb(v_out, batch_index, final_indices, ctx_len)
+            gather_ctx_len = ctx_len
+            if torch.onnx.is_in_onnx_export() and isinstance(ctx_len, int):
+                gather_ctx_len = torch.tensor(ctx_len, dtype=torch.int32, device=position_ids.device)
+            k_out = ctx_gather_cb(k_out, batch_index, final_indices, gather_ctx_len)
+            v_out = ctx_gather_cb(v_out, batch_index, final_indices, gather_ctx_len)
         else:
             k_out = ctx_gather(k_out, final_indices, ctx_len)
             v_out = ctx_gather(v_out, final_indices, ctx_len)

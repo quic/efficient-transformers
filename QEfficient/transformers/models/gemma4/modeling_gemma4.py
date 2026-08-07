@@ -584,6 +584,8 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+        if self.sliding_window is not None:
+            cache_kwargs["sliding_window"] = self.sliding_window
         token_key_states = None
         token_value_states = None
 
@@ -1093,7 +1095,7 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
             if layer_type == "sliding_attention":
                 n_heads = config.num_key_value_heads
                 d_head = config.head_dim
-                layer_seq_len = min(config.sliding_window, seq_len)
+                layer_seq_len = config.sliding_window
             else:
                 use_alternative_attention = getattr(config, "attention_k_eq_v", False)
                 n_heads = (
@@ -1474,7 +1476,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
             if layer_type == "sliding_attention":
                 n_heads = config.num_key_value_heads
                 d_head = config.head_dim
-                layer_seq_len = min(config.sliding_window, seq_len)
+                layer_seq_len = config.sliding_window
             else:
                 use_alternative_attention = getattr(config, "attention_k_eq_v", False)
                 n_heads = (
