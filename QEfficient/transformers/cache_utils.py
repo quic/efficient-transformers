@@ -1550,17 +1550,23 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
 
         ctx_len = cache_kwargs.get("CCL", k_out.shape[2])
         ctx_len = min(layer_ctx_len, ctx_len)
-        ctx_indices = torch.arange(ctx_len, dtype=kv_position_ids.dtype)[None, None, ...]
+        # Use k_out.shape[2] (= Shape(scatter_output)[2]) instead of ctx_len directly.
+        # k_out is the ctx_scatter_cb output whose shape is derived from register_fake
+        # (empty_like(data) → same shape as past_key input). The QAIC subfunction lowering
+        # can resolve Shape(scatter_output)[2] from specialization, whereas ctx_len (derived
+        # from the pre-hoisted layer_ctx_len argument) is opaque and causes
+        # "Range: limit input must be constant" during subfunction lowering.
+        arange_ctx_len = k_out.shape[2]
+        ctx_indices = torch.arange(arange_ctx_len, dtype=kv_position_ids.dtype)[None, None, ...]
         gather_limit = kv_position_ids.max(1, keepdim=True).values.unsqueeze(1).to(position_ids.dtype)
         invalid_mask = ctx_indices > gather_limit
         invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-        all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
+        all_indices = torch.arange(arange_ctx_len) + kv_position_ids.max() + 1
         rolling_indices = torch.where(
             all_indices > layer_ctx_len - 1, _remainder_with_symbolic_divisor(all_indices, layer_ctx_len), all_indices
         )
-        rolling_indices = rolling_indices[:ctx_len]
         use_rolling_indices = position_ids.max() >= (layer_ctx_len - 1)
         final_indices = torch.where(use_rolling_indices, rolling_indices, ctx_indices)
 
