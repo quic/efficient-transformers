@@ -19,6 +19,24 @@ from QEfficient.utils._utils import load_json
 from QEfficient.utils.logging_utils import logger
 
 
+def calculate_flux2_compressed_latent_dimension(height: int, width: int, vae_scale_factor: int):
+    """
+    Calculate the compressed latent dimension for Flux2 pipelines.
+
+    Returns:
+        Tuple[int, int, int]: (cl, latent_height, latent_width)
+            - cl            : Compressed latent sequence length for the transformer.
+            - latent_height : Full latent height (before packing), = height // vae_scale_factor.
+            - latent_width  : Full latent width  (before packing), = width  // vae_scale_factor.
+    """
+    # Stage-1: VAE spatial compression (matches prepare_latents formula)
+    latent_height = 2 * (int(height) // (vae_scale_factor * 2))  # == height // vae_scale_factor
+    latent_width = 2 * (int(width) // (vae_scale_factor * 2))  # == width  // vae_scale_factor
+    # Stage-2: patchify halves each spatial dim, then pack flattens H×W
+    cl = (latent_height // 2) * (latent_width // 2)
+    return cl, latent_height, latent_width
+
+
 def calculate_compressed_latent_dimension(height: int, width: int, vae_scale_factor: int) -> int:
     """
     Calculate the compressed latent dimension.
@@ -159,11 +177,7 @@ def compile_modules_parallel(
     def _prepare_and_compile(module_name: str, module_obj: Any) -> None:
         """Prepare specializations and compile a single module."""
         specializations = config["modules"][module_name]["specializations"].copy()
-        compile_kwargs = config["modules"][module_name]["compilation"].copy()
-        # Diffusion pipelines export modules before compile. Use that ONNX here
-        # so compile does not re-export modules with incompatible export APIs.
-        if compile_kwargs.get("onnx_path") is None:
-            compile_kwargs["onnx_path"] = module_obj.onnx_path
+        compile_kwargs = config["modules"][module_name]["compilation"]
 
         if (
             specialization_updates and module_name in specialization_updates
@@ -175,7 +189,10 @@ def compile_modules_parallel(
                 specializations.update(specialization_updates[module_name])
                 specializations = [specializations]
         else:
-            specializations = [specializations]
+            # Only wrap in a list if not already a list (e.g. transformer uses a
+            # list of specializations directly from the config JSON).
+            if not isinstance(specializations, list):
+                specializations = [specializations]
 
         # Tag each spec with the module name so _compile knows the graph name.
         specializations = [
@@ -222,11 +239,7 @@ def compile_modules_sequential(
     for module_name, module_obj in tqdm(modules.items(), desc="Compiling modules", unit="module"):
         module_config = config["modules"]
         specializations = module_config[module_name]["specializations"].copy()
-        compile_kwargs = module_config[module_name]["compilation"].copy()
-        # Diffusion pipelines export modules before compile. Use that ONNX here
-        # so compile does not re-export modules with incompatible export APIs.
-        if compile_kwargs.get("onnx_path") is None:
-            compile_kwargs["onnx_path"] = module_obj.onnx_path
+        compile_kwargs = module_config[module_name]["compilation"]
 
         if (
             specialization_updates and module_name in specialization_updates
@@ -238,7 +251,10 @@ def compile_modules_sequential(
                 specializations.update(specialization_updates[module_name])
                 specializations = [specializations]
         else:
-            specializations = [specializations]
+            # Only wrap in a list if not already a list (e.g. transformer uses a
+            # list of specializations directly from the config JSON).
+            if not isinstance(specializations, list):
+                specializations = [specializations]
 
         # Tag each spec with the module name so _compile knows the graph name.
         specializations = [
