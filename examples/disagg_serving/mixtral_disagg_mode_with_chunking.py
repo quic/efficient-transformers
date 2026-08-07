@@ -12,7 +12,7 @@ import torch
 from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
-from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
+from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
 
 model_id = "mistralai/Mixtral-8x7B-v0.1"

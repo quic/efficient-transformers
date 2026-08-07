@@ -146,12 +146,12 @@ from transformers.models.mistral3.modeling_mistral3 import (
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
     MixtralDecoderLayer,
+    MixtralExperts,
     MixtralForCausalLM,
     MixtralModel,
     MixtralRMSNorm,
     MixtralSparseMoeBlock,
     MixtralTopKRouter,
-    MixtralExperts
 )
 from transformers.models.mllama.modeling_mllama import (
     MllamaCrossAttentionDecoderLayer,
@@ -485,13 +485,13 @@ from QEfficient.transformers.models.mistral3.modeling_mistral3 import (
 )
 from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
     QEffMixtralAttention,
-    QEffPrefillChunkedMixtralSparseMoeBlock,
     QeffMixtralDecoderLayer,
+    QEffMixtralExperts,
     QEffMixtralForCausalLM,
     QEffMixtralModel,
     QEffMixtralSparseMoeBlock,
     QEffMixtralTopKRouter,
-    QEffMixtralExperts,
+    QEffPrefillChunkedMixtralSparseMoeBlock,
 )
 from QEfficient.transformers.models.mllama.modeling_mllama import (
     QEffMllamaCrossAttentionDecoderLayer,
