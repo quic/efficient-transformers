@@ -118,7 +118,7 @@ decode_qpc_path = qeff_model.compile(
     tree_reduce=True,  # This enables tree reduction for the MoE layers, which can improve performance when using multiple devices
     cores_per_expert=2,  # number_of_parallelized_experts_per_device = total_experts * cores_per_expert / total_cores , total_cores = num_devices * num_cores, number_of_pipline_stages = total_experts / number_of_parallelized_experts_per_device
     skip_vision=True,
-    use_onnx_subfunctions=False,
+    use_onnx_subfunctions=True,
     layerwise=False,
     offload_pt_weights=False,
     qaic_config=decode_qaic_config,
@@ -308,8 +308,6 @@ st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
 print(f"time for first run of decode with KV as input = {perf_counter() - st} sec\n")
 
-# exit(0)
-
 all_outputs.append(np.argmax(decode_out["logits"][0]))  # track batch 0
 pos_id = decode_inputs["position_ids"] + 1  # [BS, 1]
 loop_decode_inputs = {
@@ -317,9 +315,9 @@ loop_decode_inputs = {
     "position_ids": pos_id,
 }
 
-# for i in range(config.text_config.num_hidden_layers):
-#     loop_decode_inputs[f"past_key.{i}"] = decode_out[f"past_key.{i}_RetainedState"]
-#     loop_decode_inputs[f"past_value.{i}"] = decode_out[f"past_value.{i}_RetainedState"]
+for i in range(config.text_config.num_hidden_layers):
+    loop_decode_inputs[f"past_key.{i}"] = decode_out[f"past_key.{i}_RetainedState"]
+    loop_decode_inputs[f"past_value.{i}"] = decode_out[f"past_value.{i}_RetainedState"]
 
 
 st = perf_counter()
@@ -327,9 +325,9 @@ for i in range(generation_len - 2):
     decode_out = lang_decode_session.run(loop_decode_inputs)
     all_outputs.append(np.argmax(decode_out["logits"][0]))
     pos_id += 1
-    # for j in range(config.text_config.num_hidden_layers):
-    #     loop_decode_inputs[f"past_key.{j}"] = decode_out[f"past_key.{j}_RetainedState"]
-    #     loop_decode_inputs[f"past_value.{j}"] = decode_out[f"past_value.{j}_RetainedState"]
+    for j in range(config.text_config.num_hidden_layers):
+        loop_decode_inputs[f"past_key.{j}"] = decode_out[f"past_key.{j}_RetainedState"]
+        loop_decode_inputs[f"past_value.{j}"] = decode_out[f"past_value.{j}_RetainedState"]
     loop_decode_inputs.update(
         {
             "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
