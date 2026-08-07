@@ -820,7 +820,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
             attention_mask = sliding_mask
             # positive_pos_ids = torch.where(position_ids<0, 0, position_ids)
             ctx_len = position_ids.shape[1] + self.sliding_window
-            ctx_indices = torch.arange(ctx_len)
+            ctx_indices = torch.arange(ctx_len, device=position_ids.device)
             first_pos_idx = position_ids[0][0]
             add_idx = torch.where(first_pos_idx >= self.sliding_window, first_pos_idx - self.sliding_window, 0)
             # start_idx = torch.where(first_pos_idx>=self.sliding_window, first_pos_idx-self.sliding_window, 0)
@@ -888,7 +888,9 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
             }
             if self.sliding_window is not None:
                 sliding_window_len = past_key_values.sliding_window_len
-                short_read_idx = torch.arange(past_key_values.key_cache[self.layer_idx].shape[2])
+                short_read_idx = torch.arange(
+                    past_key_values.key_cache[self.layer_idx].shape[2], device=position_ids.device
+                )
                 read_idx = short_read_idx + torch.where(
                     position_ids.max() > sliding_window_len - 1, position_ids.max() - sliding_window_len + 1, 0
                 )
@@ -1126,8 +1128,8 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
         for decoder_layer in self.layers:
             if output_hidden_states:
@@ -1228,8 +1230,8 @@ class QEffGptOssModel(GptOssModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        sin = self.sin_cached[position_ids].unsqueeze(1)
-        cos = self.cos_cached[position_ids].unsqueeze(1)
+        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
 
         for decoder_layer in self.layers:
             if output_hidden_states:
