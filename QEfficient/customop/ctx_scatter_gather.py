@@ -286,56 +286,63 @@ class CtxGatherFuncBlockedKV(torch.autograd.Function):
 def CtxChunkScatterBatch(
     data: onnxscript.FLOAT, position_ids: onnxscript.INT32, updates: onnxscript.FLOAT
 ) -> onnxscript.FLOAT:
-    # Batch version: data [1, BH, T, D], updates [1, BH, QL, D], position_ids [1, BH, QL]
-    # (BH = B*NKVH, static at compile time). Caller folds updates/position_ids onto
-    # the BH axis with plain torch ops *before* calling this op (mirrors the gather
-    # side's ctx_indices/gather_limit fold), so data/updates/position_ids already
-    # share the same leading [1, BH, ...] axes here — this op only builds the
-    # ScatterND indices, it no longer hides an axis-merging fold inside the opaque
-    # custom op. head_flat runs 0..BH-1 in lockstep with the BH axis (index i on
-    # the BH axis carries head_flat==i), so the compiler can prove the BH axis
-    # splits across devices and each device scatters only its own [1, BH/N, ...]
-    # slice — instead of mapping the whole KV$ VA range per layer.
-    bh = ops.Gather(ops.Shape(updates), [1])
+    # Batch version: data [1, BH, T, D], updates [B, NKVH, QL, D], position_ids [B, QL]
+    # (BH = B*NKVH, static at compile time).
+    #
+    # Fold updates/indices onto the BH axis so data, indices and updates all share
+    # the same leading [1, BH, ...] axes. The scatter coords stay [0, head_flat, pos]
+    # but head_flat now runs 0..BH-1 in lockstep with the BH axis (index i on the
+    # BH axis carries head_flat==i), so the compiler can prove the BH axis splits
+    # across devices and each device scatters only its own [1, BH/N, ...] slice —
+    # instead of mapping the whole KV$ VA range per layer.
+    batch_size = ops.Gather(ops.Shape(updates), [0])
+    num_heads = ops.Gather(ops.Shape(updates), [1])
     seq_len = ops.Gather(ops.Shape(updates), [2])
+    head_dim = ops.Gather(ops.Shape(updates), [3])
 
     zero = ops.Constant(value_ints=[0])
     one = ops.Constant(value_ints=[1])
-    exp_shape = ops.Concat(one, bh, seq_len, one, axis=0)  # [1, BH, QL, 1]
+    bh = ops.Mul(batch_size, num_heads)  # BH = B*NKVH
+
+    # updates [B, NKVH, QL, D] -> [1, BH, QL, D]
+    updates_folded = ops.Reshape(updates, ops.Concat(one, bh, seq_len, head_dim, axis=0))
 
     # head_flat = 0..BH-1 along the BH axis: [1, BH, QL, 1]
     head_flat = ops.Range(zero, bh, one)  # [BH]
-    head_flat_exp = ops.Expand(ops.Unsqueeze(head_flat, [0, 2, 3]), exp_shape)  # [1, BH, QL, 1]
+    head_flat_exp = ops.Expand(ops.Unsqueeze(head_flat, [0, 2, 3]),
+                               ops.Concat(one, bh, seq_len, one, axis=0))  # [1, BH, QL, 1]
 
-    # position_ids [1, BH, QL] -> [1, BH, QL, 1]
-    pos_i64 = ops.Cast(position_ids, to=7)
-    pos_exp = ops.Unsqueeze(pos_i64, [3])  # [1, BH, QL, 1]
+    # position_ids [B, QL] -> [1, BH, QL, 1] (each batch's pos tiled over its NKVH heads)
+    pos_i64 = ops.Cast(position_ids, to=7)                              # [B, QL]
+    pos_tiled = ops.Expand(ops.Unsqueeze(pos_i64, [1]),
+                           ops.Concat(batch_size, num_heads, seq_len, axis=0))  # [B, NKVH, QL]
+    pos_exp = ops.Reshape(pos_tiled, ops.Concat(one, bh, seq_len, one, axis=0))  # [1, BH, QL, 1]
 
     # coords [0, head_flat, pos] -> indices [1, BH, QL, 3]
-    # ops.Zeros is not supported by QAIC compiler; use head_flat_exp * 0 for int64 zeros.
     batch_zero = ops.Mul(head_flat_exp, zero)  # [1, BH, QL, 1] of int64 zeros
     indices = ops.Concat(batch_zero, head_flat_exp, pos_exp, axis=3)  # [1, BH, QL, 3]
 
-    return ops.ScatterND(data, indices, updates)
+    return ops.ScatterND(data, indices, updates_folded)
 
 
 class CtxChunkScatterBatchFunc(torch.autograd.Function):
-    """Batch version: data [1, BH, T, D], updates [1, BH, QL, D], position_ids [1, BH, QL].
-    BH = B*NKVH static at compile time. Caller folds updates/position_ids onto the BH
-    axis with plain torch ops before calling apply (mirrors CtxGatherFuncBlockedKVBatch's
-    gather_limit fold) so the fold is visible to the compiler as ordinary Reshape/Expand
-    nodes in the main graph instead of being hidden inside this custom op.
+    """Batch version: data [1, BH, T, D], updates [B, NKVH, QL, D], position_ids [B, QL].
+    BH = B*NKVH static at compile time. Folds updates/indices onto the BH axis so the
+    BH axis stays split-able across devices (mirrors CtxGatherFuncBlockedKVBatch).
     head_flat = b*NKVH + h matches the reshape([B,NKVH,...] -> [1, B*NKVH, ...])
     convention used everywhere else.
     """
 
     @staticmethod
     def forward(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor):
-        BH = data.shape[1]
-        pos = position_ids.long()[0]  # [BH, QL]
-        head_flat_idx = torch.arange(BH, device=data.device).view(BH, 1).expand_as(pos)
+        B, NKVH, QL, D = updates.shape
+        pos = position_ids.long()
+        batch_idx = torch.arange(B, device=data.device).view(B, 1, 1).expand(B, NKVH, QL)
+        head_idx = torch.arange(NKVH, device=data.device).view(1, NKVH, 1).expand(B, NKVH, QL)
+        head_flat_idx = batch_idx * NKVH + head_idx
+        p_idx = pos.unsqueeze(1).expand(B, NKVH, QL)
         out = data.clone()
-        out[0, head_flat_idx, pos] = updates[0]
+        out[0, head_flat_idx, p_idx] = updates
         return out
 
     @staticmethod
@@ -349,7 +356,9 @@ class CtxChunkScatterBatchFunc(torch.autograd.Function):
         position_ids: torch.Value,
         updates: torch.Value,
     ) -> torch.Value:
-        return g.onnxscript_op(CtxChunkScatterBatch, data, position_ids, updates).setTypeAs(data)
+        return g.onnxscript_op(
+            CtxChunkScatterBatch, data, position_ids, updates
+        ).setTypeAs(data)
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qti.aisw.onnx", 1))
