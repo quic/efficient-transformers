@@ -114,7 +114,6 @@ def eager_attention_forward(
     return attn_output, attn_weights
 
 
-
 def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
     """Build packed->original token index."""
     batch_size, seq_len = T2Ei.shape
@@ -307,7 +306,9 @@ class QEffMixtralExperts(MixtralExperts):
             else None
         )
         down_proj_bias = getattr(self, "down_proj_bias", None)
-        self.down_proj_t_bias = nn.Parameter(down_proj_bias.detach(), requires_grad=False) if down_proj_bias is not None else None
+        self.down_proj_t_bias = (
+            nn.Parameter(down_proj_bias.detach(), requires_grad=False) if down_proj_bias is not None else None
+        )
 
 
 class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
@@ -405,7 +406,11 @@ class QEffPrefillChunkedMixtralSparseMoeBlock(MixtralSparseMoeBlock):
             b_u = up_proj_bias.view(local_experts, num_nsp, -1).transpose(0, 1).contiguous()
         else:
             b_g = b_u = None
-        b_d = down_proj_bias.view(local_experts, num_nsp, hidden_dim).transpose(0, 1).contiguous() if down_proj_bias is not None else None
+        b_d = (
+            down_proj_bias.view(local_experts, num_nsp, hidden_dim).transpose(0, 1).contiguous()
+            if down_proj_bias is not None
+            else None
+        )
 
         expert_out = x.new_zeros((num_nsp, T, hidden_dim))
         routing_weights_unsqueezed = rw.unsqueeze(-1)
