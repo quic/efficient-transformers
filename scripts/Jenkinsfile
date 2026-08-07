@@ -42,7 +42,8 @@ pipeline {
         booleanParam(name: 'RUN_QAIC_DIFFUSION', defaultValue: true)
         booleanParam(name: 'RUN_CLI', defaultValue: true)
         booleanParam(name: 'RUN_FINETUNE', defaultValue: false)
-        booleanParam(name: 'RUN_DYNAMO_QAIC', defaultValue: true, description: 'Run dynamo on-QAIC compile/generate tests (torch 2.13)')
+        booleanParam(name: 'RUN_DYNAMO_TESTS', defaultValue: true, description: 'Run dynamo CPU + on-QAIC compile/generate tests (torch 2.13)')
+        booleanParam(name: 'RUN_WEIGHT_FREE_TESTS', defaultValue: true, description: 'Run weight-free CPU + on-QAIC export/compile/generate tests (torch 2.13)')
     }
 
     environment {
@@ -86,7 +87,7 @@ pipeline {
                            mkdir -p $PWD/Non_cli_qaic &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_cli_qaic &&
-                           pytest tests -m '(not on_qaic) and (not finetune) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 4 --junitxml=tests/tests_log1.xml --durations=10 &&
+                           pytest tests -m '(not on_qaic) and (not finetune) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/dynamo --ignore tests/weight_free -n 4 --junitxml=tests/tests_log1.xml --durations=10 &&
                            junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -104,7 +105,7 @@ pipeline {
                            mkdir -p $PWD/Non_qaic_llm &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic_llm &&
-                           pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log2.xml --durations=10 &&
+                           pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/dynamo --ignore tests/weight_free --junitxml=tests/tests_log2.xml --durations=10 &&
                            junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -210,22 +211,92 @@ pipeline {
             }
         }
 
-        stage('QAIC DYNAMO') {
-            when { expression { params.RUN_DYNAMO_QAIC } }
-            steps {
-                timeout(time: 240, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    pip install -r examples/dynamo/causal_lm/requirements.txt &&
-                    mkdir -p \\$PWD/dynamo_qeff_qaic &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=\\$PWD/dynamo_qeff_qaic &&
-                    pytest tests/dynamo -m '(dynamo) and (on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly --dist loadgroup -n auto --junitxml=tests/tests_log_dynamo_qaic.xml --durations=10 &&
-                    junitparser merge tests/tests_log_dynamo_qaic.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
+        stage('Dynamo Tests') {
+            when { expression { params.RUN_DYNAMO_TESTS } }
+            parallel {
+                stage('Dynamo CPU') {
+                    steps {
+                        timeout(time: 60, unit: 'MINUTES') {
+                            sh '''
+                            sudo docker exec ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            pip install -r examples/dynamo/causal_lm/requirements.txt &&
+                            mkdir -p $PWD/dynamo_cpu &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=$PWD/dynamo_cpu &&
+                            pytest tests/dynamo -m '(not on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly -n auto --junitxml=tests/tests_log_dynamo_cpu.xml --durations=10 &&
+                            junitparser merge tests/tests_log_dynamo_cpu.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
+                }
+
+                stage('Dynamo QAIC') {
+                    steps {
+                        timeout(time: 240, unit: 'MINUTES') {
+                            sh '''
+                            sudo docker exec ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            pip install -r examples/dynamo/causal_lm/requirements.txt &&
+                            mkdir -p \\$PWD/dynamo_qeff_qaic &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=\\$PWD/dynamo_qeff_qaic &&
+                            pytest tests/dynamo -m '(on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly --dist loadgroup -n auto --junitxml=tests/tests_log_dynamo_qaic.xml --durations=10 &&
+                            junitparser merge tests/tests_log_dynamo_qaic.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Weight Free Tests') {
+            when { expression { params.RUN_WEIGHT_FREE_TESTS } }
+            parallel {
+                stage('Weight Free CPU') {
+                    steps {
+                        timeout(time: 120, unit: 'MINUTES') {
+                            sh '''
+                            sudo docker exec ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            pip install -r examples/dynamo/causal_lm/requirements.txt &&
+                            mkdir -p $PWD/weight_free_cpu &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=$PWD/weight_free_cpu &&
+                            export HF_HUB_CACHE=/huggingface_hub &&
+                            export HF_HUB_ENABLE_HF_TRANSFER=1 &&
+                            pytest tests/weight_free -m '(not on_qaic) and ${TEST_FILTER}' -n auto --junitxml=tests/tests_log_weight_free_cpu.xml --durations=10 &&
+                            junitparser merge tests/tests_log_weight_free_cpu.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
+                }
+
+                stage('Weight Free QAIC') {
+                    steps {
+                        timeout(time: 360, unit: 'MINUTES') {
+                            sh '''
+                            sudo docker exec ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            pip install -r examples/dynamo/causal_lm/requirements.txt &&
+                            mkdir -p \\$PWD/weight_free_qaic &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=\\$PWD/weight_free_qaic &&
+                            export HF_HUB_CACHE=/huggingface_hub &&
+                            export HF_HUB_ENABLE_HF_TRANSFER=1 &&
+                            pytest tests/weight_free -m '(on_qaic) and ${TEST_FILTER}' --dist loadgroup -n auto --junitxml=tests/tests_log_weight_free_qaic.xml --durations=10 &&
+                            junitparser merge tests/tests_log_weight_free_qaic.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
                 }
             }
         }
