@@ -2045,7 +2045,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         expert_parallel: Optional[bool] = None,
         cores_per_expert: int = 1,
         tree_reduce: bool = False,
-        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         qaic_config: Optional[dict] = None,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
@@ -2142,7 +2141,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     tree_reduce=tree_reduce,
                     moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                     qaic_config=qaic_config,
-                    moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                     kv_cache_prefix=kv_cache_prefix,
                     **compiler_options,
                 )
