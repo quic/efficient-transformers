@@ -518,7 +518,6 @@ class QEFFBaseModel(ABC):
         export_kwargs["custom_translation_table"] = {
             **(export_kwargs.pop("custom_translation_table", None) or {}),
             **DYNAMO_CUSTOM_OP_TABLE,
-            **_build_blocked_translation_table(self.model),
         }
 
         prev_invoke_fallback = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
@@ -600,6 +599,8 @@ class QEFFBaseModel(ABC):
             self.weight_spec_path = str(_weight_spec_path) if _weight_spec_path.is_file() else None
             return onnx_path
 
+        # check if the model is in meta state or weights are offloaded
+        self._model_offloaded_check()
         export_dir.mkdir(parents=True, exist_ok=True)
 
         def _resolve_pkv_layers(pkv_obj):
