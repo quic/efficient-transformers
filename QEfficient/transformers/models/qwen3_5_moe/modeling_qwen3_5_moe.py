@@ -741,9 +741,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         v_head_dim = value.shape[-1]
         effective_sequence_length = sequence_length
         forced_unroll_seq = int(getattr(self, "qeff_force_unroll_seq", 0) or 0)
-        import ipdb
 
-        ipdb.set_trace()
         # Export-only override to force a larger unrolled chunk loop count in ONNX
         # while keeping runtime outputs trimmed to the true sequence length.
         if torch.onnx.is_in_onnx_export() and forced_unroll_seq > 0:
