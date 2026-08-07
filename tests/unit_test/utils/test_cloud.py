@@ -226,6 +226,15 @@ class TestExecuteFunctionSignatures:
         sig = inspect.signature(main)
         assert "local_model_dir" in sig.parameters
 
+    def test_device_group_warns_about_next_release(self, monkeypatch):
+        import QEfficient.cloud.execute as execute
+
+        monkeypatch.setattr(execute, "load_hf_tokenizer", MagicMock())
+        monkeypatch.setattr(execute, "cloud_ai_100_exec_kv", MagicMock())
+
+        with pytest.warns(FutureWarning, match="renamed to device_ids in the next release"):
+            execute.main(model_name="gpt2", qpc_path="/path/to/qpc", device_group=[0])
+
 
 # ---------------------------------------------------------------------------
 # Tests: infer.py - function signatures
