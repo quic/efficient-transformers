@@ -4110,6 +4110,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 dynamo=dynamo,
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
                 prefill_only=prefill_only,
+                rename_onnx_nodes=kwargs.get("rename_onnx_nodes", False),
+                onnx_transform_kwargs=kwargs.get("onnx_transform_kwargs"),
             )
 
     def build_prefill_specialization(
