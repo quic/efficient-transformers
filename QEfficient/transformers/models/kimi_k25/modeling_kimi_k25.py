@@ -529,7 +529,18 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             default_image_idx = torch.clamp(merged_image_tokens - 1, min=0)
             input_batch = torch._shape_as_tensor(input_ids)[:1].view(1, 1).to(device=image_idx.device)
             image_idx_batch = torch._shape_as_tensor(image_idx)[:1].view(1, 1).to(device=image_idx.device)
-            use_default_image_idx = torch.logical_and(torch.logical_not(selected_any), input_batch != image_idx_batch)
+
+            if position_ids is None:
+                post_media_position = torch.zeros_like(image_idx, dtype=torch.bool)
+            else:
+                post_media_position = position_ids[:, :1].to(device=image_idx.device) >= torch.full_like(image_idx, 7)
+            use_default_image_idx = torch.logical_and(
+                torch.logical_not(selected_any),
+                torch.logical_or(
+                    input_batch != image_idx_batch,
+                    torch.logical_and(post_media_position, image_idx < default_image_idx),
+                ),
+            )
             effective_image_idx = torch.where(use_default_image_idx, default_image_idx, image_idx)
             if position_ids is None:
                 position_ids = merged_position_ids

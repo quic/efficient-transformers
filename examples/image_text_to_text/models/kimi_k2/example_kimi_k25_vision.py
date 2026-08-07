@@ -20,7 +20,7 @@ from PIL import Image
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-LOAD_KIMI_UTILS_PATH = Path(__file__).resolve().parents[2] / "tests" / "utils" / "load_kimi_utils.py"
+LOAD_KIMI_UTILS_PATH = Path(__file__).resolve().parents[4] / "tests" / "utils" / "load_kimi_utils.py"
 _load_kimi_spec = importlib.util.spec_from_file_location("load_kimi_utils", LOAD_KIMI_UTILS_PATH)
 if _load_kimi_spec is None or _load_kimi_spec.loader is None:
     raise ImportError(f"Unable to load Kimi helpers from {LOAD_KIMI_UTILS_PATH}")
@@ -41,6 +41,7 @@ PREFILL_SEQ_LEN = 512
 CTX_LEN = 2048
 BS = 1
 GENERATION_LEN = 10
+qaic_config = {"mla_absorption": {"cache_compressed": True, "absorption": False, "online": False}}
 
 
 def parse_args():
@@ -78,7 +79,7 @@ def parse_args():
     parser.add_argument("--generation-len", type=int, default=GENERATION_LEN)
     parser.add_argument("--num-cores", type=int, default=16)
     parser.add_argument("--vision-num-devices", type=int, default=1)
-    parser.add_argument("--lang-num-devices", type=int, default=4)
+    parser.add_argument("--lang-num-devices", type=int, default=1)
     parser.add_argument("--mxfp6-matmul", action="store_true")
     parser.add_argument("--mxint8-kv-cache", action="store_true")
     args = parser.parse_args()
@@ -168,7 +169,6 @@ def _compile_disagg_qpcs(qeff_model: QEFFAutoModelForImageTextToText, args, imag
     prefill_qpc_path = qeff_model.compile(
         prefill_seq_len=args.prefill_seq_len,
         prefill_only=True,
-        enable_chunking=True,
         skip_vision=True,
         skip_lang=False,
         num_devices=args.lang_num_devices,
@@ -351,7 +351,6 @@ def _prepare_inputs(processor, args):
 def main():
     args = parse_args()
     model, tokenizer, processor = _load_model(args)
-    qaic_config = {"mla_absorption": {"cache_compressed": True, "absorption": False, "online": False}}
     qeff_model = QEFFAutoModelForImageTextToText(
         model,
         kv_offload=True,

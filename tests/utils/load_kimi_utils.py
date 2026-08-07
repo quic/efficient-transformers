@@ -21,6 +21,7 @@ from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from safetensors.torch import save_file
 from transformers import AutoConfig, AutoProcessor, AutoTokenizer
+from transformers.cache_utils import Cache, DynamicCache
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 KIMI_K25_MODEL_NAME = "moonshotai/Kimi-K2.5"
@@ -98,6 +99,44 @@ def patch_deepseek_init_weights_compat(kimi_cls):
     deepseek_cls._qeff_kimi_k25_init_weights_patched = True
     deepseek_cls._qeff_test_init_weights_patched = True
     deepseek_cls._qeff_t55_init_weights_patched = True
+
+
+def patch_dynamic_cache_compat():
+    if not hasattr(DynamicCache, "from_legacy_cache"):
+
+        @classmethod
+        def _from_legacy_cache(cls, legacy_cache):
+            if legacy_cache is None:
+                return cls()
+            if isinstance(legacy_cache, cls):
+                return legacy_cache
+            if isinstance(legacy_cache, Cache):
+                return cls(ddp_cache_data=[tuple(layer[:2]) for layer in legacy_cache])
+
+            ddp_cache_data = []
+            for layer in legacy_cache:
+                if layer is None:
+                    continue
+                if len(layer) < 2:
+                    raise ValueError("Each legacy cache layer must provide key/value tensors.")
+                ddp_cache_data.append((layer[0], layer[1]))
+            return cls(ddp_cache_data=ddp_cache_data)
+
+        DynamicCache.from_legacy_cache = _from_legacy_cache
+
+    if not hasattr(DynamicCache, "to_legacy_cache"):
+
+        def _to_legacy_cache(self):
+            return tuple((layer[0], layer[1]) for layer in self)
+
+        DynamicCache.to_legacy_cache = _to_legacy_cache
+
+    if not hasattr(DynamicCache, "get_max_length"):
+
+        def _get_max_length(self):
+            return None
+
+        DynamicCache.get_max_length = _get_max_length
 
 
 def load_kimi_k25_class(model_path_or_name):

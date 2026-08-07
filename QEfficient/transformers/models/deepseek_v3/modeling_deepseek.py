@@ -783,7 +783,7 @@ class QEffDeepseekV3Attention(nn.Module):
             )
 
 
-EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
+EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "2"))
 EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
 
 
@@ -1286,7 +1286,6 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
 
         for chunk_idx in range(num_q_ffn_blocks):
-            print("executing chunk", chunk_idx)
             packed_start = chunk_idx * packed_chunk_size
             if chunk_idx == num_q_ffn_blocks - 1:
                 packed_stop = seq_len
@@ -1323,7 +1322,16 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
 
             rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
             old_expert_out = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
-            chunk_valid_rows = torch.clamp(valid_rows - packed_start, min=0, max=packed_chunk_size)
+            valid_rows_delta = valid_rows - packed_start
+            chunk_valid_rows = torch.where(
+                valid_rows_delta < 0,
+                torch.zeros_like(valid_rows_delta),
+                torch.where(
+                    valid_rows_delta > packed_chunk_size,
+                    torch.full_like(valid_rows_delta, packed_chunk_size),
+                    valid_rows_delta,
+                ),
+            )
             current_expert_out = (
                 torch.where(
                     (row_range < chunk_valid_rows).unsqueeze(-1),
@@ -1346,11 +1354,10 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
     ) -> torch.Tensor:
         T, H = x.shape
         num_nsp = EXPERT_BLOCKING_NUM_NSP
-        if len(self.experts) % num_nsp != 0:
-            raise ValueError(
-                f"num_experts ({len(self.experts)}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})"
-            )
-        local_experts = len(self.experts) // num_nsp
+        num_experts = len(self.experts) if hasattr(self, "experts") else self.all_gate_qweight.shape[0]
+        if num_experts % num_nsp != 0:
+            raise ValueError(f"num_experts ({num_experts}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})")
+        local_experts = num_experts // num_nsp
         routing_weights_unsqueezed = routing_weights.unsqueeze(-1)
         expert_out = x.new_zeros((num_nsp, T, H))
 
@@ -1414,7 +1421,6 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
             .contiguous()
         )
         for slot in range(local_experts):
-            print(f"executing slot {slot}")
             T2Ei = local_T2E[:, slot, :]
             expert_out = self._cumsum_scatter_gather_update_expert_blocked(
                 x=x,
@@ -1443,9 +1449,10 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         T = B * S
         x = hidden_states.view(T, H)
 
-        if len(self.experts) % EXPERT_BLOCKING_NUM_NSP == 0:
+        num_experts = len(self.experts) if hasattr(self, "experts") else self.all_gate_qweight.shape[0]
+        if num_experts % EXPERT_BLOCKING_NUM_NSP == 0:
             expert_ids = torch.arange(
-                len(self.experts) // EXPERT_BLOCKING_NUM_NSP,
+                num_experts // EXPERT_BLOCKING_NUM_NSP,
                 device=x.device,
                 dtype=topk_idx.dtype,
             ).unsqueeze(0) * EXPERT_BLOCKING_NUM_NSP + torch.arange(

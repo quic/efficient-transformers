@@ -2518,9 +2518,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             if self._write_io_dir is not None:
                 write_io_files(lang_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
 
-        if "image_idx_output" in outputs:
-            lang_inputs["image_idx"] = chunk_inputs["image_idx"]
-
         prefill_time = perf_counter() - lang_start + vision_end - vision_start
         # Skip inputs/outputs again
         lang_session.skip_buffers(
@@ -3714,23 +3711,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
     ) -> int:
         self.hash_params["prefill_only"] = True
+        compile_seq_len = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        num_packed_chunks = max(1, -(-compile_seq_len // moe_prefill_packed_chunk_size))
+        for module in self.model.modules():
+            if getattr(module, "supports_moe_prefill_blocking", False):
+                module.expert_blocking_num_nsp = num_cores
+                module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
+                module.expert_blocking_num_packed_chunks = num_packed_chunks
+        self.hash_params["moe_prefill_num_nsp"] = num_cores
+        self.hash_params["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
+        self.hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
+        if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe", "kimi_k2", "kimi_k25"}:
+            return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+
         if enable_chunking:
             self.hash_params["chunking"] = True
-            compile_seq_len = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-            num_packed_chunks = max(1, -(-compile_seq_len // moe_prefill_packed_chunk_size))
-            for module in self.model.modules():
-                if getattr(module, "supports_moe_prefill_blocking", False):
-                    module.expert_blocking_num_nsp = num_cores
-                    module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
-                    module.expert_blocking_num_packed_chunks = num_packed_chunks
-            self.hash_params["moe_prefill_num_nsp"] = num_cores
-            self.hash_params["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
-            self.hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
-            if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe"}:
-                return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-            seq_len = max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-            self.hash_params["chunking_seq_len"] = seq_len
-            return seq_len
+            return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
         num_q_blocks = (
             self.hash_params["blocking_config"].num_q_blocks if self.hash_params.get("blocking_kwargs", None) else None
@@ -3896,13 +3892,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
             if prefill_only:
+                if not enable_chunking and self.continuous_batching:
+                    raise NotImplementedError(
+                        "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
+                    )
                 self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
                 self.hash_params.pop("retain_full_kv", None)
                 if "DeepseekV3ForCausalLM" not in (getattr(self.model.config, "architectures", None) or []):
-                    if not enable_chunking and self.continuous_batching:
-                        raise NotImplementedError(
-                            "Looks like you are trying to run prefix-caching without chunking, this feature is not available yet!"
-                        )
                     seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
                         prefill_seq_len=prefill_seq_len,
                         enable_chunking=enable_chunking,
@@ -3913,9 +3909,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     kv_cache_shape[2] = (
                         seq_len + (sliding_window if sliding_window is not None else 0) if enable_chunking else seq_len
                     )
-                else:
-                    seq_len = max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-                    self.hash_params["chunking_seq_len"] = seq_len
 
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
