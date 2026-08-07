@@ -1,0 +1,9 @@
+{
+  "default": {
+    "prefill_time":    {"percentage_tolerance": 5.0},
+    "decode_perf":     {"percentage_tolerance": 5.0},
+    "onnx_size_bytes": {"percentage_tolerance": 5.0},
+    "qpc_size_bytes":  {"percentage_tolerance": 5.0}
+  },
+  "per_model": {}
+}

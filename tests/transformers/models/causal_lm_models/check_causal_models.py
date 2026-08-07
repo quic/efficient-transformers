@@ -105,6 +105,8 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     mdp_num_partitions: Optional[int] = None,
     mdp_strategy: Optional[str] = None,
     use_onnx_subfunctions: bool = False,
+    perf_recorder=None,
+    request=None,
 ):
     torch.manual_seed(42)
     replace_transformers_quantizers()
@@ -215,6 +217,16 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
 
     # Generate
     exec_info = qeff_model.generate(tokenizer, prompts=prompts)
+
+    if perf_recorder is not None:
+        perf_recorder.record(
+            model_name=model_name,
+            exec_info=exec_info,
+            config={"batch_size": batch_size, "seq_len": ctx_len, "decode": "greedy"},
+            onnx_path=onnx_model_path,
+            qpc_path=qpc_path,
+            request=request,
+        )
 
     if continuous_batching:
         cloud_ai_100_tokens = exec_info.generated_ids
