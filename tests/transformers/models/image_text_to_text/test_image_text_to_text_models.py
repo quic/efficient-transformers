@@ -49,6 +49,7 @@ with open(CONFIG_PATH, "r") as f:
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
 test_mm_moe_models = [model["model_name"] for model in multimodal_models if "moe" in model.get("model_type", "")]
+test_mm_blocking_models = [model["model_name"] for model in multimodal_models if model.get("supports_blocking")]
 
 NEW_GENERATION_TOKENS = 10
 
@@ -70,6 +71,9 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     mdp_num_partitions: Optional[int] = None,
     mdp_strategy: Optional[str] = None,
     use_onnx_subfunctions: bool = False,
+    comp_ctx_lengths_prefill: Optional[List[int]] = None,
+    comp_ctx_lengths_decode: Optional[List[int]] = None,
+    ccl_enabled: bool = False,
 ):
     prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
@@ -83,6 +87,12 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     ort_tokens = None
     n_layer = num_hidden_layers
     qaic_config = copy.deepcopy(qaic_config) if qaic_config is not None else None
+    # CCL is opted into via qaic_config["ccl_enabled"], which the dual-QPC wrapper reads at
+    # construction time. Merge rather than assign so a caller-supplied qaic_config (e.g. the
+    # num_replicate_kv_heads injected below for test_kv_replicate) survives.
+    if ccl_enabled or comp_ctx_lengths_prefill or comp_ctx_lengths_decode:
+        qaic_config = qaic_config or {}
+        qaic_config["ccl_enabled"] = True
     if config is None:
         config = AutoConfig.from_pretrained(
             model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS
@@ -151,6 +161,12 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         "use_onnx_subfunctions": use_onnx_subfunctions,
         "split-model-io": True,
     }
+
+    # Left as None when CCL is auto-generated: compile() derives both lists from ctx_len.
+    if comp_ctx_lengths_prefill is not None:
+        compile_kwargs["comp_ctx_lengths_prefill"] = comp_ctx_lengths_prefill
+    if comp_ctx_lengths_decode is not None:
+        compile_kwargs["comp_ctx_lengths_decode"] = comp_ctx_lengths_decode
 
     mdp_compile_kwargs = {}
     if mdp_num_partitions is not None:
@@ -414,6 +430,152 @@ def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_o
             kv_offload=kv_offload,
             manual_cleanup=manual_cleanup,
         )
+
+
+def _run_dummy_dual_qpc_case(model_name, manual_cleanup, **kwargs):
+    """Run one dummy-layer dual-QPC case, resolving the config the same way for every variant.
+
+    ``STANDARD_VLM_MODELS`` are built from a synthesized ``AutoConfig`` (random weights at
+    the config's declared sizes); the rest carry a ``num_layers`` override applied to the
+    checkpoint's own config. Both branches otherwise share the same call, so the per-variant
+    knobs are passed through ``kwargs``.
+    """
+    if model_name in ModelConfig.STANDARD_VLM_MODELS:
+        model_type = model_config_dict[model_name].get("model_type", None)
+        custom_config = model_config_dict[model_name].get("additional_params", {})
+        hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
+        hf_config.name_or_path = model_name
+        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+            model_name,
+            kv_offload=True,
+            config=hf_config,
+            manual_cleanup=manual_cleanup,
+            **kwargs,
+        )
+    else:
+        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+            model_name,
+            num_hidden_layers=model_config_dict[model_name]["num_layers"],
+            kv_offload=True,
+            manual_cleanup=manual_cleanup,
+            **kwargs,
+        )
+
+
+@pytest.mark.dummy_layers
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        pytest.param(
+            m,
+            marks=pytest.mark.xfail(
+                reason="Pre-existing dummy-layer parity/config gap unrelated to CCL.",
+                strict=False,
+            ),
+        )
+        if m
+        in {
+            "Qwen/Qwen2.5-VL-3B-Instruct",
+            "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        }
+        else m
+        for m in test_mm_models
+    ],
+)
+def test_dummy_image_text_to_text_ccl_dual_qpc(model_name, manual_cleanup):
+    """Compute-context-length (CCL) parity for every VLM, dual QPC only.
+
+    CCL only changes the language-side specializations, and the prefill/decode QPC
+    split that consumes them exists solely on the dual-QPC path, so this runs
+    ``kv_offload=True`` for all models rather than parametrizing over both.
+
+    CCL values default to automatic generation from each model's ``ctx_len``. A model
+    opts into explicit values with a ``comp_ctx_lengths_decode`` entry in
+    ``image_text_model_configs.json``; a multi-value list is what pins the
+    disagg prefill/decode specialization slicing, since a single-value list cannot
+    distinguish a correct slice from one truncated to a single specialization.
+
+    Qwen2.5-VL and Llama-4-Scout are xfailed rather than skipped so the dual-QPC CCL
+    plumbing is still exercised on those model paths. Their dummy-layer HF-vs-QAIC
+    token parity is a pre-existing gap unrelated to CCL: Qwen2.5-VL's random-init
+    1-layer config yields near-flat decode logits (HF top1-top2 margin <0.11 on most
+    positions), which fp16 rounding at the QPC flips into a different top-K member
+    on those steps; Llama-4-Scout's dummy ``rope_scaling`` lacks the ``factor`` key
+    required by ``_compute_llama3_parameters``, so construction fails before compile.
+    """
+    ccl_forced = {
+        "Qwen/Qwen2.5-VL-3B-Instruct",
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+    }
+    if model_name in ModelConfig.SKIPPED_MODELS and model_name not in ccl_forced:
+        pytest.skip("Test skipped for this model due to some issues.")
+
+    torch.manual_seed(42)
+    comp_ctx_lengths_decode = model_config_dict[model_name].get("comp_ctx_lengths_decode")
+    _run_dummy_dual_qpc_case(
+        model_name,
+        manual_cleanup,
+        ccl_enabled=True,
+        comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+    )
+
+
+@pytest.mark.dummy_layers
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("model_name", test_mm_blocking_models)
+def test_dummy_image_text_to_text_blocking_dual_qpc(model_name, manual_cleanup):
+    """Blocked-KV attention parity for VLMs, dual QPC only.
+
+    Mirrors ``test_per_pr_causal_fp16_subfunction_cb_blocking`` on the causal-LM side.
+    Blocking rewrites the language-side attention forward, so this runs ``kv_offload=True``.
+
+    Parametrized over models flagged ``supports_blocking`` in
+    ``image_text_model_configs.json`` rather than every VLM: ``BlockingAttentionTransform``
+    attaches ``attn_blocking_config`` to every mapped ``*Attention`` module, but only some
+    attention forwards read it. Running the families that ignore it would pass while
+    exercising nothing.
+    """
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to some issues.")
+
+    torch.manual_seed(42)
+    _run_dummy_dual_qpc_case(
+        model_name,
+        manual_cleanup,
+        qaic_config={"enable_blocking": True, "num_kv_blocks": 2},
+    )
+
+
+@pytest.mark.dummy_layers
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("model_name", test_mm_models)
+def test_dummy_image_text_to_text_bf16_compile_only(model_name, manual_cleanup):
+    """BF16 export + compile for VLMs, dual QPC only.
+
+    Mirrors ``test_per_pr_causal_bf16_subfunction_cb_ccl_compile_only``. Kept
+    ``compile_only`` so the extra coverage costs an export/compile and no device run.
+
+    A family whose BF16 compile is known-broken opts out with a
+    ``known_bf16_compile_issue`` entry in ``image_text_model_configs.json``, so the gap
+    stays visible as an xfail instead of disappearing into ``SKIPPED_MODELS`` (which would
+    drop that model from every other VLM test too).
+    """
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to some issues.")
+    if bf16_issue := model_config_dict[model_name].get("known_bf16_compile_issue"):
+        pytest.xfail(bf16_issue)
+
+    torch.manual_seed(42)
+    _run_dummy_dual_qpc_case(
+        model_name,
+        manual_cleanup,
+        torch_dtype=torch.bfloat16,
+        compile_only=True,
+    )
 
 
 @pytest.mark.on_qaic

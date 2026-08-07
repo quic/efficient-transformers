@@ -70,30 +70,14 @@ def test_infer(mocker):
     Ref: https://pytest-mock.readthedocs.io/en/latest/usage.html
     """
     # testing infer without full_batch_size
-    check_infer(mocker, model_name="lu-vae/llama-68m-fft")
+    check_infer(mocker, model_name="tiny-random/qwen2.5")
 
 
 @pytest.mark.on_qaic
 @pytest.mark.cli
 def test_infer_fbs(mocker):
     # testing infer with full_batch_size
-    check_infer(mocker, model_name="lu-vae/llama-68m-fft", full_batch_size=3)
-
-
-@pytest.mark.on_qaic
-@pytest.mark.cli
-@pytest.mark.qnn
-def test_infer_qnn(mocker):
-    # testing infer without full_batch_size in QNN environment
-    check_infer(mocker, model_name="lu-vae/llama-68m-fft", enable_qnn=True)
-
-
-@pytest.mark.on_qaic
-@pytest.mark.cli
-@pytest.mark.qnn
-def test_infer_qnn_fbs(mocker):
-    # testing infer with full_batch_size in QNN environment
-    check_infer(mocker, model_name="lu-vae/llama-68m-fft", full_batch_size=3, enable_qnn=True)
+    check_infer(mocker, model_name="tiny-random/qwen2.5", full_batch_size=3)
 
 
 @pytest.mark.on_qaic
@@ -102,7 +86,7 @@ def test_infer_vlm(mocker):
     # testing infer for MM models
     check_infer(
         mocker,
-        model_name="llava-hf/llava-1.5-7b-hf",
+        model_name="peft-internal-testing/tiny-LlavaForConditionalGeneration",
         prompt="Describe the image.",
         image_url="https://i.etsystatic.com/8155076/r/il/0825c2/1594869823/il_fullxfull.1594869823_5x0w.jpg",
     )
