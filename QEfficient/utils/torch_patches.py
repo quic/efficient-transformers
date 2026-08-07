@@ -43,6 +43,7 @@ except ModuleNotFoundError:
 # Store original references before patching
 _original_setup_trace_module_map = onnx_utils._setup_trace_module_map
 _original_get_module_attributes = getattr(onnx_utils, "_get_module_attributes", None)
+_original_model_to_graph = onnx_utils._model_to_graph
 _original_track_scope_attrs = getattr(_C, "_jit_pass_onnx_track_scope_attributes", None)
 _original_ts_setup_trace_module_map = ts_utils._setup_trace_module_map if _ts_utils_available else None
 _original_ts_get_module_attributes = getattr(ts_utils, "_get_module_attributes", None) if _ts_utils_available else None
@@ -92,6 +93,35 @@ _SAFE_EXPORT_PASS_REPLACEMENTS = {
     "_jit_pass_onnx_graph_shape_type_inference": _noop,
     "_jit_pass_onnx_deduplicate_initializers": _return_params,
 }
+
+
+def _model_to_graph_patched(model, *args, **kwargs):
+    """Preserve model parameter names through TorchScript ONNX export."""
+    graph, params_dict, torch_out = _original_model_to_graph(model, *args, **kwargs)
+
+    parameter_names = {}
+    for name, parameter in model.named_parameters():
+        if parameter.numel():
+            parameter_names.setdefault(parameter.data_ptr(), name)
+
+    graph_inputs = {value.debugName(): value for value in graph.inputs()}
+    renamed_params = {}
+    for old_name, parameter in params_dict.items():
+        new_name = parameter_names.get(parameter.data_ptr())
+        graph_input = graph_inputs.get(old_name)
+        if (
+            old_name.startswith("onnx::")
+            and new_name
+            and new_name not in params_dict
+            and new_name not in renamed_params
+            and graph_input is not None
+        ):
+            graph_input.setDebugName(new_name)
+        else:
+            new_name = old_name
+        renamed_params[new_name] = parameter
+
+    return graph, renamed_params, torch_out
 
 
 def _setup_trace_module_map_patched(
@@ -264,6 +294,7 @@ def apply_torch_patches():
 
     # Patch onnx_utils (used by both TorchScript and as fallback)
     onnx_utils._setup_trace_module_map = _setup_trace_module_map_patched
+    onnx_utils._model_to_graph = _model_to_graph_patched
     if hasattr(onnx_utils, "_get_module_attributes"):
         onnx_utils._get_module_attributes = _get_module_attributes
 
@@ -287,6 +318,7 @@ def undo_torch_patches():
         return
 
     onnx_utils._setup_trace_module_map = _original_setup_trace_module_map
+    onnx_utils._model_to_graph = _original_model_to_graph
     if _original_get_module_attributes:
         onnx_utils._get_module_attributes = _original_get_module_attributes
 
