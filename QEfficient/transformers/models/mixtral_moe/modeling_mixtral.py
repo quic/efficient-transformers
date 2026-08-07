@@ -289,7 +289,6 @@ class QEffMixtralExperts(MixtralExperts):
         self.expert_dim = getattr(self, "intermediate_dim", self.gate_up_proj.shape[-2] // 2)
         gate_up_proj = self.gate_up_proj.detach()
         down_proj = self.down_proj.detach()
-        # import ipdb; ipdb.set_trace()
         # Keep zero-copy aliases as Parameters (no clone) to avoid duplicating weights.
         self.gate_proj = nn.Parameter(gate_up_proj[:, : self.expert_dim, :].transpose(1, 2), requires_grad=False)
         self.up_proj = nn.Parameter(gate_up_proj[:, self.expert_dim :, :].transpose(1, 2), requires_grad=False)
