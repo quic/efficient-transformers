@@ -133,6 +133,5 @@ for i in range(generation_len - 2):
         }
     )
 ft = time.time()
-
 print(f"decode tok/sec={(generation_len - 2) / (ft - st)}")
 print(f"input\n{prompt}\noutput\n{tokenizer.decode(all_outputs)}")
