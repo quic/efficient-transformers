@@ -30,6 +30,12 @@ from transformers.models.gemma4.modeling_gemma4 import (
     repeat_kv,
 )
 
+from QEfficient.blocking.attention_blocking import (
+    AttentionBlockingConfig,
+    BlockingMode,
+    generic_blocked_attention_interface,
+    prefill_blocked_attention_interface,
+)
 from QEfficient.customop.ctx_scatter_gather import (
     CtxGatherFunc3DGeneralized,
     CtxScatterFunc3DGeneralized,
@@ -377,7 +383,8 @@ def _cumsum_scatter_gather_update_expert_blocked(
     routing_weight: torch.Tensor,
     expert_out: torch.Tensor,
     act_fn,
-    num_packed_chunks: int,
+    packed_chunk_size: int,
+    num_packed_chunks: Optional[int] = None,
 ) -> torch.Tensor:
     """Cumsum-scatter-gather-update expert helper for NSP-blocked dispatch.
 
@@ -386,22 +393,24 @@ def _cumsum_scatter_gather_update_expert_blocked(
     scatters the weighted output back to original token positions.
     """
     batch_size, seq_len = T2Ei.shape
-    num_packed_chunks = max(1, int(num_packed_chunks))
-    assert seq_len % num_packed_chunks == 0, (
-        f"seq_len={seq_len} must be divisible by num_packed_chunks={num_packed_chunks}"
-    )
-    packed_chunk_size = seq_len // num_packed_chunks
+    packed_chunk_size = max(1, int(packed_chunk_size))
+    if num_packed_chunks is None:
+        packed_chunk_size = min(packed_chunk_size, seq_len)
+        num_packed_chunks = max(1, -(-seq_len // packed_chunk_size))
+    else:
+        num_packed_chunks = max(1, int(num_packed_chunks))
     matched_idx = _build_matched_idx_from_cumsum(T2Ei)
+    total_packed_rows = packed_chunk_size * num_packed_chunks
+    if total_packed_rows > seq_len:
+        int32_max = torch.iinfo(torch.int32).max
+        pad = matched_idx.new_full((batch_size, total_packed_rows - seq_len), int32_max)
+        matched_idx = torch.cat((matched_idx, pad), dim=1)
     valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
+    row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
-    for chunk_idx in range(num_packed_chunks):
-        packed_start = chunk_idx * packed_chunk_size
-        if chunk_idx == num_packed_chunks - 1:
-            packed_stop = seq_len
-        else:
-            packed_stop = packed_start + packed_chunk_size
-        chunk_rows = packed_stop - packed_start
-        row_range = torch.arange(chunk_rows, dtype=torch.int32, device=x.device).unsqueeze(0)
+    for packed_idx in range(num_packed_chunks):
+        packed_start = packed_idx * packed_chunk_size
+        packed_stop = packed_start + packed_chunk_size
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
         x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
         gate_prime = x_chunk @ W_g
@@ -479,7 +488,8 @@ class QEffPrefillChunkedGemma4TextExperts(Gemma4TextExperts):
 
         T = x.shape[0]
 
-        num_packed_chunks = getattr(self, "expert_blocking_packed_chunk_size", T)
+        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
+        num_packed_chunks = getattr(self, "expert_blocking_num_packed_chunks", None)
 
         # Build dense routing weights [T, E] from top-k indices/weights
         expert_weights = torch.zeros(
@@ -510,6 +520,7 @@ class QEffPrefillChunkedGemma4TextExperts(Gemma4TextExperts):
                 routing_weight=routing_weights_unsqueezed[:, slot],
                 expert_out=expert_out,
                 act_fn=self.act_fn,
+                packed_chunk_size=packed_chunk_size,
                 num_packed_chunks=num_packed_chunks,
             )
         expert_output = torch.einsum("ijk->jk", expert_out)
@@ -586,6 +597,19 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
         token_key_states = None
         token_value_states = None
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+        num_kv_shared_layers = int(getattr(self.config, "num_kv_shared_layers", 0) or 0)
+        disable_blocking_for_store_full_kv = self.store_full_length_kv and num_kv_shared_layers > 0
+        use_blocking = (
+            blocking_config is not None
+            and (blocking_config.mode != BlockingMode.NONE)
+            and not self.is_kv_shared_layer
+            and not disable_blocking_for_store_full_kv
+            and not (
+                self.sliding_window is not None
+                and ("kv" in blocking_config.mode or blocking_config.mode == BlockingMode.HQ)
+            )
+        )
 
         cos, sin = position_embeddings
 
@@ -613,6 +637,63 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
             value_states = self.v_norm(value_states)
             value_states = value_states.transpose(1, 2)
             token_key_states, token_value_states = key_states, value_states
+
+        if use_blocking:
+            if (
+                mm_token_type_ids is not None
+                and hidden_states.shape[1] != 1
+                and getattr(self.config, "use_bidirectional_attention", None) == "vision"
+            ):
+                attention_mask = _build_bidirectional_vision_attention_mask(
+                    position_ids=position_ids,
+                    mm_token_type_ids=mm_token_type_ids,
+                    target_length=key_states.shape[-2],
+                    dtype=query_states.dtype,
+                    sliding_window=self.sliding_window,
+                )
+
+            past_seen_tokens = (
+                int(past_key_values.get_seq_length(self.layer_idx))
+                if past_key_values is not None
+                else int(key_states.shape[-2])
+            )
+            use_prefill = blocking_config.prefill_blocking_mode is not None
+            if not use_prefill:
+                attn_output, attn_weights = generic_blocked_attention_interface(
+                    module=self,
+                    query=query_states,
+                    key=key_states,
+                    value=value_states,
+                    attention_mask=attention_mask,
+                    scaling=self.scaling,
+                    layer_idx=self.layer_idx,
+                    past_key_value=past_key_values,
+                    blocking_config=blocking_config,
+                    comp_ctx_lengths=comp_ctx_lengths,
+                    batch_index=batch_index,
+                    position_ids=position_ids,
+                    past_seen_tokens=past_seen_tokens,
+                    sliding_window=self.sliding_window,
+                )
+            else:
+                attn_output, attn_weights = prefill_blocked_attention_interface(
+                    module=self,
+                    query=query_states,
+                    k_cache=key_states,
+                    v_cache=value_states,
+                    attention_mask=attention_mask,
+                    scaling=self.scaling,
+                    layer_idx=self.layer_idx,
+                    past_key_value=past_key_values,
+                    blocking_config=blocking_config,
+                    comp_ctx_lengths=comp_ctx_lengths,
+                    batch_index=batch_index,
+                    position_ids=position_ids,
+                    past_seen_tokens=past_seen_tokens,
+                )
+            attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+            attn_output = self.o_proj(attn_output)
+            return attn_output, attn_weights
 
         if past_key_values is not None:
             if comp_ctx_lengths is not None:
