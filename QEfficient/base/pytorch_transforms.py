@@ -5,7 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 from types import MethodType
-from typing import Callable, Dict, Tuple, Type
+from typing import Callable, Dict, Optional, Tuple, Type
 
 from torch import nn
 
@@ -97,6 +97,7 @@ class ModuleMutatorTransform(PytorchTransform):
     """
 
     _match_class: nn.Module
+    _match_string: Optional[str] = None
 
     @classmethod
     def apply(cls, model: nn.Module) -> Tuple[nn.Module, bool]:
@@ -135,7 +136,14 @@ class ExternalModuleMapperTransform(PytorchTransform):
                 repl_method_map := cls._match_string_replace_method.get(module.__class__.__name__)
             ):
                 for orig_method_name, mapped_method in repl_method_map.items():
-                    setattr(module, orig_method_name, MethodType(mapped_method, module))
+                    parts = orig_method_name.split(".")
+                    if len(parts) > 1:
+                        target = module
+                        for part in parts[:-1]:
+                            target = getattr(target, part)
+                        setattr(target, parts[-1], MethodType(mapped_method, target))
+                    else:
+                        setattr(module, orig_method_name, MethodType(mapped_method, module))
 
                     if hasattr(module, "__qeff_init__"):
                         module.__qeff_init__()
