@@ -24,7 +24,10 @@ def _public_retained_state_name(output_name: str) -> Optional[str]:
 
 def is_retained_state_name(name: str) -> bool:
     """Return True when an I/O binding participates in retained-state cache flow."""
-    return name.startswith(("past_", "conv_state.", "recurrent_state.", "compressed_", "k_pe"))
+    name = name.rsplit("/", 1)[-1]
+    return name.startswith(("past_", "conv_state.", "recurrent_state.", "compressed_", "k_pe")) or name.endswith(
+        ("_RetainedState", "_InternalRetainedState")
+    )
 
 
 def _add_basename_binding_aliases(binding_index_map: Dict[str, int], bindings) -> None:
