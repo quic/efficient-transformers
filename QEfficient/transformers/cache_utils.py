@@ -1841,6 +1841,7 @@ class QEffGemma4DynamicCache(QEffDynamicCache):
         **kwargs,
     ):
         self.config = config
+        self.sliding_window_len = getattr(config, "sliding_window", None)
         kwargs.pop("layer_classes", None)
         kwargs.pop("layers", None)
         kwargs.pop("layer_class_to_replicate", None)
