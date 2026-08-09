@@ -112,6 +112,57 @@ def _tiny_deepseek_v4_config() -> DeepseekV4Config:
     )
 
 
+def _tiny_mixed_deepseek_v4_config() -> DeepseekV4Config:
+    return DeepseekV4Config(
+        vocab_size=64,
+        hidden_size=32,
+        head_dim=8,
+        num_attention_heads=4,
+        num_key_value_heads=1,
+        q_lora_rank=16,
+        o_groups=2,
+        o_lora_rank=8,
+        num_hidden_layers=4,
+        layer_types=[
+            "sliding_attention",
+            "heavily_compressed_attention",
+            "compressed_sparse_attention",
+            "sliding_attention",
+        ],
+        mlp_layer_types=["hash_moe", "moe", "hash_moe", "moe"],
+        n_routed_experts=4,
+        num_experts_per_tok=2,
+        moe_intermediate_size=16,
+        n_shared_experts=1,
+        hc_mult=2,
+        index_head_dim=4,
+        index_n_heads=2,
+        index_topk=2,
+        sliding_window=4,
+        compress_rates={"heavily_compressed_attention": 2, "compressed_sparse_attention": 2},
+        max_position_embeddings=64,
+    )
+
+
+def _make_deepseek_v4_csa_topk_deterministic(model) -> None:
+    for layer in model.model.layers:
+        compressor = getattr(layer.self_attn, "compressor", None)
+        indexer = getattr(compressor, "indexer", None)
+        scorer = getattr(indexer, "scorer", None)
+        if scorer is None:
+            continue
+        original_forward = scorer.forward
+
+        def deterministic_forward(q, compressed_kv, hidden_states, *, original_forward=original_forward):
+            scores = original_forward(q, compressed_kv, hidden_states)
+            if scores.shape[-1] <= 1:
+                return scores
+            entry_indices = torch.arange(scores.shape[-1], device=scores.device, dtype=scores.dtype)
+            return scores - entry_indices.view(1, 1, -1) * 1e-6
+
+        scorer.forward = deterministic_forward
+
+
 @pytest.mark.llm_model
 def test_deepseek_v4_three_layer_decode_parity():
     config = _tiny_deepseek_v4_config()
@@ -131,6 +182,42 @@ def test_deepseek_v4_three_layer_decode_parity():
 
     for position, token_id in enumerate((3, 7, 11, 5)):
         input_ids = torch.tensor([[token_id]])
+        position_ids = torch.tensor([[position]])
+        with torch.no_grad():
+            hf_output = hf_model(
+                input_ids=input_ids,
+                position_ids=position_ids,
+                past_key_values=hf_cache,
+                use_cache=True,
+            )
+            qeff_output = qeff_model(
+                input_ids=input_ids,
+                position_ids=position_ids,
+                past_key_values=qeff_cache,
+                use_cache=True,
+            )
+        hf_cache = hf_output.past_key_values
+        qeff_cache = qeff_output.past_key_values
+        torch.testing.assert_close(hf_output.logits, qeff_output.logits, atol=2e-4, rtol=2e-4)
+
+
+@pytest.mark.llm_model
+def test_deepseek_v4_mixed_layer_decode_parity_beyond_cache_boundaries():
+    config = _tiny_mixed_deepseek_v4_config()
+    config.torch_dtype = torch.float32
+    torch.manual_seed(0)
+    hf_model = DeepseekV4ForCausalLM(config).eval()
+    qeff_model = QEFFAutoModelForCausalLM(deepcopy(hf_model)).model.eval()
+    _make_deepseek_v4_csa_topk_deterministic(hf_model)
+    _make_deepseek_v4_csa_topk_deterministic(qeff_model)
+
+    hf_cache = DynamicCache(config=config)
+    qeff_cache = QEffDeepseekV4Cache.get_dummy_cache(config, batch_size=1, ctx_len=16, dtype=torch.float32)
+    assert [len(layer_state) for layer_state in qeff_cache] == [1, 4, 7, 1]
+
+    token_ids = (3, 7, 11, 5, 13, 17, 19, 23, 29, 31)
+    for position, token_id in enumerate(token_ids):
+        input_ids = torch.tensor([[token_id % config.vocab_size]])
         position_ids = torch.tensor([[position]])
         with torch.no_grad():
             hf_output = hf_model(
