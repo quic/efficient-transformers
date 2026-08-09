@@ -127,7 +127,7 @@ def test_deepseek_v4_three_layer_decode_parity():
 
     hf_cache = DynamicCache(config=config)
     qeff_cache = QEffDeepseekV4Cache.get_dummy_cache(config, batch_size=1, ctx_len=8, dtype=torch.float32)
-    assert [len(layer_state) for layer_state in qeff_cache] == [4, 4, 11]
+    assert [len(layer_state) for layer_state in qeff_cache] == [4, 4, 7]
 
     for position, token_id in enumerate((3, 7, 11, 5)):
         input_ids = torch.tensor([[token_id]])

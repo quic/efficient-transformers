@@ -3976,7 +3976,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     elif "actual_" in state_name:
                         state_axes[2] = f"compressed_ctx_len_{layer_idx}"
                     dynamic_axes[state_name] = state_axes
-                    output_names.append(f"{state_name}_RetainedState")
+                    retained_state_name = f"{state_name}_RetainedState"
+                    dynamic_axes[retained_state_name] = dict(state_axes)
+                    output_names.append(retained_state_name)
         elif (
             hasattr(self.model.config, "model_type")
             and self.model.config.model_type in DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH

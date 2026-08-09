@@ -38,8 +38,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-cores", type=int, default=12)
     parser.add_argument("--device-group", type=parse_device_group, default=[i for i in range(12)])
     parser.add_argument("--prefill-prompt", default=PREFILL_PROMPT)
+    parser.add_argument("--prompt-len", type=int, default=None)
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--automation", action="store_true")
+    parser.add_argument(
+        "--compare-hf-tokens",
+        action="store_true",
+        help="Run greedy HF generation on CPU and compare generated token IDs with the compiled QPC run.",
+    )
+    parser.add_argument(
+        "--compile-only",
+        action="store_true",
+        help="Stop after export and QAIC compile without running qeff_model.generate().",
+    )
+    parser.add_argument(
+        "--require-csa-layer",
+        action="store_true",
+        help="Fail early unless the selected layer slice includes a compressed-sparse-attention layer.",
+    )
     return parser.parse_args()
 
 
@@ -69,6 +85,12 @@ def main() -> None:
         cache_dir=args.hf_cache,
         local_files_only=args.local_files_only,
     )
+    prompt_inputs = tokenizer(args.prefill_prompt, return_tensors="pt")
+    prompt_len = int(prompt_inputs["attention_mask"].sum().item())
+    if args.prompt_len is not None and prompt_len != args.prompt_len:
+        raise ValueError(
+            f"prefill_prompt tokenized to {prompt_len} tokens, but --prompt-len requires {args.prompt_len}."
+        )
     config = AutoConfig.from_pretrained(
         args.model_id,
         cache_dir=args.hf_cache,
@@ -79,6 +101,12 @@ def main() -> None:
     config.num_hidden_layers = args.num_hidden_layers
     config.layer_types = config.layer_types[: args.num_hidden_layers]
     config.mlp_layer_types = config.mlp_layer_types[: args.num_hidden_layers]
+    csa_layer_count = config.layer_types.count("compressed_sparse_attention")
+    if args.require_csa_layer and csa_layer_count == 0:
+        raise ValueError(
+            "The selected layer slice does not include a CSA layer. "
+            "For DeepSeek-V4-Flash defaults, use --num-hidden-layers 4 or more."
+        )
 
     hf_model = AutoModelForCausalLM.from_pretrained(
         args.model_id,
@@ -125,6 +153,21 @@ def main() -> None:
     print(f"SPECIALIZATIONS_PATH={qpc_path.parent / 'specializations.json'}")
     print(f"CUSTOM_IO_PATH={qpc_path.parent / 'custom_io.yaml'}")
 
+    if args.compile_only:
+        result_path = args.artifact_root / "compile_result.json"
+        result = {
+            "model_id": args.model_id,
+            "onnx_path": str(onnx_path),
+            "qpc_path": str(qpc_path),
+            "prompt_len": prompt_len,
+            "num_hidden_layers": args.num_hidden_layers,
+            "layer_types": config.layer_types,
+            "csa_layer_count": csa_layer_count,
+        }
+        result_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+        print(f"RESULT_PATH={result_path}")
+        return
+
     print("Running qeff_model.generate()")
     exec_info = qeff_model.generate(
         tokenizer=tokenizer,
@@ -139,11 +182,48 @@ def main() -> None:
     result = {
         "model_id": args.model_id,
         "prefill_prompt": args.prefill_prompt,
+        "prompt_len": prompt_len,
         "onnx_path": str(onnx_path),
         "qpc_path": str(qpc_path),
         "generated_texts": exec_info.generated_texts,
         "generated_ids": [ids.tolist() if hasattr(ids, "tolist") else ids for ids in exec_info.generated_ids],
     }
+    if args.compare_hf_tokens:
+        prompt_inputs.pop("token_type_ids", None)
+        with torch.inference_mode():
+            hf_generated = hf_model.generate(
+                **prompt_inputs,
+                max_new_tokens=args.generation_len,
+                do_sample=False,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+        hf_new_tokens = hf_generated[:, prompt_inputs["input_ids"].shape[1] :].cpu()
+        qpc_generated = exec_info.generated_ids[0]
+        if isinstance(qpc_generated, list):
+            qpc_generated = qpc_generated[0]
+        qpc_generated = torch.as_tensor(qpc_generated, dtype=hf_new_tokens.dtype)
+        if qpc_generated.ndim == 1:
+            qpc_generated = qpc_generated.unsqueeze(0)
+        compare_len = min(hf_new_tokens.shape[1], qpc_generated.shape[1])
+        matches = torch.equal(hf_new_tokens[:, :compare_len], qpc_generated[:, :compare_len])
+        first_mismatch = None
+        if not matches:
+            mismatch = torch.nonzero(hf_new_tokens[:, :compare_len] != qpc_generated[:, :compare_len])
+            first_mismatch = mismatch[0].tolist() if mismatch.numel() else None
+        result["hf_generated_ids"] = hf_new_tokens.tolist()
+        result["qpc_generated_ids"] = qpc_generated.tolist()
+        result["token_match"] = bool(matches and hf_new_tokens.shape[1] == qpc_generated.shape[1])
+        result["first_mismatch"] = first_mismatch
+        result["matched_prefix_len"] = compare_len
+        print(f"TOKEN_MATCH={result['token_match']}")
+        if first_mismatch is not None:
+            batch_idx, token_idx = first_mismatch
+            print(
+                "FIRST_MISMATCH="
+                f"batch={batch_idx}, token={token_idx}, "
+                f"hf={hf_new_tokens[batch_idx, token_idx].item()}, "
+                f"qpc={qpc_generated[batch_idx, token_idx].item()}"
+            )
     result_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(f"RESULT_PATH={result_path}")
     print(f"GENERATED_TEXT={exec_info.generated_texts}")
