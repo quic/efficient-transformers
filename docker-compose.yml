@@ -1,0 +1,23 @@
+services:
+  qefficient:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    image: qefficient-library:latest
+
+    working_dir: /app/qefficient-library
+
+    volumes:
+      - .:/app/qefficient-library
+      - ./_cache:/cache
+
+    stdin_open: true
+    tty: true
+    command:
+      - sleep
+      - infinity
+    services:
+      qefficient:
+        env_file:
+          -.env
