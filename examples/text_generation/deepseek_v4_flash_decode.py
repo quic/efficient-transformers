@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--artifact-root", type=Path, default=Path(DEFAULT_ARTIFACT_ROOT))
     parser.add_argument("--ctx-len", type=int, default=512)
     parser.add_argument("--generation-len", type=int, default=250)
-    parser.add_argument("--num-hidden-layers", type=int, default=43)
+    parser.add_argument("--num-hidden-layers", type=int, default=None)
     parser.add_argument("--num-cores", type=int, default=12)
     parser.add_argument("--device-group", type=parse_device_group, default=[i for i in range(12)])
     parser.add_argument("--prefill-prompt", default=PREFILL_PROMPT)
@@ -65,7 +65,7 @@ def main() -> None:
         raise ValueError("ctx_len must be at least 2.")
     if not 1 <= args.generation_len < args.ctx_len:
         raise ValueError("generation_len must be in [1, ctx_len).")
-    if args.num_hidden_layers < 1:
+    if args.num_hidden_layers is not None and args.num_hidden_layers < 1:
         raise ValueError("num_hidden_layers must be at least 1.")
     if not args.device_group:
         raise ValueError("device_group must contain at least one QAIC device ID.")
@@ -96,11 +96,12 @@ def main() -> None:
         cache_dir=args.hf_cache,
         local_files_only=args.local_files_only,
     )
-    if args.num_hidden_layers > config.num_hidden_layers:
+    if args.num_hidden_layers is not None and args.num_hidden_layers > config.num_hidden_layers:
         raise ValueError(f"num_hidden_layers cannot exceed the checkpoint's {config.num_hidden_layers} layers.")
-    config.num_hidden_layers = args.num_hidden_layers
-    config.layer_types = config.layer_types[: args.num_hidden_layers]
-    config.mlp_layer_types = config.mlp_layer_types[: args.num_hidden_layers]
+    if args.num_hidden_layers is not None:
+        config.num_hidden_layers = args.num_hidden_layers
+        config.layer_types = config.layer_types[: args.num_hidden_layers]
+        config.mlp_layer_types = config.mlp_layer_types[: args.num_hidden_layers]
     csa_layer_count = config.layer_types.count("compressed_sparse_attention")
     if args.require_csa_layer and csa_layer_count == 0:
         raise ValueError(
@@ -160,9 +161,10 @@ def main() -> None:
             "onnx_path": str(onnx_path),
             "qpc_path": str(qpc_path),
             "prompt_len": prompt_len,
-            "num_hidden_layers": args.num_hidden_layers,
+            "num_hidden_layers": config.num_hidden_layers,
             "layer_types": config.layer_types,
             "csa_layer_count": csa_layer_count,
+            "csa_cache_mode": "ping_pong",
         }
         result_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
         print(f"RESULT_PATH={result_path}")
@@ -185,6 +187,10 @@ def main() -> None:
         "prompt_len": prompt_len,
         "onnx_path": str(onnx_path),
         "qpc_path": str(qpc_path),
+        "num_hidden_layers": config.num_hidden_layers,
+        "layer_types": config.layer_types,
+        "csa_layer_count": csa_layer_count,
+        "csa_cache_mode": "ping_pong",
         "generated_texts": exec_info.generated_texts,
         "generated_ids": [ids.tolist() if hasattr(ids, "tolist") else ids for ids in exec_info.generated_ids],
     }
