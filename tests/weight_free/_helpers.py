@@ -46,7 +46,7 @@ WEIGHT_FREE_CAUSAL_LM_MODEL_IDS = {
     "glm4_moe": "tiny-random/glm-4-moe",
     "gpt2": "hf-internal-testing/tiny-random-GPT2LMHeadModel",
     "gpt_bigcode": "hf-internal-testing/tiny-random-GPTBigCodeForCausalLM",
-    "gpt_oss": "openai/gpt-oss-20b",
+    "gpt_oss": "tiny-random/gpt-oss-bf16",
     "gptj": "hf-internal-testing/tiny-random-GPTJForCausalLM",
     "granite": "hf-internal-testing/tiny-random-GraniteForCausalLM",
     "granitemoe": "hf-internal-testing/tiny-random-GraniteMoeForCausalLM",
