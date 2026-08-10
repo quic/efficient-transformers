@@ -802,8 +802,9 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
         head_dim = self.config.d_model // num_key_value_heads
         num_layers = self.config.num_hidden_layers
 
-        inputs = {
-            "input_features": torch.zeros((bs, encoder_feature_count, 1), dtype=torch.float32),
+        dtype = getattr(self.model.config, "torch_dtype", torch.float32) or torch.float32
+        inputs= {
+            "input_features": torch.zeros((bs, encoder_feature_count, 1), dtype=dtype),
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
             "past_key_values": [[] for _ in range(num_layers)],
@@ -817,7 +818,7 @@ class QEffWhisperForConditionalGeneration(WhisperForConditionalGeneration):
                 for kv in ["key", "value"]:
                     inputs["past_key_values"][i].append(
                         torch.zeros(
-                            kv_cache_shape if self_cross == "self" else kv_cross_cache_shape, dtype=torch.float32
+                            kv_cache_shape if self_cross == "self" else kv_cross_cache_shape, dtype=dtype
                         )
                     )
 
