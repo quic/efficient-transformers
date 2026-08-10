@@ -3746,7 +3746,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
         if has_moe_prefill_blocking:
-            if prefill_seq_len%constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN == 0:
+            if prefill_seq_len % constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN == 0:
                 return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
             return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
 

@@ -1609,7 +1609,9 @@ class TestSplitOptimizedMoETransform:
             ({"num_cores": 3}, {}, ValueError, "num_experts \\* cores_per_expert"),
         ],
     )
-    def test_export_config_transform_rejects_invalid_expert_parallel_layout(self, kwargs, moe_config, error_type, match):
+    def test_export_config_transform_rejects_invalid_expert_parallel_layout(
+        self, kwargs, moe_config, error_type, match
+    ):
         model = _DummyOptimizedMoEModel()
 
         with pytest.raises(error_type, match=match):

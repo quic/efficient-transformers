@@ -121,6 +121,21 @@ def eager_attention_forward(
     return attn_output, attn_weights
 
 
+def _batched_linear(
+    hidden_states: torch.Tensor,
+    weights: torch.Tensor,
+    bias: torch.Tensor | None = None,
+    is_transposed: bool = False,
+) -> torch.Tensor:
+    if is_transposed:
+        outputs = torch.bmm(hidden_states.unsqueeze(1), weights).squeeze(1)
+    else:
+        outputs = torch.bmm(weights, hidden_states.unsqueeze(-1)).squeeze(-1)
+    if bias is not None:
+        outputs = outputs + bias
+    return outputs
+
+
 def _qeff_batched_mm_experts_forward(
     self: torch.nn.Module,
     hidden_states: torch.Tensor,
