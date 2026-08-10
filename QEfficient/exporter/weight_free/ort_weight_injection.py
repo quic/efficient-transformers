@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from safetensors import safe_open
 
-from QEfficient.exporter.weight_free.spec import ExternalDataFile, WeightSpecLocation, load_weight_spec
+from QEfficient.exporter.weight_free.weight_spec import ExternalDataFile, WeightSpecLocation, load_weight_spec
 from QEfficient.utils.checkpoint_utils import checkpoint_root, resolve_checkpoint_dir
 
 
