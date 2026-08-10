@@ -27,7 +27,6 @@
         "num_cores": 16,
         "num_devices": 1,
         "aic_hw_version": "ai100",
-        "mxfp6_matmul": true,
         "use_onnx_subfunctions": true
       },
       "generate_params": {
