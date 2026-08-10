@@ -23,7 +23,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageText
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-pytestmark = pytest.mark.skip(reason="Temporarily disabled for PR 1150.")
+pytestmark = pytest.mark.skip(reason="")
 
 # MODEL_NAME = "tiny-random/qwen3-vl-moe"
 MODEL_NAME = "Qwen/Qwen3-VL-30B-A3B-Instruct"
