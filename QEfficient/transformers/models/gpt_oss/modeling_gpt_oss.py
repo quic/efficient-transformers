@@ -70,6 +70,7 @@ class QEffGptOssExperts(GptOssExperts):
             interleaved=True,
             transpose_gate_up=False,
             transpose_down=False,
+            clone=True,
         )
         delete_module_attrs(self, "gate_up_proj", "down_proj", "gate_up_proj_bias", "down_proj_bias")
         self.weights_transformed = True

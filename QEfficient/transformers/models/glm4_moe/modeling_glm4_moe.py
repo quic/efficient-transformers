@@ -597,6 +597,7 @@ class QEffGlm4MoeMoE(QEffMoEBlockMixin, Glm4MoeMoE):
                 fused_split_dim=1,
                 transpose_gate_up=True,
                 transpose_down=True,
+                clone=True,
             )
             delete_module_attrs(self.experts, "gate_up_proj", "down_proj")
         else:

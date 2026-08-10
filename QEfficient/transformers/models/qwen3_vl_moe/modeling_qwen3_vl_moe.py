@@ -786,6 +786,7 @@ class QEffQwen3VLMoeTextExperts(Qwen3VLMoeTextExperts):
             fused_split_dim=1,
             transpose_gate_up=True,
             transpose_down=True,
+            clone=True,
         )
         delete_module_attrs(self, "gate_up_proj", "down_proj")
         self.weights_transformed = True
