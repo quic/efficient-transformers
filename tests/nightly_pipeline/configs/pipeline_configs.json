@@ -43,9 +43,8 @@
         "num_cores": 16,
         "num_devices": 1,
         "ctx_len": 256,
-        "aic_hw_version": "ai100",
-        "mxfp6_matmul": true,
-        "use_onnx_subfunctions": true
+        "use_onnx_subfunctions": true,
+        "aic_hw_version": "ai100"
       },
       "generate_params": {
         "generation_len": 256
