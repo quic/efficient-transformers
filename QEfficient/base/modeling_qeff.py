@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Type, Union
 import onnx
 import torch
 
+from QEfficient.base.checkpoint_transforms import BaseCheckpointTransform
 from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
     CustomOpTransform,
@@ -115,7 +116,7 @@ class QEFFBaseModel(ABC):
     _layerwise_active = False
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
-    _checkpoint_transforms: List[Type] = []
+    _checkpoint_transforms: List[Type[BaseCheckpointTransform]] = []
 
     def _transform_names(self) -> List[str]:
         return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
