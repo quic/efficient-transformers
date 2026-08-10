@@ -68,10 +68,9 @@ def _decode_qaic_config() -> dict:
     }
 
 
-def _qaic_config() -> dict:
+def _prefill_qaic_config() -> dict:
     cfg = _decode_qaic_config()
-    if PREFILL_MODE is None:
-        return cfg
+    cfg.pop("batch_fold")
     cfg["prefill_block_chunks"] = PREFILL_BLOCK_CHUNKS
     cfg["prefill_blocking_mode"] = PREFILL_MODE
     cfg["prefill_n_rep_chunk"] = PREFILL_N_REP_CHUNK
@@ -97,7 +96,7 @@ if not skip_vision:
         use_onnx_subfunctions=True,
         layerwise=False,
     )
-decode_qaic_config = _qaic_config()
+decode_qaic_config = _decode_qaic_config()
 print("decode", decode_qaic_config)
 decode_start_time = perf_counter()
 decode_qpc_path = qeff_model.compile(
@@ -136,7 +135,7 @@ PREFILL_QL_CHUNK = 128
 PREFILL_BLOCK_CHUNKS = -(-PREFILL_SEQ_LEN // PREFILL_QL_CHUNK)
 PREFILL_N_REP_CHUNK = 4
 MOE_PREFILL_PACKED_CHUNK_SIZE = 256
-prefill_qaic_config = _qaic_config()
+prefill_qaic_config = _prefill_qaic_config()
 print("prefill", prefill_qaic_config)
 
 prefill_start_time = perf_counter()
@@ -294,15 +293,10 @@ decode_inputs = {
 }
 
 for layer_idx in range(config.text_config.num_hidden_layers):
-    # RetainedState from prefill has shape [1, num_kv_heads, ctx_len, head_dim].
-    # Replicate across BS decode requests, then fold into [1, BS*num_kv_heads, ctx_len, head_dim].
-    _, h, c, d = outputs[f"past_key.{layer_idx}_RetainedState"].shape
-    decode_inputs[f"past_key.{layer_idx}"] = np.tile(
-        outputs[f"past_key.{layer_idx}_RetainedState"], (1, BS, 1, 1)
-    ).reshape(1, BS * h, c, d)
-    decode_inputs[f"past_value.{layer_idx}"] = np.tile(
-        outputs[f"past_value.{layer_idx}_RetainedState"], (1, BS, 1, 1)
-    ).reshape(1, BS * h, c, d)
+    for cache_name in ("past_key", "past_value"):
+        prefill_cache = outputs[f"{cache_name}.{layer_idx}_RetainedState"]
+        decode_inputs[f"{cache_name}.{layer_idx}"] = np.tile(prefill_cache, (BS, 1, 1, 1))
+
 
 st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
