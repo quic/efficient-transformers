@@ -331,4 +331,6 @@ NIGHTLY_SKIPPED_MODELS = {
     "hpcai-tech/grok-1",
     # Audio Embedding Models
     "facebook/wav2vec2-large",
+    # Embedding Models
+    "jinaai/jina-embeddings-v2-base-code",
 }

@@ -27,11 +27,13 @@
         "num_cores": 16,
         "num_devices": 1,
         "aic_hw_version": "ai100",
-        "mxfp6_matmul": true,
         "use_onnx_subfunctions": true
       },
       "generate_params": {
         "prompts": "This is an example sentence"
+      },
+      "golden_mad_validation": {
+        "tolerance": 0.01
       }
     }
   ],
