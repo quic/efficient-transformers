@@ -127,7 +127,7 @@ def export_via_weightfree(
     call.
     """
     from QEfficient.base.onnx_transforms import SplitTensorsTransform
-    from QEfficient.exporter.weight_free.core import export_weight_free_onnx
+    from QEfficient.exporter.weight_free.export import export_weight_free_onnx
     from QEfficient.utils.export_utils import build_dynamo_export_kwargs, reorder_inputs_by_signature
 
     example_inputs, dynamic_shapes = reorder_inputs_by_signature(qeff_model.model, example_inputs, dynamic_shapes)
@@ -164,12 +164,12 @@ def export_via_weightfree(
         if weight_spec_path is not None:
 
             def _embed_weight_spec(model, spec_path=weight_spec_path):
-                from QEfficient.exporter.weight_free.core import embed_weight_spec_as_metadata
+                from QEfficient.exporter.weight_free.export import embed_weight_spec_as_metadata
 
                 embed_weight_spec_as_metadata(model, spec_path)
 
             def _link_prepared_checkpoint(onnx_file=onnx_path, spec_path=weight_spec_path):
-                from QEfficient.exporter.weight_free.core import link_prepared_checkpoint_dir
+                from QEfficient.exporter.weight_free.export import link_prepared_checkpoint_dir
 
                 link_prepared_checkpoint_dir(onnx_file, spec_path)
 
