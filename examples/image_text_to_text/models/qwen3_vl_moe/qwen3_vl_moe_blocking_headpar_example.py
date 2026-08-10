@@ -71,6 +71,7 @@ def _decode_qaic_config() -> dict:
 
 def _prefill_qaic_config(prefill_mode: str) -> dict:
     cfg = _decode_qaic_config()
+    cfg.pop("batch_fold")
     cfg["prefill_block_chunks"] = PREFILL_BLOCK_CHUNKS
     cfg["prefill_blocking_mode"] = prefill_mode
     return cfg

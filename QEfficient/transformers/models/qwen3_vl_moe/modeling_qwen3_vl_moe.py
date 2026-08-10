@@ -1273,16 +1273,13 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
 
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
-        batch_fold = kwargs.pop("batch_fold", False)
+        kwargs.pop("batch_fold", False)
 
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
             batch_size=fbs if continuous_batching else bs,
             seq_len=prefill_seq_len,
         )
-
-        if batch_fold:
-            kv_cache_shape = [1, kv_cache_shape[0] * kv_cache_shape[1], kv_cache_shape[2], kv_cache_shape[3]]
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         for i in range(self.model.config.text_config.num_hidden_layers):
@@ -1506,26 +1503,15 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             "deepstack_features": {0: "num_feature_layers", 1: "vision_batch_size", 2: "vision_size"},
         }
 
-        if batch_fold:  # Cache layout is 1 x BH x ctx_len x head_dim
-            for i in range(num_layers):
-                lang_dynamic_axes[f"past_key.{i}"] = {
-                    1: "BH",
-                    2: "ctx_len",
-                }
-                lang_dynamic_axes[f"past_value.{i}"] = {
-                    1: "BH",
-                    2: "ctx_len",
-                }
-        else:
-            for i in range(num_layers):
-                lang_dynamic_axes[f"past_key.{i}"] = {
-                    0: "full_batch_size" if continuous_batching else "batch_size",
-                    2: "ctx_len",
-                }
-                lang_dynamic_axes[f"past_value.{i}"] = {
-                    0: "full_batch_size" if continuous_batching else "batch_size",
-                    2: "ctx_len",
-                }
+        for i in range(num_layers):
+            lang_dynamic_axes[f"past_key.{i}"] = {
+                0: "full_batch_size" if continuous_batching else "batch_size",
+                2: "ctx_len",
+            }
+            lang_dynamic_axes[f"past_value.{i}"] = {
+                0: "full_batch_size" if continuous_batching else "batch_size",
+                2: "ctx_len",
+            }
 
         if continuous_batching:
             lang_dynamic_axes["batch_index"] = {0: "batch_size"}

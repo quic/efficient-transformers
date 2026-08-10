@@ -252,10 +252,10 @@ class QEffDynamicLayer(CacheLayerMixin):
 
     def read_only_blocked_K_batch(self, start_index, end_index, cache_kwargs):
         """
-        Batch-folded counterpart of _read_blocked_k: k_cache [1, BH, T, D],
-        BH = B*Hkv static. Non-chunk_kv only (batch_fold and chunk_kv are
-        mutually exclusive by dispatch condition), so gather_limit needs no
-        chunk-layout branch.
+        Batch-folded counterpart of _read_blocked_k. The retained cache keeps
+        the standard [FBS, Hkv, T, D] layout and is viewed as
+        [1, FBS*Hkv, T, D] only for the optimized gather. The gathered block
+        uses [1, B*Hkv, T_block, D], where B is the execution batch size.
 
         Merges the B/Hkv axes into BH on the tiny [B]-sized gather_limit
         (via reshape) rather than on the T_block-sized ctx_indices tensor —
@@ -287,8 +287,9 @@ class QEffDynamicLayer(CacheLayerMixin):
         position_ids = cache_kwargs.get("position_ids")
         # batch_index = cache_kwargs.get("batch_index", None)
         B, _ = position_ids.shape
-        _, BH, _, _ = k_out.shape
-        Hkv = cache_kwargs.get("num_kv_heads", BH // B)
+        full_batch_size, Hkv, ctx_len, head_dim = k_out.shape
+        cache_bh = full_batch_size * Hkv
+        k_out = k_out.reshape(1, full_batch_size * Hkv, ctx_len, head_dim)
         T_block = end_index - start_index
 
         ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
@@ -299,7 +300,7 @@ class QEffDynamicLayer(CacheLayerMixin):
 
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-        ctx_indices = ctx_indices.expand(1, BH, T_block)
+        ctx_indices = ctx_indices.expand(1, cache_bh, T_block)
         k_out = CtxGatherFuncBlockedKVBatch.apply(k_out, ctx_indices)
 
         return k_out
@@ -345,7 +346,8 @@ class QEffDynamicLayer(CacheLayerMixin):
 
     def read_only_blocked_V_batch(self, start_index, end_index, cache_kwargs):
         """
-        Reads the `value_states` for the layer for each KV block.
+        Reads a value block through a folded view of the standard retained
+        cache layout.
 
         Parameters:
             cache_kwargs (`Dict[str, Any]`, `optional`):
@@ -365,8 +367,9 @@ class QEffDynamicLayer(CacheLayerMixin):
         position_ids = cache_kwargs.get("position_ids")
         # batch_index = cache_kwargs.get("batch_index", None)
         B, _ = position_ids.shape
-        _, BH, _, _ = v_out.shape
-        Hkv = cache_kwargs.get("num_kv_heads", BH // B)
+        full_batch_size, Hkv, ctx_len, head_dim = v_out.shape
+        cache_bh = full_batch_size * Hkv
+        v_out = v_out.reshape(1, full_batch_size * Hkv, ctx_len, head_dim)
         T_block = end_index - start_index
         ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1).expand(B, Hkv, 1).reshape(1, B * Hkv, 1)
@@ -376,7 +379,7 @@ class QEffDynamicLayer(CacheLayerMixin):
 
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-        ctx_indices = ctx_indices.expand(1, BH, T_block)
+        ctx_indices = ctx_indices.expand(1, cache_bh, T_block)
         v_out = CtxGatherFuncBlockedKVBatch.apply(v_out, ctx_indices)
 
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
@@ -462,7 +465,8 @@ class QEffDynamicLayer(CacheLayerMixin):
 
     def write_only_batch(self, key_states, value_states, cache_kwargs):
         """
-        Write in the cache with the new `key_states` and `value_states` for the layer, using the batch fold layout
+        Write through the batch-folded scatter while retaining the standard
+        [B, Hkv, T, D] cache layout.
 
         Parameters:
             key_states (`torch.Tensor`):
@@ -474,32 +478,28 @@ class QEffDynamicLayer(CacheLayerMixin):
         """
         # Update the cache
         if self.keys is None:
-            self.keys = key_states.reshape(
-                1, key_states.shape[0] * key_states.shape[1], key_states.shape[2], key_states.shape[3]
-            )
-            self.values = value_states.reshape(
-                1, value_states.shape[0] * value_states.shape[1], value_states.shape[2], value_states.shape[3]
-            )
+            self.keys = key_states
+            self.values = value_states
             self._mark_initialized(self.keys)
         else:
-            BH = key_states.shape[0] * key_states.shape[1]
-            # QL = key_states.shape[2]
-            D = key_states.shape[3]
-            if self.keys.shape[0] != 1:
-                self.keys = self.keys.reshape(1, BH, self.keys.shape[2], D)
-                self.values = self.values.reshape(1, BH, self.values.shape[2], D)
+            full_batch_size, Hkv, ctx_len, head_dim = self.keys.shape
+            cache_bh = full_batch_size * Hkv
             self._mark_initialized(self.keys)
             position_ids = cache_kwargs.get("position_ids")
-            # NKV = (BH / position_ids.shape[0]).int().item()
-            # pos_folded = position_ids.unsqueeze(1).repeat(1, NKV, QL).reshape(1, BH, QL)
-            # key_folded = key_states.reshape(1, BH, -1, D)
-            # value_folded = value_states.reshape(1, BH, -1, D)
 
-            # batch_index = cache_kwargs.get("batch_index")
+            batch_index = cache_kwargs.get("batch_index")
+            keys_folded = self.keys.reshape(1, cache_bh, ctx_len, head_dim)
+            values_folded = self.values.reshape(1, cache_bh, ctx_len, head_dim)
 
-            # Scatter
-            self.keys = CtxChunkScatterBatchFunc.apply(self.keys, position_ids, key_states)
-            self.values = CtxChunkScatterBatchFunc.apply(self.values, position_ids, value_states)
+            if batch_index is not None:
+                keys_folded = CtxChunkScatterBatchFuncCB.apply(keys_folded, batch_index, position_ids, key_states)
+                values_folded = CtxChunkScatterBatchFuncCB.apply(values_folded, batch_index, position_ids, value_states)
+            else:
+                keys_folded = CtxChunkScatterBatchFunc.apply(keys_folded, position_ids, key_states)
+                values_folded = CtxChunkScatterBatchFunc.apply(values_folded, position_ids, value_states)
+
+            self.keys = keys_folded.reshape(full_batch_size, Hkv, ctx_len, head_dim)
+            self.values = values_folded.reshape(full_batch_size, Hkv, ctx_len, head_dim)
 
     def update(
         self,
