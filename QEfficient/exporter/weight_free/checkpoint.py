@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 import torch
-from huggingface_hub import snapshot_download
 from safetensors import safe_open
+
+from QEfficient.utils._utils import hf_download
 
 
 @lru_cache(maxsize=None)
@@ -32,11 +33,10 @@ def resolve_checkpoint_dir(model_id_or_path: str) -> Path:
     if candidate.exists():
         return candidate
 
-    snapshot_dir = snapshot_download(
+    snapshot_dir = hf_download(
         repo_id=model_id_or_path,
         allow_patterns=["*.safetensors", "*.json"],
         ignore_patterns=["*.onnx", "*.ot", "*.md", "*.txt", "*.pdf", "*.msgpack", "*.h5", "*.pth"],
-        resume_download=True,
     )
     snapshot_path = Path(snapshot_dir)
     has_weights = (
@@ -44,7 +44,7 @@ def resolve_checkpoint_dir(model_id_or_path: str) -> Path:
     )
 
     if not has_weights:
-        snapshot_dir = snapshot_download(
+        snapshot_dir = hf_download(
             repo_id=model_id_or_path,
             allow_patterns=["*.bin", "*.json"],
             ignore_patterns=[
@@ -59,7 +59,6 @@ def resolve_checkpoint_dir(model_id_or_path: str) -> Path:
                 "flax_model*",
                 "tf_model*",
             ],
-            resume_download=True,
         )
 
     return Path(snapshot_dir)
