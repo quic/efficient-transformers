@@ -118,8 +118,6 @@ def test_build_canonical_expert_weights_clone_breaks_fused_gate_up_aliasing():
     assert _storage_ptr(weights.gate) != _storage_ptr(weights.up)
 
 
-
-
 def _make_tiny_causal_lm(model_type: str, **config_kwargs):
     config = AutoConfig.for_model(model_type, **{**MOE_BLOCK_BASE_CFG, **config_kwargs})
     return AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
