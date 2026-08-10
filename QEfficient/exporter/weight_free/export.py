@@ -14,8 +14,8 @@ from typing import Any, Dict, List, Optional
 import torch
 from accelerate import init_empty_weights
 
-from QEfficient.exporter.weight_free.spec import load_weight_spec, resolve_weight_spec_path, save_weight_spec
-from QEfficient.exporter.weight_free.spec_builder import promote_initializers_and_build_spec
+from QEfficient.exporter.weight_free.checkpoint_key_resolver import promote_initializers_and_build_spec
+from QEfficient.exporter.weight_free.weight_spec import load_weight_spec, resolve_weight_spec_path, save_weight_spec
 from QEfficient.transformers.embeddings.embedding_utils import PooledModel
 from QEfficient.transformers.models.pytorch_transforms import PoolingTransform
 from QEfficient.utils import load_json
