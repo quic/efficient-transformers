@@ -141,9 +141,13 @@ class ExternalModuleMapperTransform(PytorchTransform):
                         target = module
                         for part in parts[:-1]:
                             target = getattr(target, part)
-                        setattr(target, parts[-1], MethodType(mapped_method, target))
+                        if callable(mapped_method):
+                            mapped_method = MethodType(mapped_method, target)
+                        setattr(target, parts[-1], mapped_method)
                     else:
-                        setattr(module, orig_method_name, MethodType(mapped_method, module))
+                        if callable(mapped_method):
+                            mapped_method = MethodType(mapped_method, module)
+                        setattr(module, orig_method_name, mapped_method)
 
                     if hasattr(module, "__qeff_init__"):
                         module.__qeff_init__()

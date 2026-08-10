@@ -6,7 +6,6 @@
 # ----------------------------------------------------------------------------
 
 import math
-import os
 from typing import Dict, List, Optional, Tuple, Type, Union
 
 import torch
@@ -783,10 +782,6 @@ class QEffDeepseekV3Attention(nn.Module):
             )
 
 
-EXPERT_BLOCKING_NUM_NSP = int(os.environ.get("EXPERT_BLOCKING_NUM_NSP", "16"))
-EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
-
-
 def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
     """Build packed->original token index"""
     batch_size, seq_len = T2Ei.shape
@@ -948,7 +943,6 @@ class QEffDeepseekV3MoE(nn.Module):
         self.all_down_gidx = torch.nn.Parameter(
             torch.stack([exp.down_proj.g_idx for exp in self.experts], dim=0), requires_grad=False
         )
-        del self.experts
 
     def moe_old(
         self,
@@ -1139,6 +1133,8 @@ class QEffDeepseekV3MoE(nn.Module):
 
 
 class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
+    supports_moe_prefill_blocking = True
+
     def __qeff_init__(
         self,
     ):
@@ -1237,7 +1233,6 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         self.all_down_gidx = torch.nn.Parameter(
             torch.stack([exp.down_proj.g_idx for exp in self.experts], dim=0), requires_grad=False
         )
-        del self.experts
 
     def _cumsum_scatter_gather_update_expert_blocked(
         self,
@@ -1273,13 +1268,25 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         batch_size, seq_len = T2Ei.shape
         packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
 
+        num_packed_chunks = getattr(self, "expert_blocking_num_packed_chunks", None)
+        if num_packed_chunks is not None:
+            assert seq_len % num_packed_chunks == 0, "Something went wrong"
+            packed_chunk_size = seq_len // num_packed_chunks
+        else:
+            num_packed_chunks = seq_len // packed_chunk_size
+
         matched_idx = _build_matched_idx_from_cumsum(T2Ei)
         valid_rows = torch.einsum("bi->b", T2Ei.to(torch.int32)).unsqueeze(1)
         row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
         x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
 
-        for packed_start in range(0, seq_len, packed_chunk_size):
-            packed_stop = packed_start + packed_chunk_size
+        for chunk_idx in range(num_packed_chunks):
+            packed_start = chunk_idx * packed_chunk_size
+            if chunk_idx == num_packed_chunks - 1:
+                packed_stop = seq_len
+            else:
+                packed_stop = packed_start + packed_chunk_size
+
             chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
             x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
@@ -1340,10 +1347,11 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         routing_weights: torch.Tensor,
     ) -> torch.Tensor:
         T, H = x.shape
-        num_nsp = EXPERT_BLOCKING_NUM_NSP
         num_experts = len(self.experts) if hasattr(self, "experts") else self.all_gate_qweight.shape[0]
+        num_nsp = getattr(self, "expert_blocking_num_nsp", num_experts)
+        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
         if num_experts % num_nsp != 0:
-            raise ValueError(f"num_experts ({num_experts}) must be divisible by EXPERT_BLOCKING_NUM_NSP ({num_nsp})")
+            raise ValueError(f"num_experts ({num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})")
         local_experts = num_experts // num_nsp
         routing_weights_unsqueezed = routing_weights.unsqueeze(-1)
         expert_out = x.new_zeros((num_nsp, T, H))
@@ -1423,7 +1431,7 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
                 slot_down_qzeros=local_down_qzeros[:, slot],
                 routing_weight=routing_weights_unsqueezed[:, slot],
                 expert_out=expert_out,
-                packed_chunk_size=EXPERT_BLOCKING_PACKED_CHUNK_SIZE,
+                packed_chunk_size=packed_chunk_size,
             )
         return torch.einsum("bij->ij", expert_out)
 
@@ -1434,14 +1442,15 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
         x = hidden_states.view(T, H)
 
         num_experts = len(self.experts) if hasattr(self, "experts") else self.all_gate_qweight.shape[0]
-        if num_experts % EXPERT_BLOCKING_NUM_NSP == 0:
+        num_nsp = getattr(self, "expert_blocking_num_nsp", num_experts)
+        if num_experts % num_nsp == 0:
             expert_ids = torch.arange(
-                num_experts // EXPERT_BLOCKING_NUM_NSP,
+                num_experts // num_nsp,
                 device=x.device,
                 dtype=topk_idx.dtype,
-            ).unsqueeze(0) * EXPERT_BLOCKING_NUM_NSP + torch.arange(
-                EXPERT_BLOCKING_NUM_NSP, device=x.device, dtype=topk_idx.dtype
-            ).unsqueeze(1)  # [N, L]
+            ).unsqueeze(0) * num_nsp + torch.arange(num_nsp, device=x.device, dtype=topk_idx.dtype).unsqueeze(
+                1
+            )  # [N, L]
             eq = topk_idx.unsqueeze(0).unsqueeze(0) == expert_ids.unsqueeze(-1).unsqueeze(-1)
             local_T2E = eq.to(topk_idx.dtype).sum(dim=-1) > 0  # [N, L, T]
             routing_weights = (eq.to(topk_weight.dtype) * topk_weight.unsqueeze(0).unsqueeze(0)).sum(dim=-1)

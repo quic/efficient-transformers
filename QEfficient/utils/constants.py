@@ -148,7 +148,6 @@ def get_default_aic_hw_version() -> str:
 DEFAULT_AIC_HW_VERSION = get_default_aic_hw_version()
 ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL = 100
 
-EXPERT_BLOCKING_PACKED_CHUNK_SIZE = int(os.environ.get("EXPERT_BLOCKING_PACKED_CHUNK_SIZE", "256"))
 # Generic config key aliases used across model families.
 ATTENTION_HEAD_CONFIG_KEYS = ("num_attention_heads", "n_head", "n_heads", "num_heads")
 KV_HEAD_CONFIG_KEYS = ("num_key_value_heads", "n_kv_heads", "num_kv_heads", "effective_n_kv_heads")
