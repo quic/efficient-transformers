@@ -247,7 +247,7 @@ def export_wrapper(func):
 
         # Cache probe flag (used for layerwise inspection runs)
         cache_probe = kwargs.pop("_layerwise_cache_probe", False)
-        skip_pre_export_pytorch_transforms = kwargs.pop("_skip_pre_export_pytorch_transforms", False)
+        kwargs.pop("_skip_pre_export_pytorch_transforms", False)
 
         # Default context managers and state trackers
         export_context = nullcontext()

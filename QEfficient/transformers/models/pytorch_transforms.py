@@ -1602,7 +1602,9 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
         chunk_size_key = (
             "expert_parallel_chunk_size" if "expert_parallel_chunk_size" in moe_config else "packed_chunk_size"
         )
-        expert_parallel_chunk_size_requested = chunk_size_key in moe_config and moe_config.get(chunk_size_key) is not None
+        expert_parallel_chunk_size_requested = (
+            chunk_size_key in moe_config and moe_config.get(chunk_size_key) is not None
+        )
         expert_parallel_chunk_size = moe_config.get(chunk_size_key, MOE_PREFILL_PACKED_CHUNK_SIZE)
         if expert_parallel_chunk_size is None:
             expert_parallel_chunk_size = MOE_PREFILL_PACKED_CHUNK_SIZE
@@ -1658,7 +1660,11 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
                 "qaic_config['moe_config']['expert_parallel_chunk_size'] is only used for "
                 "moe flavour 'expert_parallel'; the provided value will be ignored."
             )
-        if transformed and ("cores_per_expert" in moe_config or "tree_reduce" in moe_config) and not uses_expert_parallel:
+        if (
+            transformed
+            and ("cores_per_expert" in moe_config or "tree_reduce" in moe_config)
+            and not uses_expert_parallel
+        ):
             logger.warning(
                 "qaic_config['moe_config']['cores_per_expert'] and "
                 "qaic_config['moe_config']['tree_reduce'] are only used for moe flavour 'expert_parallel'."

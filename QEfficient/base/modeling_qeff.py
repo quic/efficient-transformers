@@ -64,8 +64,7 @@ logger = logging.getLogger(__name__)
 
 
 _LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR = (
-    "moe_prefill_packed_chunk_size is no longer supported; "
-    "use qaic_config['moe_config']['expert_parallel_chunk_size']"
+    "moe_prefill_packed_chunk_size is no longer supported; use qaic_config['moe_config']['expert_parallel_chunk_size']"
 )
 
 
