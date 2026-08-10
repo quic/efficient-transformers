@@ -11,11 +11,6 @@ from typing import Dict, List, Optional
 import onnx_ir as ir
 from torch import nn
 
-from QEfficient.exporter.weight_free.checkpoint import (
-    checkpoint_root,
-    load_checkpoint_index,
-    resolve_checkpoint_files,
-)
 from QEfficient.exporter.weight_free.spec import (
     ExternalDataFile,
     TiedWeightAlias,
@@ -24,6 +19,7 @@ from QEfficient.exporter.weight_free.spec import (
     WeightSpecLocation,
 )
 from QEfficient.transformers.embeddings.embedding_utils import PooledModel
+from QEfficient.utils.checkpoint_utils import checkpoint_root, load_checkpoint_index, resolve_checkpoint_files
 
 
 def _collect_tied_weights(model: nn.Module) -> List[TiedWeightAlias]:

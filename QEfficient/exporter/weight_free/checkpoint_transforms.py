@@ -7,41 +7,40 @@
 
 """Checkpoint preparation transforms for weight-free ONNX export.
 
-CheckpointTransformPipeline selects the first applicable transform and stops.
-Layout transforms rewrite HF checkpoint keys to match QEff-derived parameters;
-DtypeConversionCheckpointTransform is only used when the source floating-point
-dtype does not already match the exported ONNX input dtype.
+Concrete transforms below are picked in priority order by CheckpointTransformPipeline
+(QEfficient/base/checkpoint_transforms.py) — the first whose is_applicable() returns
+True runs and the pipeline stops. Layout transforms rewrite HF checkpoint keys to
+match QEff-derived parameters; DtypeConversionCheckpointTransform is only used when
+the source floating-point dtype does not already match the exported ONNX input dtype.
 """
 
 import json
-import os
 import re
-import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Type
+from typing import Dict, List, Optional, Tuple
 
-import psutil
 import torch
 from safetensors import safe_open
 from safetensors.torch import save_file
 
+from QEfficient.base.checkpoint_transforms import CHECKPOINT_PREPARED_SENTINEL, BaseCheckpointTransform
 from QEfficient.transformers.quantizers.quantizer_utils import convert_moe_packed_tensors
+from QEfficient.utils.checkpoint_utils import (
+    atomic_save,
+    available_ram_gb,
+    copy_checkpoint_aux_files,
+    cpu_count,
+    read_weight_map,
+    requires_dtype_conversion,
+    write_index,
+)
 from QEfficient.utils.logging_utils import logger
 
 # ---------------------------------------------------------------------------
-# System-state helpers — used to derive worker counts at runtime
+# MoE-specific memory estimation — tied to _LayerStacker's tensor layout below,
+# so it stays here rather than in the generic checkpoint_utils helpers.
 # ---------------------------------------------------------------------------
-
-
-def _available_ram_gb() -> float:
-    """Available (free + reclaimable) RAM on the current machine in GB."""
-    return psutil.virtual_memory().available / 1024**3
-
-
-def _cpu_count() -> int:
-    """Logical CPU count with a safe fallback."""
-    return os.cpu_count() or 8
 
 
 def _estimate_layer_stack_gb(
@@ -97,154 +96,9 @@ def _estimate_layer_stack_gb(
 
 
 # ---------------------------------------------------------------------------
-# Auxiliary file names copied alongside the prepared checkpoint
+# Sentinel marking a fully-prepared checkpoint directory
 # ---------------------------------------------------------------------------
-_AUX_FILES = [
-    "config.json",
-    "generation_config.json",
-    "tokenizer.json",
-    "tokenizer_config.json",
-    "tokenizer.model",
-    "special_tokens_map.json",
-    "chat_template.jinja",
-    "vocab.json",
-    "merges.txt",
-]
-
-_SENTINEL = ".checkpoint_prepared"
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
-def _safetensors_dtype_to_torch(dtype: str) -> Optional[torch.dtype]:
-    """Map a safetensors dtype string to the matching torch dtype."""
-    return {
-        "BF16": torch.bfloat16,
-        "F16": torch.float16,
-        "F32": torch.float32,
-        "F64": torch.float64,
-    }.get(dtype)
-
-
-def _requires_dtype_conversion(src: Path, weight_map: Dict[str, str], target_dtype: torch.dtype) -> bool:
-    """Return True when any floating-point checkpoint tensor differs from ``target_dtype``."""
-    for shard_name in sorted(set(weight_map.values())):
-        with safe_open(str(src / shard_name), framework="pt") as handle:
-            for key in handle.keys():
-                dtype = _safetensors_dtype_to_torch(handle.get_slice(key).get_dtype())
-                if dtype is not None and dtype != target_dtype:
-                    return True
-    return False
-
-
-def _convert_bin_to_safetensors(src: Path, out: Path) -> None:
-    """Load a .bin checkpoint via transformers and re-save as safetensors under ``out``.
-
-    Uses save_pretrained(safe_serialization=True) which correctly handles tied
-    weights and multi-shard layouts, writing model.safetensors (single file) or
-    model-NNNNN-of-MMMMM.safetensors + model.safetensors.index.json (multi-shard).
-    """
-    import gc
-
-    from transformers import AutoConfig, AutoModelForCausalLM
-
-    if bool(list(out.glob("*.safetensors"))) or (out / "model.safetensors.index.json").exists():
-        return
-
-    out.mkdir(parents=True, exist_ok=True)
-    _copy_aux_files(src, out)
-    logger.info(f"No safetensors files found in {src}. Auto-converting .bin → safetensors in {out}.")
-    config = AutoConfig.from_pretrained(str(src), trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        str(src),
-        config=config,
-        low_cpu_mem_usage=True,
-        trust_remote_code=True,
-    )
-    model.save_pretrained(str(out), safe_serialization=True)
-    del model
-    gc.collect()
-    logger.info(f"Conversion complete — safetensors files written to {out}")
-
-
-def _read_weight_map(src: Path) -> Dict[str, str]:
-    """Return {tensor_key: shard_filename} from model.safetensors.index.json,
-    or by scanning all *.safetensors for single-file checkpoints."""
-    index_path = src / "model.safetensors.index.json"
-    if index_path.exists():
-        return json.loads(index_path.read_text())["weight_map"]
-    shard_files = sorted(src.glob("*.safetensors"))
-    if not shard_files:
-        raise FileNotFoundError(f"No safetensors files found in {src}")
-    weight_map: Dict[str, str] = {}
-    for sf in shard_files:
-        with safe_open(str(sf), framework="pt") as f:
-            for k in f.keys():
-                weight_map[k] = sf.name
-    return weight_map
-
-
-def _atomic_save(tensors: Dict[str, torch.Tensor], dst: Path) -> None:
-    """Write safetensors through a temporary file before replacing ``dst``."""
-    tmp = dst.with_suffix(dst.suffix + ".tmp")
-    save_file({k: v.contiguous() for k, v in tensors.items()}, str(tmp))
-    tmp.replace(dst)
-
-
-def _write_index(out: Path, weight_map: Dict[str, str]) -> None:
-    """Write ``model.safetensors.index.json`` for a prepared checkpoint."""
-    files = set(weight_map.values())
-    total_size = sum((out / f).stat().st_size for f in files if (out / f).exists())
-    index = {
-        "metadata": {"total_size": total_size},
-        "weight_map": dict(sorted(weight_map.items())),
-    }
-    (out / "model.safetensors.index.json").write_text(json.dumps(index, indent=2))
-
-
-def _copy_aux_files(src: Path, out: Path) -> None:
-    """Copy tokenizer and config sidecar files required by ``from_pretrained``."""
-    for name in _AUX_FILES:
-        src_file = src / name
-        if src_file.exists() and not (out / name).exists():
-            shutil.copy2(str(src_file), str(out / name))
-
-
-# ---------------------------------------------------------------------------
-# Base class
-# ---------------------------------------------------------------------------
-
-
-class BaseCheckpointTransform:
-    """Base class for checkpoint file transforms. Not to be instantiated.
-
-    Each subclass produces a *complete* prepared checkpoint directory in ``out``.
-    The pipeline picks the first applicable transform and stops — no chaining.
-    """
-
-    def __init__(self):
-        """Prevent direct instantiation of transform marker classes."""
-        raise TypeError("Checkpoint transform classes are not to be instantiated.")
-
-    @classmethod
-    def apply(
-        cls,
-        src: Path,
-        out: Path,
-        target_dtype: torch.dtype = torch.float32,
-        **kwargs,
-    ) -> bool:
-        """Transform checkpoint at ``src``, write result to ``out``.
-        Returns True if the checkpoint was prepared, False if skipped (idempotent)."""
-        raise NotImplementedError
-
-    @classmethod
-    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
-        """Return True if this transform should run for the given checkpoint."""
-        return True
+_SENTINEL = CHECKPOINT_PREPARED_SENTINEL
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +124,7 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
         **kwargs,
     ) -> bool:
         """Return True when dtype conversion is required for this checkpoint."""
-        return src is None or _requires_dtype_conversion(Path(src), weight_map, target_dtype)
+        return src is None or requires_dtype_conversion(Path(src), weight_map, target_dtype)
 
     @classmethod
     def apply(
@@ -288,9 +142,9 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
             return False
 
         out.mkdir(parents=True, exist_ok=True)
-        _copy_aux_files(src, out)
+        copy_checkpoint_aux_files(src, out)
 
-        weight_map = _read_weight_map(src)
+        weight_map = read_weight_map(src)
         shard_names = sorted(set(weight_map.values()))
         new_name_for = {
             shard: (f"model_{idx:04d}.safetensors" if len(shard_names) > 1 else "model.safetensors")
@@ -299,7 +153,7 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
 
         # I/O-bound: one thread per shard, capped at 4× CPU count and hard-capped
         # at 256 — beyond that OS scheduling overhead outweighs I/O parallelism gains.
-        n_workers = max_workers if max_workers is not None else min(len(shard_names), _cpu_count() * 4, 256)
+        n_workers = max_workers if max_workers is not None else min(len(shard_names), cpu_count() * 4, 256)
 
         def _process_shard(shard_name: str) -> None:
             tensors: Dict[str, torch.Tensor] = {}
@@ -307,11 +161,11 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
                 for key in f.keys():
                     t = f.get_tensor(key)
                     tensors[key] = t.to(target_dtype) if t.is_floating_point() else t
-            _atomic_save(tensors, out / new_name_for[shard_name])
+            atomic_save(tensors, out / new_name_for[shard_name])
 
         logger.info(
             f"DtypeConversionCheckpointTransform: converting {len(shard_names)} shards "
-            f"→ {target_dtype} | workers={n_workers} (cpus={_cpu_count()})"
+            f"→ {target_dtype} | workers={n_workers} (cpus={cpu_count()})"
         )
         with ThreadPoolExecutor(max_workers=n_workers) as ex:
             futures = [ex.submit(_process_shard, s) for s in shard_names]
@@ -319,7 +173,7 @@ class DtypeConversionCheckpointTransform(BaseCheckpointTransform):
                 fut.result()
 
         new_weight_map = {k: new_name_for[v] for k, v in weight_map.items()}
-        _write_index(out, new_weight_map)
+        write_index(out, new_weight_map)
         sentinel.touch()
         logger.info(f"DtypeConversionCheckpointTransform: done → {out}")
         return True
@@ -440,9 +294,9 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
             return False
 
         out.mkdir(parents=True, exist_ok=True)
-        _copy_aux_files(src, out)
+        copy_checkpoint_aux_files(src, out)
 
-        weight_map = _read_weight_map(src)
+        weight_map = read_weight_map(src)
         shard_names = sorted(set(weight_map.values()))
 
         # ── Phase 1: parallel key scan — no tensor data loaded ────────────────
@@ -471,11 +325,11 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
         # Phase 1: I/O-bound — cap at 4× logical CPUs, no point exceeding shard count.
         # Hard cap at 256: beyond that, OS scheduling overhead outweighs I/O gains.
         n_workers_scan = (
-            max_workers_scan if max_workers_scan is not None else min(len(shard_names), _cpu_count() * 4, 256)
+            max_workers_scan if max_workers_scan is not None else min(len(shard_names), cpu_count() * 4, 256)
         )
         logger.info(
             f"MoEExpertStackingCheckpointTransform: scanning {len(shard_names)} shards "
-            f"(workers={n_workers_scan}, cpus={_cpu_count()}, ram_avail={_available_ram_gb():.1f} GB)..."
+            f"(workers={n_workers_scan}, cpus={cpu_count()}, ram_avail={available_ram_gb():.1f} GB)..."
         )
         with ThreadPoolExecutor(max_workers=n_workers_scan) as ex:
             for loc_e, loc_p, loc_b in ex.map(_scan, shard_names):
@@ -516,7 +370,7 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
 
             stacked = stacker.stack(target_dtype)
             out_name = f"experts-layer-{layer_idx:05d}.safetensors"
-            _atomic_save(stacked, out / out_name)
+            atomic_save(stacked, out / out_name)
             return out_name, list(stacked.keys())
 
         # Phase 2: memory-bound — each layer holds all E×3 expert tensors + the
@@ -530,7 +384,7 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
             layer_gb = _estimate_layer_stack_gb(
                 expert_entries, sample_layer, len(experts_per_layer[sample_layer]), src, target_dtype
             )
-            available_gb = _available_ram_gb()
+            available_gb = available_ram_gb()
             usable_gb = available_gb * 0.8
             n_workers_layers = max(1, min(len(layer_indices), int(usable_gb / layer_gb)))
         else:
@@ -540,7 +394,7 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
         logger.info(
             f"  Stacking {len(layer_indices)} layers → {target_dtype} | "
             f"workers={n_workers_layers} (~{layer_gb:.2f} GB/layer, "
-            f"{_available_ram_gb():.1f} GB available)..."
+            f"{available_ram_gb():.1f} GB available)..."
         )
         with ThreadPoolExecutor(max_workers=n_workers_layers) as ex:
             futures = {ex.submit(_stack_layer, li): li for li in layer_indices}
@@ -565,11 +419,11 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
                 for key in keys:
                     t = f.get_tensor(key)
                     tensors[key] = t.to(target_dtype) if t.is_floating_point() else t
-            _atomic_save(tensors, out / new_base_name_for[shard_name])
+            atomic_save(tensors, out / new_base_name_for[shard_name])
 
         # Phase 3: mixed I/O + memory — one thread per shard, capped at CPU count.
         n_workers_base = (
-            max_workers_base if max_workers_base is not None else max(1, min(len(base_shard_list), _cpu_count()))
+            max_workers_base if max_workers_base is not None else max(1, min(len(base_shard_list), cpu_count()))
         )
         logger.info(f"  Converting {len(base_shard_list)} base shards → {target_dtype} | workers={n_workers_base}...")
         if base_shard_list:
@@ -581,7 +435,7 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
         for key, shard_name in base_entries.items():
             new_weight_map[key] = new_base_name_for[shard_name]
 
-        _write_index(out, new_weight_map)
+        write_index(out, new_weight_map)
         sentinel.touch()
         logger.info(f"MoEExpertStackingCheckpointTransform: done → {out}")
         return True
@@ -648,9 +502,9 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
             return False
 
         out.mkdir(parents=True, exist_ok=True)
-        _copy_aux_files(src, out)
+        copy_checkpoint_aux_files(src, out)
 
-        weight_map = _read_weight_map(src)
+        weight_map = read_weight_map(src)
         shard_names = sorted(set(weight_map.values()))
 
         # ── Phase 1: scan — collect expert tensor locations ──────────────────
@@ -694,7 +548,7 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
                     loc_base[key] = shard_name
             return loc_e, loc_b, loc_p, loc_base
 
-        n_scan = max_workers_scan if max_workers_scan is not None else min(len(shard_names), _cpu_count() * 4, 256)
+        n_scan = max_workers_scan if max_workers_scan is not None else min(len(shard_names), cpu_count() * 4, 256)
         logger.info(
             f"GptOssMxfp4ExpertDequantSplitCheckpointTransform: scanning {len(shard_names)} shards "
             f"(workers={n_scan})..."
@@ -752,11 +606,11 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
                 tensors[f"{prefix}.down_proj_bias"] = _load(dp_bias_shard, dp_bias_key).to(target_dtype)
 
             out_name = f"experts-layer-{layer_idx:05d}.safetensors"
-            _atomic_save(tensors, out / out_name)
+            atomic_save(tensors, out / out_name)
             return out_name, list(tensors.keys())
 
         n_layers = (
-            max_workers_layers if max_workers_layers is not None else max(1, min(len(layer_indices), _cpu_count()))
+            max_workers_layers if max_workers_layers is not None else max(1, min(len(layer_indices), cpu_count()))
         )
         logger.info(f"  Dequantizing {len(layer_indices)} layers | workers={n_layers}...")
         with ThreadPoolExecutor(max_workers=n_layers) as ex:
@@ -782,9 +636,9 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
                 for key in keys:
                     t = f.get_tensor(key)
                     tensors[key] = t.to(target_dtype) if t.is_floating_point() else t
-            _atomic_save(tensors, out / new_base_name_for[shard_name])
+            atomic_save(tensors, out / new_base_name_for[shard_name])
 
-        n_base = max_workers_base if max_workers_base is not None else max(1, min(len(base_shard_list), _cpu_count()))
+        n_base = max_workers_base if max_workers_base is not None else max(1, min(len(base_shard_list), cpu_count()))
         logger.info(f"  Converting {len(base_shard_list)} base shards | workers={n_base}...")
         if base_shard_list:
             with ThreadPoolExecutor(max_workers=n_base) as ex:
@@ -795,14 +649,14 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
         for key, shard_name in base_entries.items():
             new_weight_map[key] = new_base_name_for[shard_name]
 
-        _write_index(out, new_weight_map)
+        write_index(out, new_weight_map)
         sentinel.touch()
         logger.info(f"GptOssMxfp4ExpertDequantSplitCheckpointTransform: done → {out}")
         return True
 
 
 # ---------------------------------------------------------------------------
-# Pipeline
+# Transform 4: split already-stacked fused MoE experts (Mixtral v5+ layout)
 # ---------------------------------------------------------------------------
 
 
@@ -867,7 +721,7 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
             return False
 
         out.mkdir(parents=True, exist_ok=True)
-        _copy_aux_files(src, out)
+        copy_checkpoint_aux_files(src, out)
 
         new_weight_map: Dict[str, str] = {}
         for shard_name in sorted(set(weight_map.values())):
@@ -912,49 +766,3 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
         )
         sentinel.touch()
         return True
-
-
-class CheckpointTransformPipeline:
-    """Selects and runs the first applicable checkpoint transform.
-
-    Transforms are priority-ordered. The first one whose ``is_applicable()``
-    returns True is executed and the pipeline stops. Each transform produces a
-    complete prepared checkpoint — there is no chaining between transforms.
-
-    Example::
-
-        pipeline = CheckpointTransformPipeline([
-            MoEExpertStackingCheckpointTransform,   # MoE models: stacks + converts
-            DtypeConversionCheckpointTransform,     # dense models: converts only
-        ])
-        prepared_dir = pipeline.apply(src, out, target_dtype=torch.float32)
-    """
-
-    def __init__(self, transforms: List[Type[BaseCheckpointTransform]]):
-        """Create a priority-ordered checkpoint transform pipeline."""
-        self.transforms = transforms
-
-    def apply(
-        self,
-        src: Path,
-        out: Path,
-        target_dtype: torch.dtype = torch.float32,
-        **kwargs,
-    ) -> Path:
-        """Apply the first matching transform and return the usable checkpoint directory."""
-        src, out = Path(src), Path(out)
-        if (out / _SENTINEL).exists():
-            return out
-
-        source_dir = src
-        has_safetensors = bool(list(src.glob("*.safetensors"))) or (src / "model.safetensors.index.json").exists()
-        if not has_safetensors and list(src.glob("*.bin")):
-            source_dir = out.with_name(out.name + "-source-safetensors")
-            _convert_bin_to_safetensors(src, source_dir)
-
-        weight_map = _read_weight_map(source_dir)
-        for transform in self.transforms:
-            if transform.is_applicable(weight_map, src=source_dir, target_dtype=target_dtype):
-                transform.apply(source_dir, out, target_dtype=target_dtype, **kwargs)
-                return out
-        return source_dir  # no transform applicable — source is already usable as-is

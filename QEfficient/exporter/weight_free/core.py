@@ -14,12 +14,12 @@ from typing import Any, Dict, List, Optional
 import torch
 from accelerate import init_empty_weights
 
-from QEfficient.exporter.weight_free.checkpoint import prepare_checkpoint_for_weight_free_export
 from QEfficient.exporter.weight_free.spec import load_weight_spec, resolve_weight_spec_path, save_weight_spec
 from QEfficient.exporter.weight_free.spec_builder import promote_initializers_and_build_spec
 from QEfficient.transformers.embeddings.embedding_utils import PooledModel
 from QEfficient.transformers.models.pytorch_transforms import PoolingTransform
 from QEfficient.utils import load_json
+from QEfficient.utils.checkpoint_utils import resolve_checkpoint_dir
 from QEfficient.utils.export_utils import (
     _cleanup_onnx_subfunctions,
     _setup_onnx_subfunctions,
@@ -159,6 +159,42 @@ def _upsert_metadata_prop(model, key: str, value: str) -> None:
     model.metadata_props.append(onnx.StringStringEntryProto(key=key, value=value))
 
 
+def _prepare_checkpoint_for_weight_free_export(
+    qeff_model,
+    model_ref: str,
+    target_dtype: torch.dtype,
+) -> str:
+    """Prepare a checkpoint directory for weight-free ONNX export.
+
+    Parameters
+    ----------
+    qeff_model
+        QEfficient model wrapper that provides checkpoint transform classes.
+    model_ref : str
+        Local model path or Hugging Face Hub model id.
+    target_dtype : torch.dtype
+        Floating-point dtype expected by the exported ONNX graph.
+
+    Returns
+    -------
+    str
+        Path to the prepared checkpoint directory.
+    """
+    from QEfficient.base.checkpoint_transforms import CheckpointTransformPipeline
+
+    source_dir = resolve_checkpoint_dir(model_ref)
+    dtype_suffix = str(target_dtype).replace("torch.", "")
+    prepared_out = source_dir.parent / (source_dir.name + f"-qeff-prepared-{dtype_suffix}")
+    prep_pipeline = CheckpointTransformPipeline(transforms=qeff_model._checkpoint_transforms)
+    return str(
+        prep_pipeline.apply(
+            src=source_dir,
+            out=prepared_out,
+            target_dtype=target_dtype,
+        )
+    )
+
+
 def export_weight_free_onnx(
     qeff_model,
     tmp_onnx_path: Path,
@@ -243,7 +279,7 @@ def export_weight_free_onnx(
             target_dtype = torch.float16
 
         prep_start = time.perf_counter()
-        prepared_model_ref = prepare_checkpoint_for_weight_free_export(meta_qeff_model, model_ref, target_dtype)
+        prepared_model_ref = _prepare_checkpoint_for_weight_free_export(meta_qeff_model, model_ref, target_dtype)
 
         _last_prep_duration_seconds = time.perf_counter() - prep_start
         _last_prep_peak_rss_mb = None
