@@ -7,11 +7,13 @@
 
 from QEfficient.customop.ctx_scatter_gather import (
     CtxChunkScatterBatchFunc,
+    CtxChunkScatterBatchFuncCB,
     CtxGatherFunc,
     CtxGatherFunc3D,
     CtxGatherFunc3DGeneralized,
     CtxGatherFuncBlockedKV,
     CtxGatherFuncBlockedKVBatch,
+    CtxGatherFuncBlockedKVBatchCB,
     CtxScatterFunc,
     CtxScatterFunc3D,
     CtxScatterFunc3DGeneralized,
@@ -43,7 +45,9 @@ from QEfficient.customop.utils import (
 
 __all__ = [
     "CtxChunkScatterBatchFunc",
+    "CtxChunkScatterBatchFuncCB",
     "CtxGatherFuncBlockedKVBatch",
+    "CtxGatherFuncBlockedKVBatchCB",
     "CustomRMSNormAIC",
     "GemmaCustomRMSNormAIC",
     # Func classes (for ONNX export symbolic registration and direct use)

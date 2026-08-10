@@ -144,6 +144,44 @@ class TestQEffDynamicLayerCorrectness:
         assert torch.isfinite(k_out).all()
         assert torch.isfinite(v_out).all()
 
+    def test_batch_fold_continuous_batching_uses_physical_slots(self):
+        full_batch_size, batch_size, heads, ctx_len, head_dim = 3, 2, 2, 8, 4
+        layer = QEffDynamicLayer()
+        layer.keys = torch.zeros(1, full_batch_size * heads, ctx_len, head_dim)
+        layer.values = torch.zeros_like(layer.keys)
+
+        batch_index = torch.tensor([[2], [0]], dtype=torch.int32)
+        position_ids = torch.tensor([[3], [5]], dtype=torch.int32)
+        key = torch.stack(
+            [
+                torch.full((heads, 1, head_dim), 2.0),
+                torch.full((heads, 1, head_dim), 7.0),
+            ]
+        )
+        value = key + 10.0
+        cache_kwargs = {
+            "batch_index": batch_index,
+            "position_ids": position_ids,
+            "num_kv_heads": heads,
+        }
+
+        layer.write_only_batch(key, value, cache_kwargs)
+        physical_keys = layer.keys.reshape(full_batch_size, heads, ctx_len, head_dim)
+        physical_values = layer.values.reshape(full_batch_size, heads, ctx_len, head_dim)
+
+        assert torch.all(physical_keys[2, :, 3] == 2.0)
+        assert torch.all(physical_keys[0, :, 5] == 7.0)
+        assert torch.count_nonzero(physical_keys[1]) == 0
+
+        key_out = layer.read_only_blocked_K_batch(0, 6, cache_kwargs).reshape(batch_size, heads, 6, head_dim)
+        value_out = layer.read_only_blocked_V_batch(0, 6, cache_kwargs).reshape(batch_size, heads, 6, head_dim)
+        expected_keys = physical_keys.index_select(0, batch_index.flatten().long())[:, :, :6]
+        expected_values = physical_values.index_select(0, batch_index.flatten().long())[:, :, :6]
+
+        assert torch.equal(key_out[0, :, :4], expected_keys[0, :, :4])
+        assert torch.equal(key_out[1], expected_keys[1])
+        assert torch.equal(value_out, expected_values)
+
 
 # ---------------------------------------------------------------------------
 # Tests: QEffDynamicCache

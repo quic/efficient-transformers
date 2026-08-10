@@ -170,6 +170,7 @@ def generic_blocked_attention_interface(
                 "batch_index": batch_index,
                 "position_ids": position_ids,
                 "past_seen_tokens": past_seen_tokens,
+                "num_kv_heads": key.shape[1],
             }
             past_key_value.write_only_batch(key, value, module.layer_idx, cache_kwargs)
         elif use_kv_blocked and sliding_window is None:

@@ -391,3 +391,98 @@ class CtxGatherFuncBlockedKVBatch(torch.autograd.Function):
     @staticmethod
     def symbolic(g: torch.Graph, data: torch.Value, ctx_indices: torch.Value) -> torch.Value:
         return g.onnxscript_op(CtxGatherBlockedKVBatch, data, ctx_indices).setTypeAs(data)
+
+
+@onnxscript.script(onnxscript.values.Opset("com.qti.aisw.onnx", 1))
+def CtxChunkScatterBatchCB(
+    data: onnxscript.FLOAT,
+    batch_index: onnxscript.INT32,
+    position_ids: onnxscript.INT32,
+    updates: onnxscript.FLOAT,
+) -> onnxscript.FLOAT:
+    batch_size = ops.Gather(ops.Shape(updates), [0])
+    num_heads = ops.Gather(ops.Shape(updates), [1])
+    seq_len = ops.Gather(ops.Shape(updates), [2])
+    head_dim = ops.Gather(ops.Shape(updates), [3])
+    zero = ops.Constant(value_ints=[0])
+    one = ops.Constant(value_ints=[1])
+    bh = ops.Mul(batch_size, num_heads)
+    updates_folded = ops.Reshape(updates, ops.Concat(one, bh, seq_len, head_dim, axis=0))
+    slot = ops.Cast(ops.Reshape(batch_index, [-1]), to=7)
+    head = ops.Range(zero, num_heads, one)
+    folded_head = ops.Add(ops.Mul(ops.Unsqueeze(slot, [1]), num_heads), ops.Unsqueeze(head, [0]))
+    folded_head = ops.Reshape(folded_head, ops.Concat(one, bh, one, one, axis=0))
+    folded_head = ops.Expand(folded_head, ops.Concat(one, bh, seq_len, one, axis=0))
+    position = ops.Expand(
+        ops.Unsqueeze(ops.Cast(position_ids, to=7), [1]),
+        ops.Concat(batch_size, num_heads, seq_len, axis=0),
+    )
+    position = ops.Reshape(position, ops.Concat(one, bh, seq_len, one, axis=0))
+    batch_zero = ops.Mul(folded_head, zero)
+    indices = ops.Concat(batch_zero, folded_head, position, axis=3)
+    return ops.ScatterND(data, indices, updates_folded)
+
+
+class CtxChunkScatterBatchFuncCB(torch.autograd.Function):
+    @staticmethod
+    def forward(data, batch_index, position_ids, updates):
+        batch_size, num_heads, seq_len, _ = updates.shape
+        slot = batch_index.reshape(batch_size, 1, 1).long()
+        head = torch.arange(num_heads, device=data.device).view(1, num_heads, 1)
+        folded_head = (slot * num_heads + head).expand(batch_size, num_heads, seq_len)
+        position = position_ids.long().unsqueeze(1).expand(batch_size, num_heads, seq_len)
+        output = data.clone()
+        output[0, folded_head, position] = updates
+        return output
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g, data, batch_index, position_ids, updates):
+        return g.onnxscript_op(CtxChunkScatterBatchCB, data, batch_index, position_ids, updates).setTypeAs(data)
+
+
+@onnxscript.script(onnxscript.values.Opset("com.qti.aisw.onnx", 1))
+def CtxGatherBlockedKVBatchCB(
+    data: onnxscript.FLOAT,
+    batch_index: onnxscript.INT32,
+    ctx_indices: onnxscript.INT32,
+) -> onnxscript.FLOAT:
+    batch_size = ops.Gather(ops.Shape(batch_index), [0])
+    bh = ops.Gather(ops.Shape(ctx_indices), [1])
+    block_len = ops.Gather(ops.Shape(ctx_indices), [2])
+    num_heads = ops.Div(bh, batch_size)
+    zero = ops.Constant(value_ints=[0])
+    one = ops.Constant(value_ints=[1])
+    slot = ops.Cast(ops.Reshape(batch_index, [-1]), to=7)
+    head = ops.Range(zero, num_heads, one)
+    folded_head = ops.Add(ops.Mul(ops.Unsqueeze(slot, [1]), num_heads), ops.Unsqueeze(head, [0]))
+    folded_head = ops.Reshape(folded_head, ops.Concat(one, bh, one, one, axis=0))
+    folded_head = ops.Expand(folded_head, ops.Concat(one, bh, block_len, one, axis=0))
+    ctx_indices = ops.Unsqueeze(ops.Cast(ctx_indices, to=7), [-1])
+    batch_zero = ops.Mul(folded_head, zero)
+    indices = ops.Concat(batch_zero, folded_head, ctx_indices, axis=3)
+    return ops.GatherND(data, indices)
+
+
+class CtxGatherFuncBlockedKVBatchCB(torch.autograd.Function):
+    @staticmethod
+    def forward(data, batch_index, ctx_indices):
+        batch_size = batch_index.shape[0]
+        bh = ctx_indices.shape[1]
+        num_heads = bh // batch_size
+        slot = batch_index.reshape(batch_size, 1, 1).long()
+        head = torch.arange(num_heads, device=data.device).view(1, num_heads, 1)
+        folded_head = (slot * num_heads + head).reshape(bh, 1)
+        ctx_indices = torch.where(ctx_indices[0] == torch.iinfo(torch.int32).max, 0, ctx_indices[0])
+        return data[0, folded_head, ctx_indices].unsqueeze(0)
+
+    @staticmethod
+    def setup_context(ctx, inputs, outputs):
+        pass
+
+    @staticmethod
+    def symbolic(g, data, batch_index, ctx_indices):
+        return g.onnxscript_op(CtxGatherBlockedKVBatchCB, data, batch_index, ctx_indices).setTypeAs(data)

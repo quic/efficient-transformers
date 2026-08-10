@@ -14,7 +14,9 @@ from transformers.cache_utils import Cache, CacheLayerMixin, EncoderDecoderCache
 
 from QEfficient.customop import (
     CtxChunkScatterBatchFunc,
+    CtxChunkScatterBatchFuncCB,
     CtxGatherFuncBlockedKVBatch,
+    CtxGatherFuncBlockedKVBatchCB,
     ctx_gather,
     ctx_gather_3d,
     ctx_gather_blocked_kv,
@@ -285,7 +287,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         if k_out is not None:
             self._mark_initialized(k_out)
         position_ids = cache_kwargs.get("position_ids")
-        # batch_index = cache_kwargs.get("batch_index", None)
+        batch_index = cache_kwargs.get("batch_index")
         B, _ = position_ids.shape
         _, BH, _, _ = k_out.shape
         Hkv = cache_kwargs.get("num_kv_heads", BH // B)
@@ -299,8 +301,11 @@ class QEffDynamicLayer(CacheLayerMixin):
 
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-        ctx_indices = ctx_indices.expand(1, BH, T_block)
-        k_out = CtxGatherFuncBlockedKVBatch.apply(k_out, ctx_indices)
+        ctx_indices = ctx_indices.expand(1, B * Hkv, T_block)
+        if batch_index is not None:
+            k_out = CtxGatherFuncBlockedKVBatchCB.apply(k_out, batch_index, ctx_indices)
+        else:
+            k_out = CtxGatherFuncBlockedKVBatch.apply(k_out, ctx_indices)
 
         return k_out
 
@@ -363,7 +368,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         # Gather
         v_out = self.values
         position_ids = cache_kwargs.get("position_ids")
-        # batch_index = cache_kwargs.get("batch_index", None)
+        batch_index = cache_kwargs.get("batch_index")
         B, _ = position_ids.shape
         _, BH, _, _ = v_out.shape
         Hkv = cache_kwargs.get("num_kv_heads", BH // B)
@@ -376,8 +381,11 @@ class QEffDynamicLayer(CacheLayerMixin):
 
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-        ctx_indices = ctx_indices.expand(1, BH, T_block)
-        v_out = CtxGatherFuncBlockedKVBatch.apply(v_out, ctx_indices)
+        ctx_indices = ctx_indices.expand(1, B * Hkv, T_block)
+        if batch_index is not None:
+            v_out = CtxGatherFuncBlockedKVBatchCB.apply(v_out, batch_index, ctx_indices)
+        else:
+            v_out = CtxGatherFuncBlockedKVBatch.apply(v_out, ctx_indices)
 
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
         return v_out
@@ -495,11 +503,15 @@ class QEffDynamicLayer(CacheLayerMixin):
             # key_folded = key_states.reshape(1, BH, -1, D)
             # value_folded = value_states.reshape(1, BH, -1, D)
 
-            # batch_index = cache_kwargs.get("batch_index")
+            batch_index = cache_kwargs.get("batch_index")
 
             # Scatter
-            self.keys = CtxChunkScatterBatchFunc.apply(self.keys, position_ids, key_states)
-            self.values = CtxChunkScatterBatchFunc.apply(self.values, position_ids, value_states)
+            if batch_index is not None:
+                self.keys = CtxChunkScatterBatchFuncCB.apply(self.keys, batch_index, position_ids, key_states)
+                self.values = CtxChunkScatterBatchFuncCB.apply(self.values, batch_index, position_ids, value_states)
+            else:
+                self.keys = CtxChunkScatterBatchFunc.apply(self.keys, position_ids, key_states)
+                self.values = CtxChunkScatterBatchFunc.apply(self.values, position_ids, value_states)
 
     def update(
         self,

@@ -36,13 +36,24 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     config=config,
     dtype=torch.float16,
     layerwise=False,
+    continuous_batching=True,
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
 PREFILL_SEQ_LEN = 1024
 CTX_LEN = 10240  # 2048 * 2
-BS = 256
+
+# Disaggregated continuous-batching capacities:
+# FBS is the number of physical KV-cache slots and FBES is the number of rows
+# executed by the QPC per invocation.
+PREFILL_BATCH_SIZE = 1
+PREFILL_FULL_BATCH_SIZE = 7
+PREFILL_FULL_BATCH_EXEC_SIZE = 1
+DECODE_BATCH_SIZE = 256
+DECODE_FULL_BATCH_SIZE = 256
+DECODE_FULL_BATCH_EXEC_SIZE = 256
+PREFILL_SLOT = 0
 
 NUM_KV_BLOCKS = 4
 NUM_Q_BLOCKS = 2
@@ -81,7 +92,7 @@ def _qaic_config() -> dict:
 skip_vision = True
 if not skip_vision:
     vision_qpc_path = qeff_model.compile(
-        batch_size=BS,
+        batch_size=PREFILL_BATCH_SIZE,
         prefill_seq_len=PREFILL_SEQ_LEN,
         ctx_len=CTX_LEN,
         height=354,
@@ -101,7 +112,9 @@ decode_qaic_config = _qaic_config()
 print("decode", decode_qaic_config)
 decode_start_time = perf_counter()
 decode_qpc_path = qeff_model.compile(
-    batch_size=BS,
+    batch_size=DECODE_BATCH_SIZE,
+    full_batch_size=DECODE_FULL_BATCH_EXEC_SIZE,
+    kv_cache_batch_size=DECODE_FULL_BATCH_SIZE,
     prefill_seq_len=1,
     ctx_len=CTX_LEN,
     height=354,
@@ -141,7 +154,9 @@ print("prefill", prefill_qaic_config)
 
 prefill_start_time = perf_counter()
 prefill_qpc_path = qeff_model.compile(
-    batch_size=1,
+    batch_size=PREFILL_BATCH_SIZE,
+    full_batch_size=PREFILL_FULL_BATCH_EXEC_SIZE,
+    kv_cache_batch_size=PREFILL_FULL_BATCH_SIZE,
     prefill_seq_len=PREFILL_SEQ_LEN,
     ctx_len=CTX_LEN,
     moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
@@ -198,7 +213,7 @@ else:
     vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
 
 
-messages = [messages] * BS
+messages = messages * PREFILL_BATCH_SIZE
 
 texts = [processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages]
 
@@ -210,7 +225,11 @@ inputs = processor(
     padding=True,
     return_tensors="pt",
 )
-inputs = qeff_model.model.prepare_inputs_for_generation(inputs=inputs, prefill_seq_len=PREFILL_SEQ_LEN, batch_size=BS)
+inputs = qeff_model.model.prepare_inputs_for_generation(
+    inputs=inputs,
+    prefill_seq_len=PREFILL_SEQ_LEN,
+    batch_size=PREFILL_BATCH_SIZE,
+)
 
 pad_token_id = 1
 input_len = inputs["attention_mask"].sum(1, keepdims=True)
@@ -219,7 +238,7 @@ num_chunks = -(input_ids_length // -PREFILL_SEQ_LEN)  # ceil divide without floa
 padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
 generation_len = 30  # CTX_LEN - input_len.max()
 print(f"generation_len : {generation_len}")
-generated_ids = np.full((BS, generation_len + 1), pad_token_id)
+generated_ids = np.full((DECODE_BATCH_SIZE, generation_len + 1), pad_token_id)
 
 
 inputs["input_ids"] = torch.nn.functional.pad(
@@ -270,6 +289,7 @@ lang_start = perf_counter()
 lang_prefill_session.set_buffers(vision_outputs)
 all_outputs = []
 chunk_inputs = lang_inputs.copy()
+chunk_inputs["batch_index"] = np.array([[PREFILL_SLOT]], dtype=np.int64)
 for i in range(num_chunks):
     chunk_inputs["input_ids"] = lang_inputs["input_ids"][0:1, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
     chunk_inputs["position_ids"] = lang_inputs["position_ids"][:, 0:1, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
@@ -281,28 +301,28 @@ for i in range(num_chunks):
 prefill_time = perf_counter() - lang_start + vision_end - vision_start
 print(f"Prefill time : {prefill_time:.2f} secs")
 
-# Next token from batch=1 prefill; position for all BS decode requests
+# Next token from the one-row prefill execution, replicated across the decode batch.
 next_token_id = np.argmax(outputs["logits"])  # scalar
 all_outputs.append(next_token_id)
 next_pos = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
+decode_position_ids = np.repeat(next_pos, DECODE_BATCH_SIZE, axis=1)
 
-# Tile KV from prefill [1, num_kv_heads, ctx_len, head_dim]
-# → batch-fold decode layout [1, BS*num_kv_heads, ctx_len, head_dim]
+# Copy PREFILL_SLOT from the folded 7-slot prefill cache into every physical
+# slot of the folded 256-slot decode cache.
 decode_inputs = {
-    "input_ids": np.full((BS, 1), next_token_id, dtype=lang_inputs["input_ids"].dtype),
-    "position_ids": next_pos,
+    "input_ids": np.full((DECODE_BATCH_SIZE, 1), next_token_id, dtype=lang_inputs["input_ids"].dtype),
+    "position_ids": decode_position_ids,
+    "batch_index": np.arange(DECODE_BATCH_SIZE, dtype=np.int64).reshape(-1, 1),
 }
 
 for layer_idx in range(config.text_config.num_hidden_layers):
-    # RetainedState from prefill has shape [1, num_kv_heads, ctx_len, head_dim].
-    # Replicate across BS decode requests, then fold into [1, BS*num_kv_heads, ctx_len, head_dim].
-    _, h, c, d = outputs[f"past_key.{layer_idx}_RetainedState"].shape
-    decode_inputs[f"past_key.{layer_idx}"] = np.tile(
-        outputs[f"past_key.{layer_idx}_RetainedState"], (1, BS, 1, 1)
-    ).reshape(1, BS * h, c, d)
-    decode_inputs[f"past_value.{layer_idx}"] = np.tile(
-        outputs[f"past_value.{layer_idx}_RetainedState"], (1, BS, 1, 1)
-    ).reshape(1, BS * h, c, d)
+    num_kv_heads = config.text_config.num_key_value_heads
+    slot_start = PREFILL_SLOT * num_kv_heads
+    slot_end = slot_start + num_kv_heads
+    for cache_name in ("past_key", "past_value"):
+        prefill_cache = outputs[f"{cache_name}.{layer_idx}_RetainedState"]
+        selected_slot = prefill_cache[:, slot_start:slot_end, :, :]
+        decode_inputs[f"{cache_name}.{layer_idx}"] = np.tile(selected_slot, (1, DECODE_FULL_BATCH_SIZE, 1, 1))
 
 st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
@@ -313,6 +333,7 @@ pos_id = decode_inputs["position_ids"] + 1  # [BS, 1]
 loop_decode_inputs = {
     "input_ids": np.argmax(decode_out["logits"], axis=-1),  # [BS, 1]
     "position_ids": pos_id,
+    "batch_index": decode_inputs["batch_index"],
 }
 
 for i in range(config.text_config.num_hidden_layers):
@@ -330,7 +351,7 @@ for i in range(generation_len - 2):
         loop_decode_inputs[f"past_value.{j}"] = decode_out[f"past_value.{j}_RetainedState"]
     loop_decode_inputs.update(
         {
-            "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
+            "input_ids": np.argmax(decode_out["logits"], axis=-1),
             "position_ids": pos_id,
         }
     )

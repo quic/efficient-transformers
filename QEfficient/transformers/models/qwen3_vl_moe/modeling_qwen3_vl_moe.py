@@ -1424,7 +1424,8 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             for i in range(0, len(comp_ctx_lengths_decode or [])):
                 lang_decode = {
                     "batch_size": full_batch_size if continuous_batching else batch_size,
-                    "BH": batch_size * self.config.text_config.num_key_value_heads,
+                    "BH": (kv_cache_batch_size if continuous_batching else batch_size)
+                    * self.config.text_config.num_key_value_heads,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
                     "vision_size": vision_size,
@@ -1458,7 +1459,8 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
 
             lang_decode = {
                 "batch_size": full_batch_size if continuous_batching else batch_size,
-                "BH": batch_size * self.config.text_config.num_key_value_heads,
+                "BH": (kv_cache_batch_size if continuous_batching else batch_size)
+                * self.config.text_config.num_key_value_heads,
                 "seq_len": 1,
                 "ctx_len": ctx_len,
                 "vision_size": vision_size,
