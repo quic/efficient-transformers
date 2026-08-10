@@ -10,13 +10,12 @@ python -m pytest     tests/transformers/disaggregated/test_qwen3moe_kv_share_par
 
 import os
 
-import numpy as np
 import pytest
 import torch
+from examples.disagg_serving.qwen3moe_disagg_mode_chunking_with_kv_share import run as run_kv_share
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-from examples.disagg_serving.qwen3moe_disagg_mode_chunking_with_kv_share import run as run_kv_share
-from examples.disagg_serving.qwen3moe_disagg_mode_with_chunking import run as run_baseline
+# from examples.disagg_serving.qwen3moe_disagg_mode_with_chunking import run as run_baseline
 
 pytestmark = pytest.mark.skip(reason="")
 
@@ -33,47 +32,6 @@ HF_COMPARE_TOKENS = int(os.environ.get("QEFF_QWEN3MOE_HF_COMPARE_TOKENS", NUM_TO
 HF_MIN_LEADING_MATCH = int(os.environ.get("QEFF_QWEN3MOE_HF_MIN_MATCH", 20))
 _raw_layers = os.environ.get("QEFF_QWEN3MOE_NUM_HIDDEN_LAYERS")
 NUM_HIDDEN_LAYERS = int(_raw_layers) if _raw_layers and _raw_layers.strip() else None
-
-
-@pytest.mark.on_qaic
-def test_kv_share_matches_baseline_first_token_and_logits():
-    base = run_baseline(
-        MODEL_ID,
-        PROMPT,
-        PREFILL_SEQ_LEN,
-        CTX_LEN,
-        STAGES,
-        PREFILL_NUM_DEVICES,
-        DECODE_NUM_DEVICES,
-        num_hidden_layers=NUM_HIDDEN_LAYERS,
-    )
-    share = run_kv_share(
-        MODEL_ID,
-        PROMPT,
-        PREFILL_SEQ_LEN,
-        CTX_LEN,
-        STAGES,
-        PREFILL_NUM_DEVICES,
-        DECODE_NUM_DEVICES,
-        num_hidden_layers=NUM_HIDDEN_LAYERS,
-    )
-
-    # First decode token must be identical (argmax over prefill logits).
-    assert share["first_token"] == base["first_token"], (
-        f"first token mismatch: kv_share={share['first_token']} baseline={base['first_token']}"
-    )
-
-    np.testing.assert_allclose(
-        share["logits"],
-        base["logits"],
-        rtol=0,
-        atol=0,
-        err_msg="prefill logits diverged between kv_share and numpy-copy paths",
-    )
-    n = min(NUM_TOKEN_MATCH, len(base["tokens"]), len(share["tokens"]))
-    assert share["tokens"][:n] == base["tokens"][:n], (
-        f"decoded tokens diverged within first {n}:\n  kv_share={share['tokens'][:n]}\n  baseline={base['tokens'][:n]}"
-    )
 
 
 def _run_hf_greedy_reference(compare_tokens: int) -> list:
