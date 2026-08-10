@@ -267,10 +267,11 @@ def blocked_kv_attention_forward_decode_headpar_batch(
     sinks: Optional[torch.Tensor] = None,
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-    """Batch-folded decode: k_cache/v_cache [1, BH, T, D] where BH=B*num_kv_heads is static.
+    """Batch-folded decode with standard retained cache IO [FBS, Hkv, T, D].
     Used when B > 1 (decode, non-chunk_kv) — one core/device per (batch, kv-head)
     pair, so no inner `split` dimension is needed (unlike blocked_kv_attention_forward_headpar_offline).
-    query: [B, NQH, 1, D], k_cache/v_cache: [1, BH, T, D], position_ids: [B, 1]
+    The physical cache is viewed as [1, FBS*Hkv, ...]; gathered blocks and
+    attention use [1, B*Hkv, ...], with batch_index mapping B into FBS.
     """
     batch_size, num_heads, seq_len, head_dim = query.shape
     assert seq_len == 1, "blocked_kv_attention_forward_decode_headpar_batch is decode-only (seq_len must be 1)."
@@ -303,7 +304,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
                 if skip_future.item():
                     break
 
-        # Read K: [B, num_kv_heads, T_block, D] -> [1, BH, T_block, D]
+        # Read K through the folded [1, BH, T_block, D] view.
         k_block = past_key_value.read_only_blocked_K_batch(start_index, end_index, layer_idx, cache_kwargs)
 
         attn_weights_block = torch.matmul(query_flat, k_block.transpose(3, 2)) * scaling
@@ -330,7 +331,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
             max_block = torch.where(skip_future, torch.full_like(max_block, -3.0e4), max_block)
             exp_block = torch.where(skip_future, torch.zeros_like(exp_block), exp_block)
 
-        # Read V: [B, num_kv_heads, T_block, D] -> [1, BH, T_block, D]
+        # Read V through the folded [1, BH, T_block, D] view.
         v_block = past_key_value.read_only_blocked_V_batch(start_index, end_index, layer_idx, cache_kwargs)
         sum_block = torch.einsum("btdn->btd", exp_block)
         out_block = torch.matmul(exp_block, v_block)
