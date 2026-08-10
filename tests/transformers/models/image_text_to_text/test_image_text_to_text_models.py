@@ -43,7 +43,7 @@ from tests.utils.load_kimi_utils import (
     load_kimi_k25_model_from_config,
     run_kimi_k25_hf_model_on_pytorch,
 )
-
+from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from ..check_model_results import dump_and_compare_results
 
 _session = requests.Session()
@@ -78,6 +78,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     mdp_strategy: Optional[str] = None,
     use_onnx_subfunctions: bool = False,
 ):
+    replace_transformers_quantizers()
     prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
     img_size = model_config_dict[model_name].get("img_size")

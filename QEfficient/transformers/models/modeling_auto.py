@@ -70,6 +70,7 @@ from QEfficient.transformers.moe.flavours import MoEFlavour
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import (
     AwqToMatmulNbitsTransform,
+    FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform,
     FP8BlockWiseDequantLinearToLinearTransform,
     FP8DeQuantLinearToLinearTransform,
     GPTQToMatmulNbitsTransform,
@@ -82,6 +83,7 @@ from QEfficient.utils import (
     get_padding_shape_from_config,
     validate_kv_cache_prefix,
 )
+from QEfficient.utils.dtype_utils import cast_non_quantized_tensors
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.export_utils import export_from_compile
 from QEfficient.utils.logging_utils import logger
@@ -1235,6 +1237,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             Additional keyword arguments passed to the base class constructor.
         """
         _configure_proxy_for_model(self, kwargs.pop("enable_proxy", False))
+        if kwargs.pop("fp8_retain_weights", False):
+            self._pytorch_transforms = [t for t in self._pytorch_transforms if t not in (FP8DeQuantLinearToLinearTransform,FP8BlockWiseDequantLinearToLinearTransform, FP8BlockWiseDequantQwen3VLMoeTextExpertsToQwen3VLMoeTextExpertsTransform)]
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
         self.model.qaic_config = qaic_config
@@ -1500,6 +1504,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        cast_non_quantized_tensors(model, kwargs.get("torch_dtype", torch.float32))
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
@@ -1580,6 +1585,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         """
         layerwise_cache_probe = kwargs.pop("_layerwise_cache_probe", False)
         reject_legacy_moe_prefill_packed_chunk_size(kwargs)
+        fp8_retain_weights = kwargs.pop("fp8_retain_weights", False)
         if layerwise:
             return self._run_layerwise_export(
                 export_dir=export_dir,
@@ -2728,6 +2734,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         config.vision_config.use_flash_attn = "false"
         _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, config, *args, **kwargs)
+        cast_non_quantized_tensors(model, kwargs.get("torch_dtype", torch.float32))
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
@@ -3378,6 +3385,7 @@ class QEFFAutoModelForImageTextToText:
         )
 
         _resolve_torch_dtype(kwargs)
+        fp8_retain_weights = kwargs.pop("fp8_retain_weights", False)
         if layerwise:
             # Layer-wise mode: build the outer model on the meta device so the
             # caller's ``from_pretrained`` does not pull the full checkpoint
@@ -3387,9 +3395,12 @@ class QEFFAutoModelForImageTextToText:
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
         else:
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        cast_non_quantized_tensors(model, kwargs.get("torch_dtype", torch.float32))
 
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
 
+        if fp8_retain_weights:
+            kwargs["fp8_retain_weights"] = fp8_retain_weights
         instance = cls(
             model,
             kv_offload=kv_offload,
@@ -3655,6 +3666,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             }
         )
 
+        fp8_retain_weights = kwargs.pop("fp8_retain_weights", False)
         _resolve_torch_dtype(kwargs)
         if layerwise:
             # Layer-wise mode: build the outer model on the meta device. The
@@ -3664,11 +3676,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
         else:
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        cast_non_quantized_tensors(model, kwargs.get("torch_dtype", torch.float32))
         if qaic_config is not None:
             qaic_config["pretrained_model_name_or_path"] = pretrained_model_name_or_path
 
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kwargs.update({"enable_proxy": enable_proxy} if enable_proxy else {})
+        if fp8_retain_weights:
+            kwargs["fp8_retain_weights"] = fp8_retain_weights
         if model.__class__.__name__ in MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP:
             return MISCLASSIFIED_CAUSAL_LM_TO_QEFF_AUTO_CLASS_MAP[model.__class__.__name__](
                 model,
