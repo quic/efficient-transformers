@@ -426,4 +426,5 @@ def test_qwen3_vl_moe_disagg_batch_fold_blocked_qaic_vs_hf_fp32(manual_cleanup):
         "prefill_block_chunks": PREFILL_BLOCK_CHUNKS,
         "prefill_n_rep_chunk": PREFILL_N_REP_CHUNK,
     }
+    prefill_qaic_config.pop("batch_fold")
     _run_disagg_blocked(manual_cleanup, decode_qaic_config, prefill_qaic_config=prefill_qaic_config)

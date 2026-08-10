@@ -79,10 +79,9 @@ def _decode_qaic_config() -> dict:
     }
 
 
-def _qaic_config() -> dict:
+def _prefill_qaic_config() -> dict:
     cfg = _decode_qaic_config()
-    if PREFILL_MODE is None:
-        return cfg
+    cfg.pop("batch_fold")
     cfg["prefill_block_chunks"] = PREFILL_BLOCK_CHUNKS
     cfg["prefill_blocking_mode"] = PREFILL_MODE
     cfg["prefill_n_rep_chunk"] = PREFILL_N_REP_CHUNK
@@ -108,7 +107,7 @@ if not skip_vision:
         use_onnx_subfunctions=True,
         layerwise=False,
     )
-decode_qaic_config = _qaic_config()
+decode_qaic_config = _decode_qaic_config()
 print("decode", decode_qaic_config)
 decode_start_time = perf_counter()
 decode_qpc_path = qeff_model.compile(
@@ -149,7 +148,7 @@ PREFILL_QL_CHUNK = 128
 PREFILL_BLOCK_CHUNKS = -(-PREFILL_SEQ_LEN // PREFILL_QL_CHUNK)
 PREFILL_N_REP_CHUNK = 4
 MOE_PREFILL_PACKED_CHUNK_SIZE = 256
-prefill_qaic_config = _qaic_config()
+prefill_qaic_config = _prefill_qaic_config()
 print("prefill", prefill_qaic_config)
 
 prefill_start_time = perf_counter()
@@ -307,8 +306,8 @@ all_outputs.append(next_token_id)
 next_pos = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
 decode_position_ids = np.repeat(next_pos, DECODE_BATCH_SIZE, axis=1)
 
-# Copy PREFILL_SLOT from the folded 7-slot prefill cache into every physical
-# slot of the folded 256-slot decode cache.
+# Copy PREFILL_SLOT from the standard prefill cache into every physical
+# slot of the standard decode cache. Folding remains internal to attention.
 decode_inputs = {
     "input_ids": np.full((DECODE_BATCH_SIZE, 1), next_token_id, dtype=lang_inputs["input_ids"].dtype),
     "position_ids": decode_position_ids,
@@ -316,13 +315,10 @@ decode_inputs = {
 }
 
 for layer_idx in range(config.text_config.num_hidden_layers):
-    num_kv_heads = config.text_config.num_key_value_heads
-    slot_start = PREFILL_SLOT * num_kv_heads
-    slot_end = slot_start + num_kv_heads
     for cache_name in ("past_key", "past_value"):
         prefill_cache = outputs[f"{cache_name}.{layer_idx}_RetainedState"]
-        selected_slot = prefill_cache[:, slot_start:slot_end, :, :]
-        decode_inputs[f"{cache_name}.{layer_idx}"] = np.tile(selected_slot, (1, DECODE_FULL_BATCH_SIZE, 1, 1))
+        selected_slot = prefill_cache[PREFILL_SLOT : PREFILL_SLOT + 1]
+        decode_inputs[f"{cache_name}.{layer_idx}"] = np.tile(selected_slot, (DECODE_FULL_BATCH_SIZE, 1, 1, 1))
 
 st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
