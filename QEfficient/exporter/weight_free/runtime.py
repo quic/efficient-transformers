@@ -13,8 +13,8 @@ import numpy as np
 import torch
 from safetensors import safe_open
 
-from QEfficient.exporter.weight_free.checkpoint import checkpoint_root, resolve_checkpoint_dir
 from QEfficient.exporter.weight_free.spec import ExternalDataFile, WeightSpecLocation, load_weight_spec
+from QEfficient.utils.checkpoint_utils import checkpoint_root, resolve_checkpoint_dir
 
 
 def _load_checkpoint_tensor(checkpoint_file: str, key: str) -> np.ndarray:
