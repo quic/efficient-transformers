@@ -425,6 +425,7 @@ class QEffLlama4TextExperts(Llama4TextExperts):
             fused_split_dim=2,
             transpose_gate_up=False,
             transpose_down=False,
+            clone=True,
         )
         delete_module_attrs(self, "gate_up_proj", "down_proj")
         self.weights_transformed = True

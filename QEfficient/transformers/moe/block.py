@@ -59,9 +59,23 @@ class QEffMoEBlockMixin(metaclass=ABCMeta):
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
-        if "supported_moe_flavours" not in cls.__dict__:
-            raise TypeError(f"{cls.__name__} must explicitly define supported_moe_flavours")
-        supported_moe_flavours = tuple(MoEFlavour(flavour) for flavour in cls.supported_moe_flavours)
+        supported_moe_flavours = cls.__dict__.get("supported_moe_flavours")
+        if supported_moe_flavours is None:
+            inherited_supported_moe_flavours = next(
+                (
+                    base.__dict__["supported_moe_flavours"]
+                    for base in cls.__mro__[1:]
+                    if "supported_moe_flavours" in base.__dict__
+                ),
+                None,
+            )
+            is_fx_attr_proxy = cls.__module__ == "abc" and any(
+                base.__name__ == cls.__name__ for base in cls.__mro__[1:]
+            )
+            if inherited_supported_moe_flavours is None or not is_fx_attr_proxy:
+                raise TypeError(f"{cls.__name__} must explicitly define supported_moe_flavours")
+            supported_moe_flavours = inherited_supported_moe_flavours
+        supported_moe_flavours = tuple(MoEFlavour(flavour) for flavour in supported_moe_flavours)
         if not supported_moe_flavours:
             raise TypeError(f"{cls.__name__}.supported_moe_flavours must not be empty")
         cls.supported_moe_flavours = supported_moe_flavours

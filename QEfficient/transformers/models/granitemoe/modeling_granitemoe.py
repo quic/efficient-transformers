@@ -541,6 +541,7 @@ class QEffGraniteMoeMoE(QEffMoEBlockMixin, GraniteMoeMoE):
             fused_split_dim=1,
             transpose_gate_up=True,
             transpose_down=True,
+            clone=True,
         )
         delete_module_attrs(self, "input_linear", "output_linear")
         self.weights_transformed = True

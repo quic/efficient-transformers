@@ -25,7 +25,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     PrefillOnlyChunkedTransform,
     PrefillOnlyTransform,
 )
-from QEfficient.transformers.moe import MoEFlavour
+from QEfficient.transformers.moe import MoEFlavour, QEffMoEBlockMixin, build_canonical_expert_weights
 
 MODEL_KWARGS = {"attn_implementation": "eager"}
 
@@ -78,6 +78,46 @@ def _match_expected_shape(actual: torch.Tensor, expected: torch.Tensor) -> torch
         return actual
     assert actual.numel() == expected.numel()
     return actual.view_as(expected)
+
+
+def _storage_ptr(tensor: torch.Tensor) -> int:
+    return tensor.untyped_storage().data_ptr()
+
+
+def test_moe_block_mixin_allows_fx_attr_proxy_subclasses():
+    class FxProxyTargetMoE(QEffMoEBlockMixin, nn.Module):
+        supported_moe_flavours = (MoEFlavour.SIMPLE_LOOP,)
+
+        def route(self, x: torch.Tensor):
+            raise NotImplementedError
+
+        def transform_weights(self):
+            raise NotImplementedError
+
+    proxy_cls = type(FxProxyTargetMoE.__name__, (FxProxyTargetMoE,), {"__module__": "abc"})
+
+    assert proxy_cls.supported_moe_flavours == FxProxyTargetMoE.supported_moe_flavours
+    with pytest.raises(TypeError, match="must explicitly define supported_moe_flavours"):
+        type("RegularDerivedMoE", (FxProxyTargetMoE,), {})
+
+
+def test_build_canonical_expert_weights_clone_breaks_fused_gate_up_aliasing():
+    gate_up = torch.randn(MOE_BLOCK_NUM_EXPERTS, 2 * MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE, MOE_BLOCK_HIDDEN_SIZE)
+    down = torch.randn(MOE_BLOCK_NUM_EXPERTS, MOE_BLOCK_HIDDEN_SIZE, MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE)
+
+    weights = build_canonical_expert_weights(
+        gate_up=gate_up,
+        down=down,
+        fused=True,
+        fused_split_dim=1,
+        transpose_gate_up=True,
+        transpose_down=True,
+        clone=True,
+    )
+
+    assert _storage_ptr(weights.gate) != _storage_ptr(weights.up)
+
+
 
 
 def _make_tiny_causal_lm(model_type: str, **config_kwargs):
