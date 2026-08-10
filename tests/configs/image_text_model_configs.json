@@ -3,6 +3,7 @@
     {
       "model_name": "llava-hf/llava-1.5-7b-hf",
       "model_type": "llava",
+      "supports_blocking": true,
       "batch_size": 1,
       "prompt_len": 784,
       "ctx_len": 1024,
@@ -49,6 +50,7 @@
     {
       "model_name": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
       "model_type": "llama4",
+      "supports_blocking": false,
       "batch_size": 1,
       "prompt_len": 32,
       "ctx_len": 3072,
@@ -70,6 +72,7 @@
     {
       "model_name": "google/gemma-3-4b-it",
       "model_type": "gemma3",
+      "supports_blocking": false,
       "batch_size": 1,
       "prompt_len": 128,
       "ctx_len": 3072,
@@ -117,6 +120,7 @@
     {
       "model_name": "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
       "model_type": "mistral3",
+      "supports_blocking": true,
       "batch_size": 1,
       "prompt_len": 128,
       "ctx_len": 4096,
@@ -160,6 +164,7 @@
     {
       "model_name": "Qwen/Qwen2.5-VL-3B-Instruct",
       "model_type": "qwen2_5_vl",
+      "supports_blocking": true,
       "batch_size": 1,
       "prompt_len": 128,
       "ctx_len": 4096,
@@ -228,6 +233,8 @@
       "batch_size": 1,
       "prompt_len": 128,
       "ctx_len": 4096,
+      "comp_ctx_lengths_decode": [1024, 2048, 4096],
+      "supports_blocking": true,
       "img_size": 1540,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
@@ -285,6 +292,9 @@
       "batch_size": 1,
       "prompt_len": 128,
       "ctx_len": 4096,
+      "comp_ctx_lengths_decode": [1024, 2048, 4096],
+      "supports_blocking": true,
+      "supports_disagg": true,
       "img_size": 1540,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
@@ -350,6 +360,8 @@
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
       "num_layers": 4,
+      "comp_ctx_lengths_decode": [1024, 2048, 4096],
+      "supports_blocking": true,
       "img_url_list": [
         "https://picsum.photos/id/237/536/354",
         "https://picsum.photos/id/237/536/354"
@@ -414,6 +426,8 @@
       "batch_size": 1,
       "prompt_len": 64,
       "ctx_len": 4096,
+      "comp_ctx_lengths_decode": [1024, 2048, 4096],
+      "supports_blocking": true,
       "img_size": 1540,
       "img_url": "https://picsum.photos/id/237/536/354",
       "text_prompt": "Can you describe the image in detail.",
@@ -479,6 +493,7 @@
     {
       "model_name": "allenai/Molmo-7B-D-0924",
       "model_type": "molmo",
+      "supports_blocking": false,
       "batch_size": 1,
       "prompt_len": 128,
       "ctx_len": 4096,
@@ -500,6 +515,7 @@
     {
       "model_name": "OpenGVLab/InternVL2_5-1B",
       "model_type": "internvl_chat",
+      "supports_blocking": false,
       "batch_size": 1,
       "prompt_len": 384,
       "ctx_len": 512,
@@ -556,6 +572,7 @@
     {
       "model_name": "OpenGVLab/InternVL3_5-1B",
       "model_type": "internvl_chat",
+      "supports_blocking": false,
       "batch_size": 1,
       "prompt_len": 384,
       "ctx_len": 512,
@@ -612,6 +629,7 @@
     {
       "model_name": "tiny-random/gemma-4-dense",
       "model_type": "gemma4",
+      "supports_blocking": false,
       "batch_size": 1,
       "prompt_len": 64,
       "ctx_len": 512,
@@ -652,6 +670,7 @@
     {
       "model_name": "tiny-random/gemma-4-moe",
       "model_type": "gemma4",
+      "supports_blocking": false,
       "batch_size": 1,
       "prompt_len": 64,
       "ctx_len": 512,

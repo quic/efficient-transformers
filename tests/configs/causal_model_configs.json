@@ -360,124 +360,6 @@
       }
     }
   ],
-  "causal_lm_fp16_test_models": [
-    {
-      "model_name": "gpt2",
-      "model_type": "gpt2",
-      "additional_params": {
-        "max_position_embeddings": 128,
-        "num_hidden_layers": 1,
-        "num_attention_heads": 2,
-        "hidden_size": 64,
-        "intermediate_size": 256,
-        "vocab_size": 50257,
-        "num_key_value_heads": 1
-      }
-    },
-    {
-      "model_name": "hf-internal-testing/tiny-random-Gemma2ForCausalLM",
-      "model_type": "gemma2",
-      "additional_params": {
-        "max_position_embeddings": 128,
-        "num_hidden_layers": 1,
-        "num_attention_heads": 2,
-        "hidden_size": 64,
-        "intermediate_size": 256,
-        "vocab_size": 256000,
-        "num_key_value_heads": 1
-      }
-    },
-    {
-      "model_name": "hf-internal-testing/tiny-random-GPTBigCodeForCausalLM",
-      "model_type": "gpt_bigcode",
-      "additional_params": {
-        "max_position_embeddings": 128,
-        "num_hidden_layers": 1,
-        "num_attention_heads": 2,
-        "hidden_size": 64,
-        "intermediate_size": 256,
-        "vocab_size": 49152,
-        "num_key_value_heads": 1,
-        "activation_function": "gelu",
-        "architectures": [
-          "GPTBigCodeForCausalLM"
-        ]
-      }
-    },
-    {
-      "model_name": "Qwen/Qwen2-0.5B",
-      "model_type": "qwen2",
-      "additional_params": {
-        "max_position_embeddings": 128,
-        "num_hidden_layers": 1,
-        "num_attention_heads": 2,
-        "hidden_size": 64,
-        "intermediate_size": 256,
-        "vocab_size": 151936,
-        "num_key_value_heads": 1
-      }
-    },
-    {
-      "model_name": "hf-internal-testing/tiny-random-MixtralForCausalLM",
-      "model_type": "mixtral",
-      "additional_params": {
-        "max_position_embeddings": 128,
-        "num_hidden_layers": 1,
-        "num_attention_heads": 2,
-        "hidden_size": 64,
-        "intermediate_size": 256,
-        "vocab_size": 32000,
-        "num_key_value_heads": 1
-      }
-    },
-    {
-      "model_name": "hf-internal-testing/tiny-random-LlamaForCausalLM",
-      "model_type": "llama",
-      "additional_params": {
-        "max_position_embeddings": 128,
-        "num_hidden_layers": 1,
-        "num_attention_heads": 2,
-        "hidden_size": 64,
-        "intermediate_size": 256,
-        "vocab_size": 128256,
-        "num_key_value_heads": 1,
-        "rope_scaling": {
-          "factor": 32.0,
-          "high_freq_factor": 4.0,
-          "low_freq_factor": 1.0,
-          "original_max_position_embeddings": 8192,
-          "rope_type": "llama3",
-          "rope_theta": 500000.0
-        }
-      }
-    },
-    {
-      "model_name": "allenai/OLMo-2-0425-1B",
-      "model_type": "olmo2",
-      "additional_params": {
-        "max_position_embeddings": 128,
-        "num_hidden_layers": 1,
-        "num_attention_heads": 2,
-        "hidden_size": 64,
-        "intermediate_size": 256,
-        "vocab_size": 100352,
-        "num_key_value_heads": 1
-      }
-    },
-    {
-      "model_name": "hf-internal-testing/tiny-random-GraniteForCausalLM",
-      "model_type": "granite",
-      "additional_params": {
-        "max_position_embeddings": 128,
-        "num_hidden_layers": 1,
-        "num_attention_heads": 2,
-        "hidden_size": 64,
-        "intermediate_size": 256,
-        "vocab_size": 49155,
-        "num_key_value_heads": 1
-      }
-    }
-  ],
   "spd_causal_lm_models": [
     {
       "model_name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
@@ -502,68 +384,6 @@
         "hidden_size": 64,
         "intermediate_size": 256,
         "vocab_size": 151936,
-        "num_key_value_heads": 1
-      }
-    }
-  ],
-  "qnn_causal_lm_models": [
-    {
-      "model_name": "mistralai/Mixtral-8x7B-Instruct-v0.1",
-      "model_type": "mixtral",
-      "additional_params": {
-        "max_position_embeddings": 128,
-        "num_hidden_layers": 1,
-        "num_attention_heads": 2,
-        "hidden_size": 64,
-        "intermediate_size": 256,
-        "vocab_size": 32000,
-        "num_key_value_heads": 1
-      }
-    },
-    {
-      "model_name": "meta-llama/Llama-3.2-1B",
-      "model_type": "llama",
-      "additional_params": {
-        "max_position_embeddings": 128,
-        "num_hidden_layers": 1,
-        "num_attention_heads": 2,
-        "hidden_size": 64,
-        "intermediate_size": 256,
-        "vocab_size": 128256,
-        "num_key_value_heads": 1,
-        "rope_scaling": {
-          "factor": 32.0,
-          "high_freq_factor": 4.0,
-          "low_freq_factor": 1.0,
-          "original_max_position_embeddings": 8192,
-          "rope_type": "llama3",
-          "rope_theta": 500000.0
-        }
-      }
-    },
-    {
-      "model_name": "unsloth/gemma-2b",
-      "model_type": "gemma",
-      "additional_params": {
-        "max_position_embeddings": 128,
-        "num_hidden_layers": 1,
-        "num_attention_heads": 2,
-        "hidden_size": 64,
-        "intermediate_size": 256,
-        "vocab_size": 256000,
-        "num_key_value_heads": 1
-      }
-    },
-    {
-      "model_name": "ibm-granite/granite-guardian-3.1-2b",
-      "model_type": "granite",
-      "additional_params": {
-        "max_position_embeddings": 128,
-        "num_hidden_layers": 1,
-        "num_attention_heads": 2,
-        "hidden_size": 64,
-        "intermediate_size": 256,
-        "vocab_size": 49155,
         "num_key_value_heads": 1
       }
     }
@@ -672,7 +492,7 @@
   ],
   "disaggregated_dummy_models": [
     {
-      "model_name": "openai/gpt-oss-20b",
+      "model_name": "tiny-random/gpt-oss-bf16",
       "model_type": "gpt_oss",
       "tokenizer_id": "gpt2",
       "additional_params": {
@@ -689,7 +509,7 @@
       }
     },
     {
-      "model_name": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+      "model_name": "tiny-random/qwen3-moe",
       "model_type": "qwen3_moe",
       "additional_params": {
         "hidden_size": 256,
@@ -706,31 +526,335 @@
       }
     }
   ],
-  "causal_lm_models_pl1": [
+  "per_pr_causal_text_models": [
     {
-      "model_name": "gpt2",
+      "id": "gpt2_text",
+      "model_name": "hf-internal-testing/tiny-random-GPT2LMHeadModel",
       "model_type": "gpt2",
-      "additional_params": {
-        "max_position_embeddings": 128,
-        "num_hidden_layers": 1,
-        "num_attention_heads": 2,
-        "hidden_size": 64,
-        "intermediate_size": 256,
-        "vocab_size": 50257,
-        "num_key_value_heads": 1
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "llama_text",
+      "model_name": "hf-internal-testing/tiny-random-LlamaForCausalLM",
+      "model_type": "llama",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "llama4_text",
+      "model_name": "llamafactory/tiny-random-Llama-4",
+      "model_type": "llama4_text",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "config_attr": "text_config",
+      "num_hidden_layers": 4,
+      "config_overrides": {
+        "rope_parameters": {
+          "rope_type": "llama3",
+          "factor": 8.0,
+          "low_freq_factor": 1.0,
+          "high_freq_factor": 4.0,
+          "original_max_position_embeddings": 8192,
+          "rope_theta": 500000.0
+        },
+        "rope_scaling": {
+          "rope_type": "llama3",
+          "factor": 8.0,
+          "low_freq_factor": 1.0,
+          "high_freq_factor": 4.0,
+          "original_max_position_embeddings": 8192,
+          "rope_theta": 500000.0
+        }
+      },
+      "known_bf16_compile_issue": "Llama4 MoE forward uses .float() for sigmoid routing which causes dtype mismatch (float vs half) during bf16-to-fp16 export on ai100."
+    },
+    {
+      "id": "llava_text",
+      "model_name": "IlyasMoutawwakil/tiny-random-LlavaForConditionalGeneration",
+      "model_type": "llava_text",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "config_attr": "text_config",
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "llava_next_text",
+      "model_name": "katuni4ka/tiny-random-llava-next",
+      "model_type": "llava_next_text",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "config_attr": "text_config",
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "phi_text",
+      "model_name": "hf-internal-testing/tiny-random-PhiForCausalLM",
+      "model_type": "phi",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "phi3_text",
+      "model_name": "tiny-random/phi-4",
+      "model_type": "phi3",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "gemma_text",
+      "model_name": "unsloth/gemma-2b",
+      "model_type": "gemma",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "gemma2_text",
+      "model_name": "hf-internal-testing/tiny-random-Gemma2ForCausalLM",
+      "model_type": "gemma2",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1,
+      "num_cores": 4
+    },
+    {
+      "id": "gemma3_text",
+      "model_name": "tiny-random/gemma-3",
+      "model_type": "gemma3_text",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "use_text_config": true,
+      "layer_types": [
+        "sliding_attention",
+        "full_attention"
+      ]
+    },
+    {
+      "id": "qwen2_dense_text",
+      "model_name": "onnx-internal-testing/tiny-random-Qwen2ForCausalLM",
+      "model_type": "qwen2",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "internvl2_qwen2_text",
+      "model_name": "katuni4ka/tiny-random-internvl2",
+      "model_type": "internvl_qwen2_text",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "config_attr": "llm_config",
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "qwen2_5_dense_text",
+      "model_name": "tiny-random/qwen2.5",
+      "model_type": "qwen2",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1,
+      "config_overrides": {
+        "hidden_size": 32,
+        "intermediate_size": 64,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2
       }
     },
     {
-      "model_name": "openai/gpt-oss-20b",
-      "model_type": "gpt_oss",
-      "additional_params": {
-        "num_hidden_layers": 2,
-        "hidden_size": 64,
+      "id": "qwen3_dense_text",
+      "model_name": "tiny-random/qwen3",
+      "model_type": "qwen3",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "qwen3_moe_text",
+      "model_name": "tiny-random/qwen3-moe",
+      "model_type": "qwen3_moe",
+      "is_moe": true,
+      "supports_disagg": true,
+      "supports_blocking": true,
+      "num_hidden_layers": 2
+    },
+    {
+      "id": "qwen3_5_dense_text",
+      "model_name": "tiny-random/qwen3.5",
+      "model_type": "qwen3_5_text",
+      "tokenizer_id": "gpt2",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "use_text_config": true,
+      "layer_types": [
+        "linear_attention",
+        "linear_attention",
+        "linear_attention",
+        "full_attention"
+      ],
+      "config_overrides": {
+        "hidden_size": 128,
         "intermediate_size": 256,
-        "num_attention_heads": 2,
-        "num_key_value_heads": 1,
-        "num_local_experts": 4
+        "vocab_size": 50257
       }
+    },
+    {
+      "id": "qwen3_5_moe_text",
+      "model_name": "tiny-random/qwen3.5-moe",
+      "model_type": "qwen3_5_moe_text",
+      "tokenizer_id": "gpt2",
+      "is_moe": true,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "use_text_config": true,
+      "config_overrides": {
+        "hidden_size": 128,
+        "intermediate_size": 256,
+        "vocab_size": 50257,
+        "num_experts": 4,
+        "num_experts_per_tok": 2,
+        "moe_intermediate_size": 64,
+        "shared_expert_intermediate_size": 64
+      }
+    },
+    {
+      "id": "mistral_text",
+      "model_name": "hf-internal-testing/tiny-random-MistralForCausalLM",
+      "model_type": "mistral",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "mixtral_moe_text",
+      "model_name": "hf-internal-testing/tiny-random-MixtralForCausalLM",
+      "model_type": "mixtral",
+      "is_moe": true,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 2,
+      "known_export_or_compile_issue": "Mixtral subfunction compile currently fails in qaic-compile with a non-constant ReduceSum axes tensor in the MoE path."
+    },
+    {
+      "id": "granite_text",
+      "model_name": "hf-internal-testing/tiny-random-GraniteForCausalLM",
+      "model_type": "granite",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "granitemoe_text",
+      "model_name": "ibm-granite/granite-3.1-1b-a400m-base",
+      "model_type": "granitemoe",
+      "is_moe": true,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "olmo2_text",
+      "model_name": "hf-internal-testing/tiny-random-Olmo2ForCausalLM",
+      "model_type": "olmo2",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "gptj_text",
+      "model_name": "hf-internal-testing/tiny-random-GPTJForCausalLM",
+      "model_type": "gptj",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "codegen_text",
+      "model_name": "hf-internal-testing/tiny-random-CodeGenForCausalLM",
+      "model_type": "codegen",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "falcon_text",
+      "model_name": "hf-internal-testing/tiny-random-FalconForCausalLM",
+      "model_type": "falcon",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "mpt_text",
+      "model_name": "hf-internal-testing/tiny-random-MptForCausalLM",
+      "model_type": "mpt",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "starcoder2_text",
+      "model_name": "hf-internal-testing/tiny-random-Starcoder2ForCausalLM",
+      "model_type": "starcoder2",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": true,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "gpt_bigcode_text",
+      "model_name": "hf-internal-testing/tiny-random-GPTBigCodeForCausalLM",
+      "model_type": "gpt_bigcode",
+      "is_moe": false,
+      "supports_disagg": false,
+      "supports_blocking": false,
+      "num_hidden_layers": 1
+    },
+    {
+      "id": "gpt_oss_moe_text",
+      "model_name": "tiny-random/gpt-oss-bf16",
+      "model_type": "gpt_oss",
+      "tokenizer_id": "gpt2",
+      "is_moe": true,
+      "supports_disagg": true,
+      "supports_blocking": false,
+      "num_hidden_layers": 2,
+      "known_ccl_export_or_compile_issue": "GPT-OSS get_specializations does not honor comp_ctx_lengths_* kwargs; QPC binding mismatches runtime comp_ctx_lengths buffer at load time."
+    },
+    {
+      "id": "glm4_moe_text",
+      "model_name": "tiny-random/glm-4-moe",
+      "model_type": "glm4_moe",
+      "is_moe": true,
+      "supports_disagg": true,
+      "supports_blocking": false,
+      "num_hidden_layers": 2
     }
   ]
 }

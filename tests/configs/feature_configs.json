@@ -52,7 +52,7 @@
         },
         {
             "model_name": "OpenGVLab/InternVL2_5-1B",
-            "model_type": "llava",
+            "model_type": "internvl_chat",
             "image_urls": [
                 "https://picsum.photos/id/237/536/354",
                 "https://picsum.photos/id/237/536/354"

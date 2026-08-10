@@ -36,17 +36,37 @@ pipeline {
             defaultValue: 'ALL',
             description: 'Select which test stages you want to run (all run by default)'
         )
+        choice(
+            name: 'MODEL_TIER',
+            choices: [
+                'all',
+                'priority',
+                'legacy'
+            ],
+            description: 'Which model tier to test. all = full matrix (default); priority = only the actively-developed families declared in tests/configs/model_tiers.json; legacy = everything else. Edit that file to move a model between tiers.'
+        )
         booleanParam(name: 'RUN_HL_APIS', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_FEATURE', defaultValue: true)
+        booleanParam(name: 'RUN_QAIC_EMBEDDING_AUDIO', defaultValue: true, description: 'Run text-embedding and audio (CTC / speech-seq2seq) model tests')
         booleanParam(name: 'RUN_QAIC_MM', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_DIFFUSION', defaultValue: true)
         booleanParam(name: 'RUN_CLI', defaultValue: true)
         booleanParam(name: 'RUN_FINETUNE', defaultValue: false)
         booleanParam(name: 'RUN_DYNAMO_QAIC', defaultValue: true, description: 'Run dynamo on-QAIC compile/generate tests (torch 2.13)')
+        string(
+            name: 'QAIC_WORKERS',
+            defaultValue: '4',
+            description: 'pytest-xdist worker count for the QAIC LLM stage (one card per worker)'
+        )
     }
 
     environment {
         TEST_FILTER = testFilter(params.TEST_PROFILE)
+        QAIC_N      = "${params.QAIC_WORKERS}"
+        // Consumed by the tier hook in tests/conftest.py. Passed on each `docker exec`
+        // rather than the `docker run` above, because the container is created in the
+        // Install stage and `docker run -e` cannot carry a per-stage value.
+        MODEL_TIER  = "${params.MODEL_TIER}"
     }
 
     stages {
@@ -80,7 +100,7 @@ pipeline {
                     steps {
                        timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 60, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                            sh '''
-                           sudo docker exec ${BUILD_TAG} bash -c "
+                           sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
                            mkdir -p $PWD/Non_cli_qaic &&
@@ -98,13 +118,14 @@ pipeline {
                     steps {
                        timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 240, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                            sh '''
-                           sudo docker exec ${BUILD_TAG} bash -c "
+                           sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
                            mkdir -p $PWD/Non_qaic_llm &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic_llm &&
-                           pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log2.xml --durations=10 &&
+                           export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
+                           pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${QAIC_N} --dist worksteal --junitxml=tests/tests_log2.xml --durations=10 &&
                            junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -119,7 +140,7 @@ pipeline {
             steps {
                 timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 120, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Non_qaic_feature &&
@@ -132,12 +153,30 @@ pipeline {
                 }
             }
         }
+        stage('QAIC Embedding & Audio') {
+            when {expression { params.RUN_QAIC_EMBEDDING_AUDIO }}
+            steps {
+                timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 120, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
+                    sh '''
+                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    mkdir -p $PWD/Non_qaic_embedding_audio &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=$PWD/Non_qaic_embedding_audio &&
+                    pytest tests -m '(embedding_audio_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log_embedding_audio.xml --durations=10 &&
+                    junitparser merge tests/tests_log_embedding_audio.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
+                }
+            }
+        }
         stage('QAIC Multimodal') {
             when {expression { params.RUN_QAIC_MM }}
             steps {
                 timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 180, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Non_cli_qaic_multimodal &&
@@ -155,7 +194,7 @@ pipeline {
             steps {
                 timeout(time: 20, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Non_cli_qaic_reranker &&
@@ -174,7 +213,7 @@ pipeline {
             steps {
                 timeout(time: 120, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Non_cli_qaic_diffusion &&
@@ -215,7 +254,7 @@ pipeline {
             steps {
                 timeout(time: 240, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     pip install -r examples/dynamo/causal_lm/requirements.txt &&
@@ -270,6 +309,31 @@ pipeline {
                     junit testResults: 'tests/tests_log.xml', allowEmptyResults: true
                 } catch (error) {
                     echo "No test results file found or parsing failed: ${error}"
+                }
+            }
+            script {
+                try {
+                    sh '''
+                    python3 scripts/ci_report/generate_ci_report.py \
+                        --xml-dir tests \
+                        --output tests/ci_report.html \
+                        --pr "${CHANGE_ID:-}" \
+                        --commit "${GIT_COMMIT:-}" \
+                        --branch "${BRANCH_NAME:-}" \
+                        --profile "${TEST_PROFILE:-}" \
+                        --build-url "${BUILD_URL:-}" || true
+                    '''
+                } catch (error) {
+                    echo "CI report generation failed: ${error}"
+                }
+            }
+            script {
+                try {
+                    archiveArtifacts artifacts: 'tests/ci_report.html, tests/tests_log*.xml',
+                                     allowEmptyArchive: true,
+                                     fingerprint: false
+                } catch (error) {
+                    echo "Artifact archiving failed: ${error}"
                 }
             }
             script {

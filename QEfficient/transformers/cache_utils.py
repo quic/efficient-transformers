@@ -1520,6 +1520,8 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
             return self.keys, self.values
 
         self._mark_initialized(self.keys)
+        key_states = key_states.to(self.keys.dtype)
+        value_states = value_states.to(self.values.dtype)
         position_ids = cache_kwargs.get("position_ids")
         batch_index = cache_kwargs.get("batch_index", None)
         layer_ctx_len = self.keys.shape[2]
