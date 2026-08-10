@@ -11,7 +11,7 @@ from typing import Dict, List, Optional
 import onnx_ir as ir
 from torch import nn
 
-from QEfficient.exporter.weight_free.spec import (
+from QEfficient.exporter.weight_free.weight_spec import (
     ExternalDataFile,
     TiedWeightAlias,
     WeightSpec,
