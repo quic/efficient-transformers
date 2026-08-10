@@ -3525,6 +3525,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             logger.warning(
                 "Please use `from_pretrained` method to load quantized models, might give unexpected results"
             )
+        if kwargs.pop("fp8_retain_weights", False):
+            self._pytorch_transforms = [t for t in self._pytorch_transforms if t not in (FP8DeQuantLinearToLinearTransform,FP8BlockWiseDequantLinearToLinearTransform)]
         # Set use_cache=True to get KV values as output during ONNX export
         model.config.use_cache = True
 
