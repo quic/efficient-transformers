@@ -5,43 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-"""Disaggregated prefill/decode for Qwen3-VL-MoE — DMA KV handoff, with a BATCH-FOLDED decode.
-
-This is the batch_fold sibling of ``qwen3_vl_moe_disagg_mode_cb_with_kv_share.py``, but with
-continuous batching turned OFF (see "Compile knobs" below). Each prompt is chunk-prefilled into
-its own KV slot of a shared host cache ``[N, Hkv, ctx, D]`` via a per-slot DMA handoff (the host
-buffer view ``kv[slot:slot+1]`` selects the slot). Only the DECODE side folds — it runs with
-``batch_fold=True``.
-
-Why no numpy KV copy is needed for the fold
---------------------------------------------
-The modeling folds decode KV with ``key_states.reshape(B*Hkv, ctx, D)`` (cache_utils
-``write_only_batch``), i.e. folded row index ``= b*Hkv + h``. That is exactly what
-``np.reshape([N, Hkv, ctx, D] -> [1, N*Hkv, ctx, D])`` does, and on a C-contiguous array
-reshape returns a *view over the same bytes* — not a copy. So one host allocation serves both
-sides:
-
-    host kv_caches[layer] : [N, Hkv, ctx, D]           (allocated once, contiguous)
-      prefill writes row `slot`  -> view kv[slot:slot+1] = [1, Hkv, ctx, D]  (host-view selects slot)
-      decode reads/writes all    -> view kv.reshape(1, N*Hkv, ctx, D)        (identity DMA)
-
-Why no new slicing spec / DimSpec is needed
--------------------------------------------
-The DimSpec template (``FULL_ATTN_DIMSPEC = [batch_index, 0, ctx_start, 0]``) is the same 4-D
-rule for both sides. The compiled *spec handle* is built per session from that session's own
-device bindings, so the decode session automatically builds a handle matching its folded
-``[1, N*Hkv, ctx, D]`` binding. At handoff we pass ``batch_index=0, ctx_start=0`` — the
-DimSpec resolves to ``(0, 0, 0, 0)``, an identity DMA of the whole fused cache over the whole
-host view. No per-slot addressing (there is none under fold; all N slots decode as one
-tensor), no host copy.
-
-Compile knobs that make the fold line up
-----------------------------------------
-``BH = batch_size * num_key_value_heads`` (get_specializations) uses the compile ``batch_size``
-param. To fold across all N prompts the decode QPC is compiled with ``batch_size=N`` and the
-prefill QPC with ``batch_size=1`` (one prompt per exec).
-
-"""
+"""Disaggregated prefill/decode for Qwen3-VL-MoE — DMA KV handoff, with a BATCH-FOLDED decode."""
 
 import argparse
 from time import perf_counter
@@ -85,17 +49,7 @@ STAGES = 4
 PREFILL_NUM_DEVICES = 4
 DECODE_NUM_DEVICES = 16
 
-# Decode-side attention blocking. batch_fold rides on the "kv" blocking path: the cached K/V
-# is streamed through a running softmax in NUM_KV_BLOCKS chunks, but the batch/head axes are
-# folded into a single [1, N*Hkv, ctx, D] cache (write_only_batch / read_only_blocked_K_batch).
-# There is no batch_index binding under fold — slot identity is implicit in the folded row block
-# b*Hkv+h.
 NUM_KV_BLOCKS = 4
-
-# Prefill-side head-parallel "online" blocking, matching qwen3_vl_disagg_mode.py. The prefill
-# qaic_config is the decode config PLUS these online-prefill keys: because prefill_blocking_mode
-# is set, dispatch goes through the online-prefill forward and batch_fold is inert during the
-# prefill trace. PREFILL_BLOCK_CHUNKS = ceil(prefill_seq_len / PREFILL_QL_CHUNK).
 PREFILL_BLOCKING_MODE = "online"
 PREFILL_QL_CHUNK = 128
 PREFILL_N_REP_CHUNK = 4
@@ -128,13 +82,6 @@ def _build_config(model_id: str):
 
 
 def _decode_qaic_config(ctx_len: int, num_kv_blocks: int) -> dict:
-    """Batch-folded KV blocking for the decode QPC.
-     drops per-slot ``batch_index``
-    addressing — all N slots decode together as one fused tensor. It rides on the ``"kv"``
-    blocking path, which streams the cached K/V through a running softmax in ``num_kv_blocks``
-    chunks. The prefill QPC (``prefill_only=True``) ignores ``batch_fold``, so prefill keeps
-    the un-folded ``[N, Hkv, ctx, D]`` layout and its per-slot DMA handoff.
-    """
     return {
         "blocking_mode": "kv",
         "num_kv_blocks": num_kv_blocks,
@@ -144,21 +91,6 @@ def _decode_qaic_config(ctx_len: int, num_kv_blocks: int) -> dict:
 
 
 def _prefill_qaic_config(ctx_len: int, num_kv_blocks: int, prefill_seq_len: int) -> dict:
-    """Head-parallel "online" prefill blocking — same qaic_config as qwen3_vl_disagg_mode.py.
-
-    This mirrors the reference driver exactly: the prefill config is ``_decode_qaic_config``
-    (including ``batch_fold=True``) PLUS the online-prefill keys ``prefill_blocking_mode="online"``,
-    ``prefill_block_chunks``, and ``prefill_n_rep_chunk``.
-
-    Prefill MUST pass an explicit ``qaic_config`` because ``BlockingAttentionTransform.apply`` only
-    *sets* ``module.attn_blocking_config`` — it never clears it — and decode compiles first,
-    installing its config on every attention module. Passing this config overwrites the stale
-    decode config. Because ``prefill_blocking_mode`` is set, prefill dispatches through the
-    online-prefill forward (``prefill_blocked_attention_interface``) rather than the folded decode
-    forward, so ``batch_fold`` is inert during the prefill trace (no ``seq_len == 1`` assert) and
-    the prefill KV layout stays the un-folded per-slot ``[1, Hkv, ctx, D]`` the DMA handoff writes
-    into ``kv[slot:slot+1]``.
-    """
     cfg = _decode_qaic_config(ctx_len, num_kv_blocks)
     cfg["prefill_blocking_mode"] = PREFILL_BLOCKING_MODE
     cfg["prefill_block_chunks"] = -(-prefill_seq_len // PREFILL_QL_CHUNK)  # ceil divide
@@ -180,32 +112,15 @@ def run(
     decode_num_devices: int = DECODE_NUM_DEVICES,
     num_kv_blocks: int = NUM_KV_BLOCKS,
 ):
-    """Run chunked-prefill + batch-folded decode over ``prompts`` with the DMA KV handoff.
-
-    ``skip_vision=False`` (default) pairs each prompt with the image at the same index of
-    ``image_urls`` (cycled if shorter) and runs it as an image+text turn through the vision
-    QPC; ``skip_vision=True`` runs text-only prompts. Returns a dict with, per prompt, the
-    ``first_tokens`` (prefill argmax) and the full decoded ``tokens`` list, for parity
-    comparison against the single-request driver.
-    """
+    """Run chunked-prefill + batch-folded decode over ``prompts`` with the DMA KV handoff."""
     prompts = list(prompts) if prompts else list(DEFAULT_PROMPTS)
     image_urls = list(image_urls) if image_urls else list(DEFAULT_IMAGE_URLS)
-    # Repeat a single prompt/image across all batch_size slots (replicating one turn to fill the
-    # batch): pass exactly one prompt (and, with vision, one image) to run every slot with the
-    # same turn. A multi-element list is used as-is (distinct prompts per slot).
     if len(prompts) == 1:
         prompts = prompts * batch_size
     if len(image_urls) == 1:
         image_urls = image_urls * batch_size
     config = _build_config(model_id)
 
-    # NOTE: continuous_batching is intentionally OFF. `continuous_batching` is a
-    # from_pretrained-level flag shared by every compile() call — prefill and decode cannot
-    # differ on it — and the CB + batch_fold export path is broken (get_dummy_inputs builds the
-    # query dummy from `bs` but the folded KV from `fbs`, so the traced decode matmul
-    # query[.,bs*Hkv,.] × k[.,fbs*Hkv,.] mismatches). Without CB, get_dummy_inputs builds BOTH
-    # the query and the folded KV from `bs`, so BH matches and the fold export succeeds. Slot
-    # identity is carried by the host-side DMA buffer view instead of a batch_index binding.
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         model_id,
         attn_implementation="eager",
@@ -237,12 +152,6 @@ def run(
         )
         vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
 
-    # Decode is compiled with batch_size = the number of prompts to decode together, and NO
-    # continuous_batching, so BH = batch_size * num_key_value_heads and the folded KV cache is
-    # [1, N*Hkv, ctx, D]. Without CB, get_dummy_inputs builds both the query and the folded KV
-    # from this same batch, so the export traces cleanly. Compiled before prefill with
-    # offload_pt_weights=False so the PyTorch weights stay resident for the prefill export/compile
-    # below.
     decode_qpc_path = qeff_model.compile(
         batch_size=batch_size,  # drives BH = batch_size * num_kv_heads for the fold
         prefill_seq_len=1,
@@ -268,12 +177,6 @@ def run(
         qaic_config=_decode_qaic_config(ctx_len, num_kv_blocks),
     )
 
-    # Prefill compiles batch_size=1 (one prompt per exec) with NO continuous_batching, so the
-    # prefill KV cache is per-slot [1, Hkv, ctx, D] — exactly the per-slot shape the DMA handoff
-    # writes into kv[slot:slot+1]. enable_chunking is mandatory for a prefill-only compile. The
-    # head-parallel "online" prefill qaic_config (same as qwen3_vl_disagg_mode.py) overwrites the
-    # stale batch_fold config the decode compile installed and routes prefill through the
-    # online-prefill forward, so batch_fold is inert during the prefill trace.
     prefill_qpc_path = qeff_model.compile(
         batch_size=1,
         prefill_seq_len=prefill_seq_len,
@@ -299,23 +202,12 @@ def run(
 
     prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"), kv_dma_share=True)
     decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"), kv_dma_share=True)
-
-    # image_idx must be a compiled input binding; the KV-share path silently drops unknown
-    # input names (warn + skip), so assert it up front. NOTE: with continuous_batching OFF there
-    # is NO batch_index binding on either QPC — prefill targets a slot purely via the host buffer
-    # view kv[slot:slot+1] (handoff offset 0), and decode writes the whole folded cache.
     assert "image_idx" in prefill_session.binding_index_map, "image_idx not a compiled prefill input binding"
     assert "batch_index" not in decode_session.binding_index_map, (
         "unexpected batch_index binding on the non-CB folded decode QPC"
     )
     decode_has_image_idx = "image_idx" in decode_session.binding_index_map
 
-    # Shared host KV arrays. The decode session reports its cache folded as [1, N*Hkv, ctx, D];
-    # we allocate the SAME bytes in the UN-folded [N, Hkv, ctx, D] shape so prefill's per-slot
-    # kv[slot:slot+1] writes land correctly. A contiguous [N, Hkv, ctx, D] array and its
-    # [1, N*Hkv, ctx, D] reshape are the same bytes, so decode reads/writes the fold as a
-    # zero-copy view (see module docstring). Hybrid caches (mixed 4-D families) keep per-family
-    # shapes; linear/recurrent (3-D) states are not folded and are unsupported here.
     kv_caches = []
     for shape, dtype in decode_session.kv_cache_info:
         assert len(shape) == 4, f"batch_fold expects 4-D KV families, got shape {shape}"
@@ -332,14 +224,6 @@ def run(
     decode_kv_map = decode_session.decode_buff_map + decode_session.decode_rs_kv_only_buff_map
 
     def _prepare_prompt(prompt: str, image_url: str):
-        """Tokenise + (optionally) run the vision QPC for one prompt.
-
-        ``image_url`` is used only when ``skip_vision=False``. Returns
-        ``(lang_inputs, vision_outputs, num_chunks, num_pos_sections)`` where ``lang_inputs``
-        is padded to a multiple of ``prefill_seq_len`` and carries ``position_ids`` /
-        ``image_idx``, and ``vision_outputs`` is a dict with ``vision_embeds`` /
-        ``deepstack_features`` (empty when ``skip_vision``).
-        """
         if skip_vision:
             content = [{"type": "text", "text": prompt}]
         else:
@@ -394,15 +278,6 @@ def run(
         return lang_inputs, vision_outputs, num_chunks, num_pos_sections
 
     def _prefill_slot(lang_inputs, vision_outputs, num_chunks, slot: int):
-        """Chunked prefill of one prompt into KV ``slot`` (un-folded [N, Hkv, ctx, D] cache).
-
-        With CB off the prefill device KV is per-slot [1, Hkv, ctx, D] and there is no
-        batch_index binding: the on-device scatter always fills device row 0. Slot targeting is
-        done purely by the host buffer view — the last chunk wires the DMA handoff of that single
-        device row into ``kv_caches[*][slot]`` (the ``kv[slot:slot+1]`` view). The handoff offset
-        must therefore stay 0, so batch_index is NOT added to the chunk inputs. Returns
-        ``(first_token, phys_pos, mrope_pos)``.
-        """
         chunk_inputs = dict(lang_inputs)
         if not skip_vision:
             for k in VISION_OUTPUT_KEYS:
@@ -432,8 +307,6 @@ def run(
         )
         return first_token, phys_pos, mrope_pos
 
-    # Per-slot decode state. Pure batch folding: every slot is prefilled once and all slots
-    # decode together in lockstep — there is NO continuous-batching queue or mid-decode refill.
     ongoing = [False] * batch_size
     last_token = [0] * batch_size
     phys_pos = [0] * batch_size
@@ -451,9 +324,6 @@ def run(
         mrope_pos[slot] = mrope
         ongoing[slot] = True
 
-    # One prompt per slot, up to batch_size slots. Slot i serves prompt i (no queue). If more
-    # prompts than slots are supplied, only the first batch_size are served — pure batch folding
-    # has no request-refill path; raise batch_size (or run again) for the rest.
     num_active = min(batch_size, len(prompts))
     if len(prompts) > batch_size:
         print(f"NOTE: {len(prompts)} prompts > batch_size {batch_size}; only the first {batch_size} are served.")
@@ -469,13 +339,6 @@ def run(
         _seed_slot(slot, ft, phys, mrope)
     print(f"Initial prefill time : {perf_counter() - prefill_start:.2f} secs")
 
-    # Decode does not re-gather image tokens (image_idx has advanced past them), but the
-    # vision_embeds / deepstack_features bindings must still be satisfied every step. Bind
-    # constant zeros buffers of the compiled shapes; their values are never used by the
-    # text-token decode path. The buffers MUST match the DECODE binding's own compiled dims
-    # (the export-dummy shape, e.g. deepstack_features = [num_layers, fbs, vision_size, C]),
-    # NOT the vision QPC output shape — the two differ in vision_size and batch dim, which is
-    # what triggers the "input buffer deepstack_features is expected to have size ..." error.
     if not skip_vision and vision_outputs_ref:
         persistent = {}
         for k in VISION_OUTPUT_KEYS:
@@ -495,29 +358,19 @@ def run(
             input_ids[slot, 0] = last_token[slot]
             position_ids[0, slot, 0] = phys_pos[slot]
             position_ids[1:, slot, 0] = mrope_pos[slot]
-        # No batch_index: the folded decode has no batch_index binding (CB is off). Slot identity
-        # lives in the folded row block b*Hkv+h, and the handoff is a whole-cache identity DMA.
         decode_inputs = {
             "input_ids": input_ids,
             "position_ids": position_ids,
         }
         if decode_has_image_idx:
-            # image_idx is a fixed (1,1) binding: decode does not re-gather image tokens (they
-            # were merged into KV during prefill), so it is inert here. A static [[0]] satisfies it.
             decode_inputs["image_idx"] = np.array([[0]], dtype=np.int64)
         return decode_inputs
 
     st = perf_counter()
     decode_steps = 0
-    # Fixed-length lockstep decode. All active slots step together; a slot goes inactive once it
-    # emits EOS or reaches generation_len, and the loop ends when every slot is done (or the step
-    # budget is exhausted). The first token was produced by prefill (gen_count seeded to 1).
     for _ in range(generation_len):
         if not any(ongoing):
             break
-        # Wire the folded [1, N*Hkv, ctx, D] views (same host bytes as the [N, Hkv, ctx, D]
-        # cache). batch_index=0, ctx_start=0 -> identity DMA of the whole fused cache over the
-        # whole host view; the fold row block b*Hkv+h keeps each slot in place. No numpy copy.
         decode_session.set_data_for_kv_handoff(
             decode_kv_views + decode_kv_views,
             [("batch_index", 0), ("ctx_start", 0)],
@@ -547,7 +400,6 @@ def run(
                 ongoing[slot] = False
     ft = perf_counter()
 
-    # Slot i served prompt i (no queue), so results index == slot index for the active slots.
     for slot in range(num_active):
         results[slot] = slot_tokens[slot]
 
@@ -602,8 +454,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # With vision the default text prompts are a poor fit; use the image prompts unless the
-    # user supplied their own --prompt.
     prompts = args.prompts
     image_urls = args.image_urls
     if not args.skip_vision:
