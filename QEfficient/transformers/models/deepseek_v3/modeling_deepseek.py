@@ -25,7 +25,7 @@ from QEfficient.customop.ctx_scatter_gather import (
     CtxScatterFunc3DInt,
 )
 from QEfficient.customop.matmulnbits import QMOE, QuantLinearTorchFunction
-from QEfficient.customop.quantization_ops import CastToUInt4Func, DequantizeLinearFunc
+from QEfficient.customop.quantization_ops import cast_to_uint4, dequantize_linear
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.customop.utils import select_interface
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
@@ -1089,23 +1089,17 @@ class QEffDeepseekV3MoE(nn.Module):
         return final_out
 
     def moe_waa_unpack(self, hidden_states, topk_indices, topk_weights):
-        gate_proj_unpacked = CastToUInt4Func.apply(self.all_gate_qweight)
-        gate_zeros_unpacked = CastToUInt4Func.apply(self.all_gate_qzeros)
-        gate_proj_dq = DequantizeLinearFunc.apply(
-            gate_proj_unpacked, self.all_gate_scales, gate_zeros_unpacked, self.group_size
-        )
+        gate_proj_unpacked = cast_to_uint4(self.all_gate_qweight)
+        gate_zeros_unpacked = cast_to_uint4(self.all_gate_qzeros)
+        gate_proj_dq = dequantize_linear(gate_proj_unpacked, self.all_gate_scales, gate_zeros_unpacked, self.group_size)
 
-        up_proj_unpacked = CastToUInt4Func.apply(self.all_up_qweight)
-        up_zeros_unpacked = CastToUInt4Func.apply(self.all_up_qzeros)
-        up_proj_dq = DequantizeLinearFunc.apply(
-            up_proj_unpacked, self.all_up_scales, up_zeros_unpacked, self.group_size
-        )
+        up_proj_unpacked = cast_to_uint4(self.all_up_qweight)
+        up_zeros_unpacked = cast_to_uint4(self.all_up_qzeros)
+        up_proj_dq = dequantize_linear(up_proj_unpacked, self.all_up_scales, up_zeros_unpacked, self.group_size)
 
-        down_proj_unpacked = CastToUInt4Func.apply(self.all_down_qweight)
-        down_zeros_unpacked = CastToUInt4Func.apply(self.all_down_qzeros)
-        down_proj_dq = DequantizeLinearFunc.apply(
-            down_proj_unpacked, self.all_down_scales, down_zeros_unpacked, self.group_size
-        )
+        down_proj_unpacked = cast_to_uint4(self.all_down_qweight)
+        down_zeros_unpacked = cast_to_uint4(self.all_down_qzeros)
+        down_proj_dq = dequantize_linear(down_proj_unpacked, self.all_down_scales, down_zeros_unpacked, self.group_size)
 
         num_experts = self.all_gate_qweight.shape[0]
         expert_in = hidden_states.unsqueeze(0).expand(num_experts, -1, -1)
@@ -1293,22 +1287,20 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
 
             x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
 
-            gate_proj_unpacked = CastToUInt4Func.apply(slot_gate_qweight)
-            gate_zeros_unpacked = CastToUInt4Func.apply(slot_gate_qzeros)
-            gate_proj_dq = DequantizeLinearFunc.apply(
+            gate_proj_unpacked = cast_to_uint4.apply(slot_gate_qweight)
+            gate_zeros_unpacked = cast_to_uint4.apply(slot_gate_qzeros)
+            gate_proj_dq = dequantize_linear.apply(
                 gate_proj_unpacked, slot_gate_scales, gate_zeros_unpacked, self.group_size
             )
 
-            up_proj_unpacked = CastToUInt4Func.apply(slot_up_qweight)
-            up_zeros_unpacked = CastToUInt4Func.apply(slot_up_qzeros)
-            up_proj_dq = DequantizeLinearFunc.apply(
-                up_proj_unpacked, slot_up_scales, up_zeros_unpacked, self.group_size
-            )
+            up_proj_unpacked = cast_to_uint4.apply(slot_up_qweight)
+            up_zeros_unpacked = cast_to_uint4.apply(slot_up_qzeros)
+            up_proj_dq = dequantize_linear.apply(up_proj_unpacked, slot_up_scales, up_zeros_unpacked, self.group_size)
 
-            down_proj_unpacked = CastToUInt4Func.apply(slot_down_qweight)
-            down_zeros_unpacked = CastToUInt4Func.apply(slot_down_qzeros)
+            down_proj_unpacked = cast_to_uint4.apply(slot_down_qweight)
+            down_zeros_unpacked = cast_to_uint4.apply(slot_down_qzeros)
 
-            down_proj_dq = DequantizeLinearFunc.apply(
+            down_proj_dq = dequantize_linear.apply(
                 down_proj_unpacked, slot_down_scales, down_zeros_unpacked, self.group_size
             )
 

@@ -7,15 +7,18 @@
 
 import onnxscript
 import torch
-from onnx import TensorProto
+from onnx import ModelProto, TensorProto
+from onnxscript.onnx_types import UINT4
 
+from QEfficient.customop.onnxscript_utils import qeff_custom_op
+from QEfficient.customop.utils import select_interface
 from QEfficient.utils import constants
 
-ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
+ops = getattr(onnxscript, "opset" + str(constants.ONNX_LEGACY_EXPORT_OPSET))
 
 
-@onnxscript.script(onnxscript.values.Opset("com.qti.aisw.onnx", 1))
-def CastToUInt4(weight_packed: onnxscript.UINT8) -> onnxscript.UINT8:
+@qeff_custom_op("com.qti.aisw.onnx", 1)
+def CastToUInt4(weight_packed: onnxscript.UINT8) -> UINT4:
     """
     Unpack packed uint8 weights into uint4 values and cast output to UINT4.
     Supports N-D input: all leading dimensions are preserved; only the last
@@ -100,6 +103,39 @@ class CastToUInt4Func(torch.autograd.Function):
         return output
 
 
+def cast_to_uint4(weight_packed: torch.Tensor) -> torch.Tensor:
+    return select_interface(CastToUInt4Func.apply, torch.ops.qefficient.cast_to_uint4)(weight_packed)
+
+
+def update_cast_to_uint4_output_types(model: ModelProto) -> bool:
+    """Correct exported CastToUInt4 value-info to logical UINT4.
+
+    PyTorch fake tensors cannot carry UINT4 dtype, so Dynamo annotates the
+    custom-op node outputs as UINT8 even though the ONNXScript function returns
+    UINT4. QAIC consumes the graph-level value-info for quantized
+    dequantization, so keep the node metadata consistent with the custom-op
+    body.
+    """
+    cast_outputs = {
+        output_name
+        for node in model.graph.node
+        if node.domain == "com.qti.aisw.onnx" and node.op_type == "CastToUInt4"
+        for output_name in node.output
+    }
+    if not cast_outputs:
+        return False
+
+    transformed = False
+    for value in list(model.graph.value_info) + list(model.graph.output) + list(model.graph.input):
+        if value.name not in cast_outputs:
+            continue
+        tensor_type = value.type.tensor_type
+        if tensor_type.elem_type != TensorProto.UINT4:
+            tensor_type.elem_type = TensorProto.UINT4
+            transformed = True
+    return transformed
+
+
 class DequantizeLinearFunc(torch.autograd.Function):
     """
     Emits a standard ONNX DequantizeLinear node (ai.onnx domain, not custom).
@@ -147,3 +183,18 @@ class DequantizeLinearFunc(torch.autograd.Function):
             axis_i=2,
             block_size_i=block_size,
         )
+
+
+def dequantize_linear(
+    weight_unpacked: torch.Tensor, scale: torch.Tensor, zeros: torch.Tensor, block_size: int
+) -> torch.Tensor:
+    if torch._dynamo.is_compiling():
+        return torch.onnx.ops.symbolic(
+            "::DequantizeLinear",
+            (weight_unpacked, scale, zeros),
+            {"axis": 2, "block_size": block_size},
+            dtype=scale.dtype,
+            shape=weight_unpacked.shape,
+            version=18,
+        )
+    return DequantizeLinearFunc.apply(weight_unpacked, scale, zeros, block_size)

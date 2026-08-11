@@ -69,6 +69,7 @@ def convert_dynamic_axes_to_dynamic_shapes(
         torch.onnx.export(dynamic_shapes=...).
     """
     max_seq_len = getattr(model_config, "max_position_embeddings", 1024)
+    max_image_dim = max(max_seq_len, 65536)
     model_type = getattr(model_config, "model_type", None)
     batch_min = 1 if model_type == "gpt_oss" else 2
 
@@ -87,6 +88,12 @@ def convert_dynamic_axes_to_dynamic_shapes(
                 dim_registry[dim_name] = Dim("comp_ctx_lengths", min=DYNAMO_DIM_MIN_COMP_CTX_LENGTHS, max=max_seq_len)
             elif "ctx_len" in dim_name:
                 dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
+            elif dim_name == "num_patches":
+                dim_registry[dim_name] = Dim("num_patches", min=1, max=max_image_dim)
+            elif dim_name == "num_image_tokens":
+                dim_registry[dim_name] = Dim("num_image_tokens", min=1, max=max_image_dim)
+            elif dim_name in {"grid_h", "grid_w"}:
+                dim_registry[dim_name] = Dim(dim_name, min=1, max=max_image_dim)
             elif "sliding_window" in dim_name:
                 dim_registry[dim_name] = Dim(
                     "sliding_window",
