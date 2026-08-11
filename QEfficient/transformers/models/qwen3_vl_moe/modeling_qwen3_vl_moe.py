@@ -60,6 +60,19 @@ from QEfficient.utils.logging_utils import logger
 QWEN3_VL_ROPE_CACHE_EXPORT_CAP = 76800
 
 
+def _batch_index_scatter(tensor: torch.Tensor, batch_index: torch.Tensor, batch_dim: int = 0) -> torch.Tensor:
+    """Place logical request rows into their physical batch slots."""
+    batch_first = tensor if batch_dim == 0 else tensor.transpose(0, batch_dim)
+    slots = batch_index.reshape(-1).long()
+    batch_first = torch.zeros_like(batch_first).index_put((slots,), batch_first, accumulate=False)
+    return batch_first if batch_dim == 0 else batch_first.transpose(0, batch_dim)
+
+
+def _batch_index_gather(tensor: torch.Tensor, batch_index: torch.Tensor) -> torch.Tensor:
+    """Restore physical-slot rows to logical request order."""
+    return tensor.index_select(0, batch_index.reshape(-1).long())
+
+
 def qeff_apply_interleaved_mrope(freqs, mrope_section):
     """Apply interleaved MRoPE to 3D rotary embeddings.
     Reorganizes frequency layout from chunked [TTT...HHH...WWW] to
@@ -826,6 +839,13 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         """
         return {QEffQwen3VLMoeTextDecoderLayer}
 
+    def _uses_batch_folded_attention(self) -> bool:
+        layers = getattr(self.language_model, "layers", ())
+        if not layers:
+            return False
+        blocking_config = getattr(layers[0].self_attn, "attn_blocking_config", None)
+        return bool(blocking_config is not None and blocking_config.batch_fold)
+
     def forward(
         self,
         input_ids=None,
@@ -838,6 +858,24 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         batch_index: Optional[torch.LongTensor] = None,
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
+        batch_fold_cb = batch_index is not None and self._uses_batch_folded_attention()
+        layerwise = is_layerwise_active()
+        first_layer_window = not layerwise or QEffQwen3VLMoeTextModel._start == 0
+
+        if batch_fold_cb:
+            # Folded cache kernels operate on contiguous physical rows; keep the
+            # logical-to-physical mapping at the graph boundary.
+            if first_layer_window:
+                if input_ids is not None:
+                    input_ids = _batch_index_scatter(input_ids, batch_index)
+                elif inputs_embeds is not None:
+                    inputs_embeds = _batch_index_scatter(inputs_embeds, batch_index)
+            if position_ids is not None:
+                position_ids = _batch_index_scatter(position_ids, batch_index, batch_dim=1)
+            cache_batch_index = None
+        else:
+            cache_batch_index = batch_index
+
         if inputs_embeds is None:
             inputs_embeds = self.model.model.get_input_embeddings()(input_ids)
         else:
@@ -871,7 +909,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
                 position_ids=position_ids,
                 past_key_values=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
+                batch_index=cache_batch_index,
                 use_cache=True,
                 visual_pos_masks=visual_pos_masks,
                 deepstack_visual_embeds=deepstack_visual_embeds,
@@ -879,6 +917,8 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
             hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
             logits = self.model.lm_head(hidden_states)
+            if batch_fold_cb:
+                logits = _batch_index_gather(logits, batch_index)
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
 
@@ -912,7 +952,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
                 position_ids=position_ids,
                 past_key_values=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
+                batch_index=cache_batch_index,
                 use_cache=True,
                 visual_pos_masks=visual_pos_masks,
                 deepstack_visual_embeds=deepstack_visual_embeds,
@@ -931,7 +971,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
                 position_ids=position_ids,
                 past_key_values=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
+                batch_index=cache_batch_index,
                 use_cache=True,
                 visual_pos_masks=QEffQwen3VLDecoderWrapper._vision_mask,
                 deepstack_visual_embeds=QEffQwen3VLDecoderWrapper._deepstack,
@@ -939,6 +979,8 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
             hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
             logits = self.model.lm_head(hidden_states)
+            if batch_fold_cb:
+                logits = _batch_index_gather(logits, batch_index)
             return logits, outputs.past_key_values
 
         else:
@@ -947,7 +989,7 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
                 position_ids=position_ids,
                 past_key_values=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
+                batch_index=cache_batch_index,
                 use_cache=True,
                 visual_pos_masks=QEffQwen3VLDecoderWrapper._vision_mask,
                 deepstack_visual_embeds=QEffQwen3VLDecoderWrapper._deepstack,
@@ -1220,6 +1262,10 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         bs = kwargs.get("batch_size", constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE)
         if bs > 1:
             bs = 2
+        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
+        batch_fold = kwargs.pop("batch_fold", False)
+        if continuous_batching and batch_fold:
+            bs = fbs
 
         prefill_seq_len = kwargs.get("prefill_seq_len")
         if prefill_seq_len is None:
@@ -1271,10 +1317,6 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         )
         # Add data for KV
 
-        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
-
-        kwargs.pop("batch_fold", False)
-
         kv_cache_shape = get_padding_shape_from_config(
             config=self.model.config.text_config,
             batch_size=fbs if continuous_batching else bs,
@@ -1320,6 +1362,15 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
     ):
         comp_ctx_lengths_prefill = compiler_options.pop("comp_ctx_lengths_prefill", None)
         comp_ctx_lengths_decode = compiler_options.pop("comp_ctx_lengths_decode", None)
+        layers = getattr(self.model.language_model, "layers", ())
+        blocking_config = getattr(layers[0].self_attn, "attn_blocking_config", None) if layers else None
+        if (
+            continuous_batching
+            and blocking_config is not None
+            and blocking_config.batch_fold
+            and batch_size != full_batch_size
+        ):
+            raise ValueError("Batch-folded continuous batching requires batch_size == full_batch_size.")
         if height is None or width is None:
             height = constants.QWEN3_VL_HEIGHT
             width = constants.QWEN3_VL_WIDTH
@@ -1490,6 +1541,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
     ):
         # Define dynamic axes
         num_layers = self.config.text_config.num_hidden_layers
+        batch_axis = "full_batch_size" if continuous_batching and batch_fold else "batch_size"
         vision_dynamic_axes = {
             "pixel_values": {0: "grid_height", 1: "grid_width"},
             "image_grid_thw": {0: "batch_size", 1: "time", 2: "grid_h", 3: "grid_w"},
@@ -1497,8 +1549,8 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
         }
 
         lang_dynamic_axes = {
-            "input_ids": {0: "batch_size", 1: "seq_len"},
-            "position_ids": {1: "batch_size", 2: "seq_len"},
+            "input_ids": {0: batch_axis, 1: "seq_len"},
+            "position_ids": {1: batch_axis, 2: "seq_len"},
             "vision_embeds": {0: "vision_batch_size", 1: "vision_size"},
             "deepstack_features": {0: "num_feature_layers", 1: "vision_batch_size", 2: "vision_size"},
         }
@@ -1514,7 +1566,7 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             }
 
         if continuous_batching:
-            lang_dynamic_axes["batch_index"] = {0: "batch_size"}
+            lang_dynamic_axes["batch_index"] = {0: batch_axis}
 
         if comp_ctx_lengths is not None:
             lang_dynamic_axes["comp_ctx_lengths"] = {0: "comp_ctx_lengths"}
