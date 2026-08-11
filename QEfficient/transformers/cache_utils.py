@@ -1565,11 +1565,6 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
         kv_position_ids = torch.where(
             position_ids == -1, position_ids, _remainder_with_symbolic_divisor(position_ids, layer_ctx_len)
         )
-        kv_position_ids = torch.where(
-            position_ids.max() >= (layer_ctx_len - 1) * 2,
-            _remainder_with_symbolic_divisor(position_ids + 1, layer_ctx_len),
-            kv_position_ids,
-        )
 
         valid_mask = (kv_position_ids != -1).unsqueeze(1).unsqueeze(-1)
         key_states = torch.where(valid_mask, key_states, torch.zeros_like(key_states, dtype=key_states.dtype))
@@ -1588,29 +1583,18 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
 
         ctx_len = cache_kwargs.get("CCL", k_out.shape[2])
         ctx_len = min(layer_ctx_len, ctx_len)
-        ctx_indices = torch.arange(ctx_len, dtype=kv_position_ids.dtype)[None, None, ...]
-        gather_limit = kv_position_ids.max(1, keepdim=True).values.unsqueeze(1).to(position_ids.dtype)
+        ctx_indices = torch.arange(ctx_len, dtype=position_ids.dtype)[None, None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1).to(position_ids.dtype)
         invalid_mask = ctx_indices > gather_limit
         invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
         ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-        all_indices = torch.arange(layer_ctx_len) + kv_position_ids.max() + 1
-        rolling_indices = torch.where(
-            all_indices > layer_ctx_len - 1, _remainder_with_symbolic_divisor(all_indices, layer_ctx_len), all_indices
-        )
-        rolling_indices = rolling_indices[:ctx_len]
-        use_rolling_indices = position_ids.max() >= (layer_ctx_len - 1)
-        final_indices = torch.where(use_rolling_indices, rolling_indices, ctx_indices)
-
         if batch_index is not None:
-            k_out = ctx_gather_cb(k_out, batch_index, final_indices, ctx_len)
-            v_out = ctx_gather_cb(v_out, batch_index, final_indices, ctx_len)
+            k_out = ctx_gather_cb(k_out, batch_index, ctx_indices, ctx_len)
+            v_out = ctx_gather_cb(v_out, batch_index, ctx_indices, ctx_len)
         else:
-            k_out = ctx_gather(k_out, final_indices, ctx_len)
-            v_out = ctx_gather(v_out, final_indices, ctx_len)
+            k_out = ctx_gather(k_out, ctx_indices, ctx_len)
+            v_out = ctx_gather(v_out, ctx_indices, ctx_len)
 
-        k_ctx_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(k_out, dtype=k_out.dtype), k_out)
-        v_ctx_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
-        k_out = torch.where(use_rolling_indices, k_out, k_ctx_out)
-        v_out = torch.where(use_rolling_indices, v_out, v_ctx_out)
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
         return k_out, v_out
