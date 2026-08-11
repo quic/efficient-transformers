@@ -6,6 +6,8 @@
 # -----------------------------------------------------------------------------
 
 import torch
+from compressed_tensors.compressors import PackedQuantizationCompressor
+from compressed_tensors.linear.compressed_linear import CompressedLinear
 from torch import nn
 from transformers import AutoConfig
 from transformers.models.gpt_oss.modeling_gpt_oss import GptOssExperts
@@ -66,6 +68,84 @@ class AwqToMatmulNbitsTransform(ModuleMutatorTransform):
         # and transposes it internally, so assign directly without transposing.
         new_module.scales = original_module.scales.float()
         new_module.pack_on_device(int_weight, int_zeros)
+        return new_module
+
+
+class PackQuantizedInt4ToMatMulNBitsTransform(ModuleMutatorTransform):
+    """
+    This transform is used to pack the quantized int4 weights into a format that can be used by the MatMulNBits kernel.
+    It is used for the ONNX export of the quantized model.
+    """
+
+    _match_class = CompressedLinear
+
+    @classmethod
+    def _is_pack_quantized_int4_linear(cls, module):
+        quantization_scheme = getattr(module, "quantization_scheme", None)
+        quantization_args = getattr(quantization_scheme, "weights", None)
+        return (
+            isinstance(module, nn.Linear)
+            and hasattr(module, "weight_packed")
+            and hasattr(module, "weight_scale")
+            and quantization_args is not None
+            and getattr(quantization_args, "num_bits", None) == 4
+            and getattr(quantization_args, "type", None) == "int"
+            and getattr(quantization_args, "strategy", None) == "group"
+        )
+
+    @classmethod
+    def _matches(cls, module):
+        return isinstance(module, cls._match_class) or cls._is_pack_quantized_int4_linear(module)
+
+    @classmethod
+    def apply(cls, model: nn.Module):
+        transformed = False
+        for name, module in model.named_children():
+            if cls._matches(module):
+                setattr(model, name, cls.mutate(module, model))
+                transformed = True
+            else:
+                _, child_transformed = cls.apply(module)
+                transformed = transformed or child_transformed
+
+        if cls._matches(model):
+            model = cls.mutate(model, None)
+            transformed = True
+
+        return model, transformed
+
+    @classmethod
+    def mutate(cls, original_module, parent_module):
+        # add compressor.decompress to get the decompressed weight
+        # and then package into matmulnbit
+        if isinstance(original_module, CompressedLinear):
+            assert isinstance(original_module.compressor, PackedQuantizationCompressor), (
+                f"Only {PackedQuantizationCompressor} supported for now"
+            )
+            fp_weight = original_module.compressor.decompress_module(original_module)
+        else:
+            from compressed_tensors.compressors.base import decompress_module as ct_decompress_module
+
+            ct_decompress_module(original_module)
+            fp_weight = original_module.weight
+        scales = original_module.weight_scale
+        # assuming symmetric quantization
+        quantization_args = original_module.quantization_scheme.weights
+        zeros = (torch.zeros_like(scales) + pow(2, (quantization_args.num_bits - 1))).to(torch.uint8)
+        g_idx = torch.arange(original_module.in_features // quantization_args.group_size).repeat_interleave(
+            quantization_args.group_size
+        )
+        original_module.weight = torch.nn.Parameter(fp_weight)
+        assert quantization_args.type == "int", "uint is not tested yet"
+        new_module = QuantLinearORT(
+            quantization_args.num_bits,
+            quantization_args.group_size,
+            original_module.in_features,
+            original_module.out_features,
+            original_module.bias is not None,
+        )
+        new_module.bias = original_module.bias if original_module.bias is not None else None
+        new_module.pack(original_module, scales, zeros, g_idx)
         return new_module
 
 
