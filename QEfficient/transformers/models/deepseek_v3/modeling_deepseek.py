@@ -1270,7 +1270,9 @@ class QEffPrefillOnlyDeepseekV3MoE(nn.Module):
 
         num_packed_chunks = getattr(self, "expert_blocking_num_packed_chunks", None)
         if num_packed_chunks is not None:
-            assert seq_len % num_packed_chunks == 0, "Something went wrong"
+            assert seq_len % num_packed_chunks == 0, (
+                "Expert blocking in prefill For Kimi-Vision Model is not supported yet."
+            )
             packed_chunk_size = seq_len // num_packed_chunks
         else:
             num_packed_chunks = seq_len // packed_chunk_size

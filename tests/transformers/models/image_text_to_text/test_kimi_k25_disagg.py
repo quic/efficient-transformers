@@ -28,7 +28,7 @@ from tests.utils.load_kimi_utils import (
     set_deterministic,
 )
 
-PREFILL_SEQ_LEN = 64
+PREFILL_SEQ_LEN = 256
 CTX_LEN = 512
 BATCH_SIZE = 1
 GENERATION_LEN = 4
