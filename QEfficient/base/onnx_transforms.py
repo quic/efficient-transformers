@@ -132,6 +132,8 @@ class CustomOpTransform(BaseOnnxTransform):
         existing = {f.name for f in model.functions}
 
         for func_name, onnxscript_func in cls._custom_ops.values():
+            if onnxscript_func is None:
+                continue
             proto = get_onnxscript_func(onnxscript_func, onnx_export_opset).to_function_proto()
             if proto.name not in used_op_types:
                 continue

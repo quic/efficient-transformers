@@ -484,7 +484,6 @@ class QEFFBaseModel(ABC):
 
         # check if the model is in meta state or weights are offloaded
         self._model_offloaded_check()
-
         export_dir.mkdir(parents=True, exist_ok=True)
 
         def _resolve_pkv_layers(pkv_obj):
