@@ -21,13 +21,14 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+# DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-235B-A22B-Instruct"
 DEFAULT_PROMPTS = [
     "Tell me about yourself.",
     "What is the capital of France?",
     "Explain photosynthesis in one sentence.",
     "Name three primary colors.",
-]
+] * 64
 DEFAULT_IMAGE_PROMPTS = [
     "Describe all the colors seen in the image",
     "What are the objects in the image?",
@@ -41,15 +42,17 @@ DEFAULT_IMAGE_URLS = [
     "https://picsum.photos/id/235/536/354",
 ]
 DEFAULT_PREFILL_SEQ_LEN = 1024
-DEFAULT_CTX_LEN = 4096
+DEFAULT_CTX_LEN = 10240  # 4096
 DEFAULT_GENERATION_LEN = 100
-DEFAULT_BATCH_SIZE = 1
+DEFAULT_BATCH_SIZE = 256  # 1
 
-STAGES = 4
-PREFILL_NUM_DEVICES = 4
+STAGES = 7
+PREFILL_NUM_DEVICES = 14
 DECODE_NUM_DEVICES = 16
 
 NUM_KV_BLOCKS = 4
+
+
 PREFILL_BLOCKING_MODE = "online"
 PREFILL_QL_CHUNK = 128
 PREFILL_N_REP_CHUNK = 4
@@ -82,6 +85,7 @@ def _build_config(model_id: str):
 
 
 def _decode_qaic_config(ctx_len: int, num_kv_blocks: int) -> dict:
+
     return {
         "blocking_mode": "kv",
         "num_kv_blocks": num_kv_blocks,
@@ -91,6 +95,7 @@ def _decode_qaic_config(ctx_len: int, num_kv_blocks: int) -> dict:
 
 
 def _prefill_qaic_config(ctx_len: int, num_kv_blocks: int, prefill_seq_len: int) -> dict:
+
     cfg = _decode_qaic_config(ctx_len, num_kv_blocks)
     cfg["prefill_blocking_mode"] = PREFILL_BLOCKING_MODE
     cfg["prefill_block_chunks"] = -(-prefill_seq_len // PREFILL_QL_CHUNK)  # ceil divide
@@ -112,9 +117,17 @@ def run(
     decode_num_devices: int = DECODE_NUM_DEVICES,
     num_kv_blocks: int = NUM_KV_BLOCKS,
 ):
-    """Run chunked-prefill + batch-folded decode over ``prompts`` with the DMA KV handoff."""
+    """Run chunked-prefill + batch-folded decode over ``prompts`` with the DMA KV handoff.
+
+    ``skip_vision=False`` (default) pairs each prompt with the image at the same index of
+    ``image_urls`` (cycled if shorter) and runs it as an image+text turn through the vision
+    QPC; ``skip_vision=True`` runs text-only prompts. Returns a dict with, per prompt, the
+    ``first_tokens`` (prefill argmax) and the full decoded ``tokens`` list, for parity
+    comparison against the single-request driver.
+    """
     prompts = list(prompts) if prompts else list(DEFAULT_PROMPTS)
     image_urls = list(image_urls) if image_urls else list(DEFAULT_IMAGE_URLS)
+
     if len(prompts) == 1:
         prompts = prompts * batch_size
     if len(image_urls) == 1:
@@ -202,6 +215,7 @@ def run(
 
     prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"), kv_dma_share=True)
     decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"), kv_dma_share=True)
+
     assert "image_idx" in prefill_session.binding_index_map, "image_idx not a compiled prefill input binding"
     assert "batch_index" not in decode_session.binding_index_map, (
         "unexpected batch_index binding on the non-CB folded decode QPC"
@@ -219,11 +233,18 @@ def run(
     assert kv_caches and kv_caches[0].shape[0] == batch_size, (
         f"host KV batch dim {kv_caches[0].shape[0] if kv_caches else None} != batch_size {batch_size}"
     )
-    # Folded views over the SAME bytes, [1, N*Hkv, ctx, D], to hand the decode handoff.
     decode_kv_views = [kv.reshape(1, kv.shape[0] * kv.shape[1], kv.shape[2], kv.shape[3]) for kv in kv_caches]
     decode_kv_map = decode_session.decode_buff_map + decode_session.decode_rs_kv_only_buff_map
 
     def _prepare_prompt(prompt: str, image_url: str):
+        """Tokenise + (optionally) run the vision QPC for one prompt.
+
+        ``image_url`` is used only when ``skip_vision=False``. Returns
+        ``(lang_inputs, vision_outputs, num_chunks, num_pos_sections)`` where ``lang_inputs``
+        is padded to a multiple of ``prefill_seq_len`` and carries ``position_ids`` /
+        ``image_idx``, and ``vision_outputs`` is a dict with ``vision_embeds`` /
+        ``deepstack_features`` (empty when ``skip_vision``).
+        """
         if skip_vision:
             content = [{"type": "text", "text": prompt}]
         else:
@@ -368,9 +389,11 @@ def run(
 
     st = perf_counter()
     decode_steps = 0
+
     for _ in range(generation_len):
         if not any(ongoing):
             break
+
         decode_session.set_data_for_kv_handoff(
             decode_kv_views + decode_kv_views,
             [("batch_index", 0), ("ctx_start", 0)],
@@ -454,6 +477,8 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    # With vision the default text prompts are a poor fit; use the image prompts unless the
+    # user supplied their own --prompt.
     prompts = args.prompts
     image_urls = args.image_urls
     if not args.skip_vision:
