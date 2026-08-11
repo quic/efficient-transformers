@@ -115,10 +115,9 @@ class CustomOpTransform(BaseOnnxTransform):
         "CtxGatherFuncBlockedKVCB": (CtxGatherFuncBlockedKVCB, CtxGatherBlockedKVCB),
         "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
         "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
-        "CastToUInt4": (CastToUInt4Func, CastToUInt4),
         "CtxChunkScatterBatchFunc": (CtxChunkScatterBatchFunc, CtxChunkScatterBatch),
         "CtxGatherFuncBlockedKVBatch": (CtxGatherFuncBlockedKVBatch, CtxGatherBlockedKVBatch),
-        # "CastToUInt4": (CastToUInt4Func, CastToUInt4),
+        "CastToUInt4": (CastToUInt4Func, CastToUInt4),
     }
 
     @classmethod

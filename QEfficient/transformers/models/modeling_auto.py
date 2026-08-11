@@ -2050,6 +2050,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
+        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         **compiler_options,
     ) -> str:
         """
@@ -4152,11 +4153,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
                 self.hash_params.pop("retain_full_kv", None)
                 seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
-                        prefill_seq_len=prefill_seq_len,
-                        enable_chunking=enable_chunking,
-                        num_cores=num_cores,
-                        moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
-                        moe_prefill_target_seq_len=moe_prefill_target_seq_len or prefill_seq_len,
+                    prefill_seq_len=prefill_seq_len,
+                    enable_chunking=enable_chunking,
+                    num_cores=num_cores,
+                    moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+                    moe_prefill_target_seq_len=moe_prefill_target_seq_len or prefill_seq_len,
                 )
                 if self.model.config.model_type == "gpt_oss" and hasattr(self.model.model, "set_rope_cache_len"):
                     self.model.model.set_rope_cache_len(seq_len)
