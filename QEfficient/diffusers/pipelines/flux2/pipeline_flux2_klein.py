@@ -8,25 +8,25 @@
 
 import os
 import time
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Union
 
 import numpy as np
 import PIL
 import torch
 from diffusers import Flux2KleinPipeline
+from tqdm import tqdm
 
+from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.diffusers.pipelines.pipeline_module import (
     Flux2VaeDecoderWrapper,
     Flux2VaeEncoderWrapper,
     QEffFlux2TransformerModel,
     QEffVAE,
 )
-from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.diffusers.pipelines.pipeline_utils import (
     ONNX_SUBFUNCTION_MODULE,
     ModulePerf,
     QEffPipelineOutput,
-    calculate_compressed_latent_dimension,
     compile_modules_parallel,
     compile_modules_sequential,
     config_manager,
@@ -35,10 +35,6 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
 from QEfficient.utils.logging_utils import logger
-
-
-from tqdm import tqdm
-
 
 # ---------------------------------------------------------------------------
 # Utility
@@ -168,6 +164,9 @@ class QEffFlux2KleinPipeline:
         # ------------------------------------------------------------------ #
         # Text encoder — wrapped with QEFFAutoModelForCausalLM               #
         # ------------------------------------------------------------------ #
+        # Set is_flux2 flag on the text encoder config for FLUX2 Klein model
+        model.text_encoder.config.is_flux2 = True
+
         self.text_encoder = QEFFAutoModelForCausalLM(
             model=model.text_encoder,
         )
@@ -194,7 +193,7 @@ class QEffFlux2KleinPipeline:
 
         # VAE decoder — QEffVAE wrapping a Flux2VaeDecoderWrapper.
 
-        self.vae_decode = QEffVAE(Flux2VaeDecoderWrapper(model.vae), "decoder")
+        self.vae_decoder = QEffVAE(Flux2VaeDecoderWrapper(model.vae), "decoder")
 
         self.vae_encoder = QEffVAE(Flux2VaeEncoderWrapper(model.vae), "encoder")
         self.vae_encoder.get_onnx_params = self.vae_encoder.get_flux2_encoder_onnx_params
@@ -202,7 +201,7 @@ class QEffFlux2KleinPipeline:
         self.modules = {
             "transformer": self.transformer,
             "vae_encoder": self.vae_encoder,
-            "vae_decoder": self.vae_decode,
+            "vae_decoder": self.vae_decoder,
         }
         self.tokenizer = model.tokenizer
         self.tokenizer_max_length = model.tokenizer_max_length  # 512
@@ -359,6 +358,8 @@ class QEffFlux2KleinPipeline:
         ):
             self.export(use_onnx_subfunctions=use_onnx_subfunctions, compile_config=compile_config)
 
+        specialization_updates = {}
+
         # Use generic utility functions for compilation
         if parallel:
             compile_modules_parallel(self.modules, self.custom_config, specialization_updates)
@@ -496,8 +497,6 @@ class QEffFlux2KleinPipeline:
             )
             all_input_ids.append(inputs["input_ids"])
 
-        input_ids = torch.cat(all_input_ids, dim=0)  # (B, seq_len)
-
         # ------------------------------------------------------------------ #
         # Initialise QAIC session                                     #
         # ------------------------------------------------------------------ #
@@ -517,21 +516,27 @@ class QEffFlux2KleinPipeline:
                 {"logits": np.zeros((1, 3, max_sequence_length, hidden_size), dtype=np.float32)}
             )
 
-        position_ids = torch.arange(input_ids.shape[-1]).reshape(1, -1)
-        position_ids = torch.where(input_ids == 151643, -1, position_ids)
-
-        aic_inputs = {
-            "input_ids": input_ids.numpy().astype(np.int64),
-            "position_ids": position_ids.numpy().astype(np.int64),
-        }
-
+        # Process each prompt individually since QPC is compiled with batch_size=1
+        all_prompt_embeds = []
         start = time.perf_counter()
-        outputs = self.text_encoder.qpc_session.run(aic_inputs)
+        for input_id in all_input_ids:
+            position_ids = torch.arange(input_id.shape[-1]).reshape(1, -1)
+            position_ids = torch.where(input_id == 151643, -1, position_ids)
+
+            aic_inputs = {
+                "input_ids": input_id.numpy().astype(np.int64),
+                "position_ids": position_ids.numpy().astype(np.int64),
+            }
+
+            outputs = self.text_encoder.qpc_session.run(aic_inputs)
+            prompt_embeds_single = torch.from_numpy(outputs["logits"])  # (1, 3, seq_len, hidden_size)
+            all_prompt_embeds.append(prompt_embeds_single)
+
         end = time.perf_counter()
         text_encoder_perf = end - start
 
-        # Output key is "logits"; tensor contains stacked hidden states
-        prompt_embeds = torch.from_numpy(outputs["logits"])  # (B, 3, seq_len, hidden_size)
+        # Concatenate all prompt embeddings
+        prompt_embeds = torch.cat(all_prompt_embeds, dim=0)  # (B, 3, seq_len, hidden_size)
 
         # Validate text encoder output
         if torch.isnan(prompt_embeds).any():
@@ -966,8 +971,6 @@ class QEffFlux2KleinPipeline:
         # ------------------------------------------------------------------ #
         # 3b. Compile / locate all QPCs before any QAIC session is needed     #
         # ------------------------------------------------------------------ #
-        import subprocess
-        import shutil
 
         # ------------------------------------------------------------------ #
         # 3b-ii. Compile all QPCs and initialise QAIC sessions               #
@@ -985,9 +988,9 @@ class QEffFlux2KleinPipeline:
                 str(self.transformer.qpc_path), device_ids=self.transformer.device_ids
             )
 
-        if self.vae_decode.qpc_session is None:
-            self.vae_decode.qpc_session = QAICInferenceSession(
-                str(self.vae_decode.qpc_path), device_ids=self.vae_decode.device_ids
+        if self.vae_decoder.qpc_session is None:
+            self.vae_decoder.qpc_session = QAICInferenceSession(
+                str(self.vae_decoder.qpc_path), device_ids=self.vae_decoder.device_ids
             )
 
         if self.vae_encoder.qpc_session is None:
@@ -1174,7 +1177,7 @@ class QEffFlux2KleinPipeline:
 
             t_start = time.perf_counter()
             print("t_start", t_start)
-            vae_output = self.vae_decode.qpc_session.run(vae_in_np)
+            vae_output = self.vae_decoder.qpc_session.run(vae_in_np)
             t_end = time.perf_counter()
             print("t_end", t_end)
             vae_perf = t_end - t_start

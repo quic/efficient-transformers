@@ -24,15 +24,15 @@ from QEfficient.transformers.models.pytorch_transforms import (
 from QEfficient.utils import constants
 
 
-
 # ---------------------------------------------------------------------------
 # Flux2 VAE wrapper modules
 # ---------------------------------------------------------------------------
 
+
 class Flux2VaeEncoderWrapper(torch.nn.Module):
     """
-    Input:  image        
-    Output: latents    
+    Input:  image
+    Output: latents
     """
 
     def __init__(self, vae: torch.nn.Module) -> None:
@@ -47,11 +47,10 @@ class Flux2VaeEncoderWrapper(torch.nn.Module):
         return encoder_output.latents
 
 
-
 class Flux2VaeDecoderWrapper(torch.nn.Module):
     """
-    Input:  latent_sample  
-    Output: sample         
+    Input:  latent_sample
+    Output: sample
     """
 
     def __init__(self, vae: torch.nn.Module) -> None:
@@ -63,7 +62,6 @@ class Flux2VaeDecoderWrapper(torch.nn.Module):
         # return_dict=False -> plain tuple; take first element (decoded image)
         decoded = self.vae.decode(latent_sample, return_dict=False)
         return decoded[0]
-
 
 
 class QEffTextEncoder(QEFFBaseModel):
@@ -80,7 +78,7 @@ class QEffTextEncoder(QEFFBaseModel):
         _onnx_transforms (List): ONNX transformations applied after export
     """
 
-    _pytorch_transforms = [CLIPTextTransform, CustomOpsTransform, T5ModelTransform]ppip
+    _pytorch_transforms = [CLIPTextTransform, CustomOpsTransform, T5ModelTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
     @property
@@ -390,11 +388,11 @@ class QEffVAE(QEFFBaseModel):
         height = 480
         width = 832
         example_inputs = {
-         "image": torch.randn(bs, 3, height, width),
+            "image": torch.randn(bs, 3, height, width),
         }
         output_names = ["latents"]
         dynamic_axes = {
-            "image":   {0: "batch_size", 2: "height",       3: "width"},
+            "image": {0: "batch_size", 2: "height", 3: "width"},
             "latents": {0: "batch_size", 2: "latent_height", 3: "latent_width"},
         }
         return example_inputs, dynamic_axes, output_names
@@ -691,7 +689,7 @@ class QEffFlux2VAE(QEFFBaseModel):
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
-            offload_pt_weights=False, # To do:
+            offload_pt_weights=False,  # To do:
             **export_kwargs,
         )
 
@@ -701,7 +699,6 @@ class QEffFlux2VAE(QEFFBaseModel):
         """
         # self._compile(specializations=specializations, **compiler_options)
         self._compile(specializations=specializations, offload_pt_weights=False, **compiler_options)
-
 
 
 class QEffFlux2TransformerModel(QEFFBaseModel):
@@ -719,6 +716,7 @@ class QEffFlux2TransformerModel(QEFFBaseModel):
         _pytorch_transforms (List): PyTorch transformations applied before ONNX export
         _onnx_transforms (List): ONNX transformations applied after export
     """
+
     _pytorch_transforms = [AttentionTransform, NormalizationTransform, CustomOpsTransform]
     _onnx_transforms = [FP16ClipTransform, SplitTensorsTransform]
 
@@ -762,51 +760,40 @@ class QEffFlux2TransformerModel(QEFFBaseModel):
                 - output_names (List[str]): Names of model outputs
         """
         # Derive inner_dim from model config — no hardcoded constants needed
-        inner_dim    = self.model.config.num_attention_heads * self.model.config.attention_head_dim
-        num_layers   = self.model.config.num_layers
-        num_single   = self.model.config.num_single_layers
+        inner_dim = self.model.config.num_attention_heads * self.model.config.attention_head_dim
+        num_layers = self.model.config.num_layers
+        num_single = self.model.config.num_single_layers
 
         # axes_dims_rope has 4 entries for Flux2; RoPE ids have 4 coords per token
         rope_dim = len(self.model.config.axes_dims_rope)
 
         example_inputs = {
             # Image latent tokens: [batch, cl, in_channels]
-            "hidden_states": torch.randn(
-                batch_size, cl, self.model.config.in_channels, dtype=torch.float32
-            ),
+            "hidden_states": torch.randn(batch_size, cl, self.model.config.in_channels, dtype=torch.float32),
             # Text conditioning tokens: [batch, seq_length, joint_attention_dim]
             "encoder_hidden_states": torch.randn(
                 batch_size, seq_length, self.model.config.joint_attention_dim, dtype=torch.float32
             ),
             "timestep": torch.tensor([1.0], dtype=torch.float32),
-            "img_ids": torch.randn(cl,         rope_dim, dtype=torch.float32),
+            "img_ids": torch.randn(cl, rope_dim, dtype=torch.float32),
             "txt_ids": torch.randn(seq_length, rope_dim, dtype=torch.float32),
-    
-            "adaln_double_img": torch.randn(
-                num_layers, inner_dim * 6, dtype=torch.float32
-            ),
+            "adaln_double_img": torch.randn(num_layers, inner_dim * 6, dtype=torch.float32),
             # Dual-block txt-stream: same layout as img
-            "adaln_double_txt": torch.randn(
-                num_layers, inner_dim * 6, dtype=torch.float32
-            ),
+            "adaln_double_txt": torch.randn(num_layers, inner_dim * 6, dtype=torch.float32),
             # Single-block: [mod_shift, mod_scale, mod_gate] per layer
-            "adaln_single": torch.randn(
-                num_single, inner_dim * 3, dtype=torch.float32
-            ),
+            "adaln_single": torch.randn(num_single, inner_dim * 3, dtype=torch.float32),
             # Final AdaLayerNormContinuous: [scale, shift] — QEffAdaLayerNormContinuous
-            "adaln_out": torch.randn(
-                batch_size, inner_dim * 2, dtype=torch.float32
-            ),
+            "adaln_out": torch.randn(batch_size, inner_dim * 2, dtype=torch.float32),
         }
 
         output_names = ["sample"]
 
         dynamic_axes = {
-            "hidden_states":        {0: "batch_size", 1: "cl"},
+            "hidden_states": {0: "batch_size", 1: "cl"},
             "encoder_hidden_states": {0: "batch_size", 1: "seq_len"},
-            "timestep":             {0: "steps"},
-            "img_ids":              {0: "cl"},
-            "sample":               {0: "batch_size", 1: "cl"},
+            "timestep": {0: "steps"},
+            "img_ids": {0: "cl"},
+            "sample": {0: "batch_size", 1: "cl"},
         }
 
         return example_inputs, dynamic_axes, output_names
@@ -820,7 +807,7 @@ class QEffFlux2TransformerModel(QEFFBaseModel):
         use_onnx_subfunctions: bool = False,
     ) -> str:
         """
-        Export the Flux transformer model to ONNX format.
+        Export the Flux2 transformer model to ONNX format.
 
         Args:
             inputs (Dict): Example inputs for ONNX export
@@ -829,7 +816,6 @@ class QEffFlux2TransformerModel(QEFFBaseModel):
             export_dir (str, optional): Directory to save ONNX model
             use_onnx_subfunctions (bool): Whether to export transformer blocks as ONNX functions
                                      for better modularity and potential optimization
-
         Returns:
             str: Path to the exported ONNX model
         """
@@ -843,7 +829,7 @@ class QEffFlux2TransformerModel(QEFFBaseModel):
             dynamic_axes=dynamic_axes,
             export_dir=export_dir,
             use_onnx_subfunctions=use_onnx_subfunctions,
-            offload_pt_weights=False,  # As weights are needed with AdaLN changes
+            offload_pt_weights=False,
         )
 
     def compile(self, specializations: List[Dict], **compiler_options) -> None:

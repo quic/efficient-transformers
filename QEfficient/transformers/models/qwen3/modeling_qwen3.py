@@ -372,11 +372,10 @@ class QEffQwen3Model(Qwen3Model):
         # Process final hidden states based on model type
         if is_flux2:
             # Flux2 klein: stack selected hidden states
-            last_hidden_state = torch.stack(hidden_states_list, dim=1)
+            hidden_states_stack = torch.stack(hidden_states_list, dim=1)
         else:
             # Standard behavior: apply normalization
             hidden_states = self.norm(hidden_states)
-            last_hidden_state = hidden_states
 
         # add hidden states from the last decoder layer
         if output_hidden_states:
@@ -385,8 +384,14 @@ class QEffQwen3Model(Qwen3Model):
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
 
+        if is_flux2:
+            return BaseModelOutputWithPast(
+                last_hidden_state=hidden_states_stack,
+                past_key_values=past_key_values if use_cache else None,
+            )
+
         return BaseModelOutputWithPast(
-            last_hidden_state=last_hidden_state,
+            last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
             hidden_states=all_hidden_states,
         )
