@@ -144,44 +144,46 @@ class TestQEffDynamicLayerCorrectness:
         assert torch.isfinite(k_out).all()
         assert torch.isfinite(v_out).all()
 
-    def test_batch_fold_continuous_batching_uses_physical_slots(self):
-        full_batch_size, batch_size, heads, ctx_len, head_dim = 3, 2, 2, 8, 4
+    def test_batch_fold_continuous_batching_uses_preordered_physical_slots(self):
+        batch_size, heads, ctx_len, head_dim = 3, 2, 8, 4
         layer = QEffDynamicLayer.from_tensors(
-            torch.zeros(full_batch_size, heads, ctx_len, head_dim),
-            torch.zeros(full_batch_size, heads, ctx_len, head_dim),
+            torch.zeros(batch_size, heads, ctx_len, head_dim),
+            torch.zeros(batch_size, heads, ctx_len, head_dim),
         )
 
-        batch_index = torch.tensor([[2], [0]], dtype=torch.int32)
-        position_ids = torch.tensor([[3], [5]], dtype=torch.int32)
-        key = torch.stack(
+        batch_index = torch.tensor([[2], [0], [1]], dtype=torch.int64)
+        logical_positions = torch.tensor([[3], [5], [1]], dtype=torch.int32)
+        logical_keys = torch.stack(
             [
                 torch.full((heads, 1, head_dim), 2.0),
                 torch.full((heads, 1, head_dim), 7.0),
+                torch.full((heads, 1, head_dim), 11.0),
             ]
         )
-        value = key + 10.0
-        cache_kwargs = {
-            "batch_index": batch_index,
-            "position_ids": position_ids,
-            "num_kv_heads": heads,
-        }
+        logical_values = logical_keys + 10.0
 
-        layer.write_only_batch(key, value, cache_kwargs)
+        slots = batch_index.flatten()
+        physical_positions = torch.empty_like(logical_positions).index_copy(0, slots, logical_positions)
+        physical_keys = torch.empty_like(logical_keys).index_copy(0, slots, logical_keys)
+        physical_values = torch.empty_like(logical_values).index_copy(0, slots, logical_values)
+        layer.write_only_batch(
+            physical_keys,
+            physical_values,
+            cache_kwargs={"position_ids": physical_positions},
+        )
 
-        assert layer.keys.shape == (full_batch_size, heads, ctx_len, head_dim)
-        assert layer.values.shape == (full_batch_size, heads, ctx_len, head_dim)
-        assert torch.all(layer.keys[2, :, 3] == 2.0)
-        assert torch.all(layer.keys[0, :, 5] == 7.0)
-        assert torch.count_nonzero(layer.keys[1]) == 0
+        assert layer.keys.shape == (batch_size, heads, ctx_len, head_dim)
+        assert layer.values.shape == (batch_size, heads, ctx_len, head_dim)
+        for logical_row, physical_slot in enumerate(slots):
+            position = logical_positions[logical_row, 0]
+            assert torch.equal(layer.keys[physical_slot, :, position], logical_keys[logical_row, :, 0])
+            assert torch.equal(layer.values[physical_slot, :, position], logical_values[logical_row, :, 0])
 
-        key_out = layer.read_only_blocked_K_batch(0, 6, cache_kwargs).reshape(batch_size, heads, 6, head_dim)
-        value_out = layer.read_only_blocked_V_batch(0, 6, cache_kwargs).reshape(batch_size, heads, 6, head_dim)
-        expected_keys = layer.keys.index_select(0, batch_index.flatten().long())[:, :, :6]
-        expected_values = layer.values.index_select(0, batch_index.flatten().long())[:, :, :6]
-
-        assert torch.equal(key_out[0, :, :4], expected_keys[0, :, :4])
-        assert torch.equal(key_out[1], expected_keys[1])
-        assert torch.equal(value_out, expected_values)
+        read_kwargs = {"position_ids": torch.full((batch_size, 1), ctx_len - 1)}
+        key_out = layer.read_only_blocked_K_batch(0, 6, read_kwargs).reshape(batch_size, heads, 6, head_dim)
+        value_out = layer.read_only_blocked_V_batch(0, 6, read_kwargs).reshape(batch_size, heads, 6, head_dim)
+        assert torch.equal(key_out, layer.keys[:, :, :6])
+        assert torch.equal(value_out, layer.values[:, :, :6])
 
     def test_batch_fold_write_preserves_standard_cache_layout(self):
         batch, heads, ctx_len, head_dim = 3, 2, 8, 4
