@@ -16,23 +16,19 @@ from transformers.cache_utils import Cache
 
 from QEfficient.blocking.blocked_attention_forwards import (
     blocked_bhqkv_attention_forward,
-    blocked_bhqkv_paged_attention_forward,
     blocked_h_attention_forward,
     blocked_h_mla_attention_forward,
     blocked_hqkv_attention_forward,
-    blocked_hqkv_paged_attention_forward,
     blocked_kv_attention_forward,
     blocked_kv_attention_forward_decode_headpar_batch,
     blocked_kv_attention_forward_headpar_offline,
     blocked_kv_attention_forward_prefill_headpar_offline,
     blocked_kv_mla_attention_forward,
-    blocked_kv_paged_attention_forward,
     blocked_q_attention_forward,
     blocked_q_attention_forward_prefill,
     blocked_qkv_attention_forward,
     blocked_qkv_attention_forward_prefill_headpar_offline,
     blocked_qkv_attention_forward_prefill_online,
-    blocked_qkv_paged_attention_forward,
 )
 
 
@@ -43,18 +39,13 @@ class BlockingMode(str, Enum):
     KV = "kv"
     KV_HEADPAR = "kv_headpar"
     KV_BATCH_FOLD = "kv_batch_fold"
-    KV_PAGED = "kv_paged"
     Q = "q"
     H = "h"
     QKV = "qkv"
-    QKV_PAGED = "qkv_paged"
     HQ = "hq"
     HKV = "hkv"
-    HKV_PAGED = "hkv_paged"
     HQKV = "hqkv"
-    HQKV_PAGED = "hqkv_paged"
     BHQKV = "bhqkv"
-    BHQKV_PAGED = "bhqkv_paged"
     # MLA
     KV_MLA = "kv_mla"
     H_MLA = "h_mla"
@@ -149,6 +140,7 @@ class AttentionBlockingConfig:
     ctx_len: Optional[int] = None
     kv_block_unroll: Optional[int] = 1
     num_cores_per_device: Optional[int] = None
+    paged_attention: Optional[bool] = False
 
 
 def get_gdn_num_head_blocks(blocking_config: Optional[AttentionBlockingConfig], batch_fold: bool) -> int:
@@ -294,18 +286,13 @@ _STRATEGIES: Dict[BlockingMode, Callable] = {
     BlockingMode.KV: blocked_kv_attention_forward,
     BlockingMode.KV_HEADPAR: blocked_kv_attention_forward_headpar_offline,
     BlockingMode.KV_BATCH_FOLD: blocked_kv_attention_forward_decode_headpar_batch,
-    BlockingMode.KV_PAGED: blocked_kv_paged_attention_forward,
     BlockingMode.Q: blocked_q_attention_forward,
     BlockingMode.H: blocked_h_attention_forward,
     BlockingMode.QKV: blocked_qkv_attention_forward,
-    BlockingMode.QKV_PAGED: blocked_qkv_paged_attention_forward,
     BlockingMode.HQ: blocked_hqkv_attention_forward,
     BlockingMode.HKV: blocked_hqkv_attention_forward,
-    BlockingMode.HKV_PAGED: blocked_hqkv_paged_attention_forward,
     BlockingMode.HQKV: blocked_hqkv_attention_forward,
-    BlockingMode.HQKV_PAGED: blocked_hqkv_paged_attention_forward,
     BlockingMode.BHQKV: blocked_bhqkv_attention_forward,
-    BlockingMode.BHQKV_PAGED: blocked_bhqkv_paged_attention_forward,
     # MLA
     BlockingMode.KV_MLA: blocked_kv_mla_attention_forward,
     BlockingMode.H_MLA: blocked_h_mla_attention_forward,
@@ -384,7 +371,7 @@ def generic_blocked_attention_interface(
 
     use_paged_kv_blocked = (
         blocking_config is not None
-        and "paged" in blocking_config.mode
+        and blocking_config.paged_attention
         and supports_paged_attention_blocked_kv(past_key_value)
     )
 
@@ -458,6 +445,7 @@ def generic_blocked_attention_interface(
         ctx_len=blocking_config.ctx_len,
         kv_block_unroll=blocking_config.kv_block_unroll,
         skip_kv=blocking_config.skip_kv or False,
+        paged_attention=blocking_config.paged_attention,
         # prefill-specific
         n_rep_chunk=blocking_config.n_rep_chunk,
         num_cores_per_device=blocking_config.num_cores_per_device,
@@ -467,3 +455,4 @@ def generic_blocked_attention_interface(
     )
 
     return attn_output, attn_weights
+
