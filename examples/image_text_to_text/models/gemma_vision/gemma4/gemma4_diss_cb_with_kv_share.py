@@ -5,15 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-"""Continuous-batching disaggregated prefill/decode for Gemma4 — DMA KV handoff.
-
-Runs *true batched* continuous batching (CB) decode on the DMA-based KV-share substrate:
-each prompt is prefilled (chunked) into its own KV slot of the shared host buffers, and a
-single batched decode enqueue steps all ``full_batch_size`` slots at once. When a slot's
-request finishes (EOS or generation-length cap) it is refilled from the prompt queue, so
-device utilisation stays high
-
-"""
+"""Continuous-batching disaggregated prefill/decode for Gemma4 — DMA KV handoff."""
 
 import argparse
 from collections import deque
@@ -52,7 +44,7 @@ DEFAULT_IMAGE_URLS = [
     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
     "https://huggingface.co/datasets/huggingface/documentation-images/resolve/0052a70beed5bf71b92610a43a52df6d286cd5f3/diffusers/rabbit.jpg",
 ]
-DEFAULT_PREFILL_SEQ_LEN = 296
+DEFAULT_PREFILL_SEQ_LEN = 256
 DEFAULT_CTX_LEN = 4096
 DEFAULT_GENERATION_LEN = 200
 DEFAULT_FULL_BATCH_SIZE = 4
@@ -186,6 +178,7 @@ def run(
         node_precision_info=True,
         prefill_only=True,
         enable_chunking=True,
+        moe_prefill_packed_chunk_size=256,
         use_onnx_subfunctions=True,
         skip_vision=True,
         mdp_num_partitions=stages,

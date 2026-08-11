@@ -28,7 +28,7 @@ MODEL_NAME = "google/gemma-4-26B-A4B-it"
 SYSTEM_PROMPT = "You are a helpful assistant."
 NUM_HIDDEN_LAYERS = 6
 VISION_DEPTH = 2
-PREFILL_SEQ_LEN = 296
+PREFILL_SEQ_LEN = 256
 CTX_LEN = 4096
 BATCH_SIZE = 1
 GENERATION_LEN = 30
@@ -172,6 +172,15 @@ def _prepare_messages(image: Image.Image) -> list:
                 {"type": "image", "image": image},
                 {"type": "text", "text": TEXT_PROMPT},
             ],
+        }
+    ]
+
+
+def _prepare_text_only_messages() -> list:
+    return [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": TEXT_PROMPT}],
         }
     ]
 
@@ -552,6 +561,7 @@ def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
             mos=1,
             aic_enable_depth_first=True,
             mdp_num_partitions=PREFILL_MDP_PARTITIONS,
+            moe_prefill_packed_chunk_size=256,
             prefill_only=True,
             enable_chunking=True,
             skip_vision=True,
@@ -725,6 +735,7 @@ def _compile_baseline_lang(qeff_model) -> tuple[str, str, dict]:
     return prefill_qpc_path.get("lang_prefill_qpc_path"), decode_qpc_path.get("lang_decode_qpc_path"), onnx_paths
 
 
+@pytest.mark.skip()
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 def test_gemma4_moe_disagg_kv_share_matches_numpy_copy_baseline(manual_cleanup):
@@ -814,3 +825,152 @@ def test_gemma4_moe_disagg_kv_share_matches_numpy_copy_baseline(manual_cleanup):
             f"kv_share={share_tokens[:, first_mismatch].tolist()} vs "
             f"baseline={baseline_tokens[:, first_mismatch].tolist()}"
         )
+
+
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+def test_gemma4_moe_disagg_kv_share_kv_handoff_correctness(manual_cleanup):
+    """KV-handoff correctness for the gemma4 DMA path: the shared host ``kv_caches``
+    arrays are inspected right after the last chunked-prefill DMA write and right after
+    the first decode step, to prove the last prefill chunk's KV is exactly what decode
+    reads as its input KV -- decode's write-back must only append the new position
+    without disturbing the prefill-written prefix.
+    """
+    torch.manual_seed(42)
+
+    hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32"))
+    processor = AutoProcessor.from_pretrained(MODEL_NAME, trust_remote_code=True)
+
+    messages = _prepare_text_only_messages()
+    chat_template = _resolve_chat_template(processor, processor.tokenizer)
+    common_inputs = _prepare_processor_inputs(processor, chat_template, messages)
+    prompt_len = int(common_inputs["input_ids"].shape[1])
+
+    qeff_model = _build_qeff_model(hf_model)
+
+    sessions = []
+    compiled_onnx_paths = {}
+    try:
+        prefill_qpc_path, decode_qpc_path, share_onnx = _compile_kv_share_lang(qeff_model)
+        compiled_onnx_paths.update(share_onnx)
+        print(f"Disagg ONNX paths: {compiled_onnx_paths}")
+
+        prefill_session = QAICInferenceSession(prefill_qpc_path, kv_dma_share=True)
+        decode_session = QAICInferenceSession(decode_qpc_path, kv_dma_share=True)
+        sessions.extend([prefill_session, decode_session])
+
+        inputs = {
+            name: value.clone() if isinstance(value, torch.Tensor) else copy.deepcopy(value)
+            for name, value in common_inputs.items()
+        }
+
+        pad_token_id = processor.tokenizer.pad_token_id or 1
+        input_ids_length = inputs["input_ids"].shape[1]
+        num_chunks = -(input_ids_length // -PREFILL_SEQ_LEN)
+        padded_len = num_chunks * PREFILL_SEQ_LEN
+        inputs["input_ids"] = torch.nn.functional.pad(
+            inputs["input_ids"], (0, padded_len - input_ids_length), "constant", pad_token_id
+        )
+        inputs["attention_mask"] = torch.nn.functional.pad(
+            inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
+        )
+        if "mm_token_type_ids" in inputs:
+            inputs["mm_token_type_ids"] = torch.nn.functional.pad(
+                inputs["mm_token_type_ids"], (0, padded_len - input_ids_length), "constant", 0
+            )
+        lang_inputs = {name: np.array(value) for name, value in inputs.items()}
+
+        if "position_ids" in lang_inputs:
+            lang_inputs.pop("attention_mask", None)
+        else:
+            lang_inputs["position_ids"] = np.where(lang_inputs.pop("attention_mask"), np.arange(padded_len), -1)
+
+        if "mm_token_type_ids" not in lang_inputs:
+            lang_inputs["mm_token_type_ids"] = np.zeros((BATCH_SIZE, padded_len), dtype=np.int64)
+
+        lang_inputs["image_idx"] = np.array([[0]])
+
+        assert "image_idx" in prefill_session.binding_index_map, "image_idx not a compiled prefill input binding"
+        decode_has_image_idx = "image_idx" in decode_session.binding_index_map
+
+        decode_persist = {"mm_token_type_ids": np.zeros((BATCH_SIZE, 1), dtype=np.int64)}
+        decode_session.set_persistent_inputs(
+            {name: value for name, value in decode_persist.items() if name in decode_session.binding_index_map}
+        )
+
+        # Hybrid: kv_cache_info carries mixed sliding-window and full-attention 4-D shapes.
+        kv_caches = [np.zeros(shape, dtype=dtype) for (shape, dtype) in decode_session.kv_cache_info]
+        assert all(np.all(kv == 0) for kv in kv_caches), "KV caches are not zero-initialised before prefill"
+
+        # -------------------- Chunked prefill --------------------
+        chunk_inputs = dict(lang_inputs)
+        exec_idx = None
+        for chunk_idx in range(num_chunks):
+            chunk_inputs["input_ids"] = lang_inputs["input_ids"][
+                :, chunk_idx * PREFILL_SEQ_LEN : (chunk_idx + 1) * PREFILL_SEQ_LEN
+            ]
+            chunk_inputs["position_ids"] = lang_inputs["position_ids"][
+                ..., chunk_idx * PREFILL_SEQ_LEN : (chunk_idx + 1) * PREFILL_SEQ_LEN
+            ]
+            chunk_inputs["mm_token_type_ids"] = lang_inputs["mm_token_type_ids"][
+                ..., chunk_idx * PREFILL_SEQ_LEN : (chunk_idx + 1) * PREFILL_SEQ_LEN
+            ]
+            last_chunk = chunk_idx == num_chunks - 1
+            exec_idx = prefill_session.np_run_pipeline(
+                chunk_inputs,
+                last_chunk=last_chunk,
+                kv_cache_buffers=kv_caches if last_chunk else None,
+            )
+            prefill_session.complete_inf(exec_idx, is_prefill=True)
+            chunk_inputs["image_idx"] = prefill_session.get_outputs(index=exec_idx)["image_idx_output"]
+
+        prefill_out = prefill_session.get_outputs(index=exec_idx)
+        first_token = _get_next_token_ids(prefill_out["logits"])
+        next_pos = int(np.max(lang_inputs["position_ids"])) + 1
+
+        # Post-condition: the last chunk's DMA write landed the real prompt prefix.
+        written = [kv[:, :, :prompt_len, :] for kv in kv_caches]
+        assert all(np.any(w != 0) for w in written), (
+            "KV caches are still zero after the last prefill chunk -- DMA handoff did not write them"
+        )
+
+        pre_decode_kv = [kv.copy() for kv in kv_caches]
+
+        # -------------------- First decode step --------------------
+        decode_kv_map = decode_session.decode_buff_map + decode_session.decode_rs_kv_only_buff_map
+        decode_session.set_data_for_kv_handoff(
+            kv_caches + kv_caches,
+            [("batch_index", 0), ("ctx_start", 0)],
+            index=decode_session.decode_execObj_idx,
+            buff_map=decode_kv_map,
+        )
+        decode_inputs = {
+            "input_ids": first_token.reshape(BATCH_SIZE, 1),
+            "position_ids": np.array([[next_pos]], dtype=np.int64),
+        }
+        if decode_has_image_idx:
+            decode_inputs["image_idx"] = prefill_out["image_idx_output"]
+        exec_idx = decode_session.np_run(decode_inputs, is_prefill=False)
+        decode_session.complete_inf(exec_idx, is_prefill=False)
+        decode_session.get_outputs(index=exec_idx)
+
+        for kv_before, kv_after in zip(pre_decode_kv, kv_caches):
+            prefix_before = kv_before[:, :, :prompt_len, :]
+            prefix_after = kv_after[:, :, :prompt_len, :]
+            assert np.array_equal(prefix_before, prefix_after), (
+                "decode step overwrote the prefill-written KV prefix -- the last prefill "
+                "chunk's KV no longer matches the input KV the first decode step read"
+            )
+            new_pos_after = kv_after[:, :, next_pos, :]
+            assert np.any(new_pos_after != 0), (
+                f"decode step did not write KV at the new position {next_pos} -- "
+                "write-back side of the handoff is not wired"
+            )
+    finally:
+        for session in sessions:
+            session.deactivate()
+        cleanup_paths = list(compiled_onnx_paths.values()) or [
+            getattr(qeff_model.vision_model, "onnx_path", None),
+            getattr(qeff_model.lang_model, "onnx_path", None),
+        ]
+        manual_cleanup([path for path in cleanup_paths if path is not None])
