@@ -3880,12 +3880,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if self.hash_params.get("blocking_kwargs", None):
             max_blocks = -1
             for num_blocks in self.hash_params.get("blocking_kwargs").__dict__.values():
-                if isinstance(num_blocks, int):
+                if isinstance(num_blocks, int) and not isinstance(num_blocks, bool):
                     max_blocks = max(max_blocks, num_blocks)
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
             num_kv_blocks = self.hash_params["blocking_kwargs"].num_kv_blocks
-            self.supports_paged_attention = "paged" in self.hash_params["blocking_kwargs"].mode
+            self.supports_paged_attention = self.hash_params["blocking_kwargs"].paged_attention
             seq_len = kv_block_size = -(-seq_len // num_kv_blocks) if self.supports_paged_attention else seq_len
 
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS

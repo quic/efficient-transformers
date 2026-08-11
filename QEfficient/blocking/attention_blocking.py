@@ -16,35 +16,26 @@ from transformers.cache_utils import Cache
 
 from QEfficient.blocking.blocked_attention_forwards import (
     blocked_bhqkv_attention_forward,
-    blocked_bhqkv_paged_attention_forward,
     blocked_h_attention_forward,
     blocked_h_mla_attention_forward,
     blocked_hqkv_attention_forward,
-    blocked_hqkv_paged_attention_forward,
     blocked_kv_attention_forward,
     blocked_kv_mla_attention_forward,
-    blocked_kv_paged_attention_forward,
     blocked_q_attention_forward,
     blocked_qkv_attention_forward,
-    blocked_qkv_paged_attention_forward,
 )
 
 
 class BlockingMode(str, Enum):
     NONE = ""
     KV = "kv"
-    KV_PAGED = "kv_paged"
     Q = "q"
     H = "h"
     QKV = "qkv"
-    QKV_PAGED = "qkv_paged"
     HQ = "hq"
     HKV = "hkv"
-    HKV_PAGED = "hkv_paged"
     HQKV = "hqkv"
-    HQKV_PAGED = "hqkv_paged"
     BHQKV = "bhqkv"
-    BHQKV_PAGED = "bhqkv_paged"
 
 
 @dataclass
@@ -55,6 +46,7 @@ class AttentionBlockingConfig:
     head_block_size: Optional[int] = None
     skip_kv: Optional[bool] = True
     num_batch_blocks: Optional[int] = None
+    paged_attention: Optional[bool] = False
 
 
 def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
@@ -67,18 +59,13 @@ def supports_paged_attention_blocked_kv(past_key_value: Optional[Cache]) -> bool
 
 _STRATEGIES: Dict[BlockingMode, Callable] = {
     BlockingMode.KV: blocked_kv_attention_forward,
-    BlockingMode.KV_PAGED: blocked_kv_paged_attention_forward,
     BlockingMode.Q: blocked_q_attention_forward,
     BlockingMode.H: blocked_h_attention_forward,
     BlockingMode.QKV: blocked_qkv_attention_forward,
-    BlockingMode.QKV_PAGED: blocked_qkv_paged_attention_forward,
     BlockingMode.HQ: blocked_hqkv_attention_forward,
     BlockingMode.HKV: blocked_hqkv_attention_forward,
-    BlockingMode.HKV_PAGED: blocked_hqkv_paged_attention_forward,
     BlockingMode.HQKV: blocked_hqkv_attention_forward,
-    BlockingMode.HQKV_PAGED: blocked_hqkv_paged_attention_forward,
     BlockingMode.BHQKV: blocked_bhqkv_attention_forward,
-    BlockingMode.BHQKV_PAGED: blocked_bhqkv_paged_attention_forward,
 }
 
 _STRATEGIES_MLA: Dict[BlockingMode, Callable] = {
@@ -147,7 +134,7 @@ def generic_blocked_attention_interface(
 
     use_paged_kv_blocked = (
         blocking_config is not None
-        and "paged" in blocking_config.mode
+        and blocking_config.paged_attention
         and supports_paged_attention_blocked_kv(past_key_value)
     )
 
@@ -209,6 +196,7 @@ def generic_blocked_attention_interface(
         num_q_blocks=blocking_config.num_q_blocks,
         head_block_size=blocking_config.head_block_size,
         num_batch_blocks=blocking_config.num_batch_blocks,
+        paged_attention=blocking_config.paged_attention,
         score_mod=score_mod,
         position_bias=position_bias,
         sinks=sinks,
