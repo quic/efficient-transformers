@@ -44,9 +44,8 @@ from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxScatterFuncCB,
     CtxScatterFuncCB3D,
 )
-
-# from QEfficient.customop.quantization_ops import CastToUInt4, CastToUInt4Func
 from QEfficient.customop.onnxscript_utils import get_onnxscript_func
+from QEfficient.customop.quantization_ops import CastToUInt4, CastToUInt4Func
 from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
 from QEfficient.utils import constants
 from QEfficient.utils.constants import FILE_CHUNK_SIZE_DEFAULT, SIZE_THRESHOLD_DEFAULT
@@ -112,7 +111,7 @@ class CustomOpTransform(BaseOnnxTransform):
         "CtxGatherFuncBlockedKVCB": (CtxGatherFuncBlockedKVCB, CtxGatherBlockedKVCB),
         "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
         "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
-        # "CastToUInt4": (CastToUInt4Func, CastToUInt4),
+        "CastToUInt4": (CastToUInt4Func, CastToUInt4),
     }
 
     @classmethod
