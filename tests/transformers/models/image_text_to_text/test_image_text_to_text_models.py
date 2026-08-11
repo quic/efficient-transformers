@@ -75,6 +75,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     mdp_num_partitions: Optional[int] = None,
     mdp_strategy: Optional[str] = None,
     use_onnx_subfunctions: bool = False,
+    perf_recorder=None,
+    request=None,
 ):
     prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
@@ -343,6 +345,16 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     print("QPC Outputs (QAIC):")
     exec_info = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
     print(exec_info)
+
+    if perf_recorder is not None:
+        perf_recorder.record(
+            model_name=model_name,
+            exec_info=exec_info,
+            config={"batch_size": batch_size, "seq_len": ctx_len, "decode": "greedy"},
+            onnx_path=qeff_model.onnx_path,
+            qpc_path=getattr(qeff_model, "qpc_path", None),
+            request=request,
+        )
     cloud_ai_100_tokens = exec_info.generated_ids[:, :-1]
     assert (pytorch_hf_tokens == cloud_ai_100_tokens).all(), "Tokens don't match for pytorch HF output and QPC output"
     manual_cleanup(qeff_model.onnx_path)  # Clean up the model files after the tests are done.
@@ -366,7 +378,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True, False])
-def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
+def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup, perf_recorder, request):
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
     if model_name in ["tiny-random/gemma-4-dense", "tiny-random/gemma-4-moe"]:
@@ -381,6 +393,8 @@ def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_of
         compare_results=True,
         manual_cleanup=manual_cleanup,
         num_devices=4,
+        perf_recorder=perf_recorder,
+        request=request,
     )
 
 

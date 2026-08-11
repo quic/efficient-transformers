@@ -43,10 +43,16 @@ pipeline {
         booleanParam(name: 'RUN_CLI', defaultValue: true)
         booleanParam(name: 'RUN_FINETUNE', defaultValue: false)
         booleanParam(name: 'RUN_DYNAMO_QAIC', defaultValue: true, description: 'Run dynamo on-QAIC compile/generate tests (torch 2.13)')
+        booleanParam(name: 'RUN_PERF_COMPARISON', defaultValue: true, description: 'Compare perf against baseline DB after QAIC tests')
+        string(name: 'CI_PERF_DB_PATH', defaultValue: '/ci/perf_db', description: 'Host path to persistent perf baseline DB (must survive container lifecycle)')
+        string(name: 'NSP_COUNT', defaultValue: '16', description: 'Number of NSPs on this node — used to key the hardware profile in the baseline DB')
     }
 
     environment {
-        TEST_FILTER = testFilter(params.TEST_PROFILE)
+        TEST_FILTER        = testFilter(params.TEST_PROFILE)
+        CI_PERF_REPORT_DIR = "${WORKSPACE}/ci_perf_reports"
+        HW_KEY             = "${params.NODE_LABEL}_${params.NSP_COUNT}"
+        GIT_SHA            = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
     }
 
     stages {
@@ -54,7 +60,14 @@ pipeline {
             steps {
                 sh '''
                     . ~/.bashrc
-                    sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
+                    mkdir -p ${CI_PERF_REPORT_DIR}
+                    sudo docker run --privileged -dit --name ${BUILD_TAG} \
+                        -e HF_TOKEN=${HF_TOKEN} \
+                        -v ./:/efficient-transformers \
+                        -v ${HF_PATH}:${DOCKER_HF_PATH} \
+                        -v ${CI_PERF_REPORT_DIR}:/ci_perf_reports \
+                        -v ${CI_PERF_DB_PATH}:/ci_perf_db \
+                        ${DOCKER_LATEST}:master_latest
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     apt update &&
@@ -101,9 +114,15 @@ pipeline {
                            sudo docker exec ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
-                           mkdir -p $PWD/Non_qaic_llm &&
+                           mkdir -p $PWD/Non_qaic_llm /ci_perf_reports/QAIC_LLM &&
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic_llm &&
+                           export CI_STAGE_NAME=QAIC_LLM &&
+                           export CI_BUILD_TAG=${BUILD_TAG} &&
+                           export GIT_SHA=${GIT_SHA} &&
+                           export NODE_LABEL=${NODE_LABEL} &&
+                           export NSP_COUNT=${NSP_COUNT} &&
+                           export CI_PERF_REPORT_DIR=/ci_perf_reports &&
                            pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log2.xml --durations=10 &&
                            junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
                            deactivate"
@@ -111,9 +130,10 @@ pipeline {
                        }
                    }
                 }
-                
+
             }
         }
+
         stage('QAIC FEATURE') {
             when {expression { params.RUN_QAIC_FEATURE }}
             steps {
@@ -122,9 +142,15 @@ pipeline {
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Non_qaic_feature &&
+                    mkdir -p $PWD/Non_qaic_feature /ci_perf_reports/QAIC_FEATURE &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Non_qaic_feature &&
+                    export CI_STAGE_NAME=QAIC_FEATURE &&
+                    export CI_BUILD_TAG=${BUILD_TAG} &&
+                    export GIT_SHA=${GIT_SHA} &&
+                    export NODE_LABEL=${NODE_LABEL} &&
+                    export NSP_COUNT=${NSP_COUNT} &&
+                    export CI_PERF_REPORT_DIR=/ci_perf_reports &&
                     pytest tests -m '(on_qaic) and (feature) and (not qnn) and ${TEST_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log2_feature.xml --durations=10 &&
                     junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml &&
                     deactivate"
@@ -132,6 +158,7 @@ pipeline {
                 }
             }
         }
+
         stage('QAIC Multimodal') {
             when {expression { params.RUN_QAIC_MM }}
             steps {
@@ -140,9 +167,15 @@ pipeline {
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Non_cli_qaic_multimodal &&
+                    mkdir -p $PWD/Non_cli_qaic_multimodal /ci_perf_reports/QAIC_MULTIMODAL &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
+                    export CI_STAGE_NAME=QAIC_MULTIMODAL &&
+                    export CI_BUILD_TAG=${BUILD_TAG} &&
+                    export GIT_SHA=${GIT_SHA} &&
+                    export NODE_LABEL=${NODE_LABEL} &&
+                    export NSP_COUNT=${NSP_COUNT} &&
+                    export CI_PERF_REPORT_DIR=/ci_perf_reports &&
                     pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py --junitxml=tests/tests_log6.xml --durations=10 &&
                     junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
                     deactivate"
@@ -150,6 +183,7 @@ pipeline {
                 }
             }
         }
+
         stage('QAIC Reranker Tests') {
             when { expression { params.RUN_QAIC_MM } }
             steps {
@@ -158,9 +192,15 @@ pipeline {
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Non_cli_qaic_reranker &&
+                    mkdir -p $PWD/Non_cli_qaic_reranker /ci_perf_reports/QAIC_RERANKER &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Non_cli_qaic_reranker &&
+                    export CI_STAGE_NAME=QAIC_RERANKER &&
+                    export CI_BUILD_TAG=${BUILD_TAG} &&
+                    export GIT_SHA=${GIT_SHA} &&
+                    export NODE_LABEL=${NODE_LABEL} &&
+                    export NSP_COUNT=${NSP_COUNT} &&
+                    export CI_PERF_REPORT_DIR=/ci_perf_reports &&
                     export QEFF_RERANKER_DOC_LIMIT=1 &&
                     pytest -q tests/transformers/models/reranker/test_reranker_mad.py --maxfail=1 --junitxml=tests/tests_log_reranker.xml --durations=10 &&
                     junitparser merge tests/tests_log_reranker.xml tests/tests_log.xml &&
@@ -169,6 +209,7 @@ pipeline {
                 }
             }
         }
+
         stage('QAIC Diffusion Models Tests') {
             when { expression { params.RUN_QAIC_DIFFUSION } }
             steps {
@@ -219,11 +260,86 @@ pipeline {
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     pip install -r examples/dynamo/causal_lm/requirements.txt &&
-                    mkdir -p \\$PWD/dynamo_qeff_qaic &&
+                    mkdir -p \\$PWD/dynamo_qeff_qaic /ci_perf_reports/QAIC_DYNAMO &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=\\$PWD/dynamo_qeff_qaic &&
+                    export CI_STAGE_NAME=QAIC_DYNAMO &&
+                    export CI_BUILD_TAG=${BUILD_TAG} &&
+                    export GIT_SHA=${GIT_SHA} &&
+                    export NODE_LABEL=${NODE_LABEL} &&
+                    export NSP_COUNT=${NSP_COUNT} &&
+                    export CI_PERF_REPORT_DIR=/ci_perf_reports &&
                     pytest tests/dynamo -m '(dynamo) and (on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly --dist loadgroup -n auto --junitxml=tests/tests_log_dynamo_qaic.xml --durations=10 &&
                     junitparser merge tests/tests_log_dynamo_qaic.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
+                }
+            }
+        }
+
+        stage('Perf Comparison') {
+            when { expression { params.RUN_PERF_COMPARISON } }
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    for STAGE_NAME in QAIC_LLM QAIC_FEATURE QAIC_MULTIMODAL QAIC_RERANKER QAIC_DYNAMO; do
+                        REPORT=/ci_perf_reports/\\${STAGE_NAME}/perf_report.json
+                        if [ -f \\$REPORT ]; then
+                            python tests/ci_perf/compare_perf.py \\
+                                --report-dir /ci_perf_reports \\
+                                --db-path /ci_perf_db/baseline_db.json \\
+                                --stage \\$STAGE_NAME \\
+                                --hardware-key ${HW_KEY} \\
+                                --thresholds tests/ci_perf/thresholds.json \\
+                                --output-csv /ci_perf_reports/\\${STAGE_NAME}_comparison.csv
+                        fi
+                    done &&
+                    deactivate"
+                    '''
+                }
+            }
+            post {
+                always {
+                    script {
+                        try {
+                            sh 'sudo chown -R ubuntu ${CI_PERF_REPORT_DIR}'
+                        } catch (err) {
+                            echo "Could not chown perf reports: ${err}"
+                        }
+                    }
+                    archiveArtifacts artifacts: 'ci_perf_reports/**/*.csv', allowEmptyArchive: true
+                }
+            }
+        }
+
+        stage('Update Perf Baseline') {
+            when {
+                allOf {
+                    expression { params.RUN_PERF_COMPARISON }
+                    branch 'main'
+                }
+            }
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    for STAGE_NAME in QAIC_LLM QAIC_FEATURE QAIC_MULTIMODAL QAIC_RERANKER QAIC_DYNAMO; do
+                        REPORT=/ci_perf_reports/\\${STAGE_NAME}/perf_report.json
+                        if [ -f \\$REPORT ]; then
+                            python tests/ci_perf/compare_perf.py \\
+                                --report-dir /ci_perf_reports \\
+                                --db-path /ci_perf_db/baseline_db.json \\
+                                --stage \\$STAGE_NAME \\
+                                --hardware-key ${HW_KEY} \\
+                                --thresholds tests/ci_perf/thresholds.json \\
+                                --update-baseline
+                        fi
+                    done &&
                     deactivate"
                     '''
                 }
