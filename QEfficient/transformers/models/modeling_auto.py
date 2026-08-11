@@ -1546,7 +1546,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         prefill_only: bool = False,
         enable_chunking: bool = False,
         num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
-        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
@@ -1590,24 +1589,35 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        qaic_config = kwargs.get("qaic_config", getattr(self.lang_model.model, "qaic_config", None))
         # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
-            if prefill_only:
+            if prefill_only and enable_chunking:
+                moe_config = (qaic_config or {}).get("moe_config", {}) or {}
+                expert_parallel_chunk_size = moe_config.get(
+                    "expert_parallel_chunk_size", constants.MOE_PREFILL_PACKED_CHUNK_SIZE
+                )
+                if expert_parallel_chunk_size is None:
+                    expert_parallel_chunk_size = constants.MOE_PREFILL_PACKED_CHUNK_SIZE
+                expert_parallel_chunk_size = int(expert_parallel_chunk_size)
+                if expert_parallel_chunk_size <= 0:
+                    raise ValueError("moe expert_parallel_chunk_size must be greater than zero")
                 self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
                 for module in self.model.modules():
                     if getattr(module, "supports_moe_prefill_blocking", False):
                         module.expert_blocking_num_nsp = num_cores
-                        if prefill_seq_len % moe_prefill_packed_chunk_size == 0:
-                            module.expert_blocking_packed_chunk_size = prefill_seq_len // moe_prefill_packed_chunk_size
+                        if prefill_seq_len % expert_parallel_chunk_size == 0:
+                            module.expert_blocking_packed_chunk_size = prefill_seq_len // expert_parallel_chunk_size
                         else:
-                            raise ValueError("Prefill_seq_len must be divisible by moe_prefill_packed_chunk_size")
+                            raise ValueError(
+                                "prefill_seq_len must be divisible by "
+                                "qaic_config['moe_config']['expert_parallel_chunk_size']"
+                            )
                         if hasattr(module, "__qeff_init__"):
                             module.__qeff_init__()
                 if self.model.config.model_type in DYNAMIC_PREFILL_SEQ_LEN_SUPPORTED_MODEL_ARCH:
                     seq_len = (
-                        seq_len
-                        if prefill_seq_len % moe_prefill_packed_chunk_size == 0
-                        else moe_prefill_packed_chunk_size
+                        seq_len if prefill_seq_len % expert_parallel_chunk_size == 0 else expert_parallel_chunk_size
                     )
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
@@ -1677,7 +1687,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 offload_pt_weights = True
 
         if not skip_lang:
-            qaic_config = kwargs.get("qaic_config", getattr(self.lang_model.model, "qaic_config", None))
             self.lang_model.export(
                 inputs["lang"],
                 output_names["lang"],
