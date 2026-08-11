@@ -53,25 +53,17 @@ def _infer_data_bytes(compile_config: Dict[str, Any]) -> int:
 
 def _normalize_attention_mode(raw_mode: str) -> str:
     mode = raw_mode.lower()
-    if "h" in mode and "q" in mode and "kv" in mode and "paged" in mode:
-        return "hqkv_paged"
-    if "h" in mode and "q" in mode and "kv" in mode and "paged" not in mode:
+    if "h" in mode and "q" in mode and "kv" in mode:
         return "hqkv"
     if "h" in mode and "q" in mode:
         return "hq"
-    if "h" in mode and "kv" in mode and "paged" in mode:
-        return "hkv_paged"
-    if "h" in mode and "kv" in mode and "paged" not in mode:
+    if "h" in mode and "kv" in mode:
         return "hkv"
     if "h" in mode:
         return "h"
-    if "q" in mode and "kv" in mode and "paged" in mode:
-        return "qkv_paged"
-    if "q" in mode and "kv" in mode and "paged" not in mode:
+    if "q" in mode and "kv" in mode:
         return "qkv"
-    if "kv" in mode and "paged" in mode:
-        return "kv_paged"
-    if "kv" in mode and "paged" not in mode:
+    if "kv" in mode:
         return "kv"
     if "q" in mode:
         return "q"
@@ -86,27 +78,19 @@ def _resolve_effective_blocking_mode(attention_cfg: Dict[str, Any], requested_mo
     num_kv_blocks = attention_cfg.get("num_kv_blocks") or 1
     head_block_size = (attention_cfg.get("head_block_size") or 1) if attention_cfg.get("head_blocking_enabled") else 1
 
-    if head_block_size > 1 and num_q_blocks > 1 and num_kv_blocks > 1 and "paged" in mode:
-        return "hqkv_paged"
-    if head_block_size > 1 and num_q_blocks > 1 and num_kv_blocks > 1 and "paged" not in mode:
+    if head_block_size > 1 and num_q_blocks > 1 and num_kv_blocks > 1:
         return "hqkv"
     if head_block_size > 1 and num_q_blocks > 1:
         return "hq"
-    if head_block_size > 1 and num_kv_blocks > 1 and "paged" in mode:
-        return "hkv_paged"
-    if head_block_size > 1 and num_kv_blocks > 1 and "paged" not in mode:
+    if head_block_size > 1 and num_kv_blocks > 1:
         return "hkv"
     if head_block_size > 1:
         return "h"
-    if num_q_blocks > 1 and num_kv_blocks > 1 and "paged" in mode:
-        return "qkv_paged"
-    if num_q_blocks > 1 and num_kv_blocks > 1 and "paged" not in mode:
+    if num_q_blocks > 1 and num_kv_blocks > 1:
         return "qkv"
     if num_q_blocks > 1:
         return "q"
-    if num_kv_blocks > 1 and "paged" in mode:
-        return "kv_paged"
-    if num_kv_blocks > 1 and "paged" not in mode:
+    if num_kv_blocks > 1:
         return "kv"
     return ""
 
@@ -336,6 +320,7 @@ def build_transformer_blocking_config(
             attention_cfg["num_kv_blocks"] = get_num_kv_blocks_for_mla(seq_len, num_heads, ctx_len)
 
     effective_mode = _resolve_effective_blocking_mode(attention_cfg, blocking_mode or "hqkv")
+    paged_attention = "paged" in str(blocking_mode or "").lower() and "kv" in effective_mode
 
     requested = blocking_mode or "hqkv"
     if effective_mode != requested:
@@ -348,6 +333,7 @@ def build_transformer_blocking_config(
         num_kv_blocks=attention_cfg["num_kv_blocks"],
         num_q_blocks=attention_cfg["num_q_blocks"],
         head_block_size=attention_cfg["head_block_size"],
+        paged_attention=paged_attention,
     )
 
 
@@ -398,6 +384,10 @@ def build_transformer_blocking_config_for_transform(
         for key in required_keys:
             setattr(blocking_config, key, _get_valid_num_blocks(qaic_config, key))
         blocking_config.mode = BlockingMode(blocking_mode)
+        # PagedAttention reads the cache block-wise, so it is only valid alongside KV blocking.
+        blocking_config.paged_attention = (
+            "paged" in str(requested_blocking_mode or "").lower() and "num_kv_blocks" in required_keys
+        )
 
     # For headpar modes: set headpar_split, defaulting to aic_num_cores when omitted
     _HEADPAR_MODES = {BlockingMode.KV_HEADPAR, BlockingMode.PREFILL_KV, BlockingMode.PREFILL_QKV}
