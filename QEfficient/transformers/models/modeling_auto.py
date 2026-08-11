@@ -1752,7 +1752,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     if getattr(module, "supports_moe_prefill_blocking", False):
                         module.expert_blocking_num_nsp = num_cores
                         if prefill_seq_len % moe_prefill_packed_chunk_size == 0:
-                            module.expert_blocking_packed_chunk_size = prefill_seq_len // moe_prefill_packed_chunk_size
+                            module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
+                            module.expert_blocking_num_packed_chunks = prefill_seq_len // moe_prefill_packed_chunk_size
                         else:
                             raise ValueError("Prefill_seq_len must be divisible by moe_prefill_packed_chunk_size")
                         if hasattr(module, "__qeff_init__"):

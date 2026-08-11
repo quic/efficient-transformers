@@ -27,7 +27,7 @@ model_id = "google/gemma-4-26B-A4B-it"
 config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
-config.text_config.num_hidden_layers = 2
+config.text_config.num_hidden_layers = 6
 config.vision_config.num_hidden_layers = 2
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
@@ -40,8 +40,9 @@ processor = AutoProcessor.from_pretrained(model_id)
 
 ENABLE_FP16_CLIP = True
 remove_fp16clip_transform_if_disabled(qeff_model, ENABLE_FP16_CLIP)
-PREFILL_SEQ_LEN = 16384
-CTX_LEN = 32768
+PREFILL_SEQ_LEN = 1024
+CTX_LEN = 65536
+GEN_LEN = 200
 BS = 1
 gemma_vision_dir = Path(__file__).resolve().parent.parent
 # vision_npi_file = str(gemma_vision_dir / "configs" / "fp32_nodes_gemma4_26B_A4B_it_vision_diss.yaml")
@@ -49,7 +50,8 @@ gemma_vision_dir = Path(__file__).resolve().parent.parent
 # Blocking options
 ENABLE_BLOCKING = True
 ENABLE_HEAPAR = True
-NUM_KV_BLOCKS = 2
+PREFILL_NUM_KV_BLOCKS = 16
+DECODE_NUM_KV_BLOCKS = 8
 KV_BLOCKING_HEADPAR_SPLIT = 0  # 0 => resolved to num_cores
 BATCH_FOLD = False
 
@@ -57,10 +59,10 @@ BATCH_FOLD = False
 # - follow decode attention - pass nothing extra
 # - head parallel offline prefill - pass prefill_blocking_mode: “qkv”, prefill_block_chunks: 2
 # - online prefill - pass prefill_blocking_mode: “online”, prefill_block_chunks: 2
-PREFILL_MODE = "online"  # None, "online" or "qkv" depending on whether we want online prefill or headparallel prefill
+PREFILL_MODE = "qkv"  # None, "online" or "qkv" depending on whether we want online prefill or headparallel prefill
 PREFILL_QL_CHUNK = 128
 PREFILL_BLOCK_CHUNKS = -(-PREFILL_SEQ_LEN // PREFILL_QL_CHUNK)
-PREFILL_N_REP_CHUNK = 4
+PREFILL_N_REP_CHUNK = 1
 
 
 ###############
@@ -76,7 +78,7 @@ def _decode_qaic_config() -> dict:
     cfg = {
         "enable_blocking": True,
         "blocking_mode": "kv",
-        "num_kv_blocks": NUM_KV_BLOCKS,
+        "num_kv_blocks": DECODE_NUM_KV_BLOCKS,
         "ctx_len": CTX_LEN,
     }
     if ENABLE_HEAPAR:
@@ -90,6 +92,7 @@ def _qaic_config() -> dict:
     cfg = _decode_qaic_config()
     if not cfg or PREFILL_MODE is None:
         return cfg
+    cfg["num_kv_blocks"] = PREFILL_NUM_KV_BLOCKS  # for prefill kv blocks
     cfg["prefill_block_chunks"] = PREFILL_BLOCK_CHUNKS
     cfg["prefill_blocking_mode"] = PREFILL_MODE
     cfg["prefill_n_rep_chunk"] = PREFILL_N_REP_CHUNK
@@ -127,19 +130,15 @@ prefill_compile_kwargs = {
     "mxint8_kv_cache": True,
     "retain_full_kv": True,
     "split_model_io": True,
-    "mos": 1,
-    "node_precision_info": True,
+    "node_precision_info": False,
     "prefill_only": True,
     "enable_chunking": True,
     "moe_prefill_packed_chunk_size": 256,
     "use_onnx_subfunctions": False,
     "skip_vision": True,
     "qaic_config": prefill_qaic_config,
+    "user_tiled": True,
 }
-if ENABLE_BLOCKING:
-    prefill_compile_kwargs["user_tiled"] = True
-else:
-    prefill_compile_kwargs["aic_enable_depth_first"] = True
 
 prefill_qpc_path = qeff_model.compile(**prefill_compile_kwargs)
 
@@ -148,14 +147,13 @@ decode_compile_kwargs = {
     "prefill_seq_len": 1,
     "ctx_len": CTX_LEN,
     "num_cores": 16,
-    "num_devices": 1,
+    "num_devices": 2,
     "mxfp6_matmul": True,
     "mxint8_kv_cache": True,
     "split_model_io": True,
-    "mos": 1,
-    "node_precision_info": True,
+    "node_precision_info": False,
     "prefill_only": False,
-    "use_onnx_subfunctions": True,
+    "use_onnx_subfunctions": False,
     "skip_vision": True,
     "qaic_config": decode_qaic_config,
 }
@@ -233,7 +231,7 @@ input_len = inputs["attention_mask"].sum(1, keepdims=True)
 input_ids_length = inputs["input_ids"].shape[1]
 num_chunks = -(input_ids_length // -PREFILL_SEQ_LEN)  # ceil divide without float
 padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
-generation_len = 200
+generation_len = GEN_LEN
 print(f"generation_len : {generation_len}")
 generated_ids = np.full((BS, generation_len + 1), pad_token_id)
 
@@ -316,6 +314,7 @@ for i in range(config.text_config.num_hidden_layers):
     decode_inputs[f"past_value.{i}"] = outputs[f"past_value.{i}_RetainedState"]
 decode_inputs["image_idx"] = outputs["image_idx_output"]
 decode_inputs["vision_embeds"] = outputs["vision_embeds_RetainedState"]
+
 
 st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
