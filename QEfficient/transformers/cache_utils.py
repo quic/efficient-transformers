@@ -1206,12 +1206,8 @@ class QEffHybridCacheForGPTOSS:
         cache = cls(
             config,
             batch_size=past_key_values[0][0].shape[0],
-            max_cache_len=int(past_key_values[1][0].shape[2])
-            if torch._dynamo.is_compiling()
-            else past_key_values[1][0].shape[2],
-            sliding_window_len=int(past_key_values[0][0].shape[2])
-            if torch._dynamo.is_compiling()
-            else past_key_values[0][0].shape[2],
+            max_cache_len=past_key_values[1][0].shape[2],
+            sliding_window_len=past_key_values[0][0].shape[2],
         )
         if past_key_values is not None:
             for layer_idx in range(len(past_key_values)):
