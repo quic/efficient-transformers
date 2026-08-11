@@ -35,6 +35,7 @@ qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
     kv_offload=True,
     config=config,
     dtype=torch.float16,
+    continuous_batching=True,
     layerwise=False,
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
@@ -101,6 +102,8 @@ print("decode", decode_qaic_config)
 decode_start_time = perf_counter()
 decode_qpc_path = qeff_model.compile(
     batch_size=BS,
+    full_batch_size=BS,
+    kv_cache_batch_size=BS,
     prefill_seq_len=1,
     ctx_len=CTX_LEN,
     height=354,
@@ -141,6 +144,8 @@ print("prefill", prefill_qaic_config)
 prefill_start_time = perf_counter()
 prefill_qpc_path = qeff_model.compile(
     batch_size=1,
+    full_batch_size=1,
+    kv_cache_batch_size=1,
     prefill_seq_len=PREFILL_SEQ_LEN,
     ctx_len=CTX_LEN,
     moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
@@ -168,8 +173,6 @@ print(f"Prefill qpc path {prefill_qpc_path}")
 print(f"Decode qpc path {decode_qpc_path}")
 
 lang_prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"))
-lang_decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"))
-
 if skip_vision:
     messages = [
         {
@@ -269,6 +272,7 @@ lang_start = perf_counter()
 lang_prefill_session.set_buffers(vision_outputs)
 all_outputs = []
 chunk_inputs = lang_inputs.copy()
+chunk_inputs["batch_index"] = np.array([[0]], dtype=np.int64)
 for i in range(num_chunks):
     chunk_inputs["input_ids"] = lang_inputs["input_ids"][0:1, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
     chunk_inputs["position_ids"] = lang_inputs["position_ids"][:, 0:1, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
@@ -279,23 +283,31 @@ for i in range(num_chunks):
     chunk_inputs["image_idx"] = outputs["image_idx_output"]
 prefill_time = perf_counter() - lang_start + vision_end - vision_start
 print(f"Prefill time : {prefill_time:.2f} secs")
+lang_prefill_session.deactivate()
+lang_decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"))
 
 # Next token from batch=1 prefill; position for all BS decode requests
 next_token_id = np.argmax(outputs["logits"])  # scalar
 all_outputs.append(next_token_id)
 next_pos = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
 
-# Tile KV from prefill [1, num_kv_heads, ctx_len, head_dim]
-# → batch-fold decode layout [1, BS*num_kv_heads, ctx_len, head_dim]
+# vLLM supplies logical-request inputs plus a logical-to-physical slot permutation.
+# Retained KV stays in the standard [FBS, Hkv, ctx_len, head_dim] physical-slot layout.
+batch_index = np.random.default_rng(1234).permutation(BS).reshape(BS, 1).astype(np.int64)
+physical_slots = batch_index[:, 0]
 decode_inputs = {
     "input_ids": np.full((BS, 1), next_token_id, dtype=lang_inputs["input_ids"].dtype),
     "position_ids": next_pos,
+    "batch_index": batch_index,
 }
 
 for layer_idx in range(config.text_config.num_hidden_layers):
     for cache_name in ("past_key", "past_value"):
         prefill_cache = outputs[f"{cache_name}.{layer_idx}_RetainedState"]
-        decode_inputs[f"{cache_name}.{layer_idx}"] = np.tile(prefill_cache, (BS, 1, 1, 1))
+        logical_cache = np.tile(prefill_cache, (BS, 1, 1, 1))
+        physical_cache = np.empty_like(logical_cache)
+        physical_cache[physical_slots] = logical_cache
+        decode_inputs[f"{cache_name}.{layer_idx}"] = physical_cache
 
 
 st = perf_counter()
@@ -305,8 +317,9 @@ print(f"time for first run of decode with KV as input = {perf_counter() - st} se
 all_outputs.append(np.argmax(decode_out["logits"][0]))  # track batch 0
 pos_id = decode_inputs["position_ids"] + 1  # [BS, 1]
 loop_decode_inputs = {
-    "input_ids": np.argmax(decode_out["logits"], axis=-1),  # [BS, 1]
+    "input_ids": np.argmax(decode_out["logits"], axis=-1),  # [BS, 1], logical request order
     "position_ids": pos_id,
+    "batch_index": batch_index,
 }
 
 for i in range(config.text_config.num_hidden_layers):
@@ -324,8 +337,9 @@ for i in range(generation_len - 2):
         loop_decode_inputs[f"past_value.{j}"] = decode_out[f"past_value.{j}_RetainedState"]
     loop_decode_inputs.update(
         {
-            "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
+            "input_ids": np.argmax(decode_out["logits"], axis=-1),
             "position_ids": pos_id,
+            "batch_index": batch_index,
         }
     )
 ft = perf_counter()
