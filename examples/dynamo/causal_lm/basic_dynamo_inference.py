@@ -13,9 +13,25 @@ Requires PyTorch >= 2.13. Install dependencies before running:
 
 import argparse
 
-from transformers import AutoConfig, AutoTokenizer
+import torch
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
+
+
+def load_qeff_model(model_name: str, num_hidden_layers: int, use_weight_free_export: bool, enable_proxy: bool):
+    config = AutoConfig.from_pretrained(model_name)
+    if num_hidden_layers > 0:
+        config.num_hidden_layers = num_hidden_layers
+
+    if not use_weight_free_export:
+        return QEFFAutoModelForCausalLM.from_pretrained(model_name, config=config, enable_proxy=enable_proxy)
+
+    config.dtype = torch.float16
+    config.torch_dtype = torch.float16
+    with torch.device("meta"):
+        hf_model = AutoModelForCausalLM.from_config(config, attn_implementation="eager")
+    return QEFFAutoModelForCausalLM(hf_model, pretrained_model_name_or_path=model_name, enable_proxy=enable_proxy)
 
 
 def main():
@@ -32,6 +48,16 @@ def main():
     parser.add_argument("--num-cores", type=int, default=16, help="Number of AI 100 cores")
     parser.add_argument("--aic-hw-version", type=str, default="ai100", help="AIC hardware version")
     parser.add_argument(
+        "--use-weight-free-export",
+        action="store_true",
+        help="Build the model on meta tensors and load weights at compile time",
+    )
+    parser.add_argument(
+        "--enable-proxy",
+        action="store_true",
+        help="Use proxy modules (QeffProxyEmbedding/QeffProxyLinear) in place of real weights during export",
+    )
+    parser.add_argument(
         "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         default=None,
@@ -39,14 +65,9 @@ def main():
     )
     args = parser.parse_args()
 
-    # Load tokenizer and config
+    # Load tokenizer and model
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    config = AutoConfig.from_pretrained(args.model_name)
-    if args.num_hidden_layers > 0:
-        config.num_hidden_layers = args.num_hidden_layers
-
-    # Load model and apply QEff transforms
-    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, config=config)
+    model = load_qeff_model(args.model_name, args.num_hidden_layers, args.use_weight_free_export, args.enable_proxy)
 
     # Export (via torch.export / dynamo) + compile to QPC
     qpc_path = model.compile(
@@ -54,8 +75,9 @@ def main():
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
         aic_hw_version=args.aic_hw_version,
-        num_devices=(1 if args.device_group is None else len(args.device_group)),
+        num_devices=(2 if args.device_group is None else len(args.device_group)),
         dynamo=True,
+        use_weight_free_export=args.use_weight_free_export,
         use_onnx_subfunctions=True,
     )
     print(f"Model compiled to: {qpc_path}")

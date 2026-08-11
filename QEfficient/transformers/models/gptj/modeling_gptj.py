@@ -33,6 +33,7 @@ from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 def apply_rotary_pos_emb(tensor: torch.Tensor, sin: torch.Tensor, cos: torch.Tensor) -> torch.Tensor:
     # Sin Cos are also fixated on fp32 here
+
     sin = torch.repeat_interleave(sin[:, :, None, :], 2, 3)
     cos = torch.repeat_interleave(cos[:, :, None, :], 2, 3)
     return (tensor * cos) + (rotate_every_two(tensor) * sin)

@@ -139,6 +139,31 @@ class QEffGrok1MoeBlock(nn.Module):
     Mixture of experts (MoE) block.
     """
 
+    def __qeff_init__(self):
+        """Stack per-expert weights onto self.experts so the parameter path matches
+        the checkpoint transform output (*.experts.gate_proj / up_proj / down_proj_t)."""
+        E = len(self.experts)
+        if self.experts[0].linear.weight.device.type == "meta":
+            hidden_dim = self.experts[0].linear.weight.shape[1]
+            ffn_dim = self.experts[0].linear.weight.shape[0]
+            self.experts.register_parameter(
+                "gate_proj", nn.Parameter(torch.empty(E, hidden_dim, ffn_dim, device="meta"))
+            )
+            self.experts.register_parameter("up_proj", nn.Parameter(torch.empty(E, hidden_dim, ffn_dim, device="meta")))
+            self.experts.register_parameter(
+                "down_proj_t", nn.Parameter(torch.empty(E, ffn_dim, hidden_dim, device="meta"))
+            )
+        else:
+            self.experts.register_parameter(
+                "gate_proj", nn.Parameter(torch.stack([e.linear.weight.T for e in self.experts]))
+            )
+            self.experts.register_parameter(
+                "up_proj", nn.Parameter(torch.stack([e.linear_v.weight.T for e in self.experts]))
+            )
+            self.experts.register_parameter(
+                "down_proj_t", nn.Parameter(torch.stack([e.linear_1.weight.T for e in self.experts]))
+            )
+
     def forward(self, hidden_states: torch.Tensor):
         """
         Forward pass of the MoE block.

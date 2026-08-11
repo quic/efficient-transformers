@@ -146,6 +146,7 @@ from transformers.models.mistral3.modeling_mistral3 import (
 from transformers.models.mixtral.modeling_mixtral import (
     MixtralAttention,
     MixtralDecoderLayer,
+    MixtralExperts,
     MixtralForCausalLM,
     MixtralModel,
     MixtralRMSNorm,
@@ -177,6 +178,7 @@ from transformers.models.phi3.modeling_phi3 import (
     Phi3Attention,
     Phi3DecoderLayer,
     Phi3ForCausalLM,
+    Phi3MLP,
     Phi3Model,
     Phi3RMSNorm,
 )
@@ -490,6 +492,7 @@ from QEfficient.transformers.models.mistral3.modeling_mistral3 import (
 from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
     QEffMixtralAttention,
     QeffMixtralDecoderLayer,
+    QEffMixtralExperts,
     QEffMixtralForCausalLM,
     QEffMixtralModel,
     QEffMixtralSparseMoeBlock,
@@ -536,6 +539,7 @@ from QEfficient.transformers.models.phi3.modeling_phi3 import (
     QEffPhi3Attention,
     QEffPhi3DecoderLayer,
     QEffPhi3ForCausalLM,
+    QEffPhi3MLP,
     QEffPhi3Model,
 )
 from QEfficient.transformers.models.qwen2.modeling_qwen2 import (
@@ -852,6 +856,7 @@ class KVCacheTransform(ModuleMappingTransform):
         Mistral3Model: QEffMistral3Model,
         # Mixtral
         MixtralAttention: QEffMixtralAttention,
+        MixtralExperts: QEffMixtralExperts,
         MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
         MixtralDecoderLayer: QeffMixtralDecoderLayer,
         MixtralModel: QEffMixtralModel,
@@ -864,6 +869,7 @@ class KVCacheTransform(ModuleMappingTransform):
         # Phi3
         Phi3Attention: QEffPhi3Attention,
         Phi3DecoderLayer: QEffPhi3DecoderLayer,
+        Phi3MLP: QEffPhi3MLP,
         Phi3Model: QEffPhi3Model,
         Phi3ForCausalLM: QEffPhi3ForCausalLM,
         # Phi
@@ -1314,7 +1320,7 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "forward": QEffGrok1DecoderLayer.forward,
             "__qeff_init__": QEffGrok1DecoderLayer.__qeff_init__,
         },
-        "MoeBlock": {"forward": QEffGrok1MoeBlock.forward},
+        "MoeBlock": {"forward": QEffGrok1MoeBlock.forward, "__qeff_init__": QEffGrok1MoeBlock.__qeff_init__},
         "MultiHeadAttention": {
             "forward": QEffGrok1MultiHeadAttention.forward,
         },
