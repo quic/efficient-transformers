@@ -80,6 +80,7 @@ def _decode_qaic_config() -> dict:
         "blocking_mode": "kv",
         "num_kv_blocks": DECODE_NUM_KV_BLOCKS,
         "ctx_len": CTX_LEN,
+        "skip_kv": True,
     }
     if ENABLE_HEAPAR:
         cfg["kv_blocking_headpar_split"] = KV_BLOCKING_HEADPAR_SPLIT
@@ -89,9 +90,9 @@ def _decode_qaic_config() -> dict:
 
 
 def _qaic_config() -> dict:
+    if PREFILL_MODE is None:
+        return {}
     cfg = _decode_qaic_config()
-    if not cfg or PREFILL_MODE is None:
-        return cfg
     cfg["num_kv_blocks"] = PREFILL_NUM_KV_BLOCKS  # for prefill kv blocks
     cfg["prefill_block_chunks"] = PREFILL_BLOCK_CHUNKS
     cfg["prefill_blocking_mode"] = PREFILL_MODE
@@ -112,10 +113,9 @@ if not skip_vision:
         ctx_len=CTX_LEN,
         num_cores=16,
         num_devices=1,
-        mos=1,
-        mxfp6_matmul=True,
-        mxint8_kv_cache=True,
-        aic_enable_depth_first=True,
+        mxfp6_matmul=False,
+        mxint8_kv_cache=False,
+        aic_enable_depth_first=False,
         skip_vision=skip_vision,
         split_model_io=True,
         skip_lang=True,
@@ -153,6 +153,7 @@ decode_compile_kwargs = {
     "split_model_io": True,
     "node_precision_info": False,
     "prefill_only": False,
+    "retain_full_kv": True,
     "use_onnx_subfunctions": False,
     "skip_vision": True,
     "qaic_config": decode_qaic_config,
@@ -196,6 +197,13 @@ lang_decode_qpc = _resolve_lang_qpc_path(decode_qpc_path, ("lang_decode_qpc_path
 
 lang_prefill_session = QAICInferenceSession(lang_prefill_qpc)
 lang_decode_session = QAICInferenceSession(lang_decode_qpc)
+
+# Skip copying large retained-state decode outputs back to host on every token.
+decode_retained_outputs = [
+    name for name in lang_decode_session.output_names if name.rsplit("/", 1)[-1].endswith("_RetainedState")
+]
+if decode_retained_outputs:
+    lang_decode_session.skip_buffers(decode_retained_outputs)
 MODEL_ID = "google/gemma-4-26B-A4B-it"
 SYSTEM_PROMPT = "You are a helpful assistant."
 TEXT_PROMPT = "Tell me about Taj Mahal?"
@@ -327,20 +335,11 @@ loop_decode_inputs = {
     "position_ids": pos_id,
 }
 
-for i in range(config.text_config.num_hidden_layers):
-    loop_decode_inputs[f"past_key.{i}"] = decode_out[f"past_key.{i}_RetainedState"]
-    loop_decode_inputs[f"past_value.{i}"] = decode_out[f"past_value.{i}_RetainedState"]
-loop_decode_inputs["image_idx"] = decode_out["image_idx_output"]
-loop_decode_inputs["vision_embeds"] = decode_out["vision_embeds_RetainedState"]
-
 st = perf_counter()
 for i in range(generation_len - 2):
     decode_out = lang_decode_session.run(loop_decode_inputs)
     all_outputs.append(np.argmax(decode_out["logits"]))
     pos_id += 1
-    for j in range(config.text_config.num_hidden_layers):
-        loop_decode_inputs[f"past_key.{j}"] = decode_out[f"past_key.{j}_RetainedState"]
-        loop_decode_inputs[f"past_value.{j}"] = decode_out[f"past_value.{j}_RetainedState"]
     loop_decode_inputs.update(
         {
             "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
