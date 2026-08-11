@@ -1377,6 +1377,7 @@ class PrefillOnlyExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "__qeff_init__": QEffPrefillOnlyDeepseekV3MoE.__qeff_init__,
             "_forward_expert_blocked": QEffPrefillOnlyDeepseekV3MoE._forward_expert_blocked,
             "_cumsum_scatter_gather_update_expert_blocked": QEffPrefillOnlyDeepseekV3MoE._cumsum_scatter_gather_update_expert_blocked,
+            "supports_moe_prefill_blocking": QEffPrefillOnlyDeepseekV3MoE.supports_moe_prefill_blocking,
         },
     }
 

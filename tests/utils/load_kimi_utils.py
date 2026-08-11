@@ -12,18 +12,21 @@ import json
 import os
 import random
 import re
-import shutil
 import sys
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import torch
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from safetensors.torch import save_file
 from transformers import AutoConfig, AutoProcessor, AutoTokenizer
+from transformers.cache_utils import Cache, DynamicCache
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
+# Default Kimi-K2.5 test scripts load a compact subset: 2 vision layers,
+# 2 text layers, and only the first 4 routed experts.
 KIMI_K25_MODEL_NAME = "moonshotai/Kimi-K2.5"
 NUM_VISION_LAYERS = 2
 NUM_TEXT_LAYERS = 2
@@ -38,8 +41,6 @@ def is_kimi_k25(model_name: str) -> bool:
 
 
 def set_deterministic(seed: int):
-    import numpy as np
-
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -59,7 +60,7 @@ def patch_kimi_tie_weights_compat(kimi_cls):
         return
 
     def _tie_weights_compat(self, missing_keys=None, recompute_mapping=True):
-        lm_tie_weights = self.language_model.tie_weights
+        lm_tie_weights = getattr(self.language_model, "tie_weights")
         try:
             return lm_tie_weights(missing_keys=missing_keys, recompute_mapping=recompute_mapping)
         except TypeError:
@@ -101,6 +102,44 @@ def patch_deepseek_init_weights_compat(kimi_cls):
     deepseek_cls._qeff_t55_init_weights_patched = True
 
 
+def patch_dynamic_cache_compat():
+    if not hasattr(DynamicCache, "from_legacy_cache"):
+
+        @classmethod
+        def _from_legacy_cache(cls, legacy_cache):
+            if legacy_cache is None:
+                return cls()
+            if isinstance(legacy_cache, cls):
+                return legacy_cache
+            if isinstance(legacy_cache, Cache):
+                return cls(ddp_cache_data=[tuple(layer[:2]) for layer in legacy_cache])
+
+            ddp_cache_data = []
+            for layer in legacy_cache:
+                if layer is None:
+                    continue
+                if len(layer) < 2:
+                    raise ValueError("Each legacy cache layer must provide key/value tensors.")
+                ddp_cache_data.append((layer[0], layer[1]))
+            return cls(ddp_cache_data=ddp_cache_data)
+
+        DynamicCache.from_legacy_cache = _from_legacy_cache
+
+    if not hasattr(DynamicCache, "to_legacy_cache"):
+
+        def _to_legacy_cache(self):
+            return tuple((layer[0], layer[1]) for layer in self)
+
+        DynamicCache.to_legacy_cache = _to_legacy_cache
+
+    if not hasattr(DynamicCache, "get_max_length"):
+
+        def _get_max_length(self):
+            return None
+
+        DynamicCache.get_max_length = _get_max_length
+
+
 def load_kimi_k25_class(model_path_or_name):
     kimi_cls = get_class_from_dynamic_module(
         "modeling_kimi_k25.KimiK25ForConditionalGeneration",
@@ -109,10 +148,6 @@ def load_kimi_k25_class(model_path_or_name):
     patch_kimi_tie_weights_compat(kimi_cls)
     patch_deepseek_init_weights_compat(kimi_cls)
     return kimi_cls
-
-
-def patch_kimi_k25_remote_code_compat(config):
-    return load_kimi_k25_class(config._name_or_path)
 
 
 def prepare_config(model_path: Path):
@@ -145,12 +180,12 @@ def get_kimi_k25_test_config(model_name: str, model_config_dict):
     config.vision_config.torch_dtype = torch.float32
     config.vision_config.dtype = torch.float32
 
-    patch_kimi_k25_remote_code_compat(config)
+    load_kimi_k25_class(config._name_or_path)
     return config
 
 
 def load_kimi_k25_model_from_config(config):
-    kimi_cls = patch_kimi_k25_remote_code_compat(config)
+    kimi_cls = load_kimi_k25_class(config._name_or_path)
     model = kimi_cls._from_config(config)
     torch_dtype = getattr(model.config, "torch_dtype", None)
     if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
@@ -160,11 +195,6 @@ def load_kimi_k25_model_from_config(config):
     tokenizer = AutoTokenizer.from_pretrained(KIMI_K25_MODEL_NAME, trust_remote_code=True)
     processor = AutoProcessor.from_pretrained(KIMI_K25_MODEL_NAME, trust_remote_code=True)
     return model, tokenizer, processor
-
-
-def get_kimi_k25_num_image_tokens(config, grid_thws):
-    merge_height, merge_width = config.vision_config.merge_kernel_size
-    return int(grid_thws[0, 1].item() // merge_height) * int(grid_thws[0, 2].item() // merge_width)
 
 
 def parse_expert_ids(value: str):
