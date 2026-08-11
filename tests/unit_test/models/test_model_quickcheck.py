@@ -2345,6 +2345,24 @@ def test_qwen3_5_moe_get_specializations_strips_vision_symbols_for_comp_ctx_vari
     assert all("vision_batch_size" not in spec for spec in lang_specs)
 
 
+def test_qwen3_vl_moe_batch_index_boundary_reorders_inputs_and_outputs():
+    from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
+        _batch_index_gather,
+        _batch_index_scatter,
+    )
+
+    batch_index = torch.tensor([[2], [0], [3], [1]], dtype=torch.int64)
+    logical = torch.arange(4 * 3, dtype=torch.float32).reshape(4, 1, 3)
+    physical = _batch_index_scatter(logical, batch_index)
+
+    assert torch.equal(physical[batch_index.flatten()], logical)
+    assert torch.equal(_batch_index_gather(physical, batch_index), logical)
+
+    logical_positions = torch.arange(3 * 4, dtype=torch.int64).reshape(3, 4, 1)
+    physical_positions = _batch_index_scatter(logical_positions, batch_index, batch_dim=1)
+    assert torch.equal(physical_positions[:, batch_index.flatten()], logical_positions)
+
+
 def test_moe_prefill_transform_does_not_require_enable_chunking():
     from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeMoE, QEffPrefillChunkedGlm4MoeMoE
     from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyTransform
