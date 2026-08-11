@@ -2407,6 +2407,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         vision_inputs_fp16 = {"pixel_values", "image_masks"}
         vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
+        for input_name in ("pixel_values", "image_masks"):
+            if input_name not in vision_inputs or input_name not in vision_session.binding_index_map:
+                continue
+            binding = vision_session.bindings[vision_session.binding_index_map[input_name]]
+            vision_inputs[input_name] = vision_inputs[input_name].astype(
+                vision_session.aic_to_np_dtype_mapping[binding.type]
+            )
 
         # Required for KIMI-K25
         grid_thws_val = inputs.pop("grid_thws", None)
@@ -2525,6 +2532,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
             if self._write_io_dir is not None:
                 write_io_files(lang_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
+
+        if "image_idx_output" in outputs:
+            lang_inputs["image_idx"] = chunk_inputs["image_idx"]
 
         prefill_time = perf_counter() - lang_start + vision_end - vision_start
         # Skip inputs/outputs again

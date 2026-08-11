@@ -521,15 +521,12 @@ class QEffKimiK25DecoderWrapper(nn.Module):
 
             inputs_embeds = merged_inputs_embeds
             attention_mask = merged_attention_mask
-            merged_image_tokens = (
-                torch._shape_as_tensor(vision_embeds_for_state)[:1]
-                .view(1, 1)
-                .to(device=image_idx.device, dtype=torch.int64)
+            merged_image_tokens = torch.full(
+                (1, 1), vision_embeds_for_state.shape[0], device=image_idx.device, dtype=torch.int64
             )
             default_image_idx = torch.clamp(merged_image_tokens - 1, min=0)
-            input_batch = torch._shape_as_tensor(input_ids)[:1].view(1, 1).to(device=image_idx.device)
-            image_idx_batch = torch._shape_as_tensor(image_idx)[:1].view(1, 1).to(device=image_idx.device)
-
+            input_batch = torch.full((1, 1), input_ids.shape[0], device=image_idx.device, dtype=torch.int64)
+            image_idx_batch = torch.full((1, 1), image_idx.shape[0], device=image_idx.device, dtype=torch.int64)
             if position_ids is None:
                 post_media_position = torch.zeros_like(image_idx, dtype=torch.bool)
             else:
@@ -588,6 +585,8 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             output_kvs = getattr(outputs, "compressed_kvs", None)
         else:
             output_kvs = getattr(outputs, "past_key_values", None)
+        if vision_embeds_for_state is not None:
+            vision_embeds_for_state = vision_embeds_for_state + torch.zeros_like(vision_embeds_for_state)
         image_idx_output = image_idx[:1, :1] if image_idx is not None else image_idx
         return logits, vision_embeds_for_state, image_idx_output, output_kvs
 
@@ -613,8 +612,7 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
 
         target_device = inputs_embeds.device
         image_features = image_features.to(target_device)
-        image_shape = torch._shape_as_tensor(image_features).to(device=input_ids.device, dtype=input_ids.dtype)
-        num_image_tokens = image_shape[0]
+        num_image_tokens = torch.full((1, 1), image_features.shape[0], device=input_ids.device, dtype=input_ids.dtype)
 
         image_token_mask = input_ids == image_token_index
         non_image_mask = ~image_token_mask
@@ -640,22 +638,21 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
             dim=1
         )
 
-        image_start_positions = torch.where(
-            image_token_mask,
-            new_token_positions - num_image_tokens.view(1, 1) + 1,
-            torch.zeros_like(new_token_positions),
+        image_features_for_batch = image_features.unsqueeze(0).expand(input_ids.shape[0], -1, -1)
+        media_embedding = torch.cat([image_features_for_batch, final_embedding[:, image_features.shape[0] :, :]], dim=1)
+        media_attention_mask = torch.cat(
+            [
+                torch.ones(
+                    (input_ids.shape[0], image_features.shape[0]),
+                    dtype=attention_mask.dtype,
+                    device=input_ids.device,
+                ),
+                final_attention_mask[:, image_features.shape[0] :],
+            ],
+            dim=1,
         )
-        image_start = image_start_positions.max(dim=1, keepdim=True).values
-        image_positions = merged_positions.squeeze(1) - image_start
-        max_image_index = num_image_tokens.view(1, 1) - 1
-        safe_image_positions = torch.minimum(torch.clamp(image_positions, min=0), max_image_index)
-        image_slots = torch.logical_and(image_positions >= 0, image_positions < num_image_tokens.view(1, 1))
-        image_slots = torch.logical_and(image_slots, has_image)
-        image_slots = torch.logical_and(image_slots, torch.logical_not(text_position_one_hot.any(dim=1)))
-
-        gathered_image_embeddings = image_features[safe_image_positions.to(torch.long)]
-        final_embedding = torch.where(image_slots.unsqueeze(-1), gathered_image_embeddings, final_embedding)
-        final_attention_mask = torch.logical_or(final_attention_mask.bool(), image_slots).to(final_attention_mask.dtype)
+        final_embedding = torch.where(has_image.unsqueeze(-1), media_embedding, final_embedding)
+        final_attention_mask = torch.where(has_image, media_attention_mask, final_attention_mask)
 
         position_ids = torch.cumsum(final_attention_mask, dim=1) - 1
         position_ids = torch.where(final_attention_mask == 0, torch.full_like(position_ids, -1), position_ids)

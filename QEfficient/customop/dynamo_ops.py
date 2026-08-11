@@ -23,6 +23,7 @@ from QEfficient.customop.ctx_scatter_gather_cb import (  # noqa: E402
     CtxScatterCB3D,
 )
 from QEfficient.customop.onnxscript_utils import get_dynamo_onnxscript_func
+from QEfficient.customop.quantization_ops import CastToUInt4
 from QEfficient.customop.rms_norm import CustomRMSNorm  # noqa: E402
 
 
@@ -38,6 +39,21 @@ def rms_norm_op(hidden_states: torch.Tensor, weight: torch.Tensor, epsilon: floa
 def _(hidden_states: torch.Tensor, weight: torch.Tensor, epsilon: float) -> torch.Tensor:
     """Fake implementation for torch.export - just returns tensor with same shape/dtype"""
     return torch.empty_like(hidden_states)
+
+
+@torch.library.custom_op("qefficient::cast_to_uint4", mutates_args=())
+def cast_to_uint4_op(weight_packed: torch.Tensor) -> torch.Tensor:
+    """Unpack packed uint8 nibbles into uint8 values for eager/fake execution."""
+    lower = weight_packed & 0x0F
+    upper = (weight_packed >> 4) & 0x0F
+    output_shape = (*weight_packed.shape[:-1], weight_packed.shape[-1] * 2)
+    return torch.stack([lower, upper], dim=-1).reshape(output_shape)
+
+
+@cast_to_uint4_op.register_fake
+def _(weight_packed: torch.Tensor) -> torch.Tensor:
+    output_shape = (*weight_packed.shape[:-1], weight_packed.shape[-1] * 2)
+    return torch.empty(output_shape, dtype=weight_packed.dtype, device=weight_packed.device)
 
 
 @torch.library.custom_op("qefficient::ctx_scatter", mutates_args=())
@@ -374,6 +390,7 @@ def _(data: torch.Tensor, position_ids: torch.Tensor, updates: torch.Tensor) -> 
 
 DYNAMO_CUSTOM_OP_TABLE = {
     torch.ops.qefficient.rms_norm.default: get_dynamo_onnxscript_func(CustomRMSNorm),
+    torch.ops.qefficient.cast_to_uint4.default: get_dynamo_onnxscript_func(CastToUInt4),
     torch.ops.qefficient.ctx_scatter.default: get_dynamo_onnxscript_func(CtxScatter),
     torch.ops.qefficient.ctx_scatter_3d.default: get_dynamo_onnxscript_func(CtxScatter3D),
     torch.ops.qefficient.ctx_scatter_cb.default: get_dynamo_onnxscript_func(CtxScatterCB),

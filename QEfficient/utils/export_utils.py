@@ -40,48 +40,6 @@ from QEfficient.utils.torch_patches import (
 )
 
 
-def reorder_inputs_by_signature(model, example_inputs, dynamic_shapes=None):
-    """Reorder example_inputs (and optional dynamic_shapes) to match model.forward signature.
-
-    torch.export requires inputs and dynamic_shapes to follow the forward parameter order
-    so that each shape constraint binds to the correct input tensor.
-    """
-    sig_keys = list(inspect.signature(model.forward).parameters.keys())
-    sig_key_set = set(sig_keys)
-    ordered_inputs, ordered_shapes = {}, {}
-    for k in sig_keys:
-        if k in example_inputs:
-            ordered_inputs[k] = example_inputs[k]
-        if dynamic_shapes is not None and k in dynamic_shapes:
-            ordered_shapes[k] = dynamic_shapes[k]
-    reordered_inputs = {**ordered_inputs, **{k: v for k, v in example_inputs.items() if k not in sig_key_set}}
-    if dynamic_shapes is not None:
-        reordered_shapes = {**ordered_shapes, **{k: v for k, v in dynamic_shapes.items() if k not in sig_key_set}}
-        return reordered_inputs, reordered_shapes
-    return reordered_inputs, None
-
-
-def build_dynamo_export_kwargs(export_kwargs):
-    """Prepare export kwargs for dynamo (torch.export) path.
-
-    Sets dynamo=True, default report/optimize flags, and injects DYNAMO_CUSTOM_OP_TABLE
-    into custom_translation_table. Returns a new dict; does not mutate the input.
-    """
-    from QEfficient.customop.dynamo_ops import DYNAMO_CUSTOM_OP_TABLE
-    from QEfficient.utils import constants
-
-    kwargs = dict(export_kwargs)
-    kwargs.setdefault("report", False)
-    kwargs.setdefault("optimize", False)
-    kwargs["dynamo"] = True
-    kwargs["opset_version"] = constants.ONNX_DYNAMO_EXPORT_OPSET
-    kwargs["custom_translation_table"] = {
-        **(kwargs.pop("custom_translation_table", None) or {}),
-        **DYNAMO_CUSTOM_OP_TABLE,
-    }
-    return kwargs
-
-
 def convert_dynamic_axes_to_dynamic_shapes(
     dynamic_axes: Dict[str, Dict[int, str]],
     model_config=None,
@@ -111,6 +69,7 @@ def convert_dynamic_axes_to_dynamic_shapes(
         torch.onnx.export(dynamic_shapes=...).
     """
     max_seq_len = getattr(model_config, "max_position_embeddings", 1024)
+    max_image_dim = max(max_seq_len, 65536)
     model_type = getattr(model_config, "model_type", None)
     batch_min = 1 if model_type == "gpt_oss" else 2
 
@@ -129,6 +88,12 @@ def convert_dynamic_axes_to_dynamic_shapes(
                 dim_registry[dim_name] = Dim("comp_ctx_lengths", min=DYNAMO_DIM_MIN_COMP_CTX_LENGTHS, max=max_seq_len)
             elif "ctx_len" in dim_name:
                 dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
+            elif dim_name == "num_patches":
+                dim_registry[dim_name] = Dim("num_patches", min=1, max=max_image_dim)
+            elif dim_name == "num_image_tokens":
+                dim_registry[dim_name] = Dim("num_image_tokens", min=1, max=max_image_dim)
+            elif dim_name in {"grid_h", "grid_w"}:
+                dim_registry[dim_name] = Dim(dim_name, min=1, max=max_image_dim)
             elif "sliding_window" in dim_name:
                 dim_registry[dim_name] = Dim(
                     "sliding_window",
@@ -267,9 +232,7 @@ def export_wrapper(func):
 
     def wrapper(self, *args, **kwargs):
         # Extract flags
-        dynamo = kwargs.get("dynamo", False) or kwargs.get("use_weight_free_export", False)
-        if dynamo:
-            kwargs["dynamo"] = True
+        dynamo = kwargs.get("dynamo", False)
         use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
 
         if dynamo:
