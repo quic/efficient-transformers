@@ -1061,9 +1061,7 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
 
         if output_attentions:
             outputs += (self_attn_weights,)
-
-        if use_cache:
-            outputs += (present_key_value,)
+        # not returning present_key_value as it is not used
 
         return outputs
 
