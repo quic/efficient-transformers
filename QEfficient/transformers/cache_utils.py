@@ -487,16 +487,12 @@ class QEffDynamicLayer(CacheLayerMixin):
             self._mark_initialized(self.keys)
             position_ids = cache_kwargs.get("position_ids")
 
-            batch_index = cache_kwargs.get("batch_index")
+            # batch_index = cache_kwargs.get("batch_index")
             keys_folded = self.keys.reshape(1, cache_bh, ctx_len, head_dim)
             values_folded = self.values.reshape(1, cache_bh, ctx_len, head_dim)
 
-            if batch_index is not None:
-                keys_folded = CtxChunkScatterBatchFuncCB.apply(keys_folded, batch_index, position_ids, key_states)
-                values_folded = CtxChunkScatterBatchFuncCB.apply(values_folded, batch_index, position_ids, value_states)
-            else:
-                keys_folded = CtxChunkScatterBatchFunc.apply(keys_folded, position_ids, key_states)
-                values_folded = CtxChunkScatterBatchFunc.apply(values_folded, position_ids, value_states)
+            keys_folded = CtxChunkScatterBatchFunc.apply(keys_folded, position_ids, key_states)
+            values_folded = CtxChunkScatterBatchFunc.apply(values_folded, position_ids, value_states)
 
             self.keys = keys_folded.reshape(full_batch_size, Hkv, ctx_len, head_dim)
             self.values = values_folded.reshape(full_batch_size, Hkv, ctx_len, head_dim)
