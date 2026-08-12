@@ -113,9 +113,22 @@ def _get_moe_num_experts(module: nn.Module) -> Optional[int]:
     num_experts = getattr(experts, "num_experts", None)
     if num_experts is not None:
         return int(num_experts)
+    if experts is not None:
+        try:
+            return len(experts)
+        except TypeError:
+            pass
     gate = getattr(module, "gate", None)
     num_experts = getattr(gate, "num_experts", None)
-    return int(num_experts) if num_experts is not None else None
+    if num_experts is not None:
+        return int(num_experts)
+    config = getattr(module, "config", None)
+    for attr_name in ("n_routed_experts", "num_experts"):
+        num_experts = getattr(config, attr_name, None)
+        if num_experts is not None:
+            return int(num_experts)
+    all_gate_qweight = getattr(module, "all_gate_qweight", None)
+    return int(all_gate_qweight.shape[0]) if all_gate_qweight is not None else None
 
 
 def _configure_vlm_moe_expert_parallel(
@@ -1768,16 +1781,23 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
-        batch_fold = (
-            not prefill_only
-            and self.lang_model.hash_params.get("blocking_kwargs", None)
-            and getattr(self.lang_model.hash_params["blocking_kwargs"], "batch_fold", False)
-        )
-
-        if batch_fold:
-            seq_len = 1 if seq_len else None
-
-        onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": kwargs.get("batch_size", bs), "batch_fold": batch_fold}
+        onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": bs}
+        dynamic_axes_kwargs = {
+            "kv_offload": True,
+            "continuous_batching": self.continuous_batching,
+            "comp_ctx_lengths": self.comp_ctx_lengths_decode,
+        }
+        if getattr(self.model.config, "model_type", None) == "qwen3_vl_moe":
+            batch_fold = (
+                not prefill_only
+                and self.lang_model.hash_params.get("blocking_kwargs", None)
+                and getattr(self.lang_model.hash_params["blocking_kwargs"], "batch_fold", False)
+            )
+            if batch_fold:
+                onnx_kwargs["prefill_seq_len"] = 1 if seq_len else None
+            onnx_kwargs["batch_size"] = kwargs.get("batch_size", bs)
+            onnx_kwargs["batch_fold"] = batch_fold
+            dynamic_axes_kwargs["batch_fold"] = batch_fold
 
         # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
         try:
@@ -1787,12 +1807,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 comp_ctx_lengths=self.comp_ctx_lengths_decode,
                 **onnx_kwargs,
             )
-            dynamic_axes = self.model.get_onnx_dynamic_axes(
-                kv_offload=True,
-                continuous_batching=self.continuous_batching,
-                comp_ctx_lengths=self.comp_ctx_lengths_decode,
-                batch_fold=batch_fold,
-            )
+            dynamic_axes = self.model.get_onnx_dynamic_axes(**dynamic_axes_kwargs)
         except TypeError:
             inputs = self.model.get_dummy_inputs(
                 kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode, **onnx_kwargs
