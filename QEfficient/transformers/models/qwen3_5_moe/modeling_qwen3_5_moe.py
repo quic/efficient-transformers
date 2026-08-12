@@ -572,7 +572,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
     def __qeff_init__(self):
         self.chunk_gated_delta_rule = self.torch_chunk_gated_delta_rule_qeff
-        self.chunk_gated_delta_solver = "recursive_sns"
+        self.chunk_gated_delta_solver = "original"
         chunk_size = 64  # must match what's used in the function
 
         # Precompute all constant masks — no triu/tril with diagonal args at runtime
@@ -929,7 +929,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 conv_state = conv_state_all
                 recurrent_state = recurrent_state_all
 
-            if position_ids is not None:
+            if position_ids is not None and seq_len > 1:
                 text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
                 zero_cumsum = torch.cumsum((text_position_ids == 0).to(torch.int32), dim=1)[:, -1:]
                 conv_reset_mask = zero_cumsum.to(dtype=torch.bool, device=conv_state.device).reshape(
