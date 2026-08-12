@@ -341,6 +341,9 @@ class QEffGemma4TextExperts(Gemma4TextExperts):
         top_k_index: torch.Tensor,
         top_k_weights: torch.Tensor,
     ) -> torch.Tensor:
+        if not hasattr(self, "gate_proj"):
+            self.__qeff_init__()
+
         T, H = hidden_states.shape
         K = top_k_index.shape[1]
         idx = top_k_index.reshape(-1)

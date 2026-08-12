@@ -1453,7 +1453,8 @@ def _resolve_expert_parallel_layout(
         raise ValueError("num_cores must be greater than zero for MoE expert parallelism")
     if cores_per_expert <= 0:
         raise ValueError("cores_per_expert must be greater than zero for MoE expert parallelism")
-    total_avl_cores = num_devices * num_cores
+    requested_total_cores = num_devices * num_cores
+    total_avl_cores = min(requested_total_cores, num_experts * cores_per_expert)
     if (num_experts * cores_per_expert) % total_avl_cores != 0:
         raise ValueError(
             "num_experts * cores_per_expert "
