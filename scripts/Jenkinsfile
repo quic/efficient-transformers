@@ -376,7 +376,24 @@ pipeline {
                 }
             }
         }
-
+        stage('QAIC DISAGG TESTS') {
+            when { expression { params.RUN_QAIC_MM } }
+            steps {
+                timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 180, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
+                    sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    mkdir -p $PWD/Non_cli_qaic_disagg &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_HOME=$PWD/Non_cli_qaic_disagg &&
+                    pytest -m \"on_qaic and disagg_dma\" tests/transformers/disaggregated --junitxml=tests/tests_log_disagg.xml --durations=10 &&
+                    junitparser merge tests/tests_log_disagg.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
+                }
+            }
+        }
         stage('QAIC Reranker Tests') {
             when { expression { impactStageEnabled('qaic_reranker', params.RUN_QAIC_MM) } }
             steps {

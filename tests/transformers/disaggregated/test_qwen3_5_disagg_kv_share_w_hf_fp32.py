@@ -23,10 +23,8 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageText
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-pytestmark = pytest.mark.skip(reason="")
-
-MODEL_NAME = "Qwen/Qwen3.6-35B-A3B"
-# MODEL_NAME = "tiny-random/qwen3.5-moe"
+# MODEL_NAME = "Qwen/Qwen3.6-35B-A3B"
+MODEL_NAME = "tiny-random/qwen3.5-moe"
 TINY_RANDOM_MODEL_NAMES = {"tiny-random/qwen3.5-moe"}
 
 
@@ -213,37 +211,6 @@ def _run_hf_torch_fp32(model, processor: AutoProcessor, messages: list, collect_
 
     prompt_len = inputs["input_ids"].shape[-1]
     return outputs[:, prompt_len:].detach().cpu().numpy()
-
-
-def _full_ctx_axis(shape, ctx_len: int) -> int:
-    """Axis of a 4-D full-attention KV buffer that indexes the context (== ctx_len).
-
-    Prefer axis 2 (the conventional [B, heads, ctx, head_dim] layout) when it matches,
-    else the first axis whose dim equals ctx_len.
-    """
-    candidates = [ax for ax, dim in enumerate(shape) if dim == ctx_len]
-    if not candidates:
-        raise ValueError(f"no axis == ctx_len={ctx_len} in KV shape {shape}")
-    return 2 if 2 in candidates else candidates[0]
-
-
-def _kv_written_slots(before: list, after: list, ctx_len: int) -> list:
-    """Context slots the decode step wrote, per full-attention (4-D) KV buffer.
-
-    Reduces |after-before| over every axis except the context axis and takes the argmax,
-    i.e. the single ctx position that changed most this step. Linear (3-D conv-state)
-    buffers are skipped — they have no per-position context slot.
-    """
-    slots = []
-    for buf_before, buf_after in zip(before, after):
-        if buf_after.ndim != 4:
-            continue
-        ctx_axis = _full_ctx_axis(buf_after.shape, ctx_len)
-        delta = np.abs(buf_after.astype(np.float64) - buf_before.astype(np.float64))
-        reduce_axes = tuple(ax for ax in range(delta.ndim) if ax != ctx_axis)
-        per_slot = delta.sum(axis=reduce_axes)
-        slots.append(int(np.argmax(per_slot)) if per_slot.max() > 0 else -1)
-    return slots
 
 
 def _run_disagg_kv_share_qaic_generation(
@@ -473,7 +440,7 @@ def _compile_disagg_sessions(qeff_model, image, sessions: list, compiled_onnx_pa
 
 
 @pytest.mark.on_qaic
-@pytest.mark.multimodal
+@pytest.mark.disagg_dma
 def test_qwen3_5_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
     pytest.importorskip("qwen_vl_utils")
     torch.manual_seed(42)

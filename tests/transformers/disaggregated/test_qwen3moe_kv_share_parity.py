@@ -25,10 +25,8 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-pytestmark = pytest.mark.skip(reasson="")
-
-# MODEL_ID = "yujiepan/qwen3-moe-tiny-random"
-MODEL_ID = "Qwen/Qwen3-30B-A3B"
+MODEL_ID = "yujiepan/qwen3-moe-tiny-random"
+# MODEL_ID = "Qwen/Qwen3-30B-A3B"
 PROMPT = "Explain quantum computing in simple terms."
 PREFILL_SEQ_LEN = 256
 CTX_LEN = PREFILL_SEQ_LEN * 3
@@ -284,6 +282,7 @@ def test_qwen3moe_kv_share_kv_handoff_correctness(manual_cleanup):
 
 
 @pytest.mark.on_qaic
+@pytest.mark.disagg_dma
 def test_kv_share_matches_hf_generate_leading_tokens(manual_cleanup):
     compare_tokens = HF_COMPARE_TOKENS
 

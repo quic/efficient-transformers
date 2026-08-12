@@ -6,7 +6,6 @@
 # ----------------------------------------------------------------------------
 
 """Continuous-batching parity + KV-handoff check for the gpt-oss disaggregated
-prefill/decode DMA path (examples/disagg_serving/gpt_oss_disagg_mode_cb_chunking_with_kv_share.py).
 
 Two checks, in one on-device session:
   1. KV-handoff correctness: the shared host ``kv_caches`` arrays are inspected
@@ -17,7 +16,7 @@ Two checks, in one on-device session:
   2. Token-level parity: full decoded output per CB slot vs HF PyTorch fp32
      ``generate(do_sample=False)`` on the same prompt.
 
-pytest -m "on_qaic" tests/transformers/disaggregated/test_gpt_oss_disagg_cb_kv_share_w_hf_fp32.py
+pytest -m "on_qaic and disagg_dma" tests/transformers/disaggregated/test_gpt_oss_disagg_cb_kv_share_w_hf_fp32.py
 """
 
 from pathlib import Path
@@ -126,6 +125,7 @@ def _prefill_slot(prefill_session, input_ids, position_ids, num_chunks, slot: in
 
 
 @pytest.mark.on_qaic
+@pytest.mark.disagg_dma
 def test_gpt_oss_disagg_cb_kv_handoff_and_hf_parity(manual_cleanup):
     torch.manual_seed(42)
 
