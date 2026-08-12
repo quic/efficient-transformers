@@ -3754,6 +3754,12 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
             return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
+        if prefill_seq_len is None:
+            raise ValueError(
+                f"When prefill_only=True, 'prefill_seq_len' must be explicitly set. "
+                f"Received: prefill_seq_len={prefill_seq_len}"
+            )
+
         if has_moe_prefill_blocking:
             if prefill_seq_len % constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN == 0:
                 return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
