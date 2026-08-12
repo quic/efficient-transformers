@@ -286,14 +286,14 @@ class QEffDynamicLayer(CacheLayerMixin):
             self._mark_initialized(k_out)
         position_ids = cache_kwargs.get("position_ids")
         # batch_index = cache_kwargs.get("batch_index", None)
-        B, _ = position_ids.shape
         full_batch_size, Hkv, ctx_len, head_dim = k_out.shape
         cache_bh = full_batch_size * Hkv
         k_out = k_out.reshape(1, full_batch_size * Hkv, ctx_len, head_dim)
         T_block = end_index - start_index
 
         ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
-        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1).expand(B, Hkv, 1).reshape(1, B * Hkv, 1)
+        gather_limit = position_ids.max(1, keepdim=True).values
+        gather_limit = torch.cat([gather_limit] * Hkv, dim=1).reshape(1, -1, 1)
         invalid_mask = ctx_indices > gather_limit
 
         invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
@@ -366,13 +366,13 @@ class QEffDynamicLayer(CacheLayerMixin):
         v_out = self.values
         position_ids = cache_kwargs.get("position_ids")
         # batch_index = cache_kwargs.get("batch_index", None)
-        B, _ = position_ids.shape
         full_batch_size, Hkv, ctx_len, head_dim = v_out.shape
         cache_bh = full_batch_size * Hkv
         v_out = v_out.reshape(1, full_batch_size * Hkv, ctx_len, head_dim)
         T_block = end_index - start_index
         ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
-        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1).expand(B, Hkv, 1).reshape(1, B * Hkv, 1)
+        gather_limit = position_ids.max(1, keepdim=True).values
+        gather_limit = torch.cat([gather_limit] * Hkv, dim=1).reshape(1, -1, 1)
         invalid_mask = ctx_indices > gather_limit
 
         invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()

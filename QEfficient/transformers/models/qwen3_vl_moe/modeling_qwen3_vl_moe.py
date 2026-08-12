@@ -916,9 +916,9 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
             hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-            logits = self.model.lm_head(hidden_states)
             if batch_fold_cb:
-                logits = _batch_index_gather(logits, batch_index)
+                hidden_states = _batch_index_gather(hidden_states, batch_index)
+            logits = self.model.lm_head(hidden_states)
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
 
@@ -978,9 +978,9 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
             )
             logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
             hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-            logits = self.model.lm_head(hidden_states)
             if batch_fold_cb:
-                logits = _batch_index_gather(logits, batch_index)
+                hidden_states = _batch_index_gather(hidden_states, batch_index)
+            logits = self.model.lm_head(hidden_states)
             return logits, outputs.past_key_values
 
         else:
@@ -1472,7 +1472,6 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
             for i in range(0, len(comp_ctx_lengths_decode or [])):
                 lang_decode = {
                     "batch_size": full_batch_size if continuous_batching else batch_size,
-                    "BH": batch_size * self.config.text_config.num_key_value_heads,
                     "seq_len": "1",
                     "ctx_len": ctx_len,
                     "vision_size": vision_size,
@@ -1506,7 +1505,6 @@ class QEffQwen3VLMoeForConditionalGeneration(Qwen3VLMoeForConditionalGeneration)
 
             lang_decode = {
                 "batch_size": full_batch_size if continuous_batching else batch_size,
-                "BH": batch_size * self.config.text_config.num_key_value_heads,
                 "seq_len": 1,
                 "ctx_len": ctx_len,
                 "vision_size": vision_size,
