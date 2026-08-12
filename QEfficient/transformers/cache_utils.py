@@ -13,6 +13,8 @@ import torch
 from transformers.cache_utils import Cache, CacheLayerMixin, EncoderDecoderCache
 
 from QEfficient.customop import (
+    CtxChunkScatterBatchFunc,
+    CtxGatherFuncBlockedKVBatch,
     ctx_gather,
     ctx_gather_3d,
     ctx_gather_blocked_kv,
@@ -208,6 +210,178 @@ class QEffDynamicLayer(CacheLayerMixin):
 
         return k_out, v_out
 
+    def read_only_blocked_K(self, start_index, end_index, cache_kwargs):
+        """
+        Reads the `key_states` for each KV block.
+
+        Parameters:
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+            start_index (`int`):
+                Start index of the K/V block to read
+
+            end_index (`int`):
+                End index of the K/V block to read
+
+        Return:
+            the updated key states.
+        """
+        # Gather
+        k_out = self.keys
+        if k_out is not None:
+            self._mark_initialized(k_out)
+        position_ids = cache_kwargs.get("position_ids")
+        batch_index = cache_kwargs.get("batch_index", None)
+        batch, num_kv_heads, _, _ = k_out.shape
+        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+        invalid_mask = ctx_indices > gather_limit
+
+        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
+
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+
+        if batch_index is not None:
+            k_out = ctx_gather_blocked_kv_cb(k_out, batch_index, ctx_indices)
+        else:
+            ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
+            k_out = ctx_gather_blocked_kv(k_out, ctx_indices)
+
+        return k_out
+
+    def read_only_blocked_K_batch(self, start_index, end_index, cache_kwargs):
+        """
+        Batch-folded counterpart of _read_blocked_k: k_cache [1, BH, T, D],
+        BH = B*Hkv static. Non-chunk_kv only (batch_fold and chunk_kv are
+        mutually exclusive by dispatch condition), so gather_limit needs no
+        chunk-layout branch.
+
+        Merges the B/Hkv axes into BH on the tiny [B]-sized gather_limit
+        (via reshape) rather than on the T_block-sized ctx_indices tensor —
+        letting Greater/Where broadcast ctx_indices straight to [1, BH,
+        T_block] keeps the op chain feeding CtxGatherBlockedKVBatch as
+        Where->Cast->Expand (matching _read_blocked_k's pattern), instead of
+        ending in an axis-merging Reshape. The compiler's GatherNDRange
+        pattern match (an on-chip range-gather fast path) apparently keys off
+        that exact tail shape and falls back to a plain DDR GatherND when a
+        merge Reshape sits right before the gather.
+
+        Parameters:
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+            start_index (`int`):
+                Start index of the K/V block to read
+
+            end_index (`int`):
+                End index of the K/V block to read
+
+        Return:
+            the updated key states.
+        """
+        # Gather
+        k_out = self.keys
+        if k_out is not None:
+            self._mark_initialized(k_out)
+        position_ids = cache_kwargs.get("position_ids")
+        # batch_index = cache_kwargs.get("batch_index", None)
+        B, _ = position_ids.shape
+        _, BH, _, _ = k_out.shape
+        Hkv = cache_kwargs.get("num_kv_heads", BH // B)
+        T_block = end_index - start_index
+
+        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1).expand(B, Hkv, 1).reshape(1, B * Hkv, 1)
+        invalid_mask = ctx_indices > gather_limit
+
+        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
+
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+
+        ctx_indices = ctx_indices.expand(1, BH, T_block)
+        k_out = CtxGatherFuncBlockedKVBatch.apply(k_out, ctx_indices)
+
+        return k_out
+
+    def read_only_blocked_V(self, start_index, end_index, cache_kwargs):
+        """
+        Reads the `value_states` for the layer for each KV block.
+
+        Parameters:
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+            start_index (`int`):
+                Start index of the K/V block to read
+
+            end_index (`int`):
+                End index of the K/V block to read
+
+        Return:
+            the updated value states.
+        """
+        # Gather
+        v_out = self.values
+        position_ids = cache_kwargs.get("position_ids")
+        batch_index = cache_kwargs.get("batch_index", None)
+        batch, num_kv_heads, _, _ = v_out.shape
+        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+        invalid_mask = ctx_indices > gather_limit
+
+        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
+
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+
+        if batch_index is not None:
+            v_out = ctx_gather_blocked_kv_cb(v_out, batch_index, ctx_indices)
+        else:
+            ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
+            v_out = ctx_gather_blocked_kv(v_out, ctx_indices)
+
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
+        return v_out
+
+    def read_only_blocked_V_batch(self, start_index, end_index, cache_kwargs):
+        """
+        Reads the `value_states` for the layer for each KV block.
+
+        Parameters:
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+            start_index (`int`):
+                Start index of the K/V block to read
+
+            end_index (`int`):
+                End index of the K/V block to read
+
+        Return:
+            the updated value states.
+        """
+        # Gather
+        v_out = self.values
+        position_ids = cache_kwargs.get("position_ids")
+        # batch_index = cache_kwargs.get("batch_index", None)
+        B, _ = position_ids.shape
+        _, BH, _, _ = v_out.shape
+        Hkv = cache_kwargs.get("num_kv_heads", BH // B)
+        T_block = end_index - start_index
+        ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1).expand(B, Hkv, 1).reshape(1, B * Hkv, 1)
+        invalid_mask = ctx_indices > gather_limit
+
+        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
+
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+
+        ctx_indices = ctx_indices.expand(1, BH, T_block)
+        v_out = CtxGatherFuncBlockedKVBatch.apply(v_out, ctx_indices)
+
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
+        return v_out
+
     def read_only_blockedKV(self, start_index, end_index, cache_kwargs):
         """
         Reads the `key_states` and `value_states` for the layer for each KV block.
@@ -285,6 +459,47 @@ class QEffDynamicLayer(CacheLayerMixin):
             else:
                 self.keys = ctx_scatter(self.keys, position_ids, key_states)
                 self.values = ctx_scatter(self.values, position_ids, value_states)
+
+    def write_only_batch(self, key_states, value_states, cache_kwargs):
+        """
+        Write in the cache with the new `key_states` and `value_states` for the layer, using the batch fold layout
+
+        Parameters:
+            key_states (`torch.Tensor`):
+                The new key states to cache.
+            value_states (`torch.Tensor`):
+                The new value states to cache.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+        """
+        # Update the cache
+        if self.keys is None:
+            self.keys = key_states.reshape(
+                1, key_states.shape[0] * key_states.shape[1], key_states.shape[2], key_states.shape[3]
+            )
+            self.values = value_states.reshape(
+                1, value_states.shape[0] * value_states.shape[1], value_states.shape[2], value_states.shape[3]
+            )
+            self._mark_initialized(self.keys)
+        else:
+            BH = key_states.shape[0] * key_states.shape[1]
+            # QL = key_states.shape[2]
+            D = key_states.shape[3]
+            if self.keys.shape[0] != 1:
+                self.keys = self.keys.reshape(1, BH, self.keys.shape[2], D)
+                self.values = self.values.reshape(1, BH, self.values.shape[2], D)
+            self._mark_initialized(self.keys)
+            position_ids = cache_kwargs.get("position_ids")
+            # NKV = (BH / position_ids.shape[0]).int().item()
+            # pos_folded = position_ids.unsqueeze(1).repeat(1, NKV, QL).reshape(1, BH, QL)
+            # key_folded = key_states.reshape(1, BH, -1, D)
+            # value_folded = value_states.reshape(1, BH, -1, D)
+
+            # batch_index = cache_kwargs.get("batch_index")
+
+            # Scatter
+            self.keys = CtxChunkScatterBatchFunc.apply(self.keys, position_ids, key_states)
+            self.values = CtxChunkScatterBatchFunc.apply(self.values, position_ids, value_states)
 
     def update(
         self,
@@ -673,6 +888,82 @@ class QEffDynamicCache(Cache):
         """
         return self.layers[layer_idx].read_only_blockedKV(start_index, end_index, cache_kwargs)
 
+    def read_only_blocked_K(self, start_index, end_index, layer_idx, cache_kwargs):
+        """
+        Reads the `key_states` and `value_states` for the layer `layer_idx`.
+
+        Parameters:
+            start_index (`int`):
+                Start index of the K/V block to read
+            end_index (`int`):
+                End index of the K/V block to read
+            layer_idx (`int`):
+                The index of the layer to cache the states for.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+        Return:
+            A tuple containing the updated key and value states.
+        """
+        return self.layers[layer_idx].read_only_blocked_K(start_index, end_index, cache_kwargs)
+
+    def read_only_blocked_V(self, start_index, end_index, layer_idx, cache_kwargs):
+        """
+        Reads the `key_states` and `value_states` for the layer `layer_idx`.
+
+        Parameters:
+            start_index (`int`):
+                Start index of the K/V block to read
+            end_index (`int`):
+                End index of the K/V block to read
+            layer_idx (`int`):
+                The index of the layer to cache the states for.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+        Return:
+            A tuple containing the updated key and value states.
+        """
+        return self.layers[layer_idx].read_only_blocked_V(start_index, end_index, cache_kwargs)
+
+    def read_only_blocked_K_batch(self, start_index, end_index, layer_idx, cache_kwargs):
+        """
+        Reads the `key_states` and `value_states` for the layer `layer_idx`.
+
+        Parameters:
+            start_index (`int`):
+                Start index of the K/V block to read
+            end_index (`int`):
+                End index of the K/V block to read
+            layer_idx (`int`):
+                The index of the layer to cache the states for.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+        Return:
+            A tuple containing the updated key and value states.
+        """
+        return self.layers[layer_idx].read_only_blocked_K_batch(start_index, end_index, cache_kwargs)
+
+    def read_only_blocked_V_batch(self, start_index, end_index, layer_idx, cache_kwargs):
+        """
+        Reads the `key_states` and `value_states` for the layer `layer_idx`.
+
+        Parameters:
+            start_index (`int`):
+                Start index of the K/V block to read
+            end_index (`int`):
+                End index of the K/V block to read
+            layer_idx (`int`):
+                The index of the layer to cache the states for.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+
+        Return:
+            A tuple containing the updated key and value states.
+        """
+        return self.layers[layer_idx].read_only_blocked_V_batch(start_index, end_index, cache_kwargs)
+
     def write_only(self, key_states, value_states, layer_idx, cache_kwargs):
         """
         Write in the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
@@ -689,6 +980,23 @@ class QEffDynamicCache(Cache):
         """
         self.append_new_layers(layer_idx)
         return self.layers[layer_idx].write_only(key_states, value_states, cache_kwargs)
+
+    def write_only_batch(self, key_states, value_states, layer_idx, cache_kwargs):
+        """
+        Write in the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
+
+        Parameters:
+            key_states (`torch.Tensor`):
+                The new key states to cache.
+            value_states (`torch.Tensor`):
+                The new value states to cache.
+            layer_idx (`int`):
+                The index of the layer to cache the states for.
+            cache_kwargs (`Dict[str, Any]`, `optional`):
+                Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
+        """
+        self.append_new_layers(layer_idx)
+        return self.layers[layer_idx].write_only_batch(key_states, value_states, cache_kwargs)
 
     # TODO:This function will be depercated in future.
     def update3D(
@@ -1304,6 +1612,69 @@ class QEffHybridCacheForGPTOSS:
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
         return k_out, v_out
 
+    def read_only_blocked_K(
+        self,
+        start_idx: torch.Tensor,
+        end_idx: torch.Tensor,
+        layer_idx: int,
+        cache_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        position_ids = cache_kwargs.get("position_ids")
+        batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value from the kwargs
+
+        k_out = self.key_cache[layer_idx]
+
+        batch, num_kv_heads, _, _ = k_out.shape
+
+        ctx_indices = torch.arange(start=start_idx, end=end_idx)[None, None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+        invalid_mask = ctx_indices > gather_limit
+        if torch.onnx.is_in_onnx_export():
+            invalid_idx_value = torch.iinfo(torch.int32).max
+        else:
+            invalid_idx_value = 0
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+
+        if batch_index is not None:
+            k_out = ctx_gather_blocked_kv_cb(k_out, batch_index, ctx_indices)
+        else:
+            ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
+            k_out = ctx_gather_blocked_kv(k_out, ctx_indices)
+
+        return k_out
+
+    def read_only_blocked_V(
+        self,
+        start_idx: torch.Tensor,
+        end_idx: torch.Tensor,
+        layer_idx: int,
+        cache_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        position_ids = cache_kwargs.get("position_ids")
+        batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value from the kwargs
+
+        v_out = self.value_cache[layer_idx]
+
+        batch, num_kv_heads, _, _ = v_out.shape
+
+        ctx_indices = torch.arange(start=start_idx, end=end_idx)[None, None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
+        invalid_mask = ctx_indices > gather_limit
+        if torch.onnx.is_in_onnx_export():
+            invalid_idx_value = torch.iinfo(torch.int32).max
+        else:
+            invalid_idx_value = 0
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
+
+        if batch_index is not None:
+            v_out = ctx_gather_blocked_kv_cb(v_out, batch_index, ctx_indices)
+        else:
+            ctx_indices = ctx_indices.expand(batch, num_kv_heads, ctx_indices.shape[-1])
+            v_out = ctx_gather_blocked_kv(v_out, ctx_indices)
+
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
+        return v_out
+
     def update(
         self,
         key_states: torch.Tensor,
@@ -1470,6 +1841,7 @@ class QEffGemma4DynamicCache(QEffDynamicCache):
         **kwargs,
     ):
         self.config = config
+        self.sliding_window_len = getattr(config, "sliding_window", None)
         kwargs.pop("layer_classes", None)
         kwargs.pop("layers", None)
         kwargs.pop("layer_class_to_replicate", None)

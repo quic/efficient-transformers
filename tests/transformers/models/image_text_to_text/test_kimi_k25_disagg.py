@@ -146,7 +146,7 @@ def _compile_disagg_qpcs(qeff_model: QEFFAutoModelForImageTextToText, compile_di
     common_compile_kwargs = {
         "batch_size": BATCH_SIZE,
         "ctx_len": CTX_LEN,
-        "num_cores": 16,
+        "num_cores": 4,
         "mxfp6_matmul": False,
         "split_model_io": True,
         "mos": 1,
