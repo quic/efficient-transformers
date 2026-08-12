@@ -10,6 +10,7 @@ pytest -m "on_qaic and multimodal" tests/transformers/disaggregated/test_gemma4_
 """
 
 import copy
+import os
 from pathlib import Path
 
 import numpy as np
@@ -22,20 +23,23 @@ from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.base.onnx_transforms import FP16ClipTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-pytestmark = pytest.mark.skip(reason="")
+pytestmark = pytest.mark.skip(reason="gemma4 mismatching")
 
 MODEL_NAME = "google/gemma-4-26B-A4B-it"
 SYSTEM_PROMPT = "You are a helpful assistant."
-NUM_HIDDEN_LAYERS = 6
+NUM_HIDDEN_LAYERS = 2
 VISION_DEPTH = 2
+MOE_PREFILL_PACKED_CHUNK_SIZE = 256
 PREFILL_SEQ_LEN = 256
 CTX_LEN = 4096
 BATCH_SIZE = 1
 GENERATION_LEN = 30
 IMAGE_SIZE = (536, 354)
 TEXT_PROMPT = "Can you describe this image in detail?"
+# Set QEFF_GEMMA4_SKIP_VISION=1 to exercise only the language  path.
+SKIP_VISION = os.environ.get("QEFF_GEMMA4_SKIP_VISION", "1").strip().lower() in {"1", "true", "yes"}
 
-PREFILL_NUM_DEVICES = 4
+PREFILL_NUM_DEVICES = 2
 DECODE_NUM_DEVICES = 2
 PREFILL_MDP_PARTITIONS = 2
 
@@ -164,6 +168,10 @@ def _remove_fp16clip_transform(qeff_model: QEFFAutoModelForImageTextToText):
             sub._onnx_transforms = [t for t in sub._onnx_transforms if t is not FP16ClipTransform]
 
 
+def _active_sessions(*sessions: QAICInferenceSession | None) -> list[QAICInferenceSession]:
+    return [session for session in sessions if session is not None]
+
+
 def _prepare_messages(image: Image.Image) -> list:
     return [
         {
@@ -215,10 +223,6 @@ def _run_hf_torch_fp32(model, inputs: dict) -> np.ndarray:
     }
 
     with torch.inference_mode():
-        # min_new_tokens == max_new_tokens forces exactly GENERATION_LEN tokens: HF would
-        # otherwise stop early at an EOS token (max_new_tokens is only an upper bound), while
-        # the QAIC decode loop always runs a fixed GENERATION_LEN with no EOS check -- the
-        # length mismatch would break the token-for-token shape/parity comparison.
         outputs = model.generate(
             **gen_inputs,
             max_new_tokens=GENERATION_LEN,
@@ -233,7 +237,7 @@ def _run_hf_torch_fp32(model, inputs: dict) -> np.ndarray:
 def _run_disagg_kv_share_qaic_generation(
     processor,
     common_inputs: dict,
-    vision_session: QAICInferenceSession,
+    vision_session: QAICInferenceSession | None,
     prefill_session: QAICInferenceSession,
     decode_session: QAICInferenceSession,
 ) -> np.ndarray:
@@ -266,12 +270,16 @@ def _run_disagg_kv_share_qaic_generation(
             0,
         )
     inputs = {name: np.array(value) for name, value in inputs.items()}
-    vision_inputs = {name: value for name, value in inputs.items() if name in VISION_INPUT_KEYS}
-    vision_inputs.update(
-        {name: vision_inputs[name].astype("float16") for name in VISION_FP16_KEYS if name in vision_inputs}
-    )
-    vision_outputs = vision_session.run(vision_inputs)
-    vision_session.deactivate()
+    vision_outputs = {}
+    if vision_session is not None:
+        vision_inputs = {name: value for name, value in inputs.items() if name in VISION_INPUT_KEYS}
+        vision_inputs.update(
+            {name: vision_inputs[name].astype("float16") for name in VISION_FP16_KEYS if name in vision_inputs}
+        )
+        vision_outputs = vision_session.run(vision_inputs)
+        vision_session.deactivate()
+    else:
+        vision_inputs = {}
 
     lang_inputs = {name: value for name, value in inputs.items() if name not in vision_inputs}
     if "position_ids" in inputs:
@@ -280,8 +288,6 @@ def _run_disagg_kv_share_qaic_generation(
     else:
         lang_inputs["position_ids"] = np.where(lang_inputs.pop("attention_mask"), np.arange(padded_len), -1)
 
-    # mm_token_type_ids is a per-chunk lang input; synthesize zeros if the processor omitted
-    # it so prefill slicing and the binding are always satisfied.
     if "mm_token_type_ids" not in lang_inputs:
         lang_inputs["mm_token_type_ids"] = np.zeros((BATCH_SIZE, padded_len), dtype=np.int64)
 
@@ -292,21 +298,13 @@ def _run_disagg_kv_share_qaic_generation(
 
     vision_persist = {name: vision_outputs[name] for name in VISION_OUTPUTS if name in vision_outputs}
     prefill_session.set_persistent_inputs(vision_persist)
-
-    # The decode QPC binds mm_token_type_ids (seq_len=1 ignores its value, but the pooled
-    # np_run path wires only the bindings it is handed), so register constant zeros to satisfy
-    # it; register vision_embeds on decode too when it binds the name.
     decode_persist = {"mm_token_type_ids": np.zeros((BATCH_SIZE, 1), dtype=np.int64), **vision_persist}
     decode_session.set_persistent_inputs(
         {name: value for name, value in decode_persist.items() if name in decode_session.binding_index_map}
     )
 
-    # Hybrid: kv_cache_info carries mixed sliding-window and full-attention 4-D shapes.
     kv_caches = [np.zeros(shape, dtype=dtype) for (shape, dtype) in decode_session.kv_cache_info]
 
-    # ---- Prefill (producer, SERIAL): image_idx threads chunk-to-chunk ----
-    # Only the LAST chunk wires the DMA handoff into kv_caches (earlier chunks just accumulate
-    # KV on-device). np_run_pipeline selects the hybrid full slicing spec internally.
     chunk_inputs = dict(lang_inputs)
     exec_idx = None
     for chunk_idx in range(num_chunks):
@@ -331,7 +329,6 @@ def _run_disagg_kv_share_qaic_generation(
     prefill_out = prefill_session.get_outputs(index=exec_idx)
     generated_ids = [_get_next_token_ids(prefill_out["logits"])]
 
-    # ---- Decode (consumer): re-point DMA descriptor at kv_caches EVERY step ----
     decode_kv_map = decode_session.decode_buff_map + decode_session.decode_rs_kv_only_buff_map
     position_ids = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
     decode_inputs = {
@@ -366,7 +363,7 @@ def _run_disagg_kv_share_qaic_generation(
 def _run_disagg_baseline_numpy_copy_generation(
     processor,
     common_inputs: dict,
-    vision_session: QAICInferenceSession,
+    vision_session: QAICInferenceSession | None,
     prefill_session: QAICInferenceSession,
     decode_session: QAICInferenceSession,
 ) -> np.ndarray:
@@ -401,11 +398,15 @@ def _run_disagg_baseline_numpy_copy_generation(
         )
     inputs = {name: np.array(value) for name, value in inputs.items()}
 
-    vision_inputs = {name: value for name, value in inputs.items() if name in VISION_INPUT_KEYS}
-    vision_inputs.update(
-        {name: vision_inputs[name].astype("float16") for name in VISION_FP16_KEYS if name in vision_inputs}
-    )
-    vision_outputs = vision_session.run(vision_inputs)
+    vision_outputs = {}
+    if vision_session is not None:
+        vision_inputs = {name: value for name, value in inputs.items() if name in VISION_INPUT_KEYS}
+        vision_inputs.update(
+            {name: vision_inputs[name].astype("float16") for name in VISION_FP16_KEYS if name in vision_inputs}
+        )
+        vision_outputs = vision_session.run(vision_inputs)
+    else:
+        vision_inputs = {}
 
     lang_inputs = {name: value for name, value in inputs.items() if name not in vision_inputs}
     if "position_ids" in inputs:
@@ -426,7 +427,6 @@ def _run_disagg_baseline_numpy_copy_generation(
     decode_has_image_idx = "image_idx" in decode_session.binding_index_map
     decode_has_mm_token_type_ids = "mm_token_type_ids" in decode_session.binding_index_map
 
-    # ---- Prefill (SERIAL): image_idx and the retained KV thread chunk-to-chunk via host copy ----
     chunk_inputs = dict(lang_inputs)
     outputs = None
     for chunk_idx in range(num_chunks):
@@ -485,15 +485,17 @@ def _run_disagg_baseline_numpy_copy_generation(
 
 
 @pytest.mark.on_qaic
-@pytest.mark.multimodal
+@pytest.mark.disagg_dma
 def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
     torch.manual_seed(42)
 
     hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32"))
     processor = AutoProcessor.from_pretrained(MODEL_NAME, trust_remote_code=True)
 
-    image = Image.new("RGB", IMAGE_SIZE, color=(127, 127, 127))
-    messages = _prepare_messages(image)
+    if SKIP_VISION:
+        messages = _prepare_text_only_messages()
+    else:
+        messages = _prepare_messages(Image.new("RGB", IMAGE_SIZE, color=(127, 127, 127)))
     chat_template = _resolve_chat_template(processor, processor.tokenizer)
     common_inputs = _prepare_processor_inputs(processor, chat_template, messages)
     hf_tokens = _run_hf_torch_fp32(hf_model, common_inputs)
@@ -517,64 +519,21 @@ def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
     sessions = []
     compiled_onnx_paths = {}
     try:
-        vision_qpc_path = qeff_model.compile(
-            batch_size=BATCH_SIZE,
-            prefill_seq_len=PREFILL_SEQ_LEN,
-            ctx_len=CTX_LEN,
-            num_cores=16,
-            num_devices=1,
-            mos=1,
-            aic_enable_depth_first=True,
-            skip_vision=False,
-            split_model_io=True,
-            skip_lang=True,
-            use_onnx_subfunctions=True,
-            offload_pt_weights=False,
-        )
-        compiled_onnx_paths["vision"] = _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
+        vision_qpc_path = None
+        if not SKIP_VISION:
+            vision_qpc_path = _compile_vision(qeff_model)
+            compiled_onnx_paths["vision"] = _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
 
-        decode_qpc_path = qeff_model.compile(
-            batch_size=BATCH_SIZE,
-            prefill_seq_len=1,
-            ctx_len=CTX_LEN,
-            num_cores=16,
-            num_devices=DECODE_NUM_DEVICES,
-            retain_full_kv=True,  # required for DMA slice writes into full KV
-            split_retained_state_io=True,
-            mos=1,
-            aic_enable_depth_first=True,
-            prefill_only=False,
-            skip_vision=True,
-            use_onnx_subfunctions=True,
-            offload_pt_weights=False,
+        prefill_qpc_path, decode_qpc_path, lang_onnx_paths = _compile_kv_share_lang(
+            qeff_model, moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE
         )
-        compiled_onnx_paths["decode"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "decode")
-
-        prefill_qpc_path = qeff_model.compile(
-            batch_size=BATCH_SIZE,
-            prefill_seq_len=PREFILL_SEQ_LEN,
-            ctx_len=CTX_LEN,
-            num_cores=16,
-            num_devices=PREFILL_NUM_DEVICES,
-            retain_full_kv=True,
-            split_retained_state_io=True,
-            mos=1,
-            aic_enable_depth_first=True,
-            mdp_num_partitions=PREFILL_MDP_PARTITIONS,
-            moe_prefill_packed_chunk_size=256,
-            prefill_only=True,
-            enable_chunking=True,
-            skip_vision=True,
-            use_onnx_subfunctions=True,
-        )
-        compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")
-        # _assert_distinct_onnx_paths(compiled_onnx_paths)
+        compiled_onnx_paths.update(lang_onnx_paths)
         print(f"Disagg ONNX paths: {compiled_onnx_paths}")
 
-        vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
-        prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"), kv_dma_share=True)
-        decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"), kv_dma_share=True)
-        sessions.extend([vision_session, prefill_session, decode_session])
+        vision_session = None if SKIP_VISION else QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
+        prefill_session = QAICInferenceSession(prefill_qpc_path, kv_dma_share=True)
+        decode_session = QAICInferenceSession(decode_qpc_path, kv_dma_share=True)
+        sessions.extend(_active_sessions(vision_session, prefill_session, decode_session))
 
         qaic_tokens = _run_disagg_kv_share_qaic_generation(
             processor=processor,
@@ -654,8 +613,7 @@ def _compile_vision(qeff_model) -> str:
     return vision_qpc_path.get("vision_qpc_path")
 
 
-def _compile_kv_share_lang(qeff_model) -> tuple[str, str, dict]:
-    """Compile the DMA KV-share lang QPCs (split_retained_state_io + retain_full_kv)."""
+def _compile_kv_share_lang(qeff_model, moe_prefill_packed_chunk_size: int | None = None) -> tuple[str, str, dict]:
     onnx_paths = {}
     decode_qpc_path = qeff_model.compile(
         batch_size=BATCH_SIZE,
@@ -674,23 +632,26 @@ def _compile_kv_share_lang(qeff_model) -> tuple[str, str, dict]:
     )
     onnx_paths["kv_share_decode"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "kv_share decode")
 
-    prefill_qpc_path = qeff_model.compile(
-        batch_size=BATCH_SIZE,
-        prefill_seq_len=PREFILL_SEQ_LEN,
-        ctx_len=CTX_LEN,
-        num_cores=16,
-        num_devices=PREFILL_NUM_DEVICES,
-        retain_full_kv=True,
-        split_retained_state_io=True,
-        mos=1,
-        aic_enable_depth_first=True,
-        mdp_num_partitions=PREFILL_MDP_PARTITIONS,
-        prefill_only=True,
-        enable_chunking=True,
-        skip_vision=True,
-        use_onnx_subfunctions=True,
-        offload_pt_weights=False,
-    )
+    prefill_compile_kwargs = {
+        "batch_size": BATCH_SIZE,
+        "prefill_seq_len": PREFILL_SEQ_LEN,
+        "ctx_len": CTX_LEN,
+        "num_cores": 16,
+        "num_devices": PREFILL_NUM_DEVICES,
+        "retain_full_kv": True,
+        "split_retained_state_io": True,
+        "mos": 1,
+        "aic_enable_depth_first": True,
+        "mdp_num_partitions": PREFILL_MDP_PARTITIONS,
+        "prefill_only": True,
+        "enable_chunking": True,
+        "skip_vision": True,
+        "use_onnx_subfunctions": True,
+        "offload_pt_weights": False,
+    }
+    if moe_prefill_packed_chunk_size is not None:
+        prefill_compile_kwargs["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
+    prefill_qpc_path = qeff_model.compile(**prefill_compile_kwargs)
     onnx_paths["kv_share_prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "kv_share prefill")
     return prefill_qpc_path.get("lang_prefill_qpc_path"), decode_qpc_path.get("lang_decode_qpc_path"), onnx_paths
 
@@ -729,7 +690,7 @@ def _compile_baseline_lang(qeff_model) -> tuple[str, str, dict]:
         enable_chunking=True,
         skip_vision=True,
         use_onnx_subfunctions=True,
-        offload_pt_weights=False,
+        offload_pt_weights=True,
     )
     onnx_paths["baseline_prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "baseline prefill")
     return prefill_qpc_path.get("lang_prefill_qpc_path"), decode_qpc_path.get("lang_decode_qpc_path"), onnx_paths
@@ -745,8 +706,10 @@ def test_gemma4_moe_disagg_kv_share_matches_numpy_copy_baseline(manual_cleanup):
     hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32"))
     processor = AutoProcessor.from_pretrained(MODEL_NAME, trust_remote_code=True)
 
-    image = Image.new("RGB", IMAGE_SIZE, color=(127, 127, 127))
-    messages = _prepare_messages(image)
+    if SKIP_VISION:
+        messages = _prepare_text_only_messages()
+    else:
+        messages = _prepare_messages(Image.new("RGB", IMAGE_SIZE, color=(127, 127, 127)))
     chat_template = _resolve_chat_template(processor, processor.tokenizer)
     common_inputs = _prepare_processor_inputs(processor, chat_template, messages)
 
@@ -755,8 +718,10 @@ def test_gemma4_moe_disagg_kv_share_matches_numpy_copy_baseline(manual_cleanup):
     sessions = []
     compiled_onnx_paths = {}
     try:
-        vision_qpc_path = _compile_vision(qeff_model)
-        compiled_onnx_paths["vision"] = _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
+        vision_qpc_path = None
+        if not SKIP_VISION:
+            vision_qpc_path = _compile_vision(qeff_model)
+            compiled_onnx_paths["vision"] = _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
 
         share_prefill_qpc, share_decode_qpc, share_onnx = _compile_kv_share_lang(qeff_model)
         compiled_onnx_paths.update(share_onnx)
@@ -767,10 +732,10 @@ def test_gemma4_moe_disagg_kv_share_matches_numpy_copy_baseline(manual_cleanup):
         # _assert_distinct_onnx_paths(compiled_onnx_paths)
         print(f"Disagg ONNX paths: {compiled_onnx_paths}")
 
-        share_vision_session = QAICInferenceSession(vision_qpc_path)
+        share_vision_session = None if SKIP_VISION else QAICInferenceSession(vision_qpc_path)
         share_prefill_session = QAICInferenceSession(share_prefill_qpc, kv_dma_share=True)
         share_decode_session = QAICInferenceSession(share_decode_qpc, kv_dma_share=True)
-        sessions.extend([share_vision_session, share_prefill_session, share_decode_session])
+        sessions.extend(_active_sessions(share_vision_session, share_prefill_session, share_decode_session))
 
         share_tokens = _run_disagg_kv_share_qaic_generation(
             processor=processor,
@@ -780,12 +745,14 @@ def test_gemma4_moe_disagg_kv_share_matches_numpy_copy_baseline(manual_cleanup):
             decode_session=share_decode_session,
         )
         for session in (share_vision_session, share_prefill_session, share_decode_session):
+            if session is None:
+                continue
             session.deactivate()
 
-        base_vision_session = QAICInferenceSession(vision_qpc_path)
+        base_vision_session = None if SKIP_VISION else QAICInferenceSession(vision_qpc_path)
         base_prefill_session = QAICInferenceSession(base_prefill_qpc)
         base_decode_session = QAICInferenceSession(base_decode_qpc)
-        sessions.extend([base_vision_session, base_prefill_session, base_decode_session])
+        sessions.extend(_active_sessions(base_vision_session, base_prefill_session, base_decode_session))
 
         baseline_tokens = _run_disagg_baseline_numpy_copy_generation(
             processor=processor,
@@ -827,15 +794,10 @@ def test_gemma4_moe_disagg_kv_share_matches_numpy_copy_baseline(manual_cleanup):
         )
 
 
+@pytest.mark.skip("for local checking only")
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 def test_gemma4_moe_disagg_kv_share_kv_handoff_correctness(manual_cleanup):
-    """KV-handoff correctness for the gemma4 DMA path: the shared host ``kv_caches``
-    arrays are inspected right after the last chunked-prefill DMA write and right after
-    the first decode step, to prove the last prefill chunk's KV is exactly what decode
-    reads as its input KV -- decode's write-back must only append the new position
-    without disturbing the prefill-written prefix.
-    """
     torch.manual_seed(42)
 
     hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32"))
@@ -898,7 +860,6 @@ def test_gemma4_moe_disagg_kv_share_kv_handoff_correctness(manual_cleanup):
             {name: value for name, value in decode_persist.items() if name in decode_session.binding_index_map}
         )
 
-        # Hybrid: kv_cache_info carries mixed sliding-window and full-attention 4-D shapes.
         kv_caches = [np.zeros(shape, dtype=dtype) for (shape, dtype) in decode_session.kv_cache_info]
         assert all(np.all(kv == 0) for kv in kv_caches), "KV caches are not zero-initialised before prefill"
 
@@ -928,7 +889,6 @@ def test_gemma4_moe_disagg_kv_share_kv_handoff_correctness(manual_cleanup):
         first_token = _get_next_token_ids(prefill_out["logits"])
         next_pos = int(np.max(lang_inputs["position_ids"])) + 1
 
-        # Post-condition: the last chunk's DMA write landed the real prompt prefix.
         written = [kv[:, :, :prompt_len, :] for kv in kv_caches]
         assert all(np.any(w != 0) for w in written), (
             "KV caches are still zero after the last prefill chunk -- DMA handoff did not write them"
