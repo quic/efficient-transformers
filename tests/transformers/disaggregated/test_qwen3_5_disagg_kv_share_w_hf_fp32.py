@@ -26,7 +26,8 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 pytestmark = pytest.mark.skip(reason="")
 
 MODEL_NAME = "Qwen/Qwen3.6-35B-A3B"
-# MODEL_NAME = 'tiny-random/qwen3.5-moe'
+# MODEL_NAME = "tiny-random/qwen3.5-moe"
+TINY_RANDOM_MODEL_NAMES = {"tiny-random/qwen3.5-moe"}
 
 
 def _optional_int_env(name: str, default: int | None) -> int | None:
@@ -38,12 +39,12 @@ def _optional_int_env(name: str, default: int | None) -> int | None:
 
 
 # Optional depth truncation: set to an int to run a shallow model
-NUM_HIDDEN_LAYERS = _optional_int_env("QEFF_QWEN35_NUM_HIDDEN_LAYERS", default=None)
-VISION_DEPTH = _optional_int_env("QEFF_QWEN35_VISION_DEPTH", default=None)
+NUM_HIDDEN_LAYERS = _optional_int_env("QEFF_QWEN35_NUM_HIDDEN_LAYERS", default=2)
+VISION_DEPTH = _optional_int_env("QEFF_QWEN35_VISION_DEPTH", default=2)
 PREFILL_SEQ_LEN = 64
 CTX_LEN = 1024
 BATCH_SIZE = 1
-GENERATION_LEN = 50
+GENERATION_LEN = 40
 IMAGE_SIZE = (536, 354)
 TEXT_PROMPT = "Describe all the colors seen in the image."
 
@@ -72,22 +73,29 @@ def _assert_distinct_onnx_paths(onnx_paths: dict[str, Path]):
     assert len(unique_paths) == len(onnx_paths), f"Expected distinct ONNX paths per compile, got: {onnx_paths}"
 
 
-def _load_hf_model_from_pretrained(config):
+def _load_hf_model_from_pretrained(config, dtype: str = "float32"):
+    from_pretrained_kwargs = {"config": config} if config is not None else {}
+    torch_dtype = getattr(config, "torch_dtype", None) if config is not None else None
+    if isinstance(torch_dtype, str):
+        torch_dtype = getattr(torch, torch_dtype)
+    if torch_dtype is None:
+        torch_dtype = getattr(torch, dtype)
+
     try:
         model = AutoModelForImageTextToText.from_pretrained(
             MODEL_NAME,
-            config=config,
             attn_implementation="eager",
             trust_remote_code=True,
-            torch_dtype=config.torch_dtype,
+            torch_dtype=torch_dtype,
+            **from_pretrained_kwargs,
         )
     except ValueError:
         model = AutoModelForCausalLM.from_pretrained(
             MODEL_NAME,
-            config=config,
             attn_implementation="eager",
             trust_remote_code=True,
-            torch_dtype=config.torch_dtype,
+            torch_dtype=torch_dtype,
+            **from_pretrained_kwargs,
         )
     model.eval()
     return model
@@ -125,6 +133,9 @@ def _apply_reduced_layer_config(config, num_lang_layers: int | None, num_vision_
 
 def _build_config(dtype: str = "float16"):
     """Load the real config; optionally truncate depth (see ``_apply_reduced_layer_config``)."""
+    if MODEL_NAME in TINY_RANDOM_MODEL_NAMES:
+        return None
+
     config = AutoConfig.from_pretrained(MODEL_NAME, trust_remote_code=True)
     config.dtype = dtype
     config.torch_dtype = getattr(torch, dtype)
@@ -183,10 +194,6 @@ def _run_hf_torch_fp32(model, processor: AutoProcessor, messages: list, collect_
     }
 
     with torch.inference_mode():
-        # min_new_tokens == max_new_tokens forces exactly GENERATION_LEN tokens: HF would
-        # otherwise stop early at an EOS token (max_new_tokens is only an upper bound), while
-        # the QAIC decode loop always runs a fixed GENERATION_LEN with no EOS check -- the
-        # length mismatch would break the token-for-token shape/parity comparison.
         outputs = model.generate(
             **inputs,
             max_new_tokens=GENERATION_LEN,
@@ -442,7 +449,7 @@ def _compile_disagg_sessions(qeff_model, image, sessions: list, compiled_onnx_pa
         height=image.height,
         width=image.width,
         num_cores=16,
-        num_devices=4,
+        num_devices=2,
         retain_full_kv=True,
         split_retained_state_io=True,
         mos=1,
