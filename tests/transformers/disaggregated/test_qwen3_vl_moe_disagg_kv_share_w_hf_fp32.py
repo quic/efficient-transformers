@@ -23,10 +23,9 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageText
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-pytestmark = pytest.mark.skip(reason="")
-
-# MODEL_NAME = "tiny-random/qwen3-vl-moe"
-MODEL_NAME = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+MODEL_NAME = "tiny-random/qwen3-vl-moe"
+# MODEL_NAME = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+TINY_RANDOM_MODEL_NAMES = {"tiny-random/qwen3-vl-moe"}
 PREFILL_SEQ_LEN = 128
 CTX_LEN = 4096
 BATCH_SIZE = 1
@@ -61,28 +60,38 @@ def _assert_distinct_onnx_paths(onnx_paths: dict[str, Path]):
     assert len(unique_paths) == len(onnx_paths), f"Expected distinct ONNX paths per compile, got: {onnx_paths}"
 
 
-def _load_hf_model_from_pretrained(config):
+def _load_hf_model_from_pretrained(config, dtype: str = "float32"):
+    from_pretrained_kwargs = {"config": config} if config is not None else {}
+    torch_dtype = getattr(config, "torch_dtype", None) if config is not None else None
+    if isinstance(torch_dtype, str):
+        torch_dtype = getattr(torch, torch_dtype)
+    if torch_dtype is None:
+        torch_dtype = getattr(torch, dtype)
+
     try:
         model = AutoModelForImageTextToText.from_pretrained(
             MODEL_NAME,
-            config=config,
             attn_implementation="eager",
             trust_remote_code=True,
-            torch_dtype=config.torch_dtype,
+            torch_dtype=torch_dtype,
+            **from_pretrained_kwargs,
         )
     except ValueError:
         model = AutoModelForCausalLM.from_pretrained(
             MODEL_NAME,
-            config=config,
             attn_implementation="eager",
             trust_remote_code=True,
-            torch_dtype=config.torch_dtype,
+            torch_dtype=torch_dtype,
+            **from_pretrained_kwargs,
         )
     model.eval()
     return model
 
 
 def _build_config(dtype: str = "float32"):
+    if MODEL_NAME in TINY_RANDOM_MODEL_NAMES:
+        return None
+
     config = AutoConfig.from_pretrained(MODEL_NAME, trust_remote_code=True)
     config.dtype = dtype
     config.torch_dtype = getattr(torch, dtype)
@@ -271,7 +280,7 @@ def _run_disagg_kv_share_qaic_generation(
 
 
 @pytest.mark.on_qaic
-@pytest.mark.multimodal
+@pytest.mark.disagg_dma
 def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
     pytest.importorskip("qwen_vl_utils")
     torch.manual_seed(42)
