@@ -152,14 +152,14 @@ class Rope2DPosEmbRepeated(nn.Module):
             self.freqs_cis = self._precompute_freqs_cis(device)
 
         if not hasattr(self, "freqs_cos"):
-            self.register_buffer("freqs_cos", self.freqs_cis.real.contiguous(), persistent=False)
+            self.register_buffer("freqs_cos", self.freqs_cis[0].contiguous(), persistent=False)
         elif self.freqs_cos.device != device:
-            self.freqs_cos = self.freqs_cis.real.contiguous()
+            self.freqs_cos = self.freqs_cis[0].contiguous()
 
         if not hasattr(self, "freqs_sin"):
-            self.register_buffer("freqs_sin", self.freqs_cis.imag.contiguous(), persistent=False)
+            self.register_buffer("freqs_sin", self.freqs_cis[1].contiguous(), persistent=False)
         elif self.freqs_sin.device != device:
-            self.freqs_sin = self.freqs_cis.imag.contiguous()
+            self.freqs_sin = self.freqs_cis[1].contiguous()
 
     def _precompute_freqs_cis(self, device: torch.device) -> torch.Tensor:
         """Calculate the cis(freqs) for each position in the 2D grid.
@@ -176,13 +176,15 @@ class Rope2DPosEmbRepeated(nn.Module):
         freqs = 1.0 / (self.theta_base ** (dim_range / self.dim))
         x_freqs = torch.outer(x_pos, freqs).float()  # N, C/4
         y_freqs = torch.outer(y_pos, freqs).float()  # N, C/4
-        x_cis = torch.polar(torch.ones_like(x_freqs), x_freqs)  # N, C/4
-        y_cis = torch.polar(torch.ones_like(y_freqs), y_freqs)  # N, C/4
+        x_cos, x_sin = torch.cos(x_freqs), torch.sin(x_freqs)  # N, C/4
+        y_cos, y_sin = torch.cos(y_freqs), torch.sin(y_freqs)  # N, C/4
         # N, C/4, 2
-        freqs_cis = torch.cat([x_cis.unsqueeze(dim=-1), y_cis.unsqueeze(dim=-1)], dim=-1)
+        freqs_cos = torch.cat([x_cos.unsqueeze(dim=-1), y_cos.unsqueeze(dim=-1)], dim=-1)
+        freqs_sin = torch.cat([x_sin.unsqueeze(dim=-1), y_sin.unsqueeze(dim=-1)], dim=-1)
         # max_height, max_width, C/2
-        freqs_cis = freqs_cis.reshape(self.max_height, self.max_width, -1)
-        return freqs_cis
+        freqs_cos = freqs_cos.reshape(self.max_height, self.max_width, -1)
+        freqs_sin = freqs_sin.reshape(self.max_height, self.max_width, -1)
+        return torch.stack([freqs_cos, freqs_sin], dim=0)
 
     def get_freqs_cis(self, grid_thws: torch.Tensor, device: torch.device) -> torch.Tensor:
         """
@@ -200,8 +202,8 @@ class Rope2DPosEmbRepeated(nn.Module):
             self.max_width,
         )
         freqs_cis = torch.cat(
-            [self.freqs_cis[:h, :w].reshape(-1, self.dim // 2).repeat(t, 1) for t, h, w in shapes],
-            dim=0,
+            [self.freqs_cis[:, :h, :w].reshape(2, -1, self.dim // 2).repeat(1, t, 1) for t, h, w in shapes],
+            dim=1,
         )
         return freqs_cis
 
@@ -340,9 +342,15 @@ class QEffMoonViT3dEncoder(nn.Module):
 
         new_blocks = []
         for old_block in old_blocks:
-            new_block = MoonViTEncoderLayer(**self.block_cfg, use_deterministic_attn=False)
-            new_block.load_state_dict(old_block.state_dict())
-            new_blocks.append(new_block.to(device=old_block.wqkv.weight.device, dtype=old_block.wqkv.weight.dtype))
+            weight = old_block.wqkv.weight
+            if weight.is_meta:
+                with torch.device("meta"):
+                    new_block = MoonViTEncoderLayer(**self.block_cfg, use_deterministic_attn=False)
+                new_blocks.append(new_block.to(dtype=weight.dtype))
+            else:
+                new_block = MoonViTEncoderLayer(**self.block_cfg, use_deterministic_attn=False)
+                new_block.load_state_dict(old_block.state_dict())
+                new_blocks.append(new_block.to(device=weight.device, dtype=weight.dtype))
         self.blocks = nn.ModuleList(new_blocks)
 
 
@@ -521,15 +529,12 @@ class QEffKimiK25DecoderWrapper(nn.Module):
 
             inputs_embeds = merged_inputs_embeds
             attention_mask = merged_attention_mask
-            merged_image_tokens = (
-                torch._shape_as_tensor(vision_embeds_for_state)[:1]
-                .view(1, 1)
-                .to(device=image_idx.device, dtype=torch.int64)
+            merged_image_tokens = torch.full(
+                (1, 1), vision_embeds_for_state.shape[0], device=image_idx.device, dtype=torch.int64
             )
             default_image_idx = torch.clamp(merged_image_tokens - 1, min=0)
-            input_batch = torch._shape_as_tensor(input_ids)[:1].view(1, 1).to(device=image_idx.device)
-            image_idx_batch = torch._shape_as_tensor(image_idx)[:1].view(1, 1).to(device=image_idx.device)
-
+            input_batch = torch.full((1, 1), input_ids.shape[0], device=image_idx.device, dtype=torch.int64)
+            image_idx_batch = torch.full((1, 1), image_idx.shape[0], device=image_idx.device, dtype=torch.int64)
             if position_ids is None:
                 post_media_position = torch.zeros_like(image_idx, dtype=torch.bool)
             else:
@@ -588,6 +593,8 @@ class QEffKimiK25DecoderWrapper(nn.Module):
             output_kvs = getattr(outputs, "compressed_kvs", None)
         else:
             output_kvs = getattr(outputs, "past_key_values", None)
+        if vision_embeds_for_state is not None:
+            vision_embeds_for_state = vision_embeds_for_state + torch.zeros_like(vision_embeds_for_state)
         image_idx_output = image_idx[:1, :1] if image_idx is not None else image_idx
         return logits, vision_embeds_for_state, image_idx_output, output_kvs
 
@@ -613,8 +620,7 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
 
         target_device = inputs_embeds.device
         image_features = image_features.to(target_device)
-        image_shape = torch._shape_as_tensor(image_features).to(device=input_ids.device, dtype=input_ids.dtype)
-        num_image_tokens = image_shape[0]
+        num_image_tokens = torch.full((1, 1), image_features.shape[0], device=input_ids.device, dtype=input_ids.dtype)
 
         image_token_mask = input_ids == image_token_index
         non_image_mask = ~image_token_mask
@@ -640,22 +646,21 @@ class QEffKimiK25ForConditionalGeneration(nn.Module):
             dim=1
         )
 
-        image_start_positions = torch.where(
-            image_token_mask,
-            new_token_positions - num_image_tokens.view(1, 1) + 1,
-            torch.zeros_like(new_token_positions),
+        image_features_for_batch = image_features.unsqueeze(0).expand(input_ids.shape[0], -1, -1)
+        media_embedding = torch.cat([image_features_for_batch, final_embedding[:, image_features.shape[0] :, :]], dim=1)
+        media_attention_mask = torch.cat(
+            [
+                torch.ones(
+                    (input_ids.shape[0], image_features.shape[0]),
+                    dtype=attention_mask.dtype,
+                    device=input_ids.device,
+                ),
+                final_attention_mask[:, image_features.shape[0] :],
+            ],
+            dim=1,
         )
-        image_start = image_start_positions.max(dim=1, keepdim=True).values
-        image_positions = merged_positions.squeeze(1) - image_start
-        max_image_index = num_image_tokens.view(1, 1) - 1
-        safe_image_positions = torch.minimum(torch.clamp(image_positions, min=0), max_image_index)
-        image_slots = torch.logical_and(image_positions >= 0, image_positions < num_image_tokens.view(1, 1))
-        image_slots = torch.logical_and(image_slots, has_image)
-        image_slots = torch.logical_and(image_slots, torch.logical_not(text_position_one_hot.any(dim=1)))
-
-        gathered_image_embeddings = image_features[safe_image_positions.to(torch.long)]
-        final_embedding = torch.where(image_slots.unsqueeze(-1), gathered_image_embeddings, final_embedding)
-        final_attention_mask = torch.logical_or(final_attention_mask.bool(), image_slots).to(final_attention_mask.dtype)
+        final_embedding = torch.where(has_image.unsqueeze(-1), media_embedding, final_embedding)
+        final_attention_mask = torch.where(has_image, media_attention_mask, final_attention_mask)
 
         position_ids = torch.cumsum(final_attention_mask, dim=1) - 1
         position_ids = torch.where(final_attention_mask == 0, torch.full_like(position_ids, -1), position_ids)
