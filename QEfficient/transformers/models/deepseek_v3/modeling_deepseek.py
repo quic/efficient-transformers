@@ -209,6 +209,8 @@ def orig_apply_rotary_pos_emb(q, k, cos, sin):
     b, h, s, d = k.shape
     k = k.view(b, h, s, d // 2, 2).transpose(4, 3).reshape(b, h, s, d)
 
+    cos = cos.to(device=q.device, dtype=q.dtype)
+    sin = sin.to(device=q.device, dtype=q.dtype)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed, k_embed
@@ -282,7 +284,7 @@ class QEffDeepseekV3Attention(nn.Module):
         q_a_proj_out = self.q_a_layernorm(self.q_a_proj(hidden_states))
         q_pe = torch.matmul(q_a_proj_out, self.q_rope)
         q_pe = q_pe.view(bsz, q_len, self.num_heads, self.qk_rope_head_dim).transpose(1, 2)
-        q_nope = torch.bmm(q_a_proj_out, self.q_up)
+        q_nope = torch.bmm(q_a_proj_out, self.q_up.to(device=q_a_proj_out.device, dtype=q_a_proj_out.dtype))
         q_nope = q_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
 
         kva = self.kv_a_layernorm(kva)
@@ -379,7 +381,7 @@ class QEffDeepseekV3Attention(nn.Module):
                 dq_qup_kupT = torch.matmul(q_a_proj_out, self.fusedqk)
             query = torch.cat((dq_qup_kupT, q_pe), dim=-1)  # [B, num_heads, q_len, d_abs]
         else:
-            q_nope = torch.bmm(q_a_proj_out, self.q_up)
+            q_nope = torch.bmm(q_a_proj_out, self.q_up.to(device=q_a_proj_out.device, dtype=q_a_proj_out.dtype))
             q_nope = q_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
             query = torch.cat((q_nope, q_pe), dim=-1)
 
@@ -435,7 +437,7 @@ class QEffDeepseekV3Attention(nn.Module):
         # ---- Q projections ----
         q_a_proj_out = self.q_a_layernorm(self.q_a_proj(hidden_states))
 
-        q_pe = torch.bmm(q_a_proj_out, self.q_rope)
+        q_pe = torch.bmm(q_a_proj_out, self.q_rope.to(device=q_a_proj_out.device, dtype=q_a_proj_out.dtype))
         q_pe = q_pe.view(bsz, q_len, self.num_heads, self.qk_rope_head_dim).transpose(1, 2)
 
         kva = self.kv_a_layernorm(kva)
@@ -494,7 +496,7 @@ class QEffDeepseekV3Attention(nn.Module):
             query_states = torch.cat((q_nope_compressed, q_pe), dim=-1)
             key_states = torch.cat((kva_expanded, k_pe_expanded), dim=-1)
         else:
-            q_nope = torch.bmm(q_a_proj_out, self.q_up)
+            q_nope = torch.bmm(q_a_proj_out, self.q_up.to(device=q_a_proj_out.device, dtype=q_a_proj_out.dtype))
             q_nope = q_nope.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim).transpose(1, 2)
             query_states = torch.cat((q_nope, q_pe), dim=-1)
 
@@ -1091,22 +1093,32 @@ class QEffDeepseekV3MoE(nn.Module):
     def moe_waa_unpack(self, hidden_states, topk_indices, topk_weights):
         gate_proj_unpacked = cast_to_uint4(self.all_gate_qweight)
         gate_zeros_unpacked = cast_to_uint4(self.all_gate_qzeros)
-        gate_proj_dq = dequantize_linear(gate_proj_unpacked, self.all_gate_scales, gate_zeros_unpacked, self.group_size)
+        gate_proj_dq = dequantize_linear(
+            gate_proj_unpacked, self.all_gate_scales, gate_zeros_unpacked, self.group_size
+        ).to(device=hidden_states.device)
 
         up_proj_unpacked = cast_to_uint4(self.all_up_qweight)
         up_zeros_unpacked = cast_to_uint4(self.all_up_qzeros)
-        up_proj_dq = dequantize_linear(up_proj_unpacked, self.all_up_scales, up_zeros_unpacked, self.group_size)
+        up_proj_dq = dequantize_linear(up_proj_unpacked, self.all_up_scales, up_zeros_unpacked, self.group_size).to(
+            device=hidden_states.device
+        )
 
         down_proj_unpacked = cast_to_uint4(self.all_down_qweight)
         down_zeros_unpacked = cast_to_uint4(self.all_down_qzeros)
-        down_proj_dq = dequantize_linear(down_proj_unpacked, self.all_down_scales, down_zeros_unpacked, self.group_size)
+        down_proj_dq = dequantize_linear(
+            down_proj_unpacked, self.all_down_scales, down_zeros_unpacked, self.group_size
+        ).to(device=hidden_states.device)
 
         num_experts = self.all_gate_qweight.shape[0]
         expert_in = hidden_states.unsqueeze(0).expand(num_experts, -1, -1)
-        gate_out = torch.bmm(expert_in, gate_proj_dq.transpose(1, 2).to(expert_in.dtype))
-        up_out = torch.bmm(expert_in, up_proj_dq.transpose(1, 2).to(expert_in.dtype))
+        gate_weight = gate_proj_dq.transpose(1, 2).to(device=expert_in.device, dtype=expert_in.dtype)
+        up_weight = up_proj_dq.transpose(1, 2).to(device=expert_in.device, dtype=expert_in.dtype)
+        down_weight = down_proj_dq.transpose(1, 2).to(device=expert_in.device, dtype=expert_in.dtype)
+        gate_out = torch.bmm(expert_in, gate_weight)
+        up_out = torch.bmm(expert_in, up_weight)
         hidden = self.act_fn(gate_out) * up_out
-        down_out = torch.bmm(hidden, down_proj_dq.transpose(1, 2).to(expert_in.dtype))
+        down_weight = down_weight.to(dtype=hidden.dtype)
+        down_out = torch.bmm(hidden, down_weight)
 
         routed_out = down_out.transpose(0, 1)
         selected_out = torch.gather(
@@ -1114,7 +1126,7 @@ class QEffDeepseekV3MoE(nn.Module):
             1,
             topk_indices.unsqueeze(-1).expand(-1, self.gate.top_k, self.out_features_down),
         )
-        return torch.einsum("abc,ab->ac", selected_out, topk_weights)
+        return torch.einsum("abc,ab->ac", selected_out, topk_weights.to(selected_out.dtype))
 
     def forward(self, hidden_states):
         residuals = hidden_states

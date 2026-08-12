@@ -116,6 +116,23 @@ class PackQuantizedInt4ToMatMulNBitsTransform(ModuleMutatorTransform):
 
     @classmethod
     def mutate(cls, original_module, parent_module):
+        quantization_args = original_module.quantization_scheme.weights
+        if any(
+            isinstance(getattr(original_module, attr_name, None), torch.Tensor)
+            and getattr(getattr(original_module, attr_name), "is_meta", False)
+            for attr_name in ("weight_packed", "weight_scale", "weight_shape")
+        ):
+            assert quantization_args.type == "int", "uint is not tested yet"
+            with torch.device("meta"):
+                new_module = QuantLinearORT(
+                    quantization_args.num_bits,
+                    quantization_args.group_size,
+                    original_module.in_features,
+                    original_module.out_features,
+                    original_module.bias is not None,
+                )
+            return new_module
+
         # add compressor.decompress to get the decompressed weight
         # and then package into matmulnbit
         if isinstance(original_module, CompressedLinear):
@@ -130,7 +147,6 @@ class PackQuantizedInt4ToMatMulNBitsTransform(ModuleMutatorTransform):
             fp_weight = original_module.weight
         scales = original_module.weight_scale
         # assuming symmetric quantization
-        quantization_args = original_module.quantization_scheme.weights
         zeros = (torch.zeros_like(scales) + pow(2, (quantization_args.num_bits - 1))).to(torch.uint8)
         g_idx = torch.arange(original_module.in_features // quantization_args.group_size).repeat_interleave(
             quantization_args.group_size
