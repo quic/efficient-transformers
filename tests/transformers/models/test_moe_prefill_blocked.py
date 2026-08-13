@@ -905,11 +905,11 @@ def test_gptoss_blocked_forward_parity():
     assert (orig - looped).abs().max().item() < 1e-3, "GPT-OSS HF vs simple-loop parity failed"
 
 
-def test_gemma4_text_experts_forward_parity():
+def test_gemma4_text_moe_block_weight_transform_splits_fused_experts():
     from transformers.models.gemma4.configuration_gemma4 import Gemma4TextConfig
-    from transformers.models.gemma4.modeling_gemma4 import Gemma4TextExperts
+    from transformers.models.gemma4.modeling_gemma4 import Gemma4RMSNorm, Gemma4TextExperts, Gemma4TextRouter
 
-    from QEfficient.transformers.models.gemma4.modeling_gemma4 import QEffGemma4TextExperts
+    from QEfficient.transformers.models.gemma4.modeling_gemma4 import QEffGemma4TextMoeBlock
 
     torch.manual_seed(23)
     config = Gemma4TextConfig(
@@ -928,18 +928,27 @@ def test_gemma4_text_experts_forward_parity():
         original_experts.gate_up_proj.normal_(mean=0.0, std=0.02)
         original_experts.down_proj.normal_(mean=0.0, std=0.02)
 
-    qeff_experts = copy.deepcopy(original_experts).eval()
-    qeff_experts.__class__ = QEffGemma4TextExperts
+    qeff_block = QEffGemma4TextMoeBlock(
+        Gemma4TextRouter(config).eval(),
+        copy.deepcopy(original_experts).eval(),
+        Gemma4RMSNorm(config.hidden_size, eps=config.rms_norm_eps).eval(),
+        Gemma4RMSNorm(config.hidden_size, eps=config.rms_norm_eps).eval(),
+    ).eval()
 
-    hidden_states = torch.randn(MOE_BLOCK_SEQ_LEN, MOE_BLOCK_HIDDEN_SIZE)
-    top_k_index = torch.randint(0, MOE_BLOCK_NUM_EXPERTS, (MOE_BLOCK_SEQ_LEN, MOE_BLOCK_TOP_K))
-    top_k_weights = torch.softmax(torch.randn(MOE_BLOCK_SEQ_LEN, MOE_BLOCK_TOP_K), dim=-1)
+    _, weights_ready = OptimizedMoEWeightsTransform.apply(qeff_block)
 
-    with torch.no_grad():
-        expected = original_experts(hidden_states, top_k_index, top_k_weights)
-        actual = qeff_experts(hidden_states, top_k_index, top_k_weights)
-
-    torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
+    assert weights_ready
+    torch.testing.assert_close(
+        qeff_block.moe_weights.gate,
+        original_experts.gate_up_proj[:, : original_experts.intermediate_dim, :].transpose(-1, -2),
+    )
+    torch.testing.assert_close(
+        qeff_block.moe_weights.up,
+        original_experts.gate_up_proj[:, original_experts.intermediate_dim :, :].transpose(-1, -2),
+    )
+    torch.testing.assert_close(qeff_block.moe_weights.down, original_experts.down_proj.transpose(-1, -2))
+    assert not hasattr(qeff_block.experts, "gate_up_proj")
+    assert not hasattr(qeff_block.experts, "down_proj")
 
 
 @pytest.mark.parametrize("flavour", ("decode_bmm", "simple_loop"))

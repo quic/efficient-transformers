@@ -580,10 +580,10 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         # Precompute all constant masks — no triu/tril with diagonal args at runtime
         # mask_causal: upper triangular including diagonal (diagonal=0)
         # = triu(ones, diagonal=0)
-        mask_causal = torch.ones(chunk_size, chunk_size, dtype=torch.bool)
+        mask_causal = torch.zeros(chunk_size, chunk_size, dtype=torch.bool)
         for i in range(chunk_size):
-            for j in range(i + 1):
-                mask_causal[i, j] = False
+            for j in range(i, chunk_size):
+                mask_causal[i, j] = True
         self.register_buffer("_mask_causal", mask_causal, persistent=False)
         # shape: (C, C), True above diagonal inclusive
 
@@ -739,7 +739,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         zeros = torch.zeros(g.shape, dtype=g.dtype, device=g.device)
 
         g = torch.where(mask, g, zeros)
-        # beta = torch.where(mask, beta, zeros)
+        beta = torch.where(mask, beta, zeros)
 
         qkv_zeros = torch.zeros(key.shape, dtype=key.dtype, device=key.device)
         key = torch.where(mask.unsqueeze(-1), key, qkv_zeros)
@@ -774,7 +774,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             x.reshape(x.shape[0], x.shape[1], -1, chunk_size, x.shape[-1]) for x in (query, key, value, k_beta, v_beta)
         ]
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
-        mask = mask_causal.to(device=query.device)
+        mask = mask_causal
 
         #
         # chunk decay
@@ -807,7 +807,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             else initial_state.to(value)
         )
         core_attn_out = torch.zeros_like(value)
-        mask = mask_strict.to(device=query.device)
+        mask = mask_strict
 
         # for each chunk
         for i in range(0, total_sequence_length // chunk_size):
@@ -899,7 +899,6 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
             # Continuous batching path: gather only active rows, then scatter updates back.
             if batch_index is not None:
-                batch_index = batch_index.to(conv_state_all.device)
                 conv_state_grouped = conv_state_all.ndim == 4
                 if conv_state_grouped:
                     conv_state_all_flat = conv_state_all.reshape(
@@ -909,7 +908,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                     )
                 else:
                     conv_state_all_flat = conv_state_all
-                conv_batch_index = batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)
+                conv_batch_index = batch_index.to(conv_state_all_flat.device)
                 conv_ctx_indices = torch.arange(
                     conv_state_all_flat.shape[1], dtype=torch.int64, device=conv_state_all_flat.device
                 )[None, :]
@@ -919,9 +918,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                         conv_state.shape[0], conv_state_all.shape[1], conv_state_all.shape[2], conv_state_all.shape[3]
                     )
 
-                recurrent_batch_index = (batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)).to(
-                    recurrent_state_all.device
-                )
+                recurrent_batch_index = batch_index.to(recurrent_state_all.device)
                 recurrent_ctx_indices = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, None, :]
@@ -967,8 +964,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 else:
                     conv_state_all_flat = conv_state_all
                     new_conv_state_flat = new_conv_state
-                conv_batch_index = batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)
-                conv_batch_index = conv_batch_index.to(conv_state_all.device)
+                conv_batch_index = batch_index.to(conv_state_all_flat.device)
                 conv_position_ids = torch.arange(
                     conv_state_all_flat.shape[1], dtype=torch.int64, device=conv_state_all_flat.device
                 )[None, :]
@@ -1036,9 +1032,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             last_recurrent_state = torch.where(is_decode, recurrent_S, chunk_S)
 
             if batch_index is not None:
-                recurrent_batch_index = (batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)).to(
-                    recurrent_state_all.device
-                )
+                recurrent_batch_index = batch_index.to(recurrent_state_all.device)
                 recurrent_position_ids = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, :].expand(recurrent_batch_index.shape[0], -1)
