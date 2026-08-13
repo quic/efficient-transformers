@@ -427,6 +427,7 @@
       "prompt_len": 64,
       "ctx_len": 4096,
       "comp_ctx_lengths_decode": [1024, 2048, 4096],
+      "ccl_layer_types": ["linear_attention", "full_attention"],
       "supports_blocking": true,
       "img_size": 1540,
       "img_url": "https://picsum.photos/id/237/536/354",

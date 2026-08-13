@@ -432,26 +432,25 @@ def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_o
         )
 
 
-def _run_dummy_dual_qpc_case(model_name, manual_cleanup, **kwargs):
+def _run_dummy_dual_qpc_case(model_name, manual_cleanup, layer_types=None, **kwargs):
     """Run one dummy-layer dual-QPC case, resolving the config the same way for every variant.
 
     ``STANDARD_VLM_MODELS`` are built from a synthesized ``AutoConfig`` (random weights at
     the config's declared sizes); the rest carry a ``num_layers`` override applied to the
     checkpoint's own config. Both branches otherwise share the same call, so the per-variant
     knobs are passed through ``kwargs``.
+
+    ``layer_types`` overrides the language-side attention pattern, and with it the truncation
+    depth, for a variant that needs a specific mix of layer kinds; its length becomes the
+    layer count so the pattern and the depth cannot drift apart.
     """
     if model_name in ModelConfig.STANDARD_VLM_MODELS:
         model_type = model_config_dict[model_name].get("model_type", None)
         custom_config = model_config_dict[model_name].get("additional_params", {})
         hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
-        hf_config.name_or_path = model_name
-        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
-            model_name,
-            kv_offload=True,
-            config=hf_config,
-            manual_cleanup=manual_cleanup,
-            **kwargs,
-        )
+    elif layer_types is not None:
+        hf_config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+        hf_config = set_num_layers_vlm(hf_config, n_layer=len(layer_types))
     else:
         check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             model_name,
@@ -460,6 +459,19 @@ def _run_dummy_dual_qpc_case(model_name, manual_cleanup, **kwargs):
             manual_cleanup=manual_cleanup,
             **kwargs,
         )
+        return
+
+    if layer_types is not None:
+        hf_config.text_config.num_hidden_layers = len(layer_types)
+        hf_config.text_config.layer_types = layer_types
+    hf_config.name_or_path = model_name
+    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name,
+        kv_offload=True,
+        config=hf_config,
+        manual_cleanup=manual_cleanup,
+        **kwargs,
+    )
 
 
 @pytest.mark.dummy_layers
@@ -497,6 +509,10 @@ def test_dummy_image_text_to_text_ccl_dual_qpc(model_name, manual_cleanup):
     disagg prefill/decode specialization slicing, since a single-value list cannot
     distinguish a correct slice from one truncated to a single specialization.
 
+    A hybrid linear-attention model additionally opts into a ``ccl_layer_types`` pattern
+    when its default truncation depth keeps no ``full_attention`` layer; see the comment
+    on that branch below for why CCL needs one.
+
     Qwen2.5-VL and Llama-4-Scout are xfailed rather than skipped so the dual-QPC CCL
     plumbing is still exercised on those model paths. Their dummy-layer HF-vs-QAIC
     token parity is a pre-existing gap unrelated to CCL: Qwen2.5-VL's random-init
@@ -514,9 +530,19 @@ def test_dummy_image_text_to_text_ccl_dual_qpc(model_name, manual_cleanup):
 
     torch.manual_seed(42)
     comp_ctx_lengths_decode = model_config_dict[model_name].get("comp_ctx_lengths_decode")
+
+    # On hybrid linear-attention stacks only the full_attention layers consume
+    # comp_ctx_lengths; the linear_attention (Gated-DeltaNet) path ignores it. Truncating
+    # such a model to a depth that keeps no full_attention layer therefore leaves the input
+    # dead, ONNX prunes it, and every CCL specialization becomes identical, which
+    # qaic-compile rejects with "No input that uniquely identifies specialization". A model
+    # whose default truncation lands short of its first full_attention layer pins a pattern
+    # holding both layer kinds via ``ccl_layer_types``; both are required, since an
+    # all-full_attention stack breaks the hybrid cache's linear-layer state indexing.
     _run_dummy_dual_qpc_case(
         model_name,
         manual_cleanup,
+        layer_types=model_config_dict[model_name].get("ccl_layer_types"),
         ccl_enabled=True,
         comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     )
