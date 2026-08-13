@@ -39,6 +39,8 @@ from QEfficient.utils.logging_utils import logger
 # architecture must come with the corresponding modeling-file hooks.
 _LAYERWISE_SUPPORTED_MODEL_TYPES = frozenset(
     {
+        "minimax_m3_vl",
+        "minimax_m3_vl_text",
         "qwen3_vl_moe",
         "qwen3_vl_moe_text",
         "qwen3_5_moe",
@@ -441,6 +443,14 @@ def _set_layer_windows(text_start: int, text_end: int, text_total_layers: int) -
             cls._end = text_end
             cls._total_layers = text_total_layers
 
+    qeff_minimax_mod = getattr(QEfficient.transformers.models, "minimax_m3_vl", None)
+    if qeff_minimax_mod is not None:
+        cls = getattr(qeff_minimax_mod.modeling_minimax_m3_vl, "QEffMiniMaxM3VLTextModel", None)
+        if cls is not None:
+            cls._start = text_start
+            cls._end = text_end
+            cls._total_layers = text_total_layers
+
     QEfficient.base.modeling_qeff.QEFFBaseModel._start = text_start
     QEfficient.base.modeling_qeff.QEFFBaseModel._end = text_end
     QEfficient.base.modeling_qeff.QEFFBaseModel._total_layers = text_total_layers
@@ -557,6 +567,7 @@ def _cached_layerwise_onnx_path(qeff_model, compile_kwargs: Dict[str, Any]) -> O
     """Return a cached merged ONNX path without exporting or loading weights."""
     probe_kwargs = dict(compile_kwargs)
     probe_kwargs["_layerwise_cache_probe"] = True
+    probe_kwargs["skip_vision"] = True
     cached = qeff_model.compile(**probe_kwargs)
     if isinstance(cached, dict):
         cached = next(
@@ -599,6 +610,13 @@ def _install_window_patches_for(model_type: str) -> None:
     if qwen3_moe_mod is not None and model_type in {"qwen3_moe"}:
         candidates.extend(
             cls for name in ("Qwen3MoeForCausalLM",) if (cls := getattr(qwen3_moe_mod, name, None)) is not None
+        )
+    minimax_mod = getattr(getattr(transformers.models, "minimax_m3_vl", None), "modeling_minimax_m3_vl", None)
+    if minimax_mod is not None and model_type in {"minimax_m3_vl", "minimax_m3_vl_text"}:
+        candidates.extend(
+            cls
+            for name in ("MiniMaxM3SparseForConditionalGeneration",)
+            if (cls := getattr(minimax_mod, name, None)) is not None
         )
     for cls in candidates:
         _install_window_patch(cls)
@@ -772,6 +790,9 @@ def run_layerwise(
                 # skip_lang is a VLM-only kwarg; only inject when present in caller's kwargs.
                 if "skip_lang" in window_kwargs:
                     window_kwargs["skip_lang"] = False
+                # Per-window exports only touch the language decoder; skip vision re-export.
+                if "skip_vision" in window_kwargs:
+                    window_kwargs["skip_vision"] = True
                 onnx_path = qeff_model.compile(**window_kwargs)
                 if first_onnx_path is None:
                     if isinstance(onnx_path, dict):
