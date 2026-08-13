@@ -25,6 +25,7 @@ Run with: pytest tests/unit_test/models/test_modeling_auto_cpu.py -n auto -v
 """
 
 import os
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -69,6 +70,17 @@ SEQ_LEN = 8
 def make_tiny_gpt2():
     cfg = GPT2Config(n_layer=2, n_head=2, n_embd=64, vocab_size=VOCAB_SIZE, n_positions=CTX_LEN, n_ctx=CTX_LEN)
     return GPT2LMHeadModel(cfg).eval(), cfg
+
+
+class TinyGptOssForCausalLM(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.config = SimpleNamespace(model_type="gpt_oss", num_hidden_layers=1)
+
+
+def make_tiny_gpt_oss_stub():
+    model = TinyGptOssForCausalLM().eval()
+    return model, model.config
 
 
 def make_tiny_llama():
@@ -505,7 +517,7 @@ class TestQEFFAutoModelForCausalLMGetSeqLen:
 
     def test_no_prefill_seq_len_no_env_var_raises_value_error(self):
         """Without prefill_seq_len and NUM_Q_BLOCKS env var, raises ValueError."""
-        model, cfg = make_tiny_gpt2()
+        model, cfg = make_tiny_gpt_oss_stub()
         qeff = QEFFAutoModelForCausalLM(model)
         # Ensure env var is not set
         os.environ.pop("NUM_Q_BLOCKS", None)
@@ -516,7 +528,7 @@ class TestQEFFAutoModelForCausalLMGetSeqLen:
         """prefill_seq_len not divisible by block_size raises ValueError."""
         from QEfficient.utils.constants import GPT_OSS_PREFILL_Q_BLOCK_SIZE
 
-        model, cfg = make_tiny_gpt2()
+        model, cfg = make_tiny_gpt_oss_stub()
         qeff = QEFFAutoModelForCausalLM(model)
         os.environ.pop("NUM_Q_BLOCKS", None)
         # Use a value that is NOT divisible by block_size

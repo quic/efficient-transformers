@@ -18,6 +18,8 @@ This file intentionally uses two coverage tiers:
      but do not yet have a stable CPU runtime parity path in the consolidated test
 """
 
+import inspect
+import json
 import logging
 import os
 import shutil
@@ -33,6 +35,7 @@ import onnx
 import onnxruntime as ort
 import pytest
 import torch
+from torch import nn
 from transformers import (
     AutoConfig,
     AutoModel,
@@ -579,7 +582,7 @@ def _tiny_qwen3_vl_config() -> Qwen3VLConfig:
     )
 
 
-def _tiny_qwen3_vl_moe_config() -> Qwen3VLMoeConfig:
+def _tiny_qwen3_vl_moe_config(num_experts: int = 2) -> Qwen3VLMoeConfig:
     text_config = Qwen3VLMoeTextConfig(
         vocab_size=64,
         hidden_size=16,
@@ -590,7 +593,7 @@ def _tiny_qwen3_vl_moe_config() -> Qwen3VLMoeConfig:
         num_key_value_heads=1,
         head_dim=8,
         max_position_embeddings=32,
-        num_experts=2,
+        num_experts=num_experts,
         num_experts_per_tok=1,
         decoder_sparse_step=1,
         mlp_only_layers=[],
@@ -925,6 +928,125 @@ def _assert_qwen_hf_qeff_ort_parity(model_type: str, tmp_path, *, prefill_only: 
     else:
         assert np.allclose(hf_logits, qeff_logits, atol=atol, rtol=1e-4)
         assert np.allclose(qeff_logits, ort_logits, atol=atol, rtol=1e-4)
+
+
+def _kimi_k25_prompt_inputs(processor):
+    from PIL import Image
+
+    image = Image.new("RGB", (64, 64), color=(128, 64, 32))
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": image},
+                {"type": "text", "text": "Describe."},
+            ],
+        },
+    ]
+    inputs = processor(
+        messages=messages,
+        add_generation_prompt=True,
+        tokenize=False,
+        return_tensors="pt",
+    )
+    return {name: (value.to("cpu") if torch.is_tensor(value) else value) for name, value in inputs.items()}
+
+
+def _kimi_k25_qeff_lang_inputs(qeff_model, inputs, vision_embeds):
+    seq_len = inputs["input_ids"].shape[1]
+    lang_inputs = deepcopy(qeff_model.model.get_dummy_inputs(kv_offload=True, prefill_seq_len=seq_len)["lang"])
+    lang_inputs["input_ids"] = inputs["input_ids"].clone()
+    lang_inputs["position_ids"] = torch.where(
+        inputs["attention_mask"] > 0,
+        torch.arange(seq_len, dtype=torch.int64).view(1, seq_len),
+        -1,
+    )
+    lang_inputs["vision_embeds"] = vision_embeds
+    lang_inputs["image_idx"] = torch.zeros((1, 1), dtype=torch.int64)
+    return lang_inputs
+
+
+class _KimiSyntheticQuantLinear(nn.Module):
+    def __init__(self, linear: nn.Linear):
+        super().__init__()
+        if linear.in_features % 2 != 0:
+            raise ValueError("Synthetic int4 fixture requires an even input dimension")
+
+        self.in_features = linear.in_features
+        self.out_features = linear.out_features
+        self.bits = 4
+        self.group_size = 1
+        self.act_order = None
+        self.register_buffer(
+            "qweight", torch.full((linear.out_features, linear.in_features // 2), 0x99, dtype=torch.uint8)
+        )
+        self.register_buffer(
+            "qzeros", torch.full((linear.out_features, linear.in_features // 2), 0x88, dtype=torch.uint8)
+        )
+        self.register_buffer("scales", linear.weight.detach().clone().to(torch.float32))
+        self.register_buffer("g_idx", torch.arange(linear.in_features, dtype=torch.int32))
+        if linear.bias is None:
+            self.bias = None
+        else:
+            self.register_buffer("bias", linear.bias.detach().clone().to(torch.float32))
+
+    def forward(self, inputs):
+        output = torch.matmul(inputs.float(), self.scales.transpose(0, 1).float())
+        if self.bias is not None:
+            output = output + self.bias.to(output.dtype)
+        return output.to(inputs.dtype)
+
+
+def _install_kimi_synthetic_quant_experts(model):
+    for module in model.modules():
+        experts = getattr(module, "experts", None)
+        if experts is None:
+            continue
+        for expert in experts:
+            for projection_name in ("gate_proj", "up_proj", "down_proj"):
+                projection = getattr(expert, projection_name, None)
+                if isinstance(projection, nn.Linear):
+                    setattr(expert, projection_name, _KimiSyntheticQuantLinear(projection))
+
+
+@pytest.mark.llm_model
+def test_kimi_k25_quickcheck_hf_qeff_vision_logits_parity():
+    from tests.utils.load_kimi_utils import get_kimi_k25_test_config, load_kimi_k25_model_from_config
+
+    model_id = "moonshotai/Kimi-K2.5"
+    config_path = Path(__file__).parents[2] / "configs" / "image_text_model_configs.json"
+    model_configs = json.loads(config_path.read_text())["image_text_models"]
+    model_config_dict = {model["model_name"]: model for model in model_configs}
+
+    try:
+        config = get_kimi_k25_test_config(model_id, model_config_dict)
+        model_hf, _, processor = load_kimi_k25_model_from_config(config)
+        _install_kimi_synthetic_quant_experts(model_hf)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    inputs = _kimi_k25_prompt_inputs(processor)
+    with torch.no_grad():
+        hf_outputs = model_hf(**inputs, use_cache=False, return_dict=True)
+        hf_logits = hf_outputs.logits[:, -1:, :].detach().float().numpy()
+
+    qeff_model = QEFFAutoModelForImageTextToText(
+        deepcopy(model_hf),
+        kv_offload=True,
+        config=model_hf.config,
+        torch_dtype=torch.float32,
+    )
+    grid_thws = inputs["grid_thws"].to(torch.int64)
+    h_shape = torch.ones((int(grid_thws[0, 1].item()),), dtype=torch.int64)
+    w_shape = torch.ones((int(grid_thws[0, 2].item()),), dtype=torch.int64)
+
+    with torch.no_grad():
+        vision_embeds = qeff_model.vision_model.model(inputs["pixel_values"], h_shape, w_shape)
+        lang_inputs = _kimi_k25_qeff_lang_inputs(qeff_model, inputs, vision_embeds)
+        qeff_logits = qeff_model.lang_model.model(**lang_inputs)[0].detach().float().numpy()
+
+    assert qeff_logits.shape == hf_logits.shape
+    assert np.allclose(hf_logits, qeff_logits, atol=1e-4, rtol=1e-4)
 
 
 @pytest.mark.llm_model
@@ -2250,6 +2372,248 @@ def test_moe_prefill_transform_does_not_require_enable_chunking():
     )
 
 
+def _tiny_qwen3_vl_moe_sparse_block_pair(num_experts: int = 2):
+    from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextSparseMoeBlock
+
+    from QEfficient.transformers.models.pytorch_transforms import KVCacheTransform
+
+    config = _tiny_qwen3_vl_moe_config(num_experts=num_experts).text_config
+    torch.manual_seed(0)
+    hf_block = Qwen3VLMoeTextSparseMoeBlock(config).eval()
+    with torch.no_grad():
+        hf_block.gate.weight.normal_(mean=0.0, std=0.02)
+        hf_block.experts.gate_up_proj.normal_(mean=0.0, std=0.02)
+        hf_block.experts.down_proj.normal_(mean=0.0, std=0.02)
+
+    qeff_block = Qwen3VLMoeTextSparseMoeBlock(config).eval()
+    qeff_block.load_state_dict(hf_block.state_dict())
+    qeff_block, transformed = KVCacheTransform.apply(qeff_block)
+    assert transformed
+    return hf_block, qeff_block, config
+
+
+def test_qwen3_vl_moe_sparse_gather_bmm_matches_hf():
+    hf_block, qeff_block, config = _tiny_qwen3_vl_moe_sparse_block_pair()
+    hidden_states = torch.randn(2, 3, config.hidden_size)
+
+    with torch.no_grad():
+        hf_output = hf_block(hidden_states)
+        qeff_output, _ = qeff_block.forward_gather_bmm(hidden_states)
+
+    torch.testing.assert_close(qeff_output, hf_output, atol=1e-6, rtol=1e-6)
+
+
+@pytest.mark.parametrize(
+    (
+        "num_experts",
+        "num_devices",
+        "num_cores",
+        "cores_per_expert",
+        "tree_reduce",
+        "expected_experts_per_soc",
+    ),
+    [
+        pytest.param(2, 1, 2, 1, False, None, id="default-einsum"),
+        pytest.param(4, 2, 2, 1, False, 2, id="cross-soc-flat"),
+        pytest.param(4, 2, 2, 1, True, 2, id="cross-soc-tree"),
+        pytest.param(4, 2, 2, 2, False, 1, id="cores-per-expert-2"),
+    ],
+)
+def test_qwen3_vl_moe_sparse_expert_parallel_dispatch_and_parity(
+    monkeypatch,
+    num_experts,
+    num_devices,
+    num_cores,
+    cores_per_expert,
+    tree_reduce,
+    expected_experts_per_soc,
+):
+    from QEfficient.transformers.models.modeling_auto import _configure_vlm_moe_expert_parallel
+
+    hf_block, qeff_block, config = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=num_experts)
+    _configure_vlm_moe_expert_parallel(
+        qeff_block,
+        {},
+        expert_parallel=True,
+        num_devices=num_devices,
+        num_cores=num_cores,
+        cores_per_expert=cores_per_expert,
+        tree_reduce=tree_reduce,
+        moe_prefill_packed_chunk_size=2,
+    )
+    hidden_states = torch.randn(1, 4, config.hidden_size)
+    called = {"expert_parallel": False}
+    orig_forward_expert_parallel = qeff_block.forward_expert_parallel
+
+    def wrapped_forward_expert_parallel(hidden_states):
+        called["expert_parallel"] = True
+        return orig_forward_expert_parallel(hidden_states)
+
+    monkeypatch.setattr(qeff_block, "forward_expert_parallel", wrapped_forward_expert_parallel)
+
+    with torch.no_grad():
+        hf_output = hf_block(hidden_states)
+        qeff_output, _ = qeff_block(hidden_states)
+
+    assert called["expert_parallel"]
+    assert qeff_block.total_avl_cores == num_devices * num_cores
+    assert qeff_block.cores_per_expert == cores_per_expert
+    assert qeff_block.experts_per_soc == expected_experts_per_soc
+    assert qeff_block.tree_reduce is tree_reduce
+    assert qeff_output.shape == hidden_states.shape
+    torch.testing.assert_close(qeff_output, hf_output, atol=1e-6, rtol=1e-6)
+
+
+def test_qwen3_vl_moe_sparse_configurator_sets_and_clears_dispatch(monkeypatch):
+    from QEfficient.transformers.models.modeling_auto import _configure_vlm_moe_expert_parallel
+
+    _, qeff_block, config = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=4)
+    hash_params = {}
+    _configure_vlm_moe_expert_parallel(
+        qeff_block,
+        hash_params,
+        expert_parallel=True,
+        num_devices=2,
+        num_cores=2,
+        cores_per_expert=2,
+        tree_reduce=True,
+        moe_prefill_packed_chunk_size=3,
+    )
+
+    assert qeff_block.expert_parallel is True
+    assert qeff_block.expert_blocking_num_nsp == 2
+    assert qeff_block.expert_blocking_packed_chunk_size == 3
+    assert qeff_block.num_nsp == 2
+    assert qeff_block.local_experts == 2
+    assert qeff_block.num_devices == 2
+    assert qeff_block.cores_per_expert == 2
+    assert qeff_block.total_avl_cores == 4
+    assert qeff_block.num_pipeline_stages == 2
+    assert qeff_block.num_parallelized_experts == 2
+    assert qeff_block.experts_per_soc == 1
+    assert qeff_block.tree_reduce is True
+    assert hash_params["expert_parallel"] is True
+    assert "moe_prefill_num_nsp" not in hash_params
+    assert hash_params["moe_prefill_total_avl_cores"] == 4
+    assert hash_params["moe_prefill_cores_per_expert"] == 2
+    assert hash_params["moe_prefill_tree_reduce"] is True
+    assert hash_params["moe_prefill_packed_chunk_size"] == 3
+
+    _configure_vlm_moe_expert_parallel(
+        qeff_block,
+        hash_params,
+        expert_parallel=False,
+        num_devices=2,
+        num_cores=2,
+        cores_per_expert=2,
+        tree_reduce=True,
+        moe_prefill_packed_chunk_size=3,
+    )
+
+    assert qeff_block.expert_parallel is False
+    assert "expert_parallel" not in hash_params
+    assert "moe_prefill_num_nsp" not in hash_params
+    assert "moe_prefill_total_avl_cores" not in hash_params
+    assert "moe_prefill_cores_per_expert" not in hash_params
+    assert "moe_prefill_tree_reduce" not in hash_params
+    assert "moe_prefill_packed_chunk_size" not in hash_params
+    for attr_name in (
+        "expert_blocking_num_nsp",
+        "expert_blocking_packed_chunk_size",
+        "num_nsp",
+        "local_experts",
+        "num_devices",
+        "cores_per_expert",
+        "total_avl_cores",
+        "num_pipeline_stages",
+        "num_parallelized_experts",
+        "experts_per_soc",
+        "tree_reduce",
+    ):
+        assert not hasattr(qeff_block, attr_name)
+
+    called = {"gather": False, "expert_parallel": False}
+    orig_forward_gather_bmm = qeff_block.forward_gather_bmm
+
+    def wrapped_forward_gather_bmm(hidden_states):
+        called["gather"] = True
+        return orig_forward_gather_bmm(hidden_states)
+
+    def wrapped_forward_expert_parallel(hidden_states):
+        called["expert_parallel"] = True
+        raise AssertionError("expert-parallel path should be disabled")
+
+    monkeypatch.setattr(qeff_block, "forward_gather_bmm", wrapped_forward_gather_bmm)
+    monkeypatch.setattr(qeff_block, "forward_expert_parallel", wrapped_forward_expert_parallel)
+    with torch.no_grad():
+        qeff_block(torch.randn(1, 2, config.hidden_size))
+
+    assert called["gather"]
+    assert not called["expert_parallel"]
+
+
+def test_qwen3_vl_moe_sparse_configurator_rejects_invalid_core_layout():
+    from QEfficient.transformers.models.modeling_auto import _configure_vlm_moe_expert_parallel
+
+    _, qeff_block, _ = _tiny_qwen3_vl_moe_sparse_block_pair(num_experts=4)
+    with pytest.raises(ValueError, match="total_avl_cores"):
+        _configure_vlm_moe_expert_parallel(
+            qeff_block,
+            {},
+            expert_parallel=True,
+            num_devices=3,
+            num_cores=2,
+            cores_per_expert=1,
+            tree_reduce=False,
+            moe_prefill_packed_chunk_size=2,
+        )
+
+    with pytest.raises(TypeError, match="tree_reduce"):
+        _configure_vlm_moe_expert_parallel(
+            qeff_block,
+            {},
+            expert_parallel=True,
+            num_devices=1,
+            num_cores=2,
+            cores_per_expert=1,
+            tree_reduce="true",
+            moe_prefill_packed_chunk_size=2,
+        )
+
+
+def test_qwen3_vl_moe_sparse_expert_parallel_resolver_prefill_wins():
+    from QEfficient.transformers.models.modeling_auto import _resolve_vlm_expert_parallel
+
+    assert _resolve_vlm_expert_parallel(prefill_only=True, expert_parallel=False) is True
+    assert _resolve_vlm_expert_parallel(prefill_only=False, expert_parallel=True) is True
+    assert _resolve_vlm_expert_parallel(prefill_only=False, expert_parallel=None) is False
+    with pytest.raises(TypeError):
+        _resolve_vlm_expert_parallel(prefill_only=False, expert_parallel="true")
+
+
+def test_qwen3_vl_moe_sparse_vlm_compile_signatures_expose_expert_parallel_args():
+    from QEfficient.transformers.models.modeling_auto import (
+        _QEffAutoModelForImageTextToTextDualQPC,
+        _QEFFAutoModelForImageTextToTextSingleQPC,
+    )
+    from QEfficient.utils import constants
+
+    for wrapper_cls in (_QEffAutoModelForImageTextToTextDualQPC, _QEFFAutoModelForImageTextToTextSingleQPC):
+        params = inspect.signature(wrapper_cls.compile).parameters
+        assert params["expert_parallel"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert params["expert_parallel"].default is None
+        assert params["cores_per_expert"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert params["cores_per_expert"].default == 1
+        assert params["tree_reduce"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert params["tree_reduce"].default is False
+        assert params["moe_prefill_packed_chunk_size"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert params["moe_prefill_packed_chunk_size"].default == constants.MOE_PREFILL_PACKED_CHUNK_SIZE
+
+        export_params = inspect.signature(wrapper_cls.export).parameters
+        assert export_params["cores_per_expert"].default == 1
+        assert export_params["tree_reduce"].default is False
+
+
 def test_layerwise_matches_default_path_for_qwen3_moe():
     """Without-layerwise and with-layerwise forwards must produce identical output.
     This is the core backward-compatibility contract: running every decoder layer
@@ -3551,3 +3915,50 @@ def test_layerwise_export_default_names_unchanged(tmp_path):
         assert f"past_key.{window}" in captured["input_names"]
         assert all("_vllmKvCache" not in n and "_VLLM" not in n for n in captured["output_names"])
         assert all("_vllmKvCache" not in n and "_VLLM" not in n for n in captured["input_names"])
+
+
+def test_kimi_k25_get_specializations_supports_multi_resolution_grid_sizes():
+    """Kimi K2.5 accepts list-valued image sizes for multi-resolution specs."""
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.kimi_k25.modeling_kimi_k25 import QEffKimiK25ForConditionalGeneration
+
+    model = QEffKimiK25ForConditionalGeneration.__new__(QEffKimiK25ForConditionalGeneration)
+    model.config = SimpleNamespace(vision_config=SimpleNamespace(patch_size=14, merge_kernel_size=(2, 2)))
+
+    specs, _ = model.get_specializations(
+        batch_size=1,
+        prefill_seq_len=64,
+        ctx_len=4096,
+        image_height=[512, 448],
+        image_width=[910, 448],
+        num_frames=[1, 1],
+        kv_offload=True,
+    )
+    assert specs["vision"] == [
+        {"num_patches": 2508, "grid_h": 38, "grid_w": 66, "num_image_tokens": 627},
+        {"num_patches": 1024, "grid_h": 32, "grid_w": 32, "num_image_tokens": 256},
+    ]
+    assert all(spec["num_image_tokens"] == 627 for spec in specs["lang"])
+
+    with pytest.raises(ValueError, match="image_height and image_width"):
+        model.get_specializations(
+            batch_size=1,
+            prefill_seq_len=64,
+            ctx_len=4096,
+            h=[30, 32],
+            w=[80, 64],
+            num_frames=[1, 2],
+            kv_offload=True,
+        )
+
+    with pytest.raises(ValueError, match="num_patches"):
+        model.get_specializations(
+            batch_size=1,
+            prefill_seq_len=64,
+            ctx_len=4096,
+            image_height=512,
+            image_width=910,
+            num_patches=2508,
+            kv_offload=True,
+        )
