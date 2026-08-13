@@ -213,11 +213,14 @@ class TestQEffDynamicLayerCorrectness:
         positions = torch.full((batch, 1), ctx_len - 1)
         cache_kwargs = {"position_ids": positions, "num_kv_heads": heads}
 
-        key_block = layer.read_only_blocked_K_batch(2, 6, cache_kwargs)
-        value_block = layer.read_only_blocked_V_batch(2, 6, cache_kwargs)
+        folded_keys, folded_values = layer.get_batch_folded_kv()
+        key_block = layer.read_only_blocked_K_batch(2, 6, cache_kwargs, folded_cache=folded_keys)
+        value_block = layer.read_only_blocked_V_batch(2, 6, cache_kwargs, folded_cache=folded_values)
 
         expected_keys = keys[:, :, 2:6].reshape(1, batch * heads, 4, head_dim)
         expected_values = values[:, :, 2:6].reshape(1, batch * heads, 4, head_dim)
+        assert folded_keys.shape == (1, batch * heads, ctx_len, head_dim)
+        assert folded_values.shape == (1, batch * heads, ctx_len, head_dim)
         assert key_block.shape == (1, batch * heads, 4, head_dim)
         assert value_block.shape == (1, batch * heads, 4, head_dim)
         assert torch.equal(key_block, expected_keys)

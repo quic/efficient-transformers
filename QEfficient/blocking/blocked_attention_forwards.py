@@ -291,6 +291,7 @@ def blocked_kv_attention_forward_decode_headpar_batch(
     max_blocks: list = []
     sum_blocks: list = []
     out_blocks: list = []
+    key_cache_folded, value_cache_folded = past_key_value.get_batch_folded_kv(layer_idx)
 
     for j in range(num_kv_blocks):
         start_index = j * kv_block_size
@@ -305,7 +306,9 @@ def blocked_kv_attention_forward_decode_headpar_batch(
                     break
 
         # Read K through the folded [1, BH, T_block, D] view.
-        k_block = past_key_value.read_only_blocked_K_batch(start_index, end_index, layer_idx, cache_kwargs)
+        k_block = past_key_value.read_only_blocked_K_batch(
+            start_index, end_index, layer_idx, cache_kwargs, folded_cache=key_cache_folded
+        )
 
         attn_weights_block = torch.matmul(query_flat, k_block.transpose(3, 2)) * scaling
 
@@ -332,7 +335,9 @@ def blocked_kv_attention_forward_decode_headpar_batch(
             exp_block = torch.where(skip_future, torch.zeros_like(exp_block), exp_block)
 
         # Read V through the folded [1, BH, T_block, D] view.
-        v_block = past_key_value.read_only_blocked_V_batch(start_index, end_index, layer_idx, cache_kwargs)
+        v_block = past_key_value.read_only_blocked_V_batch(
+            start_index, end_index, layer_idx, cache_kwargs, folded_cache=value_cache_folded
+        )
         sum_block = torch.einsum("btdn->btd", exp_block)
         out_block = torch.matmul(exp_block, v_block)
         if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):

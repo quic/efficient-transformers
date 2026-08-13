@@ -250,7 +250,16 @@ class QEffDynamicLayer(CacheLayerMixin):
 
         return k_out
 
-    def read_only_blocked_K_batch(self, start_index, end_index, cache_kwargs):
+    def get_batch_folded_kv(self):
+        """Return K/V views with batch and KV-head axes folded together."""
+        key_states, value_states = self.keys, self.values
+        if key_states is not None:
+            self._mark_initialized(key_states)
+        full_batch_size, num_kv_heads, ctx_len, head_dim = key_states.shape
+        folded_shape = (1, full_batch_size * num_kv_heads, ctx_len, head_dim)
+        return key_states.reshape(folded_shape), value_states.reshape(folded_shape)
+
+    def read_only_blocked_K_batch(self, start_index, end_index, cache_kwargs, folded_cache=None):
         """
         Batch-folded counterpart of _read_blocked_k. The retained cache keeps
         the standard [FBS, Hkv, T, D] layout and is viewed as
@@ -288,7 +297,10 @@ class QEffDynamicLayer(CacheLayerMixin):
         # batch_index = cache_kwargs.get("batch_index", None)
         full_batch_size, Hkv, ctx_len, head_dim = k_out.shape
         cache_bh = full_batch_size * Hkv
-        k_out = k_out.reshape(1, full_batch_size * Hkv, ctx_len, head_dim)
+        if folded_cache is None:
+            k_out = k_out.reshape(1, cache_bh, ctx_len, head_dim)
+        else:
+            k_out = folded_cache
         T_block = end_index - start_index
 
         ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
@@ -344,7 +356,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
         return v_out
 
-    def read_only_blocked_V_batch(self, start_index, end_index, cache_kwargs):
+    def read_only_blocked_V_batch(self, start_index, end_index, cache_kwargs, folded_cache=None):
         """
         Reads a value block through a folded view of the standard retained
         cache layout.
@@ -368,7 +380,10 @@ class QEffDynamicLayer(CacheLayerMixin):
         # batch_index = cache_kwargs.get("batch_index", None)
         full_batch_size, Hkv, ctx_len, head_dim = v_out.shape
         cache_bh = full_batch_size * Hkv
-        v_out = v_out.reshape(1, full_batch_size * Hkv, ctx_len, head_dim)
+        if folded_cache is None:
+            v_out = v_out.reshape(1, cache_bh, ctx_len, head_dim)
+        else:
+            v_out = folded_cache
         T_block = end_index - start_index
         ctx_indices = torch.arange(start=start_index, end=end_index)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values
@@ -922,7 +937,11 @@ class QEffDynamicCache(Cache):
         """
         return self.layers[layer_idx].read_only_blocked_V(start_index, end_index, cache_kwargs)
 
-    def read_only_blocked_K_batch(self, start_index, end_index, layer_idx, cache_kwargs):
+    def get_batch_folded_kv(self, layer_idx):
+        """Return retained K/V cache for one layer in batch-folded compute layout."""
+        return self.layers[layer_idx].get_batch_folded_kv()
+
+    def read_only_blocked_K_batch(self, start_index, end_index, layer_idx, cache_kwargs, folded_cache=None):
         """
         Reads the `key_states` and `value_states` for the layer `layer_idx`.
 
@@ -939,9 +958,11 @@ class QEffDynamicCache(Cache):
         Return:
             A tuple containing the updated key and value states.
         """
-        return self.layers[layer_idx].read_only_blocked_K_batch(start_index, end_index, cache_kwargs)
+        return self.layers[layer_idx].read_only_blocked_K_batch(
+            start_index, end_index, cache_kwargs, folded_cache=folded_cache
+        )
 
-    def read_only_blocked_V_batch(self, start_index, end_index, layer_idx, cache_kwargs):
+    def read_only_blocked_V_batch(self, start_index, end_index, layer_idx, cache_kwargs, folded_cache=None):
         """
         Reads the `key_states` and `value_states` for the layer `layer_idx`.
 
@@ -958,7 +979,9 @@ class QEffDynamicCache(Cache):
         Return:
             A tuple containing the updated key and value states.
         """
-        return self.layers[layer_idx].read_only_blocked_V_batch(start_index, end_index, cache_kwargs)
+        return self.layers[layer_idx].read_only_blocked_V_batch(
+            start_index, end_index, cache_kwargs, folded_cache=folded_cache
+        )
 
     def write_only(self, key_states, value_states, layer_idx, cache_kwargs):
         """
