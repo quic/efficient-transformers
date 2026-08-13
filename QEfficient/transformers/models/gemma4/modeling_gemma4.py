@@ -690,8 +690,6 @@ class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
         hidden_states = self.mlp(hidden_states)
 
         if self.enable_moe_block:
-            if not hasattr(self, "moe_block"):
-                self.__qeff_init__()
             hidden_states_1 = self.post_feedforward_layernorm_1(hidden_states)
             hidden_states_2 = self.moe_block(residual)
             hidden_states = hidden_states_1 + hidden_states_2
