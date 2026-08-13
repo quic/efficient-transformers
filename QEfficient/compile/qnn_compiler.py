@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import shutil
+import warnings
 from typing import Dict, List, Optional
 
 from QEfficient.utils._utils import create_json, execute_command, load_json, to_named_specializations
@@ -362,6 +363,13 @@ def compile(
     Returns:
         :str: Path to compiled ``qpc`` package.
     """
+
+    if device_group is not None:
+        warnings.warn(
+            "device_group is deprecated and will be renamed to device_ids in the next release.",
+            FutureWarning,
+            stacklevel=2,
+        )
 
     if kwargs:
         logger.warning("Extra arguments to QNN compilation are not supported as of now!")

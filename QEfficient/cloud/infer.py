@@ -8,6 +8,7 @@
 import argparse
 import logging
 import sys
+import warnings
 from typing import List, Optional
 
 import requests
@@ -76,6 +77,13 @@ def execute_vlm_model(
     ValueError
         If neither ``image_url`` nor ``image_path`` is provided.
     """
+    if device_group is not None:
+        warnings.warn(
+            "device_group is deprecated and will be renamed to device_ids in the next release.",
+            FutureWarning,
+            stacklevel=2,
+        )
+
     if not (image_url or image_path):
         raise ValueError('Neither Image URL nor Image Path is found, either provide "image_url" or "image_path"')
     raw_image = Image.open(requests.get(image_url, stream=True).raw) if image_url else Image.open(image_path)
@@ -235,6 +243,13 @@ def main(
             --ctx-len 512 --img-size 560 --mxfp6-matmul
 
     """
+    if device_group is not None:
+        warnings.warn(
+            "device_group is deprecated and will be renamed to device_ids in the next release.",
+            FutureWarning,
+            stacklevel=2,
+        )
+
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
 
     if "--mxfp6" in sys.argv and mxfp6:
@@ -319,7 +334,7 @@ def main(
         _ = qeff_model.generate(
             tokenizer,
             prompts=prompt,
-            device_id=device_group,
+            device_ids=device_group,
             prompts_txt_file_path=prompts_txt_file_path,
             generation_len=generation_len,
             iteration=iteration,

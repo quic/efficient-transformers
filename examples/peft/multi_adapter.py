@@ -74,7 +74,7 @@ prompts = [
 qeff_model.generate(
     tokenizer=load_hf_tokenizer(pretrained_model_name_or_path=base_model_name),
     prompts=prompts,
-    device_id=device_group,
+    device_ids=device_group,
     prompt_to_adapter_mapping=[
         "gsm8k",
         "tldr_content_gen",
