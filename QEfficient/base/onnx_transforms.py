@@ -666,3 +666,313 @@ class OnnxTransformPipeline(BaseOnnxTransform):
             logger.info(f"Transform '{t.__name__}' applied={done}")
 
         return model, any(applied.values())
+
+
+class RenameWsubTransform(BaseOnnxTransform):
+    """Rename opaque w_sub ONNX weights and nodes to semantic HF names.
+
+    Uses 256-byte fingerprint matching between ONNX external weight data and
+    HF safetensors to build a rename map, then applies weight rename + node rename.
+
+    Handles both individual external files (onnx__MatMul_NNN) and consolidated
+    data files (model.onnx.data with offset+length metadata).
+    """
+
+    FINGERPRINT_BYTES = 256
+
+    # Regex: model.layers.N.<role>.weight -> extract <role> for node rename
+    _SEMANTIC_PARAM_RE = re.compile(
+        r"model\.layers\.\d+\.((?:self_attn|mlp)[\w.]+?)(?:\.weight)?$"
+    )
+    _NORM_ROLE_RE = re.compile(
+        r"model\.layers\.\d+\.(input_layernorm|post_attention_layernorm)\.weight$"
+    )
+
+    @classmethod
+    def apply(
+        cls,
+        model: ModelProto,
+        *,
+        hf_model_path: str,
+        onnx_base_dir: str,
+        **kwargs,
+    ) -> Tuple[ModelProto, bool]:
+        """Apply weight + node rename to a w_sub ONNX model.
+
+        Args:
+            model: ONNX ModelProto (loaded with load_external_data=False).
+            hf_model_path: Path to HF model dir containing safetensors.
+            onnx_base_dir: Directory containing ONNX external data files.
+
+        Returns:
+            (model, transformed) tuple.
+        """
+        if not hf_model_path or not os.path.isdir(hf_model_path):
+            logger.warning(f"RenameWsubTransform: hf_model_path not found: {hf_model_path}")
+            return model, False
+
+        if not onnx_base_dir or not os.path.isdir(onnx_base_dir):
+            logger.warning(f"RenameWsubTransform: onnx_base_dir not found: {onnx_base_dir}")
+            return model, False
+
+        # Step 1: Collect opaque initializer info
+        opaque_infos = cls._get_opaque_initializer_info(model, onnx_base_dir)
+        if not opaque_infos:
+            logger.info("RenameWsubTransform: no opaque initializers found, skipping")
+            return model, False
+
+        # Step 2: Detect ONNX weight dtype
+        onnx_dtype_code = opaque_infos[0]["data_type"]
+        if onnx_dtype_code == onnx.TensorProto.FLOAT:
+            target_np_dtype = np.float32
+        elif onnx_dtype_code == onnx.TensorProto.FLOAT16:
+            target_np_dtype = np.float16
+        else:
+            logger.warning(f"RenameWsubTransform: unsupported ONNX dtype code {onnx_dtype_code}")
+            return model, False
+
+        # Step 3: Build HF fingerprint map
+        hf_fp_map = cls._build_hf_fingerprint_map(hf_model_path, target_np_dtype)
+        if not hf_fp_map:
+            logger.warning("RenameWsubTransform: no HF fingerprints built")
+            return model, False
+
+        # Step 4: Match ONNX fingerprints to HF
+        rename_map: Dict[str, str] = {}
+        for info in opaque_infos:
+            onnx_fp = cls._read_onnx_fingerprint(info)
+            if onnx_fp is None:
+                continue
+            hf_param = hf_fp_map.get(onnx_fp)
+            if hf_param:
+                clean_name = hf_param
+                for prefix in ("language_model.",):
+                    if clean_name.startswith(prefix):
+                        clean_name = clean_name[len(prefix):]
+                rename_map[info["name"]] = clean_name
+
+        if not rename_map:
+            logger.warning("RenameWsubTransform: no fingerprint matches found")
+            return model, False
+
+        logger.info(f"RenameWsubTransform: matched {len(rename_map)}/{len(opaque_infos)} weights")
+
+        # Step 5: Apply weight rename + node rename
+        weight_count, node_count = cls._apply_weight_and_node_rename(model, rename_map)
+        logger.info(f"RenameWsubTransform: renamed {weight_count} weights, {node_count} nodes")
+
+        # Step 6: Stamp metadata
+        model.metadata_props.append(
+            onnx.StringStringEntryProto(key="qeff_weight_names", value="semantic_hf")
+        )
+        if node_count > 0:
+            model.metadata_props.append(
+                onnx.StringStringEntryProto(key="qeff_node_names", value="semantic_role")
+            )
+
+        return model, True
+
+    @classmethod
+    def _get_opaque_initializer_info(cls, model: ModelProto, onnx_base_dir: str) -> List[Dict[str, Any]]:
+        """Extract external data info for opaque initializers."""
+        results = []
+        for init in model.graph.initializer:
+            if not ("onnx::MatMul_" in init.name or "onnx::Add_" in init.name):
+                continue
+            ext = {}
+            for entry in init.external_data:
+                ext[entry.key] = entry.value
+            location = ext.get("location", "")
+            offset = int(ext.get("offset", 0))
+            length = int(ext.get("length", 0))
+            if location:
+                filepath = os.path.join(onnx_base_dir, location)
+            else:
+                bare_name = init.name.replace("::", "__")
+                filepath = os.path.join(onnx_base_dir, bare_name)
+                offset = 0
+            results.append({
+                "name": init.name,
+                "filepath": filepath,
+                "offset": offset,
+                "length": length,
+                "data_type": init.data_type,
+            })
+        return results
+
+    @classmethod
+    def _read_onnx_fingerprint(cls, info: Dict[str, Any]) -> Optional[bytes]:
+        """Read first FINGERPRINT_BYTES from an ONNX external weight."""
+        if not os.path.exists(info["filepath"]):
+            return None
+        read_len = min(cls.FINGERPRINT_BYTES, info["length"]) if info["length"] > 0 else cls.FINGERPRINT_BYTES
+        try:
+            with open(info["filepath"], "rb") as fh:
+                fh.seek(info["offset"])
+                data = fh.read(read_len)
+            return data if len(data) == read_len else None
+        except OSError:
+            return None
+
+    @classmethod
+    def _build_hf_fingerprint_map(cls, hf_model_path: str, target_dtype) -> Dict[bytes, str]:
+        """Build {fingerprint_bytes -> hf_param_name} from HF safetensors."""
+        import json as _json
+        import math as _math
+        import struct as _struct
+
+        fp_map: Dict[bytes, str] = {}
+        index_path = os.path.join(hf_model_path, "model.safetensors.index.json")
+        if os.path.exists(index_path):
+            with open(index_path) as f:
+                weight_map = _json.load(f)["weight_map"]
+        else:
+            single = os.path.join(hf_model_path, "model.safetensors")
+            if not os.path.exists(single):
+                return fp_map
+            with open(single, "rb") as f:
+                hdr_size = _struct.unpack("<Q", f.read(8))[0]
+                hdr = _json.loads(f.read(hdr_size))
+            weight_map = {k: "model.safetensors" for k in hdr if k != "__metadata__"}
+
+        target_params = [
+            k for k in weight_map
+            if k.endswith(".weight")
+            and "layers." in k
+            and any(sub in k for sub in (
+                "proj", "gate_proj", "up_proj", "down_proj", "router", "mlp.gate."
+            ))
+            and "mlp.experts." not in k
+        ]
+
+        for param_name in target_params:
+            shard_path = os.path.join(hf_model_path, weight_map[param_name])
+            if not os.path.exists(shard_path):
+                continue
+            fp = cls._read_hf_fingerprint(shard_path, param_name, target_dtype)
+            if fp:
+                fp_map[fp] = param_name
+
+        return fp_map
+
+    @classmethod
+    def _read_hf_fingerprint(cls, shard_path: str, param_name: str, target_dtype) -> Optional[bytes]:
+        """Read, transpose, dtype-convert a HF weight and return fingerprint bytes."""
+        import json as _json
+        import math as _math
+        import struct as _struct
+
+        target_bytes_per_elem = 4 if target_dtype == np.float32 else 2
+        try:
+            with open(shard_path, "rb") as f:
+                hdr_size = _struct.unpack("<Q", f.read(8))[0]
+                hdr = _json.loads(f.read(hdr_size))
+                if param_name not in hdr:
+                    return None
+                info = hdr[param_name]
+                hf_dtype = info["dtype"]
+                shape = info["shape"]
+                start = info["data_offsets"][0]
+                if len(shape) < 2:
+                    return None
+                out_features, in_features = shape[0], shape[1]
+                bytes_per_elem = {"BF16": 2, "F16": 2, "F32": 4}.get(hf_dtype, 0)
+                if bytes_per_elem == 0:
+                    return None
+                n_rows = min(
+                    out_features,
+                    _math.ceil(cls.FINGERPRINT_BYTES / target_bytes_per_elem),
+                )
+                n_rows = max(n_rows, 1)
+                read_bytes = n_rows * in_features * bytes_per_elem
+                f.seek(8 + hdr_size + start)
+                raw = f.read(read_bytes)
+        except (OSError, KeyError, ValueError):
+            return None
+
+        if len(raw) < n_rows * in_features * bytes_per_elem:
+            return None
+
+        arr = np.frombuffer(raw, dtype=np.uint16 if hf_dtype in ("BF16", "F16") else np.float32)
+        if hf_dtype == "BF16":
+            fp32 = (arr.astype(np.uint32) << 16).view(np.float32)
+        elif hf_dtype == "F16":
+            fp32 = arr.view(np.float16).astype(np.float32)
+        else:
+            fp32 = arr.copy()
+
+        fp32 = fp32.reshape(n_rows, in_features).T.copy()
+        if target_dtype == np.float16:
+            result = fp32.astype(np.float16)
+        else:
+            result = fp32
+        return result.tobytes()[:cls.FINGERPRINT_BYTES]
+
+    @classmethod
+    def _get_node_role(cls, weight_name: str) -> Optional[str]:
+        """Extract semantic role from a renamed weight name."""
+        match = cls._SEMANTIC_PARAM_RE.match(weight_name)
+        if match:
+            return match.group(1).replace(".", "/")
+        return None
+
+    @classmethod
+    def _apply_weight_and_node_rename(
+        cls, model: ModelProto, rename_map: Dict[str, str]
+    ) -> Tuple[int, int]:
+        """Apply rename_map throughout the model and rename anchored nodes."""
+        weight_count = 0
+        node_count = 0
+
+        # 1. Rename graph initializers
+        for init in model.graph.initializer:
+            if init.name in rename_map:
+                init.name = rename_map[init.name]
+                weight_count += 1
+
+        # 2. Rename graph inputs
+        for inp in model.graph.input:
+            if inp.name in rename_map:
+                inp.name = rename_map[inp.name]
+
+        # 3. Rename main graph node inputs (call-site bindings)
+        for node in model.graph.node:
+            for i, inp_name in enumerate(node.input):
+                if inp_name in rename_map:
+                    node.input[i] = rename_map[inp_name]
+
+        # 4. Rename function formals + internal node inputs
+        for fn in model.functions:
+            for i, inp_name in enumerate(fn.input):
+                if inp_name in rename_map:
+                    fn.input[i] = rename_map[inp_name]
+            for node in fn.node:
+                for i, inp_name in enumerate(node.input):
+                    if inp_name in rename_map:
+                        node.input[i] = rename_map[inp_name]
+
+        # 5. Node rename: MatMul/Gemm nodes using renamed weight as input[1]
+        for fn in model.functions:
+            fn_input_set = set(fn.input)
+            for node in fn.node:
+                if node.op_type in ("MatMul", "Gemm") and len(node.input) >= 2:
+                    weight_inp = node.input[1]
+                    if weight_inp in fn_input_set:
+                        role = cls._get_node_role(weight_inp)
+                        if role:
+                            node.name = role + "/" + node.op_type
+                            node_count += 1
+
+        # 6. Node rename: CustomRMSNorm nodes using layernorm weight
+        for fn in model.functions:
+            fn_input_set = set(fn.input)
+            for node in fn.node:
+                if node.op_type == "CustomRMSNorm" and len(node.input) >= 2:
+                    weight_inp = node.input[1]
+                    if weight_inp in fn_input_set:
+                        match = cls._NORM_ROLE_RE.match(weight_inp)
+                        if match:
+                            node.name = match.group(1) + "/CustomRMSNorm"
+                            node_count += 1
+
+        return weight_count, node_count
