@@ -26,9 +26,9 @@ MODEL_ID = "google/gemma-4-E2B-it"
 # ---------------------------------------------------------------------------
 # Sequence-length budget
 # ---------------------------------------------------------------------------
-PREFILL_SEQ_LEN = 256
-CTX_LEN = 2048
-GENERATION_LEN = 100
+PREFILL_SEQ_LEN = 2048
+CTX_LEN = 8192
+GENERATION_LEN = 2048
 BATCH_SIZE = 1
 
 # ---------------------------------------------------------------------------
@@ -41,7 +41,7 @@ NUM_VISION_HIDDEN_LAYER = 2
 # Compiler settings
 # ---------------------------------------------------------------------------
 NUM_CORES = 16
-NUM_DEVICES = 2
+NUM_DEVICES = 4
 NODE_PRECISION_INFO = True  # Auto-generate Gemma4 NPI file for mixed precision
 
 # ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ def main():
     resolutions = [
         {"width": 360, "height": 240},
         {"width": 536, "height": 354},
-        {"width": 1024, "height": 1024},
+        {"width": 2048, "height": 2048},
     ]
 
     widths = [s["width"] for s in resolutions]
