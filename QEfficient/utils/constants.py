@@ -263,6 +263,11 @@ CCL_UNIQNE_STEP = 32
 # used for gpt-oss prefill-only model Q-blocking
 GPT_OSS_PREFILL_Q_BLOCK_SIZE = 256
 
+# Gemma4
+SUPPORTED_NUM_SOFT_TOKENS_PER_IMAGE = [70, 140, 280, 560, 1120]
+GEMMA4_HEIGHT = 786
+GEMMA4_WIDTH = 786
+
 
 class Constants:
     # Export Constants.

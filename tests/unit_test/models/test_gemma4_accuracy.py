@@ -175,7 +175,7 @@ def _qeff_forward(qeff, **inputs):
         model_cfg = qeff.model.config
         text_cfg = getattr(model_cfg, "text_config", model_cfg)
         batch_size = int(lang_inputs["input_ids"].shape[0])
-        mm_tokens = int(getattr(model_cfg, "mm_tokens_per_image", 256))
+        mm_tokens = int(getattr(model_cfg, "mm_tokens_per_image", 280))
         lang_model_cfg = getattr(getattr(qeff.lang_model.model, "language_model", None), "config", None)
         hidden_size = int(
             getattr(
@@ -214,6 +214,18 @@ def _qeff_vision_inputs(qeff):
     """
     Build vision-only inputs using the model's own dummy-input helper.
     """
+    # In this branch, get_dummy_inputs() uses module-level _MAX_VISION_SIZE.
+    # Unit tests call it without get_specializations(), so prime a sane value.
+    from QEfficient.transformers.models.gemma4 import modeling_gemma4 as qeff_gemma4_mod
+
+    if int(getattr(qeff_gemma4_mod, "_MAX_VISION_SIZE", 0)) <= 0:
+        cfg = qeff.model.config
+        vision_cfg = getattr(cfg, "vision_config", None)
+        mm_tokens = getattr(cfg, "mm_tokens_per_image", None)
+        if mm_tokens is None and vision_cfg is not None:
+            mm_tokens = getattr(vision_cfg, "default_output_length", None)
+        qeff_gemma4_mod._MAX_VISION_SIZE = int(mm_tokens) if mm_tokens is not None else 16
+
     dummy_inputs = qeff.model.get_dummy_inputs(kv_offload=True)
     assert isinstance(dummy_inputs, dict) and "vision" in dummy_inputs, "Missing vision dummy inputs from model"
     return dummy_inputs["vision"]
