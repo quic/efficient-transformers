@@ -145,7 +145,7 @@ prefill_start_time = perf_counter()
 prefill_qpc_path = qeff_model.compile(
     batch_size=1,
     full_batch_size=1,
-    kv_cache_batch_size=1,
+    kv_cache_batch_size=7,
     prefill_seq_len=PREFILL_SEQ_LEN,
     ctx_len=CTX_LEN,
     moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
@@ -304,7 +304,7 @@ decode_inputs = {
 for layer_idx in range(config.text_config.num_hidden_layers):
     for cache_name in ("past_key", "past_value"):
         prefill_cache = outputs[f"{cache_name}.{layer_idx}_RetainedState"]
-        logical_cache = np.tile(prefill_cache, (BS, 1, 1, 1))
+        logical_cache = np.tile(prefill_cache[0:1], (BS, 1, 1, 1))
         physical_cache = np.empty_like(logical_cache)
         physical_cache[physical_slots] = logical_cache
         decode_inputs[f"{cache_name}.{layer_idx}"] = physical_cache
