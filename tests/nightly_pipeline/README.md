@@ -160,6 +160,21 @@ export NIGHTLY_NEWER_MODELS_ONLY=true
 When this variable is enabled, the default model selection is narrowed to newer models and older-model batches are
 empty. If the variable is unset, the nightly suite keeps the existing older-then-newer flow.
 
+### Execution Mode Toggle (Causal/Image)
+
+By default, nightly runs only `cb` mode for:
+
+- `causal_pipeline_configs`
+- `image_text_to_text_model_configs`
+
+To also run `non_cb` mode for these families, set:
+
+```bash
+export NIGHTLY_PIPELINE_ENABLE_NON_CB=1
+```
+
+Truthy values accepted: `1`, `true`, `yes`, `on` (case-insensitive).
+
 ### Runtime Model Skips
 
 Freestyle jobs can skip selected models without editing `validated_models.json` by passing comma-separated model names
