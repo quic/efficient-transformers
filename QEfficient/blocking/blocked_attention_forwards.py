@@ -108,7 +108,6 @@ def _read_kv_block(
     block table; otherwise it is read as a contiguous slice of the KV cache.
     """
     if paged_attention:
-        print("Reading KV block using paged attention")
         position_ids = cache_kwargs.get("position_ids")
         block_index = block_table[:, j]
         updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == j
@@ -165,7 +164,6 @@ def blocked_kv_attention_forward(
 
     block_table = None
     if paged_attention:
-        print("Paged attention enabled")
         block_table = cache_kwargs.get("block_table")  # [BS, num_kv_blocks] -> each entry is block_id value
         kv_block_size = past_key_value.get_seq_length() if past_key_value is not None else 0
         past_seen_tokens = kv_block_size * num_kv_blocks
@@ -348,7 +346,7 @@ def blocked_qkv_attention_forward(
                     if skip_future.item():
                         break
 
-            k_block, v_block = past_key_value._read_kv_block(
+            k_block, v_block = _read_kv_block(
                 past_key_value=past_key_value,
                 start_index=start_index,
                 end_index=end_index,
@@ -519,7 +517,7 @@ def blocked_hqkv_attention_forward(
                         if skip_future.item():
                             break
 
-                k_block, v_block = past_key_value._read_kv_block(
+                k_block, v_block = _read_kv_block(
                     past_key_value=past_key_value,
                     start_index=start_index,
                     end_index=end_index,
@@ -714,7 +712,7 @@ def blocked_bhqkv_attention_forward(
                             if skip_future.item():
                                 break
 
-                    k_block, v_block = past_key_value._read_kv_block(
+                    k_block, v_block = _read_kv_block(
                         past_key_value=past_key_value,
                         start_index=start_index,
                         end_index=end_index,
