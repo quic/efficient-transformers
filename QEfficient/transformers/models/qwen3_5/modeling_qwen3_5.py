@@ -38,12 +38,14 @@ from QEfficient.blocking.attention_blocking import (
     BlockingMode,
     generic_blocked_attention_interface,
 )
-from QEfficient.customop.rms_norm import CustomRMSNormFunc
-from QEfficient.transformers.cache_utils import (
+from QEfficient.customop import (
     CtxGatherFuncCB,
     CtxGatherFuncCB3D,
     CtxScatterFuncCB,
     CtxScatterFuncCB3D,
+)
+from QEfficient.customop.rms_norm import CustomRMSNormFunc
+from QEfficient.transformers.cache_utils import (
     QEffDynamicLayer,
 )
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -1716,8 +1718,8 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
             return spec
 
         lang = []
-        if comp_ctx_lengths_prefill is not None:
-            for comp_ctx in comp_ctx_lengths_prefill:
+        if comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
+            for comp_ctx in comp_ctx_lengths_prefill or []:
                 lang.append(_build_lang_spec(prefill_seq_len, comp_ctx_len=comp_ctx))
             for comp_ctx in comp_ctx_lengths_decode or []:
                 lang.append(_build_lang_spec(1, comp_ctx_len=comp_ctx))
@@ -1851,7 +1853,7 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
         if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int64)
 
         inputs = {}
         if kv_offload:

@@ -26,6 +26,8 @@ ONNX_EXPORT_IMAGE_WIDTH = 560
 ONNX_EXPORT_IMAGE_LENGHT = 560
 ONNX_EXPORT_IMAGE_DEPTH = 3
 ONNX_EXPORT_CTX_LEN = 1024
+DYNAMO_DIM_MAX_BATCH_SIZE = 1024
+DYNAMO_DIM_MIN_COMP_CTX_LENGTHS = 4
 
 NPI_MAPPING = {
     "google/gemma-3-4b-it": os.path.join(
@@ -98,9 +100,15 @@ ONNX_EXPORT_EXAMPLE_TEMPERATURES = 0.80
 ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS = 512
 ONNX_EXPORT_EXAMPLE_TOP_PS = 0.80
 ONNX_EXPORT_EXAMPLE_MIN_PS = 0.99
-ONNX_EXPORT_OPSET = 17
+ONNX_LEGACY_EXPORT_OPSET = 17
+ONNX_DYNAMO_EXPORT_OPSET = 18
+ONNX_EXPORT_OPSET = ONNX_LEGACY_EXPORT_OPSET
 FILE_CHUNK_SIZE_DEFAULT = 10 * 2**30  # 10 GB
 SIZE_THRESHOLD_DEFAULT = 1024
+
+
+def get_onnx_export_opset(dynamo: bool = False) -> int:
+    return ONNX_DYNAMO_EXPORT_OPSET if dynamo else ONNX_LEGACY_EXPORT_OPSET
 
 
 COMPILER = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw"]
@@ -177,7 +185,11 @@ VISION_MXFP6_MATMUL = False
 LLAMA4_ATTENTION_CHUNK_SIZE = 8192
 LLAMA4_MAX_POSITION_EMBEDDINGS = 65536
 
-# DeepSeek Kimi-k2 Constant
+# DeepSeek Kimi-k2.5 Constants
+KIMI_PATCH_SIZE = 14
+KIMI_EXAMPLE_IMAGE_NUM_IMAGE_TOKENS = 600
+KIMI_EXAMPLE_IMAGE_NUM_PATCHES_HEIGHT = 30
+KIMI_EXAMPLE_IMAGE_NUM_PATCHES_WIDTH = 80
 MAX_POSITION_EMBEDDINGS = 32768
 FP16_BYTES = 2
 DEFAULT_NUM_HEADS = 64
@@ -361,3 +373,43 @@ class QnnConstants:
         },
         "SKIP_QNN_CONVERTER_STEP": False,
     }
+
+
+_KNOWN_DECODER_LAYER_ATTR_PATHS = (
+    "layers",
+    "h",
+    "model.layers",
+    "model.h",
+    "decoder.layers",
+    "model.decoder.layers",
+    "encoder.layer",
+    "encoder.layers",
+    "model.encoder.layer",
+    "model.encoder.layers",
+    "transformer.h",
+    "transformer.layers",
+    "model.transformer.h",
+    "model.transformer.layers",
+    "language_model.layers",
+    "language_model.model.layers",
+    "llm.layers",
+    "llm.model.layers",
+    "vision_model.encoder.layers",
+    "vision_model.transformer.layers",
+    "model.vision_model.encoder.layers",
+    "model.vision_model.transformer.layers",
+    "vision_tower.transformer.layers",
+    "vision_tower.vision_model.encoder.layers",
+    "model.vision_tower.transformer.layers",
+    "model.vision_tower.vision_model.encoder.layers",
+)
+
+_KNOWN_DECODER_LAYER_SUFFIXES = (
+    ".layers",
+    ".layer",
+    ".h",
+    ".blocks",
+    ".block",
+    ".encoder_layers",
+    ".decoder_layers",
+)

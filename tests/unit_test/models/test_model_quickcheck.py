@@ -18,6 +18,7 @@ This file intentionally uses two coverage tiers:
      but do not yet have a stable CPU runtime parity path in the consolidated test
 """
 
+import json
 import logging
 import os
 import shutil
@@ -33,6 +34,7 @@ import onnx
 import onnxruntime as ort
 import pytest
 import torch
+from torch import nn
 from transformers import (
     AutoConfig,
     AutoModel,
@@ -927,6 +929,125 @@ def _assert_qwen_hf_qeff_ort_parity(model_type: str, tmp_path, *, prefill_only: 
         assert np.allclose(qeff_logits, ort_logits, atol=atol, rtol=1e-4)
 
 
+def _kimi_k25_prompt_inputs(processor):
+    from PIL import Image
+
+    image = Image.new("RGB", (64, 64), color=(128, 64, 32))
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": image},
+                {"type": "text", "text": "Describe."},
+            ],
+        },
+    ]
+    inputs = processor(
+        messages=messages,
+        add_generation_prompt=True,
+        tokenize=False,
+        return_tensors="pt",
+    )
+    return {name: (value.to("cpu") if torch.is_tensor(value) else value) for name, value in inputs.items()}
+
+
+def _kimi_k25_qeff_lang_inputs(qeff_model, inputs, vision_embeds):
+    seq_len = inputs["input_ids"].shape[1]
+    lang_inputs = deepcopy(qeff_model.model.get_dummy_inputs(kv_offload=True, prefill_seq_len=seq_len)["lang"])
+    lang_inputs["input_ids"] = inputs["input_ids"].clone()
+    lang_inputs["position_ids"] = torch.where(
+        inputs["attention_mask"] > 0,
+        torch.arange(seq_len, dtype=torch.int64).view(1, seq_len),
+        -1,
+    )
+    lang_inputs["vision_embeds"] = vision_embeds
+    lang_inputs["image_idx"] = torch.zeros((1, 1), dtype=torch.int64)
+    return lang_inputs
+
+
+class _KimiSyntheticQuantLinear(nn.Module):
+    def __init__(self, linear: nn.Linear):
+        super().__init__()
+        if linear.in_features % 2 != 0:
+            raise ValueError("Synthetic int4 fixture requires an even input dimension")
+
+        self.in_features = linear.in_features
+        self.out_features = linear.out_features
+        self.bits = 4
+        self.group_size = 1
+        self.act_order = None
+        self.register_buffer(
+            "qweight", torch.full((linear.out_features, linear.in_features // 2), 0x99, dtype=torch.uint8)
+        )
+        self.register_buffer(
+            "qzeros", torch.full((linear.out_features, linear.in_features // 2), 0x88, dtype=torch.uint8)
+        )
+        self.register_buffer("scales", linear.weight.detach().clone().to(torch.float32))
+        self.register_buffer("g_idx", torch.arange(linear.in_features, dtype=torch.int32))
+        if linear.bias is None:
+            self.bias = None
+        else:
+            self.register_buffer("bias", linear.bias.detach().clone().to(torch.float32))
+
+    def forward(self, inputs):
+        output = torch.matmul(inputs.float(), self.scales.transpose(0, 1).float())
+        if self.bias is not None:
+            output = output + self.bias.to(output.dtype)
+        return output.to(inputs.dtype)
+
+
+def _install_kimi_synthetic_quant_experts(model):
+    for module in model.modules():
+        experts = getattr(module, "experts", None)
+        if experts is None:
+            continue
+        for expert in experts:
+            for projection_name in ("gate_proj", "up_proj", "down_proj"):
+                projection = getattr(expert, projection_name, None)
+                if isinstance(projection, nn.Linear):
+                    setattr(expert, projection_name, _KimiSyntheticQuantLinear(projection))
+
+
+@pytest.mark.llm_model
+def test_kimi_k25_quickcheck_hf_qeff_vision_logits_parity():
+    from tests.utils.load_kimi_utils import get_kimi_k25_test_config, load_kimi_k25_model_from_config
+
+    model_id = "moonshotai/Kimi-K2.5"
+    config_path = Path(__file__).parents[2] / "configs" / "image_text_model_configs.json"
+    model_configs = json.loads(config_path.read_text())["image_text_models"]
+    model_config_dict = {model["model_name"]: model for model in model_configs}
+
+    try:
+        config = get_kimi_k25_test_config(model_id, model_config_dict)
+        model_hf, _, processor = load_kimi_k25_model_from_config(config)
+        _install_kimi_synthetic_quant_experts(model_hf)
+    except Exception as exc:
+        _skip_on_model_fetch_error(exc, model_id)
+
+    inputs = _kimi_k25_prompt_inputs(processor)
+    with torch.no_grad():
+        hf_outputs = model_hf(**inputs, use_cache=False, return_dict=True)
+        hf_logits = hf_outputs.logits[:, -1:, :].detach().float().numpy()
+
+    qeff_model = QEFFAutoModelForImageTextToText(
+        deepcopy(model_hf),
+        kv_offload=True,
+        config=model_hf.config,
+        torch_dtype=torch.float32,
+    )
+    grid_thws = inputs["grid_thws"].to(torch.int64)
+    h_shape = torch.ones((int(grid_thws[0, 1].item()),), dtype=torch.int64)
+    w_shape = torch.ones((int(grid_thws[0, 2].item()),), dtype=torch.int64)
+
+    with torch.no_grad():
+        vision_embeds = qeff_model.vision_model.model(inputs["pixel_values"], h_shape, w_shape)
+        lang_inputs = _kimi_k25_qeff_lang_inputs(qeff_model, inputs, vision_embeds)
+        qeff_logits = qeff_model.lang_model.model(**lang_inputs)[0].detach().float().numpy()
+
+    assert qeff_logits.shape == hf_logits.shape
+    assert np.allclose(hf_logits, qeff_logits, atol=1e-4, rtol=1e-4)
+
+
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     ("model_type", "model_id"),
@@ -1195,7 +1316,7 @@ def test_repeat_kv_quickcheck_hf_qeff_ort_parity(tmp_path):
     )
     torch.manual_seed(0)
     model_hf = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS).eval()
-    qeff_model = QEFFAutoModelForCausalLM(deepcopy(model_hf), qaic_config={"num_replicate_kv_heads": 2})
+    qeff_model = QEFFAutoModelForCausalLM(deepcopy(model_hf), qaic_config={"replicate_kv_heads": True})
 
     input_ids = torch.arange(1, 5, dtype=torch.int64).view(1, 4)
     position_ids = torch.arange(4, dtype=torch.int64).view(1, 4)
@@ -1211,7 +1332,7 @@ def test_repeat_kv_quickcheck_hf_qeff_ort_parity(tmp_path):
     with torch.no_grad():
         hf_logits = model_hf(input_ids=input_ids, position_ids=position_ids).logits[:, -1:, :].detach().numpy()
 
-    qeff_model.transform(ctx_len=8, seq_len=4, bs=1, qaic_config=qeff_model.model.qaic_config)
+    qeff_model.transform(ctx_len=8, seq_len=4, bs=1, num_devices=4, qaic_config=qeff_model.model.qaic_config)
     with torch.no_grad():
         qeff_logits = qeff_model.model(**inputs).logits.detach().numpy()
 
@@ -3551,3 +3672,50 @@ def test_layerwise_export_default_names_unchanged(tmp_path):
         assert f"past_key.{window}" in captured["input_names"]
         assert all("_vllmKvCache" not in n and "_VLLM" not in n for n in captured["output_names"])
         assert all("_vllmKvCache" not in n and "_VLLM" not in n for n in captured["input_names"])
+
+
+def test_kimi_k25_get_specializations_supports_multi_resolution_grid_sizes():
+    """Kimi K2.5 accepts list-valued image sizes for multi-resolution specs."""
+    from types import SimpleNamespace
+
+    from QEfficient.transformers.models.kimi_k25.modeling_kimi_k25 import QEffKimiK25ForConditionalGeneration
+
+    model = QEffKimiK25ForConditionalGeneration.__new__(QEffKimiK25ForConditionalGeneration)
+    model.config = SimpleNamespace(vision_config=SimpleNamespace(patch_size=14, merge_kernel_size=(2, 2)))
+
+    specs, _ = model.get_specializations(
+        batch_size=1,
+        prefill_seq_len=64,
+        ctx_len=4096,
+        image_height=[512, 448],
+        image_width=[910, 448],
+        num_frames=[1, 1],
+        kv_offload=True,
+    )
+    assert specs["vision"] == [
+        {"num_patches": 2508, "grid_h": 38, "grid_w": 66, "num_image_tokens": 627},
+        {"num_patches": 1024, "grid_h": 32, "grid_w": 32, "num_image_tokens": 256},
+    ]
+    assert all(spec["num_image_tokens"] == 627 for spec in specs["lang"])
+
+    with pytest.raises(ValueError, match="image_height and image_width"):
+        model.get_specializations(
+            batch_size=1,
+            prefill_seq_len=64,
+            ctx_len=4096,
+            h=[30, 32],
+            w=[80, 64],
+            num_frames=[1, 2],
+            kv_offload=True,
+        )
+
+    with pytest.raises(ValueError, match="num_patches"):
+        model.get_specializations(
+            batch_size=1,
+            prefill_seq_len=64,
+            ctx_len=4096,
+            image_height=512,
+            image_width=910,
+            num_patches=2508,
+            kv_offload=True,
+        )

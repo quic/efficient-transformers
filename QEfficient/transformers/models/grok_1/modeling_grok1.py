@@ -17,6 +17,7 @@ from transformers.modeling_outputs import (
 from transformers.models.llama.modeling_llama import repeat_kv
 
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
+from QEfficient.customop.utils import select_interface
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.models.llama.modeling_llama import qeff_apply_rotary_pos_emb
@@ -38,7 +39,7 @@ class QEFFGrok1CustomRMSNormAIC(nn.Module):
         Returns:
             torch.Tensor: Normalized tensor.
         """
-        return CustomRMSNormFunc.apply(
+        return select_interface(CustomRMSNormFunc.apply, torch.ops.qefficient.rms_norm)(
             hidden_states, self.scale, self.variance_epsilon if hasattr(self, "variance_epsilon") else self.eps
         )
 
@@ -110,10 +111,11 @@ class QEffGrok1MultiHeadAttention(nn.Module):
         attn_weights = attn_weights * self.attn_output_multiplier
         attn_weights = self.max_attn_val * F.tanh(attn_weights / self.max_attn_val)
 
+        mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
+
         if attention_mask is not None:
-            attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
-            )
+            # Apply the attention mask
+            attn_weights = torch.where(attention_mask, mask_value, attn_weights)
 
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_output = torch.matmul(attn_weights, value_states)

@@ -15,6 +15,7 @@ import pytest
 import requests
 import torch
 from PIL import Image
+from requests.adapters import HTTPAdapter
 from transformers import (
     AutoConfig,
     AutoProcessor,
@@ -22,6 +23,7 @@ from transformers import (
     GenerationConfig,
     TextStreamer,
 )
+from urllib3.util.retry import Retry
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils._utils import create_json
@@ -30,13 +32,20 @@ from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRun
 from QEfficient.utils.test_utils import (
     InternProcessor,
     ModelConfig,
-    get_text_config,
     load_vlm_model,
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
+from tests.utils.load_kimi_utils import (
+    is_kimi_k25,
+    load_kimi_k25_layer_subset_model,
+    run_kimi_k25_hf_model_on_pytorch,
+)
 
 from ..check_model_results import dump_and_compare_results
+
+_session = requests.Session()
+_session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=1)))
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
 with open(CONFIG_PATH, "r") as f:
@@ -79,16 +88,24 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     ort_tokens = None
     n_layer = num_hidden_layers
     qaic_config = copy.deepcopy(qaic_config) if qaic_config is not None else None
-    if config is None:
+
+    if is_kimi_k25(model_name) and config is None:
+        model_hf, tokenizer, processor = load_kimi_k25_layer_subset_model()
+        config = model_hf.config
+        qeff_model = QEFFAutoModelForImageTextToText(
+            copy.deepcopy(model_hf),
+            kv_offload=kv_offload,
+            config=model_hf.config,
+            torch_dtype=torch_dtype,
+        )
+    elif config is None:
         config = AutoConfig.from_pretrained(
             model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS
         )
         config = set_num_layers_vlm(config, n_layer=n_layer)
         if test_kv_replicate:
-            text_config = get_text_config(config)
-            num_replicate_kv_heads = text_config.num_attention_heads // text_config.num_key_value_heads
             qaic_config = qaic_config or {}
-            qaic_config["num_replicate_kv_heads"] = num_replicate_kv_heads
+            qaic_config["replicate_kv_heads"] = True
         if hasattr(config, "model_type") and config.model_type in ["gemma3"]:
             config.text_config._sliding_window_pattern = 2
             config.text_config.layer_types = ["sliding_attention", "full_attention"]
@@ -127,10 +144,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             )
     else:
         if test_kv_replicate:
-            text_config = get_text_config(config)
-            num_replicate_kv_heads = text_config.num_attention_heads // text_config.num_key_value_heads
             qaic_config = qaic_config or {}
-            qaic_config["num_replicate_kv_heads"] = num_replicate_kv_heads
+            qaic_config["replicate_kv_heads"] = True
         model_hf = load_vlm_model_from_config(config)
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
@@ -168,7 +183,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         num_patches_list = []
         questions = []
         for i in range(len(prompt)):
-            img = requests.get(img_url_list[i], stream=True)
+            img = _session.get(img_url_list[i], stream=True)
             image = Image.open(BytesIO(img.content)).convert("RGB")
             image = image.resize((448, 448))
             pixel_value = processor.load_image(image, max_num=12)
@@ -202,7 +217,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     elif model_name in ModelConfig.MOLMO_MODELS:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-        img = requests.get(img_url, stream=True)
+        img = _session.get(img_url, stream=True)
         image = Image.open(BytesIO(img.content)).convert("RGB")
         image = image.resize((536, 354))
         inputs = processor.process(images=[image], text=query)
@@ -228,9 +243,36 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         inputs["pixel_values"] = inputs.pop("images")
         compile_kwargs["img_size"] = img_size
 
+    elif is_kimi_k25(model_name):
+        image = Image.open(requests.get(img_url, stream=True).raw).convert("RGB")
+        conversation = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": image},
+                    {"type": "text", "text": query},
+                ],
+            },
+        ]
+        prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
+        inputs = processor(
+            messages=conversation,
+            add_generation_prompt=True,
+            tokenize=False,
+            return_tensors="pt",
+        )
+        pytorch_hf_tokens = run_kimi_k25_hf_model_on_pytorch(copy.deepcopy(model_hf), processor, inputs, max_gen_len)
+        compile_kwargs.update(
+            {
+                "prefill_seq_len": 1,
+                "image_height": image.height,
+                "image_width": image.width,
+            }
+        )
+
     else:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-        image = Image.open(requests.get(img_url, stream=True).raw)
+        image = Image.open(_session.get(img_url, stream=True).raw)
         if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
             image = image.resize((1540, 1540))
         conversation = [
@@ -486,6 +528,7 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_off
         "google/gemma-3-4b-it",
         "tiny-random/gemma-4-dense",
         "tiny-random/gemma-4-moe",
+        "moonshotai/Kimi-K2.5",
     ]:
         pytest.skip("QNN is not supported for these models yet.")
 
