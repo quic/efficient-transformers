@@ -86,7 +86,7 @@ def _build_config(dtype: str = "float16"):
     return config
 
 
-def _prepare_messages(image: Image.Image) -> list:
+def _prepare_messages(image: Image.Image, batch_size: int = BATCH_SIZE) -> list:
     return [
         [
             {
@@ -97,7 +97,7 @@ def _prepare_messages(image: Image.Image) -> list:
                 ],
             }
         ]
-        for _ in range(BATCH_SIZE)
+        for _ in range(batch_size)
     ]
 
 
@@ -142,6 +142,7 @@ def _run_disagg_qaic_generation(
     vision_session: QAICInferenceSession,
     prefill_session: QAICInferenceSession,
     decode_session: QAICInferenceSession,
+    decode_batch_size: int = BATCH_SIZE,
 ) -> np.ndarray:
     inputs = {
         name: value.clone() if isinstance(value, torch.Tensor) else copy.deepcopy(value)
@@ -185,7 +186,7 @@ def _run_disagg_qaic_generation(
     else:
         lang_inputs["position_ids"] = np.where(lang_inputs.pop("attention_mask"), np.arange(padded_len), -1)
 
-    lang_inputs["image_idx"] = np.array([[0]])
+    lang_inputs["image_idx"] = np.zeros((BATCH_SIZE, 1), dtype=np.int64)
     for output_name in VISION_OUTPUTS:
         if output_name in vision_outputs:
             lang_inputs[output_name] = vision_outputs[output_name]
@@ -206,19 +207,26 @@ def _run_disagg_qaic_generation(
 
     prefill_session.deactivate()
 
-    generated_ids = [_get_next_token_ids(outputs["logits"])]
+    first_token = _get_next_token_ids(outputs["logits"])  # shape: (BATCH_SIZE,) from BS=1 prefill
     decode_inputs = {
-        "input_ids": generated_ids[-1].reshape(BATCH_SIZE, 1),
+        "input_ids": first_token.reshape(BATCH_SIZE, 1),
         "position_ids": np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1,
     }
     _update_retained_states(decode_inputs, outputs, qeff_model.model.config.text_config.num_hidden_layers)
+
+    # Duplicate prefill outputs along the batch axis to match decode_batch_size
+    if decode_batch_size > 1:
+        decode_inputs = {k: np.repeat(v, decode_batch_size, axis=0) for k, v in decode_inputs.items()}
+        first_token = np.repeat(first_token, decode_batch_size, axis=0)
+
+    generated_ids = [first_token]
 
     decode_outputs = decode_session.run(decode_inputs)
     generated_ids.append(_get_next_token_ids(decode_outputs["logits"]))
 
     position_ids = np.max(decode_inputs["position_ids"], axis=-1, keepdims=True) + 1
     loop_decode_inputs = {
-        "input_ids": generated_ids[-1].reshape(BATCH_SIZE, 1),
+        "input_ids": generated_ids[-1].reshape(decode_batch_size, 1),
         "position_ids": position_ids,
     }
     _update_retained_states(loop_decode_inputs, decode_outputs, qeff_model.model.config.text_config.num_hidden_layers)
@@ -234,7 +242,7 @@ def _run_disagg_qaic_generation(
         )
         loop_decode_inputs.update(
             {
-                "input_ids": generated_ids[-1].reshape(BATCH_SIZE, 1),
+                "input_ids": generated_ids[-1].reshape(decode_batch_size, 1),
                 "position_ids": position_ids,
             }
         )
@@ -242,7 +250,9 @@ def _run_disagg_qaic_generation(
     return np.stack(generated_ids, axis=1)
 
 
-def _run_disagg_blocked(manual_cleanup, qaic_config: dict, prefill_qaic_config: dict | None = None) -> None:
+def _run_disagg_blocked(
+    manual_cleanup, qaic_config: dict, prefill_qaic_config: dict | None = None, batch_size: int = BATCH_SIZE
+) -> None:
     pytest.importorskip("qwen_vl_utils")
     torch.manual_seed(42)
 
@@ -315,7 +325,7 @@ def _run_disagg_blocked(manual_cleanup, qaic_config: dict, prefill_qaic_config: 
         compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")
 
         decode_qpc_path = qeff_model.compile(
-            batch_size=BATCH_SIZE,
+            batch_size=batch_size,
             prefill_seq_len=1,
             ctx_len=CTX_LEN,
             height=image.height,
@@ -348,6 +358,7 @@ def _run_disagg_blocked(manual_cleanup, qaic_config: dict, prefill_qaic_config: 
             vision_session=vision_session,
             prefill_session=prefill_session,
             decode_session=decode_session,
+            decode_batch_size=batch_size,
         )
     finally:
         for session in sessions:
@@ -358,11 +369,11 @@ def _run_disagg_blocked(manual_cleanup, qaic_config: dict, prefill_qaic_config: 
         ]
         manual_cleanup([path for path in cleanup_paths if path is not None])
 
-    assert qaic_tokens.shape == (BATCH_SIZE, GENERATION_LEN)
-    assert hf_tokens.shape == (BATCH_SIZE, GENERATION_LEN)
+    assert qaic_tokens.shape == (batch_size, GENERATION_LEN)
+    assert hf_tokens.shape == (1, GENERATION_LEN)
     assert np.issubdtype(qaic_tokens.dtype, np.integer)
     assert np.issubdtype(hf_tokens.dtype, np.integer)
-    assert (hf_tokens == qaic_tokens).all(), (
+    assert (qaic_tokens == np.repeat(hf_tokens, batch_size, axis=0)).all(), (
         "Tokens don't match for HF Torch fp32 output and disagg blocked QAIC output"
     )
 
@@ -399,9 +410,8 @@ def test_qwen3_vl_moe_disagg_blocked_qaic_vs_hf_fp32(blocking_mode, manual_clean
 def test_qwen3_vl_moe_disagg_headpar_blocked_qaic_vs_hf_fp32(manual_cleanup):
     qaic_config = {
         "enable_blocking": True,
-        "blocking_mode": "kv",
+        "blocking_mode": "kv_headpar",
         "num_kv_blocks": NUM_KV_BLOCKS,
-        "kv_blocking_headpar_split": 0,
     }
     _run_disagg_blocked(manual_cleanup, qaic_config)
 
@@ -416,15 +426,14 @@ def test_qwen3_vl_moe_disagg_batch_fold_blocked_qaic_vs_hf_fp32(manual_cleanup):
 
     decode_qaic_config = {
         "enable_blocking": True,
-        "blocking_mode": "kv",
+        "blocking_mode": "kv_batch_fold",
         "num_kv_blocks": NUM_KV_BLOCKS,
-        "batch_fold": True,
     }
     prefill_qaic_config = {
-        **decode_qaic_config,
-        "prefill_blocking_mode": "online",
-        "prefill_block_chunks": PREFILL_BLOCK_CHUNKS,
-        "prefill_n_rep_chunk": PREFILL_N_REP_CHUNK,
+        "enable_blocking": True,
+        "blocking_mode": "prefill_online",
+        "num_kv_blocks": NUM_KV_BLOCKS,
+        "num_q_blocks": PREFILL_BLOCK_CHUNKS,
+        "n_rep_chunk": PREFILL_N_REP_CHUNK,
     }
-    prefill_qaic_config.pop("batch_fold")
-    _run_disagg_blocked(manual_cleanup, decode_qaic_config, prefill_qaic_config=prefill_qaic_config)
+    _run_disagg_blocked(manual_cleanup, decode_qaic_config, prefill_qaic_config=prefill_qaic_config, batch_size=2)

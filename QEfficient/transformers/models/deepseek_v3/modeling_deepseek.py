@@ -17,7 +17,6 @@ from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutpu
 from QEfficient.blocking.attention_blocking import (
     AttentionBlockingConfig,
     generic_blocked_attention_interface,
-    generic_blocked_mla_attention_interface,
 )
 from QEfficient.customop.ctx_scatter_gather import (
     CtxGatherFunc3DGeneralized,
@@ -297,24 +296,26 @@ class QEffDeepseekV3Attention(nn.Module):
 
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
 
-        attn_output, attn_weights = generic_blocked_mla_attention_interface(
+        attn_output, attn_weights = generic_blocked_attention_interface(
             module=self,
-            q_a_proj_out=q_a_proj_out,
-            fusedqk=self.fusedqk,
-            q_nope=q_nope,
-            q_pe=q_pe,
-            kva=kva,
-            k_pe=k_pe,
-            batch_index=batch_index,
-            per_head_q_up=self.per_head_q_up,
-            per_head_k_up=self.per_head_k_up,
-            per_head_v_up=self.per_head_v_up,
-            per_head_k_up_normal=self.per_head_k_up_normal,
             attention_mask=attention_mask,
             scaling=self.softmax_scale,
-            mla_absorption=mla_absorption,
             blocking_config=blocking_config,
             position_ids=position_ids,
+            is_mla=True,
+            mla_kwargs=dict(
+                q_a_proj_out=q_a_proj_out,
+                fusedqk=self.fusedqk,
+                q_nope=q_nope,
+                q_pe=q_pe,
+                kva=kva,
+                k_pe=k_pe,
+                per_head_q_up=self.per_head_q_up,
+                per_head_k_up=self.per_head_k_up,
+                per_head_v_up=self.per_head_v_up,
+                per_head_k_up_normal=self.per_head_k_up_normal,
+                mla_absorption=mla_absorption,
+            ),
             **kwargs,
         )
 
@@ -385,19 +386,22 @@ class QEffDeepseekV3Attention(nn.Module):
 
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
 
-        attn_output, attn_weights = generic_blocked_mla_attention_interface(
+        attn_output, attn_weights = generic_blocked_attention_interface(
             module=self,
             query=query,
-            per_head_k_up_normal=self.per_head_k_up_normal,
-            per_head_v_up=self.per_head_v_up,
             attention_mask=attention_mask,
             batch_index=batch_index,
             scaling=self.softmax_scale,
             layer_idx=self.layer_idx,
-            compressed_kvs=compressed_kvs,
-            mla_absorption=mla_absorption,
             blocking_config=blocking_config,
             position_ids=position_ids,
+            is_mla=True,
+            mla_kwargs=dict(
+                per_head_k_up_normal=self.per_head_k_up_normal,
+                per_head_v_up=self.per_head_v_up,
+                compressed_kvs=compressed_kvs,
+                mla_absorption=mla_absorption,
+            ),
             **kwargs,
         )
 
