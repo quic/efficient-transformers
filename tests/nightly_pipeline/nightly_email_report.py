@@ -78,6 +78,7 @@ QAIC_PLATFORM_XML = "/opt/qti-aic/versions/platform.xml"
 QNN_SDK_ENV_VAR = "QNN_SDK_ROOT"
 QNN_SDK_YAML = "sdk.yaml"
 NIGHTLY_TEST_FAILURES_FILE = "nightly_test_failures.json"
+STATUS_RANK = {"passed": 0, "warning": 1, "failed": 2}
 
 
 def parse_args() -> argparse.Namespace:
@@ -281,12 +282,14 @@ def merge_test_failure_rows(class_rows: Dict[str, List[Dict[str, str]]], artifac
     if not failures:
         return
 
-    existing_models = {
-        (class_key, row.get("model_name"))
-        for class_key, rows in class_rows.items()
-        for row in rows
-        if row.get("model_name")
-    }
+    existing_model_rows = {}
+    for class_key, rows in class_rows.items():
+        for row in rows:
+            model_name = row.get("model_name")
+            if not model_name:
+                continue
+            existing_model_rows[(class_key, model_name)] = row
+
     for row in failures.values():
         if not isinstance(row, dict):
             continue
@@ -294,16 +297,32 @@ def merge_test_failure_rows(class_rows: Dict[str, List[Dict[str, str]]], artifac
         execution_mode = str(row.get("model_mode") or "non_cb")
         class_key = mode_class_key(base_class_key, execution_mode)
         model_name = str(row.get("model_name") or "")
-        if not class_key or not model_name or (class_key, model_name) in existing_models:
+        if not class_key or not model_name:
             continue
-        class_rows.setdefault(class_key, []).append(
-            {
-                "model_name": model_name,
-                "model_age": str(row.get("model_age") or MODEL_AGE_UNKNOWN),
-                "status": str(row.get("status") or "warning"),
-                "failure_reason": str(row.get("failure_reason") or "pytest test failed"),
-            }
-        )
+        failure_status = str(row.get("status") or "warning")
+        failure_reason = str(row.get("failure_reason") or "pytest test failed")
+        failure_model_age = str(row.get("model_age") or MODEL_AGE_UNKNOWN)
+        existing_row = existing_model_rows.get((class_key, model_name))
+        if existing_row is not None:
+            current_status = str(existing_row.get("status") or "passed")
+            if STATUS_RANK.get(failure_status, 0) >= STATUS_RANK.get(current_status, 0):
+                existing_row["status"] = failure_status
+            existing_row["model_age"] = failure_model_age
+            current_reason = str(existing_row.get("failure_reason") or "")
+            if current_reason and current_reason not in {"N/A", failure_reason}:
+                existing_row["failure_reason"] = f"{failure_reason}; {current_reason}"
+            else:
+                existing_row["failure_reason"] = failure_reason
+            continue
+
+        failure_row = {
+            "model_name": model_name,
+            "model_age": failure_model_age,
+            "status": failure_status,
+            "failure_reason": failure_reason,
+        }
+        class_rows.setdefault(class_key, []).append(failure_row)
+        existing_model_rows[(class_key, model_name)] = failure_row
 
 
 def is_current_only(row: Dict[str, str]) -> bool:

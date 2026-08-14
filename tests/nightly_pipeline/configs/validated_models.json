@@ -99,6 +99,7 @@
         "openai/whisper-large-v3-turbo"
     ],
     "audio_embedding_models": [
+        "facebook/wav2vec2-base-960h",
         "facebook/wav2vec2-base",
         "facebook/wav2vec2-large"
     ],
@@ -145,7 +146,7 @@
                 "openai/whisper-tiny"
             ],
             "audio_embedding_models": [
-                "facebook/wav2vec2-base"
+                "facebook/wav2vec2-base-960h"
             ],
             "sequence_models": [
                 "meta-llama/Llama-Prompt-Guard-2-22M"

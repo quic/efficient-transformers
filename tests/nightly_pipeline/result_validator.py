@@ -442,7 +442,7 @@ def _collect_mad_failures(
             failures.append(f"{mad_column}_mad {mad_value:.6f} exceeds {tolerance_value:.6f} tolerance")
         return
 
-    failures.append(f"{mad_column}_mad is unavailable")
+    failures.append(f"{mad_column}_mad is unavailable, model failed either in export/compile or generation step")
 
 
 def _collect_assertion_failures(failures: list[str], row: dict[str, Any], spec: dict[str, Any]) -> None:
