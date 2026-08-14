@@ -179,8 +179,6 @@ def build_decode_inputs(qpc_out, inputs, num_hidden_layers, prefill_seq_len):
 def main():
     args = parse_args()
 
-    headpar_split = args.headpar_split if args.headpar_split is not None else args.num_cores
-
     # Replicate prompt to fill the requested batch size
     prompts = [args.prompt] * args.full_batch_size
 
@@ -194,22 +192,21 @@ def main():
     generation_len = args.generation_len
 
     # ── qaic configs ──────────────────────────────────────────────────────────
-    # Decode: standard blocked head-parallel KV attention
+    # Decode: blocked head-parallel KV attention; headpar_split defaults to num_cores when omitted
     decode_qaic_config = {
-        "blocking_mode": "kv",
+        "blocking_mode": "kv_headpar",
         "num_kv_blocks": args.num_kv_blocks,
-        "kv_blocking_headpar_split": headpar_split,
     }
+    if args.headpar_split is not None:
+        decode_qaic_config["headpar_split"] = args.headpar_split
     # Prefill: blocked head-parallel prefill attention
     # prefill_headpar=True routes the prefill attention through
     # prefill_blocked_attention_interface ->
     # blocked_kv_attention_forward_prefill_headpar_offline
     prefill_qaic_config = {
-        "blocking_mode": "kv",
+        "blocking_mode": "prefill_online",
         "num_kv_blocks": 2,
-        "kv_blocking_headpar_split": headpar_split,
-        "prefill_block_chunks": 2,
-        "prefill_blocking_mode": "online",  # supported modes are q and kv, kv is with head parallel softmax
+        "num_q_blocks": 2,
         "ctx_len": args.ctx_len,
     }
 

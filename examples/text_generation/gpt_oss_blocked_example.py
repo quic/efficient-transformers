@@ -34,7 +34,7 @@ def main():
         "--blocking-mode",
         type=str,
         default="q",
-        help="Blocking mode, valid options: kv, q, h, qkv, hqkv",
+        help="Blocking mode, valid options: kv, kv_headpar, q, h, qkv, hqkv",
     )
     parser.add_argument(
         "--compare-non-blocking",
@@ -85,7 +85,7 @@ def main():
         print(f"Generated: {exec_info.generated_texts[0]}")
 
     # setup qaic config to enable blocking, ensure 4 or more device ids are passed
-    qaic_config = {"blocking_mode": args.blocking_mode, "num_kv_blocks": 2, "kv_blocking_headpar_split": 0}
+    qaic_config = {"blocking_mode": args.blocking_mode, "num_kv_blocks": 2}
     if args.num_layers:
         model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, num_hidden_layers=args.num_layers)
     else:

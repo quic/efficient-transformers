@@ -36,7 +36,6 @@ from QEfficient.blocking.attention_blocking import (
     BlockingMode,
     generic_blocked_attention_interface,
     past_key_value_update,
-    prefill_blocked_attention_interface,
 )
 from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
@@ -663,12 +662,12 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = (
             blocking_config is not None
-            and (blocking_config.prefill_block_chunks is not None)
+            and blocking_config.mode.is_prefill
             and (self.sliding_window is None)
         )
 
         if use_blocking:
-            attention_interface = prefill_blocked_attention_interface
+            attention_interface = generic_blocked_attention_interface
         else:
             attention_interface: Callable = eager_attention_forward
         attn_output, attn_weights = attention_interface(
@@ -686,6 +685,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
             position_ids=position_ids,
             past_key_value=past_key_values,
             batch_index=batch_index,
+            prefill_only=True,
             **kwargs,
         )
 

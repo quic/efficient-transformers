@@ -44,9 +44,6 @@ def _normalize_int(value: Optional[torch.Tensor | int]) -> int:
     return int(value) if value is not None else 0
 
 
-def _get_headpar_split(configured_split: int, num_kv_groups: int) -> int:
-    return max(1, int(configured_split if configured_split is not None else num_kv_groups))
-
 
 def update_running_softmax(
     current_max: torch.Tensor,
@@ -326,12 +323,12 @@ def blocked_kv_attention_forward_decode_headpar_batch(
             .expand(1, BH, seq_len, num_kv_groups, kv_len_block)
             .reshape(1, BH, seq_len * num_kv_groups, kv_len_block)
         )
-        attn_weights_block = attn_weights_block.masked_fill(causal_mask, -3.0e4)
+        attn_weights_block = attn_weights_block.masked_fill(causal_mask, MIN_MASKED_ATTENTION_VALUE)
 
         max_block = attn_weights_block.max(dim=3).values
         exp_block = torch.exp(attn_weights_block - max_block.unsqueeze(-1))
         if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
-            max_block = torch.where(skip_future, torch.full_like(max_block, -3.0e4), max_block)
+            max_block = torch.where(skip_future, torch.full_like(max_block, MIN_MASKED_ATTENTION_VALUE), max_block)
             exp_block = torch.where(skip_future, torch.zeros_like(exp_block), exp_block)
 
         # Read V through the folded [1, BH, T_block, D] view.
@@ -391,7 +388,7 @@ def blocked_kv_attention_forward_headpar_offline(
     past_seen_tokens = ctx_len
     position_ids = cache_kwargs.get("position_ids")
     num_kv_heads = num_heads // num_kv_groups
-    split = _get_headpar_split(configured_split, num_kv_groups)
+    split = configured_split
     num_kv_blocks = max(1, num_kv_blocks)
     kv_block_size = -(-past_seen_tokens // num_kv_blocks)
     current_position = position_ids.max(dim=-1).values
@@ -462,7 +459,7 @@ def blocked_kv_attention_forward_headpar_offline(
         max_block = attn_weights_block.max(dim=-1).values
         exp_block = torch.exp(attn_weights_block - max_block.unsqueeze(-1))
         if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
-            max_block = torch.where(skip_future, torch.full_like(max_block, MIN_MASKED_ATTENTION_VALUE), max_block)
+            max_block = torch.where(skip_future, torch.full_like(max_block, -3.0e4), max_block)
             exp_block = torch.where(skip_future, torch.zeros_like(exp_block), exp_block)
 
         v_block = past_key_value.read_only_blocked_V(start_index, end_index, layer_idx, cache_kwargs)
@@ -548,7 +545,7 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
     batch_size, num_heads, seq_len, head_dim = query.shape
     num_kv_groups = getattr(module, "num_key_value_groups", None)
     num_kv_heads = num_heads // num_kv_groups
-    split = _get_headpar_split(configured_split, num_kv_groups)
+    split = configured_split
     num_kv_blocks = max(1, num_kv_blocks)
     kv_block_size = -(-ctx_len // num_kv_blocks)
     n_rep_chunk = num_kv_groups
@@ -575,7 +572,7 @@ def blocked_qkv_attention_forward_prefill_headpar_offline(
             + torch.arange(T_h_nom, device=query.device)[None, :]
         ).repeat(num_kv_heads, 1)  # [num_kv_heads*split, T_h_nom]
         is_export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
-        masked_tensor = torch.tensor(-3.0e4, dtype=query.dtype, device=query.device)
+        masked_tensor = torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=query.dtype, device=query.device)
 
         accs = []
         for r_start, r_end in r_ranges:
@@ -809,7 +806,7 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
     B, NQH, QL, D_abs = query.shape
     kv_lora_rank = module.head_dim
     num_kv_groups = getattr(module, "num_key_value_groups", None)
-    split = _get_headpar_split(configured_split, num_kv_groups)
+    split = configured_split
     num_kv_blocks = max(1, num_kv_blocks)
     n_rep = num_kv_groups
     Hkv = NQH // num_kv_groups
@@ -885,9 +882,9 @@ def blocked_kv_attention_forward_prefill_headpar_offline(
                 valid_in_chunk = T_orig - chunk_start
                 k_idx = torch.arange(T_h, device=attn_c.device)
                 pad_mask = k_idx.unsqueeze(0) >= valid_in_chunk.unsqueeze(1)
-                attn_c = attn_c.masked_fill(pad_mask.view(1, 1, split, 1, 1, T_h), -3.0e4)
+                attn_c = attn_c.masked_fill(pad_mask.view(1, 1, split, 1, 1, T_h), MIN_MASKED_ATTENTION_VALUE)
 
-            attn_c = attn_c.masked_fill(causal_mask, -3.0e4)
+            attn_c = attn_c.masked_fill(causal_mask, MIN_MASKED_ATTENTION_VALUE)
 
             m_c = attn_c.max(dim=-1).values  # [B, Hkv, split, chunk, QL]
             exp_c = torch.exp(attn_c - m_c.unsqueeze(-1))
