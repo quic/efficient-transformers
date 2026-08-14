@@ -54,27 +54,27 @@ PREFILL_MODE = None  # None, "online" or "qkv" depending on whether we want onli
 
 ###############
 # Decode modes:
-# - standard attention - pass enable_blocking and blocking_mode
-# - head parallel blocking - pass  enable_blocking, blocking_mode: “kv” and kv_block_headpar_split: 0
-# - batch fold head parallel - pass enable_blocking, blocking_mode: “kv” and batch_fold: True
+# - standard blocked KV attention - blocking_mode: “kv”
+# - head parallel blocking - blocking_mode: “kv_headpar” (headpar_split defaults to num_cores)
+# - batch fold head parallel - blocking_mode: “kv_batch”
 
 
 def _decode_qaic_config() -> dict:
     return {
-        "blocking_mode": "kv",
-        "num_kv_blocks": NUM_KV_BLOCKS,
-        # "kv_blocking_headpar_split": 0,  # 0 → resolved to num_cores at compile time
-        "batch_fold": True,
-        "ctx_len": CTX_LEN,
+        “blocking_mode”: “kv_batch”,
+        “num_kv_blocks”: NUM_KV_BLOCKS,
+        “ctx_len”: CTX_LEN,
     }
 
 
 def _prefill_qaic_config() -> dict:
-    cfg = _decode_qaic_config()
-    cfg.pop("batch_fold")
-    cfg["prefill_block_chunks"] = PREFILL_BLOCK_CHUNKS
-    cfg["prefill_blocking_mode"] = PREFILL_MODE
-    cfg["prefill_n_rep_chunk"] = PREFILL_N_REP_CHUNK
+    cfg = {
+        “blocking_mode”: f”prefill_{PREFILL_MODE}”,
+        “num_kv_blocks”: NUM_KV_BLOCKS,
+        “num_q_blocks”: PREFILL_BLOCK_CHUNKS,
+        “n_rep_chunk”: PREFILL_N_REP_CHUNK,
+        “ctx_len”: CTX_LEN,
+    }
     return cfg
 
 
@@ -131,8 +131,8 @@ print(f"Decode export + compile time is {(perf_counter() - decode_start_time):.3
 ################
 # Prefill modes:
 # - follow decode attention - pass nothing extra
-# - head parallel offline prefill - pass prefill_blocking_mode: “qkv”, prefill_block_chunks: 2
-# - online prefill - pass prefill_blocking_mode: “online”, prefill_block_chunks: 2
+# - head parallel offline prefill - pass blocking_mode: “prefill_qkv”, num_q_blocks: 2
+# - online prefill - pass blocking_mode: “prefill_online”, num_q_blocks: 2
 PREFILL_MODE = "online"
 PREFILL_QL_CHUNK = 128
 PREFILL_BLOCK_CHUNKS = -(-PREFILL_SEQ_LEN // PREFILL_QL_CHUNK)

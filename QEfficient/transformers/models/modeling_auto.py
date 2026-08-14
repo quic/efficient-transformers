@@ -30,6 +30,7 @@ from transformers import (
 
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel
+from QEfficient.blocking.attention_blocking import BlockingMode
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
 from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
@@ -1766,10 +1767,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
+        _blocking_cfg = self.lang_model.hash_params.get("blocking_kwargs", None)
         batch_fold = (
             not prefill_only
-            and self.lang_model.hash_params.get("blocking_kwargs", None)
-            and getattr(self.lang_model.hash_params["blocking_kwargs"], "batch_fold", False)
+            and _blocking_cfg is not None
+            and _blocking_cfg.mode == BlockingMode.KV_BATCH_FOLD
         )
 
         if batch_fold:
@@ -4118,8 +4120,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     max_blocks = max(max_blocks, num_blocks)
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
-            if getattr(self.hash_params.get("blocking_kwargs"), "kv_blocking_headpar_split", None):
-                seq_len = max_blocks * getattr(self.hash_params.get("blocking_kwargs"), "kv_blocking_headpar_split")
+            if getattr(self.hash_params.get("blocking_kwargs"), "headpar_split", None):
+                seq_len = max_blocks * getattr(self.hash_params.get("blocking_kwargs"), "headpar_split")
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
         if dynamo and not (
             getattr(self.model.config, "model_type", None) == "gpt_oss" and not self.continuous_batching

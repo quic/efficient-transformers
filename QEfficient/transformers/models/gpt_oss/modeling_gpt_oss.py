@@ -35,7 +35,6 @@ from QEfficient.blocking.attention_blocking import (
     BlockingMode,
     generic_blocked_attention_interface,
     past_key_value_update,
-    prefill_blocked_attention_interface,
 )
 from QEfficient.customop import ctx_gather_3d_generalized, ctx_scatter_3d_generalized, ctx_scatter_3d_int
 from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
@@ -156,9 +155,6 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)
         top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
 
-        # routing_weights = torch.zeros_like(router_logits)
-        # routing_weights.scatter_(1, top_i, top_w)
-
         num_experts = self.experts.num_experts
         num_nsp = getattr(self, "expert_blocking_num_nsp", num_experts)
         packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
@@ -167,9 +163,6 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
 
         local_experts = num_experts // num_nsp
         expert_dim = self.experts.expert_dim
-        # routing_weights_by_expert = (
-        #     routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        # )
 
         expert_ids = torch.arange(local_experts, device=hidden.device, dtype=top_i.dtype).unsqueeze(
             0
@@ -845,12 +838,12 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = (
             blocking_config is not None
-            and (blocking_config.prefill_block_chunks is not None)
+            and blocking_config.mode.is_prefill
             and (self.sliding_window is None)
         )
 
         if use_blocking:
-            attention_interface = prefill_blocked_attention_interface
+            attention_interface = generic_blocked_attention_interface
         else:
             attention_interface: Callable = eager_attention_forward
         attn_output, attn_weights = attention_interface(
@@ -868,6 +861,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
             position_ids=position_ids,
             past_key_value=past_key_values,
             batch_index=batch_index,
+            prefill_only=True,
             **kwargs,
         )
 

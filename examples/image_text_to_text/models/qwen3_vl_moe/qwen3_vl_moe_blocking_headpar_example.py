@@ -14,16 +14,15 @@ for fast execution.
 
 Blocking modes (selected via --blocking-mode):
 
-  decode          HQKV blocking with kv_blocking_headpar_split=0 (auto-set
-                  to num_cores). Single prefill+decode QPC, uses the
+  decode          KV_BATCH_FOLD blocking. Single prefill+decode QPC, uses the
                   high-level generate() API.
 
-  prefill_par     Separate prefill QPC (prefill_blocking_mode="qkv") plus
-                  a decode QPC (HQKV). Manual chunked-prefill + decode loop
+  prefill_par     Separate prefill QPC (blocking_mode="prefill_qkv") plus
+                  a decode QPC (KV_BATCH_FOLD). Manual chunked-prefill + decode loop
                   via QAICInferenceSession.
 
   prefill_online  Same structure as prefill_par but uses
-                  prefill_blocking_mode="online".
+                  blocking_mode="prefill_online".
 
   all             Run all three modes back-to-back against the same PyTorch
                   reference.
@@ -61,20 +60,19 @@ PROMPT = "Tell me about yourself."
 
 def _decode_qaic_config() -> dict:
     return {
-        "blocking_mode": "kv",
+        "blocking_mode": "kv_batch_fold",
         "num_kv_blocks": NUM_KV_BLOCKS,
-        "batch_fold": True,
-        # "kv_blocking_headpar_split": 0,
         "ctx_len": CTX_LEN,
     }
 
 
 def _prefill_qaic_config(prefill_mode: str) -> dict:
-    cfg = _decode_qaic_config()
-    cfg.pop("batch_fold")
-    cfg["prefill_block_chunks"] = PREFILL_BLOCK_CHUNKS
-    cfg["prefill_blocking_mode"] = prefill_mode
-    return cfg
+    return {
+        "blocking_mode": f"prefill_{prefill_mode}",
+        "num_kv_blocks": NUM_KV_BLOCKS,
+        "num_q_blocks": PREFILL_BLOCK_CHUNKS,
+        "ctx_len": CTX_LEN,
+    }
 
 
 # ── Dummy model builder ────────────────────────────────────────────────────────
@@ -154,7 +152,7 @@ def run_pytorch_reference(model_hf, raw_inputs, gen_len: int, tokenizer=None) ->
 def run_decode_config(
     model_hf, config, processor, raw_inputs, gen_len: int, num_cores: int, num_devices: int
 ) -> np.ndarray:
-    print("\n=== Config: decode (HQKV, kv_blocking_headpar_split=0) ===")
+    print("\n=== Config: decode (KV_BATCH_FOLD) ===")
 
     qeff_model = QEFFAutoModelForImageTextToText(
         copy.deepcopy(model_hf),
@@ -223,7 +221,7 @@ def run_prefill_config(
     print(f"  Decode QPC: {decode_qpc}")
 
     # ── Compile prefill model ─────────────────────────────────────────────────
-    print(f"  Compiling prefill model (prefill_blocking_mode={prefill_mode})...")
+    print(f"  Compiling prefill model (blocking_mode=prefill_{prefill_mode})...")
     prefill_model = QEFFAutoModelForImageTextToText(
         copy.deepcopy(model_hf),
         kv_offload=True,
