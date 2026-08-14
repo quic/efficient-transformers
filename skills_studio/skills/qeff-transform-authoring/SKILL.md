@@ -24,6 +24,7 @@ Use this skill to add transforms with the same architecture and safety expectati
 1. Add QEff replacement behavior first.
    - For mappers, add or reuse QEff classes/methods near the relevant model wrapper.
    - For mutators, implement deterministic `mutate(original_module, parent_module)` and return a fully initialized replacement module.
+   - Follow the base class contract: inspect the base `apply()`/`mutate()` split before subclassing, and keep traversal, matching, registration, and mode-policy decisions in `apply()` unless the base class already owns them.
 2. Wire the transform in the narrowest registry.
    - Quantizer loading behavior maps through `QEfficient/transformers/quantizers/auto.py`; `from_pretrained` temporarily replaces Transformers quantizer/config registries with QEff entries.
    - Generic model class swaps: `QEfficient/transformers/models/pytorch_transforms.py`.
@@ -38,6 +39,9 @@ Use this skill to add transforms with the same architecture and safety expectati
    - Mappers should usually preserve parameters/buffers by only replacing class or methods.
    - If `__qeff_init__` creates, reshapes, or copies state, document and test that mutation; otherwise use a mutator.
 5. Return the correct `(model, transformed)` tuple and make repeated application safe when practical.
+6. Keep mutators local.
+   - `mutate()` should only mutate or replace the module it receives and return that module.
+   - If a transform needs compile-time arguments, custom traversal, or whole-model config edits, override `apply()` cleanly or keep the transform bespoke instead of hiding that policy inside `mutate()`.
 
 ## Testing Workflow
 - Add a structure test for every new transform: importability, mapping or `_match_class`, registration in `_pytorch_transforms`, and ordering if ordering matters.

@@ -5,15 +5,7 @@
 #
 # -----------------------------------------------------------------------------
 
-"""Layerwise decode compile example for Qwen3.5-MoE.
-
-The orchestration loop that previously lived in this script has been moved
-behind the ``layerwise=True`` flag on ``.compile()`` / ``.export()``.
-
-Note: ``layerwise=True`` is a provisional API and is scheduled for deprecation
-once first-class multi-window export lands. Supported model types:
-``qwen3_vl_moe``, ``qwen3_5_moe``, ``qwen3_moe``.
-"""
+"""Decode compile example for Qwen3.5-MoE."""
 
 import torch
 import transformers
@@ -21,16 +13,14 @@ from transformers import AutoConfig, AutoProcessor
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-# MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
-MODEL_ID = "Qwen/Qwen3.6-35B-A3B"
-LAYERWISE = True
+MODEL_ID = "Qwen/Qwen3.5-397B-A17B"
 TORCH_DTYPE = torch.float16
 RANDOM_SEED = 42
 
 
 def main():
     # Tiny random checkpoints have missing params initialized from RNG.
-    # Keep the seed fixed so layerwise/non-layerwise parity checks are stable.
+    # Keep the seed fixed so parity checks are stable.
     torch.manual_seed(RANDOM_SEED)
 
     config = AutoConfig.from_pretrained(MODEL_ID)
@@ -46,7 +36,6 @@ def main():
         kv_offload=True,
         config=config,
         dtype=TORCH_DTYPE,
-        layerwise=LAYERWISE,
     )
 
     qpc_path = qeff_model.compile(
@@ -64,8 +53,6 @@ def main():
         split_retained_state_io=True,
         use_onnx_subfunctions=True,
         mos=1,
-        layerwise=LAYERWISE,
-        layerwise_window_size=1,
     )
     print(f"Final QPC path: {qpc_path}")
 

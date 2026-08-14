@@ -42,6 +42,12 @@ from QEfficient.blocking.attention_blocking import (
     BlockingMode,
     generic_blocked_attention_interface,
 )
+from QEfficient.customop import (
+    CtxGatherFuncCB,
+    CtxGatherFuncCB3D,
+    CtxScatterFuncCB,
+    CtxScatterFuncCB3D,
+)
 from QEfficient.customop.ctx_scatter_gather import (
     CtxGatherFunc3DGeneralized,
     CtxScatterFunc3DGeneralized,
@@ -49,18 +55,10 @@ from QEfficient.customop.ctx_scatter_gather import (
 )
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import (
-    CtxGatherFuncCB,
-    CtxGatherFuncCB3D,
-    CtxScatterFuncCB,
-    CtxScatterFuncCB3D,
     QEffDynamicLayer,
 )
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.models._layerwise import (
-    get_layerwise_context,
-    get_layerwise_end,
-    get_layerwise_start,
-    get_layerwise_total_layers,
     is_last_layer_window,
     is_layerwise_active,
     resolve_layer_window,
@@ -97,10 +95,9 @@ class QEffQwen3_5MoeDynamicCache(Cache):
     convolution and recurrent states.
     """
 
-    def __init__(self, config, layerwise_context=None):
+    def __init__(self, config):
         super().__init__(layers=[])
         self.config = config
-        self.layerwise_context = layerwise_context
         self.layer_types = list(config.layer_types)
         self.transformer_layers = [i for i, layer_type in enumerate(self.layer_types) if layer_type == "full_attention"]
         self.last_linear_layer = next(
@@ -118,13 +115,12 @@ class QEffQwen3_5MoeDynamicCache(Cache):
         cls,
         config,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor, ...], ...]] = None,
-        layerwise_context=None,
     ) -> "QEffQwen3_5MoeDynamicCache":
-        cache = cls(config, layerwise_context=layerwise_context)
+        cache = cls(config)
         if past_key_values is None:
             return cache
 
-        if layerwise_context is None or not layerwise_context.active:
+        if not is_layerwise_active():
             # Default path: restore every layer, matching pre-layerwise behavior.
             for layer_idx, layer_state in enumerate(past_key_values):
                 if cache.layer_types[layer_idx] == "full_attention":
@@ -139,7 +135,7 @@ class QEffQwen3_5MoeDynamicCache(Cache):
                     cache.recurrent_states[layer_idx] = recurrent_state
             return cache
 
-        layer_idx = int(layerwise_context.start)
+        layer_idx = QEffQwen3_5MoeTextModel._start
         layer_state = past_key_values
         if len(past_key_values) == len(cache.layer_types) and isinstance(past_key_values[layer_idx], (tuple, list)):
             layer_state = past_key_values[layer_idx]
@@ -228,8 +224,8 @@ class QEffQwen3_5MoeDynamicCache(Cache):
             return self.conv_states[layer_idx] is not None
 
         # Layerwise path only materializes the active layer state.
-        if self.layerwise_context is not None and self.layerwise_context.active:
-            active_idx = int(self.layerwise_context.start)
+        if is_layerwise_active():
+            active_idx = QEffQwen3_5MoeTextModel._start
             if 0 <= active_idx < len(self.layer_types) and self.layer_types[active_idx] == "linear_attention":
                 return self.conv_states[active_idx] is not None
 
@@ -440,17 +436,35 @@ def qeff_torch_causal_conv1d_update(
     bias: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     _, hidden_size, seq_len = hidden_states.shape
-    state_len = conv_state.shape[-1]
-    idx = position_ids[0].flatten()
-    zeros = torch.zeros(state_len, dtype=idx.dtype, device=idx.device)
-    out = torch.cat([zeros, idx], dim=0)
-    order = torch.argsort(out)  # sorted positions
-    last4_positions = order[-state_len:]  # (4,)
+    grouped_conv_state = conv_state.ndim == 4
+
+    if grouped_conv_state:
+        bsz, num_kv_heads, conv_group_dim, state_len = conv_state.shape
+        if hidden_size != num_kv_heads * conv_group_dim:
+            raise ValueError(
+                "Grouped conv_state shape mismatch: "
+                f"hidden_size={hidden_size}, num_kv_heads={num_kv_heads}, conv_group_dim={conv_group_dim}"
+            )
+        conv_state_flat = conv_state.reshape(bsz, hidden_size, state_len)
+    else:
+        conv_state_flat = conv_state
+
+    state_len = conv_state_flat.shape[-1]
+    pos_ids = position_ids[0]
+    zeros = torch.zeros((pos_ids.shape[0], state_len), dtype=pos_ids.dtype, device=pos_ids.device)
+    out = torch.cat([zeros, pos_ids], dim=1)
+    order = torch.argsort(out, dim=1)  # sorted positions per batch row
+    last_positions = order[:, -state_len:]  # (B, state_len)
 
     # ad_on = torch.where(hidden_states.shape[2] == torch.tensor(1), torch.tensor(1), cache_position.argmax(0))
-    hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
+    hidden_states_new = torch.cat([conv_state_flat, hidden_states], dim=-1).to(weight.dtype)
 
-    updated_conv_state = hidden_states_new.index_select(2, last4_positions.long())
+    ctx_idx = last_positions.to(torch.long).unsqueeze(1).expand(-1, hidden_size, -1)
+    updated_conv_state_flat = torch.gather(hidden_states_new, dim=2, index=ctx_idx)
+    if grouped_conv_state:
+        updated_conv_state = updated_conv_state_flat.reshape(bsz, num_kv_heads, conv_group_dim, state_len)
+    else:
+        updated_conv_state = updated_conv_state_flat
     # updated_conv_state = hidden_states_new[:, :, -state_len:].to(hidden_states_new.dtype)
     # updated_conv_state = hidden_states_new[:, :, position_ids[0].argmax(1) + 1: position_ids[0].argmax(1) + state_len].to(hidden_states_new.dtype)
     out = F.conv1d(hidden_states_new, weight.unsqueeze(1), bias, padding=0, groups=hidden_size)
@@ -558,15 +572,16 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
     def __qeff_init__(self):
         self.chunk_gated_delta_rule = self.torch_chunk_gated_delta_rule_qeff
+        self.chunk_gated_delta_solver = "recursive_sns"
         chunk_size = 64  # must match what's used in the function
 
         # Precompute all constant masks — no triu/tril with diagonal args at runtime
         # mask_causal: upper triangular including diagonal (diagonal=0)
         # = triu(ones, diagonal=0)
-        mask_causal = torch.ones(chunk_size, chunk_size, dtype=torch.bool)
+        mask_causal = torch.zeros(chunk_size, chunk_size, dtype=torch.bool)
         for i in range(chunk_size):
-            for j in range(i + 1):
-                mask_causal[i, j] = False
+            for j in range(i, chunk_size):
+                mask_causal[i, j] = True
         self.register_buffer("_mask_causal", mask_causal, persistent=False)
         # shape: (C, C), True above diagonal inclusive
 
@@ -590,6 +605,104 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
         # eye: identity matrix
         self.register_buffer("_eye", torch.eye(chunk_size), persistent=False)
+
+    # TODO: It would be better to use it directly from HF
+    def _solve_chunk_attn_original(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        for i in range(1, chunk_size):
+            row = attn[..., i, :i].clone()
+            sub = attn[..., :i, :i].clone()
+            attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
+        return attn + eye.to(dtype=attn.dtype, device=attn.device)
+
+    def _solve_chunk_attn_recursive_sns(
+        self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int
+    ):
+        strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+        acc_dtype = attn.dtype
+        I64 = eye.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        A64 = attn.masked_fill(mask, 0).to(acc_dtype)
+        ns_iters = int(math.log2(chunk_size)) + 4
+
+        def _ns_solve(L: torch.Tensor) -> torch.Tensor:
+            X = I64.clone()
+            for _ in range(ns_iters):
+                R = I64 - ((I64 - L) @ X)
+                ck = X + (X @ R).masked_fill(~strict_lower, 0)
+                X = ck.masked_fill(~strict_lower, 0) + I64
+            return X
+
+        default_depth = max(1, (int(math.ceil(math.log2(chunk_size))) - 1) // 2)
+        depth = getattr(self, "recursive_sns_depth", None)
+        depth = default_depth if depth is None else int(depth)
+        depth = max(1, depth)
+
+        X = _ns_solve(A64 * (0.5**depth))
+        for _ in range(depth):
+            M = (X - I64).masked_fill(~strict_lower, 0)
+            Z = _ns_solve(M)
+            X = (Z @ X).masked_fill(~strict_lower, 0) + I64
+        return X.to(attn.dtype)
+
+    def _solve_chunk_attn_scaled_newton_schulz(
+        self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int
+    ):
+        strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+        attn_1 = attn.clone()
+        acc_dtype = attn.dtype
+        I64 = eye.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        A64 = attn_1.masked_fill(mask, 0).to(acc_dtype)
+        ns_iters = int(math.log2(chunk_size)) + 4
+        As = 0.5 * A64
+
+        Xs = I64.clone()
+        for _ in range(ns_iters):
+            Rs = I64 - ((I64 - As) @ Xs)
+            ck = Xs + (Xs @ Rs).masked_fill(~strict_lower, 0)
+            Xs = ck.masked_fill(~strict_lower, 0) + I64
+
+        M = (Xs - I64).masked_fill(~strict_lower, 0)
+        Z = I64.clone()
+        for _ in range(ns_iters):
+            Rz = I64 - ((I64 - M) @ Z)
+            ck = Z + (Z @ Rz).masked_fill(~strict_lower, 0)
+            Z = ck.masked_fill(~strict_lower, 0) + I64
+
+        X = (Z @ Xs).masked_fill(~strict_lower, 0) + I64
+        return X.to(attn.dtype)
+
+    def _solve_chunk_attn_factorized(self, attn: torch.Tensor, eye: torch.Tensor):
+        eye = eye.to(dtype=attn.dtype, device=attn.device)
+        L = eye.clone()
+        Apow = attn
+        K = 32
+        for _ in range(int(math.log2(K))):
+            L = L @ (eye + Apow)
+            Apow = Apow @ Apow
+        return L
+
+    def _solve_chunk_attn_horner(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        A = attn.masked_fill(mask, 0)
+        acc_dtype = torch.float32
+        A64 = A.to(acc_dtype)
+        I64 = eye.to(device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
+        strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
+        K = chunk_size - 1
+        S64 = I64.clone()
+        for _ in range(K):
+            S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
+        return S64.to(A.dtype)
+
+    def _solve_chunk_attn(self, attn: torch.Tensor, mask: torch.Tensor, eye: torch.Tensor, chunk_size: int):
+        solver = getattr(self, "chunk_gated_delta_solver", "recursive_sns")
+        if solver == "original":
+            return self._solve_chunk_attn_original(attn, mask, eye, chunk_size)
+        if solver == "factorized":
+            return self._solve_chunk_attn_factorized(attn, eye)
+        if solver == "horner":
+            return self._solve_chunk_attn_horner(attn, mask, eye, chunk_size)
+        if solver == "scaled_newton_schulz":
+            return self._solve_chunk_attn_scaled_newton_schulz(attn, mask, eye, chunk_size)
+        return self._solve_chunk_attn_recursive_sns(attn, mask, eye, chunk_size)
 
     def torch_chunk_gated_delta_rule_qeff(
         self,
@@ -624,7 +737,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         zeros = torch.zeros(g.shape, dtype=g.dtype, device=g.device)
 
         g = torch.where(mask, g, zeros)
-        # beta = torch.where(mask, beta, zeros)
+        beta = torch.where(mask, beta, zeros)
 
         qkv_zeros = torch.zeros(key.shape, dtype=key.dtype, device=key.device)
         key = torch.where(mask.unsqueeze(-1), key, qkv_zeros)
@@ -659,7 +772,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             x.reshape(x.shape[0], x.shape[1], -1, chunk_size, x.shape[-1]) for x in (query, key, value, k_beta, v_beta)
         ]
         g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
-        mask = mask_causal.to(device=query.device)
+        # mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=0)
+        mask = mask_causal
 
         #
         # chunk decay
@@ -680,50 +794,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
         decay_mask = decay_mask * (~mask_strict).float()  # ensure upper is zero
 
         attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
-        for i in range(1, chunk_size):
-            row = attn[..., i, :i].clone()
-            sub = attn[..., :i, :i].clone()
-            # attn[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
-            attn[..., i, :i] = row + torch.einsum("bghi,bghij->bghj", row, sub)
-        attn = attn + eye.to(dtype=attn.dtype, device=attn.device)
-
-        ## Approximation code ##
-        # A = attn
-        # L = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)
-        # Ak = A
-
-        # K = 16
-        # for _ in range(K):
-        #     L = L + Ak
-        #     Ak = Ak @ A
-
-        # attn = L
-
-        ## Factorized Approximation code ##
-        # eye = torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)  #
-        # L = eye.clone()
-        # Apow = attn
-
-        # K = 32
-        # for _ in range(int(math.log2(K))):
-        #     L = L @ (eye + Apow)
-        #     Apow = Apow @ Apow  # square for next power
-
-        # attn = L
-
-        # Horners Method
-        # A = attn.masked_fill(mask, 0)
-        # acc_dtype = torch.float32
-        # A64 = A.to(acc_dtype)
-        # I64 = torch.eye(chunk_size, device=attn.device, dtype=acc_dtype).view(1, 1, 1, chunk_size, chunk_size)
-        # strict_lower = (~mask).view(1, 1, 1, chunk_size, chunk_size)
-
-        # K = chunk_size - 1
-        # S64 = I64.clone()
-        # for _ in range(K):
-        #     S64 = I64 + (A64 @ S64).masked_fill(~strict_lower, 0)
-
-        # attn = S64.to(A.dtype)
+        I_base = eye if eye is not None else torch.eye(chunk_size, device=attn.device, dtype=attn.dtype)
+        attn = self._solve_chunk_attn(attn=attn, mask=mask, eye=I_base, chunk_size=chunk_size)
 
         value = attn @ v_beta
         k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))
@@ -734,7 +806,8 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             else initial_state.to(value)
         )
         core_attn_out = torch.zeros_like(value)
-        mask = mask_strict.to(device=query.device)
+        # mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=1)
+        mask = mask_strict
 
         # for each chunk
         for i in range(0, total_sequence_length // chunk_size):
@@ -826,16 +899,26 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
 
             # Continuous batching path: gather only active rows, then scatter updates back.
             if batch_index is not None:
-                batch_index = batch_index.to(conv_state_all.device)
-                conv_batch_index = batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)
+                conv_state_grouped = conv_state_all.ndim == 4
+                if conv_state_grouped:
+                    conv_state_all_flat = conv_state_all.reshape(
+                        conv_state_all.shape[0],
+                        conv_state_all.shape[1] * conv_state_all.shape[2],
+                        conv_state_all.shape[3],
+                    )
+                else:
+                    conv_state_all_flat = conv_state_all
+                conv_batch_index = batch_index.to(conv_state_all_flat.device)
                 conv_ctx_indices = torch.arange(
-                    conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
+                    conv_state_all_flat.shape[1], dtype=torch.int64, device=conv_state_all_flat.device
                 )[None, :]
-                conv_state = CtxGatherFuncCB3D.apply(conv_state_all, conv_batch_index, conv_ctx_indices)
+                conv_state = CtxGatherFuncCB3D.apply(conv_state_all_flat, conv_batch_index, conv_ctx_indices)
+                if conv_state_grouped:
+                    conv_state = conv_state.reshape(
+                        conv_state.shape[0], conv_state_all.shape[1], conv_state_all.shape[2], conv_state_all.shape[3]
+                    )
 
-                recurrent_batch_index = (batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)).to(
-                    recurrent_state_all.device
-                )
+                recurrent_batch_index = batch_index.to(recurrent_state_all.device)
                 recurrent_ctx_indices = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, None, :]
@@ -846,6 +929,19 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 conv_state = conv_state_all
                 recurrent_state = recurrent_state_all
 
+            if position_ids is not None:
+                text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
+                zero_cumsum = torch.cumsum((text_position_ids == 0).to(torch.int32), dim=1)[:, -1:]
+                conv_reset_mask = zero_cumsum.to(dtype=torch.bool, device=conv_state.device).reshape(
+                    conv_state.shape[0], *([1] * (conv_state.ndim - 1))
+                )
+                conv_state = torch.where(conv_reset_mask, torch.zeros_like(conv_state), conv_state)
+
+                recurrent_reset_mask = conv_reset_mask.to(device=recurrent_state.device).reshape(
+                    recurrent_state.shape[0], *([1] * (recurrent_state.ndim - 1))
+                )
+                recurrent_state = torch.where(recurrent_reset_mask, torch.zeros_like(recurrent_state), recurrent_state)
+
             mixed_qkv, new_conv_state = qeff_torch_causal_conv1d_update(
                 mixed_qkv,
                 conv_state,
@@ -854,14 +950,35 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
                 self.conv1d.bias,
             )
             if batch_index is not None:
-                conv_batch_index = batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)
-                conv_batch_index = conv_batch_index.to(conv_state_all.device)
+                if conv_state_all.ndim == 4:
+                    conv_state_all_flat = conv_state_all.reshape(
+                        conv_state_all.shape[0],
+                        conv_state_all.shape[1] * conv_state_all.shape[2],
+                        conv_state_all.shape[3],
+                    )
+                    new_conv_state_flat = new_conv_state.reshape(
+                        new_conv_state.shape[0],
+                        new_conv_state.shape[1] * new_conv_state.shape[2],
+                        new_conv_state.shape[3],
+                    )
+                else:
+                    conv_state_all_flat = conv_state_all
+                    new_conv_state_flat = new_conv_state
+                conv_batch_index = batch_index.to(conv_state_all_flat.device)
                 conv_position_ids = torch.arange(
-                    conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
+                    conv_state_all_flat.shape[1], dtype=torch.int64, device=conv_state_all_flat.device
                 )[None, :]
-                cache_params.conv_states[self.layer_idx] = CtxScatterFuncCB3D.apply(
-                    conv_state_all, conv_batch_index, conv_position_ids, new_conv_state
+                scattered_conv = CtxScatterFuncCB3D.apply(
+                    conv_state_all_flat, conv_batch_index, conv_position_ids, new_conv_state_flat
                 )
+                if conv_state_all.ndim == 4:
+                    scattered_conv = scattered_conv.reshape(
+                        conv_state_all.shape[0],
+                        conv_state_all.shape[1],
+                        conv_state_all.shape[2],
+                        conv_state_all.shape[3],
+                    )
+                cache_params.conv_states[self.layer_idx] = scattered_conv
             else:
                 cache_params.conv_states[self.layer_idx] = new_conv_state
         else:
@@ -915,9 +1032,7 @@ class QEffQwen3_5MoeGatedDeltaNet(Qwen3_5MoeGatedDeltaNet):
             last_recurrent_state = torch.where(is_decode, recurrent_S, chunk_S)
 
             if batch_index is not None:
-                recurrent_batch_index = (batch_index if batch_index.ndim == 2 else batch_index.view(-1, 1)).to(
-                    recurrent_state_all.device
-                )
+                recurrent_batch_index = batch_index.to(recurrent_state_all.device)
                 recurrent_position_ids = torch.arange(
                     recurrent_state_all.shape[2], dtype=torch.int64, device=recurrent_state_all.device
                 )[None, :].expand(recurrent_batch_index.shape[0], -1)
@@ -1022,6 +1137,10 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
 
 
 class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
+    _start = 0
+    _end = 0
+    _total_layers = None
+
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3_5MoeTextRotaryEmbedding(config=self.config)
         rope_rows = min(int(self.rotary_emb.sin_cached.shape[0]), QWEN3_5_MOE_ROPE_CACHE_EXPORT_CAP)
@@ -1056,23 +1175,20 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
         return_legacy_cache = False
 
-        layerwise_context = get_layerwise_context(self)
         if past_key_values is not None and not isinstance(past_key_values, QEffQwen3_5MoeDynamicCache):
             return_legacy_cache = True
-            past_key_values = QEffQwen3_5MoeDynamicCache.from_legacy_cache(
-                self.config, past_key_values, layerwise_context=layerwise_context
-            )
+            past_key_values = QEffQwen3_5MoeDynamicCache.from_legacy_cache(self.config, past_key_values)
         elif use_cache and past_key_values is None:
-            past_key_values = QEffQwen3_5MoeDynamicCache(self.config, layerwise_context=layerwise_context)
+            past_key_values = QEffQwen3_5MoeDynamicCache(self.config)
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        start, end = resolve_layer_window(self, len(self.layers))
+        start, end = resolve_layer_window(QEffQwen3_5MoeTextModel, len(self.layers))
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length(layer_idx=start) if past_key_values is not None else 0
             active_layer_type = self.config.layer_types[start] if start < len(self.config.layer_types) else None
-            if is_layerwise_active(self) and position_ids is not None and active_layer_type == "linear_attention":
+            if is_layerwise_active() and position_ids is not None and active_layer_type == "linear_attention":
                 text_position_ids = position_ids[0] if position_ids.ndim == 3 else position_ids
                 cache_position = text_position_ids[0].clamp_min(0)
             else:
@@ -1130,7 +1246,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
 
             # break
 
-        if is_last_layer_window(self, len(self.layers)):
+        if is_last_layer_window(QEffQwen3_5MoeTextModel, len(self.layers)):
             hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
@@ -1138,8 +1254,8 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
 
-        if is_layerwise_active(self):
-            past_key_values = past_key_values[get_layerwise_start(self)]
+        if is_layerwise_active():
+            past_key_values = past_key_values[QEffQwen3_5MoeTextModel._start]
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
@@ -1199,7 +1315,16 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
                 ]
             else:
                 layer = self.model.layers[layer_idx].linear_attn
-                conv_shape = (batch_size, layer.conv_dim, layer.conv_kernel_size)
+                if layer.conv_dim % layer.num_k_heads != 0:
+                    raise ValueError(
+                        f"conv_dim ({layer.conv_dim}) must be divisible by num_k_heads ({layer.num_k_heads})"
+                    )
+                conv_shape = (
+                    batch_size,
+                    layer.num_k_heads,
+                    layer.conv_dim // layer.num_k_heads,
+                    layer.conv_kernel_size,
+                )
                 recurrent_shape = (batch_size, layer.num_v_heads, layer.head_k_dim, layer.head_v_dim)
                 layer_names = [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
                 layer_tensors = [
@@ -1264,12 +1389,18 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
 
 
 class QEffQwen3_5MoeModel(Qwen3_5MoeModel):
+    _start = 0
+    _end = 0
+    _total_layers = None
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: Cache | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
         inputs_embeds: torch.FloatTensor | None = None,
         pixel_values: torch.Tensor | None = None,
         pixel_values_videos: torch.FloatTensor | None = None,
@@ -1318,6 +1449,8 @@ class QEffQwen3_5MoeModel(Qwen3_5MoeModel):
             position_ids=position_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             cache_position=cache_position,
             **kwargs,
@@ -1579,7 +1712,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
         else:
             inputs_embeds = inputs_embeds
 
-        if not is_layerwise_active(self):
+        if not is_layerwise_active():
             # Default (non-layerwise) path: image merge + full decoder + lm_head in
             # a single forward, identical to the pre-layerwise behavior/output contract.
             _, _, channel_size = inputs_embeds.shape
@@ -1605,7 +1738,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, image_idx, outputs.past_key_values[: len(past_key_values)]
 
-        if get_layerwise_start(self) == 0:
+        if QEffQwen3_5MoeTextModel._start == 0:
             B, S, _ = inputs_embeds.shape
             if input_ids is None:
                 input_ids = torch.zeros((B, S), dtype=torch.int64, device=inputs_embeds.device)
@@ -1634,7 +1767,7 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
             image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
             return logits, vision_embeds, image_idx, outputs.past_key_values
 
-        elif get_layerwise_end(self) == get_layerwise_total_layers(self):
+        elif QEffQwen3_5MoeTextModel._end == QEffQwen3_5MoeTextModel._total_layers:
             outputs = self.language_model(
                 inputs_embeds=inputs_embeds,
                 position_ids=position_ids,
@@ -1679,6 +1812,8 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         past_key_values: Cache | None = None,
+        comp_ctx_lengths: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
         inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         pixel_values: torch.Tensor | None = None,
@@ -1748,6 +1883,8 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             position_ids=position_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=batch_index,
             inputs_embeds=inputs_embeds,
             cache_position=cache_position,
             mm_token_type_ids=mm_token_type_ids,
@@ -1878,8 +2015,8 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             return spec
 
         lang = []
-        if comp_ctx_lengths_prefill is not None:
-            for comp_ctx in comp_ctx_lengths_prefill:
+        if comp_ctx_lengths_prefill is not None or comp_ctx_lengths_decode is not None:
+            for comp_ctx in comp_ctx_lengths_prefill or []:
                 lang.append(_build_lang_spec(prefill_seq_len, comp_ctx_len=comp_ctx))
             for comp_ctx in comp_ctx_lengths_decode or []:
                 lang.append(_build_lang_spec(1, comp_ctx_len=comp_ctx))
@@ -1950,7 +2087,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, dummy_seq_len)
 
         inputs_shapes["position_ids"] = (
-            3,
+            4,
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
             dummy_seq_len,
         )
@@ -2000,8 +2137,8 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.text_config.num_hidden_layers)]
         # Default path exports all layers; layerwise exports only the active window's layer.
-        if is_layerwise_active(self.model):
-            window_layers = [get_layerwise_start(self.model)]
+        if is_layerwise_active():
+            window_layers = [QEffQwen3_5MoeTextModel._start]
         else:
             window_layers = range(self.model.config.text_config.num_hidden_layers)
         # KV/state dummy dtype follows the model dtype so the export trace works
@@ -2013,7 +2150,16 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
                     lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=kv_dtype))
             else:
                 layer = self.model.language_model.layers[i].linear_attn
-                conv_shape = (linear_batch_size, layer.conv_dim, layer.conv_kernel_size)
+                if layer.conv_dim % layer.num_k_heads != 0:
+                    raise ValueError(
+                        f"conv_dim ({layer.conv_dim}) must be divisible by num_k_heads ({layer.num_k_heads})"
+                    )
+                conv_shape = (
+                    linear_batch_size,
+                    layer.num_k_heads,
+                    layer.conv_dim // layer.num_k_heads,
+                    layer.conv_kernel_size,
+                )
                 recurrent_shape = (linear_batch_size, layer.num_v_heads, layer.head_k_dim, layer.head_v_dim)
                 lang_inputs["past_key_values"][i].append(torch.zeros(conv_shape, dtype=kv_dtype))
                 lang_inputs["past_key_values"][i].append(torch.zeros(recurrent_shape, dtype=kv_dtype))
@@ -2023,7 +2169,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 
         if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int64)
 
         inputs = {}
         if kv_offload:
@@ -2114,9 +2260,11 @@ class QEffQwen3_5MoeExperts(Qwen3_5MoeExperts):
         # HF 5.x keeps fused gate_up projections. Keep aliases expected by
         # QEff MoE execution paths without changing checkpoint behavior.
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
-        self.gate_proj = nn.Parameter(self.gate_up_proj[:, : self.expert_dim, :].detach().clone().transpose(1, 2))
-        self.up_proj = nn.Parameter(self.gate_up_proj[:, self.expert_dim :, :].detach().clone().transpose(1, 2))
-        self.down_proj_t = nn.Parameter(self.down_proj.detach().clone().transpose(1, 2))
+        gate_up_proj = self.gate_up_proj.detach()
+        down_proj = self.down_proj.detach()
+        self.gate_proj = nn.Parameter(gate_up_proj[:, : self.expert_dim, :].transpose(1, 2), requires_grad=False)
+        self.up_proj = nn.Parameter(gate_up_proj[:, self.expert_dim :, :].transpose(1, 2), requires_grad=False)
+        self.down_proj_t = nn.Parameter(down_proj.transpose(1, 2), requires_grad=False)
 
 
 class QEffQwen3_5MoeSparseMoeBlock(Qwen3_5MoeSparseMoeBlock):

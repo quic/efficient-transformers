@@ -36,9 +36,12 @@
 
 ## Mutator Guidelines
 - Use mutators for true weight/layout transformations: unpacking quantized weights, dequantizing FP8/MXFP4, replacing fused expert modules, packing custom operators, or changing module object identity.
+- Preserve the base-class division of responsibility: `ModuleMutatorTransform.apply()` owns recursive traversal and matching, while `mutate()` mutates or replaces exactly the matched module it receives.
 - Copy bias, device, dtype, config fields, and train/eval-relevant flags intentionally.
 - Recurse behavior is supplied by `ModuleMutatorTransform.apply`; implement only `_match_class` and `mutate` unless traversal policy itself must change.
 - If a mutator uses parent context, handle `parent_module is None` for root matches.
+- If overriding `apply()` for compile-time arguments, nonstandard target selection, or whole-model validation, keep the same separation: `apply()` decides when and which modules to mutate; `mutate()` performs only the local mutation and returns the mutated/replacement module.
+- Keep whole-model config updates and mode-policy checks in `apply()` or a bespoke transform path, not inside a per-module `mutate()`.
 
 ## Test Hotspots
 - `tests/base/test_pytorch_transforms.py`: minimal mapper/mutator contract tests.

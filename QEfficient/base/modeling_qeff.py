@@ -8,12 +8,13 @@
 import gc
 import inspect
 import logging
+import os
 import shutil
 import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import onnx
 import torch
@@ -23,19 +24,20 @@ from QEfficient.base.onnx_transforms import (
     CustomOpTransform,
     FP16ClipTransform,
     OnnxTransformPipeline,
+    PruneFakeInitializersTransform,
     RenameFunctionOutputsTransform,
     SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
 from QEfficient.blocking.blocking_configurator import build_transformer_blocking_config_for_transform
-from QEfficient.compile.qnn_compiler import compile as qnn_compile
-from QEfficient.generation.cloud_infer import QAICInferenceSession
-from QEfficient.transformers.models._layerwise import (
-    get_layerwise_end,
-    get_layerwise_start,
-    get_layerwise_total_layers,
-    is_layerwise_active,
+from QEfficient.compile.mdp_generator import (
+    MdpStrategy,
+    generate_disagg_mdp_config,
+    generate_mdp_partition_config,
 )
+from QEfficient.compile.qnn_compiler import compile as qnn_compile
+from QEfficient.customop.dynamo_ops import DYNAMO_CUSTOM_OP_TABLE
+from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
     ReplicateKVHeadTransform,
@@ -47,13 +49,13 @@ from QEfficient.utils import (
     create_json,
     create_model_params,
     dump_qconfig,
-    generate_mdp_partition_config,
     get_attr_or_key,
     hash_dict_params,
     load_json,
     require_value,
     to_named_specializations,
 )
+from QEfficient.utils.config_utils import calculate_num_replicate_kv_heads
 from QEfficient.utils.export_utils import export_wrapper
 from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
@@ -109,11 +111,46 @@ class QEFFBaseModel(ABC):
     :_onnx_transforms: ONNX transformations to be applied after ONNX export.
     """
 
+    _start = 0
+    _end = 0
+    _total_layers = None
+    _layerwise_active = False
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
 
     def _transform_names(self) -> List[str]:
         return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
+
+    def maybe_apply_replicate_kv_transform(self, model_config, num_devices: int, qaic_config: Optional[dict]) -> int:
+        if model_config is None or qaic_config is None or "EncoderWrapper" in self.model.__class__.__name__:
+            return 1
+
+        replicate_kv_heads = qaic_config.get("replicate_kv_heads", False)
+
+        if not replicate_kv_heads:
+            return 1
+
+        text_config = getattr(model_config, "text_config", None)
+        effective_config = text_config if text_config is not None else model_config
+
+        num_replicate_kv_heads = calculate_num_replicate_kv_heads(
+            num_devices=num_devices,
+            text_model_config=effective_config,
+        )
+        if num_replicate_kv_heads is None or num_replicate_kv_heads <= 1:
+            return 1
+
+        self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(
+            self.model,
+            num_replicate_kv_heads,
+        )
+        if not replicate_kv_transformed:
+            return 1
+
+        self.hash_params["config"] = (
+            model_config.to_diff_dict() if hasattr(model_config, "to_diff_dict") else model_config
+        )
+        return num_replicate_kv_heads
 
     def __init__(self, model: torch.nn.Module, **kwargs) -> None:
         super().__init__()
@@ -313,20 +350,105 @@ class QEFFBaseModel(ABC):
             :str: Path of the compiled ``qpc`` package.
         """
 
+    def _export_via_legacy(
+        self,
+        onnx_path: Path,
+        example_inputs: Dict[str, torch.Tensor],
+        input_names: List[str],
+        output_names: List[str],
+        dynamic_axes: Dict,
+        export_kwargs: Dict,
+    ) -> None:
+        """Export via TorchScript symbolic tracing (dynamo=False)."""
+        with layerwise_safe_onnx_export_patches(enabled=bool(QEFFBaseModel._layerwise_active)):
+            torch.onnx.export(
+                self.model,
+                (),
+                str(onnx_path),
+                kwargs=example_inputs,
+                input_names=input_names,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                dynamo=False,
+                opset_version=constants.ONNX_LEGACY_EXPORT_OPSET,
+                **export_kwargs,
+            )
+
+    def _export_via_dynamo(
+        self,
+        onnx_path: Path,
+        example_inputs: Dict[str, torch.Tensor],
+        input_names: List[str],
+        output_names: List[str],
+        dynamic_shapes: Optional[Dict],
+        export_kwargs: Dict,
+    ) -> None:
+        """Export via torch.export (dynamo=True) with custom op translation."""
+        # Reorder example_inputs and dynamic_shapes to match model.forward signature order,
+        # which torch.export requires for dynamic_shapes to bind correctly.
+        sig_keys = list(inspect.signature(self.model.forward).parameters.keys())
+        sig_key_set = set(sig_keys)
+        ordered_inputs, ordered_shapes = {}, {}
+        for k in sig_keys:
+            if k in example_inputs:
+                ordered_inputs[k] = example_inputs[k]
+            if dynamic_shapes is not None and k in dynamic_shapes:
+                ordered_shapes[k] = dynamic_shapes[k]
+        example_inputs = {**ordered_inputs, **{k: v for k, v in example_inputs.items() if k not in sig_key_set}}
+        if dynamic_shapes is not None:
+            dynamic_shapes = {**ordered_shapes, **{k: v for k, v in dynamic_shapes.items() if k not in sig_key_set}}
+
+        export_kwargs = dict(export_kwargs)
+        export_kwargs.setdefault("report", False)
+        export_kwargs.setdefault("optimize", False)
+        export_kwargs["dynamo"] = True
+        export_kwargs["custom_translation_table"] = {
+            **(export_kwargs.pop("custom_translation_table", None) or {}),
+            **DYNAMO_CUSTOM_OP_TABLE,
+        }
+
+        prev_invoke_fallback = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
+        os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = "1"
+        try:
+            onnx_program = torch.onnx.export(
+                self.model,
+                args=(),
+                f=None,
+                kwargs=example_inputs,
+                input_names=input_names,
+                output_names=output_names,
+                dynamic_axes=None,
+                dynamic_shapes=dynamic_shapes,
+                opset_version=constants.ONNX_DYNAMO_EXPORT_OPSET,
+                **export_kwargs,
+            )
+            if onnx_program is None:
+                raise RuntimeError("torch.onnx.export returned None for dynamo export")
+            PruneFakeInitializersTransform.apply(onnx_program)
+            onnx_program.save(str(onnx_path))
+        finally:
+            if prev_invoke_fallback is None:
+                os.environ.pop("TORCH_INVOKE_ALLOW_CREATE_FALLBACK", None)
+            else:
+                os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = prev_invoke_fallback
+
     @export_wrapper
     def _export(
         self,
         example_inputs: Dict[str, torch.Tensor],
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
-        onnx_transform_kwargs: Optional[Dict[str, any]] = None,
+        onnx_transform_kwargs: Optional[Dict[str, Any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
+        dynamo: bool = False,
+        dynamic_shapes: Optional[Dict[str, Dict[int, Any]]] = None,
         **export_kwargs,
     ) -> str:
         """
         Export the PyTorch model to ONNX and apply ONNX transforms
+
 
         This method:
         1. Exports PyTorch model to ONNX using torch.onnx.export
@@ -336,13 +458,16 @@ class QEFFBaseModel(ABC):
         Args:
             :example_inputs (dict): Sample inputs to trace the model.
             :output_names (list): names to assign to the output nodes of the graph, in order.
-            :dynamic_axes (dict): Same as dynamic_axes parameter to be passed to `torch.onnx.export`.
+            :dynamic_axes (dict): Same as dynamic_axes parameter to be passed to `torch.onnx.export`. Used when dynamo=False.
             :export_kwargs (dict): Additional arguments to be passed to `torch.onnx.export`.
             :onnx_transform_kwargs (dict): Additional arguments to be passed to `Transform.apply` for this class.
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
             :offload_pt_weights (bool): If True, offload PyTorch model weights to meta device
             after successful export to reduce memory usage. Set to False if you need to
             keep weights for further operations. Defaults to True.
+            :prefill_only (bool): If True, export only the prefill (context) graph without decode. Defaults to False.
+            :dynamo (bool): If True, export via torch.export (dynamo path) instead of the legacy torch.onnx.export TorchScript path. Defaults to False.
+            :dynamic_shapes (dict): Dynamic shape constraints passed to torch.export when dynamo=True. Keys are input names; values are per-dimension constraint dicts. Ignored when dynamo=False.
             Note:
             Once weights are offloaded, the model cannot be re-exported. Create a new
             instance using from_pretrained() for re-export.
@@ -432,20 +557,26 @@ class QEFFBaseModel(ABC):
             input_names = aligned_input_names
 
         try:
-            with layerwise_safe_onnx_export_patches(enabled=is_layerwise_active(self.model)):
-                torch.onnx.export(
-                    self.model,
-                    (),
-                    str(onnx_path),
-                    kwargs=example_inputs,
-                    input_names=input_names,
-                    output_names=output_names,
-                    dynamic_axes=dynamic_axes,
-                    opset_version=constants.ONNX_EXPORT_OPSET,
-                    **export_kwargs,
+            if dynamo:
+                self._export_via_dynamo(
+                    onnx_path,
+                    example_inputs,
+                    input_names,
+                    output_names,
+                    dynamic_shapes,
+                    export_kwargs,
+                )
+            else:
+                self._export_via_legacy(
+                    onnx_path,
+                    example_inputs,
+                    input_names,
+                    output_names,
+                    dynamic_axes,
+                    export_kwargs,
                 )
             logger.info("PyTorch export successful")
-            _ = self._offload_model_weights(offload_pt_weights)
+            self._offload_model_weights(offload_pt_weights)
             model = onnx.load(onnx_path, load_external_data=False)
 
             needs_external_tensor_data = any(
@@ -454,6 +585,8 @@ class QEFFBaseModel(ABC):
             transform_kwargs = {
                 "onnx_base_dir": str(export_dir) if needs_external_tensor_data else None,
                 "model_name": self.model_name,
+                "dynamic_axes": None if dynamo else dynamic_axes,  # dynamo uses dynamic_shapes, not axes
+                "onnx_export_opset": constants.get_onnx_export_opset(dynamo),
             }
             if onnx_transform_kwargs is not None:
                 transform_kwargs.update(onnx_transform_kwargs)
@@ -463,7 +596,7 @@ class QEFFBaseModel(ABC):
 
             # Keep this strictly layerwise-scoped so regular non-layerwise export
             # remains backward compatible.
-            if is_layerwise_active(self.model):
+            if QEFFBaseModel._layerwise_active:
                 _restore_retained_state_output_names(model, output_names)
 
             # Add metadata to the model
@@ -493,6 +626,7 @@ class QEFFBaseModel(ABC):
         specializations: Optional[List[Dict[str, int]]] = None,
         offload_pt_weights: Optional[bool] = True,
         use_onnx_subfunctions: Optional[bool] = False,
+        dynamo: Optional[bool] = False,
         retain_full_kv: Optional[bool] = False,
         qaic_config: Optional[dict] = None,
         moe_prefill_packed_chunk_size: Optional[int] = None,
@@ -502,8 +636,12 @@ class QEFFBaseModel(ABC):
         kwargs = {
             "offload_pt_weights": offload_pt_weights,
             "use_onnx_subfunctions": use_onnx_subfunctions,
+            "dynamo": dynamo,
             "retain_full_kv": retain_full_kv,
         }
+        layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
+        if layerwise_cache_probe:
+            kwargs["_layerwise_cache_probe"] = True
         if kv_cache_prefix:
             kwargs["kv_cache_prefix"] = kv_cache_prefix
 
@@ -558,8 +696,8 @@ class QEFFBaseModel(ABC):
         **export_kwargs,
     ) -> str:
         cache_probe = export_kwargs.pop("_layerwise_cache_probe", False)
-        idx = int(get_layerwise_start(self.model))
-        end_idx = int(get_layerwise_end(self.model) or idx + 1)
+        idx = int(QEFFBaseModel._start)
+        end_idx = int(getattr(QEFFBaseModel, "_end", idx + 1))
         if end_idx <= idx:
             raise ValueError(f"Invalid export window: start={idx}, end={end_idx}")
 
@@ -576,7 +714,7 @@ class QEFFBaseModel(ABC):
         # under the export root (new layout) or final_data/ (legacy layout),
         # skip per-window export entirely. This preserves hash-stable reruns
         # without re-exporting layer shards.
-        total_layers = int(get_layerwise_total_layers(self.model))
+        total_layers = int(getattr(QEFFBaseModel, "_total_layers", 0) or 0)
         cached_merged_paths = []
         if total_layers > 0:
             cached_merged_paths.append(export_dir / f"merged_0-{total_layers}.onnx")
@@ -591,9 +729,6 @@ class QEFFBaseModel(ABC):
                 return self.onnx_path
         if cache_probe:
             return None
-
-        # check if the model is in meta state or weights are offloaded
-        self._model_offloaded_check()
 
         export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -689,10 +824,6 @@ class QEFFBaseModel(ABC):
                 val for i, val in enumerate(example_inputs["compressed_kvs"]) if i < window_size
             ]
 
-        # if "past_key_values" in example_inputs:
-        #     example_inputs["past_key_values"] = [
-        #         val for i, val in enumerate(example_inputs["past_key_values"]) if i < window_size
-        #     ]
         if "past_key_values" in example_inputs:
             pkv_layers = _resolve_pkv_layers(example_inputs["past_key_values"])
             if pkv_layers is not None:
@@ -747,7 +878,7 @@ class QEFFBaseModel(ABC):
             dynamic_axes = {rename_map.get(k, k): v for k, v in dynamic_axes.items()}
             input_names = aligned_input_names
         if not os.path.isfile(layer_onnx_path):
-            with layerwise_safe_onnx_export_patches(enabled=bool(prefill_only) and is_layerwise_active(self.model)):
+            with layerwise_safe_onnx_export_patches(enabled=bool(prefill_only)):
                 torch.onnx.export(
                     self.model,
                     (),
@@ -756,7 +887,8 @@ class QEFFBaseModel(ABC):
                     input_names=input_names,
                     output_names=output_names,
                     dynamic_axes=dynamic_axes,
-                    opset_version=constants.ONNX_EXPORT_OPSET,
+                    opset_version=constants.ONNX_LEGACY_EXPORT_OPSET,
+                    dynamo=False,
                     **export_kwargs,
                 )
             total_end = time.time()
@@ -790,23 +922,17 @@ class QEFFBaseModel(ABC):
         **compiler_options,
     ):
         # Apply the transformations that are dependent on compilation parameters
-
         qaic_config = qaic_config if qaic_config else getattr(self.model, "qaic_config", None)
 
-        model_config = getattr(self.model, "config", None) or getattr(self.model.model, "config", None)
-
+        model_config = getattr(self.model, "config", None) or getattr(
+            getattr(self.model, "model", None), "config", None
+        )
+        effective_num_replicate_kv_heads = self.maybe_apply_replicate_kv_transform(
+            model_config,
+            num_devices,
+            qaic_config,
+        )
         if model_config:
-            if "DeepseekV3ForCausalLM" in (getattr(model_config, "architectures", None) or []):
-                if qaic_config:
-                    if qaic_config.get("blocking_mode", None) == "h":
-                        qaic_config["head_block_size"] = qaic_config.get("head_block_size", num_devices)
-                    num_kv_heads_repeat = qaic_config.get("num_kv_heads_repeat", 1)
-                    self.model, replicate_kv_transformed = ReplicateKVHeadTransform.apply(
-                        self.model, num_kv_heads_repeat
-                    )
-                    if replicate_kv_transformed:
-                        self.hash_params["config"] = self.model.config.to_diff_dict()
-
             blocking_config = build_transformer_blocking_config_for_transform(
                 model_config,
                 ctx_len=ctx_len,
@@ -823,6 +949,9 @@ class QEFFBaseModel(ABC):
         if blocking_config is not None:
             self.model, _ = BlockingAttentionTransform.apply(self.model, attn_blocking_config=blocking_config)
             self.hash_params["blocking_kwargs"] = blocking_config
+        if qaic_config is not None:
+            self.hash_params["qaic_config"] = qaic_config
+        self.hash_params["num_replicate_kv_heads"] = effective_num_replicate_kv_heads
 
     @dump_qconfig
     def _compile(
@@ -834,10 +963,12 @@ class QEFFBaseModel(ABC):
         specializations: Optional[List[Dict[str, int]]] = None,
         custom_io: Optional[Dict[str, str]] = None,
         mdp_ts_num_devices: int = 1,
+        mdp_num_partitions: Optional[int] = 1,
         num_speculative_tokens: Optional[Union[int, List[int]]] = None,
         enable_qnn: Optional[bool] = False,
         qnn_config: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
+        dynamo: bool = False,
         prefill_only: Optional[str] = None,
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
@@ -857,6 +988,11 @@ class QEFFBaseModel(ABC):
             :specializations (list): List of specializations to compile for
             :custom_io (dict): Custom IO to specify the input and outputs in different formats than default
             :mdp_ts_num_devices (int): Number of devices to partition to use Multi-Device Partitioning with tensor-slicing.
+            :mdp_num_partitions (int): Number of pipeline-parallel partitions for disaggregated prefill serving.
+                When > 1, the ONNX graph is read directly to generate a fully-populated MDP partition
+                config (nodeList per partition) without requiring a compiler round-trip.
+                Ignored when ``mdp_load_partition_config`` is already provided in compiler_options.
+                Defaults to 1 (template / tensor-slice MDP, existing behaviour).
             :num_speculative_tokens (int | List[int], optional): Number of speculative tokens for TLM decode. A plain int K compiles one decode specialization (seq_len=K+1). A list [K0, K1, ...] compiles one specialization per value, enabling per-step dispatch to the cheapest kernel.
             :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
             :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file. ``Defaults to None.``
@@ -873,6 +1009,16 @@ class QEFFBaseModel(ABC):
 
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
         moe_prefill_packed_chunk_size = compiler_options.pop("moe_prefill_packed_chunk_size", None)
+
+        for removed_option in ("compile_only", "compile-only"):
+            if removed_option in compiler_options:
+                logger.warning(f"'{removed_option}' is deprecated and is ignored; removing it from compiler options.")
+                compiler_options.pop(removed_option, None)
+
+        mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
+        mdp_strategy = MdpStrategy(compiler_options.pop("mdp_strategy", MdpStrategy.ONNX))
+        mdp_compiler_dump_path = compiler_options.pop("mdp_compiler_dump_path", None)
+
         if onnx_path is None:
             # If weights were offloaded after export, compiling must use the existing
             # ONNX because re-exporting is no longer possible. Otherwise export for
@@ -887,6 +1033,7 @@ class QEFFBaseModel(ABC):
                     specializations,
                     offload_pt_weights,
                     use_onnx_subfunctions,
+                    dynamo,
                     retain_full_kv,
                     num_devices=mdp_ts_num_devices,
                     qaic_config=qaic_config,
@@ -895,7 +1042,7 @@ class QEFFBaseModel(ABC):
                     kv_cache_prefix=kv_cache_prefix,
                     **compiler_options,
                 )
-        if is_layerwise_active(getattr(self, "model", None)):
+        if QEFFBaseModel._layerwise_active:
             if onnx_path is None:
                 return None
             onnx_path = Path(onnx_path)
@@ -935,28 +1082,45 @@ class QEFFBaseModel(ABC):
             + [f"-m={onnx_path}"]
         )
 
-        # MDP partition config: prioritize dump over load
-        mdp_dump_json_path = compiler_options.pop("mdp_dump_partition_config", None)
-        mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
+        # MDP partition config selection (highest priority first):
+        #   1. User-provided pre-built MDP JSON (mdp_load_partition_config).
+        #   2. Disaggregated (pipeline-parallel) MDP — generated from ONNX topsort.
+        #      Strategy ONNX (default): full superset from ONNX graph (~19 MB).
+        #      Strategy INTERSECTION: intersect with compiler dump; compact (~1-2 MB),
+        #        requires a prior -mdp-dump-partition-config run.
+        #   3. Template (tensor-slice) MDP — single partition, nodeList absent.
         mdp_ts_json = None
 
-        if mdp_dump_json_path:
-            if mdp_ts_json_path:
-                logger.warning(
-                    "Loading and Dumping partition is not supported at the same time. Prioritizing dump config over load config!"
-                )
-            command.append(f"-mdp-dump-partition-config={mdp_dump_json_path}")
-        elif mdp_ts_json_path:
+        if mdp_ts_json_path:
             command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
             mdp_ts_json = load_json(str(mdp_ts_json_path))
-        elif mdp_ts_num_devices > 1:
-            # Generate mdp config only if neither dump nor load is provided and num_devices > 1
+        elif mdp_num_partitions > 1:
+            # Disaggregated (pipeline-parallel) MDP — delegate to focused helper.
+            num_cores = compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
+            num_layers = getattr(self, "num_layers", None)
+            if getattr(self, "model", None) and getattr(self.model, "language_model", None) and not num_layers:
+                num_layers = getattr(self.model.language_model.config, "num_hidden_layers", None)
+            if num_layers is None:
+                raise AttributeError(
+                    "Model or Language Model does not expose 'num_layers' or 'num_hidden_layers' respectively. Cannot generate disagg MDP partition config."
+                )
+            mdp_ts_json_path, mdp_ts_json = generate_disagg_mdp_config(
+                onnx_path=onnx_path,
+                compile_dir=compile_dir,
+                mdp_ts_num_devices=mdp_ts_num_devices,
+                mdp_num_partitions=mdp_num_partitions,
+                mdp_strategy=mdp_strategy,
+                mdp_compiler_dump_path=mdp_compiler_dump_path,
+                num_cores=num_cores,
+                num_layers=num_layers,
+            )
+            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
+        elif mdp_ts_num_devices > 1 and not compiler_options.get("mdp_dump_partition_config", None):
+            # Template (tensor-slice) MDP: single partition, empty nodeList; compiler fills it.
+            # File write and command flag are deferred to after compile_dir is finalised (post-hash).
             mdp_ts_json = generate_mdp_partition_config(
                 mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
             )
-            mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
-            create_json(str(mdp_ts_json_path), mdp_ts_json)
-            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
@@ -1000,6 +1164,8 @@ class QEFFBaseModel(ABC):
             "specializations": specializations,
             "custom_io": custom_io,
             "mdp_ts_num_devices": mdp_ts_num_devices,
+            "mdp_num_partitions": mdp_num_partitions,
+            "mdp_strategy": mdp_strategy.value,
             "mdp_ts_json": mdp_ts_json,
             "num_speculative_tokens": num_speculative_tokens,
             "prefill_only": prefill_only,
@@ -1016,7 +1182,11 @@ class QEFFBaseModel(ABC):
             shutil.rmtree(qpc_path)
         compile_dir.mkdir(parents=True, exist_ok=True)
 
-        # Write the generated MDP partition config file (not if user provided it)
+        # Write tensor-slice MDP partition config now that compile_dir exists.
+        if mdp_ts_json is not None and mdp_ts_json_path is None:
+            mdp_ts_json_path = compile_dir / f"mdp_ts_{mdp_ts_num_devices}.json"
+            create_json(str(mdp_ts_json_path), mdp_ts_json)
+            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
 
         # Write specializations.json file
         if specializations is not None:

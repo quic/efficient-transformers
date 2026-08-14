@@ -17,6 +17,7 @@ from QEfficient.utils.test_utils import ModelConfig
 
 from .check_causal_models import (
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100,
+    check_kv_repeat_causal_lm_pytorch_vs_ai100,
     get_custom_n_layers,
 )
 
@@ -53,6 +54,26 @@ def test_few_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup)
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=n_layer, manual_cleanup=manual_cleanup)
 
 
+@pytest.mark.few_layers
+@pytest.mark.on_qaic
+@pytest.mark.llm_model
+@pytest.mark.parametrize("use_onnx_subfunctions", [False, True])
+@pytest.mark.parametrize("model_name", test_models_causal)
+def test_few_causal_lm_onnx_mdp_compile_only(model_name, use_onnx_subfunctions, manual_cleanup):
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to issues in HF.")
+    n_layer = get_custom_n_layers(model_name)
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        n_layer=n_layer,
+        manual_cleanup=manual_cleanup,
+        compile_only=True,
+        mdp_num_partitions=2,
+        mdp_strategy="onnx",
+        use_onnx_subfunctions=use_onnx_subfunctions,
+    )
+
+
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
@@ -71,6 +92,34 @@ def test_dummy_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanu
         check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, n_layer=n_layer, manual_cleanup=manual_cleanup)
     else:
         check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(model_name, config=hf_config, manual_cleanup=manual_cleanup)
+
+
+@pytest.mark.dummy_layers
+@pytest.mark.on_qaic
+@pytest.mark.llm_model
+@pytest.mark.parametrize("model_name", test_models_causal)
+def test_check_kv_repeat_custom_causal_lm_pytorch_vs_ai100(model_name, manual_cleanup):
+    """
+    Test function to validate the PyTorch model and the Cloud AI 100 model with repeating original KV heads.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to issues in HF.")
+    custom_config = model_config_dict[model_name]
+    hf_config = AutoConfig.from_pretrained(
+        model_name,
+        trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
+        **custom_config.get("additional_params", {}),
+    )
+    if model_name in ModelConfig.REPEAT_KV_TEST_MODELS:
+        if model_name in ModelConfig.QUANTIZED_MODELS:
+            n_layer = get_custom_n_layers(model_name)
+            check_kv_repeat_causal_lm_pytorch_vs_ai100(model_name, manual_cleanup=manual_cleanup, n_layer=n_layer)
+        else:
+            check_kv_repeat_causal_lm_pytorch_vs_ai100(model_name, manual_cleanup=manual_cleanup, config=hf_config)
+    else:
+        pytest.skip(f"Skipping {model_name} as it is not in REPEAT_KV_TEST_MODELS")
 
 
 @pytest.mark.full_layers

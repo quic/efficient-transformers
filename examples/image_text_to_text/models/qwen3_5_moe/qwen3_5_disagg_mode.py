@@ -20,8 +20,6 @@ from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 model_id = "Qwen/Qwen3.6-35B-A3B"
-LAYERWISE = True
-LAYERWISE_WINDOW_SIZE = 1
 DECODE_NUM_DEVICES = int(os.environ.get("QEFF_DECODE_NUM_DEVICES", "1"))
 config = AutoConfig.from_pretrained(model_id)
 
@@ -46,7 +44,7 @@ def _update_retained_states(target_inputs, source_outputs):
 
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id, attn_implementation="eager", kv_offload=True, config=config, layerwise=LAYERWISE
+    model_id, attn_implementation="eager", kv_offload=True, config=config
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
@@ -82,8 +80,6 @@ if not skip_vision:
         split_model_io=True,
         skip_lang=True,
         use_onnx_subfunctions=True,
-        layerwise=LAYERWISE,
-        layerwise_window_size=LAYERWISE_WINDOW_SIZE,
     )
 
 prefill_qpc_path = qeff_model.compile(
@@ -94,8 +90,8 @@ prefill_qpc_path = qeff_model.compile(
     width=536,
     num_cores=16,
     num_devices=1,
-    mxfp6_matmul=False,
-    mxint8_kv_cache=False,
+    mxfp6_matmul=True,
+    mxint8_kv_cache=True,
     retain_full_kv=True,
     split_model_io=True,  # This should be used for disagg serving via VLLM
     mos=1,
@@ -105,8 +101,6 @@ prefill_qpc_path = qeff_model.compile(
     enable_chunking=True,
     skip_vision=True,
     use_onnx_subfunctions=True,
-    layerwise=LAYERWISE,
-    layerwise_window_size=LAYERWISE_WINDOW_SIZE,
     # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 
@@ -120,7 +114,7 @@ decode_qpc_path = qeff_model.compile(
     num_cores=16,
     num_devices=DECODE_NUM_DEVICES,
     mxfp6_matmul=True,
-    mxint8_kv_cache=False,
+    mxint8_kv_cache=True,
     retain_full_kv=True,
     split_model_io=True,  # This should be used for disagg serving via VLLM
     mos=1,
@@ -128,8 +122,6 @@ decode_qpc_path = qeff_model.compile(
     prefill_only=False,
     skip_vision=True,
     use_onnx_subfunctions=True,
-    layerwise=LAYERWISE,
-    layerwise_window_size=LAYERWISE_WINDOW_SIZE,
     # qaic_config=qaic_config,  # Enable KV blocking - comment out to disable
 )
 

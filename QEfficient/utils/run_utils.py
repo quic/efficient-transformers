@@ -231,11 +231,23 @@ class ApiRunner:
         added_initializers = {}
         for node in m.graph.node:
             if node.op_type == "Constant":
-                np_tensor = onnx.numpy_helper.to_array(node.attribute[0].t, os.path.dirname(model_path))
+                tensor = node.attribute[0].t
+                if tensor.data_type == onnx.TensorProto.UNDEFINED:
+                    continue
+                np_tensor = onnx.numpy_helper.to_array(tensor, os.path.dirname(model_path))
                 if len(np_tensor.shape) == 0 and np_tensor.item() == 2147483647:
                     added_initializers[node.output[0]] = onnxruntime.OrtValue.ortvalue_from_numpy(
                         np.array(0, np_tensor.dtype)
                     )
+
+        for tensor in m.graph.initializer:
+            if tensor.data_type == onnx.TensorProto.UNDEFINED:
+                continue
+            if tensor.data_location == onnx.TensorProto.EXTERNAL or tensor.external_data:
+                continue
+            np_tensor = onnx.numpy_helper.to_array(tensor)
+            if len(np_tensor.shape) == 0 and np_tensor.item() == 2147483647:
+                added_initializers[tensor.name] = onnxruntime.OrtValue.ortvalue_from_numpy(np.array(0, np_tensor.dtype))
 
         session_options = onnxruntime.SessionOptions()
         for name, value in added_initializers.items():

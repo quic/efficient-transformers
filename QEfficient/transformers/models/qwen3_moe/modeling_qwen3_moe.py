@@ -34,19 +34,10 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
     past_key_value_update,
 )
-from QEfficient.customop.ctx_scatter_gather import (
-    CtxGatherFunc3DGeneralized,
-    CtxScatterFunc3DGeneralized,
-    CtxScatterFunc3DInt,
-)
+from QEfficient.customop import ctx_gather_3d_generalized, ctx_scatter_3d_generalized, ctx_scatter_3d_int
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.transformers.models._layerwise import (
-    get_layerwise_start,
-    is_last_layer_window,
-    is_layerwise_active,
-    resolve_layer_window,
-)
+from QEfficient.transformers.models._layerwise import is_last_layer_window, is_layerwise_active, resolve_layer_window
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 
 
@@ -101,10 +92,11 @@ def eager_attention_forward(
 
     value_states = repeat_kv(value, module.num_key_value_groups)
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+    mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
+
     if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
-        )
+        # Apply the attention mask
+        attn_weights = torch.where(attention_mask, mask_value, attn_weights)
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -123,7 +115,7 @@ def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
     valid_dest = valid_prefix - 1
     scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
     matched_idx = torch.full_like(token_idx, int32_max)
-    matched_idx = CtxScatterFunc3DInt.apply(
+    matched_idx = ctx_scatter_3d_int(
         matched_idx.unsqueeze(-1),
         scatter_pos,
         token_idx.unsqueeze(-1),
@@ -159,15 +151,15 @@ def _cumsum_scatter_gather_update_expert_blocked(
         packed_stop = packed_start + packed_chunk_size
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
-        x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
+        x_chunk = ctx_gather_3d_generalized(x_expanded, chunk_matched_idx)
 
         gate_prime = x_chunk @ W_g
         up_prime = x_chunk @ W_u
         down_chunk = (up_prime * act_fn(gate_prime)) @ W_d
 
-        rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
+        rw_chunk = ctx_gather_3d_generalized(routing_weight, chunk_matched_idx)
         down_chunk = down_chunk * rw_chunk
-        expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
+        expert_out_chunk = ctx_gather_3d_generalized(expert_out, chunk_matched_idx)
         updated_chunk = expert_out_chunk + down_chunk
 
         chunk_valid_rows = torch.clamp(
@@ -178,7 +170,7 @@ def _cumsum_scatter_gather_update_expert_blocked(
         updated_chunk = torch.where(
             (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
         )
-        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
+        expert_out = ctx_scatter_3d_generalized(expert_out, chunk_matched_idx, updated_chunk)
 
     return expert_out
 
@@ -199,9 +191,13 @@ class QEffQwen3MoeTopKRouter(Qwen3MoeTopKRouter):
 class QEffQwen3MoeExperts(Qwen3MoeExperts):
     def __qeff_init__(self):
         self.expert_dim = getattr(self, "intermediate_size", self.gate_up_proj.shape[-2] // 2)
-        self.gate_proj = nn.Parameter(self.gate_up_proj[:, : self.expert_dim, :].detach().clone().transpose(1, 2))
-        self.up_proj = nn.Parameter(self.gate_up_proj[:, self.expert_dim :, :].detach().clone().transpose(1, 2))
-        self.down_proj_t = nn.Parameter(self.down_proj.detach().clone().transpose(1, 2))
+        gate_up_proj = self.gate_up_proj.detach()
+        down_proj = self.down_proj.detach()
+        self.gate_proj = nn.Parameter(
+            gate_up_proj[:, : self.expert_dim, :].transpose(1, 2).clone(), requires_grad=False
+        )
+        self.up_proj = nn.Parameter(gate_up_proj[:, self.expert_dim :, :].transpose(1, 2).clone(), requires_grad=False)
+        self.down_proj_t = nn.Parameter(down_proj.transpose(1, 2).clone(), requires_grad=False)
 
 
 class QEffPrefillChunkedQwen3MoeSparseMoeBlock(Qwen3MoeSparseMoeBlock):
@@ -325,8 +321,8 @@ class QEffQwen3MoeAttention(Qwen3MoeAttention):
 
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
-        if is_layerwise_active(self):
-            self.layer_idx = self.layer_idx - get_layerwise_start(self)
+        if is_layerwise_active():
+            self.layer_idx = self.layer_idx - getattr(QEffQwen3MoeModel, "_start", 0)
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
         if use_blocking:
             attn_output, attn_weights = generic_blocked_attention_interface(
@@ -433,6 +429,10 @@ class QEffQwen3MoeDecoderLayer(Qwen3MoeDecoderLayer):
 
 
 class QEffQwen3MoeModel(Qwen3MoeModel):
+    _start = 0
+    _end = 0
+    _total_layers = None
+
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3MoeRotaryEmbedding(config=self.config)
         self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
@@ -464,7 +464,7 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
             inputs_embeds = self.embed_tokens(input_ids)
 
         total_layers = len(self.layers)
-        start, end = resolve_layer_window(self, total_layers)
+        start, end = resolve_layer_window(QEffQwen3MoeModel, total_layers)
 
         past_key_values_length = 0
         if past_key_values is not None:
@@ -505,7 +505,7 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
                 cos_cached=cos,
             )
 
-        if is_last_layer_window(self, len(self.layers)):
+        if is_last_layer_window(QEffQwen3MoeModel, len(self.layers)):
             hidden_states = self.norm(hidden_states)
 
         # add hidden states from the last decoder layer
@@ -566,7 +566,7 @@ class QEffQwen3MoeForCausalLM(Qwen3MoeForCausalLM):
         )
 
         hidden_states = outputs.last_hidden_state
-        if not is_last_layer_window(self.model, len(self.model.layers)):
+        if not is_last_layer_window(QEffQwen3MoeModel, len(self.model.layers)):
             logits = hidden_states
         else:
             logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)

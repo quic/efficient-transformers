@@ -43,7 +43,6 @@
                                 "mdp_ts_num_devices": 1,
                                 "mxfp6_matmul": true,
                                 "convert_to_fp16": true,
-                                "compile_only":true,
                                 "aic_num_cores": 16,
                                 "mos": 1,
                                 "mdts_mos": 1
@@ -66,7 +65,6 @@
                                 "mdp_ts_num_devices": 1,
                                 "mxfp6_matmul": true,
                                 "convert_to_fp16": true,
-                                "compile_only":true,
                                 "aic_num_cores": 16,
                                 "mos": 1,
                                 "mdts_mos": 1
@@ -87,7 +85,6 @@
                 "mdp_ts_num_devices": 1,
                 "mxfp6_matmul": false,
                 "convert_to_fp16": true,
-                "compile_only": true,
                 "aic_num_cores": 16,
                 "mos": 1,
                 "mdts_mos": 1

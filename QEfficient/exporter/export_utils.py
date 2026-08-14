@@ -92,7 +92,7 @@ def export_onnx(
     os.makedirs(f"{gen_models_path}_tmp", exist_ok=True)
     try:
         info("Exporting to ONNX...")
-        with layerwise_safe_onnx_export_patches(enabled=False):
+        with layerwise_safe_onnx_export_patches():
             torch.onnx.export(
                 pt_model,
                 tuple(pt_inputs),
@@ -100,7 +100,7 @@ def export_onnx(
                 input_names=input_names,
                 output_names=output_names,
                 dynamic_axes=dynamic_axes,
-                opset_version=constants.ONNX_EXPORT_OPSET,
+                opset_version=constants.ONNX_LEGACY_EXPORT_OPSET,
                 custom_opsets={"com.qti.aisw.onnx": 1},
             )
     except Exception as e:
