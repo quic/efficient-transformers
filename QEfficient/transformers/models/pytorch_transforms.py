@@ -9,6 +9,7 @@ import warnings
 from types import MethodType
 from typing import Callable, Optional, Tuple, Union
 
+import torch
 from torch import nn
 from transformers.models.codegen.modeling_codegen import (
     CodeGenAttention,
