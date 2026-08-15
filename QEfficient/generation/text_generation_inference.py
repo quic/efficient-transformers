@@ -17,6 +17,7 @@ import transformers
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
+from QEfficient.generation.input_preparation import build_prefill_inputs, prepare_tokenizer, slice_prefill_inputs
 from QEfficient.utils import padding_check_and_fix
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
@@ -507,11 +508,7 @@ class QEffTextGenerationBase:
         """
         Sets the tokenizer parameters for the model.
         """
-        if self.tokenizer.padding_side != "right":
-            logger.warning("Please use padding_side='right' while initializing the tokenizer")
-            self.tokenizer.padding_side = "right"
-        if self.tokenizer.pad_token_id is None:
-            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+        prepare_tokenizer(self.tokenizer)
 
     def _fetch_full_batch_size(
         self,
@@ -782,11 +779,7 @@ class QEffTextGenerationBase:
             generation_len (int): The generation length.
         """
         # Run prefill
-        inputs = self.tokenizer(prompt, return_tensors="np", padding=True)
-        position_ids = inputs["attention_mask"].sum(1, keepdims=True)
-        padded_len = inputs["input_ids"].shape[1]
-        num_chunks = -(padded_len // -self._prefill_seq_len)  # ceil divide without float
-        padded_len = num_chunks * self._prefill_seq_len  # Convert to a multiple of prompt_len
+        inputs, position_ids, num_chunks = build_prefill_inputs(self.tokenizer, prompt, self._prefill_seq_len)
 
         # Initialize variables specific to request
         # Calculate the max generation length.
@@ -795,10 +788,6 @@ class QEffTextGenerationBase:
 
         # Set the prefill output buffers
         self._set_output_buffers(batch_size=prefill_logit_bs, sequence_length=1)
-
-        inputs = self.tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
-        inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
-        inputs.pop("token_type_ids", None)
 
         if decode_batch_id is not None:
             inputs["batch_index"] = decode_batch_id
@@ -835,13 +824,7 @@ class QEffTextGenerationBase:
                     prefill_ccl_id = min(prefill_ccl_id + 1, len(self.comp_ctx_lengths_prefill) - 1)
                     inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
 
-            chunk_inputs = inputs.copy()
-            chunk_inputs["input_ids"] = inputs["input_ids"][
-                :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
-            ]
-            chunk_inputs["position_ids"] = inputs["position_ids"][
-                :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
-            ]
+            chunk_inputs = slice_prefill_inputs(inputs, i, self._prefill_seq_len)
             if self.include_sampler:
                 chunk_inputs["last_accepted_output_tokens"] = chunk_inputs["input_ids"]
 

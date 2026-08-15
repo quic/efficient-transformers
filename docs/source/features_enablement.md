@@ -86,3 +86,25 @@ dlm.compile()
 ```
 
 The `qaic_config` dictionary is fed during the instantiation of the model because slight changes to the ONNX graph are required. Once complete, the user can specify `num_speculative_tokens` to define the actual number of speculations that the TLM will take as input during the decode phase. As for the DLM, no new changes are required at the ONNX or compile level.
+
+## Export artifacts without compiler or runtime execution
+
+CausalLM and ImageTextToText external harnesses can request the files for compilation and one `qaic-runner` invocation without executing either tool:
+
+```python
+compile_dir = model.compile(
+    prefill_seq_len=32,
+    ctx_len=128,
+    artifact_only=True,
+)
+
+io_dir = model.generate(
+    tokenizer=tokenizer,
+    prompts=["Hello"],
+    artifact_only=True,
+)
+```
+
+The returned compile directory (`compile_dir`) contains `qaic-compile.sh`, `specializations.json`, `custom_io.yaml` when required, and the compiler hash inputs. The returned generation directory contains `aic_batch_io.json` and raw host inputs under `data/`.
+
+Image-text-to-text generation also requires an example `processor`, `images`, and `prompts`. For dual-QPC models, set exactly one of `skip_vision=True` or `skip_lang=True` to emit one independently replayable stage.

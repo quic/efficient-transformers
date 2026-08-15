@@ -156,8 +156,8 @@ class VisionHandler:
             ValueError: If vision handler is not properly initialized
             RuntimeError: If image processing fails
         """
-        if not self.is_available():
-            raise ValueError("Vision handler not properly initialized. Need both vision_session and processor.")
+        if self._processor is None:
+            raise ValueError("A processor is required to prepare vision inputs.")
 
         try:
             # Download image
@@ -215,8 +215,8 @@ class VisionHandler:
             ValueError: If vision handler is not properly initialized
             RuntimeError: If image processing fails
         """
-        if not self.is_available():
-            raise ValueError("Vision handler not properly initialized. Need both vision_session and processor.")
+        if self._processor is None:
+            raise ValueError("A processor is required to prepare vision inputs.")
 
         try:
             # Download image
@@ -485,80 +485,61 @@ class VisionHandler:
 
         return vision_inputs, vision_outputs
 
+    def prepare_processor_inputs(
+        self, image_url: str, query: str, prefill_seq_len: int
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], int]:
+        """Build padded vision and language inputs without a runtime session."""
+        if self._processor is None:
+            raise ValueError("A processor is required to build vision-language inputs.")
+
+        model_type = getattr(getattr(self._qeff_model, "model", None).config, "model_type", "")
+        if model_type == "internvl_chat":
+            vision_inputs, lang_inputs = self.prepare_internVL_inputs(image_url, query)
+        elif model_type == "molmo":
+            vision_inputs, lang_inputs = self.prepare_molmo_inputs(image_url, query)
+        else:
+            vision_inputs, lang_inputs = self.prepare_vlm_inputs(image_url, query, prefill_seq_len)
+
+        pad_token_id = 1
+        input_length = lang_inputs["input_ids"].shape[1]
+        num_chunks = -(input_length // -prefill_seq_len)
+        padded_length = num_chunks * prefill_seq_len
+        lang_inputs["input_ids"] = torch.nn.functional.pad(
+            lang_inputs["input_ids"], (0, padded_length - input_length), "constant", pad_token_id
+        )
+        lang_inputs["attention_mask"] = torch.nn.functional.pad(
+            lang_inputs["attention_mask"], (0, padded_length - input_length), "constant", 0
+        )
+        if "mm_token_type_ids" in lang_inputs:
+            lang_inputs["mm_token_type_ids"] = torch.nn.functional.pad(
+                lang_inputs["mm_token_type_ids"], (0, padded_length - input_length), "constant", 0
+            )
+        if "cross_attention_mask" in lang_inputs:
+            lang_inputs["cross_attention_mask"] = torch.nn.functional.pad(
+                lang_inputs["cross_attention_mask"], (0, 0, 0, 0, 0, padded_length - input_length)
+            )
+
+        lang_inputs = {name: np.asarray(value) for name, value in lang_inputs.items()}
+        if "position_ids" in lang_inputs:
+            lang_inputs.pop("attention_mask", None)
+        else:
+            lang_inputs["position_ids"] = np.where(lang_inputs.pop("attention_mask"), np.arange(padded_length), -1)
+        lang_inputs["image_idx"] = np.array([[0]])
+        return vision_inputs, lang_inputs, num_chunks
+
     def get_processed_inputs(
         self, image_url: str, query: str, prefill_seq_len: int
-    ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
-        """
-        Process vision inputs and prepare language model inputs
-
-        Args:
-            image_url: URL or path to image
-            query: Text query
-            padded_len: Padded sequence length for language model
-
-        Returns:
-            Tuple of (language_inputs, vision_outputs)
-        """
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], int]:
+        """Prepare model inputs and execute the vision encoder."""
         if not self.is_available():
             raise ValueError("Vision handler not properly initialized")
 
         try:
-            ## Get vlm inputs ##
-            if (
-                hasattr(self._qeff_model.model.config, "model_type")
-                and self._qeff_model.model.config.model_type == "internvl_chat"
-            ):
-                vision_inputs, lang_inputs = self.prepare_internVL_inputs(image_url, query)
-            elif (
-                hasattr(self._qeff_model.model.config, "model_type")
-                and self._qeff_model.model.config.model_type == "molmo"
-            ):
-                vision_inputs, lang_inputs = self.prepare_molmo_inputs(image_url, query)
-            else:
-                vision_inputs, lang_inputs = self.prepare_vlm_inputs(image_url, query, prefill_seq_len)
-
-            # Handle padding for language model
-            pad_token_id = 1
-            input_ids_length = lang_inputs["input_ids"].shape[1]
-            num_chunks = -(input_ids_length // -prefill_seq_len)
-            padded_len = num_chunks * prefill_seq_len
-
-            lang_inputs["input_ids"] = torch.nn.functional.pad(
-                lang_inputs["input_ids"],
-                (0, padded_len - input_ids_length),
-                "constant",
-                pad_token_id,
-            )
-            lang_inputs["attention_mask"] = torch.nn.functional.pad(
-                lang_inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
-            )
-
-            if "mm_token_type_ids" in lang_inputs:
-                lang_inputs["mm_token_type_ids"] = torch.nn.functional.pad(
-                    lang_inputs["mm_token_type_ids"], (0, padded_len - input_ids_length), "constant", 0
-                )
-
-            if "cross_attention_mask" in lang_inputs:
-                lang_inputs["cross_attention_mask"] = torch.nn.functional.pad(
-                    lang_inputs["cross_attention_mask"], (0, 0, 0, 0, 0, padded_len - input_ids_length)
-                )
-
-            for k, v in lang_inputs.items():
-                lang_inputs[k] = np.array(v)
-
+            vision_inputs, lang_inputs, num_chunks = self.prepare_processor_inputs(image_url, query, prefill_seq_len)
             vision_outputs = {}
             if vision_inputs:
                 self.setup_vision_buffers()
                 vision_outputs = self.run_vision_inference(vision_inputs)
-
-            if "position_ids" in lang_inputs:
-                lang_inputs.pop("attention_mask")
-            else:
-                lang_inputs["position_ids"] = np.where(lang_inputs.pop("attention_mask"), np.arange(padded_len), -1)
-
-            lang_inputs["image_idx"] = np.array([[0]])
-
             return lang_inputs, vision_outputs, num_chunks
-
-        except Exception as e:
-            raise RuntimeError(f"Failed to process vision-language inputs: {str(e)}")
+        except Exception as error:
+            raise RuntimeError(f"Failed to process vision-language inputs: {error}") from error

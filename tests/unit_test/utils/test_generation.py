@@ -1331,3 +1331,68 @@ class TestGemma4DissVariant:
             "image_idx": np.array([[0]], dtype=np.int64),
         }
         assert "mm_token_type_ids" not in decode_inputs
+
+
+@pytest.mark.cpu_only
+def test_causal_lm_runner_bundle_uses_live_prefill_preparation(tmp_path):
+    from types import SimpleNamespace
+
+    import onnx
+    from onnx import TensorProto, helper
+
+    from QEfficient.generation.runner_io import write_causal_lm_runner_bundle
+
+    class FakeTokenizer:
+        padding_side = "left"
+        pad_token_id = None
+        eos_token_id = 0
+
+        def __call__(self, prompt, return_tensors, padding, max_length=None):
+            del prompt, return_tensors
+            input_ids = np.array([[5, 6, 7]], dtype=np.int64)
+            attention_mask = np.ones_like(input_ids)
+            if padding == "max_length":
+                pad_width = max_length - input_ids.shape[1]
+                input_ids = np.pad(input_ids, ((0, 0), (0, pad_width)))
+                attention_mask = np.pad(attention_mask, ((0, 0), (0, pad_width)))
+            return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+    input_ids = helper.make_tensor_value_info("input_ids", TensorProto.INT64, [1, 4])
+    position_ids = helper.make_tensor_value_info("position_ids", TensorProto.INT64, [1, 4])
+    past_key = helper.make_tensor_value_info("past_key.0", TensorProto.FLOAT, [1, 2, 8, 4])
+    logits = helper.make_tensor_value_info("logits", TensorProto.FLOAT, [1, 1, 10])
+    retained_key = helper.make_tensor_value_info("past_key.0_RetainedState", TensorProto.FLOAT, [1, 2, 8, 4])
+    graph = helper.make_graph(
+        [
+            helper.make_node("Identity", ["past_key.0"], ["past_key.0_RetainedState"]),
+            helper.make_node(
+                "Constant", [], ["logits"], value=helper.make_tensor("value", TensorProto.FLOAT, [1, 1, 10], [0.0] * 10)
+            ),
+        ],
+        "causal_runner",
+        [input_ids, position_ids, past_key],
+        [logits, retained_key],
+    )
+    onnx_path = tmp_path / "model.onnx"
+    onnx.save(helper.make_model(graph), onnx_path)
+    compile_dir = tmp_path / "qpc-hash"
+    compile_dir.mkdir()
+    (compile_dir / "specializations.json").write_text(
+        json.dumps({"specializations": [{"batch_size": 1, "seq_len": 4, "ctx_len": 8}]})
+    )
+    qeff_model = SimpleNamespace(
+        qpc_path=None,
+        compile_artifacts_path=compile_dir,
+        onnx_path=onnx_path,
+        model=SimpleNamespace(config=SimpleNamespace(n_head=2, n_embd=8)),
+    )
+
+    tokenizer = FakeTokenizer()
+    io_dir = write_causal_lm_runner_bundle(model=qeff_model, tokenizer=tokenizer, prompts=["hello"])
+
+    entries = json.loads((io_dir / "aic_batch_io.json").read_text())["IO-files"][0]
+    assert tokenizer.padding_side == "right"
+    assert tokenizer.pad_token_id == tokenizer.eos_token_id
+    assert [entry["map-to"] for entry in entries] == ["input_ids", "position_ids", "logits"]
+    assert np.fromfile(io_dir / "data/input_ids.raw", dtype=np.int64).tolist() == [5, 6, 7, 0]
+    assert np.fromfile(io_dir / "data/position_ids.raw", dtype=np.int64).tolist() == [0, 1, 2, -1]
