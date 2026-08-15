@@ -14,6 +14,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from transformers.cache_utils import Cache
+from transformers.integrations.moe import _batched_linear
 from transformers.modeling_outputs import (
     MoeCausalLMOutputWithPast,
     MoeModelOutputWithPast,
@@ -119,22 +120,6 @@ def eager_attention_forward(
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
     return attn_output, attn_weights
-
-
-def _batched_linear(
-    hidden_states: torch.Tensor,
-    weights: torch.Tensor,
-    bias: torch.Tensor | None = None,
-    is_transposed: bool = False,
-) -> torch.Tensor:
-    if is_transposed:
-        outputs = torch.bmm(hidden_states.unsqueeze(1), weights).squeeze(1)
-    else:
-        outputs = torch.bmm(weights, hidden_states.unsqueeze(-1)).squeeze(-1)
-    if bias is not None:
-        outputs = outputs + bias
-    return outputs
-
 
 def _qeff_batched_mm_experts_forward(
     self: torch.nn.Module,

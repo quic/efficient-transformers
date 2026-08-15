@@ -1453,14 +1453,18 @@ def _resolve_expert_parallel_layout(
         raise ValueError("num_cores must be greater than zero for MoE expert parallelism")
     if cores_per_expert <= 0:
         raise ValueError("cores_per_expert must be greater than zero for MoE expert parallelism")
-    requested_total_cores = num_devices * num_cores
-    total_avl_cores = min(requested_total_cores, num_experts * cores_per_expert)
-    if (num_experts * cores_per_expert) % total_avl_cores != 0:
+
+    required_expert_cores = num_experts * cores_per_expert
+    total_avl_cores = num_devices * num_cores
+    if required_expert_cores < total_avl_cores and total_avl_cores % required_expert_cores == 0:
+        num_pipeline_stages = 1
+    elif required_expert_cores % total_avl_cores == 0:
+        num_pipeline_stages = required_expert_cores // total_avl_cores
+    else:
         raise ValueError(
             "num_experts * cores_per_expert "
-            f"({num_experts * cores_per_expert}) must be divisible by total_avl_cores ({total_avl_cores})"
+            f"({required_expert_cores}) must be divisible by total_avl_cores ({total_avl_cores})"
         )
-    num_pipeline_stages = (num_experts * cores_per_expert) // total_avl_cores
     if num_pipeline_stages <= 0:
         raise ValueError(f"num_pipeline_stages ({num_pipeline_stages}) must be greater than zero")
     if num_experts % num_pipeline_stages != 0:
