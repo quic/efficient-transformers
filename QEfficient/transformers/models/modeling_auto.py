@@ -5010,6 +5010,9 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
                     use_onnx_subfunctions=use_onnx_subfunctions,
                 )
 
+        if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
+            compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
+
         return self._compile(
             onnx_path=onnx_path,
             compile_dir=compile_dir,
@@ -5070,12 +5073,21 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
         self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
 
+        input_names = {input_info.name for input_info in self.model.get_inputs_info()}
+        if "feature_lengths" in input_names and "feature_lengths" not in inputs:
+            attention_mask = inputs.get("attention_mask")
+            if attention_mask is None:
+                raise RuntimeError("Cohere ASR requires the processor attention_mask to derive feature_lengths")
+            inputs["feature_lengths"] = attention_mask.sum(dim=-1, dtype=torch.int64)
+
         inputs = self.auto_correct_inputs(inputs)
         if self.qpc_session is None:
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
 
         inputs["input_features"] = inputs["input_features"].numpy().astype(np.float16)
+        if "feature_lengths" in inputs:
+            inputs["feature_lengths"] = inputs["feature_lengths"].numpy().astype(np.int64)
 
         # add start token id and initial position ids to inputs
         seq_len = 1

@@ -27,12 +27,11 @@ are:
   cannot be traced into a single ONNX graph shared by both specializations.
 - masking uses QEfficient's `torch.where`-based fp16-safe convention instead
   of HF's additive `attn_weights + attention_mask`.
-- `valid_frames` (int64 scalar) is a new QPC input representing the number of
-  real mel frames in `input_features`. The forward pass derives a per-sample
-  encoder attention mask from it: positions beyond `valid_frames // subsampling_factor`
-  are masked so the zero-padded encoder frames do not pollute cross-attention.
-  This is the correct fix for the silence-padding hallucination problem (previously
-  worked around by adding an EOS logit bias at decode time).
+- `feature_lengths` is a per-batch int64 QPC input derived from the processor's
+  attention mask. The processor excludes its final convolution-boundary feature
+  frame, so the forward pass uses a clamped `feature_lengths + 1` encoder mask,
+  then derives the decoder cross-attention mask with Parakeet's repeated
+  convolution output-length calculation.
 """
 
 import torch
@@ -48,9 +47,11 @@ from transformers.models.cohere_asr.modeling_cohere_asr import (
     CohereAsrSelfAttention,
     repeat_kv,
 )
+from transformers.models.parakeet.modeling_parakeet import ParakeetEncoderAttention, ParakeetEncoderSubsamplingConv2D
 
 from QEfficient.transformers.cache_utils import QEffEncoderDecoderCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE, ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
@@ -83,6 +84,45 @@ def eager_attention_forward(
     attn_output = attn_output.transpose(1, 2).contiguous()
 
     return attn_output, attn_weights
+
+
+class QEffParakeetEncoderAttention(ParakeetEncoderAttention):
+    """Prevents fully masked encoder query rows from propagating NaNs through convolution."""
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: torch.Tensor | None,
+        attention_mask: torch.Tensor | None = None,
+        **kwargs,
+    ):
+        attn_output, attn_weights = super().forward(
+            hidden_states,
+            position_embeddings,
+            attention_mask=attention_mask,
+            **kwargs,
+        )
+        if attention_mask is not None:
+            valid_query_rows = attention_mask.any(dim=-1).transpose(1, 2)
+            attn_output = torch.where(valid_query_rows, attn_output, torch.zeros_like(attn_output))
+        return attn_output, attn_weights
+
+
+class QEffParakeetEncoderSubsamplingConv2D(ParakeetEncoderSubsamplingConv2D):
+    """Keeps the final subsampling projection bias out of masked encoder rows."""
+
+    def forward(self, input_features: torch.Tensor, attention_mask: torch.Tensor | None = None):
+        hidden_states = super().forward(input_features, attention_mask=attention_mask)
+        if attention_mask is None:
+            return hidden_states
+
+        output_lengths = attention_mask.sum(-1)
+        for layer in self.layers:
+            if isinstance(layer, nn.Conv2d) and layer.stride != (1, 1):
+                output_lengths = self._get_output_length(output_lengths, layer)
+        positions = torch.arange(hidden_states.shape[1], device=hidden_states.device)
+        output_mask = positions.unsqueeze(0) < output_lengths.unsqueeze(1)
+        return torch.where(output_mask.unsqueeze(-1), hidden_states, torch.zeros_like(hidden_states))
 
 
 class QEffCohereAsrSelfAttention(CohereAsrSelfAttention):
@@ -354,17 +394,37 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
       `QEFFAutoModelForSpeechSeq2Seq` (Whisper-derived) hard-codes at the runtime boundary
     - sets `config.num_mel_bins` (absent on `CohereAsrConfig`) from `config.encoder_config`,
       since `QEFFAutoModelForSpeechSeq2Seq.generate()` reads `self.model.config.num_mel_bins`
-    - adds `valid_frames` (int64 scalar) as a new model input: number of real mel frames in
-      `input_features`. Used to build an encoder attention mask that prevents the decoder
-      cross-attention from attending to zero-padded encoder frames, eliminating the need
-      for the EOS logit bias workaround.
+    - adds `feature_lengths` (int64 per batch item) as a new model input derived from
+      the processor attention mask. It rebuilds Parakeet's frame mask before encoding and
+      its output-length mask before decoder cross-attention.
     """
 
     def __qeff_init__(self):
         self.config.num_mel_bins = self.config.encoder_config.num_mel_bins
 
+    def get_npi_file(self, model_name: str) -> str:
+        # model_name may be a HF hub id or a local snapshot path (models--Org--Name/snapshots/...).
+        # Normalise the local cache layout back to "Org/Name" for the lookup.
+        import re
+
+        name = model_name
+        m = re.search(r"models--([^/]+)--([^/]+)[/\\]snapshots", model_name)
+        if m:
+            name = f"{m.group(1)}/{m.group(2)}"
+        return constants.NPI_MAPPING.get(name)
+
     def get_submodules_for_export(self) -> type[nn.Module]:
         return {self.model.encoder.layers[0].__class__, QEffCohereAsrDecoderLayer}
+
+    def _get_encoder_output_lengths(self, feature_lengths: torch.LongTensor) -> torch.LongTensor:
+        output_lengths = feature_lengths
+        for layer in self.model.encoder.subsampling.layers:
+            if isinstance(layer, nn.Conv2d) and layer.stride != (1, 1):
+                padding = layer.padding[0]
+                kernel_size = layer.kernel_size[0]
+                stride = layer.stride[0]
+                output_lengths = (output_lengths + 2 * padding - kernel_size) // stride + 1
+        return output_lengths
 
     def forward(
         self,
@@ -375,7 +435,7 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
         encoder_outputs: tuple[tuple[torch.FloatTensor]] | None = None,
         past_key_values: EncoderDecoderCache | tuple[torch.FloatTensor] | None = None,
         position_ids: torch.LongTensor | None = None,
-        valid_frames: torch.LongTensor | None = None,
+        feature_lengths: torch.LongTensor | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
         return_dict: bool | None = None,
@@ -385,11 +445,28 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
         # boundary (QEFFAutoModelForSpeechSeq2Seq) presents mel-bins-major
         # (batch, num_mel_bins, feature_len), matching Whisper's Conv1d convention.
         encoder_input_features = input_features.transpose(1, 2) if input_features is not None else None
+        encoder_output_feature_lengths = feature_lengths + 1 if feature_lengths is not None else None
+
+        if feature_lengths is not None:
+            encoder_input_feature_lengths = torch.minimum(
+                encoder_output_feature_lengths,
+                torch.full_like(feature_lengths, input_features.shape[2]),
+            )
+            positions = torch.arange(input_features.shape[2], device=input_features.device)
+            attention_mask = positions.unsqueeze(0) < encoder_input_feature_lengths.unsqueeze(1)
 
         if encoder_outputs is None:
             encoder_outputs = self.model.encoder(encoder_input_features, attention_mask=attention_mask)
 
         encoder_hidden_states = encoder_outputs.last_hidden_state
+        if encoder_output_feature_lengths is not None:
+            positions = torch.arange(encoder_hidden_states.shape[1], device=encoder_hidden_states.device)
+            encoder_output_lengths = self._get_encoder_output_lengths(encoder_output_feature_lengths)
+            valid_encoder_output_mask = positions.unsqueeze(0) < encoder_output_lengths.unsqueeze(1)
+            encoder_hidden_states = torch.where(
+                valid_encoder_output_mask.unsqueeze(-1), encoder_hidden_states, torch.zeros_like(encoder_hidden_states)
+            )
+
         # Pad encoder output to the cross-KV cache length so QAIC ScatterND shape checks
         # pass in every compile specialization.
         #
@@ -417,27 +494,10 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
         )
         encoder_hidden_states = torch.cat([encoder_hidden_states, padding], dim=1)
 
-        # Build encoder attention mask from valid_frames, preventing cross-attention from
-        # attending to zero-padded encoder frames.  valid_frames is the number of real mel
-        # frames passed in input_features (an int64 scalar or 0-d tensor supplied by the
-        # caller).  Dividing by subsampling_factor gives the number of valid encoder output
-        # frames after Fast Conformer subsampling.
-        #
-        # The mask is shape (batch_size, encoder_ctx_len): 1 = attend, 0 = ignore.
-        # _prepare_4d_attention_mask (called in QEffCohereAsrDecoder.forward) converts it
-        # to an additive float mask; eager_attention_forward then converts that to a bool
-        # mask via < -1.0 for the torch.where-based fp16-safe masking path.
-        #
-        # When valid_frames is None (non-QEff / CPU inference path without the input),
-        # no mask is applied and behaviour is identical to the previous implementation.
-        if valid_frames is not None:
-            subsampling_factor = self.config.encoder_config.subsampling_factor
-            valid_enc_frames = valid_frames // subsampling_factor
-            # tracer-friendly: torch.arange + comparison produces a static-shape bool tensor
+        if encoder_output_feature_lengths is not None:
             positions = torch.arange(encoder_ctx_len, device=encoder_hidden_states.device)
-            # valid_enc_frames may be a 0-d tensor (scalar); unsqueeze for broadcasting
-            enc_mask = (positions < valid_enc_frames.view(1)).long()  # (1, encoder_ctx_len)
-            enc_mask = enc_mask.expand(encoder_hidden_states.shape[0], -1)  # (batch, encoder_ctx_len)
+            encoder_output_lengths = self._get_encoder_output_lengths(encoder_output_feature_lengths)
+            enc_mask = (positions.unsqueeze(0) < encoder_output_lengths.unsqueeze(1)).long()
         else:
             enc_mask = getattr(encoder_outputs, "attention_mask", None)
 
@@ -489,12 +549,8 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
             # receive an encoder_ctx_len-frame encoder output.  Note: we still trace with
             # the full length so the Where condition (input_features.shape[2] == 1)
             # evaluates to False at trace time, keeping both branches in the ONNX.
-            "input_features": torch.zeros(
-                (bs, encoder_feature_count, full_feature_len), dtype=torch.float32
-            ),
-            # valid_frames: number of real mel frames (scalar int64).  At export time, set to
-            # full_feature_len so the encoder mask covers all frames (no padding at trace).
-            "valid_frames": torch.tensor(full_feature_len, dtype=torch.int64),
+            "input_features": torch.zeros((bs, encoder_feature_count, full_feature_len), dtype=torch.float32),
+            "feature_lengths": torch.full((bs,), full_feature_len, dtype=torch.int64),
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
             "past_key_values": [[] for _ in range(num_layers)],
@@ -549,9 +605,10 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
         num_layers = self.config.num_hidden_layers
 
         dynamic_axes = {
-            "input_features":  {0: "batch_size", 2: "feature_len"},
-            "input_ids":       {0: "batch_size", 1: "seq_len"},
-            "position_ids":    {0: "batch_size", 1: "seq_len"},
+            "input_features": {0: "batch_size", 2: "feature_len"},
+            "feature_lengths": {0: "batch_size"},
+            "input_ids": {0: "batch_size", 1: "seq_len"},
+            "position_ids": {0: "batch_size", 1: "seq_len"},
         }
         pkv_self_dynamic_axes = {
             0: "batch_size",
@@ -581,5 +638,5 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
     def get_inputs_info(self):
         return [
             IOInfo(name="input_features", datatype=torch.float32, shape=("batch_size", "num_mel_bins", "feature_len")),
-            IOInfo(name="valid_frames", datatype=torch.int64, shape=()),
+            IOInfo(name="feature_lengths", datatype=torch.int64, shape=("batch_size",)),
         ]

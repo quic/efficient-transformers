@@ -23,6 +23,7 @@ from transformers.models.cohere_asr.modeling_cohere_asr import (
     CohereAsrForConditionalGeneration,
     CohereAsrSelfAttention,
 )
+from transformers.models.parakeet.modeling_parakeet import ParakeetEncoderAttention, ParakeetEncoderSubsamplingConv2D
 from transformers.models.deberta_v2.modeling_deberta_v2 import (
     DisentangledSelfAttention,
 )
@@ -333,6 +334,8 @@ from QEfficient.transformers.models.cohere_asr.modeling_cohere_asr import (
     QEffCohereAsrDecoderLayer,
     QEffCohereAsrForConditionalGeneration,
     QEffCohereAsrSelfAttention,
+    QEffParakeetEncoderAttention,
+    QEffParakeetEncoderSubsamplingConv2D,
 )
 from QEfficient.transformers.models.deberta_v2.modeling_deberta_v2 import (
     QEffDisentangledSelfAttention,
@@ -951,7 +954,9 @@ class KVCacheTransform(ModuleMappingTransform):
         WhisperDecoder: QEffWhisperDecoder,
         WhisperModel: QEffWhisperModel,
         WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
-        # CohereAsr decoder layers (encoder is ParakeetEncoder, used unmodified)
+        # CohereAsr decoder layers and Parakeet encoder attention
+        ParakeetEncoderAttention: QEffParakeetEncoderAttention,
+        ParakeetEncoderSubsamplingConv2D: QEffParakeetEncoderSubsamplingConv2D,
         CohereAsrSelfAttention: QEffCohereAsrSelfAttention,
         CohereAsrCrossAttention: QEffCohereAsrCrossAttention,
         CohereAsrDecoderLayer: QEffCohereAsrDecoderLayer,
