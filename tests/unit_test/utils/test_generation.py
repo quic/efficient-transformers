@@ -1345,6 +1345,61 @@ def test_runner_io_resolves_exporter_generated_logits_symbols():
 
 
 @pytest.mark.cpu_only
+def test_graph_input_filter_selects_model_specific_vision_metadata(tmp_path):
+    import onnx
+    from onnx import TensorProto, helper
+
+    from QEfficient.generation.runner_io import _filter_graph_inputs
+
+    pixel_values = helper.make_tensor_value_info("pixel_values", TensorProto.FLOAT, [1, 3, 2, 2])
+    image_grid_thw = helper.make_tensor_value_info("image_grid_thw", TensorProto.INT64, [1, 3])
+    graph = helper.make_graph([], "vision_inputs", [pixel_values, image_grid_thw], [pixel_values, image_grid_thw])
+    onnx_path = tmp_path / "vision.onnx"
+    onnx.save(helper.make_model(graph), onnx_path)
+
+    inputs = _filter_graph_inputs(
+        onnx_path,
+        {"pixel_values": np.ones((1, 3, 2, 2), dtype=np.float32)},
+        {"image_grid_thw": np.array([[1, 2, 2]]), "input_ids": np.array([[1]])},
+    )
+
+    assert set(inputs) == {"pixel_values", "image_grid_thw"}
+    np.testing.assert_array_equal(inputs["image_grid_thw"], [[1, 2, 2]])
+
+
+@pytest.mark.cpu_only
+def test_cross_qpc_output_shapes_follow_language_input_contract(tmp_path):
+    from types import SimpleNamespace
+
+    import onnx
+    from onnx import TensorProto, helper
+
+    from QEfficient.generation.runner_io import _cross_qpc_output_shapes
+
+    vision_output = helper.make_tensor_value_info(
+        "vision_embeds", TensorProto.FLOAT, ["opaque_batch", "opaque_tokens", "opaque_width"]
+    )
+    vision_path = tmp_path / "vision.onnx"
+    onnx.save(helper.make_model(helper.make_graph([], "vision", [], [vision_output])), vision_path)
+
+    language_input = helper.make_tensor_value_info(
+        "vision_embeds", TensorProto.FLOAT, ["vision_batch_size", "vision_size", 8]
+    )
+    language_path = tmp_path / "language.onnx"
+    onnx.save(helper.make_model(helper.make_graph([], "language", [language_input], [language_input])), language_path)
+    model = SimpleNamespace(
+        vision_model=SimpleNamespace(onnx_path=vision_path),
+        lang_model=SimpleNamespace(onnx_path=language_path),
+    )
+
+    assert _cross_qpc_output_shapes(model, {"batch_size": 1, "vision_size": 187}) == {"vision_embeds": [1, 187, 8]}
+
+    model.lang_model.onnx_path = None
+    model.model = SimpleNamespace(config=SimpleNamespace(text_config=SimpleNamespace(hidden_size=8)))
+    assert _cross_qpc_output_shapes(model, {"batch_size": 1, "vision_size": 187}) == {"vision_embeds": [1, 187, 8]}
+
+
+@pytest.mark.cpu_only
 def test_causal_lm_runner_bundle_uses_live_prefill_preparation(tmp_path):
     from types import SimpleNamespace
 

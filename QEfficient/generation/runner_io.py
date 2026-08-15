@@ -159,6 +159,7 @@ def write_runner_io_bundle(
     specialization: Mapping[str, int],
     host_inputs: Mapping[str, np.ndarray],
     input_shape_overrides: Optional[Mapping[str, Sequence[int]]] = None,
+    output_shape_overrides: Optional[Mapping[str, Sequence[int]]] = None,
     fallback_logits_width: Optional[int] = None,
 ) -> Path:
     """Write raw inputs and ``aic_batch_io.json`` for one qaic-runner invocation."""
@@ -176,7 +177,8 @@ def write_runner_io_bundle(
     missing_inputs = required_inputs - host_inputs.keys()
     if missing_inputs:
         raise ValueError(f"Missing qaic-runner host inputs: {sorted(missing_inputs)}")
-    unexpected_inputs = host_inputs.keys() - required_inputs
+    graph_input_names = {graph_input.name for graph_input in model.graph.input}
+    unexpected_inputs = host_inputs.keys() - graph_input_names
     if unexpected_inputs:
         raise ValueError(f"Inputs are not present in the exported ONNX graph: {sorted(unexpected_inputs)}")
 
@@ -211,13 +213,16 @@ def write_runner_io_bundle(
         if output.name.endswith(("_RetainedState", "_InternalRetainedState")):
             continue
         dtype = onnx.helper.tensor_dtype_to_np_dtype(output.type.tensor_type.elem_type)
+        output_shape = (output_shape_overrides or {}).get(output.name)
         io_entries.append(
             {
                 "path": f"data/{output.name}.raw",
                 "io-direction": "out",
                 "elem-size": custom_item_sizes.get(output.name, int(np.dtype(dtype).itemsize)),
                 "map-to": output.name,
-                "dims": _resolve_output_shape(output, symbols, fallback_batch_size, fallback_logits_width),
+                "dims": list(output_shape)
+                if output_shape is not None
+                else _resolve_output_shape(output, symbols, fallback_batch_size, fallback_logits_width),
             }
         )
 
@@ -280,10 +285,15 @@ def _slice_vlm_prefill_inputs(lang_inputs: Mapping[str, np.ndarray], prefill_seq
     return host_inputs
 
 
-def _filter_graph_inputs(onnx_path: Union[str, Path], inputs: Mapping[str, np.ndarray]) -> Dict[str, np.ndarray]:
+def _filter_graph_inputs(onnx_path: Union[str, Path], *input_groups: Mapping[str, np.ndarray]) -> Dict[str, np.ndarray]:
     graph = onnx.load(str(onnx_path), load_external_data=False).graph
     graph_input_names = {graph_input.name for graph_input in graph.input}
-    return {name: np.asarray(value) for name, value in inputs.items() if name in graph_input_names}
+    return {
+        name: np.asarray(value)
+        for inputs in input_groups
+        for name, value in inputs.items()
+        if name in graph_input_names
+    }
 
 
 def write_single_qpc_vlm_runner_bundle(*, model, processor, images: List[str], prompts: List[str]) -> Path:
@@ -351,6 +361,40 @@ def _add_cross_qpc_placeholders(model, host_inputs: Dict[str, np.ndarray], speci
         )
 
 
+def _cross_qpc_output_shapes(model, specialization: Mapping[str, int]) -> Dict[str, List[int]]:
+    """Resolve vision outputs from the paired language input contract when available."""
+    vision_outputs = {
+        output.name for output in onnx.load(str(model.vision_model.onnx_path), load_external_data=False).graph.output
+    }
+    symbols = {name: int(value) for name, value in specialization.items() if str(value).lstrip("-").isdigit()}
+    if "batch_size" in symbols:
+        symbols.setdefault("vision_batch_size", symbols["batch_size"])
+
+    language_onnx_path = getattr(model.lang_model, "onnx_path", None)
+    if language_onnx_path and Path(language_onnx_path).is_file():
+        language_inputs = onnx.load(str(language_onnx_path), load_external_data=False).graph.input
+        return {
+            graph_input.name: _resolve_output_shape(graph_input, symbols, fallback_batch_size=None)
+            for graph_input in language_inputs
+            if graph_input.name in vision_outputs
+        }
+
+    config = model.model.config
+    text_config = getattr(config, "text_config", None) or getattr(config, "language_config", None) or config
+    hidden_size = int(text_config.hidden_size)
+    output_shapes = {}
+    if "vision_embeds" in vision_outputs:
+        output_shapes["vision_embeds"] = [symbols["batch_size"], symbols["vision_size"], hidden_size]
+    if "deepstack_features" in vision_outputs:
+        output_shapes["deepstack_features"] = [
+            symbols["num_feature_layers"],
+            symbols["batch_size"],
+            symbols["vision_size"],
+            hidden_size,
+        ]
+    return output_shapes
+
+
 def write_dual_qpc_vlm_runner_bundle(
     *,
     model,
@@ -362,7 +406,10 @@ def write_dual_qpc_vlm_runner_bundle(
 ) -> Path:
     """Prepare one isolated vision or language invocation for a dual-QPC VLM."""
     if skip_vision == skip_lang:
-        raise ValueError("Artifact-only dual-QPC generation requires exactly one skipped component.")
+        raise ValueError(
+            "Artifact-only dual-QPC generation requires exactly one of `skip_vision=True` or `skip_lang=True`; "
+            "use the same component selection passed to compile()."
+        )
     if processor is None or not images or not prompts:
         raise ValueError("`processor`, `images`, and `prompts` are required in artifact-only mode.")
 
@@ -381,14 +428,18 @@ def write_dual_qpc_vlm_runner_bundle(
     )
     vision_inputs, lang_inputs, _ = handler.prepare_processor_inputs(images[0], prompts[0], prefill_seq_len)
     if skip_lang:
-        host_inputs = _filter_graph_inputs(active_model.onnx_path, vision_inputs)
+        # Some processors leave model-specific vision metadata in the language group.
+        # The active ONNX graph is the source of truth for the replay invocation.
+        host_inputs = _filter_graph_inputs(active_model.onnx_path, vision_inputs, lang_inputs)
         shape_overrides = {}
+        output_shape_overrides = _cross_qpc_output_shapes(model, specialization)
     else:
         host_inputs = _slice_vlm_prefill_inputs(lang_inputs, prefill_seq_len)
         _add_specialization_control_inputs(active_model.onnx_path, host_inputs, specialization)
         host_inputs = _filter_graph_inputs(active_model.onnx_path, host_inputs)
         _add_cross_qpc_placeholders(active_model, host_inputs, specialization)
         shape_overrides = {}
+        output_shape_overrides = {}
 
     return write_runner_io_bundle(
         onnx_path=active_model.onnx_path,
@@ -396,5 +447,6 @@ def write_dual_qpc_vlm_runner_bundle(
         specialization=specialization,
         host_inputs=host_inputs,
         input_shape_overrides=shape_overrides,
+        output_shape_overrides=output_shape_overrides,
         fallback_logits_width=_proxy_logits_width(active_model),
     )
