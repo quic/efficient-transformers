@@ -121,6 +121,7 @@ def eager_attention_forward(
     attn_output = attn_output.transpose(1, 2).contiguous()
     return attn_output, attn_weights
 
+
 def _qeff_batched_mm_experts_forward(
     self: torch.nn.Module,
     hidden_states: torch.Tensor,

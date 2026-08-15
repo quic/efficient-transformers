@@ -1608,9 +1608,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                         if getattr(module, "supports_moe_prefill_blocking", False):
                             module.expert_blocking_num_nsp = num_cores
                             if prefill_seq_len % expert_parallel_chunk_size == 0:
-                                module.expert_blocking_packed_chunk_size = (
-                                    prefill_seq_len // expert_parallel_chunk_size
-                                )
+                                module.expert_blocking_packed_chunk_size = prefill_seq_len // expert_parallel_chunk_size
                             else:
                                 raise ValueError(
                                     "prefill_seq_len must be divisible by "
