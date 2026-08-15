@@ -66,14 +66,22 @@ def _get_signature_horizon(config, configured_num_layers: int) -> int:
     return horizon
 
 
-def apply_proxy_layer_config(config, minimum_calls_per_layer_type: int = 2) -> int:
+def apply_proxy_layer_config(
+    config, minimum_calls_per_layer_type: int = 2, num_hidden_layers: int | None = None
+) -> int:
     """Reduce the language stack while retaining repeated instances of every layer type."""
     language_config = _get_language_config(config)
-    configured_num_layers = getattr(language_config, "num_hidden_layers", None)
+    configured_num_layers = (
+        num_hidden_layers if num_hidden_layers is not None else getattr(language_config, "num_hidden_layers", None)
+    )
     if configured_num_layers is None:
         raise ValueError("Proxy mode requires the language config to define `num_hidden_layers`.")
     if configured_num_layers < 1:
         raise ValueError("Proxy mode requires at least one language layer.")
+    if num_hidden_layers is not None:
+        language_config.num_hidden_layers = num_hidden_layers
+        logger.info("Proxy language model uses caller-provided layer count: %d", num_hidden_layers)
+        return num_hidden_layers
 
     signature_horizon = _get_signature_horizon(language_config, configured_num_layers)
     original_signatures = [_get_layer_signature(language_config, layer_idx) for layer_idx in range(signature_horizon)]
@@ -112,14 +120,15 @@ def apply_proxy_layer_config(config, minimum_calls_per_layer_type: int = 2) -> i
 
 def prepare_proxy_config(pretrained_model_name_or_path, kwargs: dict):
     """Load and mutate the model config before checkpoint weights are materialized."""
+    explicit_num_hidden_layers = kwargs.pop("num_hidden_layers", None)
     config = kwargs.get("config")
     if config is None:
         config_kwargs = {key: kwargs[key] for key in _CONFIG_LOAD_KWARGS if key in kwargs}
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, **config_kwargs)
 
-    apply_proxy_layer_config(config)
+    if explicit_num_hidden_layers is None:
+        apply_proxy_layer_config(config)
+    else:
+        apply_proxy_layer_config(config, num_hidden_layers=explicit_num_hidden_layers)
     kwargs["config"] = config
-    # With an explicit config, Transformers forwards unknown overrides to the
-    # model constructor. Proxy mode has already applied this setting.
-    kwargs.pop("num_hidden_layers", None)
     return config

@@ -17,6 +17,8 @@ def main():
     parser = argparse.ArgumentParser(description="Basic text generation inference")
     parser.add_argument("--model-name", type=str, default="Qwen/Qwen2-1.5B-Instruct", help="HuggingFace model ID")
     parser.add_argument("--num-hidden-layers", type=int, default=-1, help="Num hidden layers in the model")
+    parser.add_argument("--enable-proxy", action="store_true", help="Enable proxy model export mode")
+    parser.add_argument("--trust-remote-code", action="store_true", help="Trust remote code when loading HF assets")
     parser.add_argument("--prompt", type=str, default="Hello, how are you?", help="Input prompt")
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=128, help="Context length")
@@ -27,6 +29,7 @@ def main():
     parser.add_argument(
         "--aic-hw-version", type=str, default=constants.DEFAULT_AIC_HW_VERSION, help="Version of aic hardware"
     )
+    parser.add_argument("--compile-only", action="store_true", help="Compile the model and skip on-device generation")
     parser.add_argument(
         "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
@@ -36,11 +39,21 @@ def main():
     args = parser.parse_args()
 
     # Load tokenizer and model
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    config = AutoConfig.from_pretrained(args.model_name)
-    if args.num_hidden_layers > 0:
-        config.num_hidden_layers = args.num_hidden_layers
-    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, config=config)
+    load_kwargs = {"trust_remote_code": args.trust_remote_code}
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name, **load_kwargs)
+
+    model_kwargs = dict(load_kwargs)
+    if args.enable_proxy:
+        model_kwargs["enable_proxy"] = True
+        if args.num_hidden_layers > 0:
+            model_kwargs["num_hidden_layers"] = args.num_hidden_layers
+    else:
+        config = AutoConfig.from_pretrained(args.model_name, **load_kwargs)
+        if args.num_hidden_layers > 0:
+            config.num_hidden_layers = args.num_hidden_layers
+        model_kwargs["config"] = config
+
+    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, **model_kwargs)
 
     # Compile the model
     qpc_path = model.compile(
@@ -53,6 +66,8 @@ def main():
         use_onnx_subfunctions=args.use_onnx_subfunctions,
     )
     print(f"Model compiled to: {qpc_path}")
+    if args.compile_only:
+        return
 
     # Generate text
     exec_info = model.generate(
