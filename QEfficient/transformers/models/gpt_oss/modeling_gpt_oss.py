@@ -992,6 +992,11 @@ class QEffGptOssAttention(GptOssAttention):
                 batch_index=batch_index,
                 position_ids=position_ids,
                 sliding_window=self.sliding_window,
+                sliding_window_len=(
+                    past_key_values.key_cache[self.layer_idx].shape[2]
+                    if self.sliding_window is not None and past_key_values is not None
+                    else None
+                ),
             )
             attn_output, attn_weights = eager_attention_forward(
                 self,
