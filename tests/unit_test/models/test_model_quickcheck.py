@@ -3747,3 +3747,42 @@ def test_kimi_k25_get_specializations_supports_multi_resolution_grid_sizes():
             num_patches=2508,
             kv_offload=True,
         )
+
+
+@pytest.mark.cpu_only
+def test_runner_io_bundle_is_cpu_only_and_qaic_runner_compatible(tmp_path):
+    from onnx import TensorProto, helper
+
+    from QEfficient.generation.runner_io import write_runner_io_bundle
+
+    input_info = helper.make_tensor_value_info("input_ids", TensorProto.INT64, ["batch_size", "seq_len"])
+    output_info = helper.make_tensor_value_info("output", TensorProto.INT64, ["batch_size", "seq_len"])
+    graph = helper.make_graph(
+        [helper.make_node("Identity", ["input_ids"], ["output"])], "runner", [input_info], [output_info]
+    )
+    onnx_path = tmp_path / "model.onnx"
+    onnx.save(helper.make_model(graph), onnx_path)
+
+    compile_dir = tmp_path / "qpc-hash"
+    compile_dir.mkdir()
+    inputs = np.arange(4, dtype=np.int64).reshape(1, 4)
+    io_dir = write_runner_io_bundle(
+        onnx_path=onnx_path,
+        compile_dir=compile_dir,
+        specialization={"batch_size": 1, "seq_len": 4},
+        host_inputs={"input_ids": inputs},
+    )
+
+    descriptor = json.loads((io_dir / "aic_batch_io.json").read_text())
+    entries = descriptor["IO-files"][0]
+    assert entries[0] == {
+        "path": "data/input_ids.raw",
+        "io-direction": "in",
+        "elem-size": 8,
+        "map-to": "input_ids",
+        "dims": [1, 4],
+    }
+    assert entries[1]["io-direction"] == "out"
+    assert entries[1]["dims"] == [1, 4]
+    assert (io_dir / "data/input_ids.raw").stat().st_size == inputs.nbytes
+    assert not (io_dir / "data/output.raw").exists()
