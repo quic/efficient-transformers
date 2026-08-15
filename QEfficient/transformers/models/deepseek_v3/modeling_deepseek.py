@@ -20,13 +20,6 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
     generic_blocked_mla_attention_interface,
 )
-from QEfficient.customop.ctx_scatter_gather import (
-    CtxGatherFunc3DGeneralized,
-    CtxScatterFunc3DGeneralized,
-    CtxScatterFunc3DInt,
-)
-from QEfficient.customop.matmulnbits import QMOE, QuantLinearTorchFunction
-from QEfficient.customop.quantization_ops import CastToUInt4Func, DequantizeLinearFunc
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.customop.utils import select_interface
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
