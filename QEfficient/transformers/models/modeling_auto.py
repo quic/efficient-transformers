@@ -41,7 +41,10 @@ from QEfficient.generation.text_generation_inference import (
     write_io_files,
 )
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
-from QEfficient.proxy.modeling_utils import apply_proxy_layer_config, prepare_proxy_config
+from QEfficient.proxy.modeling_utils import (
+    apply_proxy_layer_config,
+    prepare_proxy_config,
+)
 from QEfficient.transformers.modeling_utils import (
     DYNAMIC_PREFILL_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
@@ -2725,8 +2728,11 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
         if enable_proxy:
-            apply_proxy_layer_config(config)
-            kwargs.pop("num_hidden_layers", None)
+            explicit_num_hidden_layers = kwargs.pop("num_hidden_layers", None)
+            if explicit_num_hidden_layers is None:
+                apply_proxy_layer_config(config)
+            else:
+                apply_proxy_layer_config(config, num_hidden_layers=explicit_num_hidden_layers)
         config._attn_implementation = "eager"
         config.vision_config.use_flash_attn = "false"
         _resolve_torch_dtype(kwargs)

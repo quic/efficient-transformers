@@ -1672,7 +1672,7 @@ def test_proxy_layer_config_preserves_repeated_layer_types():
 
     kwargs = {"config": GptOssConfig(num_hidden_layers=16), "num_hidden_layers": 2}
     prepare_proxy_config("unused-local-config", kwargs)
-    assert kwargs["config"].num_hidden_layers == 4
+    assert kwargs["config"].num_hidden_layers == 2
     assert "num_hidden_layers" not in kwargs
 
 
@@ -1686,6 +1686,14 @@ def test_proxy_layer_config_only_reduces_vlm_language_layers():
 
     assert apply_proxy_layer_config(config) == 2
     assert config.text_config.num_hidden_layers == 2
+
+    explicit_config = Qwen3VLMoeConfig(
+        text_config=Qwen3VLMoeTextConfig(num_hidden_layers=16),
+        vision_config=Qwen3VLMoeVisionConfig(depth=16),
+    )
+    assert apply_proxy_layer_config(explicit_config, num_hidden_layers=3) == 3
+    assert explicit_config.text_config.num_hidden_layers == 3
+    assert explicit_config.vision_config.depth == 16
     assert config.vision_config.depth == 8
 
 
