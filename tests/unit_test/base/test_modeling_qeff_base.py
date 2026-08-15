@@ -651,5 +651,6 @@ def test_compile_artifact_only_writes_replay_without_invoking_compiler(tmp_path)
     replay_command = replay_script.read_text()
     assert 'cd -- "$(dirname -- "$0")"' in replay_command
     assert "-aic-binary-dir=qpc" in replay_command
+    assert "-artifact-only" not in replay_command
     assert str(tmp_path) not in replay_command
     assert not (compile_dir / "qpc").exists()

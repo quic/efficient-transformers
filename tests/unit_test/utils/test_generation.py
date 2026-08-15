@@ -1334,6 +1334,17 @@ class TestGemma4DissVariant:
 
 
 @pytest.mark.cpu_only
+def test_runner_io_resolves_exporter_generated_logits_symbols():
+    from onnx import TensorProto, helper
+
+    from QEfficient.generation.runner_io import _resolve_output_shape
+
+    logits = helper.make_tensor_value_info("logits", TensorProto.FLOAT, ["Castlogits_dim_0", "Castlogits_dim_1", 32000])
+
+    assert _resolve_output_shape(logits, {"seq_len": 1}, fallback_batch_size=1) == [1, 1, 32000]
+
+
+@pytest.mark.cpu_only
 def test_causal_lm_runner_bundle_uses_live_prefill_preparation(tmp_path):
     from types import SimpleNamespace
 
@@ -1360,6 +1371,7 @@ def test_causal_lm_runner_bundle_uses_live_prefill_preparation(tmp_path):
     input_ids = helper.make_tensor_value_info("input_ids", TensorProto.INT64, [1, 4])
     position_ids = helper.make_tensor_value_info("position_ids", TensorProto.INT64, [1, 4])
     past_key = helper.make_tensor_value_info("past_key.0", TensorProto.FLOAT, [1, 2, 8, 4])
+    batch_index = helper.make_tensor_value_info("batch_index", TensorProto.INT64, [1, 1])
     logits = helper.make_tensor_value_info("logits", TensorProto.FLOAT, [1, 1, 10])
     retained_key = helper.make_tensor_value_info("past_key.0_RetainedState", TensorProto.FLOAT, [1, 2, 8, 4])
     graph = helper.make_graph(
@@ -1370,7 +1382,7 @@ def test_causal_lm_runner_bundle_uses_live_prefill_preparation(tmp_path):
             ),
         ],
         "causal_runner",
-        [input_ids, position_ids, past_key],
+        [input_ids, position_ids, past_key, batch_index],
         [logits, retained_key],
     )
     onnx_path = tmp_path / "model.onnx"
@@ -1378,7 +1390,7 @@ def test_causal_lm_runner_bundle_uses_live_prefill_preparation(tmp_path):
     compile_dir = tmp_path / "qpc-hash"
     compile_dir.mkdir()
     (compile_dir / "specializations.json").write_text(
-        json.dumps({"specializations": [{"batch_size": 1, "seq_len": 4, "ctx_len": 8}]})
+        json.dumps({"specializations": [{"batch_size": 1, "full_batch_size": 4, "seq_len": 4, "ctx_len": 8}]})
     )
     qeff_model = SimpleNamespace(
         qpc_path=None,
@@ -1393,6 +1405,7 @@ def test_causal_lm_runner_bundle_uses_live_prefill_preparation(tmp_path):
     entries = json.loads((io_dir / "aic_batch_io.json").read_text())["IO-files"][0]
     assert tokenizer.padding_side == "right"
     assert tokenizer.pad_token_id == tokenizer.eos_token_id
-    assert [entry["map-to"] for entry in entries] == ["input_ids", "position_ids", "logits"]
+    assert [entry["map-to"] for entry in entries] == ["input_ids", "position_ids", "batch_index", "logits"]
     assert np.fromfile(io_dir / "data/input_ids.raw", dtype=np.int64).tolist() == [5, 6, 7, 0]
     assert np.fromfile(io_dir / "data/position_ids.raw", dtype=np.int64).tolist() == [0, 1, 2, -1]
+    assert np.fromfile(io_dir / "data/batch_index.raw", dtype=np.int64).tolist() == [0]

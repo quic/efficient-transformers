@@ -83,6 +83,7 @@ def _resolve_output_shape(
     output: onnx.ValueInfoProto,
     symbols: Mapping[str, int],
     fallback_batch_size: Optional[int],
+    fallback_logits_width: Optional[int] = None,
 ) -> List[int]:
     shape = []
     for axis, dimension in enumerate(output.type.tensor_type.shape.dim):
@@ -90,8 +91,12 @@ def _resolve_output_shape(
             shape.append(int(dimension.dim_value))
         elif dimension.dim_param in symbols:
             shape.append(int(symbols[dimension.dim_param]))
-        elif axis == 0 and fallback_batch_size is not None and "batch" in dimension.dim_param:
+        elif axis == 0 and fallback_batch_size is not None:
             shape.append(fallback_batch_size)
+        elif output.name == "logits" and axis == 1 and "seq_len" in symbols:
+            shape.append(int(symbols["seq_len"]))
+        elif output.name == "logits" and axis == len(output.type.tensor_type.shape.dim) - 1 and fallback_logits_width:
+            shape.append(fallback_logits_width)
         else:
             raise RuntimeError(f"Cannot resolve dimension {axis} ('{dimension.dim_param}') of output '{output.name}'.")
     return shape
@@ -134,6 +139,19 @@ def _add_specialization_control_inputs(
             host_inputs[name] = np.asarray(value)
 
 
+def _proxy_logits_width(model) -> Optional[int]:
+    if not getattr(model, "_enable_proxy", False):
+        return None
+
+    config = model.model.config
+    candidates = [config, getattr(config, "text_config", None), getattr(config, "language_config", None)]
+    for candidate in filter(None, candidates):
+        for attribute in ("hidden_size", "n_embd", "d_model"):
+            if (hidden_size := getattr(candidate, attribute, None)) is not None:
+                return int(hidden_size)
+    raise AttributeError("Proxy model configuration does not expose its hidden size.")
+
+
 def write_runner_io_bundle(
     *,
     onnx_path: Union[str, Path],
@@ -141,6 +159,7 @@ def write_runner_io_bundle(
     specialization: Mapping[str, int],
     host_inputs: Mapping[str, np.ndarray],
     input_shape_overrides: Optional[Mapping[str, Sequence[int]]] = None,
+    fallback_logits_width: Optional[int] = None,
 ) -> Path:
     """Write raw inputs and ``aic_batch_io.json`` for one qaic-runner invocation."""
     onnx_path = Path(onnx_path)
@@ -198,7 +217,7 @@ def write_runner_io_bundle(
                 "io-direction": "out",
                 "elem-size": custom_item_sizes.get(output.name, int(np.dtype(dtype).itemsize)),
                 "map-to": output.name,
-                "dims": _resolve_output_shape(output, symbols, fallback_batch_size),
+                "dims": _resolve_output_shape(output, symbols, fallback_batch_size, fallback_logits_width),
             }
         )
 
@@ -244,6 +263,7 @@ def write_causal_lm_runner_bundle(
         specialization=specialization,
         host_inputs=host_inputs,
         input_shape_overrides=shape_overrides,
+        fallback_logits_width=_proxy_logits_width(model),
     )
 
 
@@ -291,6 +311,7 @@ def write_single_qpc_vlm_runner_bundle(*, model, processor, images: List[str], p
         compile_dir=_get_compile_dir(model),
         specialization=specialization,
         host_inputs=host_inputs,
+        fallback_logits_width=_proxy_logits_width(model),
     )
 
 
@@ -375,4 +396,5 @@ def write_dual_qpc_vlm_runner_bundle(
         specialization=specialization,
         host_inputs=host_inputs,
         input_shape_overrides=shape_overrides,
+        fallback_logits_width=_proxy_logits_width(active_model),
     )
