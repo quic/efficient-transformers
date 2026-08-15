@@ -9,10 +9,12 @@ import copy
 import inspect
 import re
 import warnings
+from collections import Counter
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Dict
 
+import onnx
 import torch
 import torch.nn as nn
 from torch.export import Dim
@@ -204,6 +206,57 @@ def get_decoder_layer_classes_for_export(model):
     return []
 
 
+def _iter_onnx_nodes(nodes):
+    """Yield graph nodes recursively, including nodes inside nested ONNX subgraphs."""
+    for node in nodes:
+        yield node
+        for attr in node.attribute:
+            if attr.HasField("g"):
+                yield from _iter_onnx_nodes(attr.g.node)
+
+
+def _function_call_counts(onnx_model, function_names: set[str]) -> Counter:
+    """Count call sites for the selected local function names in an ONNX model."""
+    nodes = list(_iter_onnx_nodes(onnx_model.graph.node))
+    for function_proto in onnx_model.functions:
+        nodes.extend(_iter_onnx_nodes(function_proto.node))
+    return Counter(node.op_type for node in nodes if node.op_type in function_names)
+
+
+def _validate_proxy_subfunction_calls(qeff_model, onnx_path) -> None:
+    """Ensure proxy decoder subfunctions are repeated enough to be useful performance proxies."""
+    if not getattr(qeff_model, "_enable_proxy", False):
+        return
+
+    decoder_layer_classes = get_decoder_layer_classes_for_export(qeff_model.model)
+    if not decoder_layer_classes:
+        return
+
+    target_classnames = {cls.__name__ for cls in decoder_layer_classes}
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    function_names = {
+        function_proto.name
+        for function_proto in onnx_model.functions
+        if any(classname in function_proto.name for classname in target_classnames)
+    }
+    if not function_names:
+        raise RuntimeError(
+            "Proxy ONNX subfunction validation failed: no decoder-layer subfunctions were found "
+            f"for expected classes {sorted(target_classnames)}."
+        )
+
+    call_counts = _function_call_counts(onnx_model, function_names)
+    single_call_functions = {
+        name: call_counts.get(name, 0) for name in sorted(function_names) if call_counts.get(name, 0) <= 1
+    }
+    if single_call_functions:
+        raise RuntimeError(
+            "Proxy ONNX subfunction validation failed: each decoder-layer subfunction must be invoked more "
+            "than once for a faithful compiler performance proxy. "
+            f"Observed call counts: {single_call_functions}."
+        )
+
+
 def export_wrapper(func):
     """
     Decorator for export methods that orchestrates the complete export lifecycle.
@@ -295,6 +348,9 @@ def export_wrapper(func):
                         "Retry export with use_onnx_subfunctions=False for this model/runtime."
                     ) from export_exc
                 raise
+
+            if use_onnx_subfunctions:
+                _validate_proxy_subfunction_calls(self, onnx_path)
 
             # 5. Save export metadata (skip when running cache probe)
             if not cache_probe:

@@ -1554,6 +1554,84 @@ def test_gpt_oss_proxy_repeats_each_decoder_subfunction(tmp_path):
     assert sorted(call_counts.values()) == [2, 2]
 
 
+def test_proxy_subfunction_validation_rejects_single_call_function(tmp_path):
+    from onnx import TensorProto, helper
+
+    from QEfficient.utils.export_utils import _validate_proxy_subfunction_calls
+
+    class DummyLayer:
+        pass
+
+    class DummyModel:
+        def get_submodules_for_export(self):
+            return {DummyLayer}
+
+    class DummyQEffModel:
+        _enable_proxy = True
+        model = DummyModel()
+
+    graph = helper.make_graph(
+        [helper.make_node("DummyLayer", ["x"], ["y"])],
+        "proxy_subfunction_single_call",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
+    )
+    function = helper.make_function(
+        "",
+        "DummyLayer",
+        ["x"],
+        ["y"],
+        [helper.make_node("Identity", ["x"], ["y"])],
+        [helper.make_operatorsetid("", 17)],
+    )
+    model = helper.make_model(graph, functions=[function], opset_imports=[helper.make_operatorsetid("", 17)])
+    onnx_path = tmp_path / "single_call.onnx"
+    onnx.save(model, onnx_path)
+
+    with pytest.raises(RuntimeError, match="must be invoked more than once"):
+        _validate_proxy_subfunction_calls(DummyQEffModel(), onnx_path)
+
+
+def test_proxy_subfunction_validation_accepts_repeated_function_calls(tmp_path):
+    from onnx import TensorProto, helper
+
+    from QEfficient.utils.export_utils import _validate_proxy_subfunction_calls
+
+    class DummyLayer:
+        pass
+
+    class DummyModel:
+        def get_submodules_for_export(self):
+            return {DummyLayer}
+
+    class DummyQEffModel:
+        _enable_proxy = True
+        model = DummyModel()
+
+    graph = helper.make_graph(
+        [
+            helper.make_node("DummyLayer", ["x"], ["mid"]),
+            helper.make_node("DummyLayer", ["mid"], ["y"]),
+        ],
+        "proxy_subfunction_repeated_call",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
+    )
+    function = helper.make_function(
+        "",
+        "DummyLayer",
+        ["x"],
+        ["y"],
+        [helper.make_node("Identity", ["x"], ["y"])],
+        [helper.make_operatorsetid("", 17)],
+    )
+    model = helper.make_model(graph, functions=[function], opset_imports=[helper.make_operatorsetid("", 17)])
+    onnx_path = tmp_path / "repeated_call.onnx"
+    onnx.save(model, onnx_path)
+
+    _validate_proxy_subfunction_calls(DummyQEffModel(), onnx_path)
+
+
 def test_subfunction_export_restores_onnx_transforms_on_failure():
     from QEfficient.base.onnx_transforms import CustomOpTransform, RenameFunctionOutputsTransform
     from QEfficient.transformers.cache_utils import InvalidIndexProvider
