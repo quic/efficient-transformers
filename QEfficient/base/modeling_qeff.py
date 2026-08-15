@@ -1225,7 +1225,10 @@ class QEFFBaseModel(ABC):
                 command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
         command.append(f"-aic-binary-dir={qpc_path}")
-        logger.info(f"Running compiler: {' '.join(command)}")
+        if artifact_only:
+            logger.info(f"Writing compiler replay command: {' '.join(command)}")
+        else:
+            logger.info(f"Running compiler: {' '.join(command)}")
 
         if artifact_only:
             path_flags = {

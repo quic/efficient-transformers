@@ -1195,6 +1195,39 @@ class TestArtifactOnlyGenerationAPIs:
         assert result == expected
         assert compile_model.call_args.kwargs["artifact_only"] is True
 
+    def test_causal_lm_proxy_writes_artifact_bundle(self, tmp_path):
+        import numpy as np
+
+        class FakeTokenizer:
+            padding_side = "right"
+            pad_token_id = 0
+            eos_token_id = 0
+
+            def __call__(self, prompt, return_tensors, padding, max_length=None):
+                del prompt, return_tensors
+                input_ids = np.array([[1, 2]], dtype=np.int64)
+                attention_mask = np.ones_like(input_ids)
+                if padding == "max_length":
+                    pad_width = max_length - input_ids.shape[1]
+                    input_ids = np.pad(input_ids, ((0, 0), (0, pad_width)))
+                    attention_mask = np.pad(attention_mask, ((0, 0), (0, pad_width)))
+                return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model, enable_proxy=True)
+        compile_dir = qeff.compile(
+            compile_dir=tmp_path,
+            prefill_seq_len=8,
+            ctx_len=32,
+            artifact_only=True,
+            offload_pt_weights=False,
+        )
+        io_dir = qeff.generate(tokenizer=FakeTokenizer(), prompts=["hello"], artifact_only=True)
+
+        assert compile_dir == qeff.compile_artifacts_path
+        assert (compile_dir / "qaic-compile.sh").is_file()
+        assert (io_dir / "aic_batch_io.json").is_file()
+
     def test_causal_lm_artifact_only_delegates_without_runtime(self, tmp_path):
         model, _ = make_tiny_gpt2()
         qeff = QEFFAutoModelForCausalLM(model)

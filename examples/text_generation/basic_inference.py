@@ -25,6 +25,11 @@ def main():
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
     parser.add_argument("--aic-hw-version", type=str, default="ai100", help="Version of aic hardware")
     parser.add_argument(
+        "--artifact-only",
+        action="store_true",
+        help="Write compiler and runner artifacts without executing either tool",
+    )
+    parser.add_argument(
         "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         default=None,
@@ -40,7 +45,7 @@ def main():
     model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, config=config)
 
     # Compile the model
-    qpc_path = model.compile(
+    compile_path = model.compile(
         prefill_seq_len=args.prefill_seq_len,
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
@@ -48,8 +53,12 @@ def main():
         num_devices=(1 if args.device_group is None else len(args.device_group)),
         dynamo=args.dynamo,
         use_onnx_subfunctions=args.use_onnx_subfunctions,
+        artifact_only=args.artifact_only,
     )
-    print(f"Model compiled to: {qpc_path}")
+    if args.artifact_only:
+        print(f"Compiler artifacts written to: {compile_path}")
+    else:
+        print(f"Model compiled to: {compile_path}")
 
     # Generate text
     exec_info = model.generate(
@@ -57,7 +66,12 @@ def main():
         prompts=[args.prompt],
         device_id=args.device_group,
         generation_len=args.generation_len,
+        artifact_only=args.artifact_only,
     )
+
+    if args.artifact_only:
+        print(f"Runner inputs written to: {exec_info}")
+        return
 
     print(f"\nPrompt: {args.prompt}")
     print(f"Generated: {exec_info.generated_texts[0]}")
