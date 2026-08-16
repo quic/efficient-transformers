@@ -76,7 +76,6 @@ pipeline {
         TEST_FILTER = testFilter(params.TEST_PROFILE)
         IMPACT_TEST_FILTER = testFilter(params.TEST_PROFILE)
         CI_IMPACT_MODE = 'full'
-        QEFF_INSTALL_READY = 'false'
     }
 
     stages {
@@ -150,13 +149,11 @@ pipeline {
                             rm -rf QEfficient"
                         '''
                     }
-                    env.QEFF_INSTALL_READY = 'true'
                 }
             }
         }
 
         stage('Collect Pytest Catalog') {
-            when { expression { env.QEFF_INSTALL_READY == 'true' } }
             steps {
                 sh '''
                     sudo docker exec ${BUILD_TAG} bash -c "
