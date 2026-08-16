@@ -2122,10 +2122,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
             self.qpc_paths["vision_qpc_path"] = vision_qpc_path
 
-        # Custom NPI file options
-        if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
-            compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
-
         if not skip_lang:
             custom_io_lang = {}
             for output_name in output_names["lang"]:
@@ -2923,9 +2919,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             img_size=img_size,
             **compiler_options,
         )
-
-        if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
-            compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
 
         custom_io = {}
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
@@ -5009,9 +5002,6 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
                     dtype=kv_cache_dtype,
                     use_onnx_subfunctions=use_onnx_subfunctions,
                 )
-
-        if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
-            compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
 
         return self._compile(
             onnx_path=onnx_path,

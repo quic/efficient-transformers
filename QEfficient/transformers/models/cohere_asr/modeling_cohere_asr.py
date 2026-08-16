@@ -34,8 +34,6 @@ are:
   convolution output-length calculation.
 """
 
-from pathlib import Path
-
 import torch
 from torch import nn
 from transformers.cache_utils import Cache, EncoderDecoderCache
@@ -402,23 +400,6 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
 
     def __qeff_init__(self):
         self.config.num_mel_bins = self.config.encoder_config.num_mel_bins
-
-    def get_npi_file(self, model_name: str) -> str:
-        # model_name may be a HF hub id or a local snapshot path (models--Org--Name/snapshots/...).
-        # Normalise the local cache layout back to "Org/Name" for the lookup.
-        import re
-
-        name = model_name
-        m = re.search(r"models--([^/]+)--([^/]+)[/\\]snapshots", model_name)
-        if m:
-            name = f"{m.group(1)}/{m.group(2)}"
-        supported_checkpoints = {
-            "CohereLabs/cohere-transcribe-03-2026",
-            "CohereLabs/cohere-transcribe-arabic-07-2026",
-        }
-        if name not in supported_checkpoints:
-            return None
-        return str(Path(__file__).parent / "configs" / "cohere_transcribe_03_2026_npi.yaml")
 
     def get_submodules_for_export(self) -> type[nn.Module]:
         return {self.model.encoder.layers[0].__class__, QEffCohereAsrDecoderLayer}
