@@ -63,6 +63,16 @@ pipeline {
             defaultValue: false,
             description: 'Run the complete regression pipeline regardless of the impact plan'
         )
+        string(
+            name: 'CI_IMPACT_VALIDATION_PR',
+            defaultValue: '',
+            description: 'Optional PR number to check out and validate with this CI implementation'
+        )
+        booleanParam(
+            name: 'CI_IMPACT_LATEST_COMMIT_ONLY',
+            defaultValue: false,
+            description: 'Validation only: compare the selected PR head with HEAD^ instead of main'
+        )
         booleanParam(name: 'RUN_HL_APIS', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_FEATURE', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_MM', defaultValue: true)
@@ -79,15 +89,47 @@ pipeline {
     }
 
     stages {
+        stage('Checkout Impact Validation Target') {
+            when { expression { params.CI_IMPACT_VALIDATION_PR?.trim() } }
+            steps {
+                script {
+                    def validationPr = params.CI_IMPACT_VALIDATION_PR.trim()
+                    if (!(validationPr ==~ /[1-9][0-9]*/)) {
+                        error("CI_IMPACT_VALIDATION_PR must be a positive integer: ${validationPr}")
+                    }
+
+                    def selectorCommit = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                    if (!(selectorCommit ==~ /[0-9a-f]{40,64}/)) {
+                        error("Could not resolve the CI selector commit: ${selectorCommit}")
+                    }
+                    def validationRef = "refs/remotes/origin/ci-impact-validation-pr-${validationPr}"
+                    sh "git fetch --no-tags origin '+refs/pull/${validationPr}/head:${validationRef}'"
+                    sh "git switch --detach '${validationRef}'"
+                    sh "git archive '${selectorCommit}' scripts/ci_impact | tar -x"
+                    env.CI_IMPACT_VALIDATION_PR_ID = validationPr
+                    echo "Validating CI impact selection against PR-${validationPr} at ${validationRef}"
+                }
+            }
+        }
+
         stage('Resolve Comparison Base') {
             steps {
                 script {
                     def base = ''
-                    def forceFull = params.FORCE_FULL_CI || !env.CHANGE_ID
+                    def validationPr = params.CI_IMPACT_VALIDATION_PR?.trim()
+                    if (params.CI_IMPACT_LATEST_COMMIT_ONLY && !validationPr) {
+                        error('CI_IMPACT_LATEST_COMMIT_ONLY requires CI_IMPACT_VALIDATION_PR')
+                    }
+                    def forceFull = params.FORCE_FULL_CI || (!env.CHANGE_ID && !validationPr)
                     def forceReason = params.FORCE_FULL_CI ? 'full CI manually forced' : 'non-PR build'
                     try {
-                        if (env.CHANGE_ID) {
-                            def target = env.CHANGE_TARGET ?: 'main'
+                        if (params.CI_IMPACT_LATEST_COMMIT_ONLY) {
+                            if (sh(returnStatus: true, script: 'git rev-parse --verify --quiet HEAD^') != 0) {
+                                error('Cannot compare the validation target with HEAD^')
+                            }
+                            base = sh(returnStdout: true, script: 'git rev-parse HEAD^').trim()
+                        } else if (env.CHANGE_ID || validationPr) {
+                            def target = validationPr ? 'main' : (env.CHANGE_TARGET ?: 'main')
                             if (!(target ==~ /[A-Za-z0-9._\/-]+/)) {
                                 error("Unsafe CHANGE_TARGET: ${target}")
                             }
@@ -182,7 +224,8 @@ pipeline {
                     }
                     def plan = new JsonSlurperClassic().parseText(readFile('.ci-impact-plan.json'))
                     loadImpactEnvironment(plan)
-                    currentBuild.description = "${plan.mode}: ${plan.reasons.join('; ')}"
+                    def validationPrefix = env.CI_IMPACT_VALIDATION_PR_ID ? "PR-${env.CI_IMPACT_VALIDATION_PR_ID} validation; " : ''
+                    currentBuild.description = "${validationPrefix}${plan.mode}: ${plan.reasons.join('; ')}"
                     echo "Regression impact mode: ${plan.mode}\nReasons: ${plan.reasons.join('\n')}"
                     archiveArtifacts artifacts: '.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json', fingerprint: true
                 }
@@ -344,6 +387,23 @@ pipeline {
     post {
         always {
             script {
+                try {
+                    sh '''
+                        sudo docker inspect --format 'status={{.State.Status}} oom_killed={{.State.OOMKilled}} exit_code={{.State.ExitCode}} error={{json .State.Error}} memory_limit={{.HostConfig.Memory}}' ${BUILD_TAG} || true
+                        sudo docker stats --no-stream --format 'container={{.Name}} memory={{.MemUsage}} memory_percent={{.MemPerc}}' ${BUILD_TAG} || true
+                        container_pid=$(sudo docker inspect --format '{{.State.Pid}}' ${BUILD_TAG} 2>/dev/null || true)
+                        if [ -n "${container_pid}" ] && [ "${container_pid}" -gt 0 ] 2>/dev/null; then
+                            cgroup_path=$(awk -F: '$1 == "0" {print $3}' /proc/${container_pid}/cgroup)
+                            if [ -n "${cgroup_path}" ] && [ -f "/sys/fs/cgroup${cgroup_path}/memory.events" ]; then
+                                sudo sed 's/^/container_cgroup_/' "/sys/fs/cgroup${cgroup_path}/memory.events"
+                            fi
+                        fi
+                        sudo journalctl -k --since '-20 minutes' --no-pager 2>/dev/null | grep -Ei 'oom|out of memory|killed process|memory cgroup' | tail -100 || true
+                        df -h /var/lib/docker "${WORKSPACE}" || true
+                    '''
+                } catch (error) {
+                    echo "Failed to collect container diagnostics: ${error}"
+                }
                 try {
                     sh 'sudo chown -R ubuntu .'
                 } catch (error) {
