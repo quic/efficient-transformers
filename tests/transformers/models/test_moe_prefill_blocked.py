@@ -943,7 +943,7 @@ def test_gemma4_text_experts_forward_parity():
     torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
 
 
-@pytest.mark.parametrize("flavour", ("decode_bmm", "simple_loop"))
+@pytest.mark.parametrize("flavour", ("decode_bmm", "simple_loop", "expert_parallel"))
 def test_gemma4_text_moe_block_forward_parity(flavour):
     from transformers.models.gemma4.configuration_gemma4 import Gemma4TextConfig
     from transformers.models.gemma4.modeling_gemma4 import Gemma4RMSNorm, Gemma4TextExperts, Gemma4TextRouter
@@ -977,7 +977,17 @@ def test_gemma4_text_moe_block_forward_parity(flavour):
         copy.deepcopy(post_norm),
     ).eval()
     _, weights_ready = OptimizedMoEWeightsTransform.apply(qeff_block)
-    qeff_block._moe_flavour = MoEFlavour(flavour)
+    if flavour == "expert_parallel":
+        OptimizedMoEExportConfigTransform.apply(
+            qeff_block,
+            prefill_only=True,
+            num_cores=2,
+            qaic_config={"moe_config": {"flavour": flavour, "expert_parallel_chunk_size": 4}},
+            prefill_seq_len=MOE_BLOCK_SEQ_LEN,
+        )
+        OptimizedMoEExpertParallelWeightsTransform.apply(qeff_block)
+    else:
+        qeff_block._moe_flavour = MoEFlavour(flavour)
 
     assert weights_ready
     hidden_states = torch.randn(1, MOE_BLOCK_SEQ_LEN, MOE_BLOCK_HIDDEN_SIZE)
