@@ -25,46 +25,13 @@ from transformers import AutoConfig, AutoProcessor, AutoTokenizer
 from transformers.cache_utils import Cache, DynamicCache
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
-# Default Kimi-K2.5 tests instantiate a compact random model from config.
-# Passing an explicit model_path keeps the older checkpoint-slicing path for
-# manual debugging against real weights.
+# Default Kimi-K2.5 test scripts load a compact subset: 2 vision layers,
+# 2 text layers, and only the first 4 routed experts.
 KIMI_K25_MODEL_NAME = "moonshotai/Kimi-K2.5"
 NUM_VISION_LAYERS = 2
 NUM_TEXT_LAYERS = 2
 LOADED_EXPERT_IDS = (0, 1, 2, 3)
 NUM_EXPERTS_PER_TOKEN = 2
-
-KIMI_K25_TINY_ADDITIONAL_PARAMS = {
-    "text_config": {
-        "hidden_size": 64,
-        "intermediate_size": 128,
-        "kv_lora_rank": 16,
-        "max_position_embeddings": 1024,
-        "model_type": "kimi_k2",
-        "moe_intermediate_size": 32,
-        "n_group": 1,
-        "n_routed_experts": 4,
-        "n_shared_experts": 1,
-        "num_attention_heads": 4,
-        "num_experts_per_tok": 2,
-        "num_hidden_layers": 2,
-        "num_key_value_heads": 4,
-        "q_lora_rank": 32,
-        "qk_nope_head_dim": 8,
-        "qk_rope_head_dim": 8,
-        "topk_group": 1,
-        "v_head_dim": 16,
-        "vocab_size": 163840,
-    },
-    "vision_config": {
-        "mm_hidden_size": 64,
-        "text_hidden_size": 64,
-        "vt_hidden_size": 64,
-        "vt_intermediate_size": 128,
-        "vt_num_attention_heads": 4,
-        "vt_num_hidden_layers": 2,
-    },
-}
 
 EXPERT_KEY_PATTERN = re.compile(r"^(language_model\.model\.layers\.\d+\.mlp\.experts\.)(\d+)(\..+)$")
 
@@ -194,52 +161,27 @@ def prepare_config(model_path: Path):
     return config
 
 
-def _apply_kimi_k25_test_config(config, additional_params, dtype=torch.float32):
-    """Shrink Kimi-K2.5 config for PR tests without downloading checkpoint shards."""
+def get_kimi_k25_test_config(model_name: str, model_config_dict):
+    config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
     config._attn_implementation = "eager"
-    config.torch_dtype = dtype
-    config.dtype = dtype
+    config.torch_dtype = torch.float32
+    config.dtype = torch.float32
+    additional_params = model_config_dict[model_name]["additional_params"]
 
     for attr, value in additional_params["text_config"].items():
         setattr(config.text_config, attr, value)
     config.text_config._attn_implementation = "eager"
-    config.text_config.torch_dtype = dtype
-    config.text_config.dtype = dtype
+    config.text_config.torch_dtype = torch.float32
+    config.text_config.dtype = torch.float32
 
     for attr, value in additional_params["vision_config"].items():
         setattr(config.vision_config, attr, value)
     config.vision_config._attn_implementation = "eager"
-    config.vision_config.torch_dtype = dtype
-    config.vision_config.dtype = dtype
-    return config
+    config.vision_config.torch_dtype = torch.float32
+    config.vision_config.dtype = torch.float32
 
-
-def get_kimi_k25_test_config(model_name: str, model_config_dict):
-    config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
-    additional_params = model_config_dict[model_name]["additional_params"]
-    config = _apply_kimi_k25_test_config(config, additional_params)
     load_kimi_k25_class(config._name_or_path)
     return config
-
-
-def load_kimi_k25_tiny_model_from_config(
-    *,
-    num_vision_layers: int = NUM_VISION_LAYERS,
-    num_text_layers: int = NUM_TEXT_LAYERS,
-    loaded_expert_ids=LOADED_EXPERT_IDS,
-    num_experts_per_tok: int = NUM_EXPERTS_PER_TOKEN,
-    dtype=torch.float32,
-):
-    """Instantiate the reduced PR-test Kimi-K2.5 model without checkpoint shards."""
-    config = AutoConfig.from_pretrained(KIMI_K25_MODEL_NAME, trust_remote_code=True)
-    additional_params = copy.deepcopy(KIMI_K25_TINY_ADDITIONAL_PARAMS)
-    additional_params["text_config"]["num_hidden_layers"] = num_text_layers
-    additional_params["text_config"]["n_routed_experts"] = len(tuple(loaded_expert_ids))
-    additional_params["text_config"]["num_experts_per_tok"] = num_experts_per_tok
-    additional_params["vision_config"]["vt_num_hidden_layers"] = num_vision_layers
-    config = _apply_kimi_k25_test_config(config, additional_params, dtype=dtype)
-    load_kimi_k25_class(config._name_or_path)
-    return load_kimi_k25_model_from_config(config)
 
 
 def load_kimi_k25_model_from_config(config):
@@ -463,16 +405,7 @@ def load_kimi_k25_layer_subset_model(
     seed: int = 1234,
 ):
     set_deterministic(seed)
-    if model_path is None:
-        return load_kimi_k25_tiny_model_from_config(
-            num_vision_layers=num_vision_layers,
-            num_text_layers=num_text_layers,
-            loaded_expert_ids=loaded_expert_ids,
-            num_experts_per_tok=num_experts_per_tok,
-            dtype=dtype,
-        )
-
-    resolved_model_path = Path(model_path)
+    resolved_model_path = Path(model_path) if model_path is not None else resolve_model_path()
     config = prepare_config(resolved_model_path)
     kimi_cls = load_kimi_k25_class(resolved_model_path)
 
