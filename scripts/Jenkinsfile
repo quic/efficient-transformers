@@ -125,6 +125,7 @@ pipeline {
         CI_SELECTIVE_LAYER_FILTER = noopMarkerFilter()
         CI_QAIC_WORKERS = '3'
         QAIC_VISIBLE_DEVICES = "${params.QAIC_VISIBLE_DEVICES}"
+        TMPDIR = "/home/ubuntu/workspace"
     }
 
     stages {
@@ -256,9 +257,13 @@ pipeline {
             steps {
                 sh '''
                     . ~/.bashrc
-                    sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} -e QAIC_VISIBLE_DEVICES=${QAIC_VISIBLE_DEVICES} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
+                    sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} -e QAIC_VISIBLE_DEVICES=${QAIC_VISIBLE_DEVICES} -e TMPDIR=${TMPDIR} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
+                    mkdir -p ${TMPDIR} &&
+                    apt update &&
+                    DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv python3.12-dev build-essential &&
+                    python3.12 -m venv preflight_qeff &&
                     . preflight_qeff/bin/activate &&
                     python -m pytest tests --collect-only -q --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -p scripts.ci_impact.pytest_plugin --impact-catalog=.ci-impact-catalog.json --impact-head=${CI_IMPACT_HEAD} &&
                     deactivate"
