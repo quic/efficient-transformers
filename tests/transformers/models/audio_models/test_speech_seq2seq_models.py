@@ -645,14 +645,18 @@ def test_cohere_asr_qeff_pytorch_and_ort_match_with_cached_decode(tmp_path, cohe
             assert max_abs_diff <= 1e-5, f"{output_kind} {output_name} max absolute difference: {max_abs_diff:.3e}"
 
 
-def test_speech_generate_retains_feature_lengths_for_all_decode_calls(cohere_asr_qeff_model, monkeypatch, tmp_path):
+def test_speech_generate_consumes_decoder_prompt_and_retains_feature_lengths(
+    cohere_asr_qeff_model, monkeypatch, tmp_path
+):
     batch_size = 2
     vocab_size = cohere_asr_qeff_model.config.vocab_size
+    eos_token_id = cohere_asr_qeff_model.config.eos_token_id
 
     class Session:
         input_names = ["input_features", "feature_lengths", "input_ids", "position_ids"]
         output_names = ["logits"]
-        bindings = [SimpleNamespace(dims=(batch_size,))]
+        bindings = [SimpleNamespace(dims=(batch_size, 8, 16))]
+        binding_index_map = {"input_features": 0}
 
         def __init__(self, *_args, **_kwargs):
             self.calls = []
@@ -666,11 +670,17 @@ def test_speech_generate_retains_feature_lengths_for_all_decode_calls(cohere_asr
 
         def run(self, inputs):
             self.calls.append({name: value.copy() for name, value in inputs.items()})
-            token_id = 3 if len(self.calls) == 3 else 5
             logits = np.zeros(
                 (inputs["input_ids"].shape[0], inputs["input_ids"].shape[1], vocab_size), dtype=np.float32
             )
-            logits[..., token_id] = 1.0
+            if len(self.calls) == 4:
+                logits[0, ..., eos_token_id] = 1.0
+                logits[1, ..., 6] = 1.0
+            elif len(self.calls) == 5:
+                logits[0, ..., 7] = 1.0
+                logits[1, ..., eos_token_id] = 1.0
+            else:
+                logits[..., 5] = 1.0
             self.output_shapes.append(logits.shape)
             return {"logits": logits}
 
@@ -682,14 +692,94 @@ def test_speech_generate_retains_feature_lengths_for_all_decode_calls(cohere_asr
     monkeypatch.setattr("QEfficient.transformers.models.modeling_auto.QAICInferenceSession", Session)
 
     attention_mask = torch.tensor([[1] * 8 + [0] * 8, [1] * 13 + [0] * 3])
-    wrapper.generate(
-        inputs={"input_features": torch.randn(2, 8, 16), "attention_mask": attention_mask}, generation_len=2
+    input_features = torch.randn(2, 13, 8)
+    decoder_prompt = torch.tensor([[1, 2, 3], [1, 4, 3]], dtype=torch.int64)
+    result = wrapper.generate(
+        inputs={
+            "input_features": input_features,
+            "attention_mask": attention_mask,
+            "decoder_input_ids": decoder_prompt,
+        },
+        generation_len=3,
     )
 
-    assert len(wrapper.qpc_session.calls) == 3
-    assert wrapper.qpc_session.output_shapes == [(batch_size, 1, vocab_size)] * 3
+    assert len(wrapper.qpc_session.calls) == 5
+    assert wrapper.qpc_session.output_shapes == [(batch_size, 1, vocab_size)] * 5
+    assert [call["input_ids"].tolist() for call in wrapper.qpc_session.calls] == [
+        [[1], [1]],
+        [[2], [4]],
+        [[3], [3]],
+        [[5], [5]],
+        [[eos_token_id], [6]],
+    ]
+    assert [call["position_ids"].tolist() for call in wrapper.qpc_session.calls] == [
+        [[0], [0]],
+        [[1], [1]],
+        [[2], [2]],
+        [[3], [3]],
+        [[4], [4]],
+    ]
+    expected_features = (
+        torch.nn.functional.pad(input_features.transpose(1, 2), (0, 3)).numpy().astype(np.float16)
+    )
+    assert np.array_equal(wrapper.qpc_session.calls[0]["input_features"], expected_features)
+    for call in wrapper.qpc_session.calls[1:]:
+        assert np.count_nonzero(call["input_features"]) == 0
     for call in wrapper.qpc_session.calls:
         assert np.array_equal(call["feature_lengths"], np.array([8, 13], dtype=np.int64))
+    assert np.array_equal(
+        result.generated_ids,
+        np.array(
+            [[1, 2, 3, 5, eos_token_id, eos_token_id], [1, 4, 3, 5, 6, eos_token_id]], dtype=np.int64
+        ),
+    )
+
+
+def test_speech_generate_defaults_to_single_decoder_start_token(cohere_asr_qeff_model, monkeypatch, tmp_path):
+    batch_size = 2
+    vocab_size = cohere_asr_qeff_model.config.vocab_size
+    start_token_id = cohere_asr_qeff_model.config.decoder_start_token_id
+
+    class Session:
+        input_names = ["input_features", "input_ids", "position_ids"]
+        output_names = ["logits"]
+        bindings = [SimpleNamespace(dims=(batch_size, 8, 16))]
+        binding_index_map = {"input_features": 0}
+
+        def __init__(self, *_args, **_kwargs):
+            self.calls = []
+
+        def skip_buffers(self, _names):
+            pass
+
+        def set_buffers(self, _outputs):
+            pass
+
+        def run(self, inputs):
+            self.calls.append({name: value.copy() for name, value in inputs.items()})
+            logits = np.zeros((batch_size, 1, vocab_size), dtype=np.float32)
+            logits[..., 5] = 1.0
+            return {"logits": logits}
+
+    wrapper = object.__new__(QEFFAutoModelForSpeechSeq2Seq)
+    wrapper.model = cohere_asr_qeff_model
+    wrapper.qpc_path = tmp_path
+    wrapper.onnx_path = tmp_path / "model.onnx"
+    wrapper.qpc_session = None
+    monkeypatch.setattr("QEfficient.transformers.models.modeling_auto.QAICInferenceSession", Session)
+
+    result = wrapper.generate(
+        inputs={
+            "input_features": torch.randn(2, 8, 16),
+            "attention_mask": torch.ones((2, 16), dtype=torch.int64),
+        },
+        generation_len=1,
+    )
+
+    assert len(wrapper.qpc_session.calls) == 1
+    assert wrapper.qpc_session.calls[0]["input_ids"].tolist() == [[start_token_id], [start_token_id]]
+    assert wrapper.qpc_session.calls[0]["position_ids"].tolist() == [[0], [0]]
+    assert result.generated_ids.tolist() == [[start_token_id, 5], [start_token_id, 5]]
 
 
 def run_seq2seq_pytorch_hf(
