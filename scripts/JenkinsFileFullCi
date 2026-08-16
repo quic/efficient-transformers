@@ -54,9 +54,10 @@ pipeline {
             steps {
                 sh '''
                     . ~/.bashrc
-                    sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
+                    sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} -e TMPDIR=/efficient-transformers/.ci-tmp/default -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
+                    mkdir -p /efficient-transformers/.ci-tmp/{default,export_compile,qaic_llm,qaic_feature,qaic_multimodal,qaic_reranker,qaic_diffusion,cli,dynamo_qaic,finetune} &&
                     apt update &&
                     DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv python3.12-dev build-essential &&
                     python3.12 -m venv preflight_qeff &&
@@ -80,7 +81,7 @@ pipeline {
                     steps {
                        timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 60, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                            sh '''
-                           sudo docker exec ${BUILD_TAG} bash -c "
+                           sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/export_compile ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
                            mkdir -p $PWD/Non_cli_qaic &&
@@ -98,7 +99,7 @@ pipeline {
                     steps {
                        timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 240, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                            sh '''
-                           sudo docker exec ${BUILD_TAG} bash -c "
+                           sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_llm ${BUILD_TAG} bash -c "
                            cd /efficient-transformers &&
                            . preflight_qeff/bin/activate &&
                            mkdir -p $PWD/Non_qaic_llm &&
@@ -119,7 +120,7 @@ pipeline {
             steps {
                 timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 120, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_feature ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Non_qaic_feature &&
@@ -137,7 +138,7 @@ pipeline {
             steps {
                 timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 180, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_multimodal ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Non_cli_qaic_multimodal &&
@@ -155,7 +156,7 @@ pipeline {
             steps {
                 timeout(time: 20, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_reranker ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Non_cli_qaic_reranker &&
@@ -174,7 +175,7 @@ pipeline {
             steps {
                 timeout(time: 120, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_diffusion ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     mkdir -p $PWD/Non_cli_qaic_diffusion &&
@@ -194,7 +195,7 @@ pipeline {
             steps {
                 timeout(time: 120, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/cli ${BUILD_TAG} bash -c "
                     #source /qnn_sdk/bin/envsetup.sh &&
                     #source /qnn_sdk/bin/envcheck -c &&
                     cd /efficient-transformers &&
@@ -215,7 +216,7 @@ pipeline {
             steps {
                 timeout(time: 240, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/dynamo_qaic ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     pip install -r examples/dynamo/causal_lm/requirements.txt &&
@@ -235,7 +236,7 @@ pipeline {
             steps {
                 timeout(time: 20, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
+                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/finetune ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     . preflight_qeff/bin/activate &&
                     # TODO: Update torch_qaic path to py312 when migrating to Python 3.12
