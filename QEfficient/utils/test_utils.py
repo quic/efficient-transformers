@@ -458,11 +458,12 @@ class ModelConfig:
     STANDARD_VLM_MODELS = {
         "llava-hf/llava-1.5-7b-hf",
         "meta-llama/Llama-4-Scout-17B-16E-Instruct",
-        "google/gemma-3-4b-it",
-        "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+        "tiny-random/gemma-3",
+        "tiny-random/mistral-3",
         "Qwen/Qwen2.5-VL-3B-Instruct",
-        "Qwen/Qwen3.5-0.8B",
-        # "Qwen/Qwen3.6-35B-A3B",
+        "tiny-random/qwen3-vl-moe",
+        "tiny-random/qwen3.5",
+        "tiny-random/qwen3.5-moe",
     }
 
     INTERNVL_MODELS = {
@@ -475,7 +476,6 @@ class ModelConfig:
     }
     # FIXME: Debug issue wrt Qwen 3.5, 3.6
     SKIPPED_MODELS = {
-        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
         "allenai/Molmo-7B-D-0924",
         "wtang06/mpt-125m-c4",
         "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
@@ -489,13 +489,14 @@ class ModelConfig:
     DUAL_QPC_MODELS = {
         "OpenGVLab/InternVL2_5-1B",
         "OpenGVLab/InternVL3_5-1B",
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
         "Qwen/Qwen2.5-VL-3B-Instruct",
-        "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        "tiny-random/qwen3-vl-moe",
         "Qwen/Qwen3-VL-2B-Instruct",
         "Qwen/Qwen3-VL-Reranker-2B",
         "Qwen/Qwen3-VL-Reranker-8B",
-        "Qwen/Qwen3.5-0.8B",
-        "Qwen/Qwen3.6-35B-A3B",
+        "tiny-random/qwen3.5",
+        "tiny-random/qwen3.5-moe",
         "tiny-random/gemma-4-dense",
         "tiny-random/gemma-4-moe",
     }
@@ -512,13 +513,13 @@ class ModelConfig:
         "ibm-granite/granite-3.1-2b-instruct",
         "llava-hf/llava-1.5-7b-hf",
         "meta-llama/Llama-4-Scout-17B-16E-Instruct",
-        "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+        "tiny-random/mistral-3",
         "Qwen/Qwen2.5-VL-3B-Instruct",
         "Qwen/Qwen3-VL-2B-Instruct",
-        "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        "tiny-random/qwen3-vl-moe",
         "allenai/Molmo-7B-D-0924",
         "OpenGVLab/InternVL2_5-1B",
-        "Qwen/Qwen3.5-0.8B",
+        "tiny-random/qwen3.5",
     }
 
     EXTERNAL_MODELS = {

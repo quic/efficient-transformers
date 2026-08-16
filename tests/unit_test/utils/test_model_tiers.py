@@ -23,6 +23,7 @@ import pytest
 from tests.conftest import (
     _MODEL_PARAM_KEYS,
     _is_priority_model,
+    _merge_card_model_types,
     _model_identity_index,
     _model_marker_universe,
     _priority_tier_spec,
@@ -289,8 +290,16 @@ def test_no_new_identity_shaped_parametrize_argnames():
 @pytest.mark.cpu_only
 def test_identity_index_resolves_model_type_for_known_card():
     index = _model_identity_index()
-    assert index["tiny-random/qwen3.5"] == "qwen3_5_text"
+    assert index["tiny-random/qwen3.5"] == "qwen3_5"
     assert index["hf-internal-testing/tiny-random-GPT2LMHeadModel"] == "gpt2"
+
+
+@pytest.mark.cpu_only
+def test_identity_index_merges_vlm_and_nested_text_types():
+    assert _merge_card_model_types("tiny", "qwen3_5_text", "qwen3_5") == "qwen3_5"
+    assert _merge_card_model_types("tiny", "gemma3", "gemma3_text") == "gemma3"
+    with pytest.raises(pytest.UsageError, match="Conflicting model_type"):
+        _merge_card_model_types("tiny", "qwen3_5", "gemma3")
 
 
 @pytest.mark.cpu_only

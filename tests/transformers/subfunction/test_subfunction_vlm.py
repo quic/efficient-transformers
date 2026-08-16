@@ -29,6 +29,7 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
+from tests.two_phase import model_export_compile_lock, resolve_two_phase_cleanup
 
 NEW_GENERATION_TOKENS = 10
 
@@ -41,6 +42,15 @@ with open(CONFIG_PATH, "r") as f:
 
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
+
+# The tiny-random qwen3.5 hybrids ship a degenerate ``hidden_size=8`` checkpoint that stores
+# attention weights at only a couple of layer indices. Loading it via ``from_pretrained`` is
+# fp16-marginal at that width and, worse, random-initializes the checkpoint-missing weights
+# independently for the HF reference and the QEff model under test, so the two become different
+# networks and token parity is meaningless. Build these from their authored config (random init
+# at the intended sizes) with weights shared via ``deepcopy`` instead -- the same synthesized-config
+# path the main VLM test uses for ``ModelConfig.STANDARD_VLM_MODELS``.
+SYNTHESIZED_CONFIG_MODELS = frozenset({"tiny-random/qwen3.5", "tiny-random/qwen3.5-moe"})
 
 
 def has_decoder_layer_function(onnx_path, expected_function_tokens):
@@ -61,7 +71,12 @@ def check_image_text_to_text_subfunction_core(
     num_devices: int = 1,
     config: Optional[AutoConfig] = None,
     torch_dtype: Optional[torch.dtype] = torch.float32,
+    compile_only: bool = False,
 ):
+    # Two-phase compile/execute split: suppress per-test cleanup in both phases (model variants
+    # share a content-addressed export dir, so one variant's rmtree would destroy its siblings'
+    # warm QPCs) and force compile-only in the warm phase. A no-op in normal runs.
+    manual_cleanup, compile_only = resolve_two_phase_cleanup(manual_cleanup, compile_only)
     img_size = model_config_dict[model_name]["img_size"]
     img_url = model_config_dict[model_name]["img_url"]
     query = model_config_dict[model_name]["text_prompt"]
@@ -71,6 +86,14 @@ def check_image_text_to_text_subfunction_core(
     enable_qnn = False
     qnn_config = None
     max_gen_len = NEW_GENERATION_TOKENS
+
+    if config is None and model_name in SYNTHESIZED_CONFIG_MODELS:
+        # Synthesize the config at the authored sizes so both models are built from it (random
+        # init) with byte-identical weights; see ``SYNTHESIZED_CONFIG_MODELS`` for the rationale.
+        model_type = model_config_dict[model_name].get("model_type", None)
+        custom_config = model_config_dict[model_name].get("additional_params", {})
+        config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
+        config.name_or_path = model_name
 
     if config is None:
         config = AutoConfig.from_pretrained(
@@ -88,21 +111,25 @@ def check_image_text_to_text_subfunction_core(
             config.text_config.num_hidden_layers = 1
             config.vision_config.deepstack_visual_indexes = [8]
 
-            model_hf = load_vlm_model(config)
-            qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-                model_name,
-                kv_offload=kv_offload,
-                config=config,
-                torch_dtype=torch_dtype,
-            )
-        else:
-            model_hf = load_vlm_model(config)
-            qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-                model_name,
-                kv_offload=kv_offload,
-                config=config,
-                torch_dtype=torch_dtype,
-            )
+        # A truncated hybrid stack must keep at least one full_attention layer: the hybrid
+        # cache indexes its linear-layer state off the attention layers, so an all-linear
+        # pattern makes ``get_seq_length`` raise. ``set_num_layers_vlm`` only rewrites the
+        # layer count, and a checkpoint's own pattern can be all-linear at this depth, so
+        # pin the pattern authored alongside the layer count in the model-config JSON.
+        authored_layer_types = (
+            model_config_dict[model_name].get("additional_params", {}).get("text_config", {}).get("layer_types")
+        )
+        if authored_layer_types is not None and getattr(config.text_config, "layer_types", None) is not None:
+            config.text_config.layer_types = authored_layer_types
+            config.text_config.num_hidden_layers = len(authored_layer_types)
+
+        model_hf = load_vlm_model(config)
+        qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
+            model_name,
+            kv_offload=kv_offload,
+            config=config,
+            torch_dtype=torch_dtype,
+        )
     else:
         model_hf = load_vlm_model_from_config(config)
         qeff_model = QEFFAutoModelForImageTextToText(
@@ -125,7 +152,7 @@ def check_image_text_to_text_subfunction_core(
 
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
     image = Image.open(requests.get(img_url, stream=True).raw)
-    if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
+    if model_name == "tiny-random/mistral-3":
         image = image.resize((1540, 1540))
     conversation = [
         {
@@ -153,7 +180,8 @@ def check_image_text_to_text_subfunction_core(
     inputs = processor(images=image, text=prompt, return_tensors="pt")
     if "pixel_values" in inputs:
         inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
-    pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
+    if not compile_only:
+        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
 
     inputs = processor(images=image, text=prompt, return_tensors="pt")
     if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type in [
@@ -169,25 +197,33 @@ def check_image_text_to_text_subfunction_core(
     if "pixel_values" in inputs:
         inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
 
-    with_sub_func_onnx = qeff_model.export(use_onnx_subfunctions=True, offload_pt_weights=False)
+    # One lock spans export and compile: both write into the same content-addressed dir, so a
+    # concurrent worker must not slip in between them.
+    with model_export_compile_lock(model_name):
+        with_sub_func_onnx = qeff_model.export(use_onnx_subfunctions=True, offload_pt_weights=False)
 
-    model_type = getattr(qeff_model.model.config, "model_type", "")
-    expected_function_tokens = {
-        "qwen2_5_vl": ("QEffQwen2_5_VLDecoderLayer",),
-        "qwen3_5": ("QEffQwen3_5DecoderLayer",),
-        "qwen3_5_moe": ("QEffQwen3_5MoeDecoderLayer",),
-    }.get(model_type, tuple())
-    assert expected_function_tokens, f"Unsupported model_type for VLM subfunction test: {model_type}"
+        model_type = getattr(qeff_model.model.config, "model_type", "")
+        expected_function_tokens = {
+            "qwen2_5_vl": ("QEffQwen2_5_VLDecoderLayer",),
+            "qwen3_5": ("QEffQwen3_5DecoderLayer",),
+            "qwen3_5_moe": ("QEffQwen3_5MoeDecoderLayer",),
+        }.get(model_type, tuple())
+        assert expected_function_tokens, f"Unsupported model_type for VLM subfunction test: {model_type}"
 
-    has_decoder_layer, decoder_layer_names = has_decoder_layer_function(
-        with_sub_func_onnx[-1], expected_function_tokens
-    )
-    assert has_decoder_layer, (
-        "Model exported with use_onnx_subfunctions=True should contain expected decoder-layer function definition. "
-        f"model_type={model_type}, expected_any={expected_function_tokens}"
-    )
-    print(f"\nDecoder-layer functions found: {decoder_layer_names}")
-    qeff_model.compile(**compile_kwargs)
+        has_decoder_layer, decoder_layer_names = has_decoder_layer_function(
+            with_sub_func_onnx[-1], expected_function_tokens
+        )
+        assert has_decoder_layer, (
+            "Model exported with use_onnx_subfunctions=True should contain expected decoder-layer "
+            f"function definition. model_type={model_type}, expected_any={expected_function_tokens}"
+        )
+        print(f"\nDecoder-layer functions found: {decoder_layer_names}")
+        qeff_model.compile(**compile_kwargs)
+
+    if compile_only:
+        manual_cleanup(qeff_model.onnx_path)
+        return
+
     streamer = TextStreamer(processor.tokenizer)
     print("QPC Outputs (QAIC):")
     exec_info = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)

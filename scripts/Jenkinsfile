@@ -58,11 +58,17 @@ pipeline {
             defaultValue: '4',
             description: 'pytest-xdist worker count for the QAIC LLM stage (one card per worker)'
         )
+        string(
+            name: 'MM_COMPILE_WORKERS',
+            defaultValue: '8',
+            description: 'pytest-xdist worker count for the QAIC Multimodal compile-warm pass. That pass never touches an accelerator, so this is bounded by host CPU/RAM rather than by card count.'
+        )
     }
 
     environment {
         TEST_FILTER = testFilter(params.TEST_PROFILE)
         QAIC_N      = "${params.QAIC_WORKERS}"
+        MM_COMPILE_N = "${params.MM_COMPILE_WORKERS}"
         // Consumed by the tier hook in tests/conftest.py. Passed on each `docker exec`
         // rather than the `docker run` above, because the container is created in the
         // Install stage and `docker run -e` cannot carry a per-stage value.
@@ -174,18 +180,87 @@ pipeline {
         stage('QAIC Multimodal') {
             when {expression { params.RUN_QAIC_MM }}
             steps {
-                timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 180, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
-                    sh '''
-                    sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Non_cli_qaic_multimodal &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
-                    pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py --junitxml=tests/tests_log6.xml --durations=10 &&
-                    junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
+                script {
+                    if (params.TEST_PROFILE == 'full_layers_model') {
+                        // Full, untruncated models stay on the single-phase serial path. The
+                        // two-phase split below suppresses per-test cleanup, so peak disk becomes
+                        // the sum of every QPC in the stage instead of a couple at a time -- fine
+                        // for truncated models, not for full ones.
+                        timeout(time: 0, unit: 'HOURS') {
+                            sh '''
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            mkdir -p $PWD/Non_cli_qaic_multimodal &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
+                            pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py --junitxml=tests/tests_log6.xml --durations=10 &&
+                            junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    } else {
+                        // Two-phase compile/execute split (see tests/two_phase.py). Export+compile
+                        // dominates each multimodal test's wall clock and needs no accelerator, so
+                        // it runs first at MM_COMPILE_N workers -- far wider than the card count
+                        // allows -- filling a shared content-addressed QEFF_HOME. The execute pass
+                        // then re-runs the same tests against that warm cache, narrow enough to fit
+                        // the cards. Previously the whole stage ran serially because every test
+                        // drives dual-QPC generate(), where concurrent Program() creation across
+                        // processes fails; only the compile-only subset was parallel.
+                        //
+                        // Both passes must share one QEFF_HOME for the second to hit the cache,
+                        // which disables the session-start cache wipe and the per-worker QEFF_HOME
+                        // remap. That makes the clean start this pipeline's responsibility, hence
+                        // the rm -rf: the export hash covers the model config and compile options
+                        // but not the QEfficient sources, so a directory left by an earlier build
+                        // would serve stale QPCs to a PR that changed a modeling wrapper.
+                        //
+                        // The compile pass is best-effort: it writes no junit and its failures are
+                        // swallowed, because the execute pass re-runs every test and reports the
+                        // real result. A broken export/compile therefore still surfaces there,
+                        // cold, exactly as it does today; the worst a compile-pass failure can do
+                        // is forfeit the speedup.
+                        //
+                        // test_qwen3_vl_moe_disagg is excluded from the compile pass: it has not
+                        // opted into resolve_two_phase_cleanup, so it would drive real hardware
+                        // inside that wide pass. It runs cold in the execute pass instead. A new
+                        // multimodal module must either opt in or be listed here.
+                        env.MM_EXEC_N = Math.max(1, (params.QAIC_WORKERS as Integer).intdiv(2)).toString()
+                        timeout(time: 90, unit: 'MINUTES') {
+                            sh '''
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            rm -rf $PWD/Non_cli_qaic_multimodal &&
+                            mkdir -p $PWD/Non_cli_qaic_multimodal &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
+                            export QEFF_PER_PR_COMPILE_WARM_ONLY=1 &&
+                            pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py --ignore tests/transformers/models/image_text_to_text/test_qwen3_vl_moe_disagg.py -n ${MM_COMPILE_N} --dist worksteal --durations=10 || true &&
+                            deactivate"
+                            '''
+                        }
+                        // Execute pass: authoritative, reports every test. QEFF_QAIC_CARDS_PER_WORKER=2
+                        // because a dual-QPC VLM holds a vision and a language session at once and
+                        // each is compiled at the default num_cores=16 -- a full card -- so one
+                        // visible card per worker makes the second Program() fail.
+                        timeout(time: 120, unit: 'MINUTES') {
+                            sh '''
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
+                            export QEFF_PER_PR_SHARED_HOME=1 &&
+                            export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
+                            export QEFF_QAIC_CARDS_PER_WORKER=2 &&
+                            pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${MM_EXEC_N} --dist worksteal --junitxml=tests/tests_log6.xml --durations=10 &&
+                            junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
                 }
             }
         }

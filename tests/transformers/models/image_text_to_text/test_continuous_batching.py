@@ -33,6 +33,7 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
+from tests.two_phase import is_compile_warm_phase, model_export_compile_lock, resolve_two_phase_cleanup
 
 _session = requests.Session()
 _session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=1)))
@@ -47,6 +48,23 @@ model_config_dict = {model["model_name"]: model for model in multimodal_models}
 NEW_GENERATION_TOKENS = 10
 
 
+def _xfail_if_known_parity_issue(model_name):
+    """Opt a model out of the greedy HF-vs-QAIC token assert when its on-device argmax is
+    fp16-marginal, via a ``known_runtime_parity_issue`` entry in ``image_text_model_configs.json``.
+    Mirrors ``test_image_text_to_text_models.py`` and the causal suite. Centralized in the shared
+    CB check below (every CB route -- plain CB and prefix caching -- is a device-parity run) so
+    the xfail cannot be forgotten on a per-test basis; it flips to xpass the day parity is
+    recovered.
+
+    Inert in the two-phase compile-warm phase, which stops after compile and never reaches the
+    assert: the model still has to build its QPC there so the execute phase finds a warm cache.
+    """
+    if is_compile_warm_phase():
+        return
+    if parity_issue := model_config_dict[model_name].get("known_runtime_parity_issue"):
+        pytest.xfail(parity_issue)
+
+
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     model_name: str,
     manual_cleanup: callable,
@@ -57,7 +75,13 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
     qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
     kv_cache_batch_size: Optional[int] = None,
+    compile_only: bool = False,
 ):
+    # Two-phase compile/execute split: suppress per-test cleanup in both phases (model variants
+    # share a content-addressed export dir, so one variant's rmtree would destroy its siblings'
+    # warm QPCs) and force compile-only in the warm phase. A no-op in normal runs.
+    manual_cleanup, compile_only = resolve_two_phase_cleanup(manual_cleanup, compile_only)
+    _xfail_if_known_parity_issue(model_name)
     prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
     max_gen_len = (NEW_GENERATION_TOKENS,)
@@ -88,6 +112,10 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         if hasattr(config, "model_type") and config.model_type in ["gemma4"]:
             config.text_config.num_kv_shared_layers = 0
             config.text_config.layer_types = ["sliding_attention"]
+            # Keep the sliding window below ctx_len (512). The hub value (1024) exceeds ctx_len --
+            # a degenerate setup where the window never slides -- and that path crashes qaic-compile's
+            # rolling-cache `where` selector once the decode batch reaches 4 (prefix caching uses fbs=4).
+            config.text_config.sliding_window = 256
         if hasattr(config, "model_type") and config.model_type in ["qwen3_5"]:
             config.text_config.layer_types = [
                 "linear_attention",
@@ -172,7 +200,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         # For same prompt
         image_list = [images[0]] * full_batch_size
         prompt_list = [queries[0]] * full_batch_size
-        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, image_list, prompt_list)
+        if not compile_only:
+            pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, image_list, prompt_list)
         compile_kwargs["num_patches"] = 1
     elif model_name in ModelConfig.MOLMO_MODELS:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
@@ -198,19 +227,20 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         generation_config = GenerationConfig(max_new_tokens=NEW_GENERATION_TOKENS, stop_strings="<|endoftext|>")
         image_list = [images[0]] * full_batch_size
         prompt_list = [queries[0]] * full_batch_size
-        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(
-            model_hf, image_list, prompt_list, generation_config
-        )
+        if not compile_only:
+            pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(
+                model_hf, image_list, prompt_list, generation_config
+            )
         compile_kwargs["img_size"] = img_size
     else:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-        use_fast = model_name != "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+        use_fast = model_name != "tiny-random/mistral-3"
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=use_fast)
         image_height = None
         image_width = None
         for img_url in image_urls:
             image = Image.open(_session.get(img_url, stream=True).raw)
-            if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
+            if model_name == "tiny-random/mistral-3":
                 image_height = 1540
                 image_width = 1540
                 image = image.resize((image_height, image_width))
@@ -240,10 +270,17 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         )
         image_list = [images[0]] * full_batch_size
         prompt_list = [queries[0]] * full_batch_size
-        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, image_list, prompt_list)
+        if not compile_only:
+            pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch_CB(model_hf, image_list, prompt_list)
         compile_kwargs["img_size"] = img_size
 
-    qeff_model.compile(**compile_kwargs)
+    with model_export_compile_lock(model_name):
+        qeff_model.compile(**compile_kwargs)
+
+    if compile_only:
+        manual_cleanup(qeff_model.onnx_path)
+        return
+
     print("QPC Outputs (QAIC):")
     exec_info = qeff_model.generate(
         tokenizer=tokenizer,

@@ -33,6 +33,9 @@ NPI_MAPPING = {
     "google/gemma-3-4b-it": os.path.join(
         QEFF_DIR, "transformers", "models", "gemma3", "configs", "fp32_nodes_gemma3_4b.yaml"
     ),
+    "tiny-random/gemma-3": os.path.join(
+        QEFF_DIR, "transformers", "models", "gemma3", "configs", "fp32_nodes_gemma3_4b.yaml"
+    ),
     "google/gemma-3-27b-it": os.path.join(
         QEFF_DIR, "transformers", "models", "gemma3", "configs", "gemma_updated_npi.yaml"
     ),

@@ -36,8 +36,10 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
+from tests.two_phase import is_compile_warm_phase, model_export_compile_lock, resolve_two_phase_cleanup
 
 from ..check_model_results import dump_and_compare_results
+from ..golden_utils import config_to_dict_fingerprint, resolve_hf_golden, vlm_golden_variant_key
 
 _session = requests.Session()
 _session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=1)))
@@ -52,6 +54,63 @@ test_mm_moe_models = [model["model_name"] for model in multimodal_models if "moe
 test_mm_blocking_models = [model["model_name"] for model in multimodal_models if model.get("supports_blocking")]
 
 NEW_GENERATION_TOKENS = 10
+
+
+def _xfail_if_known_parity_issue(model_name):
+    """Opt a model out of the greedy HF-vs-QAIC token assert when its on-device argmax is
+    fp16-marginal, via a ``known_runtime_parity_issue`` entry in ``image_text_model_configs.json``.
+    Mirrors the causal suite: the model stays an xfail across the token-parity tests -- keeping
+    the ``*_compile_only`` export/compile cases and every non-parity VLM test live -- instead of
+    disappearing into ``SKIPPED_MODELS``, and flips to xpass the day parity is recovered.
+
+    Inert in the two-phase compile-warm phase, which stops before the token assert: the model
+    still has to build its QPC there so the execute phase finds a warm cache to run against.
+    """
+    if is_compile_warm_phase():
+        return
+    if parity_issue := model_config_dict[model_name].get("known_runtime_parity_issue"):
+        pytest.xfail(parity_issue)
+
+
+def _resolve_vlm_hf_golden(
+    model_name: str,
+    config: AutoConfig,
+    query: str,
+    img_url: str,
+    torch_dtype: torch.dtype,
+    max_gen_len: int,
+    compile_only: bool,
+    compute_fn,
+):
+    """Resolve the HF PyTorch reference tokens for one VLM variant from the committed golden.
+
+    The HF leg is a pure function of the model + effective config + fixed image/prompt pair
+    (from ``image_text_model_configs.json``), independent of ``kv_offload``/``qaic_config``
+    (those only steer the QEff/on-device leg), so it is generated once per variant and reused
+    across every other knob. ``compile_only`` runs never reach the token comparison, so the
+    (expensive) HF generate call is skipped for them entirely rather than golden-cached.
+    """
+    if compile_only:
+        return None
+    variant_key = vlm_golden_variant_key(
+        torch_dtype=torch_dtype,
+        prompt_text=query,
+        image_url=img_url,
+        generation_len=max_gen_len,
+        config_fp=config_to_dict_fingerprint(config),
+    )
+    return resolve_hf_golden(
+        family="image_text_to_text",
+        model_name=model_name,
+        variant_key=variant_key,
+        params={
+            "prompt": query,
+            "image_url": img_url,
+            "dtype": str(torch_dtype),
+            "generation_len": max_gen_len,
+        },
+        compute_fn=compute_fn,
+    )
 
 
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
@@ -75,6 +134,10 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     comp_ctx_lengths_decode: Optional[List[int]] = None,
     ccl_enabled: bool = False,
 ):
+    # Two-phase compile/execute split: suppress per-test cleanup in both phases (model variants
+    # share a content-addressed export dir, so one variant's rmtree would destroy its siblings'
+    # warm QPCs) and force compile-only in the warm phase. A no-op in normal runs.
+    manual_cleanup, compile_only = resolve_two_phase_cleanup(manual_cleanup, compile_only)
     prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
     img_size = model_config_dict[model_name].get("img_size")
@@ -83,6 +146,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     batch_size = model_config_dict[model_name]["batch_size"]
 
     max_gen_len = NEW_GENERATION_TOKENS
+    pytorch_hf_tokens = None
     pytorch_kv_tokens = None
     ort_tokens = None
     n_layer = num_hidden_layers
@@ -109,6 +173,10 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             config.text_config.num_hidden_layers = 1
             config.vision_config.num_hidden_layers = 1
             config.text_config.layer_types = ["sliding_attention"]
+            # Keep the sliding window below ctx_len (512); the hub value (1024) exceeds it, a
+            # degenerate setup where the window never slides. See the CB test for the compile crash
+            # this avoids at larger decode batches.
+            config.text_config.sliding_window = 256
         if hasattr(config, "model_type") and config.model_type in [
             "qwen3_vl",
             "qwen3_vl_moe",
@@ -213,7 +281,16 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             max_gen_len,
             num_hidden_layers,
         )
-        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs, generation_config)
+        pytorch_hf_tokens = _resolve_vlm_hf_golden(
+            model_name=model_name,
+            config=config,
+            query=query,
+            img_url=img_url,
+            torch_dtype=torch_dtype,
+            max_gen_len=max_gen_len,
+            compile_only=compile_only,
+            compute_fn=lambda: api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs, generation_config),
+        )
         compile_kwargs["num_patches"] = 1
 
     elif model_name in ModelConfig.MOLMO_MODELS:
@@ -235,7 +312,16 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             max_gen_len,
             (num_hidden_layers, num_hidden_layers),
         )
-        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs, generation_config)
+        pytorch_hf_tokens = _resolve_vlm_hf_golden(
+            model_name=model_name,
+            config=config,
+            query=query,
+            img_url=img_url,
+            torch_dtype=torch_dtype,
+            max_gen_len=max_gen_len,
+            compile_only=compile_only,
+            compute_fn=lambda: api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs, generation_config),
+        )
         batch_size, prompt_len = inputs["input_ids"].shape
         inputs["attention_mask"] = torch.ones((inputs["input_ids"].shape), dtype=torch.int64)
         valid = inputs["image_input_idx"] > 0
@@ -247,7 +333,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     else:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
         image = Image.open(_session.get(img_url, stream=True).raw)
-        if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
+        if model_name == "tiny-random/mistral-3":
             image = image.resize((1540, 1540))
         conversation = [
             {
@@ -274,7 +360,16 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         inputs = processor(images=image, text=prompt, return_tensors="pt")
         if "pixel_values" in inputs:
             inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
-        pytorch_hf_tokens = api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs)
+        pytorch_hf_tokens = _resolve_vlm_hf_golden(
+            model_name=model_name,
+            config=config,
+            query=query,
+            img_url=img_url,
+            torch_dtype=torch_dtype,
+            max_gen_len=max_gen_len,
+            compile_only=compile_only,
+            compute_fn=lambda: api_runner.run_vlm_hf_model_on_pytorch(model_hf, inputs),
+        )
         inputs = processor(images=image, text=prompt, return_tensors="pt")
         if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type in [
             "qwen2_5_vl",
@@ -307,7 +402,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     elif mdp_compile_kwargs:
         compile_kwargs.update(mdp_compile_kwargs)
     compile_kwargs["use_onnx_subfunctions"] = use_onnx_subfunctions
-    qeff_model.compile(**compile_kwargs)
+    with model_export_compile_lock(model_name):
+        qeff_model.compile(**compile_kwargs)
 
     if compile_only:
         manual_cleanup(qeff_model.onnx_path)
@@ -339,14 +435,11 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True, False])
+@pytest.mark.parametrize("kv_offload", [True])  # VLMs only need dual-QPC coverage; single-QPC isn't exercised.
 def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
-    if model_name in ["tiny-random/gemma-4-dense", "tiny-random/gemma-4-moe"]:
-        pytest.skip("These tests are currently failing due to token mismatch. They need to be fixed and re-enabled.")
-    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
-        pytest.skip("These models require kv_offload=True for testing.")
+    _xfail_if_known_parity_issue(model_name)
 
     torch.manual_seed(42)
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
@@ -362,12 +455,11 @@ def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_of
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True, False])
+@pytest.mark.parametrize("kv_offload", [True])  # VLMs only need dual-QPC coverage; single-QPC isn't exercised.
 def test_few_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
-    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
-        pytest.skip("These models require kv_offload=True for testing.")
+    _xfail_if_known_parity_issue(model_name)
 
     torch.manual_seed(42)
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
@@ -382,12 +474,10 @@ def test_few_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_off
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_moe_models)
-@pytest.mark.parametrize("kv_offload", [True, False])
+@pytest.mark.parametrize("kv_offload", [True])  # VLMs only need dual-QPC coverage; single-QPC isn't exercised.
 def test_few_image_text_to_text_onnx_mdp_compile_only(model_name, kv_offload, manual_cleanup):
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
-    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
-        pytest.skip("These models require kv_offload=True for testing.")
 
     torch.manual_seed(42)
     check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
@@ -406,12 +496,11 @@ def test_few_image_text_to_text_onnx_mdp_compile_only(model_name, kv_offload, ma
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True, False])
+@pytest.mark.parametrize("kv_offload", [True])  # VLMs only need dual-QPC coverage; single-QPC isn't exercised.
 def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
-    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
-        pytest.skip("These models require kv_offload=True for testing.")
+    _xfail_if_known_parity_issue(model_name)
 
     torch.manual_seed(42)
     hf_config = None
@@ -490,7 +579,6 @@ def _run_dummy_dual_qpc_case(model_name, manual_cleanup, layer_types=None, **kwa
         if m
         in {
             "Qwen/Qwen2.5-VL-3B-Instruct",
-            "meta-llama/Llama-4-Scout-17B-16E-Instruct",
         }
         else m
         for m in test_mm_models
@@ -513,13 +601,11 @@ def test_dummy_image_text_to_text_ccl_dual_qpc(model_name, manual_cleanup):
     when its default truncation depth keeps no ``full_attention`` layer; see the comment
     on that branch below for why CCL needs one.
 
-    Qwen2.5-VL and Llama-4-Scout are xfailed rather than skipped so the dual-QPC CCL
-    plumbing is still exercised on those model paths. Their dummy-layer HF-vs-QAIC
-    token parity is a pre-existing gap unrelated to CCL: Qwen2.5-VL's random-init
-    1-layer config yields near-flat decode logits (HF top1-top2 margin <0.11 on most
-    positions), which fp16 rounding at the QPC flips into a different top-K member
-    on those steps; Llama-4-Scout's dummy ``rope_scaling`` lacks the ``factor`` key
-    required by ``_compute_llama3_parameters``, so construction fails before compile.
+    Qwen2.5-VL is xfailed rather than skipped so the dual-QPC CCL plumbing is still
+    exercised on that model path. Its dummy-layer HF-vs-QAIC token parity is a
+    pre-existing gap unrelated to CCL: the random-init 1-layer config yields near-flat
+    decode logits (HF top1-top2 margin <0.11 on most positions), which fp16 rounding at
+    the QPC flips into a different top-K member on those steps.
     """
     ccl_forced = {
         "Qwen/Qwen2.5-VL-3B-Instruct",
@@ -527,6 +613,7 @@ def test_dummy_image_text_to_text_ccl_dual_qpc(model_name, manual_cleanup):
     }
     if model_name in ModelConfig.SKIPPED_MODELS and model_name not in ccl_forced:
         pytest.skip("Test skipped for this model due to some issues.")
+    _xfail_if_known_parity_issue(model_name)
 
     torch.manual_seed(42)
     comp_ctx_lengths_decode = model_config_dict[model_name].get("comp_ctx_lengths_decode")
@@ -566,6 +653,7 @@ def test_dummy_image_text_to_text_blocking_dual_qpc(model_name, manual_cleanup):
     """
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
+    _xfail_if_known_parity_issue(model_name)
 
     torch.manual_seed(42)
     _run_dummy_dual_qpc_case(
@@ -608,7 +696,7 @@ def test_dummy_image_text_to_text_bf16_compile_only(model_name, manual_cleanup):
 @pytest.mark.multimodal
 @pytest.mark.dummy_layers
 @pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True, False])
+@pytest.mark.parametrize("kv_offload", [True])  # VLMs only need dual-QPC coverage; single-QPC isn't exercised.
 def test_custom_replicate_kv_pytorch_vs_ai100(
     model_name,
     kv_offload,
@@ -622,8 +710,7 @@ def test_custom_replicate_kv_pytorch_vs_ai100(
     torch.manual_seed(42)
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
-    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
-        pytest.skip("These models require kv_offload=True for testing.")
+    _xfail_if_known_parity_issue(model_name)
 
     if model_name in ModelConfig.REPEAT_KV_TEST_MODELS:
         hf_config = None
@@ -662,7 +749,7 @@ def test_custom_replicate_kv_pytorch_vs_ai100(
 @pytest.mark.qnn
 @pytest.mark.multimodal
 @pytest.mark.parametrize("model_name", test_mm_models)
-@pytest.mark.parametrize("kv_offload", [True, False])
+@pytest.mark.parametrize("kv_offload", [True])  # VLMs only need dual-QPC coverage; single-QPC isn't exercised.
 def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_offload, manual_cleanup):
     """
     Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
@@ -671,7 +758,7 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_off
     """
     if model_name in [
         "meta-llama/Llama-4-Scout-17B-16E-Instruct",
-        "google/gemma-3-4b-it",
+        "tiny-random/gemma-3",
         "tiny-random/gemma-4-dense",
         "tiny-random/gemma-4-moe",
     ]:

@@ -18,6 +18,7 @@ from transformers import logging as hf_logging
 
 from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.logging_utils import logger
+from tests.two_phase import is_compile_warm_phase, is_two_phase_session
 
 _QUICKCHECK_FILE = "tests/unit_test/models/test_model_quickcheck.py"
 _QUICKCHECK_SUMMARY = {}
@@ -172,41 +173,54 @@ def _xdist_worker_index():
 def _is_two_phase_shared_home_session():
     """True when the run uses one shared QEFF_HOME across a compile/execute split.
 
-    Two env flags opt in:
-      - QEFF_PER_PR_COMPILE_WARM_ONLY  (Phase A: compile-only warm-up)
-      - QEFF_PER_PR_SHARED_HOME        (Phase B: execute against the warm cache)
-
     In this mode the per-worker QEFF_HOME remap and the session-level cache wipe
     are both skipped: every worker must share one QEFF_HOME so Phase B hits the
     QPCs Phase A warmed, and the session-start/finish rmtree of QEFF_HOME would
     otherwise destroy that warm cache (Phase A on finish, Phase B on start). The
     caller owns the shared QEFF_HOME lifecycle (starts clean, cleans up when the
-    whole two-phase run is done).
+    whole two-phase run is done). See tests/two_phase.py for the phase flags.
     """
-    return bool(os.environ.get("QEFF_PER_PR_SHARED_HOME") or os.environ.get("QEFF_PER_PR_COMPILE_WARM_ONLY"))
+    return is_two_phase_session()
 
 
 @pytest.fixture(scope="session", autouse=True)
 def _qaic_device_for_xdist_worker():
-    """Pin each pytest-xdist worker to one of the QAic cards.
+    """Pin each pytest-xdist worker to its own slice of the QAic cards.
 
     Serial runs (no xdist) and runs that already export QAIC_VISIBLE_DEVICES
     are left untouched. Under ``pytest -n 4`` on a 4-card host, gw0..gw3 each
     own one card -- so .compile()/.generate() across workers run in parallel,
     while same-worker calls remain sequential on that card.
 
+    QEFF_QAIC_CARDS_PER_WORKER widens that slice for tests that load more than one
+    QPC at a time. A dual-QPC (kv_offload=True) VLM builds a vision *and* a language
+    session, and each is compiled at the default num_cores=16 -- a whole card -- so
+    such a test needs two visible cards or the second qaicrt.Program() fails with
+    "Failed to create program with Qpc Buffer". Width 1 (the default) is correct for
+    single-QPC LLM tests; the multimodal execute phase sets 2, giving gw0 cards 0,1
+    and gw1 cards 2,3. Note QAIC_VISIBLE_DEVICES renumbers, so a worker masked to
+    "2,3" sees device ids 0,1 -- absolute ids must never be passed as device_ids
+    alongside a mask.
+
     QEFF_QAIC_CARD_OFFSET allows two stages to run simultaneously on non-
     overlapping card slices. E.g. stage A sets QEFF_NUM_QAIC_CARDS=2 + offset=0
     -> cards 0,1; stage B sets QEFF_NUM_QAIC_CARDS=2 + offset=2 -> cards 2,3.
+
+    The compile-warm phase is left unmasked: it never reaches a device, and masking
+    would break the mdp_num_partitions>1 compiles, which require that many *visible*
+    devices even though no program is ever created.
     """
-    if "QAIC_VISIBLE_DEVICES" in os.environ:
+    if "QAIC_VISIBLE_DEVICES" in os.environ or is_compile_warm_phase():
         return
     idx = _xdist_worker_index()
     if idx is None:
         return
     cards = max(1, int(os.environ.get("QEFF_NUM_QAIC_CARDS", _QAIC_CARDS_DEFAULT)))
     offset = int(os.environ.get("QEFF_QAIC_CARD_OFFSET", 0))
-    os.environ["QAIC_VISIBLE_DEVICES"] = str(offset + (idx % cards))
+    per_worker = max(1, int(os.environ.get("QEFF_QAIC_CARDS_PER_WORKER", 1)))
+    slots = max(1, cards // per_worker)
+    base = offset + (idx % slots) * per_worker
+    os.environ["QAIC_VISIBLE_DEVICES"] = ",".join(str(base + i) for i in range(per_worker))
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -219,6 +233,14 @@ def _qeff_home_per_xdist_worker():
     import time.  We patch those constants directly so every runtime call to
     _prepare_export_directory() resolves to the per-worker path.
 
+    Falls back to QEfficient.utils.cache's own resolved default when the caller
+    hasn't exported QEFF_HOME: without this, unset QEFF_HOME made this fixture a
+    no-op, so every worker silently shared one content-addressed QPC cache dir
+    with no lock -- concurrent workers compiling the same model tore each
+    other's QPC files, surfacing as a "Failed to create program with Qpc Buffer"
+    error at generate() time with no clue it was a race. Isolation must not
+    depend on the caller remembering to set QEFF_HOME first.
+
     Exception: in the two-phase compile-warm mode, every worker must share one
     QEFF_HOME so the execute phase hits the QPC cache warmed by the compile
     phase; the per-worker remap is skipped (see _is_two_phase_shared_home_session).
@@ -228,13 +250,11 @@ def _qeff_home_per_xdist_worker():
     idx = _xdist_worker_index()
     if idx is None:
         return
-    base = os.environ.get("QEFF_HOME")
-    if not base:
-        return
 
     import QEfficient.utils.cache as _cache_mod
     import QEfficient.utils.export_utils as _export_mod
 
+    base = os.environ.get("QEFF_HOME") or str(_cache_mod.QEFF_HOME)
     worker_home = Path(base) / f"worker_{idx}"
     worker_home.mkdir(parents=True, exist_ok=True)
     os.environ["QEFF_HOME"] = str(worker_home)
@@ -324,6 +344,30 @@ _ENTRY_ALIAS_FIELDS = ("id",)
 _ENTRY_REFERENT_FIELDS = ("model_name", "target_model_name", "draft_model_name")
 
 
+def _merge_card_model_types(model_name, previous, current):
+    """Resolve a card shared by a VLM config and its nested text config.
+
+    Some tiny-random VLM cards are also used to instantiate their standalone language
+    backbone. In that case the two valid types differ only by the ``_text`` suffix;
+    retain the top-level VLM type for string-parametrized tests. Dict-parametrized text
+    tests carry their own model_type and do not use this index value.
+    """
+    if previous == current or current is None:
+        return previous
+    if previous is None:
+        return current
+
+    previous_base = previous.removesuffix("_text")
+    current_base = current.removesuffix("_text")
+    if previous_base == current_base:
+        return previous_base
+
+    raise pytest.UsageError(
+        f"Conflicting model_type for {model_name!r} in tests/configs: "
+        f"{previous!r} vs {current!r}. A card must map to one model family."
+    )
+
+
 @functools.lru_cache(maxsize=1)
 def _priority_tier_spec():
     """Load the priority tier declaration from ``tests/configs/model_tiers.json``."""
@@ -362,8 +406,9 @@ def _model_identity_index():
     still resolves to ``qwen2`` via that entry's ``target_model_name``.
 
     A key mapping to ``None`` is known but untyped -- it can only be tiered by an
-    explicit ``model_names`` listing. Raises ``pytest.UsageError`` if one card is given
-    two different ``model_type`` values across configs, which would tier inconsistently.
+    explicit ``model_names`` listing. A VLM card may also represent its nested language
+    config when the types differ only by ``_text``; the top-level type is retained.
+    Other conflicting ``model_type`` values raise ``pytest.UsageError``.
     """
     entries = []
     index = {}
@@ -394,18 +439,7 @@ def _model_identity_index():
                 if not isinstance(name, str):
                     continue
                 model_type = entry.get("model_type")
-                previous = index.get(name)
-                if previous is not None and model_type is not None and previous != model_type:
-                    # The same card carrying two model_types would tier inconsistently
-                    # depending on config file iteration order. Fail loudly at build time.
-                    raise pytest.UsageError(
-                        f"Conflicting model_type for {name!r} in tests/configs: "
-                        f"{previous!r} vs {model_type!r}. A card must map to one model_type."
-                    )
-                # Keep the first non-null model_type seen for a name: a card can appear
-                # in several lists and only some of them carry the field.
-                if previous is None:
-                    index[name] = model_type
+                index[name] = _merge_card_model_types(name, index.get(name), model_type)
 
     for entry in entries:
         for alias_field in _ENTRY_ALIAS_FIELDS:
