@@ -5077,7 +5077,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if "feature_lengths" in input_names and "feature_lengths" not in inputs:
             attention_mask = inputs.get("attention_mask")
             if attention_mask is None:
-                raise RuntimeError("Cohere ASR requires the processor attention_mask to derive feature_lengths")
+                raise RuntimeError("This model requires the processor attention_mask to derive feature_lengths")
             inputs["feature_lengths"] = attention_mask.sum(dim=-1, dtype=torch.int64)
 
         inputs = self.auto_correct_inputs(inputs)

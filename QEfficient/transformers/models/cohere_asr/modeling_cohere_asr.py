@@ -34,6 +34,8 @@ are:
   convolution output-length calculation.
 """
 
+from pathlib import Path
+
 import torch
 from torch import nn
 from transformers.cache_utils import Cache, EncoderDecoderCache
@@ -51,7 +53,6 @@ from transformers.models.parakeet.modeling_parakeet import ParakeetEncoderAttent
 
 from QEfficient.transformers.cache_utils import QEffEncoderDecoderCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE, ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
@@ -411,7 +412,13 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
         m = re.search(r"models--([^/]+)--([^/]+)[/\\]snapshots", model_name)
         if m:
             name = f"{m.group(1)}/{m.group(2)}"
-        return constants.NPI_MAPPING.get(name)
+        supported_checkpoints = {
+            "CohereLabs/cohere-transcribe-03-2026",
+            "CohereLabs/cohere-transcribe-arabic-07-2026",
+        }
+        if name not in supported_checkpoints:
+            return None
+        return str(Path(__file__).parent / "configs" / "cohere_transcribe_03_2026_npi.yaml")
 
     def get_submodules_for_export(self) -> type[nn.Module]:
         return {self.model.encoder.layers[0].__class__, QEffCohereAsrDecoderLayer}

@@ -36,9 +36,6 @@ NPI_MAPPING = {
     "google/gemma-3-27b-it": os.path.join(
         QEFF_DIR, "transformers", "models", "gemma3", "configs", "gemma_updated_npi.yaml"
     ),
-    "CohereLabs/cohere-transcribe-03-2026": os.path.join(
-        QEFF_DIR, "transformers", "models", "cohere_asr", "configs", "cohere_transcribe_03_2026_npi.yaml"
-    ),
 }
 
 # Blocking defaults

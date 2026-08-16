@@ -124,6 +124,17 @@ def test_cohere_asr_subsampling_lengths_match_parakeet(cohere_asr_qeff_model):
     assert torch.equal(cohere_asr_qeff_model._get_encoder_output_lengths(feature_lengths), native_lengths)
 
 
+@pytest.mark.parametrize(
+    "model_name",
+    ("CohereLabs/cohere-transcribe-03-2026", "CohereLabs/cohere-transcribe-arabic-07-2026"),
+)
+def test_cohere_asr_known_checkpoints_use_the_validated_npi_file(cohere_asr_qeff_model, model_name):
+    npi_file = cohere_asr_qeff_model.get_npi_file(model_name)
+
+    assert npi_file is not None
+    assert os.path.isfile(npi_file)
+
+
 def test_cohere_asr_feature_lengths_build_per_batch_encoder_mask(cohere_asr_qeff_model, monkeypatch):
     encoder = cohere_asr_qeff_model.model.encoder
     original_forward = encoder.forward
