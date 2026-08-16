@@ -213,7 +213,7 @@ def test_deleted_symbol_uses_base_reverse_edges(repository: tuple[Path, str]) ->
     assert "tests/test_component.py::test_calculate" in plan.stages["export_compile"]["nodeids"]
 
 
-def test_new_and_changed_tests_are_unconditional_roots(repository: tuple[Path, str]) -> None:
+def test_full_layer_tests_are_omitted_from_selective_plan(repository: tuple[Path, str]) -> None:
     repo, base = repository
     _write(
         repo,
@@ -224,9 +224,9 @@ def test_new_and_changed_tests_are_unconditional_roots(repository: tuple[Path, s
 
     plan = build_plan(repo, base)
 
-    stage = plan.stages["export_compile"]
-    assert stage["nodeids"] == ["tests/test_new.py::test_new_case"]
-    assert stage["changed_nodeids"] == ["tests/test_new.py::test_new_case"]
+    assert plan.mode == "no_tests"
+    assert not plan.stages["export_compile"]["enabled"]
+    assert plan.stages["export_compile"]["nodeids"] == []
 
 
 def test_model_wrapper_matches_callspec_dictionary(repository: tuple[Path, str]) -> None:

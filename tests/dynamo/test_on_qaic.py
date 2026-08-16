@@ -44,7 +44,6 @@ from ._helpers import (
 
 @pytest.mark.dynamo
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id", list(DYNAMO_CAUSAL_LM_MODEL_IDS.items()), ids=list(DYNAMO_CAUSAL_LM_MODEL_IDS)
@@ -79,7 +78,6 @@ def test_dynamo_fp16_compile(model_type, model_id, tmp_export_dir):
 
 @pytest.mark.dynamo
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id", list(DYNAMO_CAUSAL_LM_MODEL_IDS.items()), ids=list(DYNAMO_CAUSAL_LM_MODEL_IDS)
@@ -125,7 +123,6 @@ def test_dynamo_fp32_compile(model_type, model_id, tmp_export_dir):
 @pytest.mark.dynamo_multi_device
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.parametrize(
     "model_type,model_id",
     list(DYNAMO_CAUSAL_LM_MODEL_IDS.items()),
@@ -162,7 +159,6 @@ def test_dynamo_multi_device_compile(model_type, model_id, tmp_export_dir):
 
 @pytest.mark.dynamo
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id",
@@ -205,7 +201,6 @@ def test_dynamo_generate_fp16(model_type, model_id, tmp_export_dir):
 
 @pytest.mark.dynamo
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id",
@@ -271,7 +266,6 @@ def test_dynamo_hw_hf_parity(model_type, model_id, tmp_export_dir):
 
 @pytest.mark.dynamo
 @pytest.mark.on_qaic
-@pytest.mark.xdist_group(name="qaic-runtime")
 @pytest.mark.llm_model
 @pytest.mark.parametrize(
     "model_type,model_id",

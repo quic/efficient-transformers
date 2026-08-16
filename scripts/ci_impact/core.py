@@ -54,6 +54,7 @@ IGNORED_FILES = {
 }
 IGNORED_PREFIXES = (".github/", "docs/", "skills_studio/")
 OUT_OF_SCOPE_TEST_PREFIXES = ("tests/unit_test/", "tests/nightly_pipeline/", "tests/vllm/")
+SELECTIVE_OMITTED_MARKERS = {"full_layers"}
 
 _MODEL_WRAPPER_RE = re.compile(r"^QEfficient/transformers/models/([^/]+)/")
 _MODEL_KEYS = {"model", "model_id", "model_name", "model_type", "architecture", "architectures"}
@@ -485,6 +486,8 @@ def _closure(roots: set[str], reverse: Mapping[str, set[str]]) -> set[str]:
 
 
 def _stages_for(path: str, markers: set[str]) -> set[str]:
+    if markers & SELECTIVE_OMITTED_MARKERS:
+        return set()
     if path.startswith(OUT_OF_SCOPE_TEST_PREFIXES) or "qnn" in markers or "finetune" in markers:
         return set()
     if path.startswith("tests/dynamo/"):

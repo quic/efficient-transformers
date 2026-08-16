@@ -14,8 +14,13 @@ from pathlib import Path
 import pytest
 from transformers import logging as hf_logging
 
-from QEfficient.utils.cache import QEFF_HOME
-from QEfficient.utils.logging_utils import logger
+_xdist_worker = os.environ.get("PYTEST_XDIST_WORKER")
+if _xdist_worker and os.environ.get("QEFF_HOME"):
+    os.environ["QEFF_HOME"] = str(Path(os.environ["QEFF_HOME"]) / _xdist_worker)
+    Path(os.environ["QEFF_HOME"]).mkdir(parents=True, exist_ok=True)
+
+from QEfficient.utils.cache import QEFF_HOME  # noqa: E402
+from QEfficient.utils.logging_utils import logger  # noqa: E402
 
 _QUICKCHECK_FILE = "tests/unit_test/models/test_model_quickcheck.py"
 _QUICKCHECK_SUMMARY = {}

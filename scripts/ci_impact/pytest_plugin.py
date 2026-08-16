@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from .core import SCHEMA_VERSION, STAGES, _stages_for
+from .core import SCHEMA_VERSION, SELECTIVE_OMITTED_MARKERS, STAGES, _stages_for
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -71,6 +71,10 @@ def _omitted_by_profile(item: pytest.Item, profile: str) -> bool:
     return bool(markers & excluded[profile])
 
 
+def _omitted_from_selective_ci(item: pytest.Item) -> bool:
+    return bool({marker.name for marker in item.iter_markers()} & SELECTIVE_OMITTED_MARKERS)
+
+
 def _head(config: pytest.Config) -> str:
     configured = config.getoption("--impact-head")
     if configured:
@@ -83,6 +87,8 @@ def _write_catalog(config: pytest.Config, items: list[pytest.Item]) -> None:
     for item in items:
         path = item.nodeid.split("::", 1)[0]
         markers = {marker.name for marker in item.iter_markers()}
+        if markers & SELECTIVE_OMITTED_MARKERS:
+            continue
         stages = sorted(_stages_for(path, markers))
         if stages:
             tests.append({"nodeid": item.nodeid, "stages": stages})
@@ -116,6 +122,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     profile = config.getoption("--impact-profile-omissions")
     if profile:
         selected = [item for item in selected if _omitted_by_profile(item, profile)]
+    if payload["mode"] == "selective":
+        selected = [item for item in selected if not _omitted_from_selective_ci(item)]
     selected_ids = {id(item) for item in selected}
     deselected = [item for item in items if id(item) not in selected_ids]
     items[:] = selected

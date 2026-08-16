@@ -11,7 +11,7 @@ Shared fixtures and configuration for the dynamo test suite (tests/dynamo/).
 All dynamo tests require torch >= 2.13 (the minimum version that supports
 torch.compiler.nested_compile_region and the dynamo export path).
 
-Run with: pytest tests/dynamo/ -m "not on_qaic" -n auto -v
+Run with: pytest tests/dynamo/ -m "not on_qaic" -n 4 -v
 """
 
 from __future__ import annotations

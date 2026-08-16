@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 from scripts.ci_impact.pytest_plugin import (
     _matches,
     _omitted_by_profile,
+    _omitted_from_selective_ci,
     _write_catalog,
     pytest_collection_modifyitems,
 )
@@ -34,16 +35,17 @@ def test_profile_omission_uses_layer_markers() -> None:
 
     assert _omitted_by_profile(item, "dummy_layers_model")
     assert not _omitted_by_profile(item, "full_layers_model")
+    assert _omitted_from_selective_ci(item)
 
 
 def test_profile_omission_selects_llm_override_nodeids() -> None:
     selected = Mock(nodeid="tests/test_models.py::test_llm_choice")
     selected_marker = Mock()
-    selected_marker.name = "full_layers"
+    selected_marker.name = "few_layers"
     selected.iter_markers.return_value = [selected_marker]
     deterministic_only = Mock(nodeid="tests/test_models.py::test_deterministic")
     deterministic_marker = Mock()
-    deterministic_marker.name = "full_layers"
+    deterministic_marker.name = "few_layers"
     deterministic_only.iter_markers.return_value = [deterministic_marker]
     config = Mock()
     config.getoption.side_effect = lambda option: {
@@ -80,10 +82,14 @@ def test_collect_only_catalog_contains_exact_nodeids_and_runtime_stages(tmp_path
     marker = Mock()
     marker.name = "llm_model"
     llm_item.iter_markers.return_value = [marker]
+    full_layers_item = Mock(nodeid="tests/test_models.py::test_full_model[case0]")
+    full_layers_marker = Mock()
+    full_layers_marker.name = "full_layers"
+    full_layers_item.iter_markers.return_value = [marker, full_layers_marker]
     docs_item = Mock(nodeid="tests/unit_test/test_helper.py::test_helper")
     docs_item.iter_markers.return_value = []
 
-    _write_catalog(config, [llm_item, docs_item])
+    _write_catalog(config, [llm_item, full_layers_item, docs_item])
 
     payload = json.loads(catalog_path.read_text(encoding="utf-8"))
     assert payload == {
