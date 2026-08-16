@@ -2601,7 +2601,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 lang_inputs["input_ids"], dtype=lang_inputs["mm_token_type_ids"].dtype
             )
         if num_kv_blocks:
-            lang_inputs["slot_id"] = (np.max(lang_inputs["position_ids"]) % kv_block_size).reshape(batch_size)
+            lang_inputs["slot_id"] = lang_inputs["position_ids"].reshape(-1, batch_size).max(axis=0) % kv_block_size
         if "cross_attention_mask" in lang_inputs:
             bs, _, num_images, img_tiles = lang_inputs["cross_attention_mask"].shape
             lang_inputs["cross_attention_mask"] = torch.ones((bs, 1, num_images, img_tiles), dtype=torch.int64).numpy()
@@ -3984,10 +3984,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.supports_paged_attention = False
         # increase seq_len if using a larger number of blocks and set PagedAttention params if required
         if self.hash_params.get("blocking_kwargs", None):
-            max_blocks = -1
-            for num_blocks in self.hash_params.get("blocking_kwargs").__dict__.values():
-                if isinstance(num_blocks, int) and not isinstance(num_blocks, bool):
-                    max_blocks = max(max_blocks, num_blocks)
+            blocking_kwargs = self.hash_params["blocking_kwargs"]
+            block_counts = [
+                blocking_kwargs.num_q_blocks,
+                blocking_kwargs.num_kv_blocks,
+                blocking_kwargs.num_batch_blocks,
+            ]
+            max_blocks = max([b for b in block_counts if b is not None], default=1)
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
             num_kv_blocks = self.hash_params["blocking_kwargs"].num_kv_blocks
