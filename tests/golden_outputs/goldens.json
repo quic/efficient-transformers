@@ -9009,5 +9009,237 @@
         "variant_key": "nocb_float32_pl8_cl32_glNone_f2c6a1b3_7e3017d4d8bc"
       }
     }
+  },
+  "image_text_to_text": {
+    "Qwen/Qwen2.5-VL-3B-Instruct": {
+      "float32_gl10_f5c4e91a_18865c53cb98": {
+        "dtype": "torch.float32",
+        "gen_len": 10,
+        "generation_len": 10,
+        "image_url": "https://picsum.photos/id/237/536/354",
+        "prompt": "Can you describe the image in detail.",
+        "pytorch_hf_tokens": [
+          115517,
+          22870,
+          123672,
+          51907,
+          51907,
+          123672,
+          44537,
+          123672,
+          51907,
+          123672
+        ],
+        "timestamp": "2026-08-14T00:21:05.431648",
+        "variant_key": "float32_gl10_f5c4e91a_18865c53cb98"
+      }
+    },
+    "Qwen/Qwen3-VL-2B-Instruct": {
+      "float32_gl10_7f28b461_c4c87837558b": {
+        "dtype": "torch.float32",
+        "gen_len": 10,
+        "generation_len": 10,
+        "image_url": "https://picsum.photos/id/237/536/354",
+        "prompt": "Can you describe the image in detail.",
+        "pytorch_hf_tokens": [
+          2676,
+          2676,
+          2676,
+          2676,
+          2676,
+          2676,
+          2676,
+          2676,
+          2676,
+          2676
+        ],
+        "timestamp": "2026-08-13T23:53:10.833297",
+        "variant_key": "float32_gl10_7f28b461_c4c87837558b"
+      }
+    },
+    "llava-hf/llava-1.5-7b-hf": {
+      "float32_gl10_681e5064_33b1484c7715": {
+        "dtype": "torch.float32",
+        "gen_len": 10,
+        "generation_len": 10,
+        "image_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
+        "prompt": "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
+        "pytorch_hf_tokens": [
+          19094,
+          22662,
+          5432,
+          6457,
+          14735,
+          30718,
+          22800,
+          19094,
+          5432,
+          15605
+        ],
+        "timestamp": "2026-08-13T23:53:14.292571",
+        "variant_key": "float32_gl10_681e5064_33b1484c7715"
+      }
+    },
+    "meta-llama/Llama-4-Scout-17B-16E-Instruct": {
+      "float32_gl10_f5c96fc8_3f1891ed0ed4": {
+        "dtype": "torch.float32",
+        "gen_len": 10,
+        "generation_len": 10,
+        "image_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/ai2d-demo.jpg",
+        "prompt": "What does the label 15 represent? (1) lava (2) core (3) tunnel (4) ash cloud",
+        "pytorch_hf_tokens": [
+          132660,
+          132660,
+          132660,
+          132660,
+          132660,
+          132660,
+          132660,
+          90945,
+          132660,
+          90945
+        ],
+        "timestamp": "2026-08-13T23:55:06.989485",
+        "variant_key": "float32_gl10_f5c96fc8_3f1891ed0ed4"
+      }
+    },
+    "tiny-random/gemma-3": {
+      "float32_gl10_f0cabe9f_4e0ee2a95114": {
+        "dtype": "torch.float32",
+        "gen_len": 10,
+        "generation_len": 10,
+        "image_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
+        "prompt": "Can you describe the image in detail.",
+        "pytorch_hf_tokens": [
+          107,
+          107,
+          107,
+          107,
+          107,
+          107,
+          107,
+          107,
+          107,
+          107
+        ],
+        "timestamp": "2026-08-14T00:18:00.606905",
+        "variant_key": "float32_gl10_f0cabe9f_4e0ee2a95114"
+      }
+    },
+    "tiny-random/gemma-4-dense": {
+      "float32_gl10_69d49d41_08d573073b6c": {
+        "dtype": "torch.float32",
+        "gen_len": 10,
+        "generation_len": 10,
+        "image_url": "https://picsum.photos/id/237/536/354",
+        "prompt": "Can you describe the image in detail.",
+        "pytorch_hf_tokens": [
+          201220,
+          24091,
+          214117,
+          160357,
+          214117,
+          160357,
+          214117,
+          160357,
+          214117,
+          160357
+        ],
+        "timestamp": "2026-08-13T23:57:35.739882",
+        "variant_key": "float32_gl10_69d49d41_08d573073b6c"
+      }
+    },
+    "tiny-random/gemma-4-moe": {
+      "float32_gl10_032eba72_91318adfd57f": {
+        "dtype": "torch.float32",
+        "gen_len": 10,
+        "generation_len": 10,
+        "image_url": "https://picsum.photos/id/237/536/354",
+        "prompt": "Can you describe the image in detail.",
+        "pytorch_hf_tokens": [
+          15223,
+          94101,
+          92455,
+          94101,
+          92455,
+          94101,
+          92455,
+          94101,
+          92455,
+          94101
+        ],
+        "timestamp": "2026-08-13T23:56:08.096442",
+        "variant_key": "float32_gl10_032eba72_91318adfd57f"
+      }
+    },
+    "tiny-random/mistral-3": {
+      "float32_gl10_65f65b50_2a73c8b3c491": {
+        "dtype": "torch.float32",
+        "gen_len": 10,
+        "generation_len": 10,
+        "image_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/datasets/cat_style_layout.png",
+        "prompt": "Can you describe the image in detail.",
+        "pytorch_hf_tokens": [
+          112201,
+          112201,
+          112201,
+          112201,
+          112201,
+          112201,
+          112201,
+          112201,
+          112201,
+          112201
+        ],
+        "timestamp": "2026-08-14T00:19:43.957196",
+        "variant_key": "float32_gl10_65f65b50_2a73c8b3c491"
+      }
+    },
+    "tiny-random/qwen3.5": {
+      "float32_gl10_59bdf555_5b77fc1bf18e": {
+        "dtype": "torch.float32",
+        "gen_len": 10,
+        "generation_len": 10,
+        "image_url": "https://picsum.photos/id/237/536/354",
+        "prompt": "Can you describe the image in detail.",
+        "pytorch_hf_tokens": [
+          26403,
+          17179,
+          58476,
+          54219,
+          214435,
+          160078,
+          9087,
+          146467,
+          140307,
+          142489
+        ],
+        "timestamp": "2026-08-14T21:31:33.389738",
+        "variant_key": "float32_gl10_59bdf555_5b77fc1bf18e"
+      }
+    },
+    "tiny-random/qwen3.5-moe": {
+      "float32_gl10_1bf4efe3_9d4a6ac341f9": {
+        "dtype": "torch.float32",
+        "gen_len": 10,
+        "generation_len": 10,
+        "image_url": "https://picsum.photos/id/237/536/354",
+        "prompt": "Can you describe the image in detail.",
+        "pytorch_hf_tokens": [
+          127171,
+          151741,
+          134197,
+          144452,
+          134047,
+          157679,
+          85425,
+          168673,
+          136461,
+          114595
+        ],
+        "timestamp": "2026-08-14T21:33:00.623212",
+        "variant_key": "float32_gl10_1bf4efe3_9d4a6ac341f9"
+      }
+    }
   }
 }
