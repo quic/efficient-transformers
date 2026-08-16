@@ -18,22 +18,14 @@ from PIL import Image
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from tests.utils.load_kimi_utils import (
-    LOADED_EXPERT_IDS,
-    NUM_EXPERTS_PER_TOKEN,
-    load_kimi_k25_class,
-    load_layer_subset_model,
-    prepare_config,
-    resolve_model_path,
+    load_kimi_k25_layer_subset_model,
     run_kimi_k25_hf_model_on_pytorch,
-    set_deterministic,
 )
 
 PREFILL_SEQ_LEN = 256
 CTX_LEN = 512
 BATCH_SIZE = 1
 GENERATION_LEN = 4
-NUM_VISION_LAYERS = 2
-NUM_TEXT_LAYERS = 2
 IMAGE_URL = "https://huggingface.co/moonshotai/Kimi-K2.5/resolve/main/figures/kimi-logo.png"
 TEXT_PROMPT = "Describe this image."
 
@@ -119,23 +111,7 @@ def _update_retained_states(target_inputs: dict[str, np.ndarray], source_outputs
 
 
 def _load_kimi_subset_model():
-    set_deterministic(1234)
-    model_path = resolve_model_path()
-    config = prepare_config(model_path)
-    kimi_cls = load_kimi_k25_class(model_path)
-
-    model, tokenizer, processor = load_layer_subset_model(
-        model_path=model_path,
-        kimi_cls=kimi_cls,
-        config=config,
-        num_vision_layers=NUM_VISION_LAYERS,
-        num_text_layers=NUM_TEXT_LAYERS,
-        loaded_expert_ids=LOADED_EXPERT_IDS,
-        num_experts_per_tok=NUM_EXPERTS_PER_TOKEN,
-        dtype=torch.float32,
-    )
-    model.vision_tower.patch_embed.pos_emb.interpolation_mode = "bilinear"
-    return model.eval().to("cpu"), tokenizer, processor
+    return load_kimi_k25_layer_subset_model(dtype=torch.float32)
 
 
 def _get_image_compile_dims(image_height: int, image_width: int) -> dict[str, int]:
