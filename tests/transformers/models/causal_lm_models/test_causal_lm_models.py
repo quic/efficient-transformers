@@ -15,6 +15,7 @@ from transformers import AutoConfig
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import Constants, QnnConstants
 from QEfficient.utils.test_utils import ModelConfig
+from tests.two_phase import resolve_two_phase_cleanup
 
 from .check_causal_models import (
     check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100,
@@ -83,10 +84,6 @@ def _per_pr_dummy_config(model_config):
     return config
 
 
-def _no_cleanup(*args, **kwargs):
-    """No-op cleanup used by the compile-warm phase to preserve the compiled QPC."""
-
-
 def _run_per_pr_causal_text_case(
     model_config,
     manual_cleanup,
@@ -106,15 +103,9 @@ def _run_per_pr_causal_text_case(
     # Two-phase shared-QEFF_HOME run: the per-test cleanup must be suppressed in BOTH phases,
     # because variants of one model share a content-addressed export dir (the QPCs nest inside
     # it). If left active, a finishing variant's cleanup rmtree's the shared dir and destroys
-    # sibling variants' warm QPCs / in-progress compiles. The caller owns the shared QEFF_HOME
-    # lifecycle (starts clean, cleans up when the whole two-phase run is done).
-    #   - QEFF_PER_PR_COMPILE_WARM_ONLY (Phase A): also force compile-only, no device touched.
-    #   - QEFF_PER_PR_SHARED_HOME (Phase B): real generate + assertions against the warm cache.
-    if os.environ.get("QEFF_PER_PR_COMPILE_WARM_ONLY"):
-        compile_only = True
-        manual_cleanup = _no_cleanup
-    elif os.environ.get("QEFF_PER_PR_SHARED_HOME"):
-        manual_cleanup = _no_cleanup
+    # sibling variants' warm QPCs / in-progress compiles. Phase A additionally forces
+    # compile-only so it never touches a device. See tests/two_phase.py.
+    manual_cleanup, compile_only = resolve_two_phase_cleanup(manual_cleanup, compile_only)
 
     if model_config.get("known_export_or_compile_issue"):
         pytest.xfail(model_config["known_export_or_compile_issue"])

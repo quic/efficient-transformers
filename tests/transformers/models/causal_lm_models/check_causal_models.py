@@ -7,15 +7,7 @@
 
 import copy
 import os
-import re
-from contextlib import contextmanager
-from pathlib import Path
 from typing import Optional
-
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - Linux is the supported test environment.
-    fcntl = None
 
 import numpy as np
 import torch
@@ -24,11 +16,11 @@ from transformers import AutoConfig
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils._utils import load_hf_tokenizer
-from QEfficient.utils.cache import QEFF_HOME
 from QEfficient.utils.config_utils import get_first_config_value
 from QEfficient.utils.constants import ATTENTION_HEAD_CONFIG_KEYS, KV_HEAD_CONFIG_KEYS, Constants
 from QEfficient.utils.run_utils import ApiRunner
 from QEfficient.utils.test_utils import ModelConfig, load_hf_causal_lm_model
+from tests.two_phase import model_export_compile_lock
 
 from ..check_model_results import dump_and_compare_results
 from ..golden_utils import config_fingerprint, golden_variant_key, resolve_hf_golden
@@ -37,32 +29,6 @@ from ..golden_utils import config_fingerprint, golden_variant_key, resolve_hf_go
 # golden HF reference. The CPU reference legs (torch-KV "qeff_hf" and ONNXRuntime) are
 # retained for debugging / on-demand parity checks but are skipped unless this is set.
 _RUN_CPU_REFERENCES = os.environ.get("QEFF_RUN_CPU_REFERENCES") == "1"
-
-
-@contextmanager
-def _model_export_compile_lock(model_name):
-    """Serialize export+compile of one model across concurrent xdist workers.
-
-    Only active in the two-phase shared-QEFF_HOME run (many variants of one model
-    share a content-addressed ONNX export dir, so concurrent writers would tear
-    the .onnx file). A no-op otherwise, so default single-phase runs are untouched.
-    """
-    if (
-        not (os.environ.get("QEFF_PER_PR_SHARED_HOME") or os.environ.get("QEFF_PER_PR_COMPILE_WARM_ONLY"))
-        or fcntl is None
-    ):
-        yield
-        return
-
-    lock_dir = Path(os.environ.get("QEFF_HOME", QEFF_HOME)) / ".locks"
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = lock_dir / (re.sub(r"[^A-Za-z0-9_.-]", "_", model_name) + ".lock")
-    with open(lock_path, "a+", encoding="utf-8") as lockfile:
-        fcntl.flock(lockfile.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(lockfile.fileno(), fcntl.LOCK_UN)
 
 
 def get_custom_n_layers(model_name):
@@ -255,7 +221,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
             compute_fn=_compute_hf_tokens,
         )
 
-    with _model_export_compile_lock(model_name):
+    with model_export_compile_lock(model_name):
         onnx_model_path = qeff_model.export(use_onnx_subfunctions=use_onnx_subfunctions)
         if _RUN_CPU_REFERENCES and not compile_only and continuous_batching is False:
             ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)

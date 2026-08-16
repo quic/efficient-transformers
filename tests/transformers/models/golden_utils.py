@@ -40,6 +40,7 @@ import hashlib
 import json
 import os
 import tempfile
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
@@ -102,6 +103,62 @@ def config_fingerprint(config) -> str:
         values[attr] = value
     canonical = json.dumps(values, sort_keys=True, default=str)
     return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:8]
+
+
+# Volatile keys HF stamps on every config that don't affect the generated token stream
+# (library version, checkpoint path, dtype metadata -- dtype is threaded through the VLM
+# variant key explicitly instead).
+_VOLATILE_CONFIG_KEYS = frozenset({"transformers_version", "_name_or_path", "_commit_hash", "torch_dtype", "dtype"})
+
+
+def config_to_dict_fingerprint(config) -> str:
+    """Content-hash of a full HF config, for architectures too varied for a fixed attribute list.
+
+    ``config_fingerprint`` above works for causal-LM configs because their token-relevant
+    attributes are a small, stable set. VLM configs nest a ``text_config``/``vision_config``/
+    ``llm_config`` whose architecture-defining fields differ per model family (e.g. Qwen3-VL's
+    ``deepstack_visual_indexes`` vs Gemma3's ``layer_types``), so a fixed whitelist would need
+    updating for every onboarded model. Hashing the full serialized dict picks up any test-time
+    override -- layer counts, sliding-window pattern, vision depth -- without maintaining one.
+    """
+
+    def _strip(node):
+        if isinstance(node, dict):
+            return {k: _strip(v) for k, v in node.items() if k not in _VOLATILE_CONFIG_KEYS}
+        if isinstance(node, list):
+            return [_strip(v) for v in node]
+        return node
+
+    canonical = json.dumps(_strip(config.to_dict()), sort_keys=True, default=str)
+    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:8]
+
+
+def vlm_golden_variant_key(
+    *,
+    torch_dtype,
+    prompt_text: str,
+    image_url: str,
+    generation_len: int,
+    config_fp: str,
+) -> str:
+    """Deterministic variant key for one VLM golden.
+
+    Mirrors ``golden_variant_key``: the HF token stream for a VLM is a pure function of the
+    model + effective config plus the fixed image/prompt pair from
+    ``image_text_model_configs.json``, dtype, and the generation length. It does not depend on
+    ``kv_offload`` or ``qaic_config`` (those only steer the QEff / on-device leg), so one golden
+    is reused across every variant of those knobs for the same model.
+    """
+    payload = {
+        "dtype": _dtype_str(torch_dtype),
+        "prompt": prompt_text,
+        "image_url": image_url,
+        "generation_len": generation_len,
+        "config_fp": config_fp,
+    }
+    canonical = json.dumps(payload, sort_keys=True, default=str)
+    digest = hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
+    return f"{_dtype_str(torch_dtype)}_gl{generation_len}_{config_fp}_{digest}"
 
 
 def golden_variant_key(
@@ -174,6 +231,8 @@ def _write_variant(family: str, model_name: str, variant_key: str, record: dict)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(doc, f, indent=2, sort_keys=True)
+            # Keep the committed file newline-terminated so regeneration doesn't churn the diff.
+            f.write("\n")
         os.replace(tmp_path, GOLDEN_FILE)
     finally:
         if os.path.exists(tmp_path):
@@ -220,13 +279,18 @@ def resolve_hf_golden(
     params: dict,
     compute_fn: Callable[[], np.ndarray],
 ) -> np.ndarray:
-    """Return the golden HF tokens for a variant, generating them once if missing.
+    """Return the golden HF tokens for a variant, computing them live if missing.
 
     Reads the committed golden first; only when the variant is absent (or
-    ``QEFF_REGENERATE_GOLDEN=1``) does ``compute_fn`` run the HF model. The expensive HF
-    run happens outside the lock; the store is then re-checked under the lock and the
-    record written, so parallel workers compute each variant at most once without
-    serializing unrelated models behind one another.
+    ``QEFF_REGENERATE_GOLDEN=1``) does ``compute_fn`` run the HF model.
+
+    The store is only ever written under ``QEFF_REGENERATE_GOLDEN=1``. A plain run that
+    misses still computes the reference so the parity assert stays meaningful, but it must
+    not mutate a committed file as a side effect -- that would leave the tree dirty in CI
+    and let an unreviewed token stream become the baseline. Regeneration is deliberately a
+    separate, explicit step. The expensive HF run happens outside the lock; the store is
+    re-checked under the lock before writing so parallel workers compute each variant at
+    most once without serializing unrelated models behind one another.
     """
     regenerate = os.environ.get("QEFF_REGENERATE_GOLDEN") == "1"
 
@@ -234,6 +298,12 @@ def resolve_hf_golden(
         record = _read_variant(family, model_name, variant_key)
         if record is not None:
             return np.array(record["pytorch_hf_tokens"])
+        warnings.warn(
+            f"No committed golden for {family}/{model_name}/{variant_key}; running the HF "
+            "reference live. Commit a golden (QEFF_REGENERATE_GOLDEN=1) to skip the CPU leg.",
+            stacklevel=2,
+        )
+        return np.asarray(compute_fn())
 
     tokens = np.asarray(compute_fn())
     record = {
