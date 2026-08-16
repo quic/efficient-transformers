@@ -36,6 +36,11 @@ pipeline {
             defaultValue: 'ALL',
             description: 'Select which test stages you want to run (all run by default)'
         )
+        string(
+            name: 'QAIC_VISIBLE_DEVICES',
+            defaultValue: '4,5,6,7,8,9,10,11,12,13,14,15',
+            description: 'Physical QAIC devices exposed to tests; keep this homogeneous on mixed-NSP hosts'
+        )
         booleanParam(name: 'RUN_HL_APIS', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_FEATURE', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_MM', defaultValue: true)
@@ -47,6 +52,7 @@ pipeline {
 
     environment {
         TEST_FILTER = testFilter(params.TEST_PROFILE)
+        QAIC_VISIBLE_DEVICES = "${params.QAIC_VISIBLE_DEVICES}"
     }
 
     stages {
@@ -54,7 +60,7 @@ pipeline {
             steps {
                 sh '''
                     . ~/.bashrc
-                    sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
+                    sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} -e QAIC_VISIBLE_DEVICES=${QAIC_VISIBLE_DEVICES} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
                     apt update &&
