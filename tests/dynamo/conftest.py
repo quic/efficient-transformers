@@ -19,7 +19,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from QEfficient.utils.device_utils import get_available_device_id, is_multi_qranium_setup_available
+from QEfficient.utils.device_utils import is_multi_qranium_setup_available
 
 
 def _parse_torch_version() -> tuple:
@@ -68,14 +68,6 @@ def tmp_export_dir(tmp_path):
     export_dir = tmp_path / "qeff_dynamo_exports"
     export_dir.mkdir(parents=True, exist_ok=True)
     return export_dir
-
-
-@pytest.fixture(autouse=True)
-def skip_if_no_qaic_device(request):
-    """Auto-skip any on_qaic test when no QAIC device is ready."""
-    if request.node.get_closest_marker("on_qaic"):
-        if get_available_device_id() is None:
-            pytest.skip("No available QAIC device")
 
 
 @pytest.fixture(autouse=True)

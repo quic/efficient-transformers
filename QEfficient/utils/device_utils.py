@@ -6,50 +6,10 @@
 # -----------------------------------------------------------------------------
 
 import math
-import re
 import subprocess
 
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
-
-
-def is_networks_loaded(stdout):
-    # Check is the networks are loaded on the device.
-    network_loaded = re.search(r"Networks Active:(\d+)", stdout)
-    if network_loaded and int(network_loaded.group(1)) > 0:
-        return True
-    return False
-
-
-def get_available_device_id():
-    """
-    API to check available device id.
-
-    Return:
-        :int: Available device id.
-    """
-
-    device_id = 0
-    result = None
-
-    # FIXME: goes into infinite loop when user doesn't have permission and the command gives permission denied.
-    # To reproduce change the ownership of available devices.
-    while 1:
-        command = ["/opt/qti-aic/tools/qaic-util", "-q", "-d", f"{device_id}"]
-        try:
-            result = subprocess.run(command, capture_output=True, text=True)
-        except OSError:
-            logger.warning("Not a Cloud AI 100 device, Command not found", command)
-            return None
-        if result:
-            if "Status:Error" in result.stdout or is_networks_loaded(result.stdout):
-                device_id += 1
-            elif "Status:Ready" in result.stdout:
-                logger.info("device is available.")
-                return [device_id]
-            elif "Failed to find requested device ID" in result.stdout:
-                logger.warning("Failed to find requested device ID")
-                return None
 
 
 def is_qpc_size_gt_32gb(params: int, mxfp6: bool) -> bool:
