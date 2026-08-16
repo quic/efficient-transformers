@@ -77,7 +77,6 @@ def check_seq_classification_pytorch_vs_ai100(
         seq_len=seq_len,
         batch_size=1,
         num_devices=1,
-        num_cores=14,
         mxfp6_matmul=False,
     )
 
@@ -110,7 +109,6 @@ def check_seq_classification_pytorch_vs_ai100(
         "seq_len": seq_len,
         "batch_size": 1,
         "num_devices": 1,
-        "num_cores": 14,
         "mxfp6_matmul": False,
     }
     assert dump_and_compare_results(
