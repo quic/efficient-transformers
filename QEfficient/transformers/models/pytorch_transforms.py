@@ -23,7 +23,6 @@ from transformers.models.cohere_asr.modeling_cohere_asr import (
     CohereAsrForConditionalGeneration,
     CohereAsrSelfAttention,
 )
-from transformers.models.parakeet.modeling_parakeet import ParakeetEncoderAttention, ParakeetEncoderSubsamplingConv2D
 from transformers.models.deberta_v2.modeling_deberta_v2 import (
     DisentangledSelfAttention,
 )
@@ -180,6 +179,7 @@ from transformers.models.olmo2.modeling_olmo2 import (
     Olmo2Model,
     Olmo2RMSNorm,
 )
+from transformers.models.parakeet.modeling_parakeet import ParakeetEncoderAttention, ParakeetEncoderSubsamplingConv2D
 from transformers.models.phi.modeling_phi import PhiAttention, PhiDecoderLayer, PhiForCausalLM, PhiModel
 from transformers.models.phi3.modeling_phi3 import (
     Phi3Attention,

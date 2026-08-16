@@ -2122,6 +2122,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
             self.qpc_paths["vision_qpc_path"] = vision_qpc_path
 
+        # Custom NPI file options
+        if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
+            compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
+
         if not skip_lang:
             custom_io_lang = {}
             for output_name in output_names["lang"]:
@@ -2919,6 +2923,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             img_size=img_size,
             **compiler_options,
         )
+
+        if hasattr(self.model, "get_npi_file") and "node_precision_info" not in compiler_options:
+            compiler_options["node_precision_info"] = self.model.get_npi_file(self.model.name_or_path)
 
         custom_io = {}
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
@@ -5139,9 +5146,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             if self._write_io_dir is not None:
                 stage = "prefill" if prompt_position == 0 else f"prompt_{prompt_position}"
                 write_io_files(inputs, outputs, self._write_io_dir, stage, "aic_batch_io", True, False)
-            inputs["input_features"] = np.zeros(
-                (self.batch_size, self.model.config.num_mel_bins, 1), dtype=np.float16
-            )
+            inputs["input_features"] = np.zeros((self.batch_size, self.model.config.num_mel_bins, 1), dtype=np.float16)
 
         generated_ids = np.full(
             (self.batch_size, prompt_length + generation_len), self.model.config.eos_token_id, dtype=np.int64
@@ -5164,9 +5169,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
                 break
 
             inputs["input_ids"] = np.where(finished, self.model.config.eos_token_id, next_token)[:, None]
-            inputs["position_ids"] = np.full(
-                (self.batch_size, 1), prompt_length + generated_index, dtype=np.int64
-            )
+            inputs["position_ids"] = np.full((self.batch_size, 1), prompt_length + generated_index, dtype=np.int64)
             outputs = self.qpc_session.run(inputs)
             if self._write_io_dir is not None:
                 write_io_files(inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)

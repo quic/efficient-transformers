@@ -719,9 +719,7 @@ def test_speech_generate_consumes_decoder_prompt_and_retains_feature_lengths(
         [[3], [3]],
         [[4], [4]],
     ]
-    expected_features = (
-        torch.nn.functional.pad(input_features.transpose(1, 2), (0, 3)).numpy().astype(np.float16)
-    )
+    expected_features = torch.nn.functional.pad(input_features.transpose(1, 2), (0, 3)).numpy().astype(np.float16)
     assert np.array_equal(wrapper.qpc_session.calls[0]["input_features"], expected_features)
     for call in wrapper.qpc_session.calls[1:]:
         assert np.count_nonzero(call["input_features"]) == 0
@@ -729,9 +727,7 @@ def test_speech_generate_consumes_decoder_prompt_and_retains_feature_lengths(
         assert np.array_equal(call["feature_lengths"], np.array([8, 13], dtype=np.int64))
     assert np.array_equal(
         result.generated_ids,
-        np.array(
-            [[1, 2, 3, 5, eos_token_id, eos_token_id], [1, 4, 3, 5, 6, eos_token_id]], dtype=np.int64
-        ),
+        np.array([[1, 2, 3, 5, eos_token_id, eos_token_id], [1, 4, 3, 5, 6, eos_token_id]], dtype=np.int64),
     )
 
 
