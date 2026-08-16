@@ -20,6 +20,7 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
     generic_blocked_mla_attention_interface,
 )
+from QEfficient.customop.quantization_ops import CastToUInt4Func, DequantizeLinearFunc
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.customop.utils import select_interface
 from QEfficient.transformers.cache_utils import QEffDynamicCache, QEffDynamicCompressedKVRopeCache
@@ -792,6 +793,21 @@ def _deepseek_expert_weight(proj: nn.Module) -> torch.Tensor:
     return proj.weight
 
 
+def _deepseek_has_quantized_expert_projection(proj: nn.Module) -> bool:
+    return all(hasattr(proj, name) for name in ("qweight", "qzeros", "scales", "g_idx", "bits", "group_size"))
+
+
+def _deepseek_first_unfused_expert(experts: nn.Module) -> Optional[nn.Module]:
+    if hasattr(experts, "gate_up_proj"):
+        return None
+    if not hasattr(experts, "__getitem__"):
+        return None
+    try:
+        return experts[0]
+    except (IndexError, KeyError, TypeError):
+        return None
+
+
 def _deepseek_act_fn(experts: nn.Module) -> Callable:
     if hasattr(experts, "act_fn"):
         return experts.act_fn
@@ -815,11 +831,90 @@ class QEffDeepseekV3MoE(QEffMoEBlockMixin, nn.Module):
         self,
     ):
         QEffMoEBlockMixin.__qeff_init__(self)
+        if hasattr(self, "all_gate_qweight"):
+            self._qeff_quantized_experts = True
+            return
         self.act_fn = _deepseek_act_fn(self.experts)
+        first_expert = _deepseek_first_unfused_expert(self.experts)
+        self._qeff_quantized_experts = (
+            first_expert is not None
+            and hasattr(first_expert, "gate_proj")
+            and _deepseek_has_quantized_expert_projection(first_expert.gate_proj)
+        )
+
+    def _stack_quantized_projection_params(self, projection_name: str) -> None:
+        first_projection = getattr(self.experts[0], projection_name)
+        name_prefix = projection_name[: -len("_proj")]
+        in_features = first_projection.in_features
+        out_features = first_projection.out_features
+
+        setattr(self, f"in_features_{name_prefix}", in_features)
+        setattr(self, f"out_features_{name_prefix}", out_features)
+        setattr(
+            self,
+            f"all_{name_prefix}_qweight",
+            torch.nn.Parameter(
+                torch.stack([getattr(expert, projection_name).qweight for expert in self.experts], dim=0).reshape(
+                    -1, out_features, in_features // 2
+                ),
+                requires_grad=False,
+            ),
+        )
+        setattr(
+            self,
+            f"all_{name_prefix}_scales",
+            torch.nn.Parameter(
+                torch.stack([getattr(expert, projection_name).scales for expert in self.experts], dim=0).reshape(
+                    -1, out_features, in_features // self.group_size
+                ),
+                requires_grad=False,
+            ),
+        )
+        setattr(
+            self,
+            f"all_{name_prefix}_qzeros",
+            torch.nn.Parameter(
+                torch.stack([getattr(expert, projection_name).qzeros for expert in self.experts], dim=0).reshape(
+                    -1, out_features, in_features // (self.group_size * 2)
+                ),
+                requires_grad=False,
+            ),
+        )
+        setattr(
+            self,
+            f"all_{name_prefix}_gidx",
+            torch.nn.Parameter(
+                torch.stack([getattr(expert, projection_name).g_idx for expert in self.experts], dim=0),
+                requires_grad=False,
+            ),
+        )
+
+    def _transform_quantized_expert_weights(self) -> None:
+        if hasattr(self, "all_gate_qweight"):
+            return
+
+        first_expert = self.experts[0]
+        self.bits = first_expert.gate_proj.bits
+        self.group_size = first_expert.gate_proj.group_size
+        assert first_expert.gate_proj.act_order == first_expert.up_proj.act_order == first_expert.down_proj.act_order, (
+            "act_order mismatch"
+        )
+        self.act_order = first_expert.gate_proj.act_order
+
+        for projection_name in ("gate_proj", "up_proj", "down_proj"):
+            QEffDeepseekV3MoE._stack_quantized_projection_params(self, projection_name)
+        for expert in self.experts:
+            delete_module_attrs(expert, "gate_proj", "up_proj", "down_proj")
 
     def transform_weights(self) -> MoEWeights:
         if getattr(self, "weights_transformed", False):
+            if getattr(self, "_qeff_quantized_experts", False):
+                return None
             return self.moe_weights
+        if getattr(self, "_qeff_quantized_experts", False):
+            QEffDeepseekV3MoE._transform_quantized_expert_weights(self)
+            self.weights_transformed = True
+            return None
         if hasattr(self.experts, "gate_up_proj"):
             self.moe_weights = build_canonical_expert_weights(
                 gate_up=self.experts.gate_up_proj,
@@ -851,6 +946,51 @@ class QEffDeepseekV3MoE(QEffMoEBlockMixin, nn.Module):
 
     def apply_shared_experts(self, out: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
         return out + self.shared_experts(residual)
+
+    def moe_waa_unpack(self, hidden_states: torch.Tensor, topk_indices: torch.Tensor, topk_weights: torch.Tensor):
+        gate_proj_unpacked = CastToUInt4Func.apply(self.all_gate_qweight)
+        gate_zeros_unpacked = CastToUInt4Func.apply(self.all_gate_qzeros)
+        gate_proj_dq = DequantizeLinearFunc.apply(
+            gate_proj_unpacked, self.all_gate_scales, gate_zeros_unpacked, self.group_size
+        )
+
+        up_proj_unpacked = CastToUInt4Func.apply(self.all_up_qweight)
+        up_zeros_unpacked = CastToUInt4Func.apply(self.all_up_qzeros)
+        up_proj_dq = DequantizeLinearFunc.apply(
+            up_proj_unpacked, self.all_up_scales, up_zeros_unpacked, self.group_size
+        )
+
+        down_proj_unpacked = CastToUInt4Func.apply(self.all_down_qweight)
+        down_zeros_unpacked = CastToUInt4Func.apply(self.all_down_qzeros)
+        down_proj_dq = DequantizeLinearFunc.apply(
+            down_proj_unpacked, self.all_down_scales, down_zeros_unpacked, self.group_size
+        )
+
+        num_experts = self.all_gate_qweight.shape[0]
+        expert_in = hidden_states.unsqueeze(0).expand(num_experts, -1, -1)
+        gate_out = torch.bmm(expert_in, gate_proj_dq.transpose(1, 2).to(expert_in.dtype))
+        up_out = torch.bmm(expert_in, up_proj_dq.transpose(1, 2).to(expert_in.dtype))
+        hidden = self.act_fn(gate_out) * up_out
+        down_out = torch.bmm(hidden, down_proj_dq.transpose(1, 2).to(expert_in.dtype))
+
+        routed_out = down_out.transpose(0, 1)
+        selected_out = torch.gather(
+            routed_out,
+            1,
+            topk_indices.unsqueeze(-1).expand(-1, self.gate.top_k, self.out_features_down),
+        )
+        return torch.einsum("abc,ab->ac", selected_out, topk_weights)
+
+    def forward(self, hidden_states: torch.Tensor):
+        if not getattr(self, "_qeff_quantized_experts", False):
+            return QEffMoEBlockMixin.forward(self, hidden_states)
+
+        residuals = hidden_states
+        B, S, H = hidden_states.shape
+        x = hidden_states.view(B * S, H)
+        (topk_indices, topk_weights), _ = self.route(hidden_states)
+        out = self.moe_waa_unpack(x, topk_indices, topk_weights).view(B, S, H)
+        return self.apply_shared_experts(out, residuals)
 
 
 class QEffDeepseekV3DecoderLayer(nn.Module):
