@@ -861,6 +861,11 @@ class QEffTextGenerationBase:
             chunk_inputs["position_ids"] = inputs["position_ids"][
                 :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
             ]
+            if block_table is not None:
+                chunk_start_position_id = i * self._prefill_seq_len
+                chunk_inputs["slot_id"] = np.full(
+                    (prefill_logit_bs,), chunk_start_position_id % self.kv_block_size, dtype=np.int64
+                )
             if self.include_sampler:
                 chunk_inputs["last_accepted_output_tokens"] = chunk_inputs["input_ids"]
 
