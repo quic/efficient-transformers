@@ -136,8 +136,8 @@ pipeline {
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_cli_qaic &&
                            export TMPDIR=$PWD/.qeff_tmp/export_compile &&
-                           rm -rf \$TMPDIR &&
-                           mkdir -p \$TMPDIR &&
+                           rm -rf $PWD/.qeff_tmp/export_compile &&
+                           mkdir -p $PWD/.qeff_tmp/export_compile &&
                            pytest tests -m '(not on_qaic) and (not finetune) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 4 --junitxml=tests/tests_log1.xml --durations=10 &&
                            junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
                            deactivate"
@@ -162,8 +162,8 @@ pipeline {
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic_llm &&
                            export TMPDIR=$PWD/.qeff_tmp/qaic_llm &&
-                           rm -rf \$TMPDIR &&
-                           mkdir -p \$TMPDIR &&
+                           rm -rf $PWD/.qeff_tmp/qaic_llm &&
+                           mkdir -p $PWD/.qeff_tmp/qaic_llm &&
                            export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
                            export QEFF_QAIC_CARDS_PER_WORKER=2 &&
                            pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${LLM_EXEC_N} --dist worksteal --junitxml=tests/tests_log2.xml --durations=10 &&
