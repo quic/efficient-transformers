@@ -5,14 +5,15 @@
 #
 # -----------------------------------------------------------------------------
 """
-Priority-2 fix: QEffHybridCache, QEffHybridChunkedCache, QEffHybridCacheForGPTOSS
-correctness — these three classes had ZERO test coverage.
+Priority-2 fix: QEffHybridCache, QEffHybridChunkedCache, QEffGPTOSSDynamicCache
+correctness — these classes had ZERO test coverage.
 
 Constructor signatures (verified from source):
   QEffHybridCache(config, batch_size, max_cache_len)
   QEffHybridChunkedCache — constructed via from_legacy_cache(config, past_key_values)
     which calls cls(config, max_batch_size=..., max_cache_len=...)
-  QEffHybridCacheForGPTOSS(config, batch_size, max_cache_len, sliding_window_len)
+  QEffGPTOSSDynamicCache(config) — per-layer cache; layers created via
+    append_new_layers/from_legacy_cache, tagged is_sliding from config.layer_types
 
 QEffHybridCache.update() required cache_kwargs:
   position_ids, sliding_window_pattern
@@ -22,21 +23,21 @@ QEffHybridChunkedCache.update() required cache_kwargs:
   position_ids
   is_sliding comes from self.is_sliding[layer_idx] set by parent HybridChunkedCache
 
-QEffHybridCacheForGPTOSS.update() required cache_kwargs:
-  position_ids, is_sliding, sliding_window
-QEffHybridCacheForGPTOSS.write_only() required cache_kwargs:
-  position_ids, is_sliding
+QEffGPTOSSDynamicCache.update() required cache_kwargs:
+  position_ids (is_sliding/sliding_window are derived from the layer itself, not cache_kwargs)
+QEffGPTOSSDynamicCache.write_only() required cache_kwargs:
+  position_ids
 
 All tests run on CPU only.
 """
 
 import pytest
 import torch
-from transformers import Gemma2Config, MistralConfig
+from transformers import Gemma2Config, GptOssConfig, MistralConfig
 
 from QEfficient.transformers.cache_utils import (
+    QEffGPTOSSDynamicCache,
     QEffHybridCache,
-    QEffHybridCacheForGPTOSS,
     QEffHybridChunkedCache,
 )
 
@@ -83,6 +84,23 @@ def _mistral_cfg(sliding_window=4):
     # HybridChunkedCache parent reads this to build is_sliding list
     cfg.sliding_window_pattern = 2
     return cfg
+
+
+def _gptoss_cfg(num_layers=4, sliding_window=4):
+    """Minimal GptOssConfig with alternating sliding/full attention layers."""
+    layer_types = ["sliding_attention" if i % 2 == 0 else "full_attention" for i in range(num_layers)]
+    return GptOssConfig(
+        num_hidden_layers=num_layers,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=500,
+        max_position_embeddings=64,
+        head_dim=32,
+        sliding_window=sliding_window,
+        layer_types=layer_types,
+    )
 
 
 def _kv(batch=1, heads=2, ctx_len=16, head_dim=8, fill=None):
@@ -680,127 +698,67 @@ class TestQEffHybridChunkedCacheCorrectness:
 
 
 # ---------------------------------------------------------------------------
-# Tests: QEffHybridCacheForGPTOSS — correctness
+# Tests: QEffGPTOSSDynamicCache / QEffGPTOSSDynamicLayer — correctness
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.cache
-class TestQEffHybridCacheForGPTOSSCorrectness:
+class TestQEffGPTOSSDynamicCacheCorrectness:
     """
-    QEffHybridCacheForGPTOSS is used by the GPT-OSS disaggregated serving path.
-    Constructor: QEffHybridCacheForGPTOSS(config, batch_size, max_cache_len, sliding_window_len)
-    update() kwargs: position_ids, is_sliding, sliding_window
-    write_only() kwargs: position_ids, is_sliding
+    QEffGPTOSSDynamicCache is used by the GPT-OSS disaggregated serving path.
+    Layers are tagged is_sliding from config.layer_types; update()/write_only() only
+    need position_ids in cache_kwargs (sliding_window/is_sliding come from the layer).
     """
 
-    def _make(self, ctx_len=16, sw=4):
-        cfg = _gemma2_cfg(sliding_window=sw)
-        return QEffHybridCacheForGPTOSS(cfg, batch_size=1, max_cache_len=ctx_len, sliding_window_len=sw)
+    def _make(self, sw=4):
+        return QEffGPTOSSDynamicCache(config=_gptoss_cfg(sliding_window=sw))
 
     def test_creation_succeeds(self):
         assert self._make() is not None
 
     def test_update_first_call_stores_tensors(self):
-        cache = self._make(ctx_len=16)
+        cache = self._make()
+        cache.append_new_layers(0)
         k, v = _kv(ctx_len=8)
-        k_out, v_out = cache.update(
-            k,
-            v,
-            layer_idx=0,
-            cache_kwargs={
-                "position_ids": _pids(8),
-                "is_sliding": False,
-                "sliding_window": 4,
-            },
-        )
+        k_out, v_out = cache.update(k, v, layer_idx=0, cache_kwargs={"position_ids": _pids(8)})
         assert k_out is not None and v_out is not None
 
     def test_update_non_sliding_returns_finite(self):
-        cache = self._make(ctx_len=16)
+        cache = self._make()
+        cache.append_new_layers(1)  # layer 1 is full_attention per _gptoss_cfg
         k, v = _kv(ctx_len=8)
-        k_out, v_out = cache.update(
-            k,
-            v,
-            layer_idx=0,
-            cache_kwargs={
-                "position_ids": _pids(8),
-                "is_sliding": False,
-                "sliding_window": 4,
-            },
-        )
+        k_out, v_out = cache.update(k, v, layer_idx=1, cache_kwargs={"position_ids": _pids(8)})
         assert torch.isfinite(k_out).all()
         assert torch.isfinite(v_out).all()
 
     def test_update_sliding_returns_finite(self):
-        cache = self._make(ctx_len=4, sw=4)
+        cache = self._make(sw=4)
+        cache.append_new_layers(0)  # layer 0 is sliding_attention per _gptoss_cfg
         k, v = _kv(ctx_len=4)
-        k_out, v_out = cache.update(
-            k,
-            v,
-            layer_idx=0,
-            cache_kwargs={
-                "position_ids": _pids(4),
-                "is_sliding": True,
-                "sliding_window": 4,
-            },
-        )
+        k_out, v_out = cache.update(k, v, layer_idx=0, cache_kwargs={"position_ids": _pids(4)})
         assert torch.isfinite(k_out).all()
         assert torch.isfinite(v_out).all()
 
     def test_non_sliding_scatter_at_correct_position(self):
         """Write 33.0 at position 4, verify it lands at slot 4."""
-        cache = self._make(ctx_len=16)
+        cache = self._make()
+        cache.append_new_layers(1)
         k_init, v_init = _kv(ctx_len=16, fill=0.0)
-        cache.update(
-            k_init,
-            v_init,
-            layer_idx=0,
-            cache_kwargs={
-                "position_ids": _pids(16),
-                "is_sliding": False,
-                "sliding_window": 4,
-            },
-        )
+        cache.update(k_init, v_init, layer_idx=1, cache_kwargs={"position_ids": _pids(16)})
         k_dec, v_dec = _kv(ctx_len=1, fill=33.0)
-        k_out, v_out = cache.update(
-            k_dec,
-            v_dec,
-            layer_idx=0,
-            cache_kwargs={
-                "position_ids": torch.tensor([[4]]),
-                "is_sliding": False,
-                "sliding_window": 4,
-            },
-        )
+        k_out, v_out = cache.update(k_dec, v_dec, layer_idx=1, cache_kwargs={"position_ids": torch.tensor([[4]])})
         assert k_out[0, 0, 4, 0].item() == pytest.approx(33.0, abs=1e-5), (
             f"Expected 33.0 at position 4, got {k_out[0, 0, 4, 0].item()}"
         )
 
     def test_non_sliding_prior_positions_not_corrupted(self):
         """Writing at position 4 must not corrupt positions 0..3."""
-        cache = self._make(ctx_len=16)
+        cache = self._make()
+        cache.append_new_layers(1)
         k_init = torch.arange(16, dtype=torch.float32).reshape(1, 1, 16, 1).expand(1, 2, 16, 8).clone()
-        cache.update(
-            k_init,
-            k_init.clone(),
-            layer_idx=0,
-            cache_kwargs={
-                "position_ids": _pids(16),
-                "is_sliding": False,
-                "sliding_window": 4,
-            },
-        )
+        cache.update(k_init, k_init.clone(), layer_idx=1, cache_kwargs={"position_ids": _pids(16)})
         k_dec, v_dec = _kv(ctx_len=1, fill=99.0)
-        k_out, _ = cache.update(
-            k_dec,
-            v_dec,
-            layer_idx=0,
-            cache_kwargs={
-                "position_ids": torch.tensor([[4]]),
-                "is_sliding": False,
-                "sliding_window": 4,
-            },
-        )
+        k_out, _ = cache.update(k_dec, v_dec, layer_idx=1, cache_kwargs={"position_ids": torch.tensor([[4]])})
         assert k_out[0, 0, 4, 0].item() == pytest.approx(99.0, abs=1e-5)
         for pos in range(4):
             assert k_out[0, 0, pos, 0].item() == pytest.approx(float(pos), abs=1e-5), (
@@ -809,168 +767,96 @@ class TestQEffHybridCacheForGPTOSSCorrectness:
 
     def test_write_only_populates_cache(self):
         """write_only must populate the cache without running gather."""
-        cache = self._make(ctx_len=16)
+        cache = self._make()
         k, v = _kv(ctx_len=16)
-        cache.write_only(
-            k,
-            v,
-            layer_idx=0,
-            cache_kwargs={
-                "position_ids": _pids(16),
-                "is_sliding": False,
-            },
-        )
-        assert len(cache) == 1
-        assert cache.key_cache[0] is not None
+        cache.write_only(k, v, layer_idx=1, cache_kwargs={"position_ids": _pids(16)})
+        assert len(cache) == 2
+        assert cache.layers[1].keys is not None
 
     def test_write_only_then_update_returns_finite(self):
         """write_only followed by update must return finite tensors."""
-        cache = self._make(ctx_len=16)
+        cache = self._make()
         k_init, v_init = _kv(ctx_len=16)
-        cache.write_only(
-            k_init,
-            v_init,
-            layer_idx=0,
-            cache_kwargs={
-                "position_ids": _pids(16),
-                "is_sliding": False,
-            },
-        )
+        cache.write_only(k_init, v_init, layer_idx=1, cache_kwargs={"position_ids": _pids(16)})
         k_dec, v_dec = _kv(ctx_len=1)
-        k_out, v_out = cache.update(
-            k_dec,
-            v_dec,
-            layer_idx=0,
-            cache_kwargs={
-                "position_ids": torch.tensor([[8]]),
-                "is_sliding": False,
-                "sliding_window": 4,
-            },
-        )
+        k_out, v_out = cache.update(k_dec, v_dec, layer_idx=1, cache_kwargs={"position_ids": torch.tensor([[8]])})
         assert torch.isfinite(k_out).all()
         assert torch.isfinite(v_out).all()
 
     def test_len_tracks_updated_layers(self):
-        cache = self._make(ctx_len=16)
+        cache = QEffGPTOSSDynamicCache(config=_gptoss_cfg(num_layers=4, sliding_window=4))
         k, v = _kv(ctx_len=8)
         for i in range(3):
-            cache.update(
-                k,
-                v,
-                layer_idx=i,
-                cache_kwargs={
-                    "position_ids": _pids(8),
-                    "is_sliding": False,
-                    "sliding_window": 4,
-                },
-            )
+            cache.update(k, v, layer_idx=i, cache_kwargs={"position_ids": _pids(8)})
         assert len(cache) == 3
 
     def test_to_legacy_cache_shape(self):
-        cache = self._make(ctx_len=16)
+        cache = self._make()
         k, v = _kv(ctx_len=8)
-        cache.update(
-            k,
-            v,
-            layer_idx=0,
-            cache_kwargs={
-                "position_ids": _pids(8),
-                "is_sliding": False,
-                "sliding_window": 4,
-            },
-        )
+        cache.update(k, v, layer_idx=1, cache_kwargs={"position_ids": _pids(8)})
         legacy = cache.to_legacy_cache()
-        assert isinstance(legacy, tuple) and len(legacy) == 1
+        assert isinstance(legacy, tuple) and len(legacy) == 2  # layer 0 auto-appended + layer 1
         assert len(legacy[0]) == 2
 
     def test_multi_layer_independence(self):
         """Different layers must not interfere."""
-        cache = self._make(ctx_len=16)
-        for layer_idx in range(3):
+        cache = QEffGPTOSSDynamicCache(config=_gptoss_cfg(num_layers=4, sliding_window=4))
+        for layer_idx in [1, 3]:  # full_attention layers per _gptoss_cfg
             fill = float(layer_idx + 1) * 7.0
             k = torch.full((1, 2, 16, 8), fill)
             v = torch.full((1, 2, 16, 8), fill)
-            cache.update(
-                k,
-                v,
-                layer_idx=layer_idx,
-                cache_kwargs={
-                    "position_ids": _pids(16),
-                    "is_sliding": False,
-                    "sliding_window": 4,
-                },
-            )
-        for layer_idx in range(3):
+            cache.update(k, v, layer_idx=layer_idx, cache_kwargs={"position_ids": _pids(16)})
+        for layer_idx in [1, 3]:
             expected = float(layer_idx + 1) * 7.0
-            actual = cache.key_cache[layer_idx][0, 0, 0, 0].item()
+            actual = cache.layers[layer_idx].keys[0, 0, 0, 0].item()
             assert actual == pytest.approx(expected, abs=1e-4), f"Layer {layer_idx}: expected {expected}, got {actual}"
 
     def test_from_legacy_cache_populates_layers(self):
-        """
-        from_legacy_cache uses past[1][0].shape[2] for max_cache_len,
-        so we need at least 2 layers in the legacy tuple.
-        """
-        cfg = _gemma2_cfg(num_layers=4, sliding_window=4)
+        cfg = _gptoss_cfg(num_layers=4, sliding_window=4)
         k = torch.randn(1, 2, 8, 8)
         v = torch.randn(1, 2, 8, 8)
         past = [(k.clone(), v.clone()) for _ in range(4)]
-        cache = QEffHybridCacheForGPTOSS.from_legacy_cache(cfg, past_key_values=past)
+        cache = QEffGPTOSSDynamicCache.from_legacy_cache(cfg, past_key_values=past)
         assert len(cache) == 4
 
 
 # ---------------------------------------------------------------------------
-# Tests: QEffHybridCacheForGPTOSS — chunked update methods (GAP C)
+# Tests: QEffGPTOSSDynamicLayer — chunked update methods (GAP C)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.cache
-class TestQEffHybridCacheForGPTOSSChunkedMethods:
+class TestQEffGPTOSSDynamicCacheChunkedMethods:
     """
     Tests for full_cache_update_chunked and sliding_window_update_chunked
-    on QEffHybridCacheForGPTOSS.
+    on QEffGPTOSSDynamicCache.
 
-    Both methods require the layer to already exist in key_cache (not the first call).
+    Both methods require the layer to already exist (not the first call).
     batch_index=None is used to avoid the ONNX-export-only scatter_position_ids bug.
     """
 
-    def _make(self, ctx_len=16, sw=4):
-        cfg = _gemma2_cfg(sliding_window=sw)
-        return QEffHybridCacheForGPTOSS(cfg, batch_size=1, max_cache_len=ctx_len, sliding_window_len=sw)
+    def _make(self, sw=4):
+        return QEffGPTOSSDynamicCache(config=_gptoss_cfg(sliding_window=sw))
 
-    def _populate_layer(self, cache, layer_idx=0, ctx_len=16, sw=4):
-        """Populate a layer using update() so it exists in key_cache."""
+    def _populate_layer(self, cache, layer_idx=1, ctx_len=16):
+        """Populate a layer using update() so it exists in cache.layers."""
         k_init, v_init = _kv(ctx_len=ctx_len, fill=0.0)
-        cache.update(
-            k_init,
-            v_init,
-            layer_idx=layer_idx,
-            cache_kwargs={
-                "position_ids": _pids(ctx_len),
-                "is_sliding": False,
-                "sliding_window": sw,
-            },
-        )
+        cache.update(k_init, v_init, layer_idx=layer_idx, cache_kwargs={"position_ids": _pids(ctx_len)})
 
     def test_full_cache_update_chunked_returns_finite(self):
         """full_cache_update_chunked must return finite tensors."""
-        cache = self._make(ctx_len=16)
+        cache = self._make()
         self._populate_layer(cache)
         k_chunk, v_chunk = _kv(ctx_len=8)
         k_out, v_out = cache.full_cache_update_chunked(
-            k_chunk,
-            v_chunk,
-            layer_idx=0,
-            cache_kwargs={
-                "position_ids": _pids(8),
-                "batch_index": None,
-            },
+            k_chunk, v_chunk, layer_idx=1, cache_kwargs={"position_ids": _pids(8), "batch_index": None}
         )
         assert torch.isfinite(k_out).all(), "full_cache_update_chunked must return finite keys"
         assert torch.isfinite(v_out).all(), "full_cache_update_chunked must return finite values"
 
     def test_full_cache_update_chunked_scatter_at_correct_position(self):
         """full_cache_update_chunked must scatter at the correct position."""
-        cache = self._make(ctx_len=16)
+        cache = self._make()
         self._populate_layer(cache)
         # Write 77.0 at position 3
         k_chunk = torch.full((1, 2, 1, 8), 77.0)
@@ -978,11 +864,8 @@ class TestQEffHybridCacheForGPTOSSChunkedMethods:
         k_out, v_out = cache.full_cache_update_chunked(
             k_chunk,
             v_chunk,
-            layer_idx=0,
-            cache_kwargs={
-                "position_ids": torch.tensor([[3]]),
-                "batch_index": None,
-            },
+            layer_idx=1,
+            cache_kwargs={"position_ids": torch.tensor([[3]]), "batch_index": None},
         )
         assert k_out[0, 0, 3, 0].item() == pytest.approx(77.0, abs=1e-5), (
             f"Expected 77.0 at position 3, got {k_out[0, 0, 3, 0].item()}"
@@ -990,31 +873,19 @@ class TestQEffHybridCacheForGPTOSSChunkedMethods:
 
     def test_full_cache_update_chunked_prior_positions_not_corrupted(self):
         """Writing at position 3 must not corrupt positions 0..2."""
-        cache = self._make(ctx_len=16)
+        cache = self._make()
         # Initialize with sequential values
         k_init = torch.arange(16, dtype=torch.float32).reshape(1, 1, 16, 1).expand(1, 2, 16, 8).clone()
         v_init = k_init.clone()
-        cache.update(
-            k_init,
-            v_init,
-            layer_idx=0,
-            cache_kwargs={
-                "position_ids": _pids(16),
-                "is_sliding": False,
-                "sliding_window": 4,
-            },
-        )
+        cache.update(k_init, v_init, layer_idx=1, cache_kwargs={"position_ids": _pids(16)})
         # Write 99.0 at position 3
         k_chunk = torch.full((1, 2, 1, 8), 99.0)
         v_chunk = torch.full((1, 2, 1, 8), 99.0)
         k_out, _ = cache.full_cache_update_chunked(
             k_chunk,
             v_chunk,
-            layer_idx=0,
-            cache_kwargs={
-                "position_ids": torch.tensor([[3]]),
-                "batch_index": None,
-            },
+            layer_idx=1,
+            cache_kwargs={"position_ids": torch.tensor([[3]]), "batch_index": None},
         )
         assert k_out[0, 0, 3, 0].item() == pytest.approx(99.0, abs=1e-5)
         for pos in range(3):
@@ -1025,19 +896,15 @@ class TestQEffHybridCacheForGPTOSSChunkedMethods:
     def test_sliding_window_update_chunked_returns_finite(self):
         """sliding_window_update_chunked must return finite tensors."""
         sw = 4
-        cache = self._make(ctx_len=16, sw=sw)
-        self._populate_layer(cache, sw=sw)
+        cache = self._make(sw=sw)
+        self._populate_layer(cache, layer_idx=0)  # layer 0 is sliding_attention
         seq_len = 4
         k_chunk, v_chunk = _kv(ctx_len=seq_len)
         k_out, v_out = cache.sliding_window_update_chunked(
             k_chunk,
             v_chunk,
             layer_idx=0,
-            cache_kwargs={
-                "position_ids": _pids(seq_len),
-                "batch_index": None,
-                "sliding_window": sw,
-            },
+            cache_kwargs={"position_ids": _pids(seq_len), "batch_index": None, "sliding_window": sw},
         )
         assert torch.isfinite(k_out).all(), "sliding_window_update_chunked must return finite keys"
         assert torch.isfinite(v_out).all(), "sliding_window_update_chunked must return finite values"
@@ -1045,19 +912,15 @@ class TestQEffHybridCacheForGPTOSSChunkedMethods:
     def test_sliding_window_update_chunked_output_shape(self):
         """sliding_window_update_chunked output ctx_len must equal seq_len + sliding_window."""
         sw = 4
-        cache = self._make(ctx_len=16, sw=sw)
-        self._populate_layer(cache, sw=sw)
+        cache = self._make(sw=sw)
+        self._populate_layer(cache, layer_idx=0)
         seq_len = 4
         k_chunk, v_chunk = _kv(ctx_len=seq_len)
         k_out, v_out = cache.sliding_window_update_chunked(
             k_chunk,
             v_chunk,
             layer_idx=0,
-            cache_kwargs={
-                "position_ids": _pids(seq_len),
-                "batch_index": None,
-                "sliding_window": sw,
-            },
+            cache_kwargs={"position_ids": _pids(seq_len), "batch_index": None, "sliding_window": sw},
         )
         # ctx_len = position_ids.shape[1] + sliding_window_len = seq_len + sw
         expected_ctx_len = seq_len + sw
@@ -1066,8 +929,8 @@ class TestQEffHybridCacheForGPTOSSChunkedMethods:
     def test_sliding_window_update_chunked_with_offset_position(self):
         """sliding_window_update_chunked with position > sliding_window must use add_idx offset."""
         sw = 4
-        cache = self._make(ctx_len=16, sw=sw)
-        self._populate_layer(cache, sw=sw)
+        cache = self._make(sw=sw)
+        self._populate_layer(cache, layer_idx=0)
         seq_len = 4
         # Start at position 8 (> sw=4), so add_idx = 8 - 4 = 4
         k_chunk, v_chunk = _kv(ctx_len=seq_len)
@@ -1075,11 +938,7 @@ class TestQEffHybridCacheForGPTOSSChunkedMethods:
             k_chunk,
             v_chunk,
             layer_idx=0,
-            cache_kwargs={
-                "position_ids": _pids(seq_len, start=8),
-                "batch_index": None,
-                "sliding_window": sw,
-            },
+            cache_kwargs={"position_ids": _pids(seq_len, start=8), "batch_index": None, "sliding_window": sw},
         )
         assert torch.isfinite(k_out).all()
         assert torch.isfinite(v_out).all()
@@ -1110,30 +969,28 @@ class TestFromLegacyCacheClassmethods:
         assert hasattr(QEffHybridChunkedCache, "from_legacy_cache")
         assert callable(QEffHybridChunkedCache.from_legacy_cache)
 
-    def test_qeff_hybrid_cache_for_gptoss_has_from_legacy_cache(self):
-        """QEffHybridCacheForGPTOSS must have a from_legacy_cache classmethod."""
-        assert hasattr(QEffHybridCacheForGPTOSS, "from_legacy_cache")
-        assert callable(QEffHybridCacheForGPTOSS.from_legacy_cache)
+    def test_qeff_gptoss_dynamic_cache_has_from_legacy_cache(self):
+        """QEffGPTOSSDynamicCache must have a from_legacy_cache classmethod."""
+        assert hasattr(QEffGPTOSSDynamicCache, "from_legacy_cache")
+        assert callable(QEffGPTOSSDynamicCache.from_legacy_cache)
 
-    def test_qeff_hybrid_cache_for_gptoss_from_legacy_cache_creates_instance(self):
-        """QEffHybridCacheForGPTOSS.from_legacy_cache must create a valid instance."""
-        cfg = _gemma2_cfg(num_layers=4, sliding_window=4)
+    def test_qeff_gptoss_dynamic_cache_from_legacy_cache_creates_instance(self):
+        """QEffGPTOSSDynamicCache.from_legacy_cache must create a valid instance."""
+        cfg = _gptoss_cfg(num_layers=4, sliding_window=4)
         k = torch.randn(1, 2, 8, 8)
         v = torch.randn(1, 2, 8, 8)
-        # Need at least 2 layers so past[1][0].shape[2] is valid
         past = [(k.clone(), v.clone()) for _ in range(4)]
-        cache = QEffHybridCacheForGPTOSS.from_legacy_cache(cfg, past_key_values=past)
-        assert isinstance(cache, QEffHybridCacheForGPTOSS)
+        cache = QEffGPTOSSDynamicCache.from_legacy_cache(cfg, past_key_values=past)
+        assert isinstance(cache, QEffGPTOSSDynamicCache)
         assert len(cache) == 4
 
-    def test_qeff_hybrid_cache_for_gptoss_from_legacy_cache_preserves_shapes(self):
+    def test_qeff_gptoss_dynamic_cache_from_legacy_cache_preserves_shapes(self):
         """from_legacy_cache must preserve tensor shapes."""
-        cfg = _gemma2_cfg(num_layers=4, sliding_window=4)
+        cfg = _gptoss_cfg(num_layers=4, sliding_window=4)
         k = torch.randn(1, 2, 8, 8)
         v = torch.randn(1, 2, 8, 8)
         past = [(k.clone(), v.clone()) for _ in range(4)]
-        cache = QEffHybridCacheForGPTOSS.from_legacy_cache(cfg, past_key_values=past)
-        # After from_legacy_cache, key_cache[i] should have shape matching the input
+        cache = QEffGPTOSSDynamicCache.from_legacy_cache(cfg, past_key_values=past)
         for i in range(4):
-            assert cache.key_cache[i].shape[0] == 1  # batch
-            assert cache.key_cache[i].shape[1] == 2  # heads
+            assert cache.layers[i].keys.shape[0] == 1  # batch
+            assert cache.layers[i].keys.shape[1] == 2  # heads

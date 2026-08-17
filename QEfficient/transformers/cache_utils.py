@@ -1189,107 +1189,63 @@ class QEffSlidingWindowCache:
         return k_out, v_out
 
 
-class QEffHybridCacheForGPTOSS:
-    def __init__(self, config, batch_size, max_cache_len, sliding_window_len):
-        self.max_cache_len = max_cache_len
-        self.batch_size = batch_size
-        self.sliding_window_len = sliding_window_len
-        self.key_cache: List[torch.Tensor] = []
-        self.value_cache: List[torch.Tensor] = []
+class QEffGPTOSSDynamicLayer(QEffDynamicLayer):
+    def __init__(self, is_sliding: bool = False):
+        super().__init__()
+        self.is_sliding = is_sliding
 
     @classmethod
-    def from_legacy_cache(
-        cls, config, past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
-    ) -> "HybridCache":
-        """Converts a cache in the legacy cache format into an equivalent `DynamicCache`. Used for
-        backward compatibility."""
-        cache = cls(
-            config,
-            batch_size=past_key_values[0][0].shape[0],
-            max_cache_len=past_key_values[1][0].shape[2],
-            sliding_window_len=past_key_values[0][0].shape[2],
-        )
-        if past_key_values is not None:
-            for layer_idx in range(len(past_key_values)):
-                key_states, value_states = past_key_values[layer_idx]
-                cache.update(key_states, value_states, layer_idx)
-        return cache
-
-    def __len__(self):
-        """
-        Support for backwards-compatible `past_key_value` length, e.g. `len(past_key_value)`. This value corresponds
-        to the number of layers in the model.
-        """
-        return len(self.key_cache)
-
-    def get_seq_length(self, layer_idx: Optional[int] = 0, cache_position: Optional[torch.LongTensor] = None) -> int:
-        """Returns the sequence length of the cached states. A layer index can be optionally passed."""
-        # TODO: deprecate this function in favor of `cache_position`
-        is_empty_layer = (
-            len(self.key_cache) == 0  # no cache in any layer
-            or len(self.key_cache) <= layer_idx  # skipped `layer_idx` and hasn't run a layer with cache after it
-            or len(self.key_cache[layer_idx]) == 0  # the layer has no cache
-        )
-        layer_seq_length = self.key_cache[layer_idx].shape[-2] if not is_empty_layer else 0
-        return layer_seq_length
-
-    def to_legacy_cache(self) -> Tuple[Tuple[torch.Tensor], Tuple[torch.Tensor]]:
-        """Converts the `DynamicCache` instance into the its equivalent in the legacy cache format. Used for
-        backward compatibility."""
-        legacy_cache = ()
-        for layer_idx in range(len(self)):
-            legacy_cache += ((self.key_cache[layer_idx], self.value_cache[layer_idx]),)
-        return legacy_cache
+    def from_tensors(
+        cls, key_states: torch.Tensor, value_states: torch.Tensor, is_sliding: bool = False
+    ) -> "QEffGPTOSSDynamicLayer":
+        layer = cls(is_sliding=is_sliding)
+        layer.keys = key_states
+        layer.values = value_states
+        layer._mark_initialized(key_states)
+        return layer
 
     def write_only(
         self,
         key_states: torch.Tensor,
         value_states: torch.Tensor,
-        layer_idx: int,
         cache_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        if len(self.key_cache) <= layer_idx:
-            self.key_cache.append(key_states)
-            self.value_cache.append(value_states)
-            k_out, v_out = key_states, value_states
+        if self.keys is None:
+            self.keys = key_states
+            self.values = value_states
+            self._mark_initialized(self.keys)
+            return self.keys, self.values
+
+        position_ids = cache_kwargs.get("position_ids")
+        _, _, ctx_len, _ = self.keys.shape
+        batch_index = cache_kwargs.get("batch_index", None)
+
+        if self.is_sliding:
+            # prefill only mode we slice the passed key states to sliding window len and need to adjust kv_position_ids accordingly
+            kv_position_ids = torch.arange(ctx_len, dtype=torch.int64, device=position_ids.device).reshape(1, -1)
         else:
-            position_ids = cache_kwargs.get("position_ids")
-            is_sliding_layer = cache_kwargs.get("is_sliding")
-            _, _, ctx_len, _ = self.key_cache[layer_idx].shape
-            batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value form the kwargs
+            kv_position_ids = position_ids
 
-            if is_sliding_layer:
-                # prefill only mode we slice the passed key states to sliding window len and need to adjust kv_position_ids accordingly
-                kv_position_ids = torch.arange(ctx_len, dtype=torch.int64, device=position_ids.device).reshape(1, -1)
-            else:
-                kv_position_ids = position_ids
-
-            if batch_index is not None:
-                invalid_scatter_index = torch.iinfo(torch.int32).max
-                scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
-                self.key_cache[layer_idx] = ctx_scatter_cb(
-                    self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states
-                )
-                self.value_cache[layer_idx] = ctx_scatter_cb(
-                    self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states
-                )
-            else:
-                self.key_cache[layer_idx] = ctx_scatter(self.key_cache[layer_idx], kv_position_ids, key_states)
-                self.value_cache[layer_idx] = ctx_scatter(self.value_cache[layer_idx], kv_position_ids, value_states)
-            k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
-        return k_out, v_out
+        if batch_index is not None:
+            invalid_scatter_index = torch.iinfo(torch.int32).max
+            scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
+            self.keys = ctx_scatter_cb(self.keys, batch_index, scatter_position_ids, key_states)
+            self.values = ctx_scatter_cb(self.values, batch_index, scatter_position_ids, value_states)
+        else:
+            self.keys = ctx_scatter(self.keys, kv_position_ids, key_states)
+            self.values = ctx_scatter(self.values, kv_position_ids, value_states)
+        return self.keys, self.values
 
     def read_only_blockedKV(
         self,
         start_idx: torch.Tensor,
         end_idx: torch.Tensor,
-        layer_idx: int,
         cache_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         position_ids = cache_kwargs.get("position_ids")
-        batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value from the kwargs
+        batch_index = cache_kwargs.get("batch_index", None)
 
-        k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+        k_out, v_out = self.keys, self.values
 
         batch, num_kv_heads, _, _ = k_out.shape
 
@@ -1316,74 +1272,62 @@ class QEffHybridCacheForGPTOSS:
         self,
         key_states: torch.Tensor,
         value_states: torch.Tensor,
-        layer_idx: int,
-        cache_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        if len(self.key_cache) <= layer_idx:
-            self.key_cache.append(key_states)
-            self.value_cache.append(value_states)
-            k_out, v_out = key_states, value_states
+        cache_kwargs: Optional[dict[str, Any]] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if not self.is_sliding or cache_kwargs is None:
+            return super().update(key_states, value_states, cache_kwargs)
+
+        if self.keys is None:
+            self.keys = key_states
+            self.values = value_states
+            self._mark_initialized(self.keys)
+            return self.keys, self.values
+
+        self._mark_initialized(self.keys)
+        position_ids = cache_kwargs.get("position_ids")
+        batch_index = cache_kwargs.get("batch_index", None)
+        layer_ctx_len = self.keys.shape[2]
+
+        kv_position_ids = torch.where(
+            position_ids == -1, position_ids, _remainder_with_symbolic_divisor(position_ids, layer_ctx_len)
+        )
+
+        if batch_index is not None:
+            if torch.onnx.is_in_onnx_export():
+                invalid_scatter_index = torch.iinfo(torch.int32).max
+                scatter_position_ids = torch.where(kv_position_ids < 0, invalid_scatter_index, kv_position_ids)
+            else:
+                scatter_position_ids = kv_position_ids
+            self.keys = ctx_scatter_cb(self.keys, batch_index, scatter_position_ids, key_states)
+            self.values = ctx_scatter_cb(self.values, batch_index, scatter_position_ids, value_states)
         else:
-            position_ids = cache_kwargs.get("position_ids")
-            is_sliding_layer = cache_kwargs.get("is_sliding")
-            sliding_window = cache_kwargs.get("sliding_window")
-            batch_index = cache_kwargs.get("batch_index", None)  # Check and fetch batch index value from the kwargs
+            self.keys = ctx_scatter(self.keys, kv_position_ids, key_states)
+            self.values = ctx_scatter(self.values, kv_position_ids, value_states)
 
-            if is_sliding_layer:
-                kv_position_ids = torch.where(
-                    position_ids == -1,
-                    position_ids,
-                    _remainder_with_symbolic_divisor(position_ids, sliding_window),
-                )
-            else:
-                kv_position_ids = position_ids
+        k_out, v_out = self.keys, self.values
 
-            if batch_index is not None:
-                if torch.onnx.is_in_onnx_export():
-                    invalid_scatter_index = torch.iinfo(torch.int32).max
-                    scatter_position_ids = torch.where(kv_position_ids < 0, invalid_scatter_index, kv_position_ids)
-                else:
-                    scatter_position_ids = kv_position_ids
+        # Original Gather
+        ctx_len = self.keys.shape[2]
+        ctx_indices = torch.arange(ctx_len, dtype=position_ids.dtype, device=position_ids.device)[None, None, ...]
+        gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1).to(position_ids.dtype)
+        invalid_mask = ctx_indices > gather_limit
+        invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
+        ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
 
-                self.key_cache[layer_idx] = ctx_scatter_cb(
-                    self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states
-                )
-                self.value_cache[layer_idx] = ctx_scatter_cb(
-                    self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states
-                )
-            else:
-                self.key_cache[layer_idx] = ctx_scatter(self.key_cache[layer_idx], kv_position_ids, key_states)
-                self.value_cache[layer_idx] = ctx_scatter(self.value_cache[layer_idx], kv_position_ids, value_states)
+        if batch_index is not None:
+            k_out = ctx_gather_cb(k_out, batch_index, ctx_indices, ctx_len)
+            v_out = ctx_gather_cb(v_out, batch_index, ctx_indices, ctx_len)
+        else:
+            k_out = ctx_gather(k_out, ctx_indices, ctx_len)
+            v_out = ctx_gather(v_out, ctx_indices, ctx_len)
 
-            k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
-
-            # Original Gather
-            if is_sliding_layer:
-                ctx_len = self.key_cache[layer_idx].shape[2]
-            else:
-                ctx_len = cache_kwargs.get("CCL", self.key_cache[layer_idx].shape[2])
-
-            ctx_indices = torch.arange(ctx_len, dtype=position_ids.dtype, device=position_ids.device)[None, None, ...]
-            gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1).to(position_ids.dtype)
-            invalid_mask = ctx_indices > gather_limit
-            invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
-            ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
-
-            if batch_index is not None:
-                k_out = ctx_gather_cb(k_out, batch_index, ctx_indices, ctx_len)
-                v_out = ctx_gather_cb(v_out, batch_index, ctx_indices, ctx_len)
-            else:
-                k_out = ctx_gather(k_out, ctx_indices, ctx_len)
-                v_out = ctx_gather(v_out, ctx_indices, ctx_len)
-
-            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
+        v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
         return k_out, v_out
 
     def full_cache_update_chunked(
         self,
         key_states: torch.Tensor,
         value_states: torch.Tensor,
-        layer_idx: int,
         cache_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         position_ids = cache_kwargs.get("position_ids")
@@ -1394,17 +1338,13 @@ class QEffHybridCacheForGPTOSS:
         if batch_index is not None:
             if torch.onnx.is_in_onnx_export():
                 scatter_position_ids = torch.where(position_ids < 0, torch.iinfo(torch.int32).max, position_ids)
-            self.key_cache[layer_idx] = ctx_scatter_cb(
-                self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states
-            )
-            self.value_cache[layer_idx] = ctx_scatter_cb(
-                self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states
-            )
+            self.keys = ctx_scatter_cb(self.keys, batch_index, scatter_position_ids, key_states)
+            self.values = ctx_scatter_cb(self.values, batch_index, scatter_position_ids, value_states)
         else:
-            self.key_cache[layer_idx] = ctx_scatter(self.key_cache[layer_idx], position_ids, key_states)
-            self.value_cache[layer_idx] = ctx_scatter(self.value_cache[layer_idx], position_ids, value_states)
+            self.keys = ctx_scatter(self.keys, position_ids, key_states)
+            self.values = ctx_scatter(self.values, position_ids, value_states)
 
-        k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+        k_out, v_out = self.keys, self.values
 
         # Gather
         ctx_len = cache_kwargs.get("CCL", k_out.shape[2])
@@ -1426,7 +1366,6 @@ class QEffHybridCacheForGPTOSS:
         self,
         key_states: torch.Tensor,
         value_states: torch.Tensor,
-        layer_idx: int,
         cache_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         position_ids = cache_kwargs.get("position_ids")
@@ -1436,17 +1375,13 @@ class QEffHybridCacheForGPTOSS:
         if batch_index is not None:
             if torch.onnx.is_in_onnx_export():
                 scatter_position_ids = torch.where(position_ids < 0, torch.iinfo(torch.int32).max, position_ids)
-            self.key_cache[layer_idx] = ctx_scatter_cb(
-                self.key_cache[layer_idx], batch_index, scatter_position_ids, key_states
-            )
-            self.value_cache[layer_idx] = ctx_scatter_cb(
-                self.value_cache[layer_idx], batch_index, scatter_position_ids, value_states
-            )
+            self.keys = ctx_scatter_cb(self.keys, batch_index, scatter_position_ids, key_states)
+            self.values = ctx_scatter_cb(self.values, batch_index, scatter_position_ids, value_states)
         else:
-            self.key_cache[layer_idx] = ctx_scatter(self.key_cache[layer_idx], position_ids, key_states)
-            self.value_cache[layer_idx] = ctx_scatter(self.value_cache[layer_idx], position_ids, value_states)
+            self.keys = ctx_scatter(self.keys, position_ids, key_states)
+            self.values = ctx_scatter(self.values, position_ids, value_states)
 
-        k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
+        k_out, v_out = self.keys, self.values
         sliding_window_len = cache_kwargs.get("sliding_window")
 
         # Gather
@@ -1467,6 +1402,95 @@ class QEffHybridCacheForGPTOSS:
         v_out = torch.where(invalid_mask.unsqueeze(-1), torch.zeros_like(v_out, dtype=v_out.dtype), v_out)
 
         return k_out, v_out
+
+
+class QEffGPTOSSDynamicCache(QEffDynamicCache):
+    def __init__(
+        self,
+        config=None,
+        ddp_cache_data: Optional[Iterable[tuple[torch.Tensor, torch.Tensor]]] = None,
+        *args,
+        **kwargs,
+    ):
+        self.config = config
+        kwargs.pop("layer_classes", None)
+        kwargs.pop("layers", None)
+        kwargs.pop("layer_class_to_replicate", None)
+        Cache.__init__(self, layers=[], *args, **kwargs)
+        if ddp_cache_data is not None:
+            for layer_idx, (key_states, value_states) in enumerate(ddp_cache_data):
+                self.append_new_layers(layer_idx)
+                self.layers[layer_idx] = QEffGPTOSSDynamicLayer.from_tensors(
+                    key_states,
+                    value_states,
+                    is_sliding=self._is_sliding_layer(layer_idx),
+                )
+
+    def _is_sliding_layer(self, layer_idx: int) -> bool:
+        layer_types = getattr(self.config, "layer_types", None)
+        return (
+            layer_types is not None and layer_idx < len(layer_types) and layer_types[layer_idx] == "sliding_attention"
+        )
+
+    @property
+    def sliding_window_len(self) -> int:
+        return self.config.sliding_window
+
+    def append_new_layers(self, layer_idx: int) -> None:
+        while len(self.layers) <= layer_idx:
+            self.layers.append(QEffGPTOSSDynamicLayer(is_sliding=self._is_sliding_layer(len(self.layers))))
+
+    @classmethod
+    def from_legacy_cache(
+        cls,
+        config,
+        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
+    ) -> "QEffGPTOSSDynamicCache":
+        cache = cls(config=config)
+        if past_key_values is not None:
+            for layer_idx, (key_states, value_states) in enumerate(past_key_values):
+                cache.append_new_layers(layer_idx)
+                cache.layers[layer_idx] = QEffGPTOSSDynamicLayer.from_tensors(
+                    key_states,
+                    value_states,
+                    is_sliding=cache._is_sliding_layer(layer_idx),
+                )
+        return cache
+
+    @classmethod
+    def from_cache(cls, config, past_key_values: Cache) -> "QEffGPTOSSDynamicCache":
+        cache = cls(config=config)
+        for layer_idx, layer in enumerate(getattr(past_key_values, "layers", [])):
+            key_states = getattr(layer, "keys", None)
+            value_states = getattr(layer, "values", None)
+            if key_states is None or value_states is None:
+                continue
+            cache.append_new_layers(layer_idx)
+            cache.layers[layer_idx] = QEffGPTOSSDynamicLayer.from_tensors(
+                key_states,
+                value_states,
+                is_sliding=cache._is_sliding_layer(layer_idx),
+            )
+        return cache
+
+    def update(self, key_states, value_states, layer_idx, cache_kwargs=None):
+        self.append_new_layers(layer_idx)
+        return self.layers[layer_idx].update(key_states, value_states, cache_kwargs)
+
+    def write_only(self, key_states, value_states, layer_idx, cache_kwargs=None):
+        self.append_new_layers(layer_idx)
+        return self.layers[layer_idx].write_only(key_states, value_states, cache_kwargs)
+
+    def read_only_blockedKV(self, start_idx, end_idx, layer_idx, cache_kwargs=None):
+        return self.layers[layer_idx].read_only_blockedKV(start_idx, end_idx, cache_kwargs)
+
+    def full_cache_update_chunked(self, key_states, value_states, layer_idx, cache_kwargs=None):
+        self.append_new_layers(layer_idx)
+        return self.layers[layer_idx].full_cache_update_chunked(key_states, value_states, cache_kwargs)
+
+    def sliding_window_update_chunked(self, key_states, value_states, layer_idx, cache_kwargs=None):
+        self.append_new_layers(layer_idx)
+        return self.layers[layer_idx].sliding_window_update_chunked(key_states, value_states, cache_kwargs)
 
 
 class QEffGemma4DynamicCache(QEffDynamicCache):

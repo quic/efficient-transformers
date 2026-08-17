@@ -37,7 +37,7 @@ from QEfficient.blocking.attention_blocking import (
     past_key_value_update,
 )
 from QEfficient.customop import ctx_gather_3d_generalized, ctx_scatter_3d_generalized, ctx_scatter_3d_int
-from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
+from QEfficient.transformers.cache_utils import QEffGPTOSSDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
@@ -889,7 +889,7 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
             if self.sliding_window is not None:
                 sliding_window_len = past_key_values.sliding_window_len
                 short_read_idx = torch.arange(
-                    past_key_values.key_cache[self.layer_idx].shape[2], device=position_ids.device
+                    past_key_values.layers[self.layer_idx].keys.shape[2], device=position_ids.device
                 )
                 read_idx = short_read_idx + torch.where(
                     position_ids.max() > sliding_window_len - 1, position_ids.max() - sliding_window_len + 1, 0
@@ -1101,7 +1101,7 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            past_key_values = QEffHybridCacheForGPTOSS.from_legacy_cache(self.config, past_key_values)
+            past_key_values = QEffGPTOSSDynamicCache.from_legacy_cache(self.config, past_key_values)
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -1114,11 +1114,22 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        # target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.max_cache_len)
+        full_target_length = self.config.max_position_embeddings
+        sliding_target_length = self.config.sliding_window
+        if past_key_values is not None:
+            for layer_idx, layer_type in enumerate(self.config.layer_types[: len(past_key_values.layers)]):
+                layer_keys = past_key_values.layers[layer_idx].keys
+                if layer_keys is None or layer_keys.numel() == 0:
+                    continue
+                if layer_type == "sliding_attention":
+                    sliding_target_length = layer_keys.shape[-2]
+                else:
+                    full_target_length = layer_keys.shape[-2]
+
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=full_target_length)
         sliding_mask = _create_causal_mask(
             position_ids=position_ids,
-            target_length=past_key_values.max_cache_len,
+            target_length=sliding_target_length,
             sliding_window=self.config.sliding_window,
         )
         hidden_states = inputs_embeds
@@ -1202,7 +1213,7 @@ class QEffGptOssModel(GptOssModel):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            past_key_values = QEffHybridCacheForGPTOSS.from_legacy_cache(self.config, past_key_values)
+            past_key_values = QEffGPTOSSDynamicCache.from_legacy_cache(self.config, past_key_values)
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -1215,11 +1226,22 @@ class QEffGptOssModel(GptOssModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        # target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.max_cache_len)
+        full_target_length = self.config.max_position_embeddings
+        sliding_target_length = self.config.sliding_window
+        if past_key_values is not None:
+            for layer_idx, layer_type in enumerate(self.config.layer_types[: len(past_key_values.layers)]):
+                layer_keys = past_key_values.layers[layer_idx].keys
+                if layer_keys is None or layer_keys.numel() == 0:
+                    continue
+                if layer_type == "sliding_attention":
+                    sliding_target_length = layer_keys.shape[-2]
+                else:
+                    full_target_length = layer_keys.shape[-2]
+
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=full_target_length)
         sliding_mask = _create_causal_mask(
             position_ids=position_ids,
-            target_length=past_key_values.sliding_window_len,
+            target_length=sliding_target_length,
             sliding_window=past_key_values.sliding_window_len,
         )
 
