@@ -285,7 +285,15 @@ def pytest_sessionstart(session):
         logger.info("Skipping session-start cleanup: two-phase shared QEFF_HOME run")
         return
 
-    qeff_models_clean_up()
+    # Only the controller wipes the shared QEFF_HOME base, and it does so before
+    # any worker is spawned. Workers must not run this rmtree: it targets the base
+    # dir (the parent of every per-worker QEFF_HOME/TMPDIR subdir), so a late-booting
+    # worker's sessionstart would recursively delete a sibling worker's in-flight
+    # compile scratch, tearing qaic-compile temp files ('fd != -1') and QPC buffers
+    # ('Failed to create program with Qpc Buffer') mid-run. sessionfinish already
+    # guards this the same way.
+    if getattr(session.config, "workerinput", None) is None:
+        qeff_models_clean_up()
 
 
 def pytest_configure(config):
