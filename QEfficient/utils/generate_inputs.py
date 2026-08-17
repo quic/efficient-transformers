@@ -161,7 +161,7 @@ class InputHandler:
         num_kv_blocks = self._get_num_kv_blocks()
         kv_block_size = self._get_kv_block_size()
 
-        if self._is_paged_attention and num_kv_blocks and kv_block_size:
+        if self._is_paged_attention() and num_kv_blocks and kv_block_size:
             inputs["block_table"] = torch.arange(batch_size * num_kv_blocks, dtype=torch.int64).reshape(
                 batch_size, num_kv_blocks
             )
@@ -169,7 +169,7 @@ class InputHandler:
             pad_shape_paged = [batch_size * num_kv_blocks, self.padding_shape[1], kv_block_size, self.padding_shape[3]]
 
         for i in range(self.n_layer):
-            if self._is_paged_attention and num_kv_blocks and kv_block_size:
+            if self._is_paged_attention() and num_kv_blocks and kv_block_size:
                 pad_shape = pad_shape_paged
             else:
                 pad_shape = self._get_layer_cache_shape(i)
@@ -220,7 +220,7 @@ class InputHandler:
 
         num_kv_blocks = self._get_num_kv_blocks()
         kv_block_size = self._get_kv_block_size()
-        if self._is_paged_attention and num_kv_blocks and kv_block_size and "slot_id" in inputs:
+        if self._is_paged_attention() and num_kv_blocks and kv_block_size and "slot_id" in inputs:
             updated_inputs["slot_id"] = ((updated_inputs["position_ids"]) % kv_block_size).view(
                 updated_inputs["position_ids"].shape[0]
             )
@@ -260,7 +260,7 @@ class InputHandler:
         num_kv_blocks = self._get_num_kv_blocks()
         kv_block_size = self._get_kv_block_size()
 
-        if self._is_paged_attention and num_kv_blocks and kv_block_size:
+        if self._is_paged_attention() and num_kv_blocks and kv_block_size:
             inputs["block_table"] = np.arange(batch_size * num_kv_blocks, dtype=np.int64).reshape(
                 batch_size, num_kv_blocks
             )
@@ -268,7 +268,7 @@ class InputHandler:
             pad_shape_paged = [batch_size * num_kv_blocks, self.padding_shape[1], kv_block_size, self.padding_shape[3]]
 
         for i in range(self.n_layer):
-            if self._is_paged_attention and num_kv_blocks and kv_block_size:
+            if self._is_paged_attention() and num_kv_blocks and kv_block_size:
                 pad_shape = pad_shape_paged
             else:
                 pad_shape = self._get_layer_cache_shape(i)
@@ -302,7 +302,7 @@ class InputHandler:
 
         num_kv_blocks = self._get_num_kv_blocks()
         kv_block_size = self._get_kv_block_size()
-        if self._is_paged_attention and num_kv_blocks and kv_block_size and "slot_id" in inputs:
+        if self._is_paged_attention() and num_kv_blocks and kv_block_size and "slot_id" in inputs:
             updated_inputs["slot_id"] = ((updated_inputs["position_ids"]) % kv_block_size).reshape(
                 updated_inputs["position_ids"].shape[0]
             )
