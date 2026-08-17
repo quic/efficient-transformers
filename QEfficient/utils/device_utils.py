@@ -6,10 +6,47 @@
 # -----------------------------------------------------------------------------
 
 import math
+import re
 import subprocess
+from collections import defaultdict
 
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
+
+
+def get_qaic_mdp_device_groups(min_nsp: int = 16, devices_per_group: int = 4) -> list[list[int]]:
+    """Return ready, topology-compatible QAIC device groups suitable for parallel test workers."""
+    command = ["/opt/qti-aic/tools/qaic-util", "-q"]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+    except OSError:
+        logger.warning("Not a Cloud AI 100 device, command not found: %s", command)
+        return []
+
+    if result.returncode != 0:
+        logger.warning("Failed to query QAIC devices: %s", result.stderr.strip())
+        return []
+
+    groups = defaultdict(list)
+    records = re.split(r"(?=^QID \d+\s*$)", result.stdout, flags=re.MULTILINE)
+    for record in records:
+        qid_match = re.search(r"^QID (\d+)\s*$", record, flags=re.MULTILINE)
+        nsp_match = re.search(r"^\s*Nsp Total:(\d+)\s*$", record, flags=re.MULTILINE)
+        board_match = re.search(r"^\s*Board serial:(.+?)\s*$", record, flags=re.MULTILINE)
+        if not qid_match or not nsp_match or not board_match:
+            continue
+        if "Status:Ready" not in record or "HybridBoot+" not in record or "MDP+" not in record:
+            continue
+        if int(nsp_match.group(1)) < min_nsp:
+            continue
+        groups[board_match.group(1).strip()].append(int(qid_match.group(1)))
+
+    device_groups = []
+    for device_ids in groups.values():
+        device_ids.sort()
+        if len(device_ids) >= devices_per_group:
+            device_groups.append(device_ids[:devices_per_group])
+    return sorted(device_groups, key=lambda device_ids: device_ids[0])
 
 
 def is_qpc_size_gt_32gb(params: int, mxfp6: bool) -> bool:

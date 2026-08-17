@@ -12,7 +12,7 @@ def testFilter(String profile) {
 }
 
 def qaicWorkerCount(String profile) {
-    return profile == 'full_layers_model' ? '3' : '4'
+    return '3'
 }
 
 pipeline {
@@ -109,6 +109,7 @@ pipeline {
                            . preflight_qeff/bin/activate &&
                            mkdir -p /efficient-transformers/Non_qaic_llm &&
                            export TOKENIZERS_PARALLELISM=false &&
+                           export QEFF_ISOLATE_QAIC_WORKERS=1 &&
                            export QEFF_HOME=/efficient-transformers/Non_qaic_llm &&
                            pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log2.xml --durations=10 &&
                            junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
@@ -130,6 +131,7 @@ pipeline {
                     . preflight_qeff/bin/activate &&
                     mkdir -p /efficient-transformers/Non_qaic_feature &&
                     export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_ISOLATE_QAIC_WORKERS=1 &&
                     export QEFF_HOME=/efficient-transformers/Non_qaic_feature &&
                     pytest tests -m '(on_qaic) and (feature) and (not qnn) and ${TEST_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log2_feature.xml --durations=10 &&
                     junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml &&
@@ -148,6 +150,7 @@ pipeline {
                     . preflight_qeff/bin/activate &&
                     mkdir -p /efficient-transformers/Non_cli_qaic_multimodal &&
                     export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_ISOLATE_QAIC_WORKERS=1 &&
                     export QEFF_HOME=/efficient-transformers/Non_cli_qaic_multimodal &&
                     pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log6.xml --durations=10 &&
                     junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
@@ -166,6 +169,7 @@ pipeline {
                     . preflight_qeff/bin/activate &&
                     mkdir -p /efficient-transformers/Non_cli_qaic_reranker &&
                     export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_ISOLATE_QAIC_WORKERS=1 &&
                     export QEFF_HOME=/efficient-transformers/Non_cli_qaic_reranker &&
                     export QEFF_RERANKER_DOC_LIMIT=1 &&
                     pytest -q tests/transformers/models/reranker/test_reranker_mad.py --maxfail=1 -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log_reranker.xml --durations=10 &&
@@ -185,6 +189,7 @@ pipeline {
                     . preflight_qeff/bin/activate &&
                     mkdir -p /efficient-transformers/Non_cli_qaic_diffusion &&
                     export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_ISOLATE_QAIC_WORKERS=1 &&
                     export QEFF_HOME=/efficient-transformers/Non_cli_qaic_diffusion &&
                     export HF_HUB_CACHE=/huggingface_hub &&
                     pytest tests -m 'diffusion_models' --ignore tests/vllm  --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log_diffusion.xml --durations=10 &&
@@ -207,6 +212,7 @@ pipeline {
                     . preflight_qeff/bin/activate &&
                     mkdir -p /efficient-transformers/cli &&
                     export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_ISOLATE_QAIC_WORKERS=1 &&
                     export QEFF_HOME=/efficient-transformers/cli &&
                     pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log3.xml --durations=10 &&
                     junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
@@ -227,6 +233,7 @@ pipeline {
                     pip install -r examples/dynamo/causal_lm/requirements.txt &&
                     mkdir -p /efficient-transformers/dynamo_qeff_qaic &&
                     export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_ISOLATE_QAIC_WORKERS=1 &&
                     export QEFF_HOME=/efficient-transformers/dynamo_qeff_qaic &&
                     pytest tests/dynamo -m '(dynamo) and (on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log_dynamo_qaic.xml --durations=10 &&
                     junitparser merge tests/tests_log_dynamo_qaic.xml tests/tests_log.xml &&
