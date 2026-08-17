@@ -486,7 +486,7 @@ class QEffTextGenerationBase:
         self.full_batch_size = (
             full_batch_size if full_batch_size else self._fetch_full_batch_size()
         )  # Check and fetch full batch size if CB is enabled
-        self.num_kv_blocks = num_kv_blocks if num_kv_blocks else None
+        self.num_kv_blocks = num_kv_blocks
         self.kv_block_size = -(-self._ctx_len // self.num_kv_blocks) if num_kv_blocks else 1
 
         # Initialize the storage variables.
