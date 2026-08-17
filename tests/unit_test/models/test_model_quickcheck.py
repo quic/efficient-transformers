@@ -48,6 +48,7 @@ from transformers import (
     Qwen2Config,
 )
 from transformers.models.qwen3.configuration_qwen3 import Qwen3Config
+from transformers.models.qwen3_asr.configuration_qwen3_asr import Qwen3ASRConfig, Qwen3ASREncoderConfig
 from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5Config, Qwen3_5TextConfig, Qwen3_5VisionConfig
 from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import (
     Qwen3_5MoeConfig,
@@ -487,6 +488,39 @@ def _tiny_qwen3_config() -> Qwen3Config:
         head_dim=8,
         max_position_embeddings=32,
         dtype="float32",
+    )
+
+
+def _tiny_qwen3_asr_config() -> Qwen3ASRConfig:
+    text_config = Qwen3Config(
+        vocab_size=64,
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=8,
+        max_position_embeddings=128,
+        dtype="float32",
+    )
+    audio_config = Qwen3ASREncoderConfig(
+        num_mel_bins=8,
+        encoder_layers=1,
+        encoder_attention_heads=2,
+        encoder_ffn_dim=32,
+        d_model=16,
+        output_dim=16,
+        downsample_hidden_size=4,
+        n_window=50,
+        n_window_infer=100,
+        max_position_embeddings=13,
+    )
+    return Qwen3ASRConfig(
+        text_config=text_config,
+        audio_config=audio_config,
+        audio_token_id=3,
+        pad_token_id=0,
+        eos_token_id=1,
     )
 
 
@@ -1191,6 +1225,40 @@ def test_audio_embedding_ctc_cpu_parity_and_export(tmp_path):
     ort_logits = ort_session.run(None, {"input_values": input_values.detach().numpy()})[0]
 
     assert np.allclose(hf_logits, ort_logits, atol=1e-5)
+
+
+@pytest.mark.llm_model
+def test_qwen3_asr_cpu_parity_and_export(tmp_path):
+    config = _tiny_qwen3_asr_config()
+    torch.manual_seed(0)
+    hf_model = AutoModelForSpeechSeq2Seq.from_config(config).eval()
+    qeff_model = QEFFAutoModelForSpeechSeq2Seq(deepcopy(hf_model))
+    inputs = qeff_model.model.get_dummy_inputs()
+    runtime_inputs = {name: value for name, value in inputs.items() if name != "past_key_values"}
+
+    with torch.no_grad():
+        hf_logits = hf_model(**runtime_inputs).logits[:, -1, :].detach().numpy()
+        qeff_logits = qeff_model.model(**runtime_inputs).logits.squeeze(1).detach().numpy()
+        qeff_export_logits = qeff_model.model(**inputs).logits.detach().numpy()
+
+    assert np.allclose(hf_logits, qeff_logits, atol=1e-5)
+
+    onnx_path = _exported_onnx_path(qeff_model.export(tmp_path / "qwen3-asr"))
+    ort_session = _ort_session(onnx_path)
+    ort_inputs = {}
+    for input_info in ort_session.get_inputs():
+        name = input_info.name
+        if name in inputs:
+            ort_inputs[name] = inputs[name].detach().numpy()
+        elif name.startswith("past_key."):
+            layer_idx = int(name.split(".")[1])
+            ort_inputs[name] = inputs["past_key_values"][layer_idx][0].detach().numpy()
+        elif name.startswith("past_value."):
+            layer_idx = int(name.split(".")[1])
+            ort_inputs[name] = inputs["past_key_values"][layer_idx][1].detach().numpy()
+
+    ort_logits = ort_session.run(None, ort_inputs)[0]
+    assert np.allclose(qeff_export_logits, ort_logits, atol=1e-4)
 
 
 @pytest.mark.llm_model

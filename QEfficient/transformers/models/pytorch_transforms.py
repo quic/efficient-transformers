@@ -99,11 +99,16 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeForCausalLM,
     GraniteMoeModel,
     GraniteMoeMoE,
-    GraniteMoeParallelExperts,
     GraniteMoeRMSNorm,
     GraniteMoeRotaryEmbedding,
-    GraniteMoeTopKGating,
 )
+try:
+    from transformers.models.granitemoe.modeling_granitemoe import GraniteMoeParallelExperts, GraniteMoeTopKGating
+except ImportError:
+    from transformers.models.granitemoe.modeling_granitemoe import (
+        GraniteMoeExperts as GraniteMoeParallelExperts,
+        GraniteMoeTopKRouter as GraniteMoeTopKGating,
+    )
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
     LlamaDecoderLayer,
@@ -210,6 +215,13 @@ from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3ForCausalLM,
     Qwen3Model,
     Qwen3RMSNorm,
+)
+from transformers.models.qwen3_asr.modeling_qwen3_asr import (
+    Qwen3ASRAudioAttention,
+    Qwen3ASRAudioEncoderLayer,
+    Qwen3ASREncoder,
+    Qwen3ASRForConditionalGeneration,
+    Qwen3ASRModel,
 )
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5Attention,
@@ -561,6 +573,13 @@ from QEfficient.transformers.models.qwen3.modeling_qwen3 import (
     QEffQwen3ForCausalLM,
     QEffQwen3Model,
 )
+from QEfficient.transformers.models.qwen3_asr.modeling_qwen3_asr import (
+    QEffQwen3ASRAudioAttention,
+    QEffQwen3ASRAudioEncoderLayer,
+    QEffQwen3ASREncoder,
+    QEffQwen3ASRForConditionalGeneration,
+    QEffQwen3ASRModel,
+)
 from QEfficient.transformers.models.qwen3_5.modeling_qwen3_5 import (
     QEffQwen3_5Attention,
     QEffQwen3_5DecoderLayer,
@@ -883,6 +902,12 @@ class KVCacheTransform(ModuleMappingTransform):
         Qwen3DecoderLayer: QEffQwen3DecoderLayer,
         Qwen3Model: QEffQwen3Model,
         Qwen3ForCausalLM: QEffQwen3ForCausalLM,
+        # Qwen3 ASR
+        Qwen3ASRAudioAttention: QEffQwen3ASRAudioAttention,
+        Qwen3ASRAudioEncoderLayer: QEffQwen3ASRAudioEncoderLayer,
+        Qwen3ASREncoder: QEffQwen3ASREncoder,
+        Qwen3ASRModel: QEffQwen3ASRModel,
+        Qwen3ASRForConditionalGeneration: QEffQwen3ASRForConditionalGeneration,
         # Qwen3_5
         Qwen3_5GatedDeltaNet: QEffQwen3_5GatedDeltaNet,
         Qwen3_5DecoderLayer: QEffQwen3_5DecoderLayer,
