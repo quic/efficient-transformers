@@ -300,6 +300,20 @@ def image_text_to_text_model_artifacts(image_text_to_text_model_artifacts_file):
     save_artifacts(image_text_to_text_model_artifacts_file, artifacts)
 
 
+@pytest.fixture(scope="session")
+def diffuser_model_artifacts_file(artifacts_dir):
+    """Path to shared artifacts JSON file."""
+    return artifacts_dir / "diffuser_model_artifacts.json"
+
+
+@pytest.fixture
+def diffuser_model_artifacts(diffuser_model_artifacts_file):
+    """Fixture to get/set model artifacts."""
+    artifacts = load_artifacts(diffuser_model_artifacts_file)
+    yield artifacts
+    save_artifacts(diffuser_model_artifacts_file, artifacts)
+
+
 @pytest.fixture
 def get_pipeline_config():
     """Load pipeline configs."""
