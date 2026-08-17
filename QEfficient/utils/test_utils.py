@@ -98,6 +98,8 @@ def set_num_layers_vlm(config: AutoConfig, n_layer: int = -1):
     elif hasattr(config, "text_config"):
         config.text_config.num_hidden_layers = n_layer
         config.vision_config.num_hidden_layers = n_layer
+        if hasattr(config.vision_config, "vt_num_hidden_layers"):
+            config.vision_config.vt_num_hidden_layers = n_layer
         if hasattr(config.vision_config, "depth"):
             config.vision_config.depth = n_layer
         if hasattr(config.vision_config, "deepstack_visual_indexes"):
@@ -487,6 +489,7 @@ class ModelConfig:
     }
 
     DUAL_QPC_MODELS = {
+        "moonshotai/Kimi-K2.5",
         "OpenGVLab/InternVL2_5-1B",
         "OpenGVLab/InternVL3_5-1B",
         "Qwen/Qwen2.5-VL-3B-Instruct",
