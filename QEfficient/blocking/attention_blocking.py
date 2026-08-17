@@ -274,13 +274,6 @@ def generic_blocked_attention_interface(
                 "block_table": block_table,
                 "slot_id": slot_id,
             }
-            if sliding_window is not None:
-                cache_kwargs.update(
-                    {
-                        "is_sliding": sliding_window is not None,
-                        "sliding_window": past_key_value.sliding_window_len,
-                    }
-                )
             past_key_value.write_only_pagedAttention(key, value, module.layer_idx, cache_kwargs)
         elif prefill_only:
             if sliding_window is not None:
