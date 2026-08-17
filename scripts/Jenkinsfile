@@ -69,6 +69,9 @@ pipeline {
         TEST_FILTER = testFilter(params.TEST_PROFILE)
         QAIC_N      = "${params.QAIC_WORKERS}"
         MM_COMPILE_N = "${params.MM_COMPILE_WORKERS}"
+        // Half the card count, because the QAIC LLM stage gives each worker two cards
+        // (QEFF_QAIC_CARDS_PER_WORKER=2). See that stage for why.
+        LLM_EXEC_N  = "${Math.max(1, (params.QAIC_WORKERS as Integer).intdiv(2))}"
         // Consumed by the tier hook in tests/conftest.py. Passed on each `docker exec`
         // rather than the `docker run` above, because the container is created in the
         // Install stage and `docker run -e` cannot carry a per-stage value.
@@ -80,20 +83,40 @@ pipeline {
             steps {
                 sh '''
                     . ~/.bashrc
-                    sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    apt update &&
-                    DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv python3.12-dev build-essential &&
-                    python3.12 -m venv preflight_qeff &&
-                    . preflight_qeff/bin/activate &&
-                    pip install --upgrade pip setuptools &&
-                    pip install .[test] &&
-                    pip install junitparser pytest-xdist &&
-                    pip install librosa==0.10.2 soundfile==0.13.1 &&
-                    pip install qwen-vl-utils==0.0.14 &&
-                    pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1 &&
-                    pip install onnx_ir
+                    # Caches live on the node outside ${WORKSPACE}, so the deleteDir() in post
+                    # cannot wipe them; only a dependency change re-downloads the wheels.
+                    CI_CACHE_DIR="${CI_CACHE_DIR:-$HOME/.cache/qeff-ci}"
+                    mkdir -p "$CI_CACHE_DIR/uv" "$CI_CACHE_DIR/pip"
+                    
+                    sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} \
+                        -v ./:/efficient-transformers \
+                        -v ${HF_PATH}:${DOCKER_HF_PATH} \
+                        -v "$CI_CACHE_DIR/uv":/root/.cache/uv \
+                        -v "$CI_CACHE_DIR/pip":/root/.cache/pip \
+                        ${DOCKER_LATEST}:master_latest
+                   
+                    sudo docker exec ${BUILD_TAG} bash -ec "
+                    cd /efficient-transformers
+                    export UV_CACHE_DIR=/root/.cache/uv
+                    export PIP_CACHE_DIR=/root/.cache/pip
+                    
+                    # Every dependency is a binary wheel, so the image needs only python3.12 with
+                    # venv -- no toolchain, no headers -- which it normally already provides.
+                    if ! python3.12 -c 'import venv' 2>/dev/null; then
+                      apt-get update
+                      DEBIAN_FRONTEND=noninteractive apt-get install -y tzdata python3.12-venv
+                    fi
+                    python3.12 -m venv preflight_qeff
+                    . preflight_qeff/bin/activate
+                    pip install uv==0.11.16
+                    # One resolution pass. Split installs let a later one upgrade an already
+                    # pinned dependency: librosa on its own replaced numpy 1.26.4 with 2.5.2.
+                    uv pip install '.[test]' junitparser librosa==0.10.2 soundfile==0.13.1 timm==1.0.14 einops==0.8.1
+                    # Overrides the qwen-vl-utils==0.0.8 pin for Qwen3-VL embedding tokenization,
+                    # which needs process_vision_info(image_patch_size=...) from >=0.0.14. The two
+                    # pins cannot co-resolve, hence a separate --no-deps pass; bumping the
+                    # pyproject pin is the real fix and would remove this line.
+                    uv pip install --no-deps qwen-vl-utils==0.0.14
                     rm -rf QEfficient"
                 '''
             }
@@ -113,8 +136,8 @@ pipeline {
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_cli_qaic &&
                            export TMPDIR=$PWD/.qeff_tmp/export_compile &&
-                           rm -rf $TMPDIR &&
-                           mkdir -p $TMPDIR &&
+                           rm -rf \$TMPDIR &&
+                           mkdir -p \$TMPDIR &&
                            pytest tests -m '(not on_qaic) and (not finetune) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 4 --junitxml=tests/tests_log1.xml --durations=10 &&
                            junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
                            deactivate"
@@ -125,6 +148,11 @@ pipeline {
 
                 stage('QAIC LLM') {
                     steps {
+                       // QEFF_QAIC_CARDS_PER_WORKER=2 because the per-PR causal tests compile at
+                       // the default num_cores=16 -- a full 16-NSP card -- so a worker masked to a
+                       // single card has no room to create the Program and every device test fails
+                       // with "Failed to create program with Qpc Buffer". Two cards per worker at
+                       // LLM_EXEC_N workers keeps the slices non-overlapping: gw0 -> 0,1 gw1 -> 2,3.
                        timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 240, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                            sh '''
                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
@@ -134,10 +162,11 @@ pipeline {
                            export TOKENIZERS_PARALLELISM=false &&
                            export QEFF_HOME=$PWD/Non_qaic_llm &&
                            export TMPDIR=$PWD/.qeff_tmp/qaic_llm &&
-                           rm -rf $TMPDIR &&
-                           mkdir -p $TMPDIR &&
+                           rm -rf \$TMPDIR &&
+                           mkdir -p \$TMPDIR &&
                            export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
-                           pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${QAIC_N} --dist worksteal --junitxml=tests/tests_log2.xml --durations=10 &&
+                           export QEFF_QAIC_CARDS_PER_WORKER=2 &&
+                           pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${LLM_EXEC_N} --dist worksteal --junitxml=tests/tests_log2.xml --durations=10 &&
                            junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
                            deactivate"
                            '''
