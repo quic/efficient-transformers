@@ -366,7 +366,6 @@ def test_per_pr_causal_fp32_export_fp16_compile_subfunction_cb_ccl(model_config,
 
 
 @pytest.mark.dummy_layers
-@pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_config", test_models_per_pr_causal, ids=_per_pr_id)
 def test_per_pr_causal_bf16_subfunction_cb_ccl_compile_only(model_config, manual_cleanup):
