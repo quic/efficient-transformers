@@ -101,8 +101,16 @@
     "audio_embedding_models": [
         "facebook/wav2vec2-base-960h", 
         "facebook/wav2vec2-large-960h-lv60-self",
-        "facebook/wav2vec2-base",
         "facebook/wav2vec2-large"
+    ],
+    "diffuser_flux_models": [
+        "black-forest-labs/FLUX.1-schnell"
+    ],
+    "diffuser_wan_models": [
+        "Wan-AI/Wan2.2-T2V-A14B-Diffusers"
+    ],
+    "diffuser_wan_i2v_models": [
+        "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
     ],
     "sequence_models": [
         "meta-llama/Llama-Prompt-Guard-2-22M"

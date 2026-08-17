@@ -143,5 +143,95 @@
         "mad_tolerance": 0.1
       }
     }
+  },
+  "diffuser_flux_configs": {
+    "compile_config": "tests/nightly_pipeline/diffusers/flux_compile_config.json",
+    "model_setup": {
+      "height": 64,
+      "width": 64
+    },
+    "pipeline_params": {
+      "test_prompt": "A cat holding a sign that says hello world",
+      "num_inference_steps": 2,
+      "guidance_scale": 0.0,
+      "max_sequence_length": 256,
+      "use_onnx_subfunctions": true,
+      "validate_gen_img": true,
+      "min_image_variance": 1.0
+    },
+    "mad_validation": {
+      "tolerances": {
+        "end_to_end": 0.35
+      }
+    }
+  },
+  "diffuser_wan_configs": {
+    "compile_config": "tests/nightly_pipeline/diffusers/wan_compile_config.json",
+    "model_setup": {
+      "height": 48,
+      "width": 64,
+      "num_frames": 81
+    },
+    "pipeline_params": {
+      "test_prompt": "A cat walking in a garden",
+      "num_inference_steps": 2,
+      "guidance_scale": 1.0,
+      "guidance_scale_2": 1.0,
+      "max_sequence_length": 512,
+      "use_onnx_subfunctions": true,
+      "validate_gen_video": true,
+      "min_video_variance": 1.0
+    },
+    "mad_validation": {
+      "tolerances": {
+        "end_to_end": 1.5
+      }
+    }
+  },
+  "diffuser_wan_non_unified_configs": {
+    "compile_config": "tests/nightly_pipeline/diffusers/wan_non_unified_compile_config.json",
+    "model_setup": {
+      "height": 48,
+      "width": 64,
+      "num_frames": 81
+    },
+    "pipeline_params": {
+      "test_prompt": "A cat walking in a garden",
+      "num_inference_steps": 2,
+      "guidance_scale": 1.0,
+      "guidance_scale_2": 1.0,
+      "max_sequence_length": 512,
+      "use_onnx_subfunctions": false,
+      "validate_gen_video": true,
+      "min_video_variance": 1.0
+    },
+    "mad_validation": {
+      "tolerances": {
+        "end_to_end": 1.5
+      }
+    }
+  },
+  "diffuser_wan_i2v_configs": {
+    "compile_config": "tests/nightly_pipeline/diffusers/wan_i2v_compile_config.json",
+    "model_setup": {
+      "max_area": 3072,
+      "num_frames": 81
+    },
+    "pipeline_params": {
+      "test_prompt": "A cat walking in a garden with flowing motion",
+      "test_image_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/diffusers/astronaut.jpg",
+      "num_inference_steps": 2,
+      "guidance_scale": 1.0,
+      "guidance_scale_2": 1.0,
+      "max_sequence_length": 512,
+      "use_onnx_subfunctions": true,
+      "validate_gen_video": true,
+      "min_video_variance": 1.0
+    },
+    "mad_validation": {
+      "tolerances": {
+        "end_to_end": 3.0
+      }
+    }
   }
 }
