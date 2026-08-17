@@ -225,8 +225,11 @@ def _qaic_device_for_xdist_worker():
 
 @pytest.fixture(scope="session", autouse=True)
 def _qeff_home_per_xdist_worker():
-    """Give each xdist worker its own QEFF_HOME subdir so compile-cache writes
-    don't race. Serial runs are untouched.
+    """Give each xdist worker its own QEFF_HOME and TMPDIR subdirs.
+
+    This keeps compile-cache writes from racing and prevents concurrent
+    qaic-compile processes from sharing the stage-level scratch directory.
+    Serial runs are untouched.
 
     Setting os.environ alone is not enough because QEfficient.utils.cache and
     QEfficient.utils.export_utils bind QEFF_HOME to a module-level constant at
@@ -257,7 +260,10 @@ def _qeff_home_per_xdist_worker():
     base = os.environ.get("QEFF_HOME") or str(_cache_mod.QEFF_HOME)
     worker_home = Path(base) / f"worker_{idx}"
     worker_home.mkdir(parents=True, exist_ok=True)
+    worker_tmp = worker_home / ".tmp"
+    worker_tmp.mkdir(parents=True, exist_ok=True)
     os.environ["QEFF_HOME"] = str(worker_home)
+    os.environ["TMPDIR"] = str(worker_tmp)
     _cache_mod.QEFF_HOME = worker_home
     _export_mod.QEFF_HOME = worker_home
 
