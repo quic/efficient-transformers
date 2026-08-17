@@ -16,6 +16,7 @@ The tier hook narrows the model matrix a CI run covers (``all`` / ``priority`` /
 
 import ast
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -365,6 +366,32 @@ def test_repeated_model_type_for_one_card_is_accepted(tmp_path, monkeypatch):
         assert index["acme/dup"] == "llama"
     finally:
         tier._model_identity_index.cache_clear()
+
+
+@pytest.mark.cpu_only
+def test_xdist_worker_gets_isolated_qeff_home_and_tmpdir(tmp_path, monkeypatch):
+    import QEfficient.utils.cache as cache_module
+    import QEfficient.utils.export_utils as export_module
+    import tests.conftest as test_config
+
+    base_home = tmp_path / "qeff_home"
+    monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw2")
+    monkeypatch.setenv("QEFF_HOME", str(base_home))
+    monkeypatch.delenv("QEFF_PER_PR_SHARED_HOME", raising=False)
+    monkeypatch.delenv("QEFF_PER_PR_COMPILE_WARM_ONLY", raising=False)
+    monkeypatch.setattr(cache_module, "QEFF_HOME", base_home)
+    monkeypatch.setattr(export_module, "QEFF_HOME", base_home)
+
+    test_config._qeff_home_per_xdist_worker.__wrapped__()
+
+    worker_home = base_home / "worker_2"
+    worker_tmp = worker_home / ".tmp"
+    assert Path(os.environ["QEFF_HOME"]) == worker_home
+    assert Path(os.environ["TMPDIR"]) == worker_tmp
+    assert worker_home.is_dir()
+    assert worker_tmp.is_dir()
+    assert cache_module.QEFF_HOME == worker_home
+    assert export_module.QEFF_HOME == worker_home
 
 
 # --------------------------------------------------------------------------- #
