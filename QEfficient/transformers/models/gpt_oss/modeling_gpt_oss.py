@@ -836,11 +836,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
             attention_mask = attention_mask
 
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
-        use_blocking = (
-            blocking_config is not None
-            and blocking_config.mode.is_prefill
-            and (self.sliding_window is None)
-        )
+        use_blocking = blocking_config is not None and blocking_config.mode.is_prefill and (self.sliding_window is None)
 
         if use_blocking:
             attention_interface = generic_blocked_attention_interface

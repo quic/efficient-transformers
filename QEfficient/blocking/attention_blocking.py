@@ -77,9 +77,7 @@ class BlockingMode(str, Enum):
         is_mla: bool = False,
         mla_kwargs: Optional[Dict[str, Any]] = None,
     ) -> "BlockingMode":
-        if prefill_only:
-            mode = blocking_config.mode
-        elif is_mla:
+        if is_mla:
             _mla_map = {cls.KV: cls.KV_MLA, cls.H: cls.H_MLA}
             mode = _mla_map[blocking_config.mode]
         else:
@@ -105,9 +103,19 @@ class BlockingMode(str, Enum):
 
         _REQUIRED_MLA_KWARGS: Dict["BlockingMode", list] = {
             cls.KV_MLA: ["per_head_k_up_normal", "per_head_v_up", "mla_absorption"],
-            cls.H_MLA:  ["q_a_proj_out", "fusedqk", "q_nope", "q_pe", "kva", "k_pe",
-                         "per_head_q_up", "per_head_k_up", "per_head_v_up", "per_head_k_up_normal",
-                         "mla_absorption"],
+            cls.H_MLA: [
+                "q_a_proj_out",
+                "fusedqk",
+                "q_nope",
+                "q_pe",
+                "kva",
+                "k_pe",
+                "per_head_q_up",
+                "per_head_k_up",
+                "per_head_v_up",
+                "per_head_k_up_normal",
+                "mla_absorption",
+            ],
         }
         if mode in _REQUIRED_MLA_KWARGS:
             mla = mla_kwargs or {}
@@ -132,27 +140,25 @@ class AttentionBlockingConfig:
 
 
 # Required AttentionBlockingConfig fields per blocking mode.
-# headpar_split is NOT listed for KV_HEADPAR: the configurator always sets it
-# (defaulting to aic_num_cores), so it never needs to be in the user-facing qaic_config.
 BLOCKING_MODE_REQUIRED_PARAMS: Dict[BlockingMode, list] = {
     # decode
-    BlockingMode.KV:            ["num_kv_blocks"],
+    BlockingMode.KV: ["num_kv_blocks"],
     BlockingMode.KV_BATCH_FOLD: ["num_kv_blocks"],
-    BlockingMode.KV_HEADPAR:    ["num_kv_blocks"],
-    BlockingMode.Q:             ["num_q_blocks"],
-    BlockingMode.H:             ["head_block_size"],
-    BlockingMode.QKV:           ["num_kv_blocks", "num_q_blocks"],
-    BlockingMode.HQ:            ["head_block_size", "num_q_blocks"],
-    BlockingMode.HKV:           ["head_block_size", "num_kv_blocks"],
-    BlockingMode.HQKV:          ["head_block_size", "num_kv_blocks", "num_q_blocks"],
-    BlockingMode.BHQKV:         ["head_block_size", "num_kv_blocks", "num_q_blocks", "num_batch_blocks"],
+    BlockingMode.KV_HEADPAR: ["num_kv_blocks"],
+    BlockingMode.Q: ["num_q_blocks"],
+    BlockingMode.H: ["head_block_size"],
+    BlockingMode.QKV: ["num_kv_blocks", "num_q_blocks"],
+    BlockingMode.HQ: ["head_block_size", "num_q_blocks"],
+    BlockingMode.HKV: ["head_block_size", "num_kv_blocks"],
+    BlockingMode.HQKV: ["head_block_size", "num_kv_blocks", "num_q_blocks"],
+    BlockingMode.BHQKV: ["head_block_size", "num_kv_blocks", "num_q_blocks", "num_batch_blocks"],
     # MLA
-    BlockingMode.KV_MLA:        ["num_kv_blocks"],
-    BlockingMode.H_MLA:         ["head_block_size"],
+    BlockingMode.KV_MLA: ["num_kv_blocks"],
+    BlockingMode.H_MLA: ["head_block_size"],
     # prefill
-    BlockingMode.PREFILL_Q:     ["num_q_blocks"],
-    BlockingMode.PREFILL_KV:    ["num_kv_blocks"],
-    BlockingMode.PREFILL_QKV:   ["num_kv_blocks", "num_q_blocks"],
+    BlockingMode.PREFILL_Q: ["num_q_blocks"],
+    BlockingMode.PREFILL_KV: ["num_kv_blocks"],
+    BlockingMode.PREFILL_QKV: ["num_kv_blocks", "num_q_blocks"],
     BlockingMode.PREFILL_ONLINE: ["num_kv_blocks", "num_q_blocks"],
 }
 
@@ -236,7 +242,9 @@ def generic_blocked_attention_interface(
     prefill_only: bool = False,
     **kwargs,
 ):
-    strategy = _STRATEGIES[BlockingMode.get_final_mode(blocking_config, prefill_only=prefill_only, is_mla=is_mla, mla_kwargs=mla_kwargs)]
+    strategy = _STRATEGIES[
+        BlockingMode.get_final_mode(blocking_config, prefill_only=prefill_only, is_mla=is_mla, mla_kwargs=mla_kwargs)
+    ]
 
     cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
 

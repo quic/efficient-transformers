@@ -15,7 +15,7 @@ from torch import nn
 from transformers.cache_utils import Cache
 
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
+from QEfficient.utils.constants import HEADPAR_MASKED_ATTENTION_VALUE, MIN_MASKED_ATTENTION_VALUE
 
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
@@ -42,7 +42,6 @@ def _normalize_int(value: Optional[torch.Tensor | int]) -> int:
     if isinstance(value, torch.Tensor):
         return int(value.item())
     return int(value) if value is not None else 0
-
 
 
 def update_running_softmax(
@@ -433,7 +432,9 @@ def blocked_kv_attention_forward_headpar_offline(
             valid_in_chunk = kv_len_block - chunk_start
             key_idx = torch.arange(split_block_len, device=query.device)
             pad_mask = key_idx.unsqueeze(0) >= valid_in_chunk.unsqueeze(1)
-            attn_weights_block = attn_weights_block.masked_fill(pad_mask.view(1, 1, split, 1, split_block_len), -3.0e4)
+            attn_weights_block = attn_weights_block.masked_fill(
+                pad_mask.view(1, 1, split, 1, split_block_len), HEADPAR_MASKED_ATTENTION_VALUE
+            )
 
         split_causal_masks = []
         for s in range(split):
@@ -454,12 +455,12 @@ def blocked_kv_attention_forward_headpar_offline(
             split_causal_masks.append(mask_s)
         causal_mask = torch.stack(split_causal_masks, dim=2)  # [B, 1, split, G*Q, split_block_len]
 
-        attn_weights_block = attn_weights_block.masked_fill(causal_mask, -3.0e4)
+        attn_weights_block = attn_weights_block.masked_fill(causal_mask, HEADPAR_MASKED_ATTENTION_VALUE)
 
         max_block = attn_weights_block.max(dim=-1).values
         exp_block = torch.exp(attn_weights_block - max_block.unsqueeze(-1))
         if skip_kv and (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
-            max_block = torch.where(skip_future, torch.full_like(max_block, -3.0e4), max_block)
+            max_block = torch.where(skip_future, torch.full_like(max_block, HEADPAR_MASKED_ATTENTION_VALUE), max_block)
             exp_block = torch.where(skip_future, torch.zeros_like(exp_block), exp_block)
 
         v_block = past_key_value.read_only_blocked_V(start_index, end_index, layer_idx, cache_kwargs)
