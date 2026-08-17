@@ -109,13 +109,20 @@ def _make_serializable(obj):
 
 
 def _merge_artifacts(existing_data, new_data):
-    """Merge per-model payloads without dropping updates from other workers."""
+    """Recursively merge nested artifact dicts without dropping sibling keys.
+
+    Works for any nesting depth:
+      - causal/sequence:  {model: payload}
+      - audio:            {model: {dtype: payload}}
+      - embedding:        {model: {dtype: {pooling: payload}}}
+    """
     merged = dict(existing_data)
-    for model_name, model_payload in new_data.items():
-        if isinstance(model_payload, dict) and isinstance(merged.get(model_name), dict):
-            merged[model_name] = {**merged[model_name], **model_payload}
+    for key, new_val in new_data.items():
+        existing_val = merged.get(key)
+        if isinstance(new_val, dict) and isinstance(existing_val, dict):
+            merged[key] = _merge_artifacts(existing_val, new_val)
         else:
-            merged[model_name] = model_payload
+            merged[key] = new_val
     return merged
 
 

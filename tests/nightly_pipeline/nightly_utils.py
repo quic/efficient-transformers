@@ -106,7 +106,6 @@ def pre_generate_utils(model_name, model_class, get_pipeline_config, model_artif
     compile_params = pipeline_configs[model_class][0].get("compile_params", {})
     generate_params = pipeline_configs[model_class][0].get("generate_params", {})
 
-    # Check artifacts exist - support both nested (dtype_key) and flat structure
     if model_name not in model_artifacts:
         pytest.skip(f"No artifacts for {model_name}. Run export and compile first.")
 
@@ -283,9 +282,6 @@ def compare_with_golden(qpc_output: dict, golden: dict, tolerance: float = 0.0) 
             continue
 
         qpc_val = qpc_output[key]
-
-        print(f"\nComparing key '{key}': golden={golden_val} qpc={qpc_val}")
-        print(f"Type: golden={type(golden_val)} qpc={type(qpc_val)}")
 
         if isinstance(golden_val, str):
             # Exact string comparison e.g. transcription
