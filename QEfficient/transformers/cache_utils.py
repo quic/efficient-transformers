@@ -762,7 +762,6 @@ class QEffDynamicCache(Cache):
         return self.layers[layer_idx].read_only_blockedKV(start_index, end_index, cache_kwargs)
 
     def read_only_pagedAttention(self, block_index, updated, layer_idx, cache_kwargs):
-        # def read_only_pagedAttention(self, start_index, end_index, layer_idx, cache_kwargs):
         """
         Reads the `key_states` and `value_states` for the layer `layer_idx`.
 
