@@ -246,10 +246,14 @@ def _qeff_home_per_xdist_worker():
 
     Exception: in the two-phase compile-warm mode, every worker must share one
     QEFF_HOME so the execute phase hits the QPC cache warmed by the compile
-    phase; the per-worker remap is skipped (see _is_two_phase_shared_home_session).
+    phase; the per-worker QEFF_HOME remap is skipped (see
+    _is_two_phase_shared_home_session). The per-worker TMPDIR remap is NOT
+    skipped: QEFF_HOME is content-addressed so concurrent workers write disjoint
+    QPC dirs, but qaic-compile's scratch is TMPDIR-relative, so a shared TMPDIR
+    lets concurrent compiles tear each other's intermediate files and emit a
+    valid-looking but numerically wrong QPC. That warm QPC is then cached and
+    reused by the execute phase, surfacing as a silent on-device parity failure.
     """
-    if _is_two_phase_shared_home_session():
-        return
     idx = _xdist_worker_index()
     if idx is None:
         return
@@ -258,6 +262,17 @@ def _qeff_home_per_xdist_worker():
     import QEfficient.utils.export_utils as _export_mod
 
     base = os.environ.get("QEFF_HOME") or str(_cache_mod.QEFF_HOME)
+
+    # Two-phase shared-home run: keep QEFF_HOME shared (Phase B must hit Phase A's
+    # warm QPCs) but still give each worker a private TMPDIR to isolate the
+    # qaic-compile scratch. The private TMPDIR nests under the shared base so the
+    # caller's single rm -rf of QEFF_HOME still reclaims it.
+    if _is_two_phase_shared_home_session():
+        worker_tmp = Path(base) / ".worker_tmp" / f"worker_{idx}"
+        worker_tmp.mkdir(parents=True, exist_ok=True)
+        os.environ["TMPDIR"] = str(worker_tmp)
+        return
+
     worker_home = Path(base) / f"worker_{idx}"
     worker_home.mkdir(parents=True, exist_ok=True)
     worker_tmp = worker_home / ".tmp"

@@ -56,7 +56,7 @@ pipeline {
         string(
             name: 'QAIC_WORKERS',
             defaultValue: '4',
-            description: 'pytest-xdist worker count for the QAIC LLM stage (one card per worker)'
+            description: 'Physical QAIC card count on the CI node. The device-bound execute passes derive their xdist worker count from this (cards / QEFF_QAIC_CARDS_PER_WORKER) so one worker owns each non-overlapping card slice. It is NOT a compile-parallelism knob -- raising it claims more cards than exist. Use MM_COMPILE_WORKERS for compile-phase parallelism.'
         )
         string(
             name: 'MM_COMPILE_WORKERS',
@@ -69,8 +69,10 @@ pipeline {
         TEST_FILTER = testFilter(params.TEST_PROFILE)
         QAIC_N      = "${params.QAIC_WORKERS}"
         MM_COMPILE_N = "${params.MM_COMPILE_WORKERS}"
-        // Half the card count, because the QAIC LLM stage gives each worker two cards
-        // (QEFF_QAIC_CARDS_PER_WORKER=2). See that stage for why.
+        // Device-bound execute worker count: cards / QEFF_QAIC_CARDS_PER_WORKER. Per-worker
+        // is 2 (see the QAIC LLM stage), so this is half the card count, giving each worker
+        // its own non-overlapping two-card slice. Must never exceed cards / per_worker or
+        // multiple workers collapse onto one slice and oversubscribe its NSP cores.
         LLM_EXEC_N  = "${Math.max(1, (params.QAIC_WORKERS as Integer).intdiv(2))}"
         // Consumed by the tier hook in tests/conftest.py. Passed on each `docker exec`
         // rather than the `docker run` above, because the container is created in the
@@ -124,7 +126,11 @@ pipeline {
 
         stage('HL API Tests') {
             when { expression { params.RUN_HL_APIS } }
-            parallel {
+            // Sequential, not parallel: Export & Compile is CPU-bound and now runs at -n auto,
+            // claiming the whole host. QAIC LLM's own per-test export+compile (ahead of each
+            // device-pinned execute) also needs host CPU, so running the two stages at once
+            // would have both competing for the same cores.
+            stages {
                 stage('Export & Compile') {
                     steps {
                        timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 60, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
@@ -138,7 +144,7 @@ pipeline {
                            export TMPDIR=$PWD/.qeff_tmp/export_compile &&
                            rm -rf $PWD/.qeff_tmp/export_compile &&
                            mkdir -p $PWD/.qeff_tmp/export_compile &&
-                           pytest tests -m '(not on_qaic) and (not finetune) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 4 --junitxml=tests/tests_log1.xml --durations=10 &&
+                           pytest tests -m '(not on_qaic) and (not finetune) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n auto --junitxml=tests/tests_log1.xml --durations=10 &&
                            junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -148,32 +154,37 @@ pipeline {
 
                 stage('QAIC LLM') {
                     steps {
-                       // QEFF_QAIC_CARDS_PER_WORKER=2 because the per-PR causal tests compile at
-                       // the default num_cores=16 -- a full 16-NSP card -- so a worker masked to a
-                       // single card has no room to create the Program and every device test fails
-                       // with "Failed to create program with Qpc Buffer". Two cards per worker at
-                       // LLM_EXEC_N workers keeps the slices non-overlapping: gw0 -> 0,1 gw1 -> 2,3.
-                       timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 240, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
-                           sh '''
-                           sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
-                           cd /efficient-transformers &&
-                           . preflight_qeff/bin/activate &&
-                           mkdir -p $PWD/Non_qaic_llm &&
-                           export TOKENIZERS_PARALLELISM=false &&
-                           export QEFF_HOME=$PWD/Non_qaic_llm &&
-                           export TMPDIR=$PWD/.qeff_tmp/qaic_llm &&
-                           rm -rf $PWD/.qeff_tmp/qaic_llm &&
-                           mkdir -p $PWD/.qeff_tmp/qaic_llm &&
-                           export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
-                           export QEFF_QAIC_CARDS_PER_WORKER=2 &&
-                           pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${LLM_EXEC_N} --dist worksteal --junitxml=tests/tests_log2.xml --durations=10 &&
-                           junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
-                           deactivate"
-                           '''
-                       }
-                   }
+                        // QEFF_QAIC_CARDS_PER_WORKER=2 because the per-PR causal tests compile at
+                        // the default num_cores=16 -- a full 16-NSP card -- so a worker masked to a
+                        // single card has no room to create the Program and every device test fails
+                        // with "Failed to create program with Qpc Buffer". Two cards per worker at
+                        // LLM_EXEC_N workers keeps the slices non-overlapping: gw0 -> 0,1 gw1 -> 2,3.
+                        //
+                        // -k excludes the bf16 compile-only variant: it now runs under Export &
+                        // Compile instead (see its un-marking comment in test_causal_lm_models.py).
+                        // It still carries the llm_model marker this stage selects on, so without
+                        // the exclusion it would also collect here and redundantly recompile.
+                        timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 240, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
+                            sh '''
+                            sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            mkdir -p $PWD/Non_qaic_llm &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=$PWD/Non_qaic_llm &&
+                            export TMPDIR=$PWD/.qeff_tmp/qaic_llm &&
+                            rm -rf $PWD/.qeff_tmp/qaic_llm &&
+                            mkdir -p $PWD/.qeff_tmp/qaic_llm &&
+                            export QEFF_NUM_QAIC_CARDS=${QAIC_N} &&
+                            export QEFF_QAIC_CARDS_PER_WORKER=2 &&
+                            pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' -k 'not test_per_pr_causal_bf16_subfunction_cb_ccl_compile_only' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${LLM_EXEC_N} --dist worksteal --junitxml=tests/tests_log2.xml --durations=10 &&
+                            junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
                 }
-                
+
             }
         }
         stage('QAIC FEATURE') {
