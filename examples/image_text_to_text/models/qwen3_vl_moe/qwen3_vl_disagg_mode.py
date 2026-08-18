@@ -80,8 +80,12 @@ def parse_args():
     )
     p.add_argument("--num-kv-blocks", type=int, default=NUM_KV_BLOCKS)
     p.add_argument("--num-q-blocks", type=int, default=NUM_Q_BLOCKS, help="Prefill Q blocks for headpar mode")
-    p.add_argument("--prefill-ql-chunk", type=int, default=PREFILL_QL_CHUNK, help="Prefill Q chunk size (batch_fold only)")
-    p.add_argument("--prefill-n-rep-chunk", type=int, default=PREFILL_N_REP_CHUNK, help="Prefill n_rep_chunk (batch_fold only)")
+    p.add_argument(
+        "--prefill-ql-chunk", type=int, default=PREFILL_QL_CHUNK, help="Prefill Q chunk size (batch_fold only)"
+    )
+    p.add_argument(
+        "--prefill-n-rep-chunk", type=int, default=PREFILL_N_REP_CHUNK, help="Prefill n_rep_chunk (batch_fold only)"
+    )
     p.add_argument(
         "--moe-prefill-packed-chunk-size",
         type=int,
@@ -353,9 +357,7 @@ def main():
         lang_inputs["position_ids"] = inputs["position_ids"]
         lang_inputs.pop("attention_mask")
     else:
-        lang_inputs["position_ids"] = np.where(
-            lang_inputs.pop("attention_mask"), np.arange(padded_len), -1
-        )
+        lang_inputs["position_ids"] = np.where(lang_inputs.pop("attention_mask"), np.arange(padded_len), -1)
 
     lang_inputs["image_idx"] = np.array([[0]])
 
@@ -377,11 +379,19 @@ def main():
 
     for i in range(num_chunks):
         if args.mode == "batch_fold":
-            chunk_inputs["input_ids"] = lang_inputs["input_ids"][0:1, i * args.prefill_seq_len : (i + 1) * args.prefill_seq_len]
-            chunk_inputs["position_ids"] = lang_inputs["position_ids"][:, 0:1, i * args.prefill_seq_len : (i + 1) * args.prefill_seq_len]
+            chunk_inputs["input_ids"] = lang_inputs["input_ids"][
+                0:1, i * args.prefill_seq_len : (i + 1) * args.prefill_seq_len
+            ]
+            chunk_inputs["position_ids"] = lang_inputs["position_ids"][
+                :, 0:1, i * args.prefill_seq_len : (i + 1) * args.prefill_seq_len
+            ]
         else:
-            chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * args.prefill_seq_len : (i + 1) * args.prefill_seq_len]
-            chunk_inputs["position_ids"] = lang_inputs["position_ids"][..., i * args.prefill_seq_len : (i + 1) * args.prefill_seq_len]
+            chunk_inputs["input_ids"] = lang_inputs["input_ids"][
+                :, i * args.prefill_seq_len : (i + 1) * args.prefill_seq_len
+            ]
+            chunk_inputs["position_ids"] = lang_inputs["position_ids"][
+                ..., i * args.prefill_seq_len : (i + 1) * args.prefill_seq_len
+            ]
         outputs = lang_prefill_session.run(chunk_inputs)
         for j in range(num_layers):
             chunk_inputs[f"past_key.{j}"] = outputs[f"past_key.{j}_RetainedState"]
