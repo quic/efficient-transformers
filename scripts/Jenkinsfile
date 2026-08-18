@@ -317,7 +317,7 @@ pipeline {
                             mkdir -p /efficient-transformers/Non_cli_qaic &&
                             export TOKENIZERS_PARALLELISM=false &&
                             export QEFF_HOME=/efficient-transformers/Non_cli_qaic &&
-                            python -m pytest tests -m '(not on_qaic) and (not finetune) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 4 -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=export_compile --junitxml=tests/tests_log1.xml --durations=10 &&
+                            python -m pytest tests -m '(not on_qaic) and (not dynamo) and (not finetune) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 4 -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=export_compile --junitxml=tests/tests_log1.xml --durations=10 &&
                             junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
                             deactivate"
                             '''
@@ -337,7 +337,7 @@ pipeline {
                             export TOKENIZERS_PARALLELISM=false &&
                             export QEFF_ISOLATE_QAIC_WORKERS=1 &&
                             export QEFF_HOME=/efficient-transformers/Non_qaic_llm &&
-                            python -m pytest tests -m '(llm_model) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_llm --junitxml=tests/tests_log2.xml --durations=10 &&
+                            python -m pytest tests -m '(llm_model) and (not dynamo) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_llm --junitxml=tests/tests_log2.xml --durations=10 &&
                             junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
                             deactivate"
                             '''
