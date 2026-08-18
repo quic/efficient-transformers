@@ -16,6 +16,7 @@ import argparse
 from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
+from QEfficient.utils.constants import DEFAULT_AIC_HW_VERSION, DEFAULT_AIC_NUM_CORES
 
 
 def main():
@@ -29,8 +30,8 @@ def main():
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=128, help="Context (KV-cache) length")
     parser.add_argument("--generation-len", type=int, default=100, help="Number of new tokens to generate")
-    parser.add_argument("--num-cores", type=int, default=16, help="Number of AI 100 cores")
-    parser.add_argument("--aic-hw-version", type=str, default="ai100", help="AIC hardware version")
+    parser.add_argument("--num-cores", type=int, default=DEFAULT_AIC_NUM_CORES, help="Number of AI 100 cores")
+    parser.add_argument("--aic-hw-version", type=str, default=DEFAULT_AIC_HW_VERSION, help="AIC hardware version")
     parser.add_argument(
         "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],

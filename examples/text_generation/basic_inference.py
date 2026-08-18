@@ -10,6 +10,7 @@ import argparse
 from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
+from QEfficient.utils.constants import DEFAULT_AIC_HW_VERSION, DEFAULT_AIC_NUM_CORES
 
 
 def main():
@@ -22,8 +23,8 @@ def main():
     parser.add_argument("--dynamo", action="store_true", help="Export via dynamo")
     parser.add_argument("--use-onnx-subfunctions", action="store_true", help="Use subfunctions while exporting")
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
-    parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
-    parser.add_argument("--aic-hw-version", type=str, default="ai100", help="Version of aic hardware")
+    parser.add_argument("--num-cores", type=int, default=DEFAULT_AIC_NUM_CORES, help="Number of cores")
+    parser.add_argument("--aic-hw-version", type=str, default=DEFAULT_AIC_HW_VERSION, help="Version of aic hardware")
     parser.add_argument(
         "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
