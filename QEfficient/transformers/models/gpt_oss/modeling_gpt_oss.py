@@ -900,7 +900,9 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
                 v_cache = value_states[:, :, read_idx, :]
             else:
                 k_cache, v_cache = key_states, value_states
-            _, _ = past_key_values.write_only(k_cache, v_cache, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_values.write_only(
+                k_cache, v_cache, self.layer_idx, cache_kwargs
+            )  # dynamo change
 
         if self.sliding_window is not None:
             attention_mask = sliding_mask

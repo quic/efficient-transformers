@@ -29,7 +29,7 @@ tokenizer = AutoTokenizer.from_pretrained(model_id)
 config = AutoConfig.from_pretrained(model_id)
 config.num_hidden_layers = 4
 
-dynamo = True
+dynamo = False
 
 PREFILL_SEQ_LEN = 256
 CTX_LEN = 256
