@@ -20,6 +20,7 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
     generic_blocked_mla_attention_interface,
 )
+from QEfficient.customop.matmulnbits import QuantLinearTorchFunction
 from QEfficient.customop.quantization_ops import CastToUInt4Func, DequantizeLinearFunc
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.customop.utils import select_interface
@@ -946,6 +947,100 @@ class QEffDeepseekV3MoE(QEffMoEBlockMixin, nn.Module):
 
     def apply_shared_experts(self, out: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
         return out + self.shared_experts(residual)
+
+    def moe_old(
+        self,
+        hidden_states: torch.Tensor,
+        topk_indices: torch.Tensor,
+        topk_weights: torch.Tensor,
+    ):
+        """Debug-only reference path; not used by optimized forward/export."""
+        seq_len, _ = hidden_states.shape
+        hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
+        final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)
+
+        for i in range(self.gate.top_k):
+            expert_idx = topk_indices[:, i]
+            curr_weight = topk_weights[:, i]
+            gate_qweight = self.all_gate_qweight[expert_idx].reshape(
+                seq_len * self.out_features_gate,
+                self.in_features_gate // self.group_size,
+                (self.group_size * self.bits) // 8,
+            )
+            gate_scales = self.all_gate_scales[expert_idx].reshape(
+                seq_len * self.out_features_gate * (self.in_features_gate // self.group_size)
+            )
+            gate_qzeros = self.all_gate_qzeros[expert_idx].reshape(
+                seq_len * self.out_features_gate, self.in_features_gate // self.group_size
+            )
+            gate_gidx = self.all_gate_gidx[expert_idx].reshape(seq_len * self.in_features_gate)
+
+            up_qweight = self.all_up_qweight[expert_idx].reshape(
+                seq_len * self.out_features_up,
+                self.in_features_up // self.group_size,
+                (self.group_size * self.bits) // 8,
+            )
+            up_scales = self.all_up_scales[expert_idx].reshape(
+                seq_len * self.out_features_up * (self.in_features_up // self.group_size)
+            )
+            up_qzeros = self.all_up_qzeros[expert_idx].reshape(
+                seq_len * self.out_features_up, self.in_features_up // self.group_size
+            )
+            up_gidx = self.all_up_gidx[expert_idx].reshape(seq_len * self.in_features_up)
+
+            down_qweight = self.all_down_qweight[expert_idx].reshape(
+                seq_len * self.out_features_down,
+                self.in_features_down // self.group_size,
+                (self.group_size * self.bits) // 8,
+            )
+            down_scales = self.all_down_scales[expert_idx].reshape(
+                seq_len * self.out_features_down * (self.in_features_down // self.group_size)
+            )
+            down_qzeros = self.all_down_qzeros[expert_idx].reshape(
+                seq_len * self.out_features_down, self.in_features_down // self.group_size
+            )
+            down_gidx = self.all_down_gidx[expert_idx].reshape(seq_len * self.in_features_down)
+
+            gate_out = QuantLinearTorchFunction.apply(
+                hidden_states,
+                gate_qweight,
+                gate_scales,
+                gate_qzeros,
+                gate_gidx if self.act_order else None,
+                self.bits,
+                self.group_size,
+                self.in_features_gate,
+                self.out_features_gate * seq_len,
+            )
+
+            up_out = QuantLinearTorchFunction.apply(
+                hidden_states,
+                up_qweight,
+                up_scales,
+                up_qzeros,
+                up_gidx if self.act_order else None,
+                self.bits,
+                self.group_size,
+                self.in_features_up,
+                self.out_features_up * seq_len,
+            )
+
+            hidden = self.act_fn(gate_out) * up_out
+            down_out = QuantLinearTorchFunction.apply(
+                hidden,
+                down_qweight,
+                down_scales,
+                down_qzeros,
+                down_gidx if self.act_order else None,
+                self.bits,
+                self.group_size,
+                self.in_features_down,
+                self.out_features_down,
+            )
+            down_out = down_out.reshape(seq_len, self.out_features_down)
+            final_hidden_states += down_out * curr_weight.unsqueeze(1)
+
+        return final_hidden_states
 
     def moe_waa_unpack(self, hidden_states: torch.Tensor, topk_indices: torch.Tensor, topk_weights: torch.Tensor):
         gate_proj_unpacked = CastToUInt4Func.apply(self.all_gate_qweight)
