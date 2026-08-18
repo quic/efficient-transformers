@@ -4093,7 +4093,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 bs, num_kv_blocks
             )
             example_inputs["slot_id"] = torch.zeros(bs, dtype=torch.int64)
-            dynamic_axes["block_table"] = {0: "batch_size", 1: "num_kv_blocks"}
+            dynamic_axes["block_table"] = {0: "batch_size"}
             dynamic_axes["slot_id"] = {0: "batch_size"}
             # Assuming 4d pkv, might have to recheck for GPTBigCode with 3d pkv
             pkv_dynamic_axes = {
