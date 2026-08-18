@@ -186,12 +186,25 @@ pipeline {
                         sh '''
                             . ~/.bashrc
                             sudo docker rm -f ${BUILD_TAG} >/dev/null 2>&1 || true
-                            sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} -e TMPDIR=/efficient-transformers/.ci-tmp/default -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
+                            export QEFF_PIP_CACHE_PATH="${QEFF_PIP_CACHE_PATH:-${HOME}/.cache/qeff-pip}"
+                            export QEFF_APT_ARCHIVES_PATH="${QEFF_APT_ARCHIVES_PATH:-${HOME}/.cache/qeff-apt/archives}"
+                            export QEFF_APT_LISTS_PATH="${QEFF_APT_LISTS_PATH:-${HOME}/.cache/qeff-apt/lists}"
+                            mkdir -p "${QEFF_PIP_CACHE_PATH}" "${QEFF_APT_ARCHIVES_PATH}/partial" "${QEFF_APT_LISTS_PATH}/partial"
+                            sudo docker run --privileged -dit --name ${BUILD_TAG} \
+                            -e HF_TOKEN=${HF_TOKEN} \
+                            -e TMPDIR=/efficient-transformers/.ci-tmp/default \
+                            -e PIP_CACHE_DIR=/root/.cache/pip \
+                            -e PIP_NO_CACHE_DIR=false \
+                            -v ./:/efficient-transformers \
+                            -v ${HF_PATH}:${DOCKER_HF_PATH} \
+                            -v ${QEFF_PIP_CACHE_PATH}:/root/.cache/pip \
+                            -v ${QEFF_APT_ARCHIVES_PATH}:/var/cache/apt/archives \
+                            -v ${QEFF_APT_LISTS_PATH}:/var/lib/apt/lists \
+                            ${DOCKER_LATEST}:master_latest
                             sudo docker exec ${BUILD_TAG} bash -c "
                             cd /efficient-transformers &&
                             mkdir -p /efficient-transformers/.ci-tmp/{default,export_compile,qaic_llm,qaic_feature,qaic_multimodal,qaic_reranker,qaic_diffusion,cli,dynamo_qaic,finetune} &&
-                            apt clean &&
-                            rm -rf /var/lib/apt/lists/* &&
+                            rm -f /etc/apt/apt.conf.d/docker-clean &&
                             apt update &&
                             DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv python3.12-dev build-essential &&
                             python3.12 -m venv preflight_qeff &&
