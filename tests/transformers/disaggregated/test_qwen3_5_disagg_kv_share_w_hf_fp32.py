@@ -8,9 +8,8 @@
 """Token-level parity tests for the Qwen3.5-MoE disaggregated prefill/decode DMA path.
 
 Run the nightly full-model HF/ORT/QAIC three-way parity test with:
-    pytest -m "on_qaic and multimodal and nightly_disagg" \
-        tests/transformers/disaggregated/test_qwen3_5_disagg_kv_share_w_hf_fp32.py \
-        -k test_qwen3_5_disagg_kv_share_qaic_vs_ort_fp32
+    pytest -m "nightly_disagg" \
+        tests/transformers/disaggregated/test_qwen3_5_disagg_kv_share_w_hf_fp32.py
 
 Nightly full-model compile scaling knobs:
     QEFF_QWEN35_NIGHTLY_FULL_MODEL_VISION_NUM_DEVICES=4
@@ -51,8 +50,7 @@ from tests.transformers.disaggregated._disagg_ort_test_utils import (
     vision_feed_for_ort as _vision_feed_for_ort,
 )
 
-MODEL_NAME = "Qwen/Qwen3.6-35B-A3B"
-# MODEL_NAME = "tiny-random/qwen3.5-moe"
+MODEL_NAME = "tiny-random/qwen3.5-moe"
 THREE_WAY_PARITY_MODEL_NAME = os.environ.get("QEFF_QWEN35_THREE_WAY_MODEL_NAME", "Qwen/Qwen3.5-35B-A3B")
 TINY_RANDOM_MODEL_NAMES = {"tiny-random/qwen3.5-moe"}
 
@@ -1057,7 +1055,6 @@ def _create_disagg_sessions(qpc_paths: dict[str, str], sessions: list):
     decode_session = QAICInferenceSession(qpc_paths["decode"], kv_dma_share=True)
     sessions.extend([vision_session, prefill_session, decode_session])
     return vision_session, prefill_session, decode_session
-
 
 
 @pytest.mark.nightly_disagg

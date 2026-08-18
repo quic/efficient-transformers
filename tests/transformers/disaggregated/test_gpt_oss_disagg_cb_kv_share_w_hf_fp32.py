@@ -19,9 +19,8 @@ Two checks, in one on-device session:
 pytest -m "on_qaic and disagg_dma" tests/transformers/disaggregated/test_gpt_oss_disagg_cb_kv_share_w_hf_fp32.py
 
 Run the nightly full-model HF/ORT/QAIC three-way parity test with:
-    pytest -m "on_qaic and disagg_dma and nightly_disagg" \
-        tests/transformers/disaggregated/test_gpt_oss_disagg_cb_kv_share_w_hf_fp32.py \
-        -k test_gpt_oss_disagg_kv_share_qaic_vs_ort_vs_hf_fp32
+    pytest -m "nightly_disagg" \
+        tests/transformers/disaggregated/test_gpt_oss_disagg_cb_kv_share_w_hf_fp32.py
 """
 
 import os
@@ -54,7 +53,7 @@ from tests.transformers.disaggregated._disagg_ort_test_utils import (
 )
 
 MODEL_NAME = "openai/gpt-oss-20b"
-THREE_WAY_PARITY_MODEL_NAME = os.environ.get("QEFF_GPT_OSS_THREE_WAY_MODEL_NAME","openai/gpt-oss-20b")
+THREE_WAY_PARITY_MODEL_NAME = os.environ.get("QEFF_GPT_OSS_THREE_WAY_MODEL_NAME", "openai/gpt-oss-20b")
 TOKENIZER_ID = MODEL_NAME
 NUM_HIDDEN_LAYERS = 4
 PREFILL_SEQ_LEN = 32

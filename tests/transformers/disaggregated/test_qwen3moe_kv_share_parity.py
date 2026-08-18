@@ -6,12 +6,8 @@
 # -----------------------------------------------------------------------------
 
 """parity: KV-DMA-share disagg path vs HF generate.
-python -m pytest     tests/transformers/disaggregated/test_qwen3moe_kv_share_parity.py     -k test_kv_share_matches_hf_generate_leading_tokens     -m on_qaic -s
+pytest -m 'on_qaic and disagg_dma'   tests/transformers/disaggregated/test_qwen3moe_kv_share_parity.py
 
-Self-contained: compiles and runs the disaggregated prefill/decode DMA-share
-sessions directly (see examples/disagg_serving/qwen3moe_disagg_mode_cb_chunking_with_kv_share.py
-for the reference continuous-batching version this is adapted from), rather than
-importing a `run(...)` helper from an examples script.
 """
 
 import os
