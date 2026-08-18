@@ -151,6 +151,15 @@ pytest tests/nightly_pipeline/causal_lm_models/test_generate.py
 pytest tests/nightly_pipeline/test_result_validation.py
 ```
 
+To run only the newer-model subset from `configs/validated_models.json`, set:
+
+```bash
+export NIGHTLY_NEWER_MODELS_ONLY=true
+```
+
+When this variable is enabled, the default model selection is narrowed to newer models and older-model batches are
+empty. If the variable is unset, the nightly suite keeps the existing older-then-newer flow.
+
 ### Runtime Model Skips
 
 Freestyle jobs can skip selected models without editing `validated_models.json` by passing comma-separated model names
@@ -214,3 +223,26 @@ Use this file when:
 
 ## License
 Check the LICENSE file in the repository root.
+
+## Jenkins HTML Email Report
+
+Generate an email-safe HTML summary after validation so Jenkins can send the report body with the Email Extension plugin:
+
+```bash
+python scripts/nightly_email_report.py \
+  --artifacts-dir "$NIGHTLY_PIPELINE_ARTIFACTS_DIR" \
+  --output-html "$NIGHTLY_PIPELINE_ARTIFACTS_DIR/nightly_email_report.html" \
+  --output-json "$NIGHTLY_PIPELINE_ARTIFACTS_DIR/nightly_email_report_summary.json" \
+  --output-environment-json "$NIGHTLY_PIPELINE_ARTIFACTS_DIR/environment_versions.json" \
+  --build-start-epoch "$BUILD_START_EPOCH" \
+  --build-end-epoch "$(date +%s)" \
+  --build-status "$BUILD_RESULT"
+```
+
+The report contains one combined build and SDK details table, QAIC apps/platform/factory SDK versions from `/opt/qti-aic/tools/qaic-version-util` with XML fallback, aggregate pass/warning/fail counts, and one Outlook-safe inline table per model class. Older model failures are reported as orange warnings and do not fail Jenkins; newer model failures remain red and fail the nightly report.
+
+For Jenkins Email Extension, set content type to HTML and use the generated file as the message body, for example:
+
+```text
+${FILE,path="Nightly_Pipeline/${BUILD_TAG}/nightly_email_report.html"}
+```

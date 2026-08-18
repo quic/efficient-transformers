@@ -46,14 +46,23 @@
         "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
         "Qwen/Qwen2-1.5B-Instruct",
         "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
-        "hpcai-tech/grok-1"
+        "hpcai-tech/grok-1",
+        "zai-org/GLM-4.5"
     ],
     "image_text_to_text_models": [
         "Qwen/Qwen3.5-0.8B",
         "Qwen/Qwen3.6-35B-A3B",
+        "Qwen/Qwen3.5-27B",
+        "Qwen/Qwen3.5-122B-A10B",
+        "Qwen/Qwen3.5-35B-A3B",
+        "Qwen/Qwen3.6-27B",
+        "google/gemma-4-31B-it",
+        "google/gemma-4-26B-A4B-it",
+        "google/gemma-4-E4B-it",
         "google/gemma-4-E2B-it",
         "Qwen/Qwen3-VL-2B-Instruct",
         "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        "Qwen/Qwen3-VL-235B-A22B-Instruct",
         "meta-llama/Llama-4-Scout-17B-16E-Instruct",
         "google/gemma-3-4b-it",
         "Qwen/Qwen2.5-VL-3B-Instruct",
@@ -75,9 +84,11 @@
         "nomic-ai/nomic-embed-text-v1.5",
         "ibm-granite/granite-embedding-30m-english",
         "ibm-granite/granite-embedding-125m-english",
+        "BAAI/bge-reranker-v2-m3",
         "ibm-granite/granite-embedding-107m-multilingual",
         "ibm-granite/granite-embedding-278m-multilingual",
-        "intfloat/multilingual-e5-large"
+        "intfloat/multilingual-e5-large",
+        "jinaai/jina-embeddings-v2-base-code"
     ],
     "audio_models": [
         "openai/whisper-tiny",
@@ -93,5 +104,52 @@
     ],
     "sequence_models": [
         "meta-llama/Llama-Prompt-Guard-2-22M"
-    ]
+    ],
+    "model_age_groups": {
+        "newer_models": {
+            "causal_lm_models": [
+                "allenai/OLMo-2-0425-1B",
+                "Qwen/Qwen3-30B-A3B-Instruct-2507",
+                "openai/gpt-oss-20b",
+                "meta-llama/Llama-3.3-70B-Instruct",
+                "meta-llama/Llama-3.2-1B",
+                "meta-llama/Llama-3.2-3B",
+                "meta-llama/Llama-3.1-8B",
+                "meta-llama/Llama-3.1-70B",
+                "meta-llama/Meta-Llama-3-8B",
+                "meta-llama/Meta-Llama-3-70B",
+                "zai-org/GLM-4.5"
+            ],
+            "image_text_to_text_models": [
+                "Qwen/Qwen3.5-0.8B",
+                "Qwen/Qwen3.6-35B-A3B",
+                "Qwen/Qwen3.5-27B",
+                "Qwen/Qwen3.5-122B-A10B",
+                "Qwen/Qwen3.5-35B-A3B",
+                "Qwen/Qwen3.6-27B",
+                "google/gemma-4-31B-it",
+                "google/gemma-4-26B-A4B-it",
+                "google/gemma-4-E4B-it",
+                "google/gemma-4-E2B-it",
+                "Qwen/Qwen3-VL-2B-Instruct",
+                "Qwen/Qwen3-VL-30B-A3B-Instruct",
+                "Qwen/Qwen3-VL-235B-A22B-Instruct",
+                "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+                "google/gemma-3-4b-it",
+                "Qwen/Qwen2.5-VL-3B-Instruct"
+            ],
+            "embedding_models": [
+                "BAAI/bge-base-en-v1.5"
+            ],
+            "audio_models": [
+                "openai/whisper-tiny"
+            ],
+            "audio_embedding_models": [
+                "facebook/wav2vec2-base"
+            ],
+            "sequence_models": [
+                "meta-llama/Llama-Prompt-Guard-2-22M"
+            ]
+        }
+    }
 }
