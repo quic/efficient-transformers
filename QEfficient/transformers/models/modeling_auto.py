@@ -830,7 +830,7 @@ class QEFFAutoModel(QEFFTransformersBase):
     def cloud_ai_100_feature_generate(
         self,
         inputs: torch.Tensor,
-        device_ids: List[int] = [0],
+        device_ids: List[int] = None,
         dtype: Optional[torch.dtype] = torch.float32,
     ) -> np.ndarray:
         """
@@ -845,7 +845,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             Input tensors for feature extraction. Must be a dictionary-like object
             including `input_ids` and `attention_mask`.
         device_ids : List[int], optional
-            List of device IDs to use for inference. Defaults to [0].
+            List of device IDs to use for inference. Defaults to runtime automatic device selection.
 
         Returns
         -------
@@ -1152,7 +1152,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
             Input tensors for classification. Must be a dictionary-like object
             including `input_ids` and `attention_mask`.
         device_ids : List[int], optional
-            List of device IDs to use for inference. Defaults to [0].
+            List of device IDs to use for inference. Defaults to runtime automatic device selection.
 
         Returns
         -------
@@ -5626,7 +5626,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         self,
         processor,
         inputs: torch.Tensor,
-        device_ids: List[int] = [0],
+        device_ids: List[int] = None,
     ) -> np.ndarray:
         """
         Generates features with list of prompts using AI 100 runtime.
@@ -5635,7 +5635,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             :inputs (Union[torch.Tensor, np.ndarray]): inputs to run the execution.
             :processor (AutoProcessor): The Processor to use for encoding the waveform.
         ``Optional`` Args:
-            device_ids (List[int], optional): A list of device IDs to use for the session. Defaults to [0].
+            device_ids (List[int], optional): A list of device IDs to use for the session. Defaults to runtime automatic device selection.
 
         """
 
