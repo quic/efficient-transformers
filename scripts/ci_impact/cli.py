@@ -64,7 +64,13 @@ def _plan(args: argparse.Namespace) -> int:
         catalog = load_catalog(args.catalog, plan.head)
         plan = expand_plan_with_catalog(plan, catalog)
         write_plan(plan, args.deterministic_output)
-        selection = select_tests(repo, plan, catalog)
+        selection = select_tests(
+            repo,
+            plan,
+            catalog,
+            catalog_path=args.catalog,
+            deterministic_plan_path=args.deterministic_output,
+        )
         write_llm_artifact(selection, args.llm_output)
         merged = merge_selection(plan, selection, catalog)
     except LLMStageError as error:

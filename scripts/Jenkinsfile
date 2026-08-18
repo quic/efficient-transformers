@@ -202,8 +202,7 @@ pipeline {
                             pip install librosa==0.10.2 soundfile==0.13.1 &&
                             pip install qwen-vl-utils==0.0.14 &&
                             pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1 &&
-                            pip install onnx_ir
-                            rm -rf QEfficient"
+                            pip install onnx_ir"
                         '''
                     }
                 }
@@ -223,18 +222,37 @@ pipeline {
             }
         }
 
+        stage('Stage Qgenie Tools') {
+            steps {
+                script {
+                    if (!(env.BUILD_TAG ==~ /[A-Za-z0-9_.-]+/)) {
+                        error("BUILD_TAG contains unsafe characters: ${env.BUILD_TAG}")
+                    }
+                    env.CI_IMPACT_TRUSTED_TOOL_DIR = "/opt/qeff-ci/qgenie/${env.BUILD_TAG}"
+                    sh '''
+                        sudo install -d -o root -g root -m 0755 ${CI_IMPACT_TRUSTED_TOOL_DIR}
+                        sudo install -o root -g root -m 0555 scripts/ci_impact/query.py ${CI_IMPACT_TRUSTED_TOOL_DIR}/query.py
+                        sudo install -o root -g root -m 0555 scripts/ci_impact/tool_policy.py ${CI_IMPACT_TRUSTED_TOOL_DIR}/tool_policy.py
+                    '''
+                }
+            }
+        }
+
         stage('Plan Regression Impact') {
             steps {
                 script {
                     def safeForceReason = env.CI_IMPACT_FORCE_REASON.replace("'", '')
                     def forceArgs = env.CI_IMPACT_FORCE_FULL == 'true' ? "--force-full --force-reason='${safeForceReason}'" : ''
                     try {
-                        withEnv(['PATH+QGENIE=/home/ubuntu/.local/bin']) {
+                        withEnv([
+                            'PATH+QGENIE=/home/ubuntu/.local/bin',
+                            "QEFF_CI_TRUSTED_TOOL_DIR=${env.CI_IMPACT_TRUSTED_TOOL_DIR}",
+                        ]) {
                             sh "python3 -m scripts.ci_impact.cli plan --base='${env.CI_IMPACT_BASE}' --head=HEAD --catalog=.ci-impact-catalog.json ${forceArgs}"
                             sh 'python3 -m scripts.ci_impact.cli validate .ci-impact-plan.json'
                         }
                     } catch (planningError) {
-                        archiveArtifacts artifacts: '.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json', allowEmptyArchive: true
+                        archiveArtifacts artifacts: '.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json,.ci-impact-qgenie-audit.jsonl', allowEmptyArchive: true
                         throw planningError
                     }
                     def plan = new JsonSlurperClassic().parseText(readFile('.ci-impact-plan.json'))
@@ -242,8 +260,18 @@ pipeline {
                     def validationPrefix = env.CI_IMPACT_VALIDATION_PR_ID ? "PR-${env.CI_IMPACT_VALIDATION_PR_ID} validation; " : ''
                     currentBuild.description = "${validationPrefix}${plan.mode}: ${plan.reasons.join('; ')}"
                     echo "Regression impact mode: ${plan.mode}\nReasons: ${plan.reasons.join('\n')}"
-                    archiveArtifacts artifacts: '.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json', fingerprint: true
+                    archiveArtifacts artifacts: '.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json,.ci-impact-qgenie-audit.jsonl', fingerprint: true
                 }
+            }
+        }
+
+        stage('Remove Library Sources') {
+            steps {
+                sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    rm -rf QEfficient"
+                '''
             }
         }
 
@@ -425,13 +453,19 @@ pipeline {
                 } catch (error) {
                     echo "Failed to change ownership: ${error}"
                 }
+                if (env.CI_IMPACT_TRUSTED_TOOL_DIR) {
+                    if (!(env.CI_IMPACT_TRUSTED_TOOL_DIR ==~ /\/opt\/qeff-ci\/qgenie\/[A-Za-z0-9_.-]+/)) {
+                        error("Refusing to remove unsafe qgenie tool path: ${env.CI_IMPACT_TRUSTED_TOOL_DIR}")
+                    }
+                    sh "sudo rm -rf '${env.CI_IMPACT_TRUSTED_TOOL_DIR}'"
+                }
                 try {
                     junit testResults: 'tests/tests_log.xml', allowEmptyResults: true
                 } catch (error) {
                     echo "No test results file found or parsing failed: ${error}"
                 }
                 try {
-                    archiveArtifacts artifacts: '.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json', allowEmptyArchive: true, fingerprint: true
+                    archiveArtifacts artifacts: '.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json,.ci-impact-qgenie-audit.jsonl', allowEmptyArchive: true, fingerprint: true
                 } catch (error) {
                     echo "Failed to archive CI impact artifacts: ${error}"
                 }

@@ -37,7 +37,6 @@ STAGES = (
 )
 
 HARD_FULL_FILES = {
-    "QEfficient/base/modeling_qeff.py",
     "pyproject.toml",
     "scripts/Jenkinsfile",
     "scripts/JenkinsFileFullCi",
