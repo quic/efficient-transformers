@@ -8,14 +8,12 @@
 """Token-level parity tests for the Qwen3-VL-MoE disaggregated prefill/decode DMA path.
 
 Run the regular HF/QAIC parity test with:
-    pytest -m "on_qaic and multimodal" \
-        tests/transformers/disaggregated/test_qwen3_vl_moe_disagg_kv_share_w_hf_fp32.py \
-        -k test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32
+    pytest -m "on_qaic and disagg_dma" \
+        tests/transformers/disaggregated/test_qwen3_vl_moe_disagg_kv_share_w_hf_fp32.py
 
 Run the nightly full HF/ORT/QAIC three-way parity test with:
-    pytest -m "on_qaic and multimodal and nightly_disagg" \
-        tests/transformers/disaggregated/test_qwen3_vl_moe_disagg_kv_share_w_hf_fp32.py \
-        -k test_qwen3_vl_moe_disagg_kv_share_qaic_vs_ort_fp32
+    pytest -m "nightly_disagg" \
+        tests/transformers/disaggregated/test_qwen3_vl_moe_disagg_kv_share_w_hf_fp32.py
 """
 
 import copy
@@ -943,7 +941,6 @@ def _create_disagg_sessions(qpc_paths: dict[str, str], sessions: list):
     decode_session = QAICInferenceSession(qpc_paths["decode"], kv_dma_share=True)
     sessions.extend([vision_session, prefill_session, decode_session])
     return vision_session, prefill_session, decode_session
-
 
 
 @pytest.mark.nightly_disagg

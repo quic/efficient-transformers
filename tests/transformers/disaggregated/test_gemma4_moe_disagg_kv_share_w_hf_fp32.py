@@ -8,14 +8,12 @@
 """Token-level parity tests for the Gemma4-MoE disaggregated prefill/decode DMA path.
 
 Run the regular HF/QAIC parity test with:
-    pytest -m "on_qaic and multimodal" \
-        tests/transformers/disaggregated/test_gemma4_moe_disagg_kv_share_w_hf_fp32.py \
-        -k test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32
+    pytest -m "on_qaic and disagg_dma" \
+        tests/transformers/disaggregated/test_gemma4_moe_disagg_kv_share_w_hf_fp32.py 
 
 Run the nightly full-model HF/ORT/QAIC three-way parity test with:
-    pytest -m "on_qaic and multimodal and nightly_disagg" \
-        tests/transformers/disaggregated/test_gemma4_moe_disagg_kv_share_w_hf_fp32.py \
-        -k test_gemma4_moe_disagg_kv_share_qaic_vs_ort_vs_hf_fp32
+    pytest -m "nightly_disagg" \
+        tests/transformers/disaggregated/test_gemma4_moe_disagg_kv_share_w_hf_fp32.py
 
 Nightly full-model compile scaling knobs:
     QEFF_GEMMA4_NIGHTLY_FULL_MODEL_VISION_NUM_DEVICES=4
@@ -53,7 +51,7 @@ from tests.transformers.disaggregated._disagg_ort_test_utils import (
     update_state_from_outputs as _update_state_from_outputs,
 )
 
-MODEL_NAME = "google/gemma-4-26B-A4B-it"
+MODEL_NAME = "tiny-random/gemma-4-moe"
 THREE_WAY_PARITY_MODEL_NAME = os.environ.get("QEFF_GEMMA4_THREE_WAY_MODEL_NAME", "google/gemma-4-26B-A4B-it")
 SYSTEM_PROMPT = "You are a helpful assistant."
 NUM_HIDDEN_LAYERS = 2
@@ -865,7 +863,6 @@ def _run_disagg_baseline_numpy_copy_generation(
                 decode_inputs[name] = decode_outputs[rs_name]
 
     return np.stack(generated_ids, axis=1)
-
 
 
 @pytest.mark.nightly_disagg
