@@ -49,6 +49,7 @@ decode_qpc_path = qeff_model.compile(
     aic_enable_depth_first=True,
     num_speculative_tokens=None,
     use_onnx_subfunctions=True,
+    dynamo=True,
     offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation in the next step
     retain_full_kv=True,
     # split_retained_state_io=True,   # This should be used for disagg serving via VLLM
@@ -73,6 +74,7 @@ prefill_qpc_path = qeff_model.compile(
     prefill_only=True,
     enable_chunking=True,
     use_onnx_subfunctions=True,
+    dynamo=True,
     # split_retained_state_io=True,  # This should be used for disagg serving via VLLM
     node_precision_info=subfunc_npi_file_path,
 )

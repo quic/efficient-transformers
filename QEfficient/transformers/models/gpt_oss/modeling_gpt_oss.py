@@ -1115,23 +1115,24 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
             position_ids = cache_position.unsqueeze(0)
 
         full_target_length = self.config.max_position_embeddings
-        sliding_target_length = self.config.sliding_window
+        # sliding_target_length = self.config.sliding_window
         if past_key_values is not None:
             for layer_idx, layer_type in enumerate(self.config.layer_types[: len(past_key_values.layers)]):
                 layer_keys = past_key_values.layers[layer_idx].keys
                 if layer_keys is None or layer_keys.numel() == 0:
                     continue
                 if layer_type == "sliding_attention":
-                    sliding_target_length = layer_keys.shape[-2]
+                    continue
                 else:
                     full_target_length = layer_keys.shape[-2]
 
         causal_mask = _create_causal_mask(position_ids=position_ids, target_length=full_target_length)
         sliding_mask = _create_causal_mask(
             position_ids=position_ids,
-            target_length=sliding_target_length,
+            target_length=full_target_length,
             sliding_window=self.config.sliding_window,
         )
+
         hidden_states = inputs_embeds
 
         # decoder layers

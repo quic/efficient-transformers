@@ -9,7 +9,7 @@ import time
 
 import numpy as np
 import torch
-from transformers import AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -26,6 +26,11 @@ The path to the treasure was not an easy one. Alex had to navigate through dense
 all_outputs = []
 # Run prefill
 tokenizer = AutoTokenizer.from_pretrained(model_id)
+config = AutoConfig.from_pretrained(model_id)
+config.num_hidden_layers = 4
+
+dynamo = True
+
 PREFILL_SEQ_LEN = 256
 CTX_LEN = 256
 inputs = tokenizer(prompt, return_tensors="np", padding=True)
@@ -40,7 +45,7 @@ max_gen_len = CTX_LEN - position_ids.max()
 generation_len = max_gen_len
 
 
-qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
+qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, config=config)
 config = qeff_model.model.config
 inputs = tokenizer(prompt, return_tensors="np", padding="max_length", max_length=padded_len)
 inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
@@ -68,7 +73,11 @@ decode_qpc_path = qeff_model.compile(
     aic_enable_depth_first=True,
     num_speculative_tokens=None,
     offload_pt_weights=False,
+    dynamo=dynamo,
+    use_onnx_subfunctions=True,
 )
+print("Decode succcessfully compiled, path=", decode_qpc_path)
+
 prefill_qpc_path = qeff_model.compile(
     prefill_seq_len=PREFILL_SEQ_LEN,
     ctx_len=CTX_LEN,
@@ -81,7 +90,10 @@ prefill_qpc_path = qeff_model.compile(
     num_speculative_tokens=None,
     prefill_only=True,
     use_onnx_subfunctions=True,
+    dynamo=dynamo,
 )
+
+print("Prefill succcessfully compiled, path=", prefill_qpc_path)
 
 prefill_session = QAICInferenceSession(prefill_qpc_path)
 

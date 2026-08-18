@@ -30,12 +30,14 @@ The path to the treasure was not an easy one. Alex had to navigate through dense
 """
 # Run prefill
 config = AutoConfig.from_pretrained(model_id)
+config.num_hidden_layers = 4
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 PREFILL_SEQ_LEN = 128
 CTX_LEN = 4096
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
     model_id,
+    config=config,
     qaic_config={
         "ccl_enabled": True,
     },
@@ -57,12 +59,14 @@ decode_qpc_path = qeff_model.compile(
     retain_full_kv=True,
     prefill_only=False,
     comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+    use_onnx_subfunctions=True,
+    dynamo=True,
     # # split_retained_state_io=True,   # This should be used for disagg serving via VLLM
     # node_precision_info=non_subfunc_npi_file_path,
 )
 
 
-qeff_model1 = QEFFAutoModelForCausalLM.from_pretrained(model_id)
+qeff_model1 = QEFFAutoModelForCausalLM.from_pretrained(model_id, config=config)
 
 # Following command errors out by default, the user is supposed to run the printed command and provide the generated qpc path as prefill_qpc_path commenting out lines 55-68
 # prefill_qpc_path = "provide path here"
@@ -79,6 +83,7 @@ prefill_qpc_path = qeff_model1.compile(
     prefill_only=True,
     enable_chunking=True,
     use_onnx_subfunctions=True,
+    dynamo=True,
     # # split_retained_state_io=True,  # This should be used for disagg serving via VLLM
     # node_precision_info=subfunc_npi_file_path,
 )
@@ -120,7 +125,7 @@ all_outputs.append(np.argmax(qpc_out["logits"]))
 
 
 def initialize_ccl(decode_inputs, comp_ctx_lengths_decode):
-    list_of_comp_ctx_lengths_decode = [np.zeros(length, dtype=np.int8) for length in comp_ctx_lengths_decode]
+    list_of_comp_ctx_lengths_decode = [np.zeros(length, dtype=np.int64) for length in comp_ctx_lengths_decode]
     max_ccl_id = len(comp_ctx_lengths_decode) - 1
     max_position_id = np.max(decode_inputs["position_ids"])
     ccl_id_initial = 0
