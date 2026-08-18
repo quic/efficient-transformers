@@ -3976,7 +3976,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
-        self.supports_paged_attention = False
+        supports_paged_attention = False
         # increase seq_len if using a larger number of blocks and set PagedAttention params if required
         if self.hash_params.get("blocking_kwargs", None):
             blocking_kwargs = self.hash_params["blocking_kwargs"]
@@ -3989,8 +3989,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             block_size = -(-seq_len // max_blocks)
             seq_len = block_size * max_blocks
             num_kv_blocks = self.hash_params["blocking_kwargs"].num_kv_blocks
-            self.supports_paged_attention = self.hash_params["blocking_kwargs"].paged_attention
-            seq_len = kv_block_size = -(-seq_len // num_kv_blocks) if self.supports_paged_attention else seq_len
+            supports_paged_attention = self.hash_params["blocking_kwargs"].paged_attention
+            seq_len = kv_block_size = -(-seq_len // num_kv_blocks) if supports_paged_attention else seq_len
 
         # TODO: Remove this hack ##################
         if dynamo:
@@ -4085,7 +4085,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         else:
             output_names.append("logits")
 
-        if self.supports_paged_attention:
+        if supports_paged_attention:
             batch, num_kv_heads, CL, dh = kv_cache_shape
             total_num_kv_blocks = batch * num_kv_blocks
             kv_cache_shape = [total_num_kv_blocks, num_kv_heads, kv_block_size, dh]
