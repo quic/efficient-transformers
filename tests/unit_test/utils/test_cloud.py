@@ -20,7 +20,7 @@ is performed - only argument parsing and function structure validation.
 
 import argparse
 import inspect
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -1232,3 +1232,45 @@ class TestCheckAndAssignCacheDir:
 
         result = check_and_assign_cache_dir(local_model_dir=None, cache_dir=None)
         assert result is None or isinstance(result, str)
+
+
+class TestQaicDeviceGroups:
+    def test_returns_ready_mdp_groups_with_sufficient_nsps(self):
+        from QEfficient.utils.device_utils import get_qaic_mdp_device_groups
+
+        output = """
+QID 0
+    Status:Ready
+    Device Capabilities: HybridBoot+ MDP+
+    Nsp Total:8
+    Board serial:low-nsp
+QID 4
+    Status:Ready
+    Device Capabilities: HybridBoot+ MDP+
+    Nsp Total:16
+    Board serial:board-a
+QID 5
+    Status:Ready
+    Device Capabilities: HybridBoot+ MDP+
+    Nsp Total:16
+    Board serial:board-a
+QID 6
+    Status:Ready
+    Device Capabilities: HybridBoot+ MDP+
+    Nsp Total:16
+    Board serial:board-a
+QID 7
+    Status:Ready
+    Device Capabilities: HybridBoot+ MDP+
+    Nsp Total:16
+    Board serial:board-a
+QID 8
+    Status:Error
+    Device Capabilities: HybridBoot+ MDP+
+    Nsp Total:16
+    Board serial:board-b
+"""
+        result = MagicMock(returncode=0, stdout=output, stderr="")
+
+        with patch("QEfficient.utils.device_utils.subprocess.run", return_value=result):
+            assert get_qaic_mdp_device_groups() == [[4, 5, 6, 7]]

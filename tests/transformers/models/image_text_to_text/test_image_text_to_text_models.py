@@ -37,8 +37,10 @@ from QEfficient.utils.test_utils import (
     set_num_layers_vlm,
 )
 from tests.utils.load_kimi_utils import (
+    get_kimi_k25_test_config,
     is_kimi_k25,
     load_kimi_k25_layer_subset_model,
+    load_kimi_k25_model_from_config,
     run_kimi_k25_hf_model_on_pytorch,
 )
 
@@ -92,6 +94,14 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     if is_kimi_k25(model_name) and config is None:
         model_hf, tokenizer, processor = load_kimi_k25_layer_subset_model()
         config = model_hf.config
+        qeff_model = QEFFAutoModelForImageTextToText(
+            copy.deepcopy(model_hf),
+            kv_offload=kv_offload,
+            config=model_hf.config,
+            torch_dtype=torch_dtype,
+        )
+    elif is_kimi_k25(model_name):
+        model_hf, tokenizer, processor = load_kimi_k25_model_from_config(config)
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
             kv_offload=kv_offload,
@@ -441,7 +451,12 @@ def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_o
 
     torch.manual_seed(42)
     hf_config = None
-    if model_name in ModelConfig.STANDARD_VLM_MODELS:
+    if is_kimi_k25(model_name):
+        hf_config = get_kimi_k25_test_config(model_name, model_config_dict)
+        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+            model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
+        )
+    elif model_name in ModelConfig.STANDARD_VLM_MODELS:
         model_type = model_config_dict[model_name].get("model_type", None)
         custom_config = model_config_dict[model_name].get("additional_params", {})
         hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
