@@ -22,7 +22,6 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4ForConditionalGeneration,
     Gemma4TextAttention,
     Gemma4TextDecoderLayer,
-    Gemma4TextExperts,
     Gemma4TextModel,
     Gemma4TextRouter,
     Gemma4VisionAttention,
@@ -318,44 +317,6 @@ class QEffGemma4CustomRMSNormAIC(nn.Module):
             if weight is None:
                 weight = hidden_states.new_ones(hidden_states.shape[-1])
         return CustomRMSNormFunc.apply(hidden_states, weight, self.eps)
-
-
-class QEffGemma4TextExperts(Gemma4TextExperts):
-    def __qeff_init__(self):
-        # Derive gather-friendly split projections from the checkpoint's fused
-        # gate_up_proj/down_proj, without changing on-disk checkpoint format.
-        gate_up_proj = self.gate_up_proj.detach()
-        down_proj = self.down_proj.detach()
-        self.gate_proj = nn.Parameter(gate_up_proj[:, : self.intermediate_dim, :].transpose(1, 2), requires_grad=False)
-        self.up_proj = nn.Parameter(gate_up_proj[:, self.intermediate_dim :, :].transpose(1, 2), requires_grad=False)
-        self.down_proj_t = nn.Parameter(down_proj.transpose(1, 2), requires_grad=False)
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        top_k_index: torch.Tensor,
-        top_k_weights: torch.Tensor,
-    ) -> torch.Tensor:
-        if not hasattr(self, "gate_proj"):
-            self.__qeff_init__()
-
-        T, H = hidden_states.shape
-        K = top_k_index.shape[1]
-        idx = top_k_index.reshape(-1)
-
-        gate_proj = self.gate_proj[idx]  # [T*K, H, I] -- gather only the selected experts
-        up_proj = self.up_proj[idx]  # [T*K, H, I]
-        down_proj_t = self.down_proj_t[idx]  # [T*K, I, H]
-
-        xk = hidden_states.unsqueeze(1).expand(-1, K, -1).contiguous().view(-1, 1, H)  # [T*K, 1, H]
-        gate = torch.bmm(xk, gate_proj)  # [T*K, 1, I]
-        up = torch.bmm(xk, up_proj)  # [T*K, 1, I]
-        activated = self.act_fn(gate) * up
-
-        down = torch.bmm(activated, down_proj_t)  # [T*K, 1, H]
-        down = down.view(T, K, H) * top_k_weights.unsqueeze(-1)
-        down = torch.einsum("bnh->bh", down)
-        return down
 
 
 class QEffGemma4TextMoeBlock(QEffMoEBlockMixin, nn.Module):

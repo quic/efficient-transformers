@@ -55,7 +55,6 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4RMSNorm,
     Gemma4TextAttention,
     Gemma4TextDecoderLayer,
-    Gemma4TextExperts,
     Gemma4TextModel,
     Gemma4TextRouter,
     Gemma4VisionAttention,
@@ -367,7 +366,6 @@ from QEfficient.transformers.models.gemma4.modeling_gemma4 import (
     QEffGemma4ForConditionalGeneration,
     QEffGemma4TextAttention,
     QEffGemma4TextDecoderLayer,
-    QEffGemma4TextExperts,
     QEffGemma4TextModel,
     QEffGemma4TextRouter,
     QEffGemma4VisionAttention,
@@ -1463,7 +1461,7 @@ def _resolve_expert_parallel_layout(
     else:
         raise ValueError(
             "num_experts * cores_per_expert "
-            f"({required_expert_cores}) must be divisible by total_avl_cores ({total_avl_cores})"
+            "(num_experts * cores_per_expert) must be divisible by total_avl_cores (num_devices * num_cores)"
         )
     if num_pipeline_stages <= 0:
         raise ValueError(f"num_pipeline_stages ({num_pipeline_stages}) must be greater than zero")
@@ -1506,7 +1504,6 @@ class OptimizedMoEMapperTransform(ModuleMappingTransform):
         Qwen3_5MoeSparseMoeBlock: QEffQwen3_5MoeSparseMoeBlock,
         Qwen3_5MoeTopKRouter: QEffQwen3_5MoeTopKRouter,
         # Gemma4
-        Gemma4TextExperts: QEffGemma4TextExperts,
         Gemma4TextRouter: QEffGemma4TextRouter,
         # GPT-OSS
         GptOssMLP: QEffGptOssMLP,

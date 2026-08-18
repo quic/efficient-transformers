@@ -905,44 +905,6 @@ def test_gptoss_blocked_forward_parity():
     assert (orig - looped).abs().max().item() < 1e-3, "GPT-OSS HF vs simple-loop parity failed"
 
 
-def test_gemma4_text_experts_forward_parity():
-    from transformers.models.gemma4.configuration_gemma4 import Gemma4TextConfig
-    from transformers.models.gemma4.modeling_gemma4 import Gemma4TextExperts
-
-    from QEfficient.transformers.models.gemma4.modeling_gemma4 import QEffGemma4TextExperts
-
-    torch.manual_seed(23)
-    config = Gemma4TextConfig(
-        hidden_size=MOE_BLOCK_HIDDEN_SIZE,
-        intermediate_size=MOE_BLOCK_INTERMEDIATE_SIZE,
-        num_hidden_layers=1,
-        num_attention_heads=2,
-        num_key_value_heads=2,
-        num_experts=MOE_BLOCK_NUM_EXPERTS,
-        top_k_experts=MOE_BLOCK_TOP_K,
-        moe_intermediate_size=MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE,
-        enable_moe_block=True,
-    )
-    original_experts = Gemma4TextExperts(config).eval()
-    with torch.no_grad():
-        original_experts.gate_up_proj.normal_(mean=0.0, std=0.02)
-        original_experts.down_proj.normal_(mean=0.0, std=0.02)
-
-    qeff_experts = copy.deepcopy(original_experts).eval()
-    qeff_experts.__class__ = QEffGemma4TextExperts
-    qeff_experts.__qeff_init__()
-
-    hidden_states = torch.randn(MOE_BLOCK_SEQ_LEN, MOE_BLOCK_HIDDEN_SIZE)
-    top_k_index = torch.randint(0, MOE_BLOCK_NUM_EXPERTS, (MOE_BLOCK_SEQ_LEN, MOE_BLOCK_TOP_K))
-    top_k_weights = torch.softmax(torch.randn(MOE_BLOCK_SEQ_LEN, MOE_BLOCK_TOP_K), dim=-1)
-
-    with torch.no_grad():
-        expected = original_experts(hidden_states, top_k_index, top_k_weights)
-        actual = qeff_experts(hidden_states, top_k_index, top_k_weights)
-
-    torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
-
-
 @pytest.mark.parametrize("flavour", ("decode_bmm", "simple_loop", "expert_parallel"))
 def test_gemma4_text_moe_block_forward_parity(flavour):
     from transformers.models.gemma4.configuration_gemma4 import Gemma4TextConfig
@@ -976,7 +938,26 @@ def test_gemma4_text_moe_block_forward_parity(flavour):
         copy.deepcopy(pre_norm),
         copy.deepcopy(post_norm),
     ).eval()
+
+    hidden_states = torch.randn(1, MOE_BLOCK_SEQ_LEN, MOE_BLOCK_HIDDEN_SIZE)
+    with torch.no_grad():
+        flat = hidden_states.reshape(-1, hidden_states.shape[-1])
+        _, top_k_weights, top_k_index = router(flat)
+        expected = pre_norm(flat)
+        expected = experts(expected, top_k_index, top_k_weights).reshape(hidden_states.shape)
+        expected = post_norm(expected)
+
+    assert isinstance(qeff_block, QEffGemma4TextMoeBlock)
+    assert hasattr(qeff_block.experts, "gate_up_proj")
+    assert not hasattr(qeff_block.experts, "gate_proj")
+
     _, weights_ready = OptimizedMoEWeightsTransform.apply(qeff_block)
+
+    assert weights_ready
+    assert hasattr(qeff_block, "moe_weights")
+    assert not hasattr(qeff_block.experts, "gate_up_proj")
+    assert not hasattr(qeff_block.experts, "down_proj")
+
     if flavour == "expert_parallel":
         OptimizedMoEExportConfigTransform.apply(
             qeff_block,
@@ -989,14 +970,7 @@ def test_gemma4_text_moe_block_forward_parity(flavour):
     else:
         qeff_block._moe_flavour = MoEFlavour(flavour)
 
-    assert weights_ready
-    hidden_states = torch.randn(1, MOE_BLOCK_SEQ_LEN, MOE_BLOCK_HIDDEN_SIZE)
     with torch.no_grad():
-        flat = hidden_states.reshape(-1, hidden_states.shape[-1])
-        _, top_k_weights, top_k_index = router(flat)
-        expected = pre_norm(flat)
-        expected = experts(expected, top_k_index, top_k_weights).reshape(hidden_states.shape)
-        expected = post_norm(expected)
         actual = qeff_block(hidden_states)
 
     torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)

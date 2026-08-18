@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import math
 import os
 import warnings
 from pathlib import Path
@@ -41,7 +42,6 @@ from QEfficient.generation.text_generation_inference import (
 )
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 from QEfficient.transformers.modeling_utils import (
-    DYNAMIC_PREFILL_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
     _configure_proxy_for_model,
@@ -1594,32 +1594,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
             if prefill_only:
                 self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
-                if enable_chunking:
-                    moe_config = (qaic_config or {}).get("moe_config", {}) or {}
-                    expert_parallel_chunk_size = moe_config.get(
-                        "expert_parallel_chunk_size", constants.MOE_PREFILL_PACKED_CHUNK_SIZE
-                    )
-                    if expert_parallel_chunk_size is None:
-                        expert_parallel_chunk_size = constants.MOE_PREFILL_PACKED_CHUNK_SIZE
-                    expert_parallel_chunk_size = int(expert_parallel_chunk_size)
-                    if expert_parallel_chunk_size <= 0:
-                        raise ValueError("moe expert_parallel_chunk_size must be greater than zero")
-                    for module in self.model.modules():
-                        if getattr(module, "supports_moe_prefill_blocking", False):
-                            module.expert_blocking_num_nsp = num_cores
-                            if prefill_seq_len % expert_parallel_chunk_size == 0:
-                                module.expert_blocking_packed_chunk_size = prefill_seq_len // expert_parallel_chunk_size
-                            else:
-                                raise ValueError(
-                                    "prefill_seq_len must be divisible by "
-                                    "qaic_config['moe_config']['expert_parallel_chunk_size']"
-                                )
-                            if hasattr(module, "__qeff_init__"):
-                                module.__qeff_init__()
-                    if self.model.config.model_type in DYNAMIC_PREFILL_SEQ_LEN_SUPPORTED_MODEL_ARCH:
-                        seq_len = (
-                            seq_len if prefill_seq_len % expert_parallel_chunk_size == 0 else expert_parallel_chunk_size
-                        )
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
         onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": bs}
@@ -2045,10 +2019,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.transform(
             ctx_len=ctx_len,
             seq_len=prefill_seq_len,
-            batch_size=batch_size,
+            bs=batch_size,
             num_devices=num_devices,
             qaic_config=qaic_config,
             aic_num_cores=num_cores,
+            prefill_only=prefill_only,
+            prefill_seq_len=prefill_seq_len,
         )
 
         specializations, compiler_options = self.model.get_specializations(
@@ -2921,16 +2897,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                 comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
             )
 
-        # Apply compile-dependent transforms like blocking transform
-        self.transform(
-            ctx_len=ctx_len,
-            seq_len=prefill_seq_len,
-            batch_size=batch_size,
-            num_devices=num_devices,
-            qaic_config=qaic_config,
-            aic_num_cores=num_cores,
-        )
-
         # Get specializations from modelling file
         # TODO: expose this via the auto class as well
         specializations, compiler_options = self.model.get_specializations(
@@ -3726,48 +3692,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         return self.model.config.__dict__
 
-    def get_seq_len_and_handle_specialized_prefill_model(
-        self,
-        prefill_seq_len: Optional[int] = None,
-        enable_chunking=False,
-        num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
-    ) -> int:
-        from QEfficient.transformers.moe import MoEFlavour, supports_moe_flavour
-
-        self.hash_params["prefill_only"] = True
-        has_moe_prefill_blocking = any(
-            supports_moe_flavour(module, MoEFlavour.EXPERT_PARALLEL) for module in self.model.modules()
-        )
-
-        if enable_chunking:
-            self.hash_params["chunking"] = True
-
-        num_packed_chunks = self.hash_params.get("moe_prefill_num_packed_chunks")
-        if self.hash_params.get("moe_prefill_flavour") == "expert_parallel" and num_packed_chunks is not None:
-            num_packed_chunks = int(num_packed_chunks)
-            if num_packed_chunks <= 0:
-                raise ValueError(f"moe_prefill_num_packed_chunks must be positive, got {num_packed_chunks}")
-            export_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-            return export_seq_len if export_seq_len % num_packed_chunks == 0 else num_packed_chunks
-
-        if enable_chunking:
-            if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe"}:
-                return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-            return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-
-        if prefill_seq_len is None:
-            raise ValueError(
-                f"When prefill_only=True, 'prefill_seq_len' must be explicitly set. "
-                f"Received: prefill_seq_len={prefill_seq_len}"
-            )
-
-        if has_moe_prefill_blocking:
-            if prefill_seq_len % constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN == 0:
-                return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-            return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-
+    def handle_gpt_oss_env_variable_legacy_burden(self, prefill_seq_len: Optional[int] = None) -> int:
         num_q_blocks = (
-            self.hash_params["blocking_config"].num_q_blocks if self.hash_params.get("blocking_kwargs", None) else None
+            self.hash_params["blocking_kwargs"].num_q_blocks if self.hash_params.get("blocking_kwargs", None) else None
         )
         if num_q_blocks is None:
             if (
@@ -3804,6 +3731,71 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             if min_seq_len > constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
             else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         )
+
+    def get_seq_len_and_handle_specialized_prefill_model(
+        self,
+        prefill_seq_len: Optional[int] = None,
+        enable_chunking=False,
+        num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
+    ) -> int:
+        from QEfficient.transformers.moe import MoEFlavour, supports_moe_flavour
+
+        self.hash_params["prefill_only"] = True
+        if enable_chunking:
+            self.hash_params["chunking"] = True
+            if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe"}:
+                return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+
+        if self.model.config.model_type == "gpt_oss":
+            return self.handle_gpt_oss_env_variable_legacy_burden(prefill_seq_len)
+
+        compile_seq_len = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        expert_parallel_is_triggered = False
+        blocking_enabled = False
+        num_kv_blocks = None
+        num_packed_chunks = None
+
+        if self.hash_params.get("moe_prefill_flavour") == "expert_parallel":
+            num_packed_chunks = self.hash_params.get("moe_prefill_num_packed_chunks")
+            if num_packed_chunks is not None:
+                num_packed_chunks = int(num_packed_chunks)
+                if num_packed_chunks <= 0:
+                    raise ValueError(f"moe_prefill_num_packed_chunks must be positive, got {num_packed_chunks}")
+                expert_parallel_is_triggered = True
+
+        if num_packed_chunks is None:
+            num_packed_chunks = max(1, -(-compile_seq_len // moe_prefill_packed_chunk_size))
+
+        for module in self.model.modules():
+            if supports_moe_flavour(module, MoEFlavour.EXPERT_PARALLEL):
+                expert_parallel_is_triggered = True
+            if getattr(module, "supports_moe_prefill_blocking", False):
+                expert_parallel_is_triggered = True
+                module.expert_blocking_num_nsp = num_cores
+                module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
+                module.expert_blocking_num_packed_chunks = num_packed_chunks
+            if attn_blocking_config := getattr(module, "attn_blocking_config", None):
+                module_num_kv_blocks = getattr(attn_blocking_config, "num_kv_blocks", None)
+                if module_num_kv_blocks:
+                    blocking_enabled = True
+                    num_kv_blocks = int(module_num_kv_blocks)
+
+        if expert_parallel_is_triggered:
+            self.hash_params.setdefault("moe_prefill_num_packed_chunks", num_packed_chunks)
+            self.hash_params.setdefault("moe_prefill_num_nsp", num_cores)
+            self.hash_params.setdefault("moe_prefill_packed_chunk_size", moe_prefill_packed_chunk_size)
+
+        export_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        if expert_parallel_is_triggered and blocking_enabled:
+            lcm = (num_kv_blocks * num_packed_chunks) // math.gcd(num_kv_blocks, num_packed_chunks)
+            return export_seq_len if export_seq_len % lcm == 0 else lcm
+        if expert_parallel_is_triggered:
+            return export_seq_len if export_seq_len % num_packed_chunks == 0 else num_packed_chunks
+        if blocking_enabled:
+            return export_seq_len if export_seq_len % num_kv_blocks == 0 else num_kv_blocks
+
+        return export_seq_len
 
     def _run_layerwise(self, *, final_compile: bool, layerwise_window_size: int, **forward_kwargs):
         """Drive the layer-wise export/compile loop for CausalLM models."""

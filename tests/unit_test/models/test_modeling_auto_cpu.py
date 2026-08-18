@@ -531,6 +531,7 @@ class TestQEFFAutoModelForCausalLMGetSeqLen:
         """Without prefill_seq_len and NUM_Q_BLOCKS env var, raises ValueError."""
         model, cfg = make_tiny_gpt2()
         qeff = QEFFAutoModelForCausalLM(model)
+        qeff.model.config.model_type = "gpt_oss"
         # Ensure env var is not set
         os.environ.pop("NUM_Q_BLOCKS", None)
         with pytest.raises(ValueError, match="prefill_seq_len"):
@@ -542,6 +543,7 @@ class TestQEFFAutoModelForCausalLMGetSeqLen:
 
         model, cfg = make_tiny_gpt2()
         qeff = QEFFAutoModelForCausalLM(model)
+        qeff.model.config.model_type = "gpt_oss"
         os.environ.pop("NUM_Q_BLOCKS", None)
         # Use a value that is NOT divisible by block_size
         bad_seq_len = GPT_OSS_PREFILL_Q_BLOCK_SIZE + 1
