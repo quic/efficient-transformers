@@ -748,6 +748,84 @@ def test_llm_client_rejects_function_prefix_when_catalog_has_exact_callspecs(rep
         select_tests(repo, plan, catalog, api_key="secret", api_base="https://llm.example/v1")
 
 
+def test_llm_client_normalizes_path_style_callspecs(repository: tuple[Path, str]) -> None:
+    repo, base = repository
+    plan = build_plan(repo, base)
+    response = _LLMResponse(
+        {
+            "run_full_ci": False,
+            "tests": ["tests/models/test_component_calculate[case0]"],
+            "unnecessary_tests": [
+                {
+                    "nodeid": "tests/models/test_component_skip[case0]",
+                    "confidence": 95,
+                    "reason": "Unchanged behavior",
+                }
+            ],
+            "reason": "callspec path style",
+        }
+    )
+    catalog = {
+        "tests/models/test_component.py::test_component_calculate[case0]": TestCase(
+            nodeid="tests/models/test_component.py::test_component_calculate[case0]",
+            symbol="tests.models.test_component:test_component_calculate",
+            path="tests/models/test_component.py",
+            stages={"export_compile"},
+        ),
+        "tests/models/test_component.py::test_component_skip[case0]": TestCase(
+            nodeid="tests/models/test_component.py::test_component_skip[case0]",
+            symbol="tests.models.test_component:test_component_skip",
+            path="tests/models/test_component.py",
+            stages={"export_compile"},
+        ),
+    }
+
+    with patch("scripts.ci_impact.llm.urllib.request.urlopen", return_value=response):
+        selection = select_tests(repo, plan, catalog, api_key="secret", api_base="https://llm.example/v1")
+
+    assert selection.tests == ("tests/models/test_component.py::test_component_calculate[case0]",)
+    assert selection.unnecessary_tests == (
+        {
+            "nodeid": "tests/models/test_component.py::test_component_skip[case0]",
+            "confidence": 95,
+            "reason": "Unchanged behavior",
+        },
+    )
+
+
+def test_llm_client_rejects_ambiguous_path_style_callspecs(repository: tuple[Path, str]) -> None:
+    repo, base = repository
+    plan = build_plan(repo, base)
+    response = _LLMResponse(
+        {
+            "run_full_ci": False,
+            "tests": ["tests/models/test_shared[case0]"],
+            "unnecessary_tests": [],
+            "reason": "ambiguous",
+        }
+    )
+    catalog = {
+        "tests/models/test_a.py::test_shared[case0]": TestCase(
+            nodeid="tests/models/test_a.py::test_shared[case0]",
+            symbol="tests.models.test_a:test_shared",
+            path="tests/models/test_a.py",
+            stages={"export_compile"},
+        ),
+        "tests/models/test_b.py::test_shared[case0]": TestCase(
+            nodeid="tests/models/test_b.py::test_shared[case0]",
+            symbol="tests.models.test_b:test_shared",
+            path="tests/models/test_b.py",
+            stages={"export_compile"},
+        ),
+    }
+
+    with (
+        patch("scripts.ci_impact.llm.urllib.request.urlopen", return_value=response),
+        pytest.raises(LLMStageError, match="outside the allowlist"),
+    ):
+        select_tests(repo, plan, catalog, api_key="secret", api_base="https://llm.example/v1")
+
+
 def test_llm_client_rejects_duplicate_tests(repository: tuple[Path, str]) -> None:
     repo, base = repository
     plan = build_plan(repo, base)

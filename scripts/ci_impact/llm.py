@@ -111,6 +111,35 @@ def _matching_callspecs(prefix: str, stage: str, catalog: dict[str, TestCase]) -
     ]
 
 
+def _resolve_llm_nodeid(nodeid: str, catalog: dict[str, TestCase]) -> str | None:
+    if nodeid in catalog:
+        return nodeid
+    if "::" in nodeid:
+        return None
+
+    path = Path(nodeid)
+    parent = path.parent.as_posix()
+    function_and_params = path.name
+    matches = [
+        candidate
+        for candidate, test in catalog.items()
+        if Path(test.path).parent.as_posix() == parent and candidate.split("::", 1)[1] == function_and_params
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _normalize_llm_nodeids(nodeids: list[str], catalog: dict[str, TestCase]) -> tuple[list[str], list[str]]:
+    normalized: list[str] = []
+    unknown: list[str] = []
+    for nodeid in nodeids:
+        resolved = _resolve_llm_nodeid(nodeid, catalog)
+        if resolved is None:
+            unknown.append(nodeid)
+        else:
+            normalized.append(resolved)
+    return normalized, unknown
+
+
 def expand_plan_with_catalog(plan: ImpactPlan, catalog: dict[str, TestCase]) -> ImpactPlan:
     expanded = ImpactPlan(**plan.to_dict())
     if expanded.mode == "full":
@@ -604,11 +633,12 @@ def select_tests(
         raise LLMStageError("LLM run_full_ci must be a boolean")
     if not isinstance(decision["tests"], list) or not all(isinstance(item, str) for item in decision["tests"]):
         raise LLMStageError("LLM tests must be a list of nodeid strings")
-    if len(decision["tests"]) != len(set(decision["tests"])):
-        raise LLMStageError("LLM returned duplicate test nodeids")
-    unknown = sorted(set(decision["tests"]) - catalog.keys())
+    normalized_tests, unknown = _normalize_llm_nodeids(decision["tests"], catalog)
     if unknown:
-        raise LLMStageError("LLM returned tests outside the allowlist: " + ", ".join(unknown))
+        raise LLMStageError("LLM returned tests outside the allowlist: " + ", ".join(sorted(unknown)))
+    if len(normalized_tests) != len(set(normalized_tests)):
+        raise LLMStageError("LLM returned duplicate test nodeids")
+    decision["tests"] = normalized_tests
     unnecessary_tests = decision["unnecessary_tests"]
     if not isinstance(unnecessary_tests, list) or not all(isinstance(item, dict) for item in unnecessary_tests):
         raise LLMStageError("LLM unnecessary_tests must be a list of test assessments")
@@ -619,15 +649,19 @@ def select_tests(
         nodeid = assessment["nodeid"]
         confidence = assessment["confidence"]
         assessment_reason = assessment["reason"]
-        if not isinstance(nodeid, str) or nodeid not in catalog:
+        if not isinstance(nodeid, str):
             raise LLMStageError(f"LLM returned unnecessary test outside the allowlist: {nodeid!r}")
+        normalized_nodeid = _resolve_llm_nodeid(nodeid, catalog)
+        if normalized_nodeid is None:
+            raise LLMStageError(f"LLM returned unnecessary test outside the allowlist: {nodeid!r}")
+        assessment["nodeid"] = normalized_nodeid
         if isinstance(confidence, bool) or not isinstance(confidence, int) or not 0 <= confidence <= 100:
             raise LLMStageError("LLM unnecessary test confidence must be an integer from 0 to 100")
         if not isinstance(assessment_reason, str) or not assessment_reason.strip():
             raise LLMStageError("LLM unnecessary test reason must be a non-empty string")
         if len(assessment_reason) > 500:
             raise LLMStageError("LLM unnecessary test reason exceeds the 500-character limit")
-        unnecessary_nodeids.append(nodeid)
+        unnecessary_nodeids.append(normalized_nodeid)
     if len(unnecessary_nodeids) != len(set(unnecessary_nodeids)):
         raise LLMStageError("LLM returned duplicate unnecessary test nodeids")
     overlap = sorted(set(decision["tests"]) & set(unnecessary_nodeids))
