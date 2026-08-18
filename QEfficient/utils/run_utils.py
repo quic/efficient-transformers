@@ -239,7 +239,11 @@ class ApiRunner:
                     added_initializers[node.output[0]] = onnxruntime.OrtValue.ortvalue_from_numpy(
                         np.array(0, np_tensor.dtype)
                     )
-
+            # breakpoint()
+            # if "arg2_1" in node.input:
+            #     breakpoint()
+            # if tensor.data_type == onnx.TensorProto.FLOAT8E4M3FN:
+            #     breakpoint()
         for tensor in m.graph.initializer:
             if tensor.data_type == onnx.TensorProto.UNDEFINED:
                 continue
@@ -257,9 +261,29 @@ class ApiRunner:
         has_fp8_weights = any(t.data_type == onnx.TensorProto.FLOAT8E4M3FN for t in m.graph.initializer)
         if disable_ort_optimizations or has_fp8_weights:
             session_options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_DISABLE_ALL
+        # When FP8 weights are present AND the model uses local subfunctions, ORT rejects
+        # FP8 tensors passed through function call boundaries.  Apply the hoist transform
+        # in-memory to move FP8 dequantization to the main graph before the function call.
+        ort_model_path = str(model_path)
+        _fp8_tmp_dir = None
+        if has_fp8_weights and m.functions:
+            from QEfficient.base.onnx_transforms import HoistFP8DequantFromSubfunctionTransform
+            from onnx import external_data_helper as _edh
+            import shutil as _shutil
+            import tempfile as _tempfile
+            _edh.load_external_data_for_model(m, os.path.dirname(model_path))
+            changed = HoistFP8DequantFromSubfunctionTransform.apply(m)
+            if changed:
+                _fp8_tmp_dir = _tempfile.mkdtemp()
+                _fp8_tmp_path = os.path.join(_fp8_tmp_dir, "model_hoisted.onnx")
+                onnx.save(m, _fp8_tmp_path, save_as_external_data=True,
+                          all_tensors_to_one_file=True, location="model_hoisted.onnx.data")
+                ort_model_path = _fp8_tmp_path
         for name, value in added_initializers.items():
             session_options.add_initializer(name, value)
-        session = onnxruntime.InferenceSession(model_path, session_options)
+        session = onnxruntime.InferenceSession(ort_model_path, session_options)
+        if _fp8_tmp_dir:
+            _shutil.rmtree(_fp8_tmp_dir, ignore_errors=True)
 
         generated_ids = []
         inputs = self.input_handler.prepare_ort_inputs()

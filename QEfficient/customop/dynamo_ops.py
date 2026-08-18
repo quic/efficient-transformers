@@ -24,6 +24,13 @@ from QEfficient.customop.ctx_scatter_gather_cb import (  # noqa: E402
 )
 from QEfficient.customop.onnxscript_utils import get_dynamo_onnxscript_func
 from QEfficient.customop.rms_norm import CustomRMSNorm  # noqa: E402
+from QEfficient.customop.fp8_dequantize import (  # noqa: E402
+    FP8DequantizeBlocked,
+    FP8DequantizePerAxis,
+    FP8DequantizePerAxisLegacy,
+    FP8DequantizePerTensor,
+    FP8DequantizePerTensorLegacy,
+)
 
 
 @torch.library.custom_op("qefficient::rms_norm", mutates_args=())
@@ -437,4 +444,11 @@ DYNAMO_CUSTOM_OP_TABLE = {
     torch.ops.qefficient.ctx_gather_blocked_kv.default: get_dynamo_onnxscript_func(CtxGatherBlockedKV),
     torch.ops.qefficient.ctx_gather_blocked_kv_cb.default: get_dynamo_onnxscript_func(CtxGatherBlockedKVCB),
     torch.ops.qefficient.ctx_gather_3d_generalized.default: get_dynamo_onnxscript_func(CtxGather3D),
+    # FP8DequantizePerTensor/PerAxis are the dynamo variants directly (cleanly named).
+    # Use the legacy variants with get_dynamo_onnxscript_func to retrieve them.
+    torch.ops.qefficient.fp8_dequantize_per_tensor.default: get_dynamo_onnxscript_func(FP8DequantizePerTensorLegacy),
+    torch.ops.qefficient.fp8_dequantize_per_axis.default: get_dynamo_onnxscript_func(FP8DequantizePerAxisLegacy),
+    # FP8DequantizeBlocked is compiled directly at opset-21 (not via qeff_custom_op),
+    # so it is already the dynamo variant — no get_dynamo_onnxscript_func wrapper needed.
+    torch.ops.qefficient.fp8_dequantize_blocked.default: FP8DequantizeBlocked,
 }

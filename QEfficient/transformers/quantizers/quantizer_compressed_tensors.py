@@ -16,12 +16,7 @@ from transformers.utils.quantization_config import CompressedTensorsConfig, Quan
 
 # Importing the custom ops registers them with torch.ops.qefficient.*
 import QEfficient.customop.dynamo_ops  # noqa: F401
-from QEfficient.customop.fp8_dequantize import (
-    FP8DequantizeBlockedFunc,
-    FP8DequantizePerAxisFunc,
-    FP8DequantizePerTensorFunc,
-)
-from QEfficient.customop.utils import select_interface
+from QEfficient.customop.utils import fp8_dequantize_blocked, fp8_dequantize_per_axis, fp8_dequantize_per_tensor
 from QEfficient.transformers.quantizers.quantizer_utils import blockwise_dequantize, get_keys_to_not_convert
 from QEfficient.utils.logging_utils import logger
 
@@ -158,16 +153,10 @@ class FP8DeQuantLinear(torch.nn.Module):
             scale = scale.squeeze(-1)
         if scale.ndim == 0 or scale.numel() == 1:
             # Per-tensor: scalar scale — dispatches to DequantizeLinear (no axis) in ONNX.
-            dequantized_weights = select_interface(
-                FP8DequantizePerTensorFunc.apply,
-                torch.ops.qefficient.fp8_dequantize_per_tensor,
-            )(self.weight, scale)
+            dequantized_weights = fp8_dequantize_per_tensor(self.weight, scale)
         else:
             # Per-axis: (out_features,) scale — dispatches to DequantizeLinear(axis=0) in ONNX.
-            dequantized_weights = select_interface(
-                FP8DequantizePerAxisFunc.apply,
-                torch.ops.qefficient.fp8_dequantize_per_axis,
-            )(self.weight, scale)
+            dequantized_weights = fp8_dequantize_per_axis(self.weight, scale)
         with torch.no_grad():
             out = torch.matmul(x.to(scale.dtype), dequantized_weights.T)
             out = out + self.bias if self.bias is not None else out
@@ -244,14 +233,7 @@ class FP8BlockWiseDequantLinear(torch.nn.Module):
 
     def forward(self, x):
         row_bs, col_bs = self.weight_block_size
-        # Pass the compact scale directly. The custom op expands it eagerly for
-        # correctness; the ONNX symbolic emits Tile(scale,[row_bs,1]) followed by
-        # DequantizeLinear(axis=-1, block_size=col_bs) so the ONNX graph stays
-        # clean — no 3D intermediates from repeat_interleave lowering.
-        dequantized_weights = select_interface(
-            FP8DequantizeBlockedFunc.apply,
-            torch.ops.qefficient.fp8_dequantize_blocked,
-        )(self.weight, self.weight_scale_inv, row_bs, col_bs)
+        dequantized_weights = fp8_dequantize_blocked(self.weight, self.weight_scale_inv, row_bs, col_bs)
         with torch.no_grad():
             out = torch.matmul(x.to(self.weight_scale_inv.dtype), dequantized_weights.T)
             out = out + self.bias if self.bias is not None else out

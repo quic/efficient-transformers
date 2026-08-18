@@ -399,32 +399,63 @@ class QEFFBaseModel(ABC):
             dynamic_shapes = {**ordered_shapes, **{k: v for k, v in dynamic_shapes.items() if k not in sig_key_set}}
 
         export_kwargs = dict(export_kwargs)
-        export_kwargs.setdefault("report", False)
-        export_kwargs.setdefault("optimize", False)
-        export_kwargs["dynamo"] = True
-        export_kwargs["custom_translation_table"] = {
+        report = export_kwargs.pop("report", False)
+        optimize = export_kwargs.pop("optimize", False)
+        export_kwargs.pop("dynamo", None)
+        export_kwargs.pop("use_onnx_subfunctions", None)
+        custom_translation_table = {
             **(export_kwargs.pop("custom_translation_table", None) or {}),
             **DYNAMO_CUSTOM_OP_TABLE,
         }
 
+        # Build the ONNX registry with our custom ops registered.
+        # We call the lower-level _core.export directly (bypassing torch.onnx.export /
+        # export_compat) so that convert_version is NOT triggered.  convert_version
+        # inlines local ONNX functions before upgrading the opset, which fails when
+        # our custom functions reference a higher opset than the model's base opset.
+        # By passing opset_version=None to _core.export, the model stays at
+        # TORCHLIB_OPSET (18) and no inlining occurs.  For FP8 models we bump the
+        # opset declaration post-export so ORT accepts FP8 DequantizeLinear nodes.
+        from torch.onnx._internal.exporter import _core as _onnx_core, _registration as _onnx_reg
+        _registry = _onnx_reg.ONNXRegistry().from_torchlib(
+            opset_version=constants.ONNX_DYNAMO_EXPORT_OPSET
+        )
+        for _torch_op, _onnx_op in custom_translation_table.items():
+            _registry.register_op(_torch_op, _onnx_op, is_complex=False)
+
         prev_invoke_fallback = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
         os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = "1"
         try:
-            onnx_program = torch.onnx.export(
+            onnx_program = _onnx_core.export(
                 self.model,
                 args=(),
-                f=None,
                 kwargs=example_inputs,
+                registry=_registry,
                 input_names=input_names,
                 output_names=output_names,
-                dynamic_axes=None,
                 dynamic_shapes=dynamic_shapes,
-                opset_version=constants.ONNX_DYNAMO_EXPORT_OPSET,
+                report=report,
+                optimize=optimize,
+                opset_version=None,
                 **export_kwargs,
             )
             if onnx_program is None:
                 raise RuntimeError("torch.onnx.export returned None for dynamo export")
             PruneFakeInitializersTransform.apply(onnx_program)
+            # Bump the default-domain opset declaration to 21 when the model contains
+            # FP8 initializers so ORT accepts FP8 DequantizeLinear nodes.
+            # We modify the IR model's opset_imports directly (not model_proto, which
+            # is re-serialized from the IR model on every access and would discard
+            # any proto-level changes).
+            import onnx_ir as _ir
+            _has_fp8 = any(
+                v.dtype == _ir.DataType.FLOAT8E4M3FN
+                for v in onnx_program.model.graph.initializers.values()
+            )
+            if _has_fp8:
+                onnx_program.model.opset_imports[""] = 21
+                for fn in onnx_program.model.functions.values():
+                    fn.opset_imports[""] = 21
             onnx_program.save(str(onnx_path))
         finally:
             if prev_invoke_fallback is None:
