@@ -73,7 +73,7 @@ pipeline {
         // is 2 (see the QAIC LLM stage), so this is half the card count, giving each worker
         // its own non-overlapping two-card slice. Must never exceed cards / per_worker or
         // multiple workers collapse onto one slice and oversubscribe its NSP cores.
-        LLM_EXEC_N  = "${Math.max(1, (params.QAIC_WORKERS as Integer).intdiv(2))}"
+        LLM_EXEC_N  = "${Math.max(1, Math.floorDiv(Integer.parseInt(params.QAIC_WORKERS.toString()), 2))}"
         // Consumed by the tier hook in tests/conftest.py. Passed on each `docker exec`
         // rather than the `docker run` above, because the container is created in the
         // Install stage and `docker run -e` cannot carry a per-stage value.
@@ -144,7 +144,7 @@ pipeline {
                            export TMPDIR=$PWD/.qeff_tmp/export_compile &&
                            rm -rf $PWD/.qeff_tmp/export_compile &&
                            mkdir -p $PWD/.qeff_tmp/export_compile &&
-                           pytest tests -m '(not on_qaic) and (not finetune) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n auto --junitxml=tests/tests_log1.xml --durations=10 &&
+                           pytest tests -m '(not on_qaic) and (not finetune) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n logical --junitxml=tests/tests_log1.xml --durations=10 &&
                            junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
                            deactivate"
                            '''
@@ -272,7 +272,9 @@ pipeline {
                         // opted into resolve_two_phase_cleanup, so it would drive real hardware
                         // inside that wide pass. It runs cold in the execute pass instead. A new
                         // multimodal module must either opt in or be listed here.
-                        env.MM_EXEC_N = Math.max(1, (params.QAIC_WORKERS as Integer).intdiv(2)).toString()
+                        env.MM_EXEC_N = Math.max(
+                            1, Math.floorDiv(Integer.parseInt(params.QAIC_WORKERS.toString()), 2)
+                        ).toString()
                         timeout(time: 90, unit: 'MINUTES') {
                             sh '''
                             sudo docker exec -e QEFF_MODEL_TIER=${MODEL_TIER} ${BUILD_TAG} bash -c "
@@ -382,7 +384,7 @@ pipeline {
                     mkdir -p \\$PWD/dynamo_qeff_qaic &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=\\$PWD/dynamo_qeff_qaic &&
-                    pytest tests/dynamo -m '(dynamo) and (on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly --dist loadgroup -n auto --junitxml=tests/tests_log_dynamo_qaic.xml --durations=10 &&
+                    pytest tests/dynamo -m '(dynamo) and (on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly --dist loadgroup -n logical --junitxml=tests/tests_log_dynamo_qaic.xml --durations=10 &&
                     junitparser merge tests/tests_log_dynamo_qaic.xml tests/tests_log.xml &&
                     deactivate"
                     '''
