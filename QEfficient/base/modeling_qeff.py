@@ -673,7 +673,6 @@ class QEFFBaseModel(ABC):
                     "moe_prefill_packed_chunk_size": constants.MOE_PREFILL_PACKED_CHUNK_SIZE
                     if moe_prefill_packed_chunk_size is None
                     else moe_prefill_packed_chunk_size,
-                    "moe_prefill_target_seq_len": specializations[0].get("seq_len"),
                 }
             )
 
