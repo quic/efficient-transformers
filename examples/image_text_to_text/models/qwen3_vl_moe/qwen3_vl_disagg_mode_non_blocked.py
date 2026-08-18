@@ -18,67 +18,29 @@ from transformers import AutoConfig, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
+# model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 model_id = "Qwen/Qwen3-VL-235B-A22B-Instruct"
 # model_id = "tiny-random/qwen3-vl-moe"
 config = AutoConfig.from_pretrained(model_id)
 config.dtype = "float16"
 config.torch_dtype = torch.float16
 
-# # For faster execution user can run with lesser layers, For Testing Purpose Only
+# For faster execution user can run with lesser layers, For Testing Purpose Only
 config.vision_config.depth = 9
 config.text_config.num_hidden_layers = 2
 config.vision_config.deepstack_visual_indexes = [8]
 
 qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
-    model_id,
-    attn_implementation="eager",
-    kv_offload=True,
-    config=config,
-    dtype=torch.float16,
-    continuous_batching=True,
-    layerwise=False,
+    model_id, attn_implementation="eager", kv_offload=True, config=config, dtype=torch.float16, layerwise=False
 )
 tokenizer = transformers.AutoTokenizer.from_pretrained(model_id)
 processor = AutoProcessor.from_pretrained(model_id)
 
 PREFILL_SEQ_LEN = 1024
-CTX_LEN = 10240  # 2048 * 2
-BS = 256
+CTX_LEN = 10240
+BS = 1
 
-NUM_KV_BLOCKS = 4
-NUM_Q_BLOCKS = 2
-HEAD_BLOCK_SIZE = 8
-PREFILL_BLOCK_CHUNKS = None
-PREFILL_MODE = None  # None, "online" or "qkv" depending on whether we want online prefill or headparallel prefill
-
-
-###############
-# Decode modes:
-# - standard attention - pass enable_blocking and blocking_mode
-# - head parallel blocking - pass  enable_blocking, blocking_mode: “kv” and kv_block_headpar_split: 0
-# - batch fold head parallel - pass enable_blocking, blocking_mode: “kv” and batch_fold: True
-
-
-def _decode_qaic_config() -> dict:
-    return {
-        "blocking_mode": "kv",
-        "num_kv_blocks": NUM_KV_BLOCKS,
-        # "kv_blocking_headpar_split": 0,  # 0 → resolved to num_cores at compile time
-        "batch_fold": True,
-        "ctx_len": CTX_LEN,
-    }
-
-
-def _prefill_qaic_config() -> dict:
-    cfg = _decode_qaic_config()
-    cfg.pop("batch_fold")
-    cfg["prefill_block_chunks"] = PREFILL_BLOCK_CHUNKS
-    cfg["prefill_blocking_mode"] = PREFILL_MODE
-    cfg["prefill_n_rep_chunk"] = PREFILL_N_REP_CHUNK
-    return cfg
-
-
-skip_vision = True
+skip_vision = False
 if not skip_vision:
     vision_qpc_path = qeff_model.compile(
         batch_size=BS,
@@ -97,13 +59,9 @@ if not skip_vision:
         use_onnx_subfunctions=True,
         layerwise=False,
     )
-decode_qaic_config = _decode_qaic_config()
-print("decode", decode_qaic_config)
-decode_start_time = perf_counter()
+
 decode_qpc_path = qeff_model.compile(
     batch_size=BS,
-    full_batch_size=BS,
-    kv_cache_batch_size=BS,
     prefill_seq_len=1,
     ctx_len=CTX_LEN,
     height=354,
@@ -114,41 +72,19 @@ decode_qpc_path = qeff_model.compile(
     mxint8_kv_cache=True,
     split_model_io=True,  # This should be used for disagg serving via VLLM
     mos=1,
-    user_tiled=True,
+    aic_enable_depth_first=True,
     prefill_only=False,
-    expert_parallel=True,  # This forces the model to use expert parallelism for the MoE layers
-    tree_reduce=True,  # This enables tree reduction for the MoE layers, which can improve performance when using multiple devices
-    cores_per_expert=2,  # number_of_parallelized_experts_per_device = total_experts * cores_per_expert / total_cores , total_cores = num_devices * num_cores, number_of_pipline_stages = total_experts / number_of_parallelized_experts_per_device
     skip_vision=True,
     use_onnx_subfunctions=True,
     layerwise=False,
     offload_pt_weights=False,
-    qaic_config=decode_qaic_config,
 )
-print(f"Decode export + compile time is {(perf_counter() - decode_start_time):.3f}s")
 
 
-################
-# Prefill modes:
-# - follow decode attention - pass nothing extra
-# - head parallel offline prefill - pass prefill_blocking_mode: “qkv”, prefill_block_chunks: 2
-# - online prefill - pass prefill_blocking_mode: “online”, prefill_block_chunks: 2
-PREFILL_MODE = "online"
-PREFILL_QL_CHUNK = 128
-PREFILL_BLOCK_CHUNKS = -(-PREFILL_SEQ_LEN // PREFILL_QL_CHUNK)
-PREFILL_N_REP_CHUNK = 4
-MOE_PREFILL_PACKED_CHUNK_SIZE = 256
-prefill_qaic_config = _prefill_qaic_config()
-print("prefill", prefill_qaic_config)
-
-prefill_start_time = perf_counter()
 prefill_qpc_path = qeff_model.compile(
-    batch_size=1,
-    full_batch_size=1,
-    kv_cache_batch_size=7,
+    batch_size=BS,
     prefill_seq_len=PREFILL_SEQ_LEN,
     ctx_len=CTX_LEN,
-    moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
     height=354,
     width=536,
     num_cores=16,
@@ -165,14 +101,13 @@ prefill_qpc_path = qeff_model.compile(
     use_onnx_subfunctions=True,
     layerwise=False,
     offload_pt_weights=True,
-    qaic_config=prefill_qaic_config,
 )
-print(f"Prefill export + compile time is {(perf_counter() - prefill_start_time):.3f}s")
 
 print(f"Prefill qpc path {prefill_qpc_path}")
 print(f"Decode qpc path {decode_qpc_path}")
-
 lang_prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"))
+lang_decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"))
+
 if skip_vision:
     messages = [
         {
@@ -267,15 +202,14 @@ if not skip_vision:
     lang_inputs["vision_embeds"] = vision_outputs["vision_embeds"]
     lang_inputs["deepstack_features"] = vision_outputs["deepstack_features"]
 
-# RUN prefill (batch_size=1; inputs are sliced to first batch item since all are identical)
+# RUN prefill
 lang_start = perf_counter()
 lang_prefill_session.set_buffers(vision_outputs)
 all_outputs = []
 chunk_inputs = lang_inputs.copy()
-chunk_inputs["batch_index"] = np.array([[0]], dtype=np.int64)
 for i in range(num_chunks):
-    chunk_inputs["input_ids"] = lang_inputs["input_ids"][0:1, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
-    chunk_inputs["position_ids"] = lang_inputs["position_ids"][:, 0:1, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
+    chunk_inputs["input_ids"] = lang_inputs["input_ids"][:, i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
+    chunk_inputs["position_ids"] = lang_inputs["position_ids"][..., i * PREFILL_SEQ_LEN : (i + 1) * PREFILL_SEQ_LEN]
     outputs = lang_prefill_session.run(chunk_inputs)
     for i in range(config.text_config.num_hidden_layers):
         chunk_inputs[f"past_key.{i}"] = outputs[f"past_key.{i}_RetainedState"]
@@ -283,43 +217,26 @@ for i in range(num_chunks):
     chunk_inputs["image_idx"] = outputs["image_idx_output"]
 prefill_time = perf_counter() - lang_start + vision_end - vision_start
 print(f"Prefill time : {prefill_time:.2f} secs")
-lang_prefill_session.deactivate()
-lang_decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"))
 
-# Next token from batch=1 prefill; position for all BS decode requests
-next_token_id = np.argmax(outputs["logits"])  # scalar
-all_outputs.append(next_token_id)
-next_pos = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
-
-# vLLM supplies logical-request inputs plus a logical-to-physical slot permutation.
-# Retained KV stays in the standard [FBS, Hkv, ctx_len, head_dim] physical-slot layout.
-batch_index = np.random.default_rng(1234).permutation(BS).reshape(BS, 1).astype(np.int64)
-physical_slots = batch_index[:, 0]
+all_outputs.append(np.argmax(outputs["logits"]))
 decode_inputs = {
-    "input_ids": np.full((BS, 1), next_token_id, dtype=lang_inputs["input_ids"].dtype),
-    "position_ids": next_pos,
-    "batch_index": batch_index,
+    "input_ids": np.argmax(outputs["logits"]).reshape(1, 1),
+    "position_ids": np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1,
 }
 
-for layer_idx in range(config.text_config.num_hidden_layers):
-    for cache_name in ("past_key", "past_value"):
-        prefill_cache = outputs[f"{cache_name}.{layer_idx}_RetainedState"]
-        logical_cache = np.tile(prefill_cache[0:1], (BS, 1, 1, 1))
-        physical_cache = np.empty_like(logical_cache)
-        physical_cache[physical_slots] = logical_cache
-        decode_inputs[f"{cache_name}.{layer_idx}"] = physical_cache
-
+for i in range(config.text_config.num_hidden_layers):
+    decode_inputs[f"past_key.{i}"] = outputs[f"past_key.{i}_RetainedState"]
+    decode_inputs[f"past_value.{i}"] = outputs[f"past_value.{i}_RetainedState"]
 
 st = perf_counter()
 decode_out = lang_decode_session.run(decode_inputs)
 print(f"time for first run of decode with KV as input = {perf_counter() - st} sec\n")
 
-all_outputs.append(np.argmax(decode_out["logits"][0]))  # track batch 0
-pos_id = decode_inputs["position_ids"] + 1  # [BS, 1]
+all_outputs.append(np.argmax(decode_out["logits"]))
+pos_id = np.max(decode_inputs["position_ids"], axis=-1, keepdims=True) + 1
 loop_decode_inputs = {
-    "input_ids": np.argmax(decode_out["logits"], axis=-1),  # [BS, 1], logical request order
+    "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
     "position_ids": pos_id,
-    "batch_index": batch_index,
 }
 
 for i in range(config.text_config.num_hidden_layers):
@@ -330,16 +247,15 @@ for i in range(config.text_config.num_hidden_layers):
 st = perf_counter()
 for i in range(generation_len - 2):
     decode_out = lang_decode_session.run(loop_decode_inputs)
-    all_outputs.append(np.argmax(decode_out["logits"][0]))
+    all_outputs.append(np.argmax(decode_out["logits"]))
     pos_id += 1
     for j in range(config.text_config.num_hidden_layers):
         loop_decode_inputs[f"past_key.{j}"] = decode_out[f"past_key.{j}_RetainedState"]
         loop_decode_inputs[f"past_value.{j}"] = decode_out[f"past_value.{j}_RetainedState"]
     loop_decode_inputs.update(
         {
-            "input_ids": np.argmax(decode_out["logits"], axis=-1),
+            "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
             "position_ids": pos_id,
-            "batch_index": batch_index,
         }
     )
 ft = perf_counter()
