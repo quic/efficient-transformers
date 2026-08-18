@@ -18,8 +18,8 @@ This file intentionally uses two coverage tiers:
      but do not yet have a stable CPU runtime parity path in the consolidated test
 """
 
-import json
 import inspect
+import json
 import logging
 import os
 import shutil
