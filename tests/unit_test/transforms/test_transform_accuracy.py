@@ -1416,7 +1416,7 @@ class TestSplitOptimizedMoETransform:
             assert transforms.index(KVCacheTransform) < transforms.index(SimpleDecodeMoeTransform)
 
     def test_moe_component_mappings_owned_by_optimized_mapper(self):
-        from transformers.models.gemma4.modeling_gemma4 import Gemma4TextExperts, Gemma4TextRouter
+        from transformers.models.gemma4.modeling_gemma4 import Gemma4TextRouter
         from transformers.models.glm4_moe.modeling_glm4_moe import Glm4MoeMoE, Glm4MoeTopkRouter
         from transformers.models.gpt_oss.modeling_gpt_oss import GptOssExperts, GptOssMLP
         from transformers.models.granitemoe.modeling_granitemoe import (
@@ -1457,7 +1457,6 @@ class TestSplitOptimizedMoETransform:
             Qwen3_5MoeExperts,
             Qwen3_5MoeSparseMoeBlock,
             Qwen3_5MoeTopKRouter,
-            Gemma4TextExperts,
             Gemma4TextRouter,
             GptOssMLP,
             GptOssExperts,
