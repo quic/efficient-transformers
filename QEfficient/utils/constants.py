@@ -8,7 +8,11 @@
 import os
 from dataclasses import dataclass
 
-from QEfficient.utils.hardware_utils import get_default_aic_hw_version
+from QEfficient.utils.hardware_utils import (
+    get_default_aic_hw_version,
+    get_default_num_cores,
+    get_default_vtcm_size_threshold,
+)
 
 UTILS_DIR = os.path.dirname(os.path.abspath(__file__))
 QEFF_DIR = os.path.dirname(UTILS_DIR)
@@ -31,23 +35,6 @@ DYNAMO_DIM_MIN_COMP_CTX_LENGTHS = 4
 
 DEFAULT_AIC_HW_VERSION = get_default_aic_hw_version()
 
-
-class DefaultNumCoresResolver:
-    """Singleton resolving the default AIC compiler ``num_cores`` for a hardware version."""
-
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
-    def get_num_cores(self, aic_hw_version: str = DEFAULT_AIC_HW_VERSION) -> int:
-        if aic_hw_version == "ai200":
-            return 4
-        return 16
-
-
 NPI_MAPPING = {
     "google/gemma-3-4b-it": os.path.join(
         QEFF_DIR, "transformers", "models", "gemma3", "configs", "fp32_nodes_gemma3_4b.yaml"
@@ -58,10 +45,10 @@ NPI_MAPPING = {
 }
 
 # Blocking defaults
-VTCM_SIZE_THRESHOLD = 8 * 1024 * 1024 * 0.75
+VTCM_SIZE_THRESHOLD = get_default_vtcm_size_threshold(DEFAULT_AIC_HW_VERSION)
 
 # Compiler defaults
-DEFAULT_AIC_NUM_CORES = DefaultNumCoresResolver().get_num_cores()
+DEFAULT_AIC_NUM_CORES = get_default_num_cores(DEFAULT_AIC_HW_VERSION)
 DEFAULT_AIC_MXPF6_MATMUL = False
 # Hashing defaults
 HASH_HEXDIGEST_STR_LEN = 16

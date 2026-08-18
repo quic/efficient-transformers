@@ -87,3 +87,35 @@ def get_default_aic_hw_version() -> str:
         if "AIC100" in variant:
             return "ai100"
     return _detect_hw_version_via_lspci()
+
+
+class AicHwDefaultsResolver:
+    """Singleton resolving compiler/runtime defaults that vary by AIC hardware generation (e.g. AI100 vs AI200)."""
+
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    @staticmethod
+    def _is_ai200(aic_hw_version: str) -> bool:
+        return aic_hw_version == "ai200"
+
+    def get_num_cores(self, aic_hw_version: str) -> int:
+        return 4 if self._is_ai200(aic_hw_version) else 16
+
+    def get_vtcm_size_threshold(self, aic_hw_version: str) -> float:
+        vtcm_size_mb = 16 if self._is_ai200(aic_hw_version) else 8
+        return vtcm_size_mb * 1024 * 1024 * 0.75
+
+
+def get_default_num_cores(aic_hw_version: str | None = None) -> int:
+    """Return the default AIC compiler ``num_cores`` for the given (or detected) hardware version."""
+    return AicHwDefaultsResolver().get_num_cores(aic_hw_version or get_default_aic_hw_version())
+
+
+def get_default_vtcm_size_threshold(aic_hw_version: str | None = None) -> float:
+    """Return the default VTCM size threshold (bytes) for the given (or detected) hardware version."""
+    return AicHwDefaultsResolver().get_vtcm_size_threshold(aic_hw_version or get_default_aic_hw_version())
