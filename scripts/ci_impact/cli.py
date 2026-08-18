@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .core import STAGES, ImpactPlan, build_plan, write_plan
 from .llm import (
+    LLMSelection,
     LLMStageError,
     expand_plan_with_catalog,
     load_catalog,
@@ -24,6 +25,19 @@ from .llm import (
     select_tests,
     write_llm_artifact,
 )
+
+
+def _skipped_llm_selection() -> LLMSelection:
+    return LLMSelection(
+        run_full_ci=True,
+        tests=(),
+        unnecessary_tests=(),
+        reason="deterministic impact plan already requires full CI; LLM selection skipped",
+        response_id="skipped",
+        model="skipped",
+        attempts=0,
+        context_incomplete=False,
+    )
 
 
 def _full_plan(repo: Path, reason: str) -> ImpactPlan:
@@ -64,6 +78,13 @@ def _plan(args: argparse.Namespace) -> int:
         catalog = load_catalog(args.catalog, plan.head)
         plan = expand_plan_with_catalog(plan, catalog)
         write_plan(plan, args.deterministic_output)
+        if plan.mode == "full":
+            selection = _skipped_llm_selection()
+            plan.llm = selection.to_dict()
+            write_llm_artifact(selection, args.llm_output)
+            write_plan(plan, args.output)
+            print(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
+            return 0
         selection = select_tests(
             repo,
             plan,

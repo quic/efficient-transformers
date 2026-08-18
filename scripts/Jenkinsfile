@@ -194,7 +194,6 @@ pipeline {
                             -e HF_TOKEN=${HF_TOKEN} \
                             -e TMPDIR=/efficient-transformers/.ci-tmp/default \
                             -e PIP_CACHE_DIR=/root/.cache/pip \
-                            -e PIP_NO_CACHE_DIR=false \
                             -v ./:/efficient-transformers \
                             -v ${HF_PATH}:${DOCKER_HF_PATH} \
                             -v ${QEFF_PIP_CACHE_PATH}:/root/.cache/pip \
@@ -265,14 +264,30 @@ pipeline {
                             sh 'python3 -m scripts.ci_impact.cli validate .ci-impact-plan.json'
                         }
                     } catch (planningError) {
+                        if (fileExists('.ci-impact-llm.json')) {
+                            echo "LLM decision artifact:\n${readFile('.ci-impact-llm.json').trim()}"
+                        }
                         archiveArtifacts artifacts: '.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json,.ci-impact-qgenie-audit.jsonl', allowEmptyArchive: true
                         throw planningError
                     }
                     def plan = new JsonSlurperClassic().parseText(readFile('.ci-impact-plan.json'))
+                    def llmDecisionText = fileExists('.ci-impact-llm.json') ? readFile('.ci-impact-llm.json').trim() : '<missing>'
                     loadImpactEnvironment(plan, params.TEST_PROFILE)
                     def validationPrefix = env.CI_IMPACT_VALIDATION_PR_ID ? "PR-${env.CI_IMPACT_VALIDATION_PR_ID} validation; " : ''
                     currentBuild.description = "${validationPrefix}${plan.mode}: ${plan.reasons.join('; ')}"
                     echo "Regression impact mode: ${plan.mode}\nReasons: ${plan.reasons.join('\n')}"
+                    echo "LLM decision artifact:\n${llmDecisionText}"
+                    if (plan.mode != 'full') {
+                        def selectedTests = []
+                        plan.stages.each { stageKey, stagePlan ->
+                            if (stagePlan.enabled && stagePlan.nodeids) {
+                                stagePlan.nodeids.each { nodeid ->
+                                    selectedTests << "${stageKey}: ${nodeid}"
+                                }
+                            }
+                        }
+                        echo "Final selected tests:\n${selectedTests ? selectedTests.join('\n') : '<none>'}"
+                    }
                     archiveArtifacts artifacts: '.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json,.ci-impact-qgenie-audit.jsonl', fingerprint: true
                 }
             }

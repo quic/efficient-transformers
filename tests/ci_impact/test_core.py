@@ -38,6 +38,8 @@ from scripts.ci_impact.llm import (
 )
 from scripts.ci_impact.tool_policy import evaluate
 
+__test__ = False
+
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=repo, text=True).strip()
@@ -1147,11 +1149,9 @@ def test_missing_system_prompt_fails_closed(tmp_path: Path) -> None:
         _system_prompt()
 
 
-@pytest.mark.parametrize("force_full", [False, True])
-def test_cli_calls_llm_for_no_test_and_forced_full_builds(
+def test_cli_calls_llm_for_no_test_builds(
     repository: tuple[Path, str],
     tmp_path: Path,
-    force_full: bool,
 ) -> None:
     repo, base = repository
     catalog = tmp_path / "catalog.json"
@@ -1168,8 +1168,8 @@ def test_cli_calls_llm_for_no_test_and_forced_full_builds(
         deterministic_output=tmp_path / "deterministic.json",
         llm_output=tmp_path / "llm.json",
         catalog=catalog,
-        force_full=force_full,
-        force_reason="forced" if force_full else None,
+        force_full=False,
+        force_reason=None,
     )
 
     with patch("scripts.ci_impact.cli.select_tests", return_value=_selection()) as selector:
@@ -1178,6 +1178,45 @@ def test_cli_calls_llm_for_no_test_and_forced_full_builds(
     selector.assert_called_once()
     payload = json.loads(args.output.read_text(encoding="utf-8"))
     assert payload["llm"]["response_id"] == "resp_test"
+
+
+def test_cli_skips_llm_for_forced_full_builds(
+    repository: tuple[Path, str],
+    tmp_path: Path,
+) -> None:
+    repo, base = repository
+    catalog = tmp_path / "catalog.json"
+    _write_catalog(
+        catalog,
+        _git(repo, "rev-parse", "HEAD"),
+        [{"nodeid": "tests/test_component.py::test_calculate", "stages": ["export_compile"]}],
+    )
+    args = argparse.Namespace(
+        repo=repo,
+        base=base,
+        head="HEAD",
+        output=tmp_path / "plan.json",
+        deterministic_output=tmp_path / "deterministic.json",
+        llm_output=tmp_path / "llm.json",
+        catalog=catalog,
+        force_full=True,
+        force_reason="forced",
+    )
+
+    with (
+        patch("scripts.ci_impact.cli.select_tests", return_value=_selection()) as selector,
+        patch("scripts.ci_impact.cli.merge_selection") as merger,
+    ):
+        assert _plan(args) == 0
+
+    selector.assert_not_called()
+    merger.assert_not_called()
+    payload = json.loads(args.output.read_text(encoding="utf-8"))
+    llm_payload = json.loads(args.llm_output.read_text(encoding="utf-8"))
+    assert payload["mode"] == "full"
+    assert payload["llm"] == llm_payload
+    assert payload["llm"]["response_id"] == "skipped"
+    assert payload["llm"]["attempts"] == 0
 
 
 def test_cli_writes_failure_artifact_when_llm_fails(

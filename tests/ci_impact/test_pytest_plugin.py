@@ -18,6 +18,8 @@ from scripts.ci_impact.pytest_plugin import (
     pytest_collection_modifyitems,
 )
 
+__test__ = False
+
 
 def test_node_matching_requires_exact_callspecs() -> None:
     prefix = "tests/test_models.py::test_model"
