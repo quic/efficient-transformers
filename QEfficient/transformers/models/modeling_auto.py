@@ -1315,12 +1315,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         _disable_unsupported_weight_free(kwargs, self.__class__.__name__)
         super().__init__(model, **kwargs)
         self.model = model.get_qeff_language_decoder()
-        self.model.qaic_config = qaic_config
-        # Below is to pass qaic_config downstream
-        if hasattr(self.model, "model"):
-            self.model.model.qaic_config = qaic_config
-            if hasattr(self.model.model, "model"):
-                self.model.model.model.qaic_config = qaic_config
+        self.qaic_config = qaic_config
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
         self.continuous_batching = False
         if qaic_config and (mla_absorption := qaic_config.get("mla_absorption", None)):
@@ -3707,7 +3702,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if self.dflash_tlm:
             self.model, _ = DFlashTLMTransform.apply(self.model, qaic_config)
 
-        self.model, transformed = SpDTransform.apply(self.model, qaic_config, **kwargs)
+        self.model, transformed = SpDTransform.apply(self.model, qaic_config=qaic_config, **kwargs)
         self.is_tlm = transformed
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
@@ -3724,7 +3719,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
         # previous transform function.
-        self.model, transformed = SamplerTransform.apply(self.model, qaic_config, **kwargs)
+        self.model, transformed = SamplerTransform.apply(self.model, qaic_config=qaic_config, **kwargs)
         # TODO : Update in qaic_config isn't updated in the hash due to SpDTransforms. Need to move
         # SpDTransforms to PytorchTransforms.
         if self.is_tlm:
