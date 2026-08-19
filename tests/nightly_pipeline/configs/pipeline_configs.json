@@ -2,6 +2,10 @@
   "causal_pipeline_configs": [
     {
       "output_dir": "./Nightly_Pipeline",
+      "execution_modes": [
+        "non_cb",
+        "cb"
+      ],
       "export_params": {},
       "compile_params": {
         "prefill_seq_len": 32,
@@ -16,6 +20,19 @@
       "generate_params": {
         "generation_len": 256,
         "prompts": "My name is"
+      },
+      "continuous_batching": {
+        "full_batch_size": 4,
+        "export_params": {},
+        "compile_params": {},
+        "generate_params": {
+          "prompts": [
+            "My name is",
+            "I am working on nightly validation.",
+            "Continuous batching improves utilization.",
+            "This run checks model parity."
+          ]
+        }
       }
     }
   ],
@@ -72,10 +89,14 @@
   "image_text_to_text_model_configs": [
     {
       "output_dir": "./Nightly_Pipeline",
+      "execution_modes": [
+        "non_cb",
+        "cb"
+      ],
       "export_params": {},
       "compile_params": {
         "prefill_seq_len": 128,
-        "ctx_len": 1024,
+        "ctx_len": 4096,
         "num_cores": 16,
         "num_devices": 4,
         "aic_hw_version": "ai100",
@@ -88,6 +109,54 @@
         "generation_len": 256,
         "image_url": "https://picsum.photos/id/237/536/354",
         "query": "Can you describe the image in detail?"
+      },
+      "continuous_batching": {
+        "full_batch_size": 4,
+        "export_params": {},
+        "compile_params": {},
+        "generate_params": {
+          "prompts": [
+            "Can you describe the image in detail?",
+            "What are the objects in the image?",
+            "What is the main subject of the image?",
+            "What colors are predominant in the image?"
+          ],
+          "image_urls": [
+            "https://picsum.photos/id/237/536/354",
+            "https://picsum.photos/id/237/536/354",
+            "https://picsum.photos/id/237/536/354",
+            "https://picsum.photos/id/237/536/354"
+          ]
+        }
+      },
+      "multi_specialization": {
+        "export_params": {},
+        "compile_params": {
+          "height": [
+            240,
+            354,
+            1024
+          ],
+          "width": [
+            360,
+            536,
+            1024
+          ],
+          "num_frames": [
+            3,
+            2,
+            1
+          ],
+          "mm_processor_kwargs": {
+            "min_pixels": 4096,
+            "max_pixels": 16777216
+          }
+        },
+        "generate_params": {
+          "runtime_height": 240,
+          "runtime_width": 360,
+          "runtime_num_frames": 3
+        }
       }
     }
   ],

@@ -42,13 +42,24 @@ MODEL_CLASS_LABELS = {
 }
 
 VALIDATION_FILE_ORDER = [
+    "causal_model_cb_validation.csv",
     "causal_model_validation.csv",
+    "image_text_to_text_model_cb_validation.csv",
+    "image_text_to_text_model_multi_spec_validation.csv",
     "image_text_to_text_model_validation.csv",
     "embedding_model_validation.csv",
     "audio_model_validation.csv",
     "audio_embedding_model_validation.csv",
     "sequence_model_validation.csv",
 ]
+
+MODE_AWARE_REPORT_CLASSES = {"causal_model", "image_text_to_text_model"}
+CB_DEFAULT_CONFIG_CLASSES = {"causal_pipeline_configs", "image_text_to_text_model_configs"}
+ENABLE_NON_CB_MODE_ENV_VAR = "NIGHTLY_PIPELINE_ENABLE_NON_CB"
+ENABLE_MULTI_SPECIALIZATION_ENV_VAR = "NIGHTLY_PIPELINE_ENABLE_MULTI_SPECIALIZATION"
+MULTI_SPECIALIZATION_CONFIG_CLASSES = {"image_text_to_text_model_configs"}
+TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
+MODE_LABELS = {"cb": "CB", "multi_spec": "Multi-Spec", "non_cb": "Non-CB"}
 
 PIPELINE_CONFIG_PATH = Path(__file__).resolve().parent / "configs" / "pipeline_configs.json"
 
@@ -71,6 +82,7 @@ QAIC_PLATFORM_XML = "/opt/qti-aic/versions/platform.xml"
 QNN_SDK_ENV_VAR = "QNN_SDK_ROOT"
 QNN_SDK_YAML = "sdk.yaml"
 NIGHTLY_TEST_FAILURES_FILE = "nightly_test_failures.json"
+STATUS_RANK = {"passed": 0, "warning": 1, "failed": 2}
 
 
 def parse_args() -> argparse.Namespace:
@@ -208,6 +220,57 @@ def csv_class_key(path: Path) -> str:
     return name[: -len(suffix)] if name.endswith(suffix) else path.stem
 
 
+def mode_class_key(base_class_key: str, execution_mode: str) -> str:
+    if execution_mode and execution_mode != "non_cb":
+        return f"{base_class_key}_{execution_mode}"
+    return base_class_key
+
+
+def split_mode_from_class_key(class_key: str) -> tuple[str, str]:
+    for mode in ("multi_spec", "cb", "non_cb"):
+        suffix = f"_{mode}"
+        if class_key.endswith(suffix):
+            return class_key[: -len(suffix)], mode
+    return class_key, "non_cb"
+
+
+def model_class_label(class_key: str) -> str:
+    base_class_key, execution_mode = split_mode_from_class_key(class_key)
+    base_label = MODEL_CLASS_LABELS.get(base_class_key, base_class_key.replace("_", " ").title())
+    if base_class_key not in MODE_AWARE_REPORT_CLASSES:
+        return base_label
+    mode_label = MODE_LABELS.get(execution_mode, execution_mode.replace("_", " ").title())
+    return f"{base_label} ({mode_label})"
+
+
+def _is_truthy_env_var(env_var_name: str) -> bool:
+    return os.environ.get(env_var_name, "").strip().lower() in TRUTHY_ENV_VALUES
+
+
+def resolve_execution_modes(pipeline_configs: Dict[str, Any], config_key: str) -> List[str]:
+    model_family_configs = pipeline_configs.get(config_key, [])
+    model_family_config = model_family_configs[0] if model_family_configs else {}
+    execution_modes = model_family_config.get("execution_modes", ["non_cb"])
+    if not execution_modes:
+        execution_modes = ["non_cb"]
+
+    if (
+        config_key in MULTI_SPECIALIZATION_CONFIG_CLASSES
+        and _is_truthy_env_var(ENABLE_MULTI_SPECIALIZATION_ENV_VAR)
+        and "cb" in execution_modes
+    ):
+        return ["cb", "multi_spec"]
+
+    if config_key not in CB_DEFAULT_CONFIG_CLASSES:
+        return execution_modes
+    if "cb" not in execution_modes:
+        return execution_modes
+    if _is_truthy_env_var(ENABLE_NON_CB_MODE_ENV_VAR):
+        return [mode for mode in execution_modes if mode != "multi_spec"]
+
+    return [mode for mode in execution_modes if mode == "cb"]
+
+
 def ordered_validation_files(artifacts_dir: Path) -> List[Path]:
     known = [artifacts_dir / filename for filename in VALIDATION_FILE_ORDER if (artifacts_dir / filename).exists()]
     known_names = {path.name for path in known}
@@ -230,27 +293,47 @@ def merge_test_failure_rows(class_rows: Dict[str, List[Dict[str, str]]], artifac
     if not failures:
         return
 
-    existing_models = {
-        (class_key, row.get("model_name"))
-        for class_key, rows in class_rows.items()
-        for row in rows
-        if row.get("model_name")
-    }
+    existing_model_rows = {}
+    for class_key, rows in class_rows.items():
+        for row in rows:
+            model_name = row.get("model_name")
+            if not model_name:
+                continue
+            existing_model_rows[(class_key, model_name)] = row
+
     for row in failures.values():
         if not isinstance(row, dict):
             continue
-        class_key = str(row.get("model_class") or "")
+        base_class_key = str(row.get("model_class") or "")
+        execution_mode = str(row.get("model_mode") or "non_cb")
+        class_key = mode_class_key(base_class_key, execution_mode)
         model_name = str(row.get("model_name") or "")
-        if not class_key or not model_name or (class_key, model_name) in existing_models:
+        if not class_key or not model_name:
             continue
-        class_rows.setdefault(class_key, []).append(
-            {
-                "model_name": model_name,
-                "model_age": str(row.get("model_age") or MODEL_AGE_UNKNOWN),
-                "status": str(row.get("status") or "warning"),
-                "failure_reason": str(row.get("failure_reason") or "pytest test failed"),
-            }
-        )
+        failure_status = str(row.get("status") or "warning")
+        failure_reason = str(row.get("failure_reason") or "pytest test failed")
+        failure_model_age = str(row.get("model_age") or MODEL_AGE_UNKNOWN)
+        existing_row = existing_model_rows.get((class_key, model_name))
+        if existing_row is not None:
+            current_status = str(existing_row.get("status") or "passed")
+            if STATUS_RANK.get(failure_status, 0) >= STATUS_RANK.get(current_status, 0):
+                existing_row["status"] = failure_status
+            existing_row["model_age"] = failure_model_age
+            current_reason = str(existing_row.get("failure_reason") or "")
+            if current_reason and current_reason not in {"N/A", failure_reason}:
+                existing_row["failure_reason"] = f"{failure_reason}; {current_reason}"
+            else:
+                existing_row["failure_reason"] = failure_reason
+            continue
+
+        failure_row = {
+            "model_name": model_name,
+            "model_age": failure_model_age,
+            "status": failure_status,
+            "failure_reason": failure_reason,
+        }
+        class_rows.setdefault(class_key, []).append(failure_row)
+        existing_model_rows[(class_key, model_name)] = failure_row
 
 
 def is_current_only(row: Dict[str, str]) -> bool:
@@ -372,17 +455,19 @@ def derive_build_metadata(
     }
 
 
-def short_value(value: Any, max_len: int = 180) -> str:
+def short_value(value: Any, max_len: Optional[int] = 180) -> str:
     if value in (None, ""):
         return ""
     if isinstance(value, (dict, list)):
         value = json.dumps(value, sort_keys=True)
     text = str(value)
+    if max_len is None:
+        return text
     return text if len(text) <= max_len else text[: max_len - 1] + "…"
 
 
-def html_escape(value: Any) -> str:
-    return html.escape(short_value(value), quote=True)
+def html_escape(value: Any, max_len: Optional[int] = 180) -> str:
+    return html.escape(short_value(value, max_len=max_len), quote=True)
 
 
 def normalize_repo_url(repo_url: Any) -> str:
@@ -553,6 +638,78 @@ def compact_config_value(value: Any) -> str:
     return str(value)
 
 
+def _format_config_list_lines(values: List[Any], indent: int) -> List[str]:
+    indent_prefix = "\u00a0" * (indent * 4)
+    bullet = "• "
+    if not values:
+        return [f"{indent_prefix}[]"]
+
+    lines: List[str] = []
+    for item in values:
+        if isinstance(item, (dict, list, tuple)):
+            lines.append(f"{indent_prefix}{bullet}{json.dumps(item, sort_keys=True)}")
+            continue
+        scalar = "N/A" if item in (None, "") else str(item)
+        lines.append(f"{indent_prefix}{bullet}{scalar}")
+    return lines
+
+
+def format_config_lines(value: Any, indent: int = 0) -> List[str]:
+    indent_prefix = "\u00a0" * (indent * 4)
+    bullet = "• "
+
+    if isinstance(value, dict):
+        if not value:
+            return [f"{indent_prefix}{{}}"]
+        lines: List[str] = []
+        for key, config_value in value.items():
+            key_text = str(key)
+            if isinstance(config_value, dict):
+                if not config_value:
+                    lines.append(f"{indent_prefix}{bullet}{key_text}: {{}}")
+                else:
+                    lines.append(f"{indent_prefix}{bullet}{key_text}:")
+                    lines.extend(format_config_lines(config_value, indent + 1))
+                continue
+            if isinstance(config_value, (list, tuple)):
+                if not config_value:
+                    lines.append(f"{indent_prefix}{bullet}{key_text}: []")
+                else:
+                    lines.append(f"{indent_prefix}{bullet}{key_text}:")
+                    lines.extend(_format_config_list_lines(list(config_value), indent + 1))
+                continue
+            scalar = "N/A" if config_value in (None, "") else str(config_value)
+            lines.append(f"{indent_prefix}{bullet}{key_text}: {scalar}")
+        return lines
+
+    if isinstance(value, (list, tuple)):
+        return _format_config_list_lines(list(value), indent)
+
+    scalar = "N/A" if value in (None, "") else str(value)
+    return [f"{indent_prefix}{scalar}"]
+
+
+def config_cell_html(value: Any) -> str:
+    rendered_lines = [html_escape(line, max_len=None) for line in format_config_lines(value)]
+    return (
+        '<div style="white-space:normal;line-height:1.35;word-break:break-word;">'
+        + "<br>".join(rendered_lines)
+        + "</div>"
+    )
+
+
+def config_sections_cell_html(sections: List[tuple[str, Any]]) -> str:
+    blocks = []
+    for title, value in sections:
+        blocks.append(
+            '<div style="margin-bottom:8px;">'
+            f'<div style="font-weight:bold;color:#1e293b;margin-bottom:2px;">{html_escape(title, max_len=None)}</div>'
+            f"{config_cell_html(value)}"
+            "</div>"
+        )
+    return "".join(blocks) if blocks else config_cell_html("N/A")
+
+
 def build_pipeline_config_rows() -> List[List[str]]:
     pipeline_configs = load_json(PIPELINE_CONFIG_PATH)
     validation_configs = pipeline_configs.get("validation_configs", {})
@@ -564,13 +721,52 @@ def build_pipeline_config_rows() -> List[List[str]]:
         config_entries = pipeline_configs.get(config_key, [])
         config = config_entries[0] if config_entries else {}
         tolerances = {**default_tolerances, **model_class_tolerances.get(config_key, {})}
+        execution_modes = resolve_execution_modes(pipeline_configs, config_key)
+        base_params_cell = config_sections_cell_html(
+            [
+                ("Export", config.get("export_params", {})),
+                ("Compile", config.get("compile_params", {})),
+                ("Generate", config.get("generate_params", {})),
+            ]
+        )
+        mode_override_sections: List[tuple[str, Any]] = []
+        cb_config = config.get("continuous_batching", {}) if "cb" in execution_modes else {}
+        if cb_config:
+            mode_override_sections.append(
+                (
+                    "CB",
+                    {
+                        "full_batch_size": cb_config.get("full_batch_size"),
+                        "export_params": cb_config.get("export_params", {}),
+                        "compile_params": cb_config.get("compile_params", {}),
+                        "generate_params": cb_config.get("generate_params", {}),
+                    },
+                )
+            )
+
+        multi_spec_config = config.get("multi_specialization", {}) if "multi_spec" in execution_modes else {}
+        if multi_spec_config:
+            mode_override_sections.append(
+                (
+                    "Multi-Spec",
+                    {
+                        "export_params": multi_spec_config.get("export_params", {}),
+                        "compile_params": multi_spec_config.get("compile_params", {}),
+                        "generate_params": multi_spec_config.get("generate_params", {}),
+                    },
+                )
+            )
+
+        mode_overrides_cell = (
+            config_sections_cell_html(mode_override_sections) if mode_override_sections else config_cell_html("N/A")
+        )
         rows.append(
             [
-                html_escape(MODEL_CLASS_LABELS.get(report_class_key, report_class_key)),
-                html_escape(compact_config_value(config.get("export_params", {}))),
-                html_escape(compact_config_value(config.get("compile_params", {}))),
-                html_escape(compact_config_value(config.get("generate_params", {}))),
-                html_escape(compact_config_value(tolerances)),
+                html_escape(MODEL_CLASS_LABELS.get(report_class_key, report_class_key), max_len=None),
+                config_cell_html(", ".join(execution_modes)),
+                base_params_cell,
+                mode_overrides_cell,
+                config_cell_html(tolerances),
             ]
         )
 
@@ -599,6 +795,8 @@ def render_html(
         ["PR Number", html_escape(metadata.get("pr_number"))],
         ["Commit ID", html_escape(metadata.get("commit_id"))],
         ["Docker Image", html_escape(metadata.get("docker_image"))],
+        [ENABLE_NON_CB_MODE_ENV_VAR, html_escape(env_or_na(ENABLE_NON_CB_MODE_ENV_VAR))],
+        [ENABLE_MULTI_SPECIALIZATION_ENV_VAR, html_escape(env_or_na(ENABLE_MULTI_SPECIALIZATION_ENV_VAR))],
         [bold_text("QAIC Apps Version"), html_escape(environment.get("qaic_apps_version", "N/A"))],
         [bold_text("QAIC Platform Version"), html_escape(environment.get("qaic_platform_version", "N/A"))],
         ["QEfficient", html_escape(environment.get("qefficient_version", "N/A"))],
@@ -614,7 +812,7 @@ def render_html(
     summary_rows = []
     summary_classes = []
     for class_key, class_summary in summary["model_classes"].items():
-        label = MODEL_CLASS_LABELS.get(class_key, class_key.replace("_", " ").title())
+        label = model_class_label(class_key)
         summary_rows.append(
             [
                 html_escape(label),
@@ -636,7 +834,7 @@ def render_html(
 
     detail_sections = []
     for class_key, rows in class_rows.items():
-        label = MODEL_CLASS_LABELS.get(class_key, class_key.replace("_", " ").title())
+        label = model_class_label(class_key)
         detail_rows = []
         row_classes = []
         for row in rows:
@@ -685,7 +883,13 @@ def render_html(
             section(
                 "Nightly Pipeline Configuration",
                 table(
-                    ["Model Class", "Export Params", "Compile Params", "Generate Params", "Validation Tolerances"],
+                    [
+                        "Model Class",
+                        "Execution Modes",
+                        "Base Params",
+                        "Mode Overrides",
+                        "Validation Tolerances",
+                    ],
                     build_pipeline_config_rows(),
                 ),
             ),
