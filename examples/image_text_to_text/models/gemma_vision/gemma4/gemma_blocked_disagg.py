@@ -198,12 +198,6 @@ lang_decode_qpc = _resolve_lang_qpc_path(decode_qpc_path, ("lang_decode_qpc_path
 lang_prefill_session = QAICInferenceSession(lang_prefill_qpc)
 lang_decode_session = QAICInferenceSession(lang_decode_qpc)
 
-# Skip copying large retained-state decode outputs back to host on every token.
-decode_retained_outputs = [
-    name for name in lang_decode_session.output_names if name.rsplit("/", 1)[-1].endswith("_RetainedState")
-]
-if decode_retained_outputs:
-    lang_decode_session.skip_buffers(decode_retained_outputs)
 MODEL_ID = "google/gemma-4-26B-A4B-it"
 SYSTEM_PROMPT = "You are a helpful assistant."
 TEXT_PROMPT = "Tell me about Taj Mahal?"
@@ -335,11 +329,20 @@ loop_decode_inputs = {
     "position_ids": pos_id,
 }
 
+for i in range(config.text_config.num_hidden_layers):
+    loop_decode_inputs[f"past_key.{i}"] = decode_out[f"past_key.{i}_RetainedState"]
+    loop_decode_inputs[f"past_value.{i}"] = decode_out[f"past_value.{i}_RetainedState"]
+loop_decode_inputs["image_idx"] = decode_out["image_idx_output"]
+loop_decode_inputs["vision_embeds"] = decode_out["vision_embeds_RetainedState"]
+
 st = perf_counter()
 for i in range(generation_len - 2):
     decode_out = lang_decode_session.run(loop_decode_inputs)
     all_outputs.append(np.argmax(decode_out["logits"]))
     pos_id += 1
+    for j in range(config.text_config.num_hidden_layers):
+        loop_decode_inputs[f"past_key.{j}"] = decode_out[f"past_key.{j}_RetainedState"]
+        loop_decode_inputs[f"past_value.{j}"] = decode_out[f"past_value.{j}_RetainedState"]
     loop_decode_inputs.update(
         {
             "input_ids": np.argmax(decode_out["logits"]).reshape(1, 1),
