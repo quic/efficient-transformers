@@ -134,41 +134,26 @@ pipeline {
                     if (params.CI_IMPACT_LATEST_COMMIT_ONLY && !validationPr) {
                         error('CI_IMPACT_LATEST_COMMIT_ONLY requires CI_IMPACT_VALIDATION_PR')
                     }
-                    def forceFull = params.FORCE_FULL_CI || (!env.CHANGE_ID && !validationPr)
-                    def forceReason = params.FORCE_FULL_CI ? 'full CI manually forced' : 'non-PR build'
+                    def forceFull = params.FORCE_FULL_CI
+                    def forceReason = params.FORCE_FULL_CI ? 'full CI manually forced' : ''
                     try {
                         if (params.CI_IMPACT_LATEST_COMMIT_ONLY) {
                             if (sh(returnStatus: true, script: 'git rev-parse --verify --quiet HEAD^') != 0) {
                                 error('Cannot compare the validation target with HEAD^')
                             }
                             base = sh(returnStdout: true, script: 'git rev-parse HEAD^').trim()
-                        } else if (env.CHANGE_ID || validationPr) {
-                            def target = validationPr ? 'main' : (env.CHANGE_TARGET ?: 'main')
-                            if (!(target ==~ /[A-Za-z0-9._\/-]+/)) {
-                                error("Unsafe CHANGE_TARGET: ${target}")
-                            }
-                            def targetRef = "refs/remotes/origin/${target}"
-                            if (sh(returnStatus: true, script: "git rev-parse --verify --quiet '${targetRef}^{commit}'") != 0) {
-                                sh "git fetch --no-tags origin '+refs/heads/${target}:${targetRef}'"
-                            }
-                            base = sh(returnStdout: true, script: "git merge-base HEAD '${targetRef}'").trim()
-                            if (!(base ==~ /[0-9a-f]{40,64}/)) {
-                                error("Could not resolve a safe merge base for ${targetRef}")
-                            }
-                        } else if (
-                            env.GIT_PREVIOUS_SUCCESSFUL_COMMIT &&
-                            (env.GIT_PREVIOUS_SUCCESSFUL_COMMIT ==~ /[0-9a-f]{40,64}/)
-                        ) {
-                            base = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT
-                        } else if (sh(returnStatus: true, script: 'git rev-parse --verify --quiet HEAD^') == 0) {
-                            base = sh(returnStdout: true, script: 'git rev-parse HEAD^').trim()
                         } else {
-                            base = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                            def target = 'main'
+                            def targetRef = "refs/remotes/origin/${target}"
+                            sh "git fetch --no-tags origin '+refs/heads/${target}:${targetRef}'"
+                            sh "git rebase '${targetRef}'"
+                            base = sh(returnStdout: true, script: "git rev-parse '${targetRef}'").trim()
+                            if (!(base ==~ /[0-9a-f]{40,64}/)) {
+                                error("Could not resolve a safe comparison base for ${targetRef}")
+                            }
                         }
                     } catch (resolutionError) {
-                        forceFull = true
-                        forceReason = "comparison-base resolution failed closed: ${resolutionError}"
-                        base = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                        error("comparison-base resolution failed: ${resolutionError}")
                     }
                     env.CI_IMPACT_BASE = base
                     env.CI_IMPACT_HEAD = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
