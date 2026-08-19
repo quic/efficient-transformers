@@ -35,7 +35,9 @@ from QEfficient.utils.checkpoint_utils import (
     requires_dtype_conversion,
     write_index,
 )
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("INFRA")
 
 # ---------------------------------------------------------------------------
 # MoE-specific memory estimation — tied to _LayerStacker's tensor layout below,
