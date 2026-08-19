@@ -11,18 +11,19 @@ Tests verify:
   - QEffSlidingWindowCache: creation, update (sliding + non-sliding), modular scatter,
     output shape, multi-layer independence, to_legacy_cache round-trip, get_seq_length
   - QEffDynamicLayer.update3D / QEffDynamicCache.update3D: 3D KV shape (GPTBigCode)
-  - QEffHybridCacheForGPTOSS: full_cache_update_chunked, sliding_window_update_chunked
+  - QEffGPTOSSDynamicCache: full_cache_update_chunked, sliding_window_update_chunked
 
 All tests run on CPU only.
 """
 
 import pytest
 import torch
+from transformers import GptOssConfig
 
 from QEfficient.transformers.cache_utils import (
     QEffDynamicCache,
     QEffDynamicLayer,
-    QEffHybridCacheForGPTOSS,
+    QEffGPTOSSDynamicCache,
     QEffSlidingWindowCache,
 )
 
@@ -36,6 +37,23 @@ class _FakeConfig:
 
     sliding_window_pattern = 2  # every 2nd layer is sliding
     sliding_window = 4
+
+
+def _gptoss_cfg(num_layers=2, sliding_window=4):
+    """Minimal GptOssConfig: layer 0 sliding_attention, layer 1 full_attention."""
+    layer_types = ["sliding_attention" if i % 2 == 0 else "full_attention" for i in range(num_layers)]
+    return GptOssConfig(
+        num_hidden_layers=num_layers,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        hidden_size=64,
+        intermediate_size=128,
+        vocab_size=500,
+        max_position_embeddings=64,
+        head_dim=32,
+        sliding_window=sliding_window,
+        layer_types=layer_types,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -354,36 +372,36 @@ class TestQEffDynamicCache3D:
 
 
 # ---------------------------------------------------------------------------
-# Tests: QEffHybridCacheForGPTOSS chunked methods
+# Tests: QEffGPTOSSDynamicCache chunked methods
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.cache
-class TestQEffHybridCacheForGPTOSSChunked:
-    """QEffHybridCacheForGPTOSS chunked prefill methods must be numerically correct."""
+class TestQEffGPTOSSDynamicCacheChunked:
+    """QEffGPTOSSDynamicCache chunked prefill methods must be numerically correct."""
 
     def _make_cache_with_layer(self, batch=1, heads=2, ctx_len=16, head_dim=8, sliding_window_len=4):
-        """Create a cache with one pre-initialized layer."""
-        cfg = _FakeConfig()
-        cache = QEffHybridCacheForGPTOSS(
-            cfg, batch_size=batch, max_cache_len=ctx_len, sliding_window_len=sliding_window_len
-        )
-        # Initialize layer 0 (full cache)
+        """Create a cache with one pre-initialized full-attention layer (layer 1)."""
+        cfg = _gptoss_cfg(sliding_window=sliding_window_len)
+        cache = QEffGPTOSSDynamicCache(config=cfg)
         k = torch.zeros(batch, heads, ctx_len, head_dim)
         v = torch.zeros(batch, heads, ctx_len, head_dim)
-        cache.key_cache.append(k)
-        cache.value_cache.append(v)
+        cache.append_new_layers(1)
+        cache.layers[1].keys = k
+        cache.layers[1].values = v
+        cache.layers[1]._mark_initialized(k)
         return cache
 
     def _make_sliding_cache_with_layer(self, batch=1, heads=2, sliding_window_len=4, head_dim=8):
-        """Create a cache with one pre-initialized sliding window layer."""
-        cfg = _FakeConfig()
-        cache = QEffHybridCacheForGPTOSS(cfg, batch_size=batch, max_cache_len=16, sliding_window_len=sliding_window_len)
-        # Initialize layer 0 (sliding window)
+        """Create a cache with one pre-initialized sliding window layer (layer 0)."""
+        cfg = _gptoss_cfg(sliding_window=sliding_window_len)
+        cache = QEffGPTOSSDynamicCache(config=cfg)
         k = torch.zeros(batch, heads, sliding_window_len, head_dim)
         v = torch.zeros(batch, heads, sliding_window_len, head_dim)
-        cache.key_cache.append(k)
-        cache.value_cache.append(v)
+        cache.append_new_layers(0)
+        cache.layers[0].keys = k
+        cache.layers[0].values = v
+        cache.layers[0]._mark_initialized(k)
         return cache
 
     def test_full_cache_update_chunked_returns_finite(self):
@@ -393,7 +411,7 @@ class TestQEffHybridCacheForGPTOSSChunked:
         k = torch.randn(batch, heads, seq_len, head_dim)
         v = torch.randn(batch, heads, seq_len, head_dim)
         k_out, v_out = cache.full_cache_update_chunked(
-            k, v, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=seq_len), "batch_index": None}
+            k, v, layer_idx=1, cache_kwargs={"position_ids": pos_ids(seq=seq_len), "batch_index": None}
         )
         assert torch.isfinite(k_out).all()
         assert torch.isfinite(v_out).all()
@@ -407,7 +425,7 @@ class TestQEffHybridCacheForGPTOSSChunked:
         k = torch.ones(batch, heads, 4, head_dim) * 5.0
         v = torch.ones(batch, heads, 4, head_dim) * 5.0
         k_out, v_out = cache.full_cache_update_chunked(
-            k, v, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=4), "batch_index": None}
+            k, v, layer_idx=1, cache_kwargs={"position_ids": pos_ids(seq=4), "batch_index": None}
         )
         # Positions 0-3 should have value 5.0
         assert k_out[0, 0, 0, 0].item() == pytest.approx(5.0, abs=1e-5)
@@ -421,7 +439,7 @@ class TestQEffHybridCacheForGPTOSSChunked:
         k = torch.randn(batch, heads, seq_len, head_dim)
         v = torch.randn(batch, heads, seq_len, head_dim)
         k_out, v_out = cache.full_cache_update_chunked(
-            k, v, layer_idx=0, cache_kwargs={"position_ids": pos_ids(seq=seq_len), "batch_index": None}
+            k, v, layer_idx=1, cache_kwargs={"position_ids": pos_ids(seq=seq_len), "batch_index": None}
         )
         assert k_out.shape[2] == ctx_len
 
