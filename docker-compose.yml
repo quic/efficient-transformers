@@ -12,12 +12,10 @@ services:
       - .:/app/qefficient-library
       - ./_cache:/cache
 
+    env_file:
+      - .env
     stdin_open: true
     tty: true
     command:
       - sleep
       - infinity
-    services:
-      qefficient:
-        env_file:
-          -.env
