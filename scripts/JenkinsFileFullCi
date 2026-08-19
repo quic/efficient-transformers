@@ -79,189 +79,193 @@ pipeline {
             }
         }
 
-        stage('HL API Tests') {
-            when { expression { params.RUN_HL_APIS } }
-            parallel {
-                stage('Export & Compile') {
+        stage('Regression Tests') {
+            stages {
+                stage('HL API Tests') {
+                    when { expression { params.RUN_HL_APIS } }
+                    parallel {
+                        stage('Export & Compile') {
+                            steps {
+                               timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 60, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
+                                   sh '''
+                                   sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/export_compile ${BUILD_TAG} bash -c "
+                                   cd /efficient-transformers &&
+                                   . preflight_qeff/bin/activate &&
+                                   mkdir -p /efficient-transformers/Non_cli_qaic &&
+                                   export TOKENIZERS_PARALLELISM=false &&
+                                   export QEFF_HOME=/efficient-transformers/Non_cli_qaic &&
+                                   pytest tests -m '(not on_qaic) and (not finetune) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 4 --junitxml=tests/tests_log1.xml --durations=10 &&
+                                   junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
+                                   deactivate"
+                                   '''
+                               }
+                           }
+                        }
+
+                        stage('QAIC LLM') {
+                            steps {
+                               timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 240, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
+                                   sh '''
+                                   sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_llm ${BUILD_TAG} bash -c "
+                                   cd /efficient-transformers &&
+                                   . preflight_qeff/bin/activate &&
+                                   mkdir -p /efficient-transformers/Non_qaic_llm &&
+                                   export TOKENIZERS_PARALLELISM=false &&
+                                   export QEFF_ISOLATE_QAIC_WORKERS=1 &&
+                                   export QEFF_HOME=/efficient-transformers/Non_qaic_llm &&
+                                   pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log2.xml --durations=10 &&
+                                   junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
+                                   deactivate"
+                                   '''
+                               }
+                           }
+                        }
+                    }
+                }
+
+                stage('QAIC FEATURE') {
+                    when {expression { params.RUN_QAIC_FEATURE }}
                     steps {
-                       timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 60, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
-                           sh '''
-                           sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/export_compile ${BUILD_TAG} bash -c "
-                           cd /efficient-transformers &&
-                           . preflight_qeff/bin/activate &&
-                           mkdir -p /efficient-transformers/Non_cli_qaic &&
-                           export TOKENIZERS_PARALLELISM=false &&
-                           export QEFF_HOME=/efficient-transformers/Non_cli_qaic &&
-                           pytest tests -m '(not on_qaic) and (not finetune) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 4 --junitxml=tests/tests_log1.xml --durations=10 &&
-                           junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
-                           deactivate"
-                           '''
-                       }
-                   }
+                        timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 120, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
+                            sh '''
+                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_feature ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            mkdir -p /efficient-transformers/Non_qaic_feature &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_ISOLATE_QAIC_WORKERS=1 &&
+                            export QEFF_HOME=/efficient-transformers/Non_qaic_feature &&
+                            pytest tests -m '(on_qaic) and (feature) and (not qnn) and ${TEST_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log2_feature.xml --durations=10 &&
+                            junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
                 }
-
-                stage('QAIC LLM') {
+                stage('QAIC Multimodal') {
+                    when {expression { params.RUN_QAIC_MM }}
                     steps {
-                       timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 240, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
-                           sh '''
-                           sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_llm ${BUILD_TAG} bash -c "
-                           cd /efficient-transformers &&
-                           . preflight_qeff/bin/activate &&
-                           mkdir -p /efficient-transformers/Non_qaic_llm &&
-                           export TOKENIZERS_PARALLELISM=false &&
-                           export QEFF_ISOLATE_QAIC_WORKERS=1 &&
-                           export QEFF_HOME=/efficient-transformers/Non_qaic_llm &&
-                           pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log2.xml --durations=10 &&
-                           junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
-                           deactivate"
-                           '''
-                       }
-                   }
+                        timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 180, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
+                            sh '''
+                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_multimodal ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            mkdir -p /efficient-transformers/Non_cli_qaic_multimodal &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_ISOLATE_QAIC_WORKERS=1 &&
+                            export QEFF_HOME=/efficient-transformers/Non_cli_qaic_multimodal &&
+                            pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log6.xml --durations=10 &&
+                            junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
                 }
-                
-            }
-        }
-        stage('QAIC FEATURE') {
-            when {expression { params.RUN_QAIC_FEATURE }}
-            steps {
-                timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 120, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
-                    sh '''
-                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_feature ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p /efficient-transformers/Non_qaic_feature &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_ISOLATE_QAIC_WORKERS=1 &&
-                    export QEFF_HOME=/efficient-transformers/Non_qaic_feature &&
-                    pytest tests -m '(on_qaic) and (feature) and (not qnn) and ${TEST_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log2_feature.xml --durations=10 &&
-                    junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
+                stage('QAIC Reranker Tests') {
+                    when { expression { params.RUN_QAIC_MM } }
+                    steps {
+                        timeout(time: 20, unit: 'MINUTES') {
+                            sh '''
+                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_reranker ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            mkdir -p /efficient-transformers/Non_cli_qaic_reranker &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_ISOLATE_QAIC_WORKERS=1 &&
+                            export QEFF_HOME=/efficient-transformers/Non_cli_qaic_reranker &&
+                            export QEFF_RERANKER_DOC_LIMIT=1 &&
+                            pytest -q tests/transformers/models/reranker/test_reranker_mad.py --maxfail=1 -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log_reranker.xml --durations=10 &&
+                            junitparser merge tests/tests_log_reranker.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
                 }
-            }
-        }
-        stage('QAIC Multimodal') {
-            when {expression { params.RUN_QAIC_MM }}
-            steps {
-                timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 180, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
-                    sh '''
-                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_multimodal ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p /efficient-transformers/Non_cli_qaic_multimodal &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_ISOLATE_QAIC_WORKERS=1 &&
-                    export QEFF_HOME=/efficient-transformers/Non_cli_qaic_multimodal &&
-                    pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log6.xml --durations=10 &&
-                    junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
+                stage('QAIC Diffusion Models Tests') {
+                    when { expression { params.RUN_QAIC_DIFFUSION } }
+                    steps {
+                        timeout(time: 120, unit: 'MINUTES') {
+                            sh '''
+                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_diffusion ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            mkdir -p /efficient-transformers/Non_cli_qaic_diffusion &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_ISOLATE_QAIC_WORKERS=1 &&
+                            export QEFF_HOME=/efficient-transformers/Non_cli_qaic_diffusion &&
+                            export HF_HUB_CACHE=/huggingface_hub &&
+                            pytest tests -m 'diffusion_models' --ignore tests/vllm  --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log_diffusion.xml --durations=10 &&
+                            junitparser merge tests/tests_log_diffusion.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
                 }
-            }
-        }
-        stage('QAIC Reranker Tests') {
-            when { expression { params.RUN_QAIC_MM } }
-            steps {
-                timeout(time: 20, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_reranker ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p /efficient-transformers/Non_cli_qaic_reranker &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_ISOLATE_QAIC_WORKERS=1 &&
-                    export QEFF_HOME=/efficient-transformers/Non_cli_qaic_reranker &&
-                    export QEFF_RERANKER_DOC_LIMIT=1 &&
-                    pytest -q tests/transformers/models/reranker/test_reranker_mad.py --maxfail=1 -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log_reranker.xml --durations=10 &&
-                    junitparser merge tests/tests_log_reranker.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
-                }
-            }
-        }
-        stage('QAIC Diffusion Models Tests') {
-            when { expression { params.RUN_QAIC_DIFFUSION } }
-            steps {
-                timeout(time: 120, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_diffusion ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p /efficient-transformers/Non_cli_qaic_diffusion &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_ISOLATE_QAIC_WORKERS=1 &&
-                    export QEFF_HOME=/efficient-transformers/Non_cli_qaic_diffusion &&
-                    export HF_HUB_CACHE=/huggingface_hub &&
-                    pytest tests -m 'diffusion_models' --ignore tests/vllm  --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log_diffusion.xml --durations=10 &&
-                    junitparser merge tests/tests_log_diffusion.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
-                }
-            }
-        }
 
-        stage('CLI Tests') {
-            when { expression { params.RUN_CLI } }
-            steps {
-                timeout(time: 120, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/cli ${BUILD_TAG} bash -c "
-                    #source /qnn_sdk/bin/envsetup.sh &&
-                    #source /qnn_sdk/bin/envcheck -c &&
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p /efficient-transformers/cli &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_ISOLATE_QAIC_WORKERS=1 &&
-                    export QEFF_HOME=/efficient-transformers/cli &&
-                    pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log3.xml --durations=10 &&
-                    junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
+                stage('CLI Tests') {
+                    when { expression { params.RUN_CLI } }
+                    steps {
+                        timeout(time: 120, unit: 'MINUTES') {
+                            sh '''
+                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/cli ${BUILD_TAG} bash -c "
+                            #source /qnn_sdk/bin/envsetup.sh &&
+                            #source /qnn_sdk/bin/envcheck -c &&
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            mkdir -p /efficient-transformers/cli &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_ISOLATE_QAIC_WORKERS=1 &&
+                            export QEFF_HOME=/efficient-transformers/cli &&
+                            pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log3.xml --durations=10 &&
+                            junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
                 }
-            }
-        }
 
-        stage('QAIC DYNAMO') {
-            when { expression { params.RUN_DYNAMO_QAIC } }
-            steps {
-                timeout(time: 240, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/dynamo_qaic ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    pip install -r examples/dynamo/causal_lm/requirements.txt &&
-                    mkdir -p /efficient-transformers/dynamo_qeff_qaic &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_ISOLATE_QAIC_WORKERS=1 &&
-                    export QEFF_HOME=/efficient-transformers/dynamo_qeff_qaic &&
-                    pytest tests/dynamo -m '(dynamo) and (on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log_dynamo_qaic.xml --durations=10 &&
-                    junitparser merge tests/tests_log_dynamo_qaic.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
+                stage('QAIC DYNAMO') {
+                    when { expression { params.RUN_DYNAMO_QAIC } }
+                    steps {
+                        timeout(time: 240, unit: 'MINUTES') {
+                            sh '''
+                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/dynamo_qaic ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            pip install -r examples/dynamo/causal_lm/requirements.txt &&
+                            mkdir -p /efficient-transformers/dynamo_qeff_qaic &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_ISOLATE_QAIC_WORKERS=1 &&
+                            export QEFF_HOME=/efficient-transformers/dynamo_qeff_qaic &&
+                            pytest tests/dynamo -m '(dynamo) and (on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly -n ${CI_QAIC_WORKERS} --junitxml=tests/tests_log_dynamo_qaic.xml --durations=10 &&
+                            junitparser merge tests/tests_log_dynamo_qaic.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
                 }
-            }
-        }
 
-        stage('Finetune Tests') {
-            when { expression { params.RUN_FINETUNE } }
-            steps {
-                timeout(time: 20, unit: 'MINUTES') {
-                    sh '''
-                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/finetune ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    # TODO: Update torch_qaic path to py312 when migrating to Python 3.12
-                    pip install /opt/qti-aic/integrations/torch_qaic/py312/torch_qaic-0.1.0-cp312-cp312-manylinux_2_34_x86_64.whl &&
-                    # pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl &&
-                    pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cpu &&
-                    mkdir -p /efficient-transformers/cli_qaic_finetuning &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=/efficient-transformers/cli_qaic_finetuning &&
-                    pytest tests -m '(finetune)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log_finetune.xml --durations=10 &&
-                    junitparser merge tests/tests_log_finetune.xml tests/tests_log.xml &&
-                    deactivate"
-                    '''
+                stage('Finetune Tests') {
+                    when { expression { params.RUN_FINETUNE } }
+                    steps {
+                        timeout(time: 20, unit: 'MINUTES') {
+                            sh '''
+                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/finetune ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            # TODO: Update torch_qaic path to py312 when migrating to Python 3.12
+                            pip install /opt/qti-aic/integrations/torch_qaic/py312/torch_qaic-0.1.0-cp312-cp312-manylinux_2_34_x86_64.whl &&
+                            # pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl &&
+                            pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cpu &&
+                            mkdir -p /efficient-transformers/cli_qaic_finetuning &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=/efficient-transformers/cli_qaic_finetuning &&
+                            pytest tests -m '(finetune)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log_finetune.xml --durations=10 &&
+                            junitparser merge tests/tests_log_finetune.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
                 }
             }
         }
