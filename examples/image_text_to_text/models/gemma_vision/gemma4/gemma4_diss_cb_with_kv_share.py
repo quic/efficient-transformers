@@ -25,6 +25,7 @@ from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 DEFAULT_MODEL_ID = "google/gemma-4-26B-A4B-it"
+# DEFAULT_MODEL_ID ='tiny-random/gemma4-moe'
 SYSTEM_PROMPT = "You are a helpful assistant."
 DEFAULT_PROMPTS = [
     "Tell me about Taj Mahal?",
@@ -214,8 +215,6 @@ def run(
         full_batch_size=full_batch_size,
     )
 
-    # image_idx / batch_index must be compiled input bindings; the KV-share path silently drops
-    # unknown input names (warn + skip), so assert the ones we always rely on up front.
     assert "image_idx" in prefill_session.binding_index_map, "image_idx not a compiled prefill input binding"
     assert "batch_index" in decode_session.binding_index_map, "batch_index not a compiled decode input binding"
     decode_has_image_idx = "image_idx" in decode_session.binding_index_map
@@ -224,9 +223,6 @@ def run(
         getattr(processor, "chat_template", None) or getattr(tokenizer, "chat_template", None) or CHAT_TEMPLATE
     )
 
-    # Shared host KV arrays, allocated once in decode-map order. Under CB the leading batch
-    # dim is full_batch_size, so each family is [N, ...]: prefill writes one row, decode
-    # reads/writes all N. Hybrid caches carry mixed 4-D (full) and 3-D (linear) shapes.
     kv_caches = [np.zeros(shape, dtype=dtype) for (shape, dtype) in decode_session.kv_cache_info]
     assert kv_caches and kv_caches[0].shape[0] == full_batch_size, (
         f"decode KV batch dim {kv_caches[0].shape[0] if kv_caches else None} != full_batch_size {full_batch_size}"
@@ -234,13 +230,6 @@ def run(
     decode_kv_map = decode_session.decode_buff_map + decode_session.decode_rs_kv_only_buff_map
 
     def _prepare_prompt(prompt: str, image_url: str):
-        """Tokenise + (optionally) run the vision QPC for one prompt.
-
-        ``image_url`` is used only when ``skip_vision=False``. Returns
-        ``(lang_inputs, vision_embeds, num_chunks)`` where ``lang_inputs`` is padded to a
-        multiple of ``prefill_seq_len`` and carries ``position_ids`` / ``mm_token_type_ids`` /
-        ``image_idx``.
-        """
         if skip_vision:
             messages = build_messages(SYSTEM_PROMPT, prompt, use_image=False)
         else:
@@ -297,12 +286,7 @@ def run(
         return lang_inputs, vision_embeds, num_chunks
 
     def _prefill_slot(lang_inputs, vision_embeds, num_chunks, slot: int):
-        """Chunked prefill of one prompt into KV ``slot``.
-
-        Every chunk carries ``batch_index=slot`` so the on-device scatter accumulates into
-        row ``slot``; the last chunk wires the DMA handoff of that single row into
-        ``kv_caches[*][slot]``. Returns ``(first_token, next_pos)``.
-        """
+        """Chunked prefill of one prompt into KV ``slot``."""
         chunk_inputs = dict(lang_inputs)
         chunk_inputs["batch_index"] = np.array([[slot]], dtype=np.int64)
         if not skip_vision and vision_embeds is not None:
@@ -329,9 +313,8 @@ def run(
         prefill_out = prefill_session.get_outputs(index=exec_idx)
         first_token = int(np.argmax(prefill_out["logits"]))
         next_pos = int(np.max(lang_inputs["position_ids"])) + 1
-        return first_token, next_pos
+        return first_token, next_pos, prefill_out.get("image_idx_output", chunk_inputs["image_idx"])
 
-    # Per-slot decode state (gemma4 positions are single-section: one counter per slot).
     ongoing = [False] * full_batch_size
     last_token = [0] * full_batch_size
     pos = [0] * full_batch_size
@@ -339,6 +322,8 @@ def run(
     slot_prompt_idx = [-1] * full_batch_size
     slot_tokens = [None] * full_batch_size
     results = [None] * len(prompts)
+    decode_image_idx = np.array([[0]], dtype=np.int64)
+    decode_vision_embeds = None
 
     def _seed_slot(slot, prompt_idx, first_token, next_pos):
         slot_prompt_idx[slot] = prompt_idx
@@ -348,8 +333,6 @@ def run(
         pos[slot] = next_pos
         ongoing[slot] = True
 
-    # Prompt queue: each entry is (prompt_idx, prompt, image_url). Everything beyond the
-    # first N slots waits here and refills on completion. image_urls is cycled if shorter.
     prompt_queue = deque((idx, prompt, image_urls[idx % len(image_urls)]) for idx, prompt in enumerate(prompts))
 
     prefill_start = perf_counter()
@@ -358,17 +341,15 @@ def run(
             break
         prompt_idx, prompt, prompt_image_url = prompt_queue.popleft()
         lang_inputs, vision_embeds, num_chunks = _prepare_prompt(prompt, prompt_image_url)
-        ft, next_pos = _prefill_slot(lang_inputs, vision_embeds, num_chunks, slot)
+        if vision_embeds is not None:
+            decode_vision_embeds = vision_embeds
+        ft, next_pos, decode_image_idx = _prefill_slot(lang_inputs, vision_embeds, num_chunks, slot)
         _seed_slot(slot, prompt_idx, ft, next_pos)
     print(f"Initial prefill time : {perf_counter() - prefill_start:.2f} secs")
 
-    # Decode does not re-gather image tokens (image_idx has advanced past them), but the
-    # mm_token_type_ids / vision_embeds bindings must still be satisfied every step. Bind
-    # constant buffers of the compiled shapes; their values are never used by the text-token
-    # decode path. Only wire keys that are actual decode bindings.
     decode_persist = {"mm_token_type_ids": np.zeros((full_batch_size, 1), dtype=np.int64)}
-    if not skip_vision:
-        decode_persist["vision_embeds"] = np.zeros_like(vision_embeds)
+    if not skip_vision and decode_vision_embeds is not None:
+        decode_persist["vision_embeds"] = decode_vision_embeds
     decode_session.set_persistent_inputs(
         {k: v for k, v in decode_persist.items() if k in decode_session.binding_index_map}
     )
@@ -389,17 +370,14 @@ def run(
             "batch_index": batch_index,
         }
         if decode_has_image_idx:
-            # image_idx is a fixed (1,1) binding, NOT widened to full_batch_size: decode does
-            # not re-gather image tokens (they were merged into KV during prefill), so it is
-            # inert here. A static [[0]] satisfies the binding.
-            decode_inputs["image_idx"] = np.array([[0]], dtype=np.int64)
+            # image_idx is a fixed (1,1) binding, NOT widened to full_batch_size. Keep it
+            # stateful because the QPC returns image_idx_output across prefill/decode steps.
+            decode_inputs["image_idx"] = decode_image_idx
         return decode_inputs
 
     st = perf_counter()
     decode_steps = 0
     while any(ongoing):
-        # Wire the full [N, ...] KV buffers once (identity: device row i <-> host row i);
-        # per-slot addressing is carried by the decode batch_index input above.
         decode_session.set_data_for_kv_handoff(
             kv_caches + kv_caches,
             [("batch_index", 0), ("ctx_start", 0)],
@@ -410,6 +388,8 @@ def run(
         exec_idx = decode_session.np_run(decode_inputs, is_prefill=False)
         decode_session.complete_inf(exec_idx, is_prefill=False)
         out = decode_session.get_outputs(index=exec_idx)
+        if decode_has_image_idx and "image_idx_output" in out:
+            decode_image_idx = out["image_idx_output"]
         decode_steps += 1
 
         logits = out["logits"]
@@ -426,7 +406,14 @@ def run(
                 if prompt_queue:
                     prompt_idx, prompt, prompt_image_url = prompt_queue.popleft()
                     lang_inputs, vision_embeds, num_chunks = _prepare_prompt(prompt, prompt_image_url)
-                    ft, next_pos = _prefill_slot(lang_inputs, vision_embeds, num_chunks, slot)
+                    if vision_embeds is not None:
+                        decode_vision_embeds = vision_embeds
+                        decode_session.set_persistent_inputs(
+                            {"vision_embeds": vision_embeds}
+                            if "vision_embeds" in decode_session.binding_index_map
+                            else {}
+                        )
+                    ft, next_pos, decode_image_idx = _prefill_slot(lang_inputs, vision_embeds, num_chunks, slot)
                     _seed_slot(slot, prompt_idx, ft, next_pos)
                 else:
                     ongoing[slot] = False
