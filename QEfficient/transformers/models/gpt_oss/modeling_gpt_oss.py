@@ -86,6 +86,7 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
     limit: float,
     alpha: float,
     packed_chunk_size: int,
+    num_packed_chunks: Optional[int] = None,
 ) -> torch.Tensor:
     """Cumsum-scatter-gather-update expert helper for GPT-OSS NSP-blocked dispatch.
 
@@ -105,12 +106,19 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
     batch_size, seq_len = T2Ei.shape
     packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
 
+    if num_packed_chunks is None:
+        packed_chunk_size = min(packed_chunk_size, seq_len)
+        num_packed_chunks = max(1, -(-seq_len // packed_chunk_size))
+    else:
+        num_packed_chunks = max(1, int(num_packed_chunks))
+
     matched_idx = _build_matched_idx_from_cumsum(T2Ei)
     valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
     row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
 
-    for packed_start in range(0, seq_len, packed_chunk_size):
+    for packed_idx in range(num_packed_chunks):
+        packed_start = packed_idx * packed_chunk_size
         packed_stop = packed_start + packed_chunk_size
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
@@ -157,7 +165,10 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
 
         num_experts = self.experts.num_experts
         num_nsp = getattr(self, "expert_blocking_num_nsp", num_experts)
-        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
+        num_packed_chunks = getattr(self, "expert_blocking_num_packed_chunks", None)
+        packed_chunk_size = (
+            T // num_packed_chunks if num_packed_chunks else getattr(self, "expert_blocking_packed_chunk_size", T)
+        )
         if num_experts % num_nsp != 0:
             raise ValueError(f"num_experts ({num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})")
 

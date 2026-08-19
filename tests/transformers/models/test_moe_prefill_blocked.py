@@ -50,7 +50,7 @@ def test_glm4_moe_blocked_prefill_forward_parity():
     chunked_block.__class__ = QEffPrefillChunkedGlm4MoeMoE
     chunked_block.__qeff_init__()
     chunked_block.expert_blocking_num_nsp = 2
-    chunked_block.expert_blocking_packed_chunk_size = 256
+    chunked_block.expert_blocking_num_packed_chunks = 2
 
     x = torch.randn(1, 8, config.hidden_size)
     with torch.no_grad():
@@ -336,7 +336,7 @@ def test_gptoss_blocked_forward_parity():
     blocks_chunked = [m for _, m in qeff.model.named_modules() if isinstance(m, QEffPrefillOnlyChunkedGptOssMLP)]
     assert blocks_chunked
     blocks_chunked[0].expert_blocking_num_nsp = 2
-    blocks_chunked[0].expert_blocking_packed_chunk_size = 256
+    blocks_chunked[0].expert_blocking_num_packed_chunks = 2
 
     with torch.no_grad():
         blocked, _ = blocks_chunked[0].forward(x)
@@ -394,5 +394,5 @@ def test_gptoss_prefill_chunked_export_traces_packed_chunks(tmp_path):
             if node.op_type == "Slice" and len(node.input) > 1 and node.input[1] in constants:
                 slice_starts.append(constants[node.input[1]])
 
-    assert [256] in slice_starts
-    assert op_types.count("CtxGather3D") >= 2 * op_types.count("CtxScatter3DInt")
+    # prefill_seq_len 512 / moe_prefill_packed_chunk_size 256 = 2 chunks, and 3 gathers per chunk (x_expanded, routing_weight, expert_out)
+    assert op_types.count("CtxGather3D") == 6 * op_types.count("CtxScatter3DInt")
