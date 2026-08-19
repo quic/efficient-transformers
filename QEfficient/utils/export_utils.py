@@ -35,7 +35,7 @@ from QEfficient.utils.constants import (
     DYNAMO_DIM_MIN_COMP_CTX_LENGTHS,
 )
 from QEfficient.utils.hash_utils import create_export_hash
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
 from QEfficient.utils.runtime_requirements import validate_dynamo_export_requirements
 from QEfficient.utils.torch_patches import (
     apply_torch_patches,
@@ -43,6 +43,7 @@ from QEfficient.utils.torch_patches import (
     undo_torch_patches,
 )
 
+logger = QEFFLogger.get_logger("INFRA")
 _EXPORT_FROM_COMPILE = ContextVar("export_from_compile", default=False)
 
 
