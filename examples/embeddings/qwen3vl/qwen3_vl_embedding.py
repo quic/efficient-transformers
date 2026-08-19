@@ -24,7 +24,6 @@ from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.transformers.models.qwen3_vl._embedding_utils import configure_embedding_model_config
 
 DEFAULT_MODEL_NAME = "Qwen/Qwen3-VL-Embedding-8B"
-DEFAULT_CTX_LEN = 2048
 DEFAULT_NUM_CORES = 16
 DEFAULT_NUM_DEVICES = 1
 DEFAULT_NUM_HIDDEN_LAYERS = 36
@@ -36,7 +35,6 @@ def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for AI100 compile/inference knobs."""
     parser = argparse.ArgumentParser(description="Qwen3-VL embedding example.")
     parser.add_argument("--model-name", type=str, default=DEFAULT_MODEL_NAME)
-    parser.add_argument("--ctx-len", type=int, default=DEFAULT_CTX_LEN, help="Context length used at compile time.")
     parser.add_argument("--num-cores", type=int, default=DEFAULT_NUM_CORES, help="Number of AI100 cores.")
     parser.add_argument("--num-devices", type=int, default=DEFAULT_NUM_DEVICES, help="Number of AI100 devices.")
     parser.add_argument(
@@ -56,6 +54,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-hidden-layers", type=int, default=DEFAULT_NUM_HIDDEN_LAYERS)
     parser.add_argument("--vision-depth", type=int, default=DEFAULT_VISION_DEPTH)
     parser.add_argument("--deepstack-index", type=int, default=DEFAULT_DEEPSTACK_INDEX)
+    parser.add_argument(
+        "--kv-offload",
+        action="store_true",
+        default=False,
+        help=(
+            "Use dual-QPC mode (kv_offload=True): vision and language are compiled into "
+            "separate QPCs. Default is single-QPC mode (kv_offload=False)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -107,7 +114,7 @@ def main() -> None:
     processor = AutoProcessor.from_pretrained(model_source, trust_remote_code=True, padding=True)
     model = QEFFAutoModelForImageTextToText.from_pretrained(
         model_source,
-        kv_offload=True,
+        kv_offload=args.kv_offload,
         trust_remote_code=True,
         config=config,
         qaic_config={"export_embedding": True},
@@ -121,7 +128,6 @@ def main() -> None:
     # 3) Derive compile requirements from current payload.
     compile_specs = embedder.get_compile_specs(
         inputs=model_inputs,
-        ctx_len=args.ctx_len,
         prefill_seq_len=args.compile_prefill_seq_len,
     )
 

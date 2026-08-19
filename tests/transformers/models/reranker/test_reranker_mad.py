@@ -39,7 +39,7 @@ from QEfficient.transformers.models.qwen3_vl._reranker_utils import (
 )
 from QEfficient.utils.test_utils import load_vlm_model, set_num_layers_vlm
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/reranker_model_configs.json")
 
 PT_AI100_MAD_MAX = 5e-3
 MAX_LENGTH = 8192
@@ -60,8 +60,7 @@ EXAMPLE_INPUTS = {
 }
 
 with open(CONFIG_PATH, "r") as f:
-    config_data = json.load(f)
-    reranker_models = config_data["image_text_reranker_models"]
+    reranker_models = json.load(f)
 
 test_reranker_models = [model_config["model_name"] for model_config in reranker_models]
 reranker_model_config_dict = {model["model_name"]: model for model in reranker_models}
@@ -172,6 +171,48 @@ def _run_ai100_vision(vision_qpc_path: str, prepared_inputs) -> Dict[str, np.nda
     return vision_outputs
 
 
+def _run_ai100_single_qpc_prefill(prepared_inputs, qpc_path: str) -> np.ndarray:
+    """Run single-QPC (vision+language fused) prefill and return logits."""
+    prefill_len = prepared_inputs["position_ids"].shape[-1]
+    input_ids = prepared_inputs["input_ids"]
+    if input_ids.shape[1] < prefill_len:
+        pad = torch.full(
+            (input_ids.shape[0], prefill_len - input_ids.shape[1]),
+            1,
+            dtype=input_ids.dtype,
+            device=input_ids.device,
+        )
+        input_ids = torch.cat([input_ids, pad], dim=1)
+    else:
+        input_ids = input_ids[:, :prefill_len]
+
+    position_ids = prepared_inputs["position_ids"][..., :prefill_len]
+    session = QAICInferenceSession(str(qpc_path))
+    session.skip_buffers(
+        [
+            name
+            for name in session.input_names + session.output_names
+            if name.startswith("past_") or name.endswith("_RetainedState")
+        ]
+    )
+
+    run_inputs = {
+        "input_ids": input_ids.detach().cpu().numpy().astype(np.int64),
+        "position_ids": position_ids.detach().cpu().numpy().astype(np.int64),
+        "image_idx": np.zeros((1, 1), dtype=np.int64),
+    }
+
+    if "pixel_values" in prepared_inputs:
+        run_inputs["pixel_values"] = prepared_inputs["pixel_values"].detach().cpu().numpy().astype(np.float16)
+    else:
+        pv_idx = session.binding_index_map["pixel_values"]
+        run_inputs["pixel_values"] = np.zeros(session.bindings[pv_idx].dims, dtype=np.float16)
+
+    outputs = session.run(run_inputs)
+    session.deactivate()
+    return outputs["logits"]
+
+
 def _run_ai100_prefill(qpc_paths, prepared_inputs, vision_template):
     if not isinstance(qpc_paths, dict):
         raise ValueError("Expected qpc_paths to be a dict with vision/lang QPC keys.")
@@ -223,7 +264,8 @@ def _run_ai100_prefill(qpc_paths, prepared_inputs, vision_template):
 @pytest.mark.multimodal
 @pytest.mark.regular
 @pytest.mark.parametrize("model_name", test_reranker_models)
-def test_qwen3_vl_reranker_mad_parity(model_name):
+@pytest.mark.parametrize("kv_offload", [True, False], ids=["dual_qpc", "single_qpc"])
+def test_qwen3_vl_reranker_mad_parity(model_name, kv_offload):
     torch.manual_seed(42)
     model_cfg = reranker_model_config_dict[model_name]
     model_source = _resolve_model_source(model_name)
@@ -238,10 +280,12 @@ def test_qwen3_vl_reranker_mad_parity(model_name):
     model_hf = load_vlm_model(config)
     model_hf.eval()
 
+    qaic_config = {} if kv_offload else {"no_kv_cache": True}
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         model_source,
-        kv_offload=True,
+        kv_offload=kv_offload,
         config=config,
+        qaic_config=qaic_config,
     )
     processor = AutoProcessor.from_pretrained(model_source, trust_remote_code=True, padding=True)
 
@@ -298,7 +342,7 @@ def test_qwen3_vl_reranker_mad_parity(model_name):
         height=compile_height,
         width=compile_width,
         prefill_seq_len=max_prompt_len,
-        ctx_len=model_cfg["ctx_len"],
+        ctx_len=max_prompt_len,
         num_devices=1,
         num_cores=16,
         mxfp6_matmul=False,
@@ -307,33 +351,36 @@ def test_qwen3_vl_reranker_mad_parity(model_name):
     ai100_scores_list = []
 
     prepared_contexts = []
-    vision_template_ai100 = None
     for context in doc_contexts:
         prepared_inputs, _ = _prepare_qeff_inputs(
             qeff_model=qeff_model,
             tokenized_inputs=context["tokenized"],
             prefill_seq_len=max_prompt_len,
         )
-        prepared_contexts.append(
-            {
-                "prepared_inputs": prepared_inputs,
-            }
-        )
-        if vision_template_ai100 is None and "pixel_values" in prepared_inputs and "image_grid_thw" in prepared_inputs:
-            vision_template_ai100 = _run_ai100_vision(qpc_paths["vision_qpc_path"], prepared_inputs)
+        prepared_contexts.append({"prepared_inputs": prepared_inputs})
 
-    if vision_template_ai100 is None:
-        raise ValueError("Expected at least one image document to initialize vision templates.")
+    if kv_offload:
+        vision_template_ai100 = None
+        for context in prepared_contexts:
+            if vision_template_ai100 is None and "pixel_values" in context["prepared_inputs"]:
+                vision_template_ai100 = _run_ai100_vision(qpc_paths["vision_qpc_path"], context["prepared_inputs"])
 
-    for context in prepared_contexts:
-        prepared_inputs_runtime = context["prepared_inputs"]
-        ai100_logits = _run_ai100_prefill(
-            qpc_paths=qpc_paths,
-            prepared_inputs=prepared_inputs_runtime,
-            vision_template=vision_template_ai100,
-        )
-        ai100_score = _score_from_logits(ai100_logits, yes_token_id, no_token_id)[0]
-        ai100_scores_list.append(float(ai100_score))
+        if vision_template_ai100 is None:
+            raise ValueError("Expected at least one image document to initialize vision templates.")
+
+        for context in prepared_contexts:
+            ai100_logits = _run_ai100_prefill(
+                qpc_paths=qpc_paths,
+                prepared_inputs=context["prepared_inputs"],
+                vision_template=vision_template_ai100,
+            )
+            ai100_score = _score_from_logits(ai100_logits, yes_token_id, no_token_id)[0]
+            ai100_scores_list.append(float(ai100_score))
+    else:
+        for context in prepared_contexts:
+            ai100_logits = _run_ai100_single_qpc_prefill(context["prepared_inputs"], qpc_path=qpc_paths)
+            ai100_score = _score_from_logits(ai100_logits, yes_token_id, no_token_id)[0]
+            ai100_scores_list.append(float(ai100_score))
 
     hf_scores = np.array(hf_scores_list, dtype=np.float64)
     ai100_scores = np.array(ai100_scores_list, dtype=np.float64)
