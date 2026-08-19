@@ -23,7 +23,6 @@ Run the nightly full-model HF/ORT/QAIC three-way parity test with:
         tests/transformers/disaggregated/test_gpt_oss_disagg_cb_kv_share_w_hf_fp32.py
 """
 
-import os
 from pathlib import Path
 
 import numpy as np
@@ -51,9 +50,9 @@ from tests.transformers.disaggregated._disagg_ort_test_utils import (
 from tests.transformers.disaggregated._disagg_ort_test_utils import (
     update_state_from_outputs as _update_state_from_outputs,
 )
+from tests.transformers.disaggregated._nightly_disagg_config import nightly_disagg_configs
 
 MODEL_NAME = "openai/gpt-oss-20b"
-THREE_WAY_PARITY_MODEL_NAME = os.environ.get("QEFF_GPT_OSS_THREE_WAY_MODEL_NAME", "openai/gpt-oss-20b")
 TOKENIZER_ID = MODEL_NAME
 NUM_HIDDEN_LAYERS = 4
 PREFILL_SEQ_LEN = 32
@@ -71,14 +70,6 @@ MOE_PREFILL_PACKED_CHUNK_SIZE = 16
 STAGES = 2
 PREFILL_NUM_DEVICES = 2
 DECODE_NUM_DEVICES = 1
-
-NIGHTLY_FULL_MODEL_PREFILL_NUM_DEVICES = int(
-    os.environ.get("QEFF_GPT_OSS_CB_NIGHTLY_FULL_MODEL_PREFILL_NUM_DEVICES", "8")
-)
-NIGHTLY_FULL_MODEL_DECODE_NUM_DEVICES = int(
-    os.environ.get("QEFF_GPT_OSS_CB_NIGHTLY_FULL_MODEL_DECODE_NUM_DEVICES", "4")
-)
-NIGHTLY_FULL_MODEL_STAGES = int(os.environ.get("QEFF_GPT_OSS_CB_NIGHTLY_FULL_MODEL_STAGES", "4"))
 
 
 def _assert_onnx_path(onnx_path, label: str) -> Path:
@@ -567,15 +558,17 @@ def _compile_disagg_qpcs(
 
 
 @pytest.mark.nightly_disagg
-def test_gpt_oss_disagg_kv_share_qaic_vs_ort_vs_hf_fp32(manual_cleanup):
+@pytest.mark.parametrize("nightly_config", nightly_disagg_configs("gpt_oss"))
+def test_gpt_oss_disagg_kv_share_qaic_vs_ort_vs_hf_fp32(manual_cleanup, nightly_config):
     """Non-CB three-way parity: HF fp32 == ORT on QPC ONNX == QAIC disagg DMA."""
     pytest.importorskip("onnxruntime")
     pytest.importorskip("onnx")
     torch.manual_seed(42)
 
-    config = _build_config(dtype="float32", full_model=True, model_name=THREE_WAY_PARITY_MODEL_NAME)
-    hf_model = _load_hf_model(config, model_name=THREE_WAY_PARITY_MODEL_NAME)
-    tokenizer = AutoTokenizer.from_pretrained(THREE_WAY_PARITY_MODEL_NAME)
+    model_id = nightly_config["model_id"]
+    config = _build_config(dtype="float32", full_model=True, model_name=model_id)
+    hf_model = _load_hf_model(config, model_name=model_id)
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -589,9 +582,9 @@ def test_gpt_oss_disagg_kv_share_qaic_vs_ort_vs_hf_fp32(manual_cleanup):
             qeff_model,
             sessions,
             compiled_onnx_paths,
-            prefill_num_devices=NIGHTLY_FULL_MODEL_PREFILL_NUM_DEVICES,
-            decode_num_devices=NIGHTLY_FULL_MODEL_DECODE_NUM_DEVICES,
-            stages=NIGHTLY_FULL_MODEL_STAGES,
+            prefill_num_devices=nightly_config["prefill_num_devices"],
+            decode_num_devices=nightly_config["decode_num_devices"],
+            stages=nightly_config["stages"],
         )
         ort_tokens = _run_ort_generation(compiled_onnx_paths, tokenizer)
         qaic_tokens = _run_disagg_kv_share_qaic_generation(tokenizer, prefill_session, decode_session)

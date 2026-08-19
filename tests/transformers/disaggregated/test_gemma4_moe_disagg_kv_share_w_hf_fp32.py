@@ -9,17 +9,12 @@
 
 Run the regular HF/QAIC parity test with:
     pytest -m "on_qaic and disagg_dma" \
-        tests/transformers/disaggregated/test_gemma4_moe_disagg_kv_share_w_hf_fp32.py 
+        tests/transformers/disaggregated/test_gemma4_moe_disagg_kv_share_w_hf_fp32.py
 
 Run the nightly full-model HF/ORT/QAIC three-way parity test with:
     pytest -m "nightly_disagg" \
         tests/transformers/disaggregated/test_gemma4_moe_disagg_kv_share_w_hf_fp32.py
 
-Nightly full-model compile scaling knobs:
-    QEFF_GEMMA4_NIGHTLY_FULL_MODEL_VISION_NUM_DEVICES=4
-    QEFF_GEMMA4_NIGHTLY_FULL_MODEL_PREFILL_NUM_DEVICES=8
-    QEFF_GEMMA4_NIGHTLY_FULL_MODEL_DECODE_NUM_DEVICES=4
-    QEFF_GEMMA4_NIGHTLY_FULL_MODEL_STAGES=4
 """
 
 import copy
@@ -50,9 +45,9 @@ from tests.transformers.disaggregated._disagg_ort_test_utils import (
 from tests.transformers.disaggregated._disagg_ort_test_utils import (
     update_state_from_outputs as _update_state_from_outputs,
 )
+from tests.transformers.disaggregated._nightly_disagg_config import nightly_disagg_configs
 
 MODEL_NAME = "tiny-random/gemma-4-moe"
-THREE_WAY_PARITY_MODEL_NAME = os.environ.get("QEFF_GEMMA4_THREE_WAY_MODEL_NAME", "google/gemma-4-26B-A4B-it")
 SYSTEM_PROMPT = "You are a helpful assistant."
 NUM_HIDDEN_LAYERS = 2
 VISION_DEPTH = 2
@@ -78,10 +73,6 @@ PREFILL_NUM_DEVICES = 2
 DECODE_NUM_DEVICES = 2
 PREFILL_MDP_PARTITIONS = 2
 
-NIGHTLY_FULL_MODEL_VISION_NUM_DEVICES = int(os.environ.get("QEFF_GEMMA4_NIGHTLY_FULL_MODEL_VISION_NUM_DEVICES", "4"))
-NIGHTLY_FULL_MODEL_PREFILL_NUM_DEVICES = int(os.environ.get("QEFF_GEMMA4_NIGHTLY_FULL_MODEL_PREFILL_NUM_DEVICES", "8"))
-NIGHTLY_FULL_MODEL_DECODE_NUM_DEVICES = int(os.environ.get("QEFF_GEMMA4_NIGHTLY_FULL_MODEL_DECODE_NUM_DEVICES", "4"))
-NIGHTLY_FULL_MODEL_STAGES = int(os.environ.get("QEFF_GEMMA4_NIGHTLY_FULL_MODEL_STAGES", "4"))
 
 # The Gemma4 vision encoder forward binds exactly (pixel_values, image_position_ids);
 # everything else feeds the lang QPCs. Extra keys are tolerated (routed if the processor
@@ -866,17 +857,19 @@ def _run_disagg_baseline_numpy_copy_generation(
 
 
 @pytest.mark.nightly_disagg
-def test_gemma4_moe_disagg_kv_share_qaic_vs_ort_vs_hf_fp32(manual_cleanup):
+@pytest.mark.parametrize("nightly_config", nightly_disagg_configs("gemma4_moe"))
+def test_gemma4_moe_disagg_kv_share_qaic_vs_ort_vs_hf_fp32(manual_cleanup, nightly_config):
     """Three-way parity: HF fp32 == ORT on QPC ONNX == QAIC disagg DMA."""
     pytest.importorskip("onnxruntime")
     pytest.importorskip("onnx")
     torch.manual_seed(42)
 
+    model_id = nightly_config["model_id"]
     hf_model = _load_hf_model_from_pretrained(
-        _build_config(dtype="float32", full_model=True, model_name=THREE_WAY_PARITY_MODEL_NAME),
-        model_name=THREE_WAY_PARITY_MODEL_NAME,
+        _build_config(dtype="float32", full_model=True, model_name=model_id),
+        model_name=model_id,
     )
-    processor = AutoProcessor.from_pretrained(THREE_WAY_PARITY_MODEL_NAME, trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
 
     if SKIP_VISION:
         messages = _prepare_text_only_messages()
@@ -907,15 +900,15 @@ def test_gemma4_moe_disagg_kv_share_qaic_vs_ort_vs_hf_fp32(manual_cleanup):
     try:
         vision_qpc_path = None
         if not SKIP_VISION:
-            vision_qpc_path = _compile_vision(qeff_model, num_devices=NIGHTLY_FULL_MODEL_VISION_NUM_DEVICES)
+            vision_qpc_path = _compile_vision(qeff_model, num_devices=nightly_config["vision_num_devices"])
             compiled_onnx_paths["vision"] = _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
 
         prefill_qpc_path, decode_qpc_path, lang_onnx_paths = _compile_kv_share_lang(
             qeff_model,
             moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
-            prefill_num_devices=NIGHTLY_FULL_MODEL_PREFILL_NUM_DEVICES,
-            decode_num_devices=NIGHTLY_FULL_MODEL_DECODE_NUM_DEVICES,
-            mdp_num_partitions=NIGHTLY_FULL_MODEL_STAGES,
+            prefill_num_devices=nightly_config["prefill_num_devices"],
+            decode_num_devices=nightly_config["decode_num_devices"],
+            mdp_num_partitions=nightly_config["stages"],
         )
         compiled_onnx_paths.update(lang_onnx_paths)
         print(f"Disagg ONNX paths: {compiled_onnx_paths}")
@@ -960,9 +953,7 @@ def test_gemma4_moe_disagg_kv_share_qaic_vs_ort_vs_hf_fp32(manual_cleanup):
     _assert_three_way_tokens_match(hf_tokens, ort_tokens, qaic_tokens, BATCH_SIZE, GENERATION_LEN)
 
 
-@pytest.mark.skip(reason="gemma4 mismatching")
 @pytest.mark.on_qaic
-@pytest.mark.multimodal
 @pytest.mark.disagg_dma
 def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
     torch.manual_seed(42)
