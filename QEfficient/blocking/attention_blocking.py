@@ -81,8 +81,8 @@ def past_key_value_update(
     position_ids: Optional[torch.LongTensor] = None,
     sliding_window: Optional[int] = None,
 ):
+    cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
     if past_key_value is not None:
-        cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
         if sliding_window is not None:
             cache_kwargs.update(
                 {
