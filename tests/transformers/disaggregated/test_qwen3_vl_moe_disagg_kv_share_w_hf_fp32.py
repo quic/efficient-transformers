@@ -17,7 +17,6 @@ Run the nightly full HF/ORT/QAIC three-way parity test with:
 """
 
 import copy
-import os
 import time
 from pathlib import Path
 
@@ -49,9 +48,9 @@ from tests.transformers.disaggregated._disagg_ort_test_utils import (
 from tests.transformers.disaggregated._disagg_ort_test_utils import (
     vision_feed_for_ort as _vision_feed_for_ort,
 )
+from tests.transformers.disaggregated._nightly_disagg_config import nightly_disagg_configs
 
 MODEL_NAME = "tiny-random/qwen3-vl-moe"
-THREE_WAY_PARITY_MODEL_NAME = os.environ.get("QEFF_QWEN3_VL_MOE_THREE_WAY_MODEL_NAME", "Qwen/Qwen3-VL-30B-A3B-Instruct")
 TINY_RANDOM_MODEL_NAMES = {"tiny-random/qwen3-vl-moe"}
 PREFILL_SEQ_LEN = 64
 CTX_LEN = 4096
@@ -72,17 +71,6 @@ VISION_INPUTS = {
 }
 VISION_FP16_INPUTS = {"pixel_values", "image_masks"}
 VISION_OUTPUTS = ("vision_embeds", "deepstack_features")
-
-NIGHTLY_FULL_MODEL_VISION_NUM_DEVICES = int(
-    os.environ.get("QEFF_QWEN3_VL_MOE_NIGHTLY_FULL_MODEL_VISION_NUM_DEVICES", "2")
-)
-NIGHTLY_FULL_MODEL_PREFILL_NUM_DEVICES = int(
-    os.environ.get("QEFF_QWEN3_VL_MOE_NIGHTLY_FULL_MODEL_PREFILL_NUM_DEVICES", "8")
-)
-NIGHTLY_FULL_MODEL_DECODE_NUM_DEVICES = int(
-    os.environ.get("QEFF_QWEN3_VL_MOE_NIGHTLY_FULL_MODEL_DECODE_NUM_DEVICES", "4")
-)
-NIGHTLY_FULL_MODEL_STAGES = int(os.environ.get("QEFF_QWEN3_VL_MOE_NIGHTLY_FULL_MODEL_STAGES", "4"))
 
 
 def _assert_onnx_path(onnx_path, label: str) -> Path:
@@ -859,7 +847,16 @@ def _run_disagg_kv_share_qaic_generation(
     return np.stack(generated_ids, axis=1)
 
 
-def _compile_disagg_qpcs(qeff_model, image: Image.Image, compiled_onnx_paths: dict[str, Path]) -> dict[str, str]:
+def _compile_disagg_qpcs(
+    qeff_model,
+    image: Image.Image,
+    compiled_onnx_paths: dict[str, Path],
+    *,
+    vision_num_devices: int,
+    prefill_num_devices: int,
+    decode_num_devices: int,
+    stages: int,
+) -> dict[str, str]:
     """Compile QEfficient QPCs and record the ONNX path used for each compile."""
     vision_qpc_path = qeff_model.compile(
         batch_size=BATCH_SIZE,
@@ -868,7 +865,7 @@ def _compile_disagg_qpcs(qeff_model, image: Image.Image, compiled_onnx_paths: di
         height=image.height,
         width=image.width,
         num_cores=16,
-        num_devices=NIGHTLY_FULL_MODEL_VISION_NUM_DEVICES,
+        num_devices=vision_num_devices,
         mos=1,
         aic_enable_depth_first=True,
         skip_vision=False,
@@ -887,7 +884,7 @@ def _compile_disagg_qpcs(qeff_model, image: Image.Image, compiled_onnx_paths: di
         height=image.height,
         width=image.width,
         num_cores=16,
-        num_devices=NIGHTLY_FULL_MODEL_DECODE_NUM_DEVICES,
+        num_devices=decode_num_devices,
         retain_full_kv=True,
         split_retained_state_io=True,
         mos=1,
@@ -909,14 +906,14 @@ def _compile_disagg_qpcs(qeff_model, image: Image.Image, compiled_onnx_paths: di
         height=image.height,
         width=image.width,
         num_cores=16,
-        num_devices=NIGHTLY_FULL_MODEL_PREFILL_NUM_DEVICES,
+        num_devices=prefill_num_devices,
         retain_full_kv=True,
         split_retained_state_io=True,
         mos=1,
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
         aic_enable_depth_first=False,
-        mdp_num_partitions=NIGHTLY_FULL_MODEL_STAGES,
+        mdp_num_partitions=stages,
         prefill_only=True,
         enable_chunking=True,
         skip_vision=True,
@@ -944,18 +941,20 @@ def _create_disagg_sessions(qpc_paths: dict[str, str], sessions: list):
 
 
 @pytest.mark.nightly_disagg
-def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_ort_fp32(manual_cleanup):
+@pytest.mark.parametrize("nightly_config", nightly_disagg_configs("qwen3_vl_moe"))
+def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_ort_fp32(manual_cleanup, nightly_config):
     """Three-way parity: HF fp32 == ORT on QEfficient ONNX == QAIC disagg DMA."""
     pytest.importorskip("qwen_vl_utils")
     pytest.importorskip("onnxruntime")
     pytest.importorskip("onnx")
 
     torch.manual_seed(42)
+    model_id = nightly_config["model_id"]
     hf_model = _load_hf_model_from_pretrained(
-        _build_config(dtype="float32", full_model=True, model_name=THREE_WAY_PARITY_MODEL_NAME),
-        model_name=THREE_WAY_PARITY_MODEL_NAME,
+        _build_config(dtype="float32", full_model=True, model_name=model_id),
+        model_name=model_id,
     )
-    processor = AutoProcessor.from_pretrained(THREE_WAY_PARITY_MODEL_NAME, trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
 
     image = Image.new("RGB", IMAGE_SIZE, color=(127, 127, 127))
     messages = _prepare_messages(image)
@@ -977,7 +976,15 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_ort_fp32(manual_cleanup):
         )
         ort_tokens = _run_ort_generation(qeff_onnx_paths, vision_inputs, lang_inputs, num_chunks, processor)
 
-        qpc_paths = _compile_disagg_qpcs(qeff_model, image, compiled_onnx_paths)
+        qpc_paths = _compile_disagg_qpcs(
+            qeff_model,
+            image,
+            compiled_onnx_paths,
+            vision_num_devices=nightly_config["vision_num_devices"],
+            prefill_num_devices=nightly_config["prefill_num_devices"],
+            decode_num_devices=nightly_config["decode_num_devices"],
+            stages=nightly_config["stages"],
+        )
         vision_session, prefill_session, decode_session = _create_disagg_sessions(qpc_paths, sessions)
         qaic_tokens = _run_disagg_kv_share_qaic_generation(
             qeff_model=qeff_model,
