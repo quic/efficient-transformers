@@ -9,7 +9,7 @@ import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any
 
 import numpy as np
 import onnx
@@ -88,7 +88,7 @@ class SplitTensorsTransform(BaseOnnxTransform):
 
     @classmethod
     def apply(
-        cls, tensor: TensorProto, model_name: str, file_num: int, mapping: Dict[str, Tuple[TensorProto, str]]
+        cls, tensor: TensorProto, model_name: str, file_num: int, mapping: dict[str, tuple[TensorProto, str]]
     ) -> None:
         file_name = f"{model_name}_{file_num}.onnx.data"
         mapping[tensor.name] = (tensor, file_name)
@@ -97,7 +97,7 @@ class SplitTensorsTransform(BaseOnnxTransform):
 class CustomOpTransform(BaseOnnxTransform):
     """Register custom ONNX ops and append their function prototypes to the model."""
 
-    _custom_ops: Dict[str, Tuple[Any, Any]] = {
+    _custom_ops: dict[str, tuple[Any, Any]] = {
         "CustomRMSNormFunc": (CustomRMSNormFunc, CustomRMSNorm),
         "CtxScatterFunc": (CtxScatterFunc, CtxScatter),
         "CtxScatterFunc3D": (CtxScatterFunc3D, CtxScatter3D),
@@ -145,7 +145,7 @@ class CustomOpTransform(BaseOnnxTransform):
         return op_applied
 
     @staticmethod
-    def _ensure_opset_imports(container: Union[ModelProto, onnx.FunctionProto], domain: str, version: int) -> None:
+    def _ensure_opset_imports(container: ModelProto | onnx.FunctionProto, domain: str, version: int) -> None:
         if any(opset.domain == domain for opset in container.opset_import):
             return
         container.opset_import.append(onnx.helper.make_opsetid(domain, version))
@@ -321,7 +321,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
 
         fn_by_name = {fn.name: fn for fn in model.functions}
         changed = False
-        kv_rename_map: Dict[str, str] = {}
+        kv_rename_map: dict[str, str] = {}
 
         for node in graph.node:
             fn = fn_by_name.get(node.op_type)
@@ -398,7 +398,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
         return changed
 
     @staticmethod
-    def _rename_graph_inputs_bulk(graph: onnx.GraphProto, rename_map: Dict[str, str]) -> bool:
+    def _rename_graph_inputs_bulk(graph: onnx.GraphProto, rename_map: dict[str, str]) -> bool:
         if not rename_map:
             return False
         changed = False
@@ -446,13 +446,13 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
                     yield from cls._iter_all_nodes(attr.g.node)
 
     @staticmethod
-    def _rename_op_types(nodes, old_to_new: Dict[str, str]) -> None:
+    def _rename_op_types(nodes, old_to_new: dict[str, str]) -> None:
         for node in RenameRepeatedSubgraphTransform._iter_all_nodes(nodes):
             if node.op_type in old_to_new:
                 node.op_type = old_to_new[node.op_type]
 
     @classmethod
-    def apply(cls, model: ModelProto, target_classnames: Optional[List[str]] = None, **kwargs) -> bool:
+    def apply(cls, model: ModelProto, target_classnames: list[str] | None = None, **kwargs) -> bool:
         target_classnames = [name for name in (target_classnames or []) if name]
         if not target_classnames:
             logger.warning(
@@ -521,8 +521,8 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
     def _fix_subgraph_domains(
         cls,
         model: ModelProto,
-        old_to_new: Dict[str, str],
-        target_class_modules: Optional[Dict[str, str]],
+        old_to_new: dict[str, str],
+        target_class_modules: dict[str, str] | None,
     ) -> None:
         """Change pkg.torch.__subgraph__ domain to the class's Python module path.
 
@@ -545,15 +545,11 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
                 fn.domain = new_name_to_module[fn.name]
                 if not any(op.domain == fn.domain for op in model.opset_import):
                     model.opset_import.append(onnx.helper.make_opsetid(fn.domain, 1))
-        # Remove the stale pkg.torch.__subgraph__ opset import — ORT may use it
-        # to validate function call types and reject FP8 inputs at opset 18.
+        # Remove the stale pkg.torch.__subgraph__ opset import — ORT may use it to validate function call types and reject FP8 inputs at opset 18.
         _kept = [op for op in model.opset_import if op.domain != _TORCH_SUBGRAPH_DOMAIN]
         del model.opset_import[:]
         model.opset_import.extend(_kept)
-        # Remove FP8 value_info entries from the main graph.  ORT uses graph-level
-        # value_info to validate call-site input types for local functions and rejects
-        # float8e4m3fn even when the function body handles it correctly.  Removing
-        # these annotations lets ORT infer the type from the initializer at runtime.
+        # Remove FP8 value_info entries from the main graph.  ORT uses graph-level value_info to validate call-site input types for local functions and rejects float8e4m3fn even when the function body handles it correctly.  Removing these annotations lets ORT infer the type from the initializer at runtime.
         _fp8_type = 17  # TensorProto.FLOAT8E4M3FN
         _fp8_vi_names = {vi.name for vi in model.graph.value_info if vi.type.tensor_type.elem_type == _fp8_type}
         if _fp8_vi_names:
@@ -572,7 +568,7 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
 
 class AdapterWeightsToInputsTransform(BaseOnnxTransform):
     @classmethod
-    def apply(cls, model: onnx.ModelProto, *, adapter_name: str, **kwargs) -> Tuple[onnx.ModelProto, bool]:
+    def apply(cls, model: onnx.ModelProto, *, adapter_name: str, **kwargs) -> tuple[onnx.ModelProto, bool]:
         transformed = False
         removed_initializers = []
 
@@ -637,8 +633,6 @@ class PruneFakeInitializersTransform(BaseOnnxTransform):
                 del initializers[name]
                 pruned = True
         return pruned
-
-
 
 
 class HoistFP8DequantFromSubfunctionTransform(BaseOnnxTransform):
@@ -793,7 +787,7 @@ class HoistFP8DequantFromSubfunctionTransform(BaseOnnxTransform):
 class OnnxTransformPipeline(BaseOnnxTransform):
     """Pipeline to apply multiple ONNX transformations in sequence."""
 
-    def __init__(self, transforms: List[Type[BaseOnnxTransform]]):
+    def __init__(self, transforms: list[type[BaseOnnxTransform]]):
         self.transforms = transforms
 
     def apply(
@@ -801,16 +795,16 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         model: ModelProto,
         *,
         model_name: str = "",
-        onnx_base_dir: Optional[str] = None,
+        onnx_base_dir: str | None = None,
         file_chunk_size: int = FILE_CHUNK_SIZE_DEFAULT,
         size_threshold: int = SIZE_THRESHOLD_DEFAULT,
         **kwargs,
-    ) -> Tuple[ModelProto, bool]:
+    ) -> tuple[ModelProto, bool]:
         if not self.transforms:
             return model, False
 
         # Same logic as before, but replace `transforms` with `self.transforms`
-        mapping: Dict[str, Tuple[TensorProto, str]] = {}
+        mapping: dict[str, tuple[TensorProto, str]] = {}
         requested = set(self.transforms)
         applied = {t: False for t in requested}
         f16_applied = False
@@ -871,6 +865,9 @@ class OnnxTransformPipeline(BaseOnnxTransform):
 
         if AdapterWeightsToInputsTransform in requested:
             applied[AdapterWeightsToInputsTransform] = AdapterWeightsToInputsTransform.apply(model, **kwargs)
+
+        if HoistFP8DequantFromSubfunctionTransform in requested:
+            applied[HoistFP8DequantFromSubfunctionTransform] = HoistFP8DequantFromSubfunctionTransform.apply(model)
 
         for t, done in applied.items():
             logger.info(f"Transform '{t.__name__}' applied={done}")

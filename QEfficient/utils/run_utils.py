@@ -6,7 +6,6 @@
 # -----------------------------------------------------------------------------
 
 import os
-from typing import List
 
 import numpy as np
 import onnx
@@ -203,7 +202,7 @@ class ApiRunner:
         session_input_names = [x.name for x in session.get_inputs()]
         session_inputs = {}
         for inp_name in session_input_names:
-            if inp_name in inputs.keys():
+            if inp_name in inputs:
                 session_inputs[inp_name] = inputs[inp_name]
             elif inp_name.startswith("onnx::Gather_"):
                 # Some traced Gemma3 exports surface a scalar gather index as an unnamed input.
@@ -239,11 +238,6 @@ class ApiRunner:
                     added_initializers[node.output[0]] = onnxruntime.OrtValue.ortvalue_from_numpy(
                         np.array(0, np_tensor.dtype)
                     )
-            # breakpoint()
-            # if "arg2_1" in node.input:
-            #     breakpoint()
-            # if tensor.data_type == onnx.TensorProto.FLOAT8E4M3FN:
-            #     breakpoint()
         for tensor in m.graph.initializer:
             if tensor.data_type == onnx.TensorProto.UNDEFINED:
                 continue
@@ -254,36 +248,14 @@ class ApiRunner:
                 added_initializers[tensor.name] = onnxruntime.OrtValue.ortvalue_from_numpy(np.array(0, np_tensor.dtype))
 
         session_options = onnxruntime.SessionOptions()
-        # Auto-disable ORT graph optimizations when the model contains FP8 initializers.
-        # ORT's optimizer tries to fuse DequantizeLinear->MatMul into a quantized matmul
-        # and inserts a QuantizeLinear for the activation, but it expects uint8 output
-        # from QuantizeLinear — not float8e4m3fn — causing a type error at session init.
+        # Auto-disable ORT graph optimizations when the model contains FP8 initializers. ORT's optimizer tries to fuse DequantizeLinear->MatMul into a quantized matmul and inserts a QuantizeLinear for the activation, but it expects uint8 output from QuantizeLinear — not float8e4m3fn — causing a type error at session init.
         has_fp8_weights = any(t.data_type == onnx.TensorProto.FLOAT8E4M3FN for t in m.graph.initializer)
         if disable_ort_optimizations or has_fp8_weights:
             session_options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_DISABLE_ALL
-        # When FP8 weights are present AND the model uses local subfunctions, ORT rejects
-        # FP8 tensors passed through function call boundaries.  Apply the hoist transform
-        # in-memory to move FP8 dequantization to the main graph before the function call.
         ort_model_path = str(model_path)
-        _fp8_tmp_dir = None
-        if has_fp8_weights and m.functions:
-            from QEfficient.base.onnx_transforms import HoistFP8DequantFromSubfunctionTransform
-            from onnx import external_data_helper as _edh
-            import shutil as _shutil
-            import tempfile as _tempfile
-            _edh.load_external_data_for_model(m, os.path.dirname(model_path))
-            changed = HoistFP8DequantFromSubfunctionTransform.apply(m)
-            if changed:
-                _fp8_tmp_dir = _tempfile.mkdtemp()
-                _fp8_tmp_path = os.path.join(_fp8_tmp_dir, "model_hoisted.onnx")
-                onnx.save(m, _fp8_tmp_path, save_as_external_data=True,
-                          all_tensors_to_one_file=True, location="model_hoisted.onnx.data")
-                ort_model_path = _fp8_tmp_path
         for name, value in added_initializers.items():
             session_options.add_initializer(name, value)
         session = onnxruntime.InferenceSession(ort_model_path, session_options)
-        if _fp8_tmp_dir:
-            _shutil.rmtree(_fp8_tmp_dir, ignore_errors=True)
 
         generated_ids = []
         inputs = self.input_handler.prepare_ort_inputs()
@@ -372,7 +344,6 @@ class ApiRunnerVlm:
         n_layer,
         dtype=torch.float32,
     ):
-        """ """
         self.input_handler_vlm = InputHandlerVLM(
             batch_size=batch_size,
             prompt_len=prompt_len,
@@ -489,7 +460,7 @@ class ApiRunnerVlm:
         session_input_names = [x.name for x in session.get_inputs()]
         session_inputs = {}
         for inp_name in session_input_names:
-            if inp_name in inputs.keys():
+            if inp_name in inputs:
                 session_inputs[inp_name] = inputs[inp_name]
         outputs_data = session.run(output_names, session_inputs)
         ort_outputs = dict(zip(output_names, outputs_data))
@@ -606,7 +577,6 @@ class ApiRunnerInternVL(ApiRunnerVlm):
         n_layer,
         dtype=torch.float32,
     ):
-        """ """
         self.input_handler_vlm = InputHandlerInternVL(
             batch_size=batch_size,
             prompt_len=prompt_len,
@@ -656,7 +626,7 @@ class ApiRunnerInternVL(ApiRunnerVlm):
             questions.append(question)
 
             # Chat Template information for prompt preprocessing
-            messages: List[List[str]] = []
+            messages: list[list[str]] = []
             roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
             prompt = self.processor(pixel_values, questions, messages, roles, num_patches_list=num_patches_list)
 

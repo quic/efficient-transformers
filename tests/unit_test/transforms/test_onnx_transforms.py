@@ -134,6 +134,24 @@ class TestONNXTransformsModuleStructure:
         assert RenameFunctionOutputsTransform is not None
         assert hasattr(RenameFunctionOutputsTransform, "apply")
 
+    def test_onnx_pipeline_dispatches_hoist_fp8_dequant_transform(self, monkeypatch):
+        from QEfficient.base.onnx_transforms import HoistFP8DequantFromSubfunctionTransform, OnnxTransformPipeline
+
+        model = object()
+        called = {"count": 0}
+
+        def _fake_apply(cls, model_proto):
+            assert model_proto is model
+            called["count"] += 1
+            return True
+
+        monkeypatch.setattr(HoistFP8DequantFromSubfunctionTransform, "apply", classmethod(_fake_apply))
+        pipeline = OnnxTransformPipeline([HoistFP8DequantFromSubfunctionTransform])
+        _, changed = pipeline.apply(model)
+
+        assert called["count"] == 1
+        assert changed is True
+
 
 @pytest.mark.onnx
 @pytest.mark.slow
