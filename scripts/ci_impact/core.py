@@ -31,6 +31,7 @@ STAGES = (
     "qaic_feature",
     "qaic_multimodal",
     "qaic_reranker",
+    "qaic_disagg",
     "qaic_diffusion",
     "cli",
     "dynamo_qaic",
@@ -494,6 +495,8 @@ def _stages_for(path: str, markers: set[str]) -> set[str]:
     if path == "tests/transformers/models/reranker/test_reranker_mad.py":
         return {"qaic_reranker"}
     stages = set()
+    if "disagg_dma" in markers:
+        stages.add("qaic_disagg")
     if "diffusion_models" in markers:
         stages.add("qaic_diffusion")
     if "multimodal" in markers:
