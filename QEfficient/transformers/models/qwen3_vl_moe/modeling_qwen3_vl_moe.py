@@ -1103,8 +1103,10 @@ QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock = QEffQwen3VLMoeTextSparseMoeBloc
         ).unsqueeze(-1)
         expert_out = torch.zeros(N, T, H, dtype=x_flat.dtype, device=x_flat.device)
 
-        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
         num_packed_chunks = getattr(self, "expert_blocking_num_packed_chunks", None)
+        packed_chunk_size = (
+            T // num_packed_chunks if num_packed_chunks else getattr(self, "expert_blocking_packed_chunk_size", T)
+        )
         W_g = (
             self.experts.gate_proj.view(num_pipeline_stages, num_parallelized_experts, H, -1)
             .transpose(0, 1)
