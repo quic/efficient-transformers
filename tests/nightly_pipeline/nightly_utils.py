@@ -24,6 +24,8 @@ MODEL_CLASS_SKIP_ENV_VARS = {
 
 CB_DEFAULT_MODEL_CLASSES = {"causal_pipeline_configs", "image_text_to_text_model_configs"}
 ENABLE_NON_CB_MODE_ENV_VAR = "NIGHTLY_PIPELINE_ENABLE_NON_CB"
+ENABLE_MULTI_SPECIALIZATION_ENV_VAR = "NIGHTLY_PIPELINE_ENABLE_MULTI_SPECIALIZATION"
+MULTI_SPECIALIZATION_MODEL_CLASSES = {"image_text_to_text_model_configs"}
 TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
@@ -89,6 +91,13 @@ def get_execution_modes(get_pipeline_config, model_class):
     if not execution_modes:
         execution_modes = ["non_cb"]
 
+    if (
+        model_class in MULTI_SPECIALIZATION_MODEL_CLASSES
+        and _is_truthy_env_var(ENABLE_MULTI_SPECIALIZATION_ENV_VAR)
+        and "cb" in execution_modes
+    ):
+        return ["cb", "multi_spec"]
+
     if model_class not in CB_DEFAULT_MODEL_CLASSES:
         return execution_modes
 
@@ -96,7 +105,7 @@ def get_execution_modes(get_pipeline_config, model_class):
         return execution_modes
 
     if _is_truthy_env_var(ENABLE_NON_CB_MODE_ENV_VAR):
-        return execution_modes
+        return [mode for mode in execution_modes if mode != "multi_spec"]
 
     return [mode for mode in execution_modes if mode == "cb"]
 
@@ -107,6 +116,10 @@ def _is_truthy_env_var(env_var_name):
 
 def is_continuous_batching_mode(execution_mode):
     return execution_mode == "cb"
+
+
+def is_multi_specialization_mode(execution_mode):
+    return execution_mode == "multi_spec"
 
 
 def _get_model_family_config(get_pipeline_config, model_class):
@@ -136,6 +149,11 @@ def _resolve_mode_pipeline_params(get_pipeline_config, model_class, execution_mo
         full_batch_size = cb_config.get("full_batch_size")
         if full_batch_size is not None and "full_batch_size" not in compile_params:
             compile_params["full_batch_size"] = full_batch_size
+    elif execution_mode == "multi_spec":
+        multispec_config = model_family_config.get("multi_specialization", {})
+        export_params.update(copy.deepcopy(multispec_config.get("export_params", {})))
+        compile_params.update(copy.deepcopy(multispec_config.get("compile_params", {})))
+        generate_params.update(copy.deepcopy(multispec_config.get("generate_params", {})))
 
     return export_params, compile_params, generate_params
 

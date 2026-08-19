@@ -15,7 +15,12 @@ from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils.test_utils import ModelConfig
 
 from ..model_age_utils import filter_models_for_nightly
-from ..nightly_utils import get_execution_modes, is_continuous_batching_mode, pre_export_compile_utils_with_mode
+from ..nightly_utils import (
+    get_execution_modes,
+    is_continuous_batching_mode,
+    is_multi_specialization_mode,
+    pre_export_compile_utils_with_mode,
+)
 
 model_config_path = os.path.join(os.path.dirname(__file__), "../configs/validated_models.json")
 with open(model_config_path, "r") as f:
@@ -30,9 +35,16 @@ execution_modes = get_execution_modes(pipeline_config, "image_text_to_text_model
 QWEN_CB_MODEL_TYPES = {"qwen2_5_vl", "qwen3_vl", "qwen3_vl_moe", "qwen3_5", "qwen3_5_moe"}
 
 
-def _get_artifacts_store(execution_mode, image_text_to_text_model_artifacts, image_text_to_text_model_cb_artifacts):
+def _get_artifacts_store(
+    execution_mode,
+    image_text_to_text_model_artifacts,
+    image_text_to_text_model_cb_artifacts,
+    image_text_to_text_model_multi_spec_artifacts,
+):
     if is_continuous_batching_mode(execution_mode):
         return image_text_to_text_model_cb_artifacts
+    if is_multi_specialization_mode(execution_mode):
+        return image_text_to_text_model_multi_spec_artifacts
     return image_text_to_text_model_artifacts
 
 
@@ -43,7 +55,7 @@ def _apply_cb_compile_overrides(qeff_model, compile_params, execution_mode):
     model_type = getattr(qeff_model.model.config, "model_type", "")
     if model_type in QWEN_CB_MODEL_TYPES:
         compile_params["prefill_seq_len"] = 64
-        compile_params["ctx_len"] = 2048
+        compile_params["ctx_len"] = 4096
 
 
 @pytest.mark.parametrize("model_name", test_models)
@@ -55,13 +67,17 @@ def test_export_compile_image_text_to_text_model(
     execution_mode,
     image_text_to_text_model_artifacts,
     image_text_to_text_model_cb_artifacts,
+    image_text_to_text_model_multi_spec_artifacts,
     get_pipeline_config,
 ):
     export_params, compile_params = pre_export_compile_utils_with_mode(
         model_name, "image_text_to_text_model_configs", get_pipeline_config, execution_mode
     )
     model_artifacts = _get_artifacts_store(
-        execution_mode, image_text_to_text_model_artifacts, image_text_to_text_model_cb_artifacts
+        execution_mode,
+        image_text_to_text_model_artifacts,
+        image_text_to_text_model_cb_artifacts,
+        image_text_to_text_model_multi_spec_artifacts,
     )
 
     # Initialize model entry

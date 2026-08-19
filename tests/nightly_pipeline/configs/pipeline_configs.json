@@ -96,7 +96,7 @@
       "export_params": {},
       "compile_params": {
         "prefill_seq_len": 128,
-        "ctx_len": 1024,
+        "ctx_len": 4096,
         "num_cores": 16,
         "num_devices": 4,
         "aic_hw_version": "ai100",
@@ -127,6 +127,35 @@
             "https://picsum.photos/id/237/536/354",
             "https://picsum.photos/id/237/536/354"
           ]
+        }
+      },
+      "multi_specialization": {
+        "export_params": {},
+        "compile_params": {
+          "height": [
+            240,
+            354,
+            1024
+          ],
+          "width": [
+            360,
+            536,
+            1024
+          ],
+          "num_frames": [
+            3,
+            2,
+            1
+          ],
+          "mm_processor_kwargs": {
+            "min_pixels": 4096,
+            "max_pixels": 16777216
+          }
+        },
+        "generate_params": {
+          "runtime_height": 240,
+          "runtime_width": 360,
+          "runtime_num_frames": 3
         }
       }
     }

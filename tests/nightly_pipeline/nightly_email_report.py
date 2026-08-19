@@ -45,6 +45,7 @@ VALIDATION_FILE_ORDER = [
     "causal_model_cb_validation.csv",
     "causal_model_validation.csv",
     "image_text_to_text_model_cb_validation.csv",
+    "image_text_to_text_model_multi_spec_validation.csv",
     "image_text_to_text_model_validation.csv",
     "embedding_model_validation.csv",
     "audio_model_validation.csv",
@@ -55,7 +56,10 @@ VALIDATION_FILE_ORDER = [
 MODE_AWARE_REPORT_CLASSES = {"causal_model", "image_text_to_text_model"}
 CB_DEFAULT_CONFIG_CLASSES = {"causal_pipeline_configs", "image_text_to_text_model_configs"}
 ENABLE_NON_CB_MODE_ENV_VAR = "NIGHTLY_PIPELINE_ENABLE_NON_CB"
+ENABLE_MULTI_SPECIALIZATION_ENV_VAR = "NIGHTLY_PIPELINE_ENABLE_MULTI_SPECIALIZATION"
+MULTI_SPECIALIZATION_CONFIG_CLASSES = {"image_text_to_text_model_configs"}
 TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
+MODE_LABELS = {"cb": "CB", "multi_spec": "Multi-Spec", "non_cb": "Non-CB"}
 
 PIPELINE_CONFIG_PATH = Path(__file__).resolve().parent / "configs" / "pipeline_configs.json"
 
@@ -223,10 +227,10 @@ def mode_class_key(base_class_key: str, execution_mode: str) -> str:
 
 
 def split_mode_from_class_key(class_key: str) -> tuple[str, str]:
-    if class_key.endswith("_cb"):
-        return class_key[: -len("_cb")], "cb"
-    if class_key.endswith("_non_cb"):
-        return class_key[: -len("_non_cb")], "non_cb"
+    for mode in ("multi_spec", "cb", "non_cb"):
+        suffix = f"_{mode}"
+        if class_key.endswith(suffix):
+            return class_key[: -len(suffix)], mode
     return class_key, "non_cb"
 
 
@@ -235,7 +239,7 @@ def model_class_label(class_key: str) -> str:
     base_label = MODEL_CLASS_LABELS.get(base_class_key, base_class_key.replace("_", " ").title())
     if base_class_key not in MODE_AWARE_REPORT_CLASSES:
         return base_label
-    mode_label = "CB" if execution_mode == "cb" else "Non-CB"
+    mode_label = MODE_LABELS.get(execution_mode, execution_mode.replace("_", " ").title())
     return f"{base_label} ({mode_label})"
 
 
@@ -250,12 +254,19 @@ def resolve_execution_modes(pipeline_configs: Dict[str, Any], config_key: str) -
     if not execution_modes:
         execution_modes = ["non_cb"]
 
+    if (
+        config_key in MULTI_SPECIALIZATION_CONFIG_CLASSES
+        and _is_truthy_env_var(ENABLE_MULTI_SPECIALIZATION_ENV_VAR)
+        and "cb" in execution_modes
+    ):
+        return ["cb", "multi_spec"]
+
     if config_key not in CB_DEFAULT_CONFIG_CLASSES:
         return execution_modes
     if "cb" not in execution_modes:
         return execution_modes
     if _is_truthy_env_var(ENABLE_NON_CB_MODE_ENV_VAR):
-        return execution_modes
+        return [mode for mode in execution_modes if mode != "multi_spec"]
 
     return [mode for mode in execution_modes if mode == "cb"]
 
@@ -711,7 +722,6 @@ def build_pipeline_config_rows() -> List[List[str]]:
         config = config_entries[0] if config_entries else {}
         tolerances = {**default_tolerances, **model_class_tolerances.get(config_key, {})}
         execution_modes = resolve_execution_modes(pipeline_configs, config_key)
-        cb_config = config.get("continuous_batching", {}) if "cb" in execution_modes else {}
         base_params_cell = config_sections_cell_html(
             [
                 ("Export", config.get("export_params", {})),
@@ -719,23 +729,43 @@ def build_pipeline_config_rows() -> List[List[str]]:
                 ("Generate", config.get("generate_params", {})),
             ]
         )
+        mode_override_sections: List[tuple[str, Any]] = []
+        cb_config = config.get("continuous_batching", {}) if "cb" in execution_modes else {}
         if cb_config:
-            cb_params_cell = config_sections_cell_html(
-                [
-                    ("Full Batch Size", cb_config.get("full_batch_size")),
-                    ("Export Override", cb_config.get("export_params", {})),
-                    ("Compile Override", cb_config.get("compile_params", {})),
-                    ("Generate Override", cb_config.get("generate_params", {})),
-                ]
+            mode_override_sections.append(
+                (
+                    "CB",
+                    {
+                        "full_batch_size": cb_config.get("full_batch_size"),
+                        "export_params": cb_config.get("export_params", {}),
+                        "compile_params": cb_config.get("compile_params", {}),
+                        "generate_params": cb_config.get("generate_params", {}),
+                    },
+                )
             )
-        else:
-            cb_params_cell = config_cell_html("N/A")
+
+        multi_spec_config = config.get("multi_specialization", {}) if "multi_spec" in execution_modes else {}
+        if multi_spec_config:
+            mode_override_sections.append(
+                (
+                    "Multi-Spec",
+                    {
+                        "export_params": multi_spec_config.get("export_params", {}),
+                        "compile_params": multi_spec_config.get("compile_params", {}),
+                        "generate_params": multi_spec_config.get("generate_params", {}),
+                    },
+                )
+            )
+
+        mode_overrides_cell = (
+            config_sections_cell_html(mode_override_sections) if mode_override_sections else config_cell_html("N/A")
+        )
         rows.append(
             [
                 html_escape(MODEL_CLASS_LABELS.get(report_class_key, report_class_key), max_len=None),
                 config_cell_html(", ".join(execution_modes)),
                 base_params_cell,
-                cb_params_cell,
+                mode_overrides_cell,
                 config_cell_html(tolerances),
             ]
         )
@@ -766,6 +796,7 @@ def render_html(
         ["Commit ID", html_escape(metadata.get("commit_id"))],
         ["Docker Image", html_escape(metadata.get("docker_image"))],
         [ENABLE_NON_CB_MODE_ENV_VAR, html_escape(env_or_na(ENABLE_NON_CB_MODE_ENV_VAR))],
+        [ENABLE_MULTI_SPECIALIZATION_ENV_VAR, html_escape(env_or_na(ENABLE_MULTI_SPECIALIZATION_ENV_VAR))],
         [bold_text("QAIC Apps Version"), html_escape(environment.get("qaic_apps_version", "N/A"))],
         [bold_text("QAIC Platform Version"), html_escape(environment.get("qaic_platform_version", "N/A"))],
         ["QEfficient", html_escape(environment.get("qefficient_version", "N/A"))],
@@ -856,7 +887,7 @@ def render_html(
                         "Model Class",
                         "Execution Modes",
                         "Base Params",
-                        "CB Overrides",
+                        "Mode Overrides",
                         "Validation Tolerances",
                     ],
                     build_pipeline_config_rows(),

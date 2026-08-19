@@ -33,6 +33,10 @@ MODE_ARTIFACTS = {
     "image_text_to_text_model_configs": {
         "non_cb": ("image_text_to_text_model_artifacts.json", "image_text_to_text_model_validation.csv"),
         "cb": ("image_text_to_text_model_cb_artifacts.json", "image_text_to_text_model_cb_validation.csv"),
+        "multi_spec": (
+            "image_text_to_text_model_multi_spec_artifacts.json",
+            "image_text_to_text_model_multi_spec_validation.csv",
+        ),
     },
 }
 
@@ -63,6 +67,14 @@ MODEL_ARTIFACTS = [
 ]
 
 STATUS_RANK = {"passed": 0, "warning": 1, "failed": 2}
+
+
+def _infer_model_mode(artifact_filename):
+    if "_multi_spec_" in artifact_filename:
+        return "multi_spec"
+    if "_cb_" in artifact_filename:
+        return "cb"
+    return "non_cb"
 
 
 def _merge_rows_with_recorded_failures(rows, failure_rows):
@@ -103,7 +115,7 @@ def test_validate_nightly_results(model_class, artifact_filename, csv_filename, 
     previous_artifacts_dir = os.environ.get("NIGHTLY_PIPELINE_PREVIOUS_ARTIFACTS_DIR", None)
     if previous_artifacts_dir is not None:
         previous_artifacts_dir = previous_artifacts_dir.strip()
-    model_mode = "cb" if "_cb_" in artifact_filename else "non_cb"
+    model_mode = _infer_model_mode(artifact_filename)
     failure_rows = load_recorded_test_failure_rows(artifacts_dir, model_class, model_mode=model_mode)
     current_artifact_file = artifacts_dir / artifact_filename
     previous_artifact_file = None

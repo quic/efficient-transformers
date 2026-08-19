@@ -14,6 +14,7 @@ import pytest
 import requests
 import torch
 from PIL import Image
+from qwen_vl_utils import process_vision_info
 from transformers import (
     AutoModelForCausalLM,
     AutoProcessor,
@@ -29,6 +30,7 @@ from ..nightly_utils import (
     get_execution_modes,
     get_onnx_and_qpc_size,
     is_continuous_batching_mode,
+    is_multi_specialization_mode,
     pre_generate_utils,
 )
 
@@ -45,9 +47,16 @@ execution_modes = get_execution_modes(pipeline_config, "image_text_to_text_model
 QWEN_CB_MODEL_TYPES = {"qwen2_5_vl", "qwen3_vl", "qwen3_vl_moe", "qwen3_5", "qwen3_5_moe"}
 
 
-def _get_artifacts_store(execution_mode, image_text_to_text_model_artifacts, image_text_to_text_model_cb_artifacts):
+def _get_artifacts_store(
+    execution_mode,
+    image_text_to_text_model_artifacts,
+    image_text_to_text_model_cb_artifacts,
+    image_text_to_text_model_multi_spec_artifacts,
+):
     if is_continuous_batching_mode(execution_mode):
         return image_text_to_text_model_cb_artifacts
+    if is_multi_specialization_mode(execution_mode):
+        return image_text_to_text_model_multi_spec_artifacts
     return image_text_to_text_model_artifacts
 
 
@@ -64,7 +73,7 @@ def _apply_cb_compile_overrides(qeff_model, compile_params, execution_mode):
     model_type = getattr(qeff_model.model.config, "model_type", "")
     if model_type in QWEN_CB_MODEL_TYPES:
         compile_params["prefill_seq_len"] = 64
-        compile_params["ctx_len"] = 2048
+        compile_params["ctx_len"] = 4096
 
 
 def _extract_generated_ids(exec_info, execution_mode):
@@ -74,10 +83,21 @@ def _extract_generated_ids(exec_info, execution_mode):
             generated_ids = generated_ids[0]
         return generated_ids[:, :20]
 
+    if isinstance(generated_ids, list):
+        generated_ids = generated_ids[0]
+
+    if hasattr(generated_ids, "ndim"):
+        if generated_ids.ndim > 1:
+            return generated_ids[0][:20]
+        if generated_ids.ndim == 1:
+            return generated_ids[:20]
+
     first_batch = generated_ids[0]
     if hasattr(first_batch, "ndim") and first_batch.ndim > 1:
         return first_batch[0][:20]
-    return first_batch[:20]
+    if hasattr(first_batch, "__getitem__"):
+        return first_batch[:20]
+    return generated_ids[:20] if hasattr(generated_ids, "__getitem__") else generated_ids
 
 
 @pytest.mark.parametrize("model_name", test_models)
@@ -89,10 +109,14 @@ def test_generate_image_text_to_text_model(
     execution_mode,
     image_text_to_text_model_artifacts,
     image_text_to_text_model_cb_artifacts,
+    image_text_to_text_model_multi_spec_artifacts,
     get_pipeline_config,
 ):
     model_artifacts = _get_artifacts_store(
-        execution_mode, image_text_to_text_model_artifacts, image_text_to_text_model_cb_artifacts
+        execution_mode,
+        image_text_to_text_model_artifacts,
+        image_text_to_text_model_cb_artifacts,
+        image_text_to_text_model_multi_spec_artifacts,
     )
     compile_params, generate_params = pre_generate_utils(
         model_name,
@@ -104,11 +128,15 @@ def test_generate_image_text_to_text_model(
 
     img_url = generate_params.pop("image_url", None)
     query = generate_params.pop("query", None)
+    runtime_height = generate_params.pop("runtime_height", None)
+    runtime_width = generate_params.pop("runtime_width", None)
+    runtime_num_frames = generate_params.pop("runtime_num_frames", 1)
     prompt_len = compile_params.get("prefill_seq_len", 1)
     batch_size = 1
 
     onnx_path = model_artifacts[model_name].get("onnx_path")
     cb_mode = is_continuous_batching_mode(execution_mode)
+    multi_spec_mode = is_multi_specialization_mode(execution_mode)
 
     if model_name in ModelConfig.INTERNVL_MODELS or model_name in ModelConfig.MOLMO_MODELS:
         qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
@@ -134,7 +162,6 @@ def test_generate_image_text_to_text_model(
         compile_params["img_size"] = img_size
 
     _apply_cb_compile_overrides(qeff_model, compile_params, execution_mode)
-
     if kv_offload:
         _ = qeff_model.compile(vision_onnx_path=onnx_path[0], lang_onnx_path=onnx_path[1], **compile_params)
     else:
@@ -205,10 +232,12 @@ def test_generate_image_text_to_text_model(
         generated_ids = _extract_generated_ids(exec_info, execution_mode)
 
     else:
+        generation_tokenizer = None
         if model_name in ModelConfig.INTERNVL_MODELS:
             tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
             model_hf = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True)
             processor = InternProcessor(model_hf, tokenizer)
+            generation_tokenizer = tokenizer
             prompt = [query]
             img_url_list = [img_url]
             pixel_values = []
@@ -217,7 +246,10 @@ def test_generate_image_text_to_text_model(
             for i in range(len(prompt)):
                 img = requests.get(img_url_list[i], stream=True)
                 image = Image.open(BytesIO(img.content)).convert("RGB")
-                image = image.resize((448, 448))
+                if runtime_height and runtime_width:
+                    image = image.resize((runtime_width, runtime_height))
+                else:
+                    image = image.resize((448, 448))
                 pixel_value = processor.load_image(image, max_num=12)
                 num_patches_list.append(pixel_value.shape[0])
                 pixel_values.append(pixel_value)
@@ -236,7 +268,10 @@ def test_generate_image_text_to_text_model(
             processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
             img = requests.get(img_url, stream=True)
             image = Image.open(BytesIO(img.content)).convert("RGB")
-            image = image.resize((536, 354))
+            if runtime_height and runtime_width:
+                image = image.resize((runtime_width, runtime_height))
+            else:
+                image = image.resize((536, 354))
             inputs = processor.process(images=[image], text=query)
             inputs = {k: v.unsqueeze(0) for k, v in inputs.items()}
             batch_size, prompt_len = inputs["input_ids"].shape
@@ -245,43 +280,83 @@ def test_generate_image_text_to_text_model(
             valid = valid.reshape(1, -1)
             inputs["valid_idx"] = torch.nonzero(valid)[:, 1].unsqueeze(0)
             inputs["pixel_values"] = inputs.pop("images")
+            generation_tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
         else:
             processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
+            model_type = getattr(qeff_model.model.config, "model_type", "")
+            generation_tokenizer = getattr(processor, "tokenizer", None)
             image = Image.open(requests.get(img_url, stream=True).raw)
-            if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
-                image = image.resize((1540, 1540))
-            if model_name == "ibm-granite/granite-vision-3.2-2b":
-                image = image.resize((1610, 1109))
-            conversation = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": query},
-                        {"type": "image"},
-                    ],
-                },
-            ]
-            prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
-            inputs = processor(images=image, text=prompt, return_tensors="pt")
-            if hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type in [
-                "qwen2_5_vl",
-                "qwen3_vl",
-                "qwen3_vl_moe",
-                "qwen3_5",
-                "qwen3_5_moe",
-            ]:
+            if runtime_height and runtime_width:
+                image = image.resize((runtime_width, runtime_height))
+            else:
+                if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
+                    image = image.resize((1540, 1540))
+                if model_name == "ibm-granite/granite-vision-3.2-2b":
+                    image = image.resize((1610, 1109))
+
+            if multi_spec_mode and model_type in QWEN_CB_MODEL_TYPES:
+                generation_tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+                frames = max(int(runtime_num_frames), 1)
+                content = [{"type": "image", "image": image} for _ in range(frames)] + [{"type": "text", "text": query}]
+                messages = [{"role": "user", "content": content}]
+                messages = [messages] * batch_size
+                texts = [
+                    processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages
+                ]
+                image_inputs, video_inputs = process_vision_info(messages)
+                inputs = processor(
+                    text=texts,
+                    images=image_inputs,
+                    videos=video_inputs,
+                    padding=True,
+                    return_tensors="pt",
+                )
                 inputs = qeff_model.model.prepare_inputs_for_generation(
                     inputs=inputs, prefill_seq_len=prompt_len, batch_size=batch_size
                 )
+            else:
+                conversation = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": query},
+                            {"type": "image"},
+                        ],
+                    },
+                ]
+                prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
+                inputs = processor(images=image, text=prompt, return_tensors="pt")
+                if model_type in QWEN_CB_MODEL_TYPES or (
+                    multi_spec_mode and hasattr(qeff_model.model, "prepare_inputs_for_generation")
+                ):
+                    inputs = qeff_model.model.prepare_inputs_for_generation(
+                        inputs=inputs, prefill_seq_len=prompt_len, batch_size=batch_size
+                    )
             if "pixel_values" in inputs:
                 inputs["pixel_values"] = inputs["pixel_values"].to(qeff_model.model.config.torch_dtype)
 
-        streamer = TextStreamer(processor.tokenizer)
+        if multi_spec_mode and generation_tokenizer is None:
+            generation_tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+
+        streamer = None if multi_spec_mode else TextStreamer(processor.tokenizer)
         print("QPC Outputs (QAIC):")
-        exec_info = qeff_model.generate(inputs=inputs, streamer=streamer, **generate_params)
+        generate_kwargs = {}
+        if multi_spec_mode:
+            generate_kwargs.update(
+                {
+                    "multi_specs": True,
+                    "num_frames": runtime_num_frames,
+                    "tokenizer": generation_tokenizer or getattr(processor, "tokenizer", None),
+                    "processor": processor,
+                }
+            )
+        exec_info = qeff_model.generate(inputs=inputs, streamer=streamer, **generate_kwargs, **generate_params)
         print(exec_info)
-        generated_text = processor.tokenizer.batch_decode(exec_info.generated_ids, skip_special_tokens=True)
+        if multi_spec_mode:
+            generated_text = exec_info.generated_texts
+        else:
+            generated_text = processor.tokenizer.batch_decode(exec_info.generated_ids, skip_special_tokens=True)
         generated_ids = _extract_generated_ids(exec_info, execution_mode)
 
     encoder_onnx_and_qpc_dir = None

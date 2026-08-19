@@ -175,6 +175,12 @@ def image_text_to_text_model_cb_artifacts_file(artifacts_dir):
     return artifacts_dir / "image_text_to_text_model_cb_artifacts.json"
 
 
+@pytest.fixture(scope="session")
+def image_text_to_text_model_multi_spec_artifacts_file(artifacts_dir):
+    """Path to shared artifacts JSON file."""
+    return artifacts_dir / "image_text_to_text_model_multi_spec_artifacts.json"
+
+
 def load_artifacts(filepath):
     """Load artifacts from JSON file."""
     filepath = Path(filepath)
@@ -320,6 +326,14 @@ def image_text_to_text_model_cb_artifacts(image_text_to_text_model_cb_artifacts_
     artifacts = load_artifacts(image_text_to_text_model_cb_artifacts_file)
     yield artifacts
     save_artifacts(image_text_to_text_model_cb_artifacts_file, artifacts)
+
+
+@pytest.fixture
+def image_text_to_text_model_multi_spec_artifacts(image_text_to_text_model_multi_spec_artifacts_file):
+    """Fixture to get/set model artifacts."""
+    artifacts = load_artifacts(image_text_to_text_model_multi_spec_artifacts_file)
+    yield artifacts
+    save_artifacts(image_text_to_text_model_multi_spec_artifacts_file, artifacts)
 
 
 @pytest.fixture

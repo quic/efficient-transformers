@@ -175,6 +175,17 @@ export NIGHTLY_PIPELINE_ENABLE_NON_CB=1
 
 Truthy values accepted: `1`, `true`, `yes`, `on` (case-insensitive).
 
+To run VLM multi-specialization coverage, set:
+
+```bash
+export NIGHTLY_PIPELINE_ENABLE_MULTI_SPECIALIZATION=1
+```
+
+When this variable is enabled, `image_text_to_text_model_configs` runs exactly:
+
+- `cb`
+- `multi_spec` (non-CB load/generate path)
+
 ### Runtime Model Skips
 
 Freestyle jobs can skip selected models without editing `validated_models.json` by passing comma-separated model names
