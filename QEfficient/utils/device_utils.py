@@ -8,48 +8,45 @@
 import math
 import re
 import subprocess
+from collections import defaultdict
 
 from QEfficient.utils.constants import Constants
 from QEfficient.utils.logging_utils import logger
 
 
-def is_networks_loaded(stdout):
-    # Check is the networks are loaded on the device.
-    network_loaded = re.search(r"Networks Active:(\d+)", stdout)
-    if network_loaded and int(network_loaded.group(1)) > 0:
-        return True
-    return False
+def get_qaic_mdp_device_groups(min_nsp: int = 16, devices_per_group: int = 4) -> list[list[int]]:
+    """Return ready, topology-compatible QAIC device groups suitable for parallel test workers."""
+    command = ["/opt/qti-aic/tools/qaic-util", "-q"]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+    except OSError:
+        logger.warning("Not a Cloud AI 100 device, command not found: %s", command)
+        return []
 
+    if result.returncode != 0:
+        logger.warning("Failed to query QAIC devices: %s", result.stderr.strip())
+        return []
 
-def get_available_device_id():
-    """
-    API to check available device id.
+    groups = defaultdict(list)
+    records = re.split(r"(?=^QID \d+\s*$)", result.stdout, flags=re.MULTILINE)
+    for record in records:
+        qid_match = re.search(r"^QID (\d+)\s*$", record, flags=re.MULTILINE)
+        nsp_match = re.search(r"^\s*Nsp Total:(\d+)\s*$", record, flags=re.MULTILINE)
+        board_match = re.search(r"^\s*Board serial:(.+?)\s*$", record, flags=re.MULTILINE)
+        if not qid_match or not nsp_match or not board_match:
+            continue
+        if "Status:Ready" not in record or "HybridBoot+" not in record or "MDP+" not in record:
+            continue
+        if int(nsp_match.group(1)) < min_nsp:
+            continue
+        groups[board_match.group(1).strip()].append(int(qid_match.group(1)))
 
-    Return:
-        :int: Available device id.
-    """
-
-    device_id = 0
-    result = None
-
-    # FIXME: goes into infinite loop when user doesn't have permission and the command gives permission denied.
-    # To reproduce change the ownership of available devices.
-    while 1:
-        command = ["/opt/qti-aic/tools/qaic-util", "-q", "-d", f"{device_id}"]
-        try:
-            result = subprocess.run(command, capture_output=True, text=True)
-        except OSError:
-            logger.warning("Not a Cloud AI 100 device, Command not found", command)
-            return None
-        if result:
-            if "Status:Error" in result.stdout or is_networks_loaded(result.stdout):
-                device_id += 1
-            elif "Status:Ready" in result.stdout:
-                logger.info("device is available.")
-                return [device_id]
-            elif "Failed to find requested device ID" in result.stdout:
-                logger.warning("Failed to find requested device ID")
-                return None
+    device_groups = []
+    for device_ids in groups.values():
+        device_ids.sort()
+        if len(device_ids) >= devices_per_group:
+            device_groups.append(device_ids[:devices_per_group])
+    return sorted(device_groups, key=lambda device_ids: device_ids[0])
 
 
 def is_qpc_size_gt_32gb(params: int, mxfp6: bool) -> bool:
