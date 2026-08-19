@@ -64,6 +64,15 @@ class LLMSelection:
         return asdict(self)
 
 
+def can_refine_full_plan(plan: ImpactPlan) -> bool:
+    """Return whether the LLM is allowed to bound a deterministic full-CI fallback."""
+    return (
+        plan.mode == "full"
+        and bool(plan.reasons)
+        and all(reason.startswith(LLM_REFINABLE_FULL_REASONS) for reason in plan.reasons)
+    )
+
+
 def load_catalog(path: Path, expected_head: str) -> dict[str, TestCase]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -700,11 +709,7 @@ def merge_selection(
             plan.stages[stage]["enabled"] = True
         return plan
 
-    if (
-        plan.mode == "full"
-        and plan.reasons
-        and all(reason.startswith(LLM_REFINABLE_FULL_REASONS) for reason in plan.reasons)
-    ):
+    if can_refine_full_plan(plan):
         for stage in STAGES:
             plan.stages[stage]["enabled"] = False
         plan.reasons.append("LLM bounded a deterministic static-analysis full-CI fallback")
