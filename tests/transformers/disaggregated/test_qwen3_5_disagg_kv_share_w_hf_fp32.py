@@ -11,11 +11,6 @@ Run the nightly full-model HF/ORT/QAIC three-way parity test with:
     pytest -m "nightly_disagg" \
         tests/transformers/disaggregated/test_qwen3_5_disagg_kv_share_w_hf_fp32.py
 
-Nightly full-model compile scaling knobs:
-    QEFF_QWEN35_NIGHTLY_FULL_MODEL_VISION_NUM_DEVICES=4
-    QEFF_QWEN35_NIGHTLY_FULL_MODEL_PREFILL_NUM_DEVICES=8
-    QEFF_QWEN35_NIGHTLY_FULL_MODEL_DECODE_NUM_DEVICES=4
-    QEFF_QWEN35_NIGHTLY_FULL_MODEL_STAGES=4
 """
 
 import copy
@@ -49,9 +44,9 @@ from tests.transformers.disaggregated._disagg_ort_test_utils import (
 from tests.transformers.disaggregated._disagg_ort_test_utils import (
     vision_feed_for_ort as _vision_feed_for_ort,
 )
+from tests.transformers.disaggregated._nightly_disagg_config import nightly_disagg_configs
 
 MODEL_NAME = "tiny-random/qwen3.5-moe"
-THREE_WAY_PARITY_MODEL_NAME = os.environ.get("QEFF_QWEN35_THREE_WAY_MODEL_NAME", "Qwen/Qwen3.5-35B-A3B")
 TINY_RANDOM_MODEL_NAMES = {"tiny-random/qwen3.5-moe"}
 
 
@@ -84,18 +79,6 @@ VISION_INPUT_KEYS = {
 }
 VISION_FP16_KEYS = {"pixel_values", "image_masks"}
 VISION_OUTPUTS = ("vision_embeds",)
-
-# Nightly full-model compile can be scaled independently from the reduced fp32 tests.
-NIGHTLY_FULL_MODEL_VISION_NUM_DEVICES = _optional_int_env(
-    "QEFF_QWEN35_NIGHTLY_FULL_MODEL_VISION_NUM_DEVICES", default=4
-)
-NIGHTLY_FULL_MODEL_PREFILL_NUM_DEVICES = _optional_int_env(
-    "QEFF_QWEN35_NIGHTLY_FULL_MODEL_PREFILL_NUM_DEVICES", default=8
-)
-NIGHTLY_FULL_MODEL_DECODE_NUM_DEVICES = _optional_int_env(
-    "QEFF_QWEN35_NIGHTLY_FULL_MODEL_DECODE_NUM_DEVICES", default=4
-)
-NIGHTLY_FULL_MODEL_STAGES = _optional_int_env("QEFF_QWEN35_NIGHTLY_FULL_MODEL_STAGES", default=4)
 
 
 def _assert_onnx_path(onnx_path, label: str) -> Path:
@@ -1058,18 +1041,20 @@ def _create_disagg_sessions(qpc_paths: dict[str, str], sessions: list):
 
 
 @pytest.mark.nightly_disagg
-def test_qwen3_5_disagg_kv_share_qaic_vs_ort_fp32(manual_cleanup):
+@pytest.mark.parametrize("nightly_config", nightly_disagg_configs("qwen3_5_moe"))
+def test_qwen3_5_disagg_kv_share_qaic_vs_ort_fp32(manual_cleanup, nightly_config):
     """Three-way parity: HF fp32 == ORT on QPC ONNX == QAIC disagg DMA."""
     pytest.importorskip("qwen_vl_utils")
     pytest.importorskip("onnxruntime")
     pytest.importorskip("onnx")
 
     torch.manual_seed(42)
+    model_id = nightly_config["model_id"]
     hf_model = _load_hf_model_from_pretrained(
-        _build_config(dtype="float32", full_model=True, model_name=THREE_WAY_PARITY_MODEL_NAME),
-        model_name=THREE_WAY_PARITY_MODEL_NAME,
+        _build_config(dtype="float32", full_model=True, model_name=model_id),
+        model_name=model_id,
     )
-    processor = AutoProcessor.from_pretrained(THREE_WAY_PARITY_MODEL_NAME, trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
 
     image = Image.new("RGB", IMAGE_SIZE, color=(127, 127, 127))
     messages = _prepare_messages(image)
@@ -1095,10 +1080,10 @@ def test_qwen3_5_disagg_kv_share_qaic_vs_ort_fp32(manual_cleanup):
             qeff_model,
             image,
             compiled_onnx_paths,
-            vision_num_devices=NIGHTLY_FULL_MODEL_VISION_NUM_DEVICES,
-            prefill_num_devices=NIGHTLY_FULL_MODEL_PREFILL_NUM_DEVICES,
-            decode_num_devices=NIGHTLY_FULL_MODEL_DECODE_NUM_DEVICES,
-            stages=NIGHTLY_FULL_MODEL_STAGES,
+            vision_num_devices=nightly_config["vision_num_devices"],
+            prefill_num_devices=nightly_config["prefill_num_devices"],
+            decode_num_devices=nightly_config["decode_num_devices"],
+            stages=nightly_config["stages"],
         )
         vision_session, prefill_session, decode_session = _create_disagg_sessions(qpc_paths, sessions)
         qaic_tokens = _run_disagg_kv_share_qaic_generation(
@@ -1204,13 +1189,7 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def _report_step_logits(step: int, hf_logits: np.ndarray, qaic_logits: np.ndarray, tokenizer, top_k: int = 5):
-    """Print a per-step logit comparison for row 0 and classify the disagreement.
 
-    Prints top-k candidates for both engines, the engines' logit gap between their two
-    contested top tokens, and the max-abs-diff / cosine-similarity of the full vocab logit
-    vectors. A near-tie (small contested gap + high cosine) is benign fp32 drift; a gross
-    disagreement (low cosine) points at a structural/wiring bug.
-    """
     hf_row = hf_logits[0].astype(np.float64)
     qaic_row = qaic_logits[0].astype(np.float64)
     hf_top = np.argsort(hf_row)[::-1][:top_k]
@@ -1243,10 +1222,8 @@ def _report_step_logits(step: int, hf_logits: np.ndarray, qaic_logits: np.ndarra
     reason="opt-in logit-level diagnostic; set QEFF_RUN_LOGIT_DIAG=1 to run",
 )
 def test_qwen3_5_disagg_kv_share_logit_diff_diagnostic(manual_cleanup):
-    """Optional diagnostic (does NOT assert token parity): compares HF fp32 vs disagg-QAIC
-    *logits* step-by-step to classify a post-N divergence as benign fp32 drift (near-tie
-    argmax flip, high cosine similarity) versus a structural bug (gross logit disagreement).
-
+    """Optional diagnostic : compares HF fp32 vs disagg-QAIC
+    *logits* step-by-step 
     Run with:
       QEFF_RUN_LOGIT_DIAG=1 pytest -s -m "on_qaic and multimodal" \
         tests/transformers/disaggregated/test_qwen3_5_disagg_kv_share_w_hf_fp32.py \
