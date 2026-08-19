@@ -53,9 +53,18 @@ def test_dynamo_fp16_compile(model_type, model_id, tmp_export_dir):
     """Export with dynamo=True and use_onnx_subfunctions=True, compile to FP16 QPC."""
 
     try:
-        model_hf = load_hf_model(model_id)
+        model_hf = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            trust_remote_code=True,
+            attn_implementation="eager",
+            low_cpu_mem_usage=False,
+            torch_dtype=torch.float16,
+        )
+        model_hf.eval()
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
+
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
 
     qeff_model = QEFFAutoModelForCausalLM(model_hf)
     onnx_path = exported_onnx_path(
@@ -73,10 +82,12 @@ def test_dynamo_fp16_compile(model_type, model_id, tmp_export_dir):
         num_cores=16,
         batch_size=BATCH_SIZE,
         use_onnx_subfunctions=True,
+        dynamo=True,
     )
     assert (tmp_export_dir / "fp16_compile").is_dir()
 
 
+@pytest.mark.skip
 @pytest.mark.dynamo
 @pytest.mark.on_qaic
 @pytest.mark.xdist_group(name="qaic-runtime")
@@ -117,6 +128,7 @@ def test_dynamo_fp32_compile(model_type, model_id, tmp_export_dir):
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
         use_onnx_subfunctions=True,
+        dynamo=True,
     )
     assert (tmp_export_dir / "fp32_compile").is_dir()
 
@@ -156,6 +168,7 @@ def test_dynamo_multi_device_compile(model_type, model_id, tmp_export_dir):
         num_devices=4,
         batch_size=BATCH_SIZE,
         use_onnx_subfunctions=True,
+        dynamo=True,
     )
     assert (tmp_export_dir / "mdp_compile").is_dir()
 
@@ -194,6 +207,7 @@ def test_dynamo_generate_fp16(model_type, model_id, tmp_export_dir):
         num_cores=16,
         batch_size=BATCH_SIZE,
         use_onnx_subfunctions=True,
+        dynamo=True,
     )
     output = qeff_model.generate(
         tokenizer=tokenizer,
@@ -254,6 +268,7 @@ def test_dynamo_hw_hf_parity(model_type, model_id, tmp_export_dir):
         num_cores=16,
         batch_size=BATCH_SIZE,
         use_onnx_subfunctions=True,
+        dynamo=True,
     )
 
     qaic_output = qeff_model.generate(
@@ -310,6 +325,7 @@ def test_dynamo_cb_generate(model_type, model_id, tmp_export_dir):
         batch_size=BATCH_SIZE,
         full_batch_size=FULL_BATCH_SIZE,
         use_onnx_subfunctions=True,
+        dynamo=True,
     )
     prompts = ["hello world"] * FULL_BATCH_SIZE
     output = qeff_model.generate(

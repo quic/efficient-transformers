@@ -3898,10 +3898,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # don't have to pass both flags and the guard in _export() is satisfied.
         if use_weight_free_export:
             dynamo = True
-        if (dynamo or use_weight_free_export) and not (
-            getattr(self.model.config, "model_type", None) == "gpt_oss" and not self.continuous_batching
-        ):
-            # torch.export requires example inputs to satisfy dynamic_shapes min=2; gpt_oss non-CB keeps bs=1.
+        if dynamo or use_weight_free_export:
+            # torch.export requires example inputs to satisfy dynamic_shapes min=2
             bs = max(2, bs)
         kv_cache_shape = get_padding_shape_from_config(
             self.model.config, fbs if self.continuous_batching else bs, seq_len
