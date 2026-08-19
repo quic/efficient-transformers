@@ -109,6 +109,12 @@ def blocked_kv_attention_forward(
     sinks: Optional[torch.Tensor] = None,
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """Compute attention by streaming key/value cache blocks through running softmax.
+
+    This reduces peak activation memory for long contexts by splitting the cached
+    key/value sequence into ``num_kv_blocks`` chunks while preserving numerically
+    stable softmax accumulation across blocks.
+    """
     # Initialize result tensor
     output = torch.zeros_like(query)
 
@@ -222,6 +228,11 @@ def blocked_qkv_attention_forward(
     sinks: Optional[torch.Tensor] = None,
     **kwargs,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """Compute attention by streaming query and key/value blocks.
+
+    Query tokens are split into ``num_q_blocks`` and each query block attends over
+    ``num_kv_blocks`` cached key/value chunks using running softmax accumulation.
+    """
     # Initialize Running Maximum and Denominator
     batch_size, num_heads, seq_len, DH = query.shape
 

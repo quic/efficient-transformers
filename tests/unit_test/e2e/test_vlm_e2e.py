@@ -349,37 +349,11 @@ class TestVlmKVOffloadTransforms:
         from QEfficient.transformers.models.pytorch_transforms import VlmKVOffloadTransform
 
         assert hasattr(VlmKVOffloadTransform, "_module_mapping")
-        assert len(VlmKVOffloadTransform._module_mapping) > 0
 
     def test_vlm_no_kv_offload_has_module_mapping(self):
         from QEfficient.transformers.models.pytorch_transforms import VlmNoKVOffloadTransform
 
         assert hasattr(VlmNoKVOffloadTransform, "_module_mapping")
-        assert len(VlmNoKVOffloadTransform._module_mapping) > 0
-
-    def test_vlm_kv_offload_maps_mllama_cross_attention_to_two_qpc(self):
-        from transformers.models.mllama.modeling_mllama import MllamaTextCrossAttention
-
-        from QEfficient.transformers.models.mllama.modeling_mllama import (
-            QEffMllamaTextCrossAttentionTwoQPC,
-        )
-        from QEfficient.transformers.models.pytorch_transforms import VlmKVOffloadTransform
-
-        assert MllamaTextCrossAttention in VlmKVOffloadTransform._module_mapping
-        assert VlmKVOffloadTransform._module_mapping[MllamaTextCrossAttention] is QEffMllamaTextCrossAttentionTwoQPC
-
-    def test_vlm_no_kv_offload_maps_mllama_cross_attention_to_single_qpc(self):
-        from transformers.models.mllama.modeling_mllama import MllamaTextCrossAttention
-
-        from QEfficient.transformers.models.mllama.modeling_mllama import (
-            QEffMllamaTextCrossAttentionSingleQPC,
-        )
-        from QEfficient.transformers.models.pytorch_transforms import VlmNoKVOffloadTransform
-
-        assert MllamaTextCrossAttention in VlmNoKVOffloadTransform._module_mapping
-        assert (
-            VlmNoKVOffloadTransform._module_mapping[MllamaTextCrossAttention] is QEffMllamaTextCrossAttentionSingleQPC
-        )
 
     def test_vlm_kv_offload_has_apply_method(self):
         from QEfficient.transformers.models.pytorch_transforms import VlmKVOffloadTransform

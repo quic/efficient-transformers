@@ -12,7 +12,8 @@ import time
 import numpy as np
 import pytest
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, HybridCache
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers.cache_utils import DynamicCache
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
@@ -100,7 +101,7 @@ def test_disagg_mode_prefill(model_id, prompt):
     raw_inputs.pop("token_type_ids", None)
 
     inputs = {k: torch.from_numpy(v).to(model.device) for k, v in raw_inputs.items()}
-    cache = HybridCache(config=config, batch_size=1, max_cache_len=CTX_LEN)
+    cache = DynamicCache(config=config)
     ins = tokenizer(prompt, return_tensors="pt")
     out = model(**ins, past_key_values=cache)
 
@@ -175,7 +176,7 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
     raw_inputs.pop("token_type_ids", None)
 
     inputs = {k: torch.from_numpy(v).to(model.device) for k, v in raw_inputs.items()}
-    cache = HybridCache(config=config, batch_size=1, max_cache_len=CTX_LEN)
+    cache = DynamicCache(config=config)
     ins = tokenizer(prompt, return_tensors="pt")
     out = model(**ins, past_key_values=cache)
 
@@ -212,7 +213,7 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
     prefill_qpc_path = qeff_model.compile(
         prefill_seq_len=PREFILL_SEQ_LEN,
         ctx_len=CTX_LEN,
-        num_cores=16,
+        num_cores=config.num_experts,
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
         num_devices=1,
@@ -268,7 +269,7 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
     raw_inputs.pop("token_type_ids", None)
 
     inputs = {k: torch.from_numpy(v).to(model.device) for k, v in raw_inputs.items()}
-    cache = HybridCache(config=config, batch_size=1, max_cache_len=CTX_LEN)
+    cache = DynamicCache(config=config)
     ins = tokenizer(prompt, return_tensors="pt")
     orig_out = model(**ins, past_key_values=cache)
 

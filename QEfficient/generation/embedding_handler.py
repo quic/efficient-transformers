@@ -235,27 +235,59 @@ class VisionHandler:
                     image = image.resize(
                         (constants.GRANITEVISION_IMG_SIZE_HEIGHT, constants.GRANITEVISION_IMG_SIZE_WIDTH)
                     )
+            model_type = getattr(getattr(self._qeff_model, "model", None).config, "model_type", "")
+
+            # Gemma4 expects the processor-rendered prompt with the image placeholder ahead of user text.
+            is_gemma4 = (
+                hasattr(self._qeff_model.model.config, "model_type")
+                and self._qeff_model.model.config.model_type == "gemma4"
+            )
+            is_kimi_k25 = model_type == "kimi_k25"
 
             # Prepare conversation format
             conversation = [
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "text", "text": query},
-                        {"type": "image"},
-                    ],
+                    "content": (
+                        [{"type": "image_url", "image_url": image}, {"type": "text", "text": query}]
+                        if is_kimi_k25
+                        else [{"type": "image"}, {"type": "text", "text": query}]
+                        if is_gemma4
+                        else [{"type": "text", "text": query}, {"type": "image"}]
+                    ),
                 },
             ]
 
             # Apply chat template
-            prompt = self._processor.apply_chat_template(conversation, add_generation_prompt=True)
+            if is_kimi_k25:
+                inputs = self._processor(
+                    messages=conversation,
+                    add_generation_prompt=True,
+                    tokenize=False,
+                    return_tensors="pt",
+                )
+            elif is_gemma4:
+                prompt = self._processor.apply_chat_template(
+                    conversation,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=False,
+                )
+                inputs = self._processor(images=image, text=prompt, return_tensors="pt")
+            else:
+                prompt = self._processor.apply_chat_template(
+                    conversation,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+                inputs = self._processor(images=image, text=prompt, return_tensors="pt")
 
-            # Process image and text
-            inputs = self._processor(images=image, text=prompt, return_tensors="pt")
-            if hasattr(self._qeff_model.model.config, "model_type") and self._qeff_model.model.config.model_type in {
+            if model_type in {
                 "qwen2_5_vl",
                 "qwen3_vl_moe",
                 "qwen3_vl",
+                "qwen3_5",
+                "qwen3_5_moe",
             }:
                 inputs = self._qeff_model.model.prepare_inputs_for_generation(
                     inputs=inputs, prefill_seq_len=prefill_seq_len, batch_size=inputs["input_ids"].shape[0]
@@ -270,6 +302,7 @@ class VisionHandler:
             for k, v in inputs.items():
                 if k in {
                     "pixel_values",
+                    "image_position_ids",
                     "image_masks",
                     "image_input_idx",
                     "valid_idx",
@@ -277,6 +310,13 @@ class VisionHandler:
                     "aspect_ratio_mask",
                 }:
                     vision_inputs[k] = np.array(v)
+
+            if is_kimi_k25:
+                grid_thws = inputs.get("grid_thws")
+                if grid_thws is None:
+                    raise ValueError("Kimi-K2.5 processor output must include grid_thws for vision export.")
+                vision_inputs["h_shape"] = np.ones(int(grid_thws[0, 1].item()), dtype=np.int64)
+                vision_inputs["w_shape"] = np.ones(int(grid_thws[0, 2].item()), dtype=np.int64)
 
             # Convert specific inputs to float16
             vision_inputs_fp16 = {"pixel_values", "image_masks"}
@@ -492,6 +532,11 @@ class VisionHandler:
             lang_inputs["attention_mask"] = torch.nn.functional.pad(
                 lang_inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
             )
+
+            if "mm_token_type_ids" in lang_inputs:
+                lang_inputs["mm_token_type_ids"] = torch.nn.functional.pad(
+                    lang_inputs["mm_token_type_ids"], (0, padded_len - input_ids_length), "constant", 0
+                )
 
             if "cross_attention_mask" in lang_inputs:
                 lang_inputs["cross_attention_mask"] = torch.nn.functional.pad(

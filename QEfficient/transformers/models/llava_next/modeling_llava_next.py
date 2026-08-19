@@ -28,7 +28,7 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
-        self.model.vision_model = self.model.vision_tower
+        self.model.vision_model = self.model.model.vision_tower
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
@@ -37,13 +37,13 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.vision_tower.vision_model.encoder.layers[0].__class__}
+        return {self.model.model.vision_tower.vision_model.encoder.layers[0].__class__}
 
     def forward(self, pixel_values, image_sizes):
         if pixel_values.dim() == constants.GRANITEVISION_PIXEL_VALUE_DIM:
             pixel_values_new = pixel_values.squeeze(0)
 
-        image_feature = self.model.vision_tower(pixel_values_new, output_hidden_states=True)
+        image_feature = self.model.model.vision_tower(pixel_values_new, output_hidden_states=True)
         if isinstance(self.model.config.vision_feature_layer, int):
             selected_image_feature = image_feature.hidden_states[self.model.config.vision_feature_layer]
         else:
@@ -57,7 +57,7 @@ class QEffLlavaNextEncoderWrapper(nn.Module):
             selected_image_feature = selected_image_feature
         else:
             raise ValueError(f"Unexpected select feature strategy: {self.model.config.vision_feature_select_strategy}")
-        image_features = self.model.multi_modal_projector(selected_image_feature)
+        image_features = self.model.model.multi_modal_projector(selected_image_feature)
         image_features = torch.split(image_features, [image_features.shape[0]], dim=0)
         new_image_features = []
 
@@ -134,7 +134,7 @@ class QEffLlavaNextDecoderWrapper(nn.Module):
         super().__init__()
         self.model = model
         self.config = self.model.config
-        self.language_model = self.model.language_model
+        self.language_model = self.model.model.language_model
         self.lm_head = self.model.lm_head
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
@@ -144,7 +144,7 @@ class QEffLlavaNextDecoderWrapper(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {self.model.language_model.layers[0].__class__}
+        return {self.model.model.language_model.layers[0].__class__}
 
     def forward(
         self,
@@ -195,6 +195,10 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         continuous_batching: bool = False,
         **kwargs,
     ):
+        prefill_seq_len = kwargs.get("prefill_seq_len")
+        if prefill_seq_len is None:
+            prefill_seq_len = constants.GRANITEVISION_SEQ_LEN
+        prefill_seq_len = int(prefill_seq_len)
         num_layers = self.config.text_config.num_hidden_layers
         num_key_value_heads = self.config.text_config.num_key_value_heads
         head_dim = self.config.text_config.hidden_size // self.config.text_config.num_attention_heads
@@ -221,17 +225,15 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
             ),
         }
         lang_inputs = {
-            "input_ids": torch.ones(
-                (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.GRANITEVISION_SEQ_LEN), dtype=torch.int64
-            ),
+            "input_ids": torch.ones((constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, prefill_seq_len), dtype=torch.int64),
             "attention_mask": torch.ones(
-                (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.GRANITEVISION_SEQ_LEN), dtype=torch.int64
+                (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, prefill_seq_len), dtype=torch.int64
             ),
             "vision_embeds": torch.ones(
                 (
                     constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
                     vision_size,
-                    self.language_model.config.hidden_size,
+                    self.model.language_model.config.hidden_size,
                 ),
                 dtype=self.config.torch_dtype,
             ),
@@ -261,7 +263,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
         lang_inputs["position_ids"] = torch.full(lang_inputs["position_ids"].shape, constants.GRANITEVISION_CTX_LEN - 1)
 
         if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int64)
 
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(BS).view(BS, 1)
@@ -328,7 +330,13 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
             logger.warning("Setting img_size to be 384, as it was neither passed nor found in vision_config")
         if img_size != constants.GRANITEVISION_IMG_SIZE and kv_offload:
             logger.warning("Image Size other than 384 is not supported for LlavaNext models yet.")
-        vision_size = constants.GRANITEVISION_FEATURE_SIZE
+        user_vision_size = compiler_options.pop("vision_size", None)
+        if user_vision_size:
+            if user_vision_size >= ctx_len:
+                raise ValueError("vision_size must be less than ctx_len")
+            vision_size = user_vision_size
+        else:
+            vision_size = constants.GRANITEVISION_FEATURE_SIZE
         vision = [
             {
                 "batch_size": batch_size,
@@ -473,7 +481,7 @@ class QEffLlavaNextForConditionalGeneration(LlavaNextForConditionalGeneration):
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]
         lang_output_names = ["logits"]
-        for i in range(self.language_model.config.num_hidden_layers):
+        for i in range(self.model.language_model.config.num_hidden_layers):
             for kv in ["key", "value"]:
                 lang_output_names.append(f"past_{kv}.{i}_RetainedState")
 

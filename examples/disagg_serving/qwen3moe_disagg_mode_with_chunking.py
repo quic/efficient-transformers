@@ -14,20 +14,23 @@ from transformers import AutoConfig, AutoTokenizer
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
-model_id = "Qwen/Qwen3-30B-A3B-Instruct-2507"  # weights are not required to convert to fp32
+# model_id = "Qwen/Qwen3-30B-A3B-Instruct-2507"  # weights are not required to convert to fp32
+model_id = "yujiepan/qwen3-moe-tiny-random"
 prompt = """
 Explain quantum computing in simple terms.
 """
 config = AutoConfig.from_pretrained(model_id)
 tokenizer = AutoTokenizer.from_pretrained(model_id)
-PREFILL_SEQ_LEN = 128
-CTX_LEN = 128 * 3
+PREFILL_SEQ_LEN = 512
+CTX_LEN = PREFILL_SEQ_LEN * 3
+NUM_CORES = 4
+MOE_PREFILL_PACKED_CHUNK_SIZE = 256
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
 decode_qpc_path = qeff_model.compile(
     prefill_seq_len=1,
     ctx_len=CTX_LEN,
-    num_cores=16,
+    num_cores=NUM_CORES,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     num_devices=1,
@@ -45,17 +48,19 @@ decode_qpc_path = qeff_model.compile(
 prefill_qpc_path = qeff_model.compile(
     prefill_seq_len=PREFILL_SEQ_LEN,
     ctx_len=CTX_LEN,
-    num_cores=16,
+    num_cores=NUM_CORES,
+    moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
-    num_devices=2,
+    num_devices=1,
     split_retained_state_io=True,
     mos=1,
-    aic_enable_depth_first=True,
+    user_tiled=True,
+    aic_enable_depth_first=False,
     num_speculative_tokens=None,
     prefill_only=True,
     enable_chunking=True,
-    # use_onnx_subfunctions=True,
+    use_onnx_subfunctions=True,
 )
 
 

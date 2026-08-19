@@ -52,7 +52,7 @@ class QEffGraniteMoeRotaryEmbedding(GraniteMoeRotaryEmbedding):
         super().__init__(config=config)  # Initialize nn.Module
 
         self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=config.torch_dtype
         )
 
     def _set_cos_sin_cache(self, seq_len: int, device=None, dtype=None):
@@ -107,15 +107,12 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
         cos_cached: Optional[torch.Tensor] = None,
         sin_cached: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        bsz, q_len, _ = hidden_states.size()
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.head_dim)
 
-        query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = self.v_proj(hidden_states)
-
-        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
@@ -138,7 +135,7 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
                 past_seen_tokens=past_seen_tokens,
             )
         else:
-            key_states, value_states, _ = past_key_value_update(
+            key_states, value_states, attention_mask, _ = past_key_value_update(
                 module=self,
                 key=key_states,
                 value=value_states,
@@ -157,7 +154,7 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
                 scaling=self.scaling,
             )
 
-        attn_output = attn_output.view(bsz, q_len, -1)
+        attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = self.o_proj(attn_output)
 
         return attn_output, attn_weights
@@ -176,10 +173,11 @@ def eager_attention_forward(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+    mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
+
     if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
-        )
+        # Apply the attention mask
+        attn_weights = torch.where(attention_mask, mask_value, attn_weights)
 
     # upcast attention to fp32
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
@@ -448,7 +446,7 @@ class QEffGraniteMoeModel(GraniteMoeModel):
             causal_mask *= torch.arange(target_length, device=device) > cache_position.reshape(-1, 1)
             causal_mask = causal_mask[None, None, :, :].expand(input_tensor.shape[0], 1, -1, -1)
             if attention_mask is not None:
-                causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
+                causal_mask = causal_mask.detach().clone()  # copy to contiguous memory for in-place edit
                 mask_length = attention_mask.shape[-1]
                 padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :]
                 padding_mask = padding_mask == 0
@@ -496,16 +494,24 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
                 num of experts.
 
         """
+
         logits = self.layer(hidden_states).float()
-        top_k_logits, top_k_indices = torch.topk(logits, self.top_k, dim=1)  # [num_tokens, top_k]
-        top_k_gates = torch.softmax(top_k_logits, dim=1).type_as(hidden_states)  # [num_tokens, top_k]
+
+        top_k_logits, top_k_indices = torch.topk(logits, self.top_k, dim=1)  # [B, K]
+        top_k_gates = torch.softmax(top_k_logits, dim=1).to(hidden_states.dtype)  # [B, K]
 
         B, K = top_k_indices.shape
         E = int(self.num_experts)
-        flat = top_k_indices.reshape(-1)
-        mask = torch.zeros((B * K, E), dtype=torch.int64, device=top_k_indices.device)
-        mask[torch.arange(B * K, device=flat.device), flat] = 1
-        expert_mask = mask.view(B, K, E).permute(2, 1, 0)
+
+        # Create expert indices [E]
+        expert_ids = torch.arange(E, device=top_k_indices.device)
+
+        # Compare and build mask: [B, K, E]
+        expert_mask = (top_k_indices.unsqueeze(-1) == expert_ids).to(torch.int64)
+
+        # Match original layout: [E, K, B]
+        expert_mask = expert_mask.permute(2, 1, 0)
+
         return top_k_gates, expert_mask, logits, self.num_experts
 
 
@@ -527,15 +533,24 @@ class QEffGraniteMoeMoE(GraniteMoeMoE):
         bsz, length, emb_size = layer_input.size()
         layer_input = layer_input.reshape(-1, emb_size)
         topk_gates, expert_mask, router_logits, num_experts = self.router(layer_input)
-        final_hidden_states = torch.zeros_like(layer_input)
+        final_hidden_states = torch.zeros_like(layer_input, dtype=layer_input.dtype)
         for expert_idx in range(num_experts):
             mask = expert_mask[expert_idx].transpose(0, 1).to(layer_input.dtype)
-            mask_weight = torch.einsum("be,be->b", topk_gates, mask.to(topk_gates.dtype))[:, None]
+            # mask_weight = torch.einsum("be,be->b", topk_gates, mask.to(topk_gates.dtype))[:, None]
+            mask_weight = torch.einsum("be,be->b", topk_gates, mask.to(dtype=topk_gates.dtype))[:, None]
             hidden_states = self.input_linear(layer_input, expert_idx)
-            chunked_hidden_states = hidden_states.chunk(2, dim=-1)
-            hidden_states = self.activation(chunked_hidden_states[0]) * chunked_hidden_states[1]
+            # refactored due to SplitToSequence error
+            hidden_states, gate = hidden_states[..., : self.hidden_size], hidden_states[..., self.hidden_size :]
+            hidden_states = self.activation(hidden_states) * gate
             expert_outputs = self.output_linear(hidden_states, expert_idx)
-            current_hidden_states = torch.where(mask_weight > 0, expert_outputs * mask_weight, 0.0)
+            # current_hidden_states = torch.where(mask_weight > 0, expert_outputs * mask_weight, 0.0, dtype=mask_weight.dtype)
+
+            current_hidden_states = torch.where(
+                mask_weight > 0,
+                expert_outputs * mask_weight,
+                torch.zeros_like(expert_outputs * mask_weight, dtype=final_hidden_states.dtype),
+            )
+
             final_hidden_states += current_hidden_states
         final_hidden_states = final_hidden_states.view(bsz, length, self.input_size)
         return final_hidden_states, router_logits

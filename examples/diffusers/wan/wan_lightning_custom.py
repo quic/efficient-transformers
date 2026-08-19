@@ -33,6 +33,8 @@ from QEfficient import QEffWanPipeline
 
 # Option 1: Basic initialization with default parameters
 pipeline = QEffWanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers")
+# Option 2: Non-unified mode (separate high/low transformers)
+# pipeline = QEffWanPipeline.from_pretrained("Wan-AI/Wan2.2-T2V-A14B-Diffusers", use_unified=False)
 
 # ============================================================================
 # LORA ADAPTER LOADING FOR LIGHTNING MODEL

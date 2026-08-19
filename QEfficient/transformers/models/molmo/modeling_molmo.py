@@ -158,7 +158,7 @@ class QEffMolmoRotaryEmbedding(nn.Module):
         self.inv_freq = 1.0 / (config.rope_theta ** (torch.arange(0, dim, 2, device=device, dtype=torch.float) / dim))
         self.original_max_seq_len = config.max_position_embeddings or config.max_sequence_length
         self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len, device=_non_meta_init_device(config), dtype=torch.get_default_dtype()
+            seq_len=self.original_max_seq_len, device=_non_meta_init_device(config), dtype=config.torch_dtype
         )
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
@@ -717,6 +717,13 @@ class QEffMolmoModel(nn.Module):
         full_batch_size: Optional[int] = None,
         **compiler_options,
     ):
+        # Extract Molmo specific paramters from compiler options if not provided as named args
+        # vLLM passes num_crops instead of num_images, so that user don't get confused
+        if num_images is None and "num_crops" in compiler_options:
+            num_images = int(compiler_options["num_crops"])
+        if valid_size is None and "valid_size" in compiler_options:
+            valid_size = int(compiler_options["valid_size"])
+
         prefill_seq_len = prefill_seq_len if prefill_seq_len else 1024
         ctx_len = ctx_len if ctx_len else constants.INTERN_CTX_LEN
 
@@ -843,6 +850,9 @@ class QEffMolmoModel(nn.Module):
 
             lang = [lang_prefill, lang_decode]
 
+        compiler_options.pop("num_crops", None)
+        compiler_options.pop("valid_size", None)
+
         specializations = {}
 
         if kv_offload:
@@ -921,9 +931,13 @@ class QEffMolmoModel(nn.Module):
         continuous_batching: bool = False,
         **kwargs,
     ):
+        prefill_seq_len = kwargs.get("prefill_seq_len")
+        if prefill_seq_len is None:
+            prefill_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        prefill_seq_len = int(prefill_seq_len)
         inputs_shapes = {}
         inputs_shapes_lang = {}
-        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+        inputs_shapes["input_ids"] = (constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, prefill_seq_len)
 
         inputs_shapes["vision_embeds"] = (
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
@@ -932,7 +946,7 @@ class QEffMolmoModel(nn.Module):
         )
         inputs_shapes["position_ids"] = (
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
-            constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+            prefill_seq_len,
         )
         inputs_shapes["pixel_values"] = (
             constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
@@ -966,8 +980,8 @@ class QEffMolmoModel(nn.Module):
         lang_inputs["input_ids"] = torch.zeros((inputs_shapes["input_ids"]), dtype=torch.int64)
         lang_inputs["vision_embeds"] = torch.zeros((inputs_shapes["vision_embeds"]), dtype=self.config.torch_dtype)
         lang_inputs["position_ids"] = (
-            torch.arange(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, dtype=torch.int64)
-            .view(1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+            torch.arange(prefill_seq_len, dtype=torch.int64)
+            .view(1, prefill_seq_len)
             .repeat(constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE, 1)
         )
         lang_inputs["image_idx"] = torch.zeros((inputs_shapes["image_idx"]), dtype=torch.int64)
@@ -979,7 +993,7 @@ class QEffMolmoModel(nn.Module):
         kv_cache_shape = get_padding_shape_from_config(
             config=self.config,
             batch_size=fbs if continuous_batching else bs,
-            seq_len=constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN,
+            seq_len=prefill_seq_len,
         )
 
         lang_inputs["past_key_values"] = [[] for _ in range(self.model.config.n_layers)]
@@ -988,7 +1002,7 @@ class QEffMolmoModel(nn.Module):
                 lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=self.config.torch_dtype))
 
         if comp_ctx_lengths is not None:
-            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int8)
+            lang_inputs["comp_ctx_lengths"] = torch.randint(0, 100, (40,), dtype=torch.int64)
         if continuous_batching:
             lang_inputs["batch_index"] = torch.arange(bs).view(bs, 1)
 

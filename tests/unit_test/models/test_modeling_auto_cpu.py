@@ -648,10 +648,27 @@ class TestQEFFAutoModel:
         assert qeff is not None
 
     def test_init_sets_use_cache_true(self):
-        """__init__ sets model.base_model.config.use_cache=True."""
+        """__init__ sets use_cache based on model architecture.
+
+        Decoder or encoder-decoder models (is_decoder=True or is_encoder_decoder=True)
+        require KV-cache and therefore get use_cache=True.
+        Encoder-only models (e.g. BERT) do not use a KV-cache, so use_cache is
+        explicitly set to None to avoid forcing cache mode on architectures that
+        do not support it (needed after the transformers upgrade that added RoBERTa
+        support alongside BERT).
+        """
+        # --- Encoder-only model (BERT): use_cache must be None ---
         model, cfg = make_tiny_bert()
         qeff = QEFFAutoModel(model)
-        assert qeff.model.base_model.config.use_cache is True
+        # BERT has is_decoder=False and is_encoder_decoder=False, so cache mode
+        # is intentionally disabled.
+        assert qeff.model.base_model.config.use_cache is None
+
+        # --- Decoder model: use_cache must be True ---
+        decoder_model, decoder_cfg = make_tiny_bert()
+        decoder_model.config.is_decoder = True
+        qeff_decoder = QEFFAutoModel(decoder_model)
+        assert qeff_decoder.model.base_model.config.use_cache is True
 
     def test_get_model_config_returns_dict(self):
         """get_model_config returns the model's config as a dict."""
@@ -980,5 +997,185 @@ class TestQEFFAutoModelForCTC:
         qeff = QEFFAutoModelForCTC(model)
         onnx_path = qeff.export(export_dir=str(tmp_export_dir))
         onnx_model = onnx.load(str(onnx_path))
-        output_names = {out.name for out in onnx_model.graph.output}
-        assert "logits" in output_names
+        output_names_ctc = {out.name for out in onnx_model.graph.output}
+        assert "logits" in output_names_ctc
+
+
+# ---------------------------------------------------------------------------
+# TLM multi-spec specialization unit tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.cpu_only
+@pytest.mark.causal_lm
+class TestTLMMultiSpecSpecializations:
+    """Tests for the multi-spec decode specialization API (num_speculative_tokens as list)."""
+
+    # ---- build_decode_specialization (multi-spec) ----
+
+    def test_build_decode_spec_for_k_seq_len(self):
+        """build_decode_specialization sets seq_len = num_speculative_tokens+1 for TLM."""
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff.is_tlm = True
+        for k in [0, 1, 3, 7]:
+            spec = qeff.build_decode_specialization(
+                num_speculative_tokens=k, ctx_len=128, batch_size=1, kv_cache_batch_size=1, prefill_seq_len=32
+            )
+            assert spec is not None
+            assert spec["seq_len"] == k + 1
+
+    def test_build_decode_spec_for_k_num_logits_to_keep(self):
+        """build_decode_specialization sets num_logits_to_keep = num_speculative_tokens+1 for TLM."""
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff.is_tlm = True
+        for k in [0, 1, 3]:
+            spec = qeff.build_decode_specialization(
+                num_speculative_tokens=k, ctx_len=128, batch_size=1, kv_cache_batch_size=1, prefill_seq_len=32
+            )
+            assert spec["num_logits_to_keep"] == k + 1
+
+    def test_build_decode_spec_for_k_returns_none_when_duplicate_prefill(self):
+        """Returns None when seq_len == prefill_seq_len and no continuous batching."""
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff.is_tlm = True
+        # num_speculative_tokens=0 → seq_len=1 == prefill_seq_len=1 → should be None
+        spec = qeff.build_decode_specialization(
+            num_speculative_tokens=0, ctx_len=128, batch_size=1, kv_cache_batch_size=1, prefill_seq_len=1
+        )
+        assert spec is None
+
+    def test_build_decode_spec_for_k_not_none_with_continuous_batching(self):
+        """Returns spec even when seq_len == prefill_seq_len if continuous_batching is enabled."""
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model, continuous_batching=True)
+        qeff.is_tlm = True
+        # num_speculative_tokens=0 → seq_len=1 == prefill_seq_len=1, but CB is True → should not be None
+        spec = qeff.build_decode_specialization(
+            num_speculative_tokens=0,
+            ctx_len=128,
+            batch_size=1,
+            kv_cache_batch_size=2,
+            full_batch_size=2,
+            prefill_seq_len=1,
+        )
+        assert spec is not None
+
+    # ---- compile() specialization count via mock ----
+
+    def test_compile_list_produces_correct_spec_count(self):
+        """compile(num_speculative_tokens=[0, 3]) → 1 prefill + 2 decode specializations."""
+        from unittest.mock import patch
+
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
+        captured = {}
+
+        with patch.object(
+            type(qeff),
+            "_compile",
+            side_effect=lambda *args, **kw: (
+                captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"
+            ),
+        ):
+            qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=[0, 3])
+
+        assert captured.get("specializations") is not None, "_compile was not reached"
+        specs = captured["specializations"]
+        decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
+        assert len(decode_specs) == 2, f"Expected 2 decode specs, got {len(decode_specs)}: {specs}"
+
+    def test_compile_deduplication(self):
+        """compile(num_speculative_tokens=[3, 3, 3]) → only one decode spec for K=3."""
+        from unittest.mock import patch
+
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
+        captured = {}
+
+        with patch.object(
+            type(qeff),
+            "_compile",
+            side_effect=lambda *args, **kw: (
+                captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"
+            ),
+        ):
+            qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=[3, 3, 3])
+
+        assert captured.get("specializations") is not None, "_compile was not reached"
+        specs = captured["specializations"]
+        decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
+        assert len(decode_specs) == 1, f"Expected 1 decode spec (deduplicated), got: {decode_specs}"
+        assert decode_specs[0]["seq_len"] == 4
+
+    def test_compile_sorting(self):
+        """compile(num_speculative_tokens=[3, 1, 2]) → decode specs in ascending seq_len order."""
+        from unittest.mock import patch
+
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
+        captured = {}
+
+        with patch.object(
+            type(qeff),
+            "_compile",
+            side_effect=lambda *args, **kw: (
+                captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"
+            ),
+        ):
+            qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=[3, 1, 2])
+
+        assert captured.get("specializations") is not None, "_compile was not reached"
+        specs = captured["specializations"]
+        decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
+        assert len(decode_specs) == 3
+        seq_lens = [s["seq_len"] for s in decode_specs]
+        assert seq_lens == sorted(seq_lens), f"Decode specs not in sorted order: {seq_lens}"
+
+    def test_compile_int_backward_compat(self):
+        """compile(num_speculative_tokens=3) as plain int still works (treated as [3])."""
+        from unittest.mock import patch
+
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
+        captured = {}
+
+        with patch.object(
+            type(qeff),
+            "_compile",
+            side_effect=lambda *args, **kw: (
+                captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"
+            ),
+        ):
+            qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=3)
+
+        assert captured.get("specializations") is not None, "_compile was not reached"
+        specs = captured["specializations"]
+        decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
+        assert len(decode_specs) == 1, f"Expected 1 decode spec for int input, got: {decode_specs}"
+        assert decode_specs[0]["seq_len"] == 4  # k=3 → seq_len=4
+
+    def test_compile_int_zero_backward_compat(self):
+        """compile(num_speculative_tokens=0) as plain scalar int still works (treated as [0])."""
+        from unittest.mock import patch
+
+        model, _ = make_tiny_llama()
+        qeff = QEFFAutoModelForCausalLM(model, qaic_config={"speculative_model_type": "target"})
+        captured = {}
+
+        with patch.object(
+            type(qeff),
+            "_compile",
+            side_effect=lambda *args, **kw: (
+                captured.update({"specializations": kw.get("specializations")}) or "/fake/qpc"
+            ),
+        ):
+            qeff.compile(prefill_seq_len=32, ctx_len=128, num_speculative_tokens=0)
+
+        assert captured.get("specializations") is not None, "_compile was not reached"
+        specs = captured["specializations"]
+        decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
+        assert len(decode_specs) == 1, f"Expected 1 decode spec for scalar 0, got: {decode_specs}"
+        assert decode_specs[0]["seq_len"] == 1  # k=0 → seq_len=1

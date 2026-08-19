@@ -13,6 +13,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from transformers.cache_utils import Cache
+from transformers.integrations.moe import _batched_linear
 from transformers.modeling_outputs import (
     MoeCausalLMOutputWithPast,
     MoeModelOutputWithPast,
@@ -52,7 +53,7 @@ class QEffMixtralRotaryEmbedding(MixtralRotaryEmbedding):
         super().__init__(config=config)
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=config.torch_dtype
         )
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
@@ -99,13 +100,69 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
+            attention_mask,
+            torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
+            attn_weights,
         )
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
     return attn_output, attn_weights
+
+
+def _qeff_batched_mm_experts_forward(
+    self: torch.nn.Module,
+    hidden_states: torch.Tensor,
+    top_k_index: torch.Tensor,
+    top_k_weights: torch.Tensor,
+) -> torch.Tensor:
+    """Like batched_mm_experts_forward but replaces masked_fill_ with torch.where
+    so ONNX Where node gets consistent f32 types on both value inputs."""
+    device = hidden_states.device
+    num_top_k = top_k_index.size(-1)
+    num_tokens = hidden_states.size(0)
+    hidden_dim = hidden_states.size(-1)
+
+    token_idx = torch.arange(num_tokens, device=device).unsqueeze(1).expand(-1, num_top_k).reshape(-1)
+    sample_weights = top_k_weights.reshape(-1)
+    expert_ids = top_k_index.reshape(-1)
+
+    invalid_mask = expert_ids >= self.num_experts
+    expert_ids = expert_ids.clamp(0, self.num_experts - 1)
+
+    selected_hidden_states = hidden_states[token_idx]
+
+    if self.has_gate:
+        selected_weights = self.gate_up_proj[expert_ids]
+        selected_biases = self.gate_up_proj_bias[expert_ids] if self.has_bias else None
+    else:
+        selected_weights = self.up_proj[expert_ids]
+        selected_biases = self.up_proj_bias[expert_ids] if self.has_bias else None
+
+    proj_out = _batched_linear(
+        selected_hidden_states, selected_weights, bias=selected_biases, is_transposed=self.is_transposed
+    )
+
+    if self.has_gate:
+        proj_out = self._apply_gate(proj_out)
+    else:
+        proj_out = self.act_fn(proj_out)
+
+    selected_weights = self.down_proj[expert_ids]
+    selected_biases = self.down_proj_bias[expert_ids] if self.has_bias else None
+
+    proj_out = _batched_linear(proj_out, selected_weights, bias=selected_biases, is_transposed=self.is_transposed)
+
+    weighted_out = proj_out * sample_weights.unsqueeze(-1)
+    # Use torch.where instead of masked_fill_ so the ONNX Where node sees
+    # consistent f32 types on both value branches (zeros_like inherits dtype).
+    weighted_out = torch.where(
+        invalid_mask.unsqueeze(-1), torch.zeros_like(weighted_out, dtype=weighted_out.dtype), weighted_out
+    )
+
+    final_hidden_states = weighted_out.view(num_tokens, num_top_k, hidden_dim).sum(dim=1)
+    return final_hidden_states.to(hidden_states.dtype)
 
 
 class QEffMixtralAttention(MixtralAttention):
@@ -160,7 +217,7 @@ class QEffMixtralAttention(MixtralAttention):
                 past_seen_tokens=past_seen_tokens,
             )
         else:
-            key_states, value_states, _ = past_key_value_update(
+            key_states, value_states, attention_mask, _ = past_key_value_update(
                 module=self,
                 key=key_states,
                 value=value_states,
@@ -203,34 +260,54 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
     """
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """ """
+        """Mixtral MoE forward compatible with both pre-v5 and v5 gate/experts APIs."""
         batch_size, sequence_length, hidden_dim = hidden_states.shape
+        if self.training and getattr(self, "jitter_noise", 0) > 0:
+            hidden_states = hidden_states * torch.empty_like(hidden_states).uniform_(
+                1.0 - self.jitter_noise, 1.0 + self.jitter_noise
+            )
         hidden_states = hidden_states.view(-1, hidden_dim)
-        # router_logits: (batch * sequence_length, n_experts)
-        router_logits = self.gate(hidden_states)
-        routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
-        routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
-        routing_weights /= torch.einsum("bi->b", routing_weights)[:, None]
-        # we cast back to the input dtype
-        routing_weights = routing_weights.to(hidden_states.dtype)
+        gate_dtype = getattr(getattr(self.gate, "weight", None), "dtype", hidden_states.dtype)
+        gate_out = self.gate(hidden_states.to(gate_dtype))
 
-        final_hidden_states = torch.zeros(
-            (batch_size * sequence_length, hidden_dim), dtype=hidden_states.dtype, device=hidden_states.device
-        )
+        if isinstance(gate_out, tuple) and len(gate_out) >= 3:
+            router_logits, routing_weights, selected_experts = gate_out[0], gate_out[1], gate_out[2]
+        else:
+            router_logits = gate_out[0] if isinstance(gate_out, tuple) else gate_out
+            routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
+            routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
+            routing_weights /= torch.einsum("bi->b", routing_weights)[:, None]
+            routing_weights = routing_weights.to(hidden_states.dtype)
 
-        # One hot encode the selected experts to create an expert mask
-        # this will be used to easily index which expert is going to be sollicitated
-        # selected_experts: [B, K]
+        # transformers>=5.3 uses MixtralExperts aggregate with call signature
+        # experts(hidden_states, top_k_index, top_k_weights)
+        if callable(self.experts) and not hasattr(self.experts, "__getitem__"):
+            experts_dtype = None
+            for param in self.experts.parameters():
+                experts_dtype = param.dtype
+                break
+            hidden_states_for_experts = hidden_states.to(experts_dtype) if experts_dtype else hidden_states
+            if torch.onnx.is_in_onnx_export() or torch._dynamo.is_compiling():
+                # Avoid grouped-mm ONNX incompatibility (`aten::histc`) while keeping
+                # upstream experts math/parameter layout.
+                final_hidden_states = _qeff_batched_mm_experts_forward(
+                    self.experts, hidden_states_for_experts, selected_experts, routing_weights
+                )
+            else:
+                final_hidden_states = self.experts(hidden_states_for_experts, selected_experts, routing_weights)
+            final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
+            return final_hidden_states, router_logits
+
+        # Backward compatible path for older expert containers.
+        final_hidden_states = torch.zeros_like(hidden_states)
         B, K = selected_experts.shape
-        E = int(self.num_experts)
+        E = int(getattr(self, "num_experts", getattr(self.experts, "num_experts", self.gate.weight.shape[0])))
         flat = selected_experts.reshape(-1)
         mask = torch.zeros((B * K, E), dtype=torch.int64)
         mask[torch.arange(B * K), flat] = 1
-        mask_bke = mask.view(B, K, E)
-        expert_mask = mask_bke.permute(2, 1, 0)
+        expert_mask = mask.view(B, K, E).permute(2, 1, 0)
 
-        # Loop over all available experts in the model and perform the computation on each expert
-        for expert_idx in range(self.num_experts):
+        for expert_idx in range(E):
             expert_layer = self.experts[expert_idx]
             expert_mask_tr = expert_mask[expert_idx].transpose(0, 1)
             scale = torch.einsum("be,be->b", routing_weights, expert_mask_tr.to(self.gate.weight.dtype))[:, None]
@@ -240,7 +317,7 @@ class QEffMixtralSparseMoeBlock(MixtralSparseMoeBlock):
                     :, None
                 ],
                 current_hidden_states,
-                torch.tensor(0.0),
+                torch.zeros_like(current_hidden_states),
             )
             final_hidden_states = final_hidden_states + current_hidden_states
         final_hidden_states = final_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
@@ -313,7 +390,14 @@ class QeffMixtralDecoderLayer(MixtralDecoderLayer):
         # Fully Connected
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
-        hidden_states, router_logits = self.block_sparse_moe(hidden_states)
+        moe_block = getattr(self, "block_sparse_moe", None)
+        if moe_block is None:
+            moe_block = getattr(self, "mlp", None)
+        moe_out = moe_block(hidden_states)
+        if isinstance(moe_out, tuple):
+            hidden_states, _ = moe_out
+        else:
+            hidden_states, _ = moe_out, None
         hidden_states = residual + hidden_states
 
         return hidden_states
@@ -491,7 +575,8 @@ class QEffMixtralForCausalLM(MixtralForCausalLM):
         # Cast to int32 to avoid ONNXRT issue
         logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)
         hidden_states = outputs.last_hidden_state[torch.arange(position_ids.shape[0]).view(-1, 1), logit_idx]
-        logits = self.lm_head(hidden_states).float()
+        lm_head_dtype = self.lm_head.weight.dtype
+        logits = self.lm_head(hidden_states.to(lm_head_dtype)).float()
 
         aux_loss = None
         if output_router_logits:

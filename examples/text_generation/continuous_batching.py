@@ -23,7 +23,9 @@ def main():
     )
     parser.add_argument("--prefill-seq-len", type=int, default=128, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=512, help="Context length")
+    parser.add_argument("--num-hidden-layers", type=int, default=4, help="Num hidden layers")
     parser.add_argument("--full-batch-size", type=int, default=4, help="Full batch size for continuous batching")
+    parser.add_argument("--dynamo", action="store_true", help="Export via dynamo")
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
     parser.add_argument(
@@ -40,7 +42,9 @@ def main():
 
     # Load tokenizer and model with continuous batching enabled
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, continuous_batching=True)
+    model = QEFFAutoModelForCausalLM.from_pretrained(
+        args.model_name, num_hidden_layers=args.num_hidden_layers, continuous_batching=True
+    )
 
     # Compile the model with full_batch_size for continuous batching
     qpc_path = model.compile(
@@ -49,6 +53,8 @@ def main():
         full_batch_size=args.full_batch_size,
         num_cores=args.num_cores,
         num_devices=(1 if args.device_group is None else len(args.device_group)),
+        dynamo=args.dynamo,
+        use_onnx_subfunctions=True,
     )
     print(f"Model compiled to: {qpc_path}")
 

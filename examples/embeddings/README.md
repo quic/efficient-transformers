@@ -2,6 +2,19 @@
 
 Examples for running text embedding models on Qualcomm Cloud AI 100.
 
+## Model-Specific Examples
+
+| Model | Location |
+|-------|----------|
+| **Qwen3-VL Embedding** | [qwen3vl/](qwen3vl/) |
+
+## Quick Run
+
+```bash
+python examples/embeddings/qwen3vl/qwen3_vl_embedding.py \
+  --model-name Qwen/Qwen3-VL-Embedding-8B
+```
+
 ## Authentication
 
 For private/gated models, export your HuggingFace token:

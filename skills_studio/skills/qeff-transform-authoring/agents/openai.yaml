@@ -1,0 +1,4 @@
+interface:
+  display_name: "QEff Transform Authoring"
+  short_description: "Add QEff transform code safely"
+  default_prompt: "Use $qeff-transform-authoring to add a new QEff transform."

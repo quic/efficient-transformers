@@ -477,3 +477,76 @@ def test_dummy_pld_inference(model_id, manual_cleanup):
         model_config_dict[model_id]["target_model_name"], **model_config_dict[model_id]["additional_params"]
     )
     check_pld_spec_decode_inference(model_id, config=hf_config, manual_cleanup=manual_cleanup)
+
+
+@pytest.mark.parametrize("model_id", test_models_id)
+@pytest.mark.parametrize("decode_ks", [[3], [0, 3], [1, 2, 3], [0, 1, 2, 3]])
+def test_multi_spec_structure(model_id, decode_ks):
+    """
+    Verify that build_decode_specialization produces correct specializations for each K value.
+    No hardware required.
+    """
+    target_model_name = model_config_dict[model_id]["target_model_name"]
+    prefill_seq_len = model_config_dict[model_id]["prefill_seq_len"]
+    ctx_len = model_config_dict[model_id]["ctx_len"]
+    full_batch_size = model_config_dict[model_id]["full_batch_size"]
+    continuous_batching = full_batch_size is not None
+
+    target_model = load_qeff_causal_lm_model(
+        target_model_name,
+        num_hidden_layers=2,
+        continuous_batching=continuous_batching,
+        qaic_config={"speculative_model_type": "target"},
+    )
+
+    kv_cache_batch_size = full_batch_size or 1
+    batch_size = 1
+
+    specs = []
+    for k in sorted(set(decode_ks)):
+        spec = target_model.build_decode_specialization(
+            num_speculative_tokens=k,
+            ctx_len=ctx_len,
+            batch_size=batch_size,
+            kv_cache_batch_size=kv_cache_batch_size,
+            full_batch_size=full_batch_size,
+            prefill_seq_len=prefill_seq_len,
+        )
+        assert spec is not None, f"build_decode_specialization returned None for k={k}"
+        assert spec["seq_len"] == k + 1, f"Expected seq_len={k + 1}, got {spec['seq_len']}"
+        assert spec["num_logits_to_keep"] == k + 1, (
+            f"Expected num_logits_to_keep={k + 1}, got {spec['num_logits_to_keep']}"
+        )
+        assert spec["ctx_len"] == ctx_len
+        specs.append(spec)
+
+    seq_lens = [s["seq_len"] for s in specs]
+    assert len(seq_lens) == len(set(seq_lens)), f"Duplicate seq_len values in specs: {seq_lens}"
+
+
+# ---------------------------------------------------------------------------
+# _select_k dispatch helper tests (no hardware required)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "actual_proposals,decode_ks,expected_k",
+    [
+        # All batch items have 0 proposals → smallest k >= 0
+        (np.array([0, 0, 0]), [0, 3], 0),
+        # Mix: some proposals, some not → smallest k >= max=3
+        (np.array([0, 3, 3]), [0, 3], 3),
+        # Single spec: always returns only option
+        (np.array([0, 0]), [3], 3),
+        # need=2, ks=[0,2,4] → returns 2
+        (np.array([1, 2]), [0, 2, 4], 2),
+        # need exceeds all → returns max
+        (np.array([5, 5]), [0, 3], 3),
+    ],
+)
+def test_select_k(actual_proposals, decode_ks, expected_k):
+    """_select_k returns the smallest K in decode_ks covering the max actual proposal count."""
+    from examples.performance.speculative_decoding.prompt_lookup import _select_k
+
+    result = _select_k(actual_proposals, decode_ks)
+    assert result == expected_k, f"Expected {expected_k}, got {result} for proposals={actual_proposals}, ks={decode_ks}"

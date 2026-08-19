@@ -77,9 +77,6 @@ class TestQEffSupportedArchitectures:
     def test_contains_whisper(self):
         assert "WhisperForConditionalGeneration" in qeff_supported_architectures.architectures
 
-    def test_contains_mllama(self):
-        assert "MllamaForCausalLM" in qeff_supported_architectures.architectures
-
     def test_contains_starcoder2(self):
         assert "Starcoder2ForCausalLM" in qeff_supported_architectures.architectures
 

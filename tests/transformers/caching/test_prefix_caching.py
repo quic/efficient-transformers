@@ -81,8 +81,8 @@ def prefix_caching_inference(model_name, qpc_path):
         decode_inputs["input_ids"] = next_token_id
         decode_inputs["position_ids"] += 1
 
-    assert np.all(generator._qaic_model.generated_ids[0, :gen_len2] == [int(val[0]) for val in generation_outputs])
-    assert np.all(generator._qaic_model.generated_ids[1, :gen_len2] == [int(val[1]) for val in generation_outputs])
+    assert np.all(generator._qaic_model.generated_ids[0, :gen_len2] == [int(val[0, 0]) for val in generation_outputs])
+    assert np.all(generator._qaic_model.generated_ids[1, :gen_len2] == [int(val[1, 0]) for val in generation_outputs])
 
     ##############################
     # Now rerun with cached prefix on 0th index with prompt3 and use -1 for 1st index
@@ -179,7 +179,7 @@ def prefix_caching_inference(model_name, qpc_path):
         decode_inputs["position_ids"][1][0] += 1
 
     assert np.all(
-        prompts_exec_info.generated_ids[1][:247] == [int(val[1]) for val in generation_outputs_prefill_cached][:247]
+        prompts_exec_info.generated_ids[1][:247] == [int(val[1, 0]) for val in generation_outputs_prefill_cached][:247]
     )
 
 

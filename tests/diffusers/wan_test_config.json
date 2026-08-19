@@ -8,6 +8,7 @@
                     },
     "mad_validation": {
                          "tolerances": {
+                                "transformer": 0.1,
                                 "transformer_high": 0.1,
                                 "transformer_low": 0.1,
                                 "vae_decoder" : 1.3

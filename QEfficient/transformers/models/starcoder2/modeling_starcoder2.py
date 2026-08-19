@@ -50,7 +50,9 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
+            attention_mask,
+            torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
+            attn_weights,
         )
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -88,7 +90,7 @@ class QEffStarcoder2Attention(Starcoder2Attention):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         cos, sin = position_embeddings
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
@@ -110,7 +112,7 @@ class QEffStarcoder2Attention(Starcoder2Attention):
                 past_seen_tokens=past_seen_tokens,
             )
         else:
-            key_states, value_states, _ = past_key_value_update(
+            key_states, value_states, attention_mask, _ = past_key_value_update(
                 module=self,
                 key=key_states,
                 value=value_states,

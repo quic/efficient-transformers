@@ -29,7 +29,12 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils import constants
 from QEfficient.utils._utils import load_json
-from tests.diffusers.diffusers_utils import DiffusersTestUtils, MADValidator
+from tests.diffusers.diffusers_utils import (
+    DiffusersTestUtils,
+    MADValidator,
+    release_pipeline_qpc_sessions,
+    release_qpc_session,
+)
 
 # Test Configuration for I2V with dynamic sizing
 CONFIG_PATH = "tests/diffusers/wan_i2v_test_config.json"
@@ -249,7 +254,7 @@ def wan_i2v_pipeline_call_with_mad_validation(
     mad_validator.validate_module_mad(
         pytorch_image_latents[0].detach().cpu().numpy(), latents.detach().cpu().numpy(), "vae_encoder", "image encoding"
     )
-    pipeline.vae_encoder.qpc_session.deactivate()  # deactivate vae encoder qpc session
+    release_qpc_session(pipeline.vae_encoder)
 
     # Step 7: Setup transformer inference session
     if pipeline.transformer.qpc_session is None:
@@ -381,7 +386,7 @@ def wan_i2v_pipeline_call_with_mad_validation(
             if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % pipeline.scheduler.order == 0):
                 progress_bar.update()
 
-    pipeline.transformer.qpc_session.deactivate()  # deactivate transformer qpc session
+    release_qpc_session(pipeline.transformer)
     # Handle final conditioning for expand_timesteps mode
     if pipeline.model.config.expand_timesteps:
         latents = (1 - first_frame_mask) * condition + first_frame_mask * latents
@@ -417,7 +422,7 @@ def wan_i2v_pipeline_call_with_mad_validation(
     video = pipeline.vae_decoder.qpc_session.run(inputs)
     end_decode_time = time.perf_counter()
     vae_decoder_perf = end_decode_time - start_decode_time
-    pipeline.vae_decoder.qpc_session.deactivate()  # deactivate vae decoder qpc session
+    release_qpc_session(pipeline.vae_decoder)
 
     # VAE decoder MAD validation
     print(" Performing MAD validation for VAE decoder...")
@@ -639,6 +644,8 @@ def test_wan_i2v_pipeline(wan_i2v_pipeline):
     except Exception as e:
         print(f"\nTEST FAILED: {e}")
         raise
+    finally:
+        release_pipeline_qpc_sessions(pipeline, ["vae_encoder", "transformer", "vae_decoder"])
 
 
 if __name__ == "__main__":

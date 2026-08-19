@@ -23,9 +23,10 @@ from time import perf_counter
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
+import torch
 from transformers import AutoImageProcessor, PreTrainedTokenizer, PreTrainedTokenizerFast
 
-from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.embedding_handler import VisionHandler
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfo,
@@ -33,6 +34,7 @@ from QEfficient.generation.text_generation_inference import (
     QEffTextGenerationBase,
     TextGeneration,
     calculate_latency,
+    get_compilation_dims,
     write_io_files,
 )
 from QEfficient.utils import LRUCache
@@ -146,10 +148,13 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         )
 
         # Vision-specific initialization
-        self.is_qwen_vl = hasattr(qeff_model.model.config, "model_type") and qeff_model.model.config.model_type in {
+        model_type = getattr(getattr(qeff_model, "model", None).config, "model_type", "")
+        self.is_qwen_vl = model_type in {
             "qwen2_5_vl",
             "qwen3_vl_moe",
             "qwen3_vl",
+            "qwen3_5",
+            "qwen3_5_moe",
         }
         self.qeff_model = qeff_model
         self.processor = processor
@@ -229,7 +234,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         self._vision_skip_buffers = [
             x
             for x in self._vision_session.input_names + self._vision_session.output_names
-            if x.startswith("past_") or x.endswith("_RetainedState")
+            if is_retained_state_name(x) or x.endswith("_RetainedState")
         ]
         self._vision_session.skip_buffers(self._vision_skip_buffers)
 
@@ -237,7 +242,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         self._lang_skip_buffers = [
             x
             for x in self._session.input_names + self._session.output_names
-            if x.startswith("past_") or x.endswith("_RetainedState")
+            if is_retained_state_name(x) or x.endswith("_RetainedState")
         ]
 
     def run_prefill_for_all_inputs(self, prompt_queue, generation_len):
@@ -276,12 +281,15 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             next_token_id (array): The next token ID.
         """
         next_token_id = self._fetch_next_token_id(outputs)
+        if next_token_id.ndim == 2 and next_token_id.shape[1] > 1:
+            next_token_id = next_token_id[:, -1:]
 
         # Store the generated values.
-        self.decode_input_ids[decode_batch_id or slice(None)] = next_token_id
-        self.decode_pos_ids[:, decode_batch_id] = position_ids.squeeze(1)
-        self.generated_ids[decode_batch_id or slice(None), 0] = next_token_id.squeeze(1)
-        self.generation_len[decode_batch_id or slice(None)] = generation_len
+        decode_batch = decode_batch_id if decode_batch_id is not None else slice(None)
+        self.decode_input_ids[decode_batch] = next_token_id
+        self.decode_pos_ids[:, decode_batch] = position_ids.squeeze(1)
+        self.generated_ids[decode_batch, 0] = next_token_id.squeeze()
+        self.generation_len[decode_batch] = generation_len
         return next_token_id
 
     def _execute_chunked_prefill(
@@ -303,9 +311,6 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         Returns:
             Final prefill outputs
         """
-        # Set output buffers
-        self._set_output_buffers(batch_size=prefill_logit_bs, sequence_length=1)
-
         # Skip buffers for dual-QPC coordination
         self._session.skip_buffers(self._lang_skip_buffers)
 
@@ -315,7 +320,7 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
 
         if self.comp_ctx_lengths_prefill is not None:
             self.list_of_comp_ctx_lengths_prefill = [
-                np.zeros(length, dtype=np.int8) for length in self.comp_ctx_lengths_prefill
+                np.zeros(length, dtype=np.int64) for length in self.comp_ctx_lengths_prefill
             ]
             prefill_ccl_id = 0
             lang_inputs["comp_ctx_lengths"] = self.list_of_comp_ctx_lengths_prefill[prefill_ccl_id]
@@ -327,17 +332,46 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
                 else:
                     lang_inputs[op] = self.sampling_params[op]
 
+        prefill_output_seq_len_by_input_seq = {}
+        default_prefill_output_seq_len = 1
+        if not self.include_sampler:
+            logits_binding_idx = self._session.binding_index_map.get("logits")
+            input_ids_binding_idx = self._session.binding_index_map.get("input_ids")
+            if logits_binding_idx is not None and input_ids_binding_idx is not None:
+                if getattr(self._session, "allowed_shapes", None):
+                    for shape_spec in self._session.allowed_shapes:
+                        if len(shape_spec) <= max(input_ids_binding_idx, logits_binding_idx):
+                            continue
+                        input_dims = shape_spec[input_ids_binding_idx][1]
+                        logits_dims = shape_spec[logits_binding_idx][1]
+                        if len(input_dims) < 2 or len(logits_dims) < 2:
+                            continue
+                        prefill_output_seq_len_by_input_seq[int(input_dims[1])] = int(logits_dims[1])
+                logits_binding = self._session.bindings[logits_binding_idx]
+                if len(logits_binding.dims) > 1:
+                    default_prefill_output_seq_len = int(logits_binding.dims[1])
+
         for i in range(num_chunks):
             input_ids_slice = lang_inputs["input_ids"][:, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len]
             position_ids_slice = lang_inputs["position_ids"][
                 ..., i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
             ]
 
+            prefill_output_seq_len = prefill_output_seq_len_by_input_seq.get(
+                int(input_ids_slice.shape[1]), default_prefill_output_seq_len
+            )
+            self._set_output_buffers(batch_size=prefill_logit_bs, sequence_length=prefill_output_seq_len)
+
             chunk_inputs = {
                 "input_ids": input_ids_slice,
                 "position_ids": position_ids_slice,
                 "image_idx": chunk_image_idx if chunk_image_idx is not None else np.array([[0]], dtype=np.int64),
             }
+
+            if "mm_token_type_ids" in lang_inputs:
+                chunk_inputs["mm_token_type_ids"] = lang_inputs["mm_token_type_ids"][
+                    :, i * self._prefill_seq_len : (i + 1) * self._prefill_seq_len
+                ]
 
             if decode_batch_id is not None:
                 chunk_inputs["batch_index"] = decode_batch_id
@@ -371,6 +405,14 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             self._decode_cross_attention_mask = np.ones((bs, 1, num_images, img_tiles), dtype=np.int64)
         else:
             self._decode_cross_attention_mask = None
+
+        if "mm_token_type_ids" in lang_inputs:
+            batch_size = (
+                self.full_batch_size if self.full_batch_size is not None else lang_inputs["mm_token_type_ids"].shape[0]
+            )
+            self._decode_mm_token_type_ids = np.zeros((batch_size, 1), dtype=lang_inputs["mm_token_type_ids"].dtype)
+        else:
+            self._decode_mm_token_type_ids = None
 
         return outputs
 
@@ -467,7 +509,15 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
             return text_prompt
 
     def generate(
-        self, images: List[str], prompts: List[str], generation_len: Optional[int] = None, stream: bool = True, **kwargs
+        self,
+        images: List[str],
+        prompts: List[str],
+        inputs: torch.Tensor = None,
+        num_frames: Optional[int] = None,
+        multi_specs: Optional[bool] = None,
+        generation_len: Optional[int] = None,
+        stream: bool = True,
+        **kwargs,
     ) -> CloudAI100ExecInfo:
         """
         Main generation method maintaining API compatibility with VisionLanguageGeneration
@@ -485,6 +535,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         Raises:
             ValueError: If images and prompts lengths don't match
         """
+        if num_frames or multi_specs:
+            return self._generate_multi_frame_specialization(inputs, num_frames, generation_len)
+
         if len(images) != len(prompts):
             raise ValueError(f"Number of images ({len(images)}) must match number of prompts ({len(prompts)})")
 
@@ -503,6 +556,228 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         else:
             # Regular batching mode
             return self._generate_regular_batching(vision_prompts, generation_len, stream, **kwargs)
+
+    def run_prefill_multi_frame_specialization(
+        self, inputs: Optional[torch.Tensor], num_frames: Optional[int] = 1, generation_len: int = None
+    ):
+        """
+        Run prefill for multi-frame specialization. This is a special case where we have a fixed number of frames
+        and we want to prefill the model with the input frames before generating the output.
+
+        Args:
+            inputs: Input tensor
+            num_frames: Number of frames to process
+            generation_len: Length of generation
+            stream: Whether to stream the output
+
+        Returns:
+            Generation result
+        """
+
+        if not self._qpc_path:
+            raise TypeError("Please run compile API for language model first!")
+
+        self._session.deactivate()
+        self._vision_session.activate()
+
+        if not num_frames:
+            logger.warning("num_frames not specified, defaulting to 1")
+            num_frames = 1
+
+        batch_size, ctx_len, fbs = get_compilation_dims(self._qpc_path)
+
+        pad_token_id = 1
+
+        # Skip inputs/outputs
+        self._session.skip_buffers(
+            [
+                x
+                for x in self._session.input_names + self._session.output_names
+                if x.startswith("past_") or x.endswith("_RetainedState")
+            ]
+        )
+
+        prefill_seq_len = max(
+            [x[self._session.binding_index_map["input_ids"]][1][1] for x in self._session.allowed_shapes]
+            + [self._session.bindings[self._session.binding_index_map["input_ids"]].dims[1]]
+        )
+
+        input_len = inputs["attention_mask"].sum(1, keepdims=True)
+        input_ids_length = inputs["input_ids"].shape[1]
+        num_chunks = -(input_ids_length // -prefill_seq_len)  # ceil divide without float
+        padded_len = num_chunks * prefill_seq_len  # Convert to a multiple of prompt_len
+
+        if generation_len is None:
+            generation_len = ctx_len - input_len.max()
+        assert generation_len > 0, "generation length should be greater than zero"
+
+        inputs["input_ids"] = torch.nn.functional.pad(
+            inputs["input_ids"],
+            (0, padded_len - input_ids_length),
+            "constant",
+            pad_token_id,
+        )
+        inputs["attention_mask"] = torch.nn.functional.pad(
+            inputs["attention_mask"], (0, padded_len - input_ids_length), "constant", 0
+        )
+
+        for k, v in inputs.items():
+            inputs[k] = np.array(v)
+
+        vision_inputs = {
+            k: v
+            for k, v in inputs.items()
+            if k
+            in {"pixel_values", "image_masks", "image_input_idx", "valid_idx", "aspect_ratio_ids", "aspect_ratio_mask"}
+        }
+
+        vision_inputs_fp16 = {"pixel_values", "image_masks"}
+        vision_inputs.update({k: vision_inputs[k].astype("float16") for k in vision_inputs_fp16 if k in vision_inputs})
+
+        vision_outputs = {}
+        if vision_inputs:
+            vision_size = vision_inputs["pixel_values"].shape[0] // num_frames
+
+            pixel_values_shape = list(vision_inputs["pixel_values"][:vision_size].shape)
+
+            idx = next(
+                i for i, inner in enumerate(self._vision_session.allowed_shapes) if (2, pixel_values_shape) in inner
+            )
+
+            buffer_set = {
+                "vision_embeds": np.zeros(
+                    self._vision_session.allowed_shapes[idx][self._vision_session.binding_index_map["vision_embeds"]][
+                        1
+                    ],
+                    dtype=np.float16,
+                ),
+                "image_grid_thw": np.zeros(
+                    self._vision_session.allowed_shapes[idx][self._vision_session.binding_index_map["image_grid_thw"]][
+                        1
+                    ],
+                    dtype=np.int64,
+                ),
+            }
+            if "deepstack_features" in self._vision_session.binding_index_map:
+                buffer_set["deepstack_features"] = np.zeros(
+                    self._vision_session.allowed_shapes[idx][
+                        self._vision_session.binding_index_map["deepstack_features"]
+                    ][1],
+                    dtype=np.float16,
+                )
+
+            self._vision_session.set_buffers(buffer_set)
+
+            chunk_inputs = vision_inputs.copy()
+
+            for i in range(num_frames):
+                chunk_inputs["pixel_values"] = vision_inputs["pixel_values"][i * vision_size : (i + 1) * vision_size]
+                chunk_outputs = self._vision_session.run(chunk_inputs)
+                if i == 0:
+                    vision_outputs = chunk_outputs
+                else:
+                    vision_outputs["vision_embeds"] = np.concatenate(
+                        (vision_outputs["vision_embeds"], chunk_outputs["vision_embeds"]), axis=1
+                    )
+
+            vision_outputs["vision_embeds"] = np.pad(
+                vision_outputs["vision_embeds"],
+                pad_width=(
+                    (0, 0),
+                    (0, self._session.allowed_shapes[0][1][1][1] - vision_outputs["vision_embeds"].shape[-2]),
+                    (0, 0),
+                ),  # pad axis=1 only
+                mode="constant",
+                constant_values=0,
+            )
+            if "deepstack_features" in vision_outputs:
+                vision_outputs["deepstack_features"] = np.pad(
+                    vision_outputs["deepstack_features"],
+                    pad_width=(
+                        (0, 0),
+                        (0, 0),
+                        (0, self._session.allowed_shapes[0][1][1][1] - vision_outputs["deepstack_features"].shape[-2]),
+                        (0, 0),
+                    ),  # pad axis=1 only
+                    mode="constant",
+                    constant_values=0,
+                )
+
+        lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
+        lang_inputs.pop("attention_mask")
+
+        if self._vision_qpc_path:
+            self._vision_session.deactivate()
+
+        self._session.activate()
+
+        self._session.set_buffers(vision_outputs)
+        logger.debug(f"Vision buffers set: {list(vision_outputs.keys())}")
+        self._vision_processed = True
+        self._vision_outputs = vision_outputs
+
+        # Calculate generation_len consistent with ctx_len
+        max_gen_len = self._ctx_len - np.where(lang_inputs["position_ids"] != -1, 1, 0).sum(1, keepdims=True).max()
+        generation_len = self._fetch_generation_len(generation_len, max_gen_len)
+
+        # Execute chunked prefill
+        outputs = self._execute_chunked_prefill(lang_inputs, num_chunks)
+
+        self._session.skip_buffers(vision_outputs)
+
+        # Prepare position_ids for decode phase (next position after prefill)
+        position_ids_decode = np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1
+
+        return outputs, position_ids_decode, generation_len
+
+    def _generate_multi_frame_specialization(
+        self,
+        inputs: Optional[torch.Tensor],
+        num_frames: Optional[int] = 1,
+        generation_len: int = None,
+        stream: List[str] = None,
+    ):
+
+        exec_batch_size = self.batch_size
+        max_gen_length = self._ctx_len if not generation_len else max(self._ctx_len, generation_len)
+        self.initialize_decode_inputs(
+            num_prompts=1, execution_batch_size=exec_batch_size, max_gen_length=max_gen_length
+        )
+
+        if self.is_qwen_vl:
+            self.decode_pos_ids = np.zeros((4, exec_batch_size, 1), np.int64)
+
+        # Prefill using VLM-aware run_prefill (batch is a list of (image, text))
+        start = perf_counter()
+        outputs, position_ids, generation_len_final = self.run_prefill_multi_frame_specialization(
+            inputs, num_frames, generation_len
+        )
+        self.update_decode_input(outputs, position_ids, generation_len_final)
+
+        # Prepare decode
+        decode_inputs = self.prepare_decode_inputs()
+
+        # Decode loop
+        loop_start = perf_counter()
+        num_token = self.run_decode(decode_inputs, generation_len_final, automation=False, streamer=None)
+        end = perf_counter()
+
+        # Decode generated texts
+        generated_texts = self.tokenizer.batch_decode(self.generated_ids, skip_special_tokens=True)
+
+        # Latency metrics
+        total_decode_tokens = num_token
+        prefill_time, decode_perf, total_perf, total_time = calculate_latency(
+            total_decode_tokens, loop_start, start, end
+        )
+        perf_metrics = PerfMetrics(prefill_time, decode_perf, total_perf, total_time)
+
+        return CloudAI100ExecInfo(
+            batch_size=self.batch_size,
+            generated_texts=generated_texts,
+            generated_ids=self.generated_ids,
+            perf_metrics=perf_metrics,
+        )
 
     def _generate_regular_batching(self, vision_prompts, generation_len, stream, **kwargs):
         """Handle regular batching for vision-language generation without creating a second language session"""
@@ -724,6 +999,9 @@ class VisionLanguageGeneration(QEffTextGenerationBase):
         if hasattr(self, "_decode_cross_attention_mask") and self._decode_cross_attention_mask is not None:
             # Decoder specialization expects a single mask (batch dim = 1)
             decode_inputs["cross_attention_mask"] = self._decode_cross_attention_mask
+
+        if hasattr(self, "_decode_mm_token_type_ids") and self._decode_mm_token_type_ids is not None:
+            decode_inputs["mm_token_type_ids"] = self._decode_mm_token_type_ids
 
         return decode_inputs
 

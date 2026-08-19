@@ -102,8 +102,8 @@ class QEffMxfp4HfQuantizer(Mxfp4HfQuantizer):
 
     def update_torch_dtype(self, torch_dtype):
         if torch_dtype not in [None, torch.float32]:
-            logger.warning(f"Requested dtype {torch_dtype} is not supported, overriding to None")
-        return None
+            logger.warning(f"Requested dtype {torch_dtype} is not supported, overriding to float32")
+        return torch.float32
 
     def update_dtype(self, dtype):
         return self.update_torch_dtype(dtype)

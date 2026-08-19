@@ -65,7 +65,9 @@ class QEffGPTJAttention(GPTJAttention):
         if attention_mask is not None:
             # Apply the attention mask
             attn_weights = torch.where(
-                attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=value.dtype), attn_weights
+                attention_mask,
+                torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
+                attn_weights,
             )
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
@@ -111,8 +113,9 @@ class QEffGPTJAttention(GPTJAttention):
         else:
             embed_positions = self._get_embed_positions(position_ids)
         embed_positions = embed_positions.to(value.dtype)
-        repeated_position_ids = position_ids.unsqueeze(-1).repeat(1, 1, embed_positions.shape[-1])
-        repeated_position_ids = torch.where(repeated_position_ids == -1, 0, repeated_position_ids)
+        # Avoid ONNX Tile(repeats=dynamic) from repeat(..., embed_positions.shape[-1]).
+        safe_position_ids = torch.where(position_ids == -1, 0, position_ids)
+        repeated_position_ids = safe_position_ids.unsqueeze(-1).expand(-1, -1, embed_positions.shape[-1])
         sincos = torch.gather(embed_positions, 1, repeated_position_ids)
         sin, cos = torch.split(sincos, sincos.shape[-1] // 2, dim=-1)
 
@@ -253,14 +256,10 @@ class QEffGPTJModel(GPTJModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        causal_mask = self._update_causal_mask(
-            attention_mask, inputs_embeds, cache_position, past_key_values, output_attentions
-        )
-        # Prepare head mask if needed
-        # 1.0 in head_mask indicate we keep the head
-        # attention_probs has shape bsz x num_attention_heads x N x N
-        # head_mask has shape n_layer x batch x num_attention_heads x N x N
-        head_mask = self.get_head_mask(head_mask, self.config.n_layer)
+        target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_length
+        causal_mask = _create_causal_mask(position_ids, target_length, None)
+        if head_mask is None:
+            head_mask = [None] * self.config.n_layer
         hidden_states = inputs_embeds
 
         if token_type_ids is not None:
@@ -374,7 +373,8 @@ class QEffGPTJForCausalLM(GPTJForCausalLM):
         hidden_states = transformer_outputs[0]
         # Cast to INT32 to avoid issue while running in ONNXRT
         logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = transformer_outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+        gather_index = logit_index.unsqueeze(-1).expand(-1, -1, hidden_states.shape[-1])
+        hidden_states = torch.gather(hidden_states, 1, gather_index)
         lm_logits = self.lm_head(hidden_states)
         lm_logits = lm_logits.float()
 

@@ -8,7 +8,7 @@
 
 | Architecture            | Model Family       | Representative Models                                                                 | [vLLM Support](https://quic.github.io/cloud-ai-sdk-pages/latest/Getting-Started/Installation/vLLM/vLLM/index.html) |
 |-------------------------|--------------------|--------------------------------------------------------------------------------------|--------------|
-| **MolmoForCausalLM** | Molmo① | [allenai/Molmo-7B-D-0924](https://huggingface.co/allenai/Molmo-7B-D-0924) | ✕           |
+| **MolmoForCausalLM** ** | Molmo① | [allenai/Molmo-7B-D-0924](https://huggingface.co/allenai/Molmo-7B-D-0924) | ✕           |
 | **Olmo2ForCausalLM**   |       OLMo-2       | [allenai/OLMo-2-0425-1B](https://huggingface.co/allenai/OLMo-2-0425-1B)                                                               | ✔️         |
 | **FalconForCausalLM**   | Falcon②            | [tiiuae/falcon-40b](https://huggingface.co/tiiuae/falcon-40b)                                                                | ✔️          |
 | **Qwen3MoeForCausalLM**   | Qwen3Moe             | [Qwen/Qwen3-30B-A3B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507)                                                                | ✔️          |
@@ -21,7 +21,7 @@
 | **GPT2LMHeadModel**     | GPT-2              | [openai-community/gpt2](https://huggingface.co/openai-community/gpt2)                                                               | ✔️          |
 | **GraniteForCausalLM**  | Granite 3.1        | [ibm-granite/granite-3.1-8b-instruct](https://huggingface.co/ibm-granite/granite-3.1-8b-instruct)<br>[ibm-granite/granite-guardian-3.1-8b](https://huggingface.co/ibm-granite/granite-guardian-3.1-8b)          | ✔️          |
 |                         | Granite 20B        | [ibm-granite/granite-20b-code-base-8k](https://huggingface.co/ibm-granite/granite-20b-code-base-8k)<br>[ibm-granite/granite-20b-code-instruct-8k](https://huggingface.co/ibm-granite/granite-20b-code-instruct-8k)    | ✔️          |
-| **InternVLChatModel**   | Intern-VL①         | [OpenGVLab/InternVL2_5-1B](https://huggingface.co/OpenGVLab/InternVL2_5-1B) <br> [OpenGVLab/InternVL3_5-1B](https://huggingface.co/OpenGVLab/InternVL3_5-1B)  | ✔️          |                                                         |            |
+| **InternVLChatModel** **  | Intern-VL①         | [OpenGVLab/InternVL2_5-1B](https://huggingface.co/OpenGVLab/InternVL2_5-1B) <br> [OpenGVLab/InternVL3_5-1B](https://huggingface.co/OpenGVLab/InternVL3_5-1B)  | ✔️          |                                                         |            |
 | **LlamaForCausalLM**    | CodeLlama          | [codellama/CodeLlama-7b-hf](https://huggingface.co/codellama/CodeLlama-7b-hf)<br>[codellama/CodeLlama-13b-hf](https://huggingface.co/codellama/CodeLlama-13b-hf)<br>[codellama/CodeLlama-34b-hf](https://huggingface.co/codellama/CodeLlama-34b-hf) | ✔️          |
 |                         | DeepSeek-R1-Distill-Llama | [deepseek-ai/DeepSeek-R1-Distill-Llama-70B](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Llama-70B)                                      | ✔️          |
 |                         | InceptionAI-Adapted | [inceptionai/jais-adapted-7b](https://huggingface.co/inceptionai/jais-adapted-7b)<br>[inceptionai/jais-adapted-13b-chat](https://huggingface.co/inceptionai/jais-adapted-13b-chat)<br>[inceptionai/jais-adapted-70b](https://huggingface.co/inceptionai/jais-adapted-70b) | ✔️          |
@@ -37,8 +37,8 @@
 | **QwenForCausalLM**     | DeepSeek-R1-Distill-Qwen | [DeepSeek-R1-Distill-Qwen-32B](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-32B)                                                   | ✔️          |
 |                         | Qwen2, Qwen2.5     | [Qwen/Qwen2-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2-1.5B-Instruct)                                                            | ✔️          |
 | **LlamaSwiftKVForCausalLM**  | swiftkv            | [Snowflake/Llama-3.1-SwiftKV-8B-Instruct](https://huggingface.co/Snowflake/Llama-3.1-SwiftKV-8B-Instruct)                                                  | ✔️          |
-| **Grok1ModelForCausalLM**  |  grok-1②          | [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)                                                  | ✕          |
-
+| **Grok1ModelForCausalLM** ** |  grok-1②          | [hpcai-tech/grok-1](https://huggingface.co/hpcai-tech/grok-1)                                                  | ✕          |
+| **Glm4MoeForCausalLM**  |     GLM-4.5       | [zai-org/GLM-4.5](https://huggingface.co/zai-org/GLM-4.5)                                                  |          |
 
 ---
 
@@ -51,11 +51,11 @@
 |--------------|--------------|---------------------------------|--------------|
 | **BertModel** | BERT-based   | [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5)<br> [BAAI/bge-large-en-v1.5](https://huggingface.co/BAAI/bge-large-en-v1.5)<br>[BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) <br>[e5-large-v2](https://huggingface.co/intfloat/e5-large-v2) | ✔️          |
 | **MPNetForMaskedLM** | MPNet | [sentence-transformers/multi-qa-mpnet-base-cos-v1](https://huggingface.co/sentence-transformers/multi-qa-mpnet-base-cos-v1) | ✔️         |
-| **NomicBertModel** | NomicBERT② | [nomic-ai/nomic-embed-text-v1.5](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5) | ✕          |
+| **NomicBertModel** ** | NomicBERT② | [nomic-ai/nomic-embed-text-v1.5](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5) | ✕          |
 | **RobertaModel**     | RoBERTa |  [ibm-granite/granite-embedding-30m-english](https://huggingface.co/ibm-granite/granite-embedding-30m-english)<br> [ibm-granite/granite-embedding-125m-english](https://huggingface.co/ibm-granite/granite-embedding-125m-english) | ✔️          |
 | **XLMRobertaForSequenceClassification** | XLM-RoBERTa | [bge-reranker-v2-m3bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3) | ✔️          |
 | **XLMRobertaModel**    | XLM-RoBERTa  |[ibm-granite/granite-embedding-107m-multilingual](https://huggingface.co/ibm-granite/granite-embedding-107m-multilingual)<br> [ibm-granite/granite-embedding-278m-multilingual](https://huggingface.co/ibm-granite/granite-embedding-278m-multilingual) <br> [intfloat/multilingual-e5-large](https://huggingface.co/intfloat/multilingual-e5-large) | ✔️          |
-
+| **JinaBertForMaskedLM** **| Jina Embeddings v2 | [jinaai/jina-embeddings-v2-base-code](https://huggingface.co/jinaai/jina-embeddings-v2-base-code) |         |
 ---
 
 ## Sequence Classification Models
@@ -74,15 +74,31 @@
 ### Vision-Language Models (Text + Image Generation)
 **QEff Auto Class:** `QEFFAutoModelForImageTextToText`
 
+> **⚠️ Deprecation Notice:** Support for **MllamaForConditionalGeneration** (Llama 3.2 Vision) is deprecated and will be removed in a future release. Users are encouraged to migrate to [Llama-4](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct) which provides equivalent vision-language capabilities with continued support.
+
 | Architecture                        | Model Family | Representative Models                                                                 | Qeff Single Qpc | Qeff Dual Qpc | vllm Single Qpc | vllm Dual Qpc |
 |------------------------------------|--------------|----------------------------------------------------------------------------------------|------------|---------------------|-------------------|-----------------|
 | **LlavaForConditionalGeneration**  | LLaVA-1.5   | [llava-hf/llava-1.5-7b-hf](https://huggingface.co/llava-hf/llava-1.5-7b-hf)         | ✔️               | ✔️                       | ✔️                      | ✔️                      |
-| **MllamaForConditionalGeneration** | Llama 3.2   | [meta-llama/Llama-3.2-11B-Vision Instruct](https://huggingface.co/meta-llama/Llama-3.2-11B-Vision-Instruct)<br>[meta-llama/Llama-3.2-90B-Vision-Instruct](https://huggingface.co/meta-llama/Llama-3.2-90B-Vision-Instruct)           | ✔️                       | ✔️                      | ✔️                      | ✔️                      |
+| **MllamaForConditionalGeneration** ⚠️ *(Deprecated)* | Llama 3.2   | [meta-llama/Llama-3.2-11B-Vision Instruct](https://huggingface.co/meta-llama/Llama-3.2-11B-Vision-Instruct)<br>[meta-llama/Llama-3.2-90B-Vision-Instruct](https://huggingface.co/meta-llama/Llama-3.2-90B-Vision-Instruct)           | ✔️                       | ✔️                      | ✔️                      | ✔️                      |
 | **LlavaNextForConditionalGeneration** | Granite Vision | [ibm-granite/granite-vision-3.2-2b](https://huggingface.co/ibm-granite/granite-vision-3.2-2b)  | ✕                       | ✔️                      | ✕                       | ✔️                      |
 | **Llama4ForConditionalGeneration** | Llama-4-Scout | [Llama-4-Scout-17B-16E-Instruct](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct)  | ✔️                       | ✔️                      | ✔️                       | ✔️                      |
 | **Gemma3ForConditionalGeneration** | Gemma3③       | [google/gemma-3-4b-it](https://huggingface.co/google/gemma-3-4b-it)  | ✔️               | ✔️                       |                ✕        |                 ✕       |
+| **Gemma4ForConditionalGeneration** | Gemma4       | [google/gemma-4-31B-it](https://huggingface.co/google/gemma-4-31B-it)<br>[google/gemma-4-26B-A4B-it](https://huggingface.co/google/gemma-4-26B-A4B-it)<br>[google/gemma-4-E4B-it](https://huggingface.co/google/gemma-4-E4B-it)<br>[google/gemma-4-E2B-it](https://huggingface.co/google/gemma-4-E2B-it)  |       ✕           |              ✔️          |          ✕                |         ✔️              |
 | **Qwen2_5_VLForConditionalGeneration** | Qwen2.5-VL | [Qwen/Qwen2.5-VL-3B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct)  | ✔️               | ✔️                       |             ✕           |          ✔️             |
+| **Qwen3VLForConditionalGeneration** | Qwen3-VL | [Qwen/Qwen3-VL-235B-A22B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-235B-A22B-Instruct)<br>[Qwen/Qwen3-VL-30B-A3B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct)<br>[Qwen/Qwen3-VL-2B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct)<br>[Qwen/Qwen3-VL-Embedding-8B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-8B)  | ✔️               | ✔️                       | ✕             | ✕             |
+| **Qwen3_5ForConditionalGeneration** | Qwen3.5 | [Qwen/Qwen3.5-27B](https://huggingface.co/Qwen/Qwen3.5-27B)<br>[Qwen/Qwen3.5-0.8B](https://huggingface.co/Qwen/Qwen3.5-0.8B) |        ✕          |       ✔️                 |       ✕       |     ✔️         |
+| **Qwen3_5MoeForConditionalGeneration** | Qwen3.5 | [Qwen/Qwen3.5-122B-A10B](https://huggingface.co/Qwen/Qwen3.5-122B-A10B)<br>[Qwen/Qwen3.5-35B-A3B](https://huggingface.co/Qwen/Qwen3.5-35B-A3B) |        ✕          |        ✔️                |       ✕         |       ✔️       |
+| **Qwen3_5ForConditionalGeneration** | Qwen3.6       |   [Qwen/Qwen3.6-27B](https://huggingface.co/Qwen/Qwen3.6-27B)    |      ✕          |       ✔️                 |       ✕       |     ✔️         |
+| **Qwen3_5MoeForConditionalGeneration** | Qwen3.6       |   [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B)    |      ✕          |       ✔️                 |       ✕       |     ✔️         |
+| **KimiK25ForConditionalGeneration** | Kimi-K2.5 | [moonshotai/Kimi-K2.5](https://huggingface.co/moonshotai/Kimi-K2.5) | ✕ | ✔️ | ✕ | ✔️ |
 | **Mistral3ForConditionalGeneration** | Mistral3| [mistralai/Mistral-Small-3.1-24B-Instruct-2503](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503)| ✕ | ✔️ | ✕  | ✕  |
+
+### Vision-Language Reranker Models (Text + Image Scoring)
+**QEff Auto Class:** `QEFFAutoModelForImageTextToText`
+
+| Architecture                        | Model Family | Representative Models                                                                 | Qeff Single Qpc | Qeff Dual Qpc | vllm Single Qpc | vllm Dual Qpc |
+|------------------------------------|--------------|----------------------------------------------------------------------------------------|------------|---------------------|-------------------|-----------------|
+| **Qwen3VLForConditionalGeneration** | Qwen3-VL Reranker | [Qwen/Qwen3-VL-Reranker-2B](https://huggingface.co/Qwen/Qwen3-VL-Reranker-2B)<br>[Qwen/Qwen3-VL-Reranker-8B](https://huggingface.co/Qwen/Qwen3-VL-Reranker-8B)  | ✕               | ✔️                       |             ✕           |          ✕             |
 
 
 
@@ -125,7 +141,17 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 
 | Architecture | Model Family | Representative Models                                                                 | vLLM Support |
 |--------------|--------------|----------------------------------------------------------------------------------------|--------------|
-| **FluxPipeline**  | FLUX.1     | [black-forest-labs/FLUX.1-schnell](https://huggingface.co/stabilityai/stable-diffusion-2-1) |          |
+| **FluxPipeline**  | FLUX.1     | [black-forest-labs/FLUX.1-schnell](https://huggingface.co/black-forest-labs/FLUX.1-schnell) |          |
+
+Supported modes:
+
+- Baseline FLUX pipeline.
+- FLUX first-block-cache mode (`enable_first_block_cache=True`) with call-time `cache_threshold`.
+
+Reference examples:
+
+- [flux_1_schnell.py](https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/flux/flux_1_schnell.py)
+- [flux_1_schnell_first_block_cache.py](https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/flux/flux_1_schnell_first_block_cache.py)
 
 ### Video Generation Models
 #### Text to Video Generation Models
@@ -135,6 +161,19 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 |--------------|--------------|----------------------------------------------------------------------------------------|--------------|
 | **WanPipeline**  | Wan2.2     | [Wan-AI/Wan2.2-T2V-A14B-Diffusers](https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B-Diffusers) |         |
 
+Supported modes:
+
+- Unified WAN (`use_unified=True`): single transformer module.
+- Non-unified WAN (`use_unified=False`): separate high/low transformer modules.
+- Non-unified first-block-cache (`use_unified=False`, `enable_first_block_cache=True`) with
+  `cache_threshold_high` and `cache_threshold_low`.
+
+Reference examples:
+
+- [wan_lightning.py](https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/wan/wan_lightning.py)
+- [wan_lightning_custom.py](https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/wan/wan_lightning_custom.py)
+- [wan_first_block_cache.py](https://github.com/quic/efficient-transformers/blob/main/examples/diffusers/wan/wan_first_block_cache.py)
+
 #### Image to Video Generation Models
 **QEff Auto Class:** `QEffWanImageToVideoPipeline`
 | Architecture | Model Family | Representative Models                                                                 | vLLM Support |
@@ -143,7 +182,13 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 
 ---
 
+
 ```{NOTE}
+Models marked with `**` are currently not functional on the `main` and `release/1.22.0` branches due to failures with Transformers 5.x.  
+   To run these models, please use:
+   - `release/v1.21.6`
+   - `release/v1.22.0_tf_4.57.3`
+
 ① Intern-VL and Molmo models are Vision-Language Models but use `QEFFAutoModelForCausalLM` for inference to stay compatible with HuggingFace Transformers.
 
 ② Set `trust_remote_code=True` for end-to-end inference with vLLM.
@@ -151,7 +196,6 @@ If the `kv_offload` is set to `True` it runs in dual QPC and if its set to `Fals
 ③ Pass `disable_sliding_window` for few family models when using vLLM.
 ```
 ---
-
 
 
 (models_coming_soon)=

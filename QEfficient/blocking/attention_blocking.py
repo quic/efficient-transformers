@@ -32,6 +32,8 @@ class BlockingMode(str, Enum):
     Q = "q"
     H = "h"
     QKV = "qkv"
+    HQ = "hq"
+    HKV = "hkv"
     HQKV = "hqkv"
     BHQKV = "bhqkv"
 
@@ -42,7 +44,7 @@ class AttentionBlockingConfig:
     num_kv_blocks: Optional[int] = None
     num_q_blocks: Optional[int] = None
     head_block_size: Optional[int] = None
-    skip_kv: Optional[bool] = False
+    skip_kv: Optional[bool] = True
     num_batch_blocks: Optional[int] = None
 
 
@@ -55,6 +57,8 @@ _STRATEGIES: Dict[BlockingMode, Callable] = {
     BlockingMode.Q: blocked_q_attention_forward,
     BlockingMode.H: blocked_h_attention_forward,
     BlockingMode.QKV: blocked_qkv_attention_forward,
+    BlockingMode.HQ: blocked_hqkv_attention_forward,
+    BlockingMode.HKV: blocked_hqkv_attention_forward,
     BlockingMode.HQKV: blocked_hqkv_attention_forward,
     BlockingMode.BHQKV: blocked_bhqkv_attention_forward,
 }
@@ -90,7 +94,7 @@ def past_key_value_update(
             attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
             cache_kwargs["CCL"] = attention_mask.shape[-1]
         key, value = past_key_value.update(key, value, module.layer_idx, cache_kwargs)
-    return key, value, cache_kwargs
+    return key, value, attention_mask, cache_kwargs
 
 
 def generic_blocked_attention_interface(
@@ -134,7 +138,7 @@ def generic_blocked_attention_interface(
                 )
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
         else:
-            key, value, cache_kwargs = past_key_value_update(
+            key, value, attention_mask, cache_kwargs = past_key_value_update(
                 module=module,
                 key=key,
                 value=value,

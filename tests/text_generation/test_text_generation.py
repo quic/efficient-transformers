@@ -15,7 +15,6 @@ from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalL
 from QEfficient.utils import hf_download
 from QEfficient.utils._utils import load_hf_tokenizer
 from QEfficient.utils.constants import Constants
-from QEfficient.utils.device_utils import get_available_device_id
 
 configs = [pytest.param("gpt2", 2, None, 32, id="gpt2_config")]
 
@@ -73,10 +72,6 @@ def test_generate_text_stream(
     qeff_model = QEFFAutoModelForCausalLM(model_hf)
 
     qeff_model.export()
-    device_id = get_available_device_id()
-
-    if not device_id:
-        pytest.skip("No available devices to run model on Cloud AI 100")
 
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,

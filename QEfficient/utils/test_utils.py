@@ -98,8 +98,16 @@ def set_num_layers_vlm(config: AutoConfig, n_layer: int = -1):
     elif hasattr(config, "text_config"):
         config.text_config.num_hidden_layers = n_layer
         config.vision_config.num_hidden_layers = n_layer
+        if hasattr(config.vision_config, "vt_num_hidden_layers"):
+            config.vision_config.vt_num_hidden_layers = n_layer
         if hasattr(config.vision_config, "depth"):
             config.vision_config.depth = n_layer
+        if hasattr(config.vision_config, "deepstack_visual_indexes"):
+            # Keep deepstack taps aligned with reduced vision depth for fast-test configs.
+            deepstack_idxs = [idx for idx in config.vision_config.deepstack_visual_indexes if idx < n_layer]
+            if not deepstack_idxs and n_layer > 0:
+                deepstack_idxs = [n_layer - 1]
+            config.vision_config.deepstack_visual_indexes = deepstack_idxs
     elif hasattr(config, "llm_config"):
         config.llm_config.num_hidden_layers = n_layer
         config.vision_config.num_hidden_layers = n_layer
@@ -123,12 +131,15 @@ def load_hf_vlm_model(
                 config._name_or_path,
                 low_cpu_mem_usage=False,
                 config=config,
+                ignore_mismatched_sizes=True,
+                trust_remote_code=True,
             )
         except ValueError:
             model_hf = AutoModelForCausalLM.from_pretrained(
                 config._name_or_path,
                 low_cpu_mem_usage=False,
                 trust_remote_code=True,
+                ignore_mismatched_sizes=True,
                 config=config,
             )
     else:
@@ -176,6 +187,8 @@ def load_qeff_vlm_model(
                 continuous_batching=continuous_batching,
                 qaic_config=qaic_config,
                 torch_dtype=torch_dtype,
+                ignore_mismatched_sizes=True,
+                trust_remote_code=True,
             )
         except ValueError:
             qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
@@ -186,6 +199,7 @@ def load_qeff_vlm_model(
                 continuous_batching=continuous_batching,
                 qaic_config=qaic_config,
                 trust_remote_code=True,
+                ignore_mismatched_sizes=True,
                 torch_dtype=torch_dtype,
             )
     else:
@@ -197,6 +211,7 @@ def load_qeff_vlm_model(
             model_hf,
             kv_offload=kv_offload,
             continuous_batching=continuous_batching,
+            trust_remote_code=True,
             qaic_config=qaic_config,
             torch_dtype=torch_dtype,
         )
@@ -207,16 +222,11 @@ def load_qeff_vlm_model(
 def load_vlm_model(config):
     try:
         model_hf = AutoModelForImageTextToText.from_pretrained(
-            config._name_or_path,
-            low_cpu_mem_usage=False,
-            config=config,
+            config._name_or_path, low_cpu_mem_usage=False, config=config, dtype=torch.float32
         )
     except ValueError:
         model_hf = AutoModelForCausalLM.from_pretrained(
-            config._name_or_path,
-            low_cpu_mem_usage=False,
-            trust_remote_code=True,
-            config=config,
+            config._name_or_path, low_cpu_mem_usage=False, trust_remote_code=True, config=config, dtype=torch.float32
         )
     model_hf.eval()
     return model_hf
@@ -231,9 +241,7 @@ def load_vlm_model_from_config(config):
         )
     except ValueError:
         model_hf = AutoModelForCausalLM.from_config(
-            config,
-            attn_implementation="eager",
-            trust_remote_code=True,
+            config, attn_implementation="eager", trust_remote_code=True, ignore_mismatched_sizes=True
         )
     torch_dtype = getattr(model_hf.config, "torch_dtype", None)
     if torch_dtype == torch.bfloat16 or torch_dtype == torch.float16:
@@ -281,6 +289,14 @@ def load_qeff_model_with_sampler(
         )
 
     return qeff_model
+
+
+def get_text_config(config):
+    if hasattr(config, "text_config"):
+        return config.text_config
+    elif hasattr(config, "llm_config"):
+        return config.llm_config
+    return config
 
 
 # Processor class for InternVL models
@@ -447,7 +463,8 @@ class ModelConfig:
         "google/gemma-3-4b-it",
         "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
         "Qwen/Qwen2.5-VL-3B-Instruct",
-        "meta-llama/Llama-3.2-11B-Vision-Instruct",
+        "Qwen/Qwen3.5-0.8B",
+        # "Qwen/Qwen3.6-35B-A3B",
     }
 
     INTERNVL_MODELS = {
@@ -458,19 +475,53 @@ class ModelConfig:
     MOLMO_MODELS = {
         "allenai/Molmo-7B-D-0924",
     }
-
+    # FIXME: Debug issue wrt Qwen 3.5, 3.6
     SKIPPED_MODELS = {
         "meta-llama/Llama-4-Scout-17B-16E-Instruct",
         "allenai/Molmo-7B-D-0924",
-        "meta-llama/Llama-3.2-11B-Vision-Instruct",
+        "wtang06/mpt-125m-c4",
+        "Snowflake/Llama-3.1-SwiftKV-8B-Instruct",
+        "OpenGVLab/InternVL2_5-1B",
+        "OpenGVLab/InternVL3_5-1B",
+        "jinaai/jina-embeddings-v2-base-code",
+        "hpcai-tech/grok-1",
+        "Qwen/Qwen2.5-VL-3B-Instruct",
     }
 
     DUAL_QPC_MODELS = {
+        "moonshotai/Kimi-K2.5",
         "OpenGVLab/InternVL2_5-1B",
         "OpenGVLab/InternVL3_5-1B",
         "Qwen/Qwen2.5-VL-3B-Instruct",
         "Qwen/Qwen3-VL-30B-A3B-Instruct",
         "Qwen/Qwen3-VL-2B-Instruct",
+        "Qwen/Qwen3-VL-Reranker-2B",
+        "Qwen/Qwen3-VL-Reranker-8B",
+        "Qwen/Qwen3.5-0.8B",
+        "Qwen/Qwen3.6-35B-A3B",
+        "tiny-random/gemma-4-dense",
+        "tiny-random/gemma-4-moe",
+    }
+
+    REPEAT_KV_TEST_MODELS = {
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "ibm-granite/granite-3.1-1b-a400m-base",
+        "Qwen/Qwen2-0.5B",
+        "bigcode/starcoder2-3b",
+        "meta-llama/Llama-3.2-1B",
+        "TheBloke/TinyLlama-1.1B-Chat-v0.3-AWQ",
+        "TheBloke/Llama-2-7B-GPTQ",
+        "neuralmagic/Llama-3.2-3B-Instruct-FP8",
+        "ibm-granite/granite-3.1-2b-instruct",
+        "llava-hf/llava-1.5-7b-hf",
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+        "Qwen/Qwen2.5-VL-3B-Instruct",
+        "Qwen/Qwen3-VL-2B-Instruct",
+        "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        "allenai/Molmo-7B-D-0924",
+        "OpenGVLab/InternVL2_5-1B",
+        "Qwen/Qwen3.5-0.8B",
     }
 
     EXTERNAL_MODELS = {

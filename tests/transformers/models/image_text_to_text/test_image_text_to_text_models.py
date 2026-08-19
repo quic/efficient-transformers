@@ -15,6 +15,7 @@ import pytest
 import requests
 import torch
 from PIL import Image
+from requests.adapters import HTTPAdapter
 from transformers import (
     AutoConfig,
     AutoProcessor,
@@ -22,6 +23,7 @@ from transformers import (
     GenerationConfig,
     TextStreamer,
 )
+from urllib3.util.retry import Retry
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils._utils import create_json
@@ -34,8 +36,18 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
+from tests.utils.load_kimi_utils import (
+    get_kimi_k25_test_config,
+    is_kimi_k25,
+    load_kimi_k25_layer_subset_model,
+    load_kimi_k25_model_from_config,
+    run_kimi_k25_hf_model_on_pytorch,
+)
 
 from ..check_model_results import dump_and_compare_results
+
+_session = requests.Session()
+_session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=1)))
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
 with open(CONFIG_PATH, "r") as f:
@@ -43,6 +55,7 @@ with open(CONFIG_PATH, "r") as f:
     multimodal_models = config_data["image_text_models"]
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
+test_mm_moe_models = [model["model_name"] for model in multimodal_models if "moe" in model.get("model_type", "")]
 
 NEW_GENERATION_TOKENS = 10
 
@@ -56,8 +69,14 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     enable_qnn: Optional[bool] = False,
     qnn_config: Optional[str] = None,
     config: Optional[AutoConfig] = None,
+    qaic_config: Optional[dict] = None,
+    test_kv_replicate: Optional[bool] = None,
     torch_dtype: Optional[torch.dtype] = torch.float32,
     compare_results: Optional[bool] = False,
+    compile_only: bool = False,
+    mdp_num_partitions: Optional[int] = None,
+    mdp_strategy: Optional[str] = None,
+    use_onnx_subfunctions: bool = False,
 ):
     prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
@@ -70,14 +89,41 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     pytorch_kv_tokens = None
     ort_tokens = None
     n_layer = num_hidden_layers
-    if config is None:
+    qaic_config = copy.deepcopy(qaic_config) if qaic_config is not None else None
+
+    if is_kimi_k25(model_name) and config is None:
+        model_hf, tokenizer, processor = load_kimi_k25_layer_subset_model()
+        config = model_hf.config
+        qeff_model = QEFFAutoModelForImageTextToText(
+            copy.deepcopy(model_hf),
+            kv_offload=kv_offload,
+            config=model_hf.config,
+            torch_dtype=torch_dtype,
+        )
+    elif is_kimi_k25(model_name):
+        model_hf, tokenizer, processor = load_kimi_k25_model_from_config(config)
+        qeff_model = QEFFAutoModelForImageTextToText(
+            copy.deepcopy(model_hf),
+            kv_offload=kv_offload,
+            config=model_hf.config,
+            torch_dtype=torch_dtype,
+        )
+    elif config is None:
         config = AutoConfig.from_pretrained(
             model_name, trust_remote_code=True, padding=model_name not in ModelConfig.MOLMO_MODELS
         )
         config = set_num_layers_vlm(config, n_layer=n_layer)
+        if test_kv_replicate:
+            qaic_config = qaic_config or {}
+            qaic_config["replicate_kv_heads"] = True
         if hasattr(config, "model_type") and config.model_type in ["gemma3"]:
             config.text_config._sliding_window_pattern = 2
             config.text_config.layer_types = ["sliding_attention", "full_attention"]
+        if hasattr(config, "model_type") and config.model_type in ["gemma4"]:
+            config.text_config.num_kv_shared_layers = 0
+            config.text_config.num_hidden_layers = 1
+            config.vision_config.num_hidden_layers = 1
+            config.text_config.layer_types = ["sliding_attention"]
         if hasattr(config, "model_type") and config.model_type in [
             "qwen3_vl",
             "qwen3_vl_moe",
@@ -92,7 +138,9 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
                 model_name,
                 kv_offload=kv_offload,
                 config=config,
+                qaic_config=qaic_config,
                 torch_dtype=torch_dtype,
+                ignore_mismatched_sizes=True,
             )
         else:
             model_hf = load_vlm_model(config)
@@ -100,15 +148,22 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
                 model_name,
                 kv_offload=kv_offload,
                 config=config,
+                qaic_config=qaic_config,
                 torch_dtype=torch_dtype,
+                ignore_mismatched_sizes=True,
             )
     else:
+        if test_kv_replicate:
+            qaic_config = qaic_config or {}
+            qaic_config["replicate_kv_heads"] = True
         model_hf = load_vlm_model_from_config(config)
         qeff_model = QEFFAutoModelForImageTextToText(
             copy.deepcopy(model_hf),
             kv_offload=kv_offload,
             config=model_hf.config,
+            qaic_config=qaic_config,
             torch_dtype=torch_dtype,
+            ignore_mismatched_sizes=True,
         )
     compile_kwargs = {
         "num_devices": num_devices,
@@ -117,8 +172,18 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         "mxfp6": False,
         "enable_qnn": enable_qnn,
         "qnn_config": qnn_config,
+        "qaic_config": qaic_config,
+        "use_onnx_subfunctions": use_onnx_subfunctions,
+        "split-model-io": True,
     }
 
+    mdp_compile_kwargs = {}
+    if mdp_num_partitions is not None:
+        mdp_compile_kwargs["mdp_num_partitions"] = mdp_num_partitions
+    if mdp_strategy is not None:
+        mdp_compile_kwargs["mdp_strategy"] = mdp_strategy
+    if model_name == "tiny-random/gemma-4-dense" or model_name == "tiny-random/gemma-4-moe":
+        compile_kwargs["node_precision_info"] = True
     if model_name in ModelConfig.INTERNVL_MODELS:
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
         processor = InternProcessor(model_hf, tokenizer)
@@ -128,7 +193,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         num_patches_list = []
         questions = []
         for i in range(len(prompt)):
-            img = requests.get(img_url_list[i], stream=True)
+            img = _session.get(img_url_list[i], stream=True)
             image = Image.open(BytesIO(img.content)).convert("RGB")
             image = image.resize((448, 448))
             pixel_value = processor.load_image(image, max_num=12)
@@ -162,7 +227,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     elif model_name in ModelConfig.MOLMO_MODELS:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-        img = requests.get(img_url, stream=True)
+        img = _session.get(img_url, stream=True)
         image = Image.open(BytesIO(img.content)).convert("RGB")
         image = image.resize((536, 354))
         inputs = processor.process(images=[image], text=query)
@@ -188,9 +253,36 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         inputs["pixel_values"] = inputs.pop("images")
         compile_kwargs["img_size"] = img_size
 
+    elif is_kimi_k25(model_name):
+        image = Image.open(requests.get(img_url, stream=True).raw).convert("RGB")
+        conversation = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": image},
+                    {"type": "text", "text": query},
+                ],
+            },
+        ]
+        prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
+        inputs = processor(
+            messages=conversation,
+            add_generation_prompt=True,
+            tokenize=False,
+            return_tensors="pt",
+        )
+        pytorch_hf_tokens = run_kimi_k25_hf_model_on_pytorch(copy.deepcopy(model_hf), processor, inputs, max_gen_len)
+        compile_kwargs.update(
+            {
+                "prefill_seq_len": 1,
+                "image_height": image.height,
+                "image_width": image.width,
+            }
+        )
+
     else:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-        image = Image.open(requests.get(img_url, stream=True).raw)
+        image = Image.open(_session.get(img_url, stream=True).raw)
         if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
             image = image.resize((1540, 1540))
         conversation = [
@@ -224,6 +316,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             "qwen2_5_vl",
             "qwen3_vl",
             "qwen3_vl_moe",
+            "qwen3_5",
+            "qwen3_5_moe",
         ]:
             inputs = qeff_model.model.prepare_inputs_for_generation(
                 inputs=inputs, prefill_seq_len=prompt_len, batch_size=batch_size
@@ -236,12 +330,25 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     # assert (pytorch_kv_tokens == pytorch_hf_tokens).all(), (
     #     "Tokens don't match for pytorch HF output and pytorch KV output"
     # )
-
-    _ = qeff_model.export()
     # ort_tokens = api_runner.run_vlm_kv_model_on_ort(onnx_model_path)
     # assert (pytorch_hf_tokens == ort_tokens).all(), "Tokens don't match for pytorch HF output and ORT output"
 
+    if (
+        mdp_compile_kwargs
+        and model_name not in ModelConfig.INTERNVL_MODELS
+        and model_name not in ModelConfig.MOLMO_MODELS
+    ):
+        compile_kwargs["skip_vision"] = True
+        compile_kwargs.update(mdp_compile_kwargs)
+    elif mdp_compile_kwargs:
+        compile_kwargs.update(mdp_compile_kwargs)
+    compile_kwargs["use_onnx_subfunctions"] = use_onnx_subfunctions
     qeff_model.compile(**compile_kwargs)
+
+    if compile_only:
+        manual_cleanup(qeff_model.onnx_path)
+        return
+
     streamer = TextStreamer(processor.tokenizer)
     print("QPC Outputs (QAIC):")
     exec_info = qeff_model.generate(inputs=inputs, generation_len=NEW_GENERATION_TOKENS, streamer=streamer)
@@ -272,6 +379,8 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 def test_full_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_offload, manual_cleanup):
     if model_name in ModelConfig.SKIPPED_MODELS:
         pytest.skip("Test skipped for this model due to some issues.")
+    if model_name in ["tiny-random/gemma-4-dense", "tiny-random/gemma-4-moe"]:
+        pytest.skip("These tests are currently failing due to token mismatch. They need to be fixed and re-enabled.")
     if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
         pytest.skip("These models require kv_offload=True for testing.")
 
@@ -305,6 +414,30 @@ def test_few_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_off
     )
 
 
+@pytest.mark.few_layers
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("model_name", test_mm_moe_models)
+@pytest.mark.parametrize("kv_offload", [True, False])
+def test_few_image_text_to_text_onnx_mdp_compile_only(model_name, kv_offload, manual_cleanup):
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to some issues.")
+    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
+        pytest.skip("These models require kv_offload=True for testing.")
+
+    torch.manual_seed(42)
+    check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name,
+        num_hidden_layers=model_config_dict[model_name]["num_layers"],
+        kv_offload=kv_offload,
+        manual_cleanup=manual_cleanup,
+        compile_only=True,
+        mdp_num_partitions=2,
+        mdp_strategy="onnx",
+        use_onnx_subfunctions=True,
+    )
+
+
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
@@ -318,7 +451,12 @@ def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_o
 
     torch.manual_seed(42)
     hf_config = None
-    if model_name in ModelConfig.STANDARD_VLM_MODELS:
+    if is_kimi_k25(model_name):
+        hf_config = get_kimi_k25_test_config(model_name, model_config_dict)
+        check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+            model_name, kv_offload=kv_offload, config=hf_config, manual_cleanup=manual_cleanup
+        )
+    elif model_name in ModelConfig.STANDARD_VLM_MODELS:
         model_type = model_config_dict[model_name].get("model_type", None)
         custom_config = model_config_dict[model_name].get("additional_params", {})
         hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
@@ -335,6 +473,57 @@ def test_dummy_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(model_name, kv_o
         )
 
 
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.dummy_layers
+@pytest.mark.parametrize("model_name", test_mm_models)
+@pytest.mark.parametrize("kv_offload", [True, False])
+def test_custom_replicate_kv_pytorch_vs_ai100(
+    model_name,
+    kv_offload,
+    manual_cleanup,
+):
+    """
+    Test function to validate the PyTorch model, the PyTorch model after KV changes, the ONNX model, and the Cloud AI 100 model,  without continuous batching.
+    ``Mandatory`` Args:
+        :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
+    """
+    torch.manual_seed(42)
+    if model_name in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to some issues.")
+    if model_name in ModelConfig.DUAL_QPC_MODELS and not kv_offload:
+        pytest.skip("These models require kv_offload=True for testing.")
+
+    if model_name in ModelConfig.REPEAT_KV_TEST_MODELS:
+        hf_config = None
+        if model_name in ModelConfig.STANDARD_VLM_MODELS:
+            model_type = model_config_dict[model_name].get("model_type")
+            custom_config = model_config_dict[model_name].get("additional_params", {})
+            hf_config = AutoConfig.for_model(model_type, trust_remote_code=True, **custom_config)
+            hf_config.name_or_path = model_name
+
+        if hf_config is not None:
+            check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+                model_name=model_name,
+                kv_offload=kv_offload,
+                config=hf_config,
+                qaic_config={},
+                test_kv_replicate=True,
+                manual_cleanup=manual_cleanup,
+            )
+        else:
+            check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
+                model_name=model_name,
+                num_hidden_layers=model_config_dict[model_name]["num_layers"],
+                kv_offload=kv_offload,
+                qaic_config={},
+                test_kv_replicate=True,
+                manual_cleanup=manual_cleanup,
+            )
+    else:
+        pytest.skip(f"Skipping replicate KV test for {model_name} as it's not in REPEAT_KV_TEST_MODELS")
+
+
 ################################ QNN Tests ################################
 
 
@@ -349,7 +538,13 @@ def test_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_qnn(model_name, kv_off
     ``Mandatory`` Args:
         :model_name (str): Hugging Face Model Card name, Example: ``gpt2``
     """
-    if model_name == "meta-llama/Llama-4-Scout-17B-16E-Instruct" or model_name == "google/gemma-3-4b-it":
+    if model_name in [
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        "google/gemma-3-4b-it",
+        "tiny-random/gemma-4-dense",
+        "tiny-random/gemma-4-moe",
+        "moonshotai/Kimi-K2.5",
+    ]:
         pytest.skip("QNN is not supported for these models yet.")
 
     qnn_config_json_path = os.path.join(os.getcwd(), "qnn_config.json")

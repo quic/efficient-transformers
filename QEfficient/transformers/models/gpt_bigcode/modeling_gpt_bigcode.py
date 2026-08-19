@@ -82,10 +82,12 @@ def eager_attention_forward(
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
 
+    mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
+
     if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
-        )
+        # Apply the attention mask
+        attn_weights = torch.where(attention_mask, mask_value, attn_weights)
+
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
@@ -315,11 +317,8 @@ class QEffGPTBigCodeModel(GPTBigCodeModel):
         else:
             encoder_attention_mask = None
 
-        # Prepare head mask if needed
-        # 1.0 in head_mask indicate we keep the head
-        # attention_probs has shape bsz x n_heads x N x N
-        # head_mask has shape n_layer x batch x n_heads x N x N
-        head_mask = self.get_head_mask(head_mask, self.config.n_layer)
+        if head_mask is None:
+            head_mask = [None] * self.config.n_layer
 
         position_ids1 = position_ids.clone()
         position_ids1[position_ids1 == -1] = 0

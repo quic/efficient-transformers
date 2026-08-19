@@ -18,20 +18,20 @@ def main():
     parser.add_argument("--prompt", type=str, default="Hello", help="Input prompt")
     parser.add_argument("--prefill-seq-len", type=int, default=1, help="Prefill sequence length")
     parser.add_argument(
-        "--ctx-len", type=int, default=32768, help="Context length high enough to force blocking computation"
+        "--ctx-len", type=int, default=131072, help="Context length high enough to force blocking computation"
     )
-    parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
+    parser.add_argument("--generation-len", type=int, default=64000, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
     parser.add_argument(
         "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
-        default=[36, 37, 38, 39, 40, 41, 42, 43],
+        default=[0, 1, 2, 3, 4, 5, 6, 7],
         help="Device IDs (comma-separated) e.g. [0,1]",
     )
     parser.add_argument(
         "--blocking-mode",
         type=str,
-        default="hqkv",
+        default="kv",
         help="Blocking mode, valid options: kv, q, h, qkv, hqkv",
     )
     parser.add_argument(
@@ -67,7 +67,13 @@ def main():
         print(f"Generated: {exec_info.generated_texts[0]}")
 
     # setup qaic config to enable blocking, ensure 4 or more device ids are passed
-    qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode}
+    # qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode}
+    qaic_config = {
+        "enable_blocking": True,
+        "blocking_mode": "kv",
+        "num_kv_blocks": 16,
+        "skip_kv": True,
+    }
     model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, num_hidden_layers=2)
 
     # Compile the model
@@ -76,7 +82,11 @@ def main():
         ctx_len=args.ctx_len,
         num_cores=args.num_cores,
         num_devices=8,
+        mxfp6_matmul=True,
+        mxint8_kv_cache=True,
+        use_onnx_subfunctions=True,
         qaic_config=qaic_config,
+        user_tiled=True,
     )
     print(f"Model compiled to: {qpc_path_blocked}")
 

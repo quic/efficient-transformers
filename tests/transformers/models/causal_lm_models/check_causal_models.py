@@ -16,7 +16,8 @@ from transformers import AutoConfig
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils._utils import load_hf_tokenizer
-from QEfficient.utils.constants import Constants
+from QEfficient.utils.config_utils import get_first_config_value
+from QEfficient.utils.constants import ATTENTION_HEAD_CONFIG_KEYS, KV_HEAD_CONFIG_KEYS, Constants
 from QEfficient.utils.run_utils import ApiRunner
 from QEfficient.utils.test_utils import ModelConfig, load_hf_causal_lm_model
 
@@ -39,6 +40,50 @@ def get_custom_n_layers(model_name):
     return 1
 
 
+def check_kv_repeat_causal_lm_pytorch_vs_ai100(
+    model_name: str,
+    manual_cleanup: callable,
+    prompt_len: int = Constants.PROMPT_LEN,
+    ctx_len: int = Constants.CTX_LEN,
+    n_layer: int = -1,
+    config: Optional[AutoConfig] = None,
+):
+    """
+    Validate causal LM flow with repeated KV heads configuration.
+    """
+    if config is None:
+        model_config = AutoConfig.from_pretrained(
+            model_name,
+            trust_remote_code=model_name in ModelConfig.EXTERNAL_MODELS,
+        )
+    else:
+        model_config = config
+
+    num_attention_heads = get_first_config_value(model_config, ATTENTION_HEAD_CONFIG_KEYS, default=1, cast_int=True)
+    num_key_value_heads = get_first_config_value(model_config, KV_HEAD_CONFIG_KEYS, default=None, cast_int=True)
+    if num_key_value_heads is None:
+        num_key_value_heads = num_attention_heads
+    if num_attention_heads < 1 or num_key_value_heads < 1:
+        raise ValueError(
+            f"Invalid heads in config for RepeatKV: "
+            f"num_attention_heads={num_attention_heads}, num_key_value_heads={num_key_value_heads}"
+        )
+    if num_attention_heads % num_key_value_heads != 0:
+        raise ValueError(
+            f"Invalid heads in config for RepeatKV: num_attention_heads ({num_attention_heads}) "
+            f"is not divisible by num_key_value_heads ({num_key_value_heads})."
+        )
+    check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
+        model_name=model_name,
+        manual_cleanup=manual_cleanup,
+        prompt_len=prompt_len,
+        ctx_len=ctx_len,
+        n_layer=n_layer,
+        config=config,
+        qaic_config={"replicate_kv_heads": True},
+    )
+
+
 def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
     manual_cleanup: callable,
@@ -56,8 +101,11 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     qaic_config: Optional[dict] = None,
     retain_full_kv: Optional[bool] = None,
     compare_results: bool = False,
+    compile_only: bool = False,
+    mdp_num_partitions: Optional[int] = None,
+    mdp_strategy: Optional[str] = None,
+    use_onnx_subfunctions: bool = False,
 ):
-
     torch.manual_seed(42)
     replace_transformers_quantizers()
     model_hf = load_hf_causal_lm_model(model_name, num_hidden_layers=n_layer, config=config)
@@ -72,15 +120,6 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
     pytorch_kv_tokens = None
     ort_tokens = None
 
-    api_runner = ApiRunner(
-        batch_size,
-        tokenizer,
-        config,
-        prompts,
-        Constants.PROMPT_LEN,
-        Constants.CTX_LEN,
-        full_batch_size if continuous_batching else None,
-    )
     qeff_model = QEFFAutoModelForCausalLM(
         copy.deepcopy(model_hf),
         is_tlm=is_tlm,
@@ -95,6 +134,15 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         num_devices=num_devices,
         qaic_config=qaic_config,
     )
+    api_runner = ApiRunner(
+        batch_size,
+        tokenizer,
+        qeff_model.config,
+        prompts,
+        Constants.PROMPT_LEN,
+        Constants.CTX_LEN,
+        full_batch_size if continuous_batching else None,
+    )
     if continuous_batching is False:
         pytorch_kv_tokens = api_runner.run_kv_model_on_pytorch(qeff_model.model)
 
@@ -105,7 +153,7 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         else:
             pytorch_hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
 
-    onnx_model_path = qeff_model.export()
+    onnx_model_path = qeff_model.export(use_onnx_subfunctions=use_onnx_subfunctions)
     if continuous_batching is False:
         ort_tokens = api_runner.run_kv_model_on_ort(onnx_model_path, is_tlm=is_tlm)
         gen_len = ort_tokens.shape[-1]
@@ -136,6 +184,12 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         }
         compiler_options["specializations"] = [prefill_spec, decode_spec]
 
+    mdp_compile_kwargs = {}
+    if mdp_num_partitions is not None:
+        mdp_compile_kwargs["mdp_num_partitions"] = mdp_num_partitions
+    if mdp_strategy is not None:
+        mdp_compile_kwargs["mdp_strategy"] = mdp_strategy
+
     qpc_path = qeff_model.compile(
         prefill_seq_len=prompt_len,
         ctx_len=ctx_len,
@@ -149,9 +203,15 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         prefill_only=prefill_only,
         batch_size=batch_size if continuous_batching else 1,
         full_batch_size=full_batch_size if continuous_batching else None,
+        use_onnx_subfunctions=use_onnx_subfunctions,
         **compiler_options,
+        **mdp_compile_kwargs,
     )
     assert os.path.isfile(os.path.join(os.path.dirname(qpc_path), "qconfig.json"))
+
+    if compile_only:
+        manual_cleanup(onnx_model_path)
+        return
 
     # Generate
     exec_info = qeff_model.generate(tokenizer, prompts=prompts)
@@ -201,6 +261,10 @@ def check_causal_lm_pytorch_vs_kv_vs_ort_vs_ai100(
         "batch_size": batch_size if continuous_batching else 1,
         "full_batch_size": full_batch_size if continuous_batching else None,
         "compiler_options": compiler_options,
+        "compile_only": compile_only,
+        "mdp_num_partitions": mdp_num_partitions,
+        "mdp_strategy": mdp_strategy,
+        "use_onnx_subfunctions": use_onnx_subfunctions,
     }
     assert dump_and_compare_results(
         model_name,

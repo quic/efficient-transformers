@@ -51,7 +51,7 @@ class QEffQwen2RotaryEmbedding(Qwen2RotaryEmbedding):
         super().__init__(config=config)
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=config.torch_dtype
         )
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
@@ -106,7 +106,9 @@ def eager_attention_forward(
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
+            attention_mask,
+            torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype),
+            attn_weights,
         )
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -165,7 +167,7 @@ class QEffQwen2Attention(Qwen2Attention):
                 past_seen_tokens=past_seen_tokens,
             )
         else:
-            key_states, value_states, _ = past_key_value_update(
+            key_states, value_states, attention_mask, _ = past_key_value_update(
                 module=self,
                 key=key_states,
                 value=value_states,

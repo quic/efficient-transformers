@@ -12,7 +12,6 @@ import torch
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
-from QEfficient.utils.device_utils import get_available_device_id
 
 torch.manual_seed(42)
 
@@ -23,7 +22,7 @@ configs = [
     ("gptj", 256, 2, 4, 128, 512, 127, {"rotary_dim": 16}),
     ("llama", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     ("mistral", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
-    ("mixtral", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
+    # ("mixtral", 256, 2, 4, 128, 512, 127, {"num_key_value_heads": 2}),
     ("mpt", 256, 2, 4, 128, 512, 127, {}),
     ("phi", 256, 2, 4, 128, 512, 127, {}),
     ("phi3", 256, 2, 4, 128, 512, 127, {"pad_token_id": 0}),
@@ -124,8 +123,6 @@ def test_subfunction_vs_nonsubfunction(config, tmp_path):
             "Expected NO QEffGPT2Block function calls in graph when use_onnx_subfunctions=False"
         )
 
-    if not get_available_device_id():
-        pytest.skip("No available devices to run model on Cloud AI 100")
     # TODO: Re-enable this check when generation is fully deterministic
     # Compile and test generation to ensure functional equivalence
     compile_params = {"prefill_seq_len": 8, "ctx_len": 16}

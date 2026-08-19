@@ -18,6 +18,7 @@ from QEfficient.transformers.embeddings.embedding_utils import POOLING_MAP
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModel
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import Constants, QnnConstants
+from QEfficient.utils.test_utils import ModelConfig
 
 from ..check_model_results import dump_and_compare_results
 
@@ -132,6 +133,8 @@ def test_full_embed_model_pytorch_vs_onnx_vs_ai100(model, manual_cleanup):
     """
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output.
     """
+    if model["model_name"] in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to issues in HF.")
     check_embed_pytorch_vs_ort_vs_ai100(
         model_name=model["model_name"], seq_len=32, compare_results=True, manual_cleanup=manual_cleanup
     )
@@ -145,6 +148,8 @@ def test_full_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model, manual_cleanup
     """
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with pooling.
     """
+    if model["model_name"] in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to issues in HF.")
     check_embed_pytorch_vs_ort_vs_ai100(
         model_name=model["model_name"],
         seq_len=32,
@@ -162,6 +167,8 @@ def test_full_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model, manua
     """
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with multiple seq_len.
     """
+    if model["model_name"] in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to issues in HF.")
     check_embed_pytorch_vs_ort_vs_ai100(
         model_name=model["model_name"], seq_len=[32, 20], compare_results=True, manual_cleanup=manual_cleanup
     )
@@ -174,6 +181,8 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100(model, manual_cleanup):
     """
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output.
     """
+    if model["model_name"] in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to issues in HF.")
     check_embed_pytorch_vs_ort_vs_ai100(
         model_name=model["model_name"], seq_len=32, n_layer=1, manual_cleanup=manual_cleanup
     )
@@ -186,6 +195,8 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_pooling(model, manual_cleanup):
     """
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with pooling.
     """
+    if model["model_name"] in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to issues in HF.")
     check_embed_pytorch_vs_ort_vs_ai100(
         model_name=model["model_name"], seq_len=32, pooling=model["pooling"], n_layer=1, manual_cleanup=manual_cleanup
     )
@@ -198,6 +209,8 @@ def test_embed_model_pytorch_vs_onnx_vs_ai100_multiple_seq_len(model, manual_cle
     """
     Test function to validate output of the Pytorch, ONNX and AI 100 runtime model output with multiple seq_len.
     """
+    if model["model_name"] in ModelConfig.SKIPPED_MODELS:
+        pytest.skip("Test skipped for this model due to issues in HF.")
     check_embed_pytorch_vs_ort_vs_ai100(
         model_name=model["model_name"], seq_len=[32, 20], n_layer=1, manual_cleanup=manual_cleanup
     )

@@ -51,7 +51,7 @@ class QEffGemma2RotaryEmbedding(Gemma2RotaryEmbedding):
 
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cache(
-            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+            seq_len=self.original_max_seq_len, device=self.inv_freq.device, dtype=config.torch_dtype
         )
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
@@ -99,10 +99,11 @@ def eager_attention_forward(
     value_states = repeat_kv(value, module.num_key_value_groups)
 
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+    mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=attn_weights.dtype)
+
     if attention_mask is not None:
-        attn_weights = torch.where(
-            attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=module.config.torch_dtype), attn_weights
-        )
+        # Apply the attention mask
+        attn_weights = torch.where(attention_mask, mask_value, attn_weights)
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
@@ -160,7 +161,7 @@ class QEffGemma2Attention(Gemma2Attention):
                 past_seen_tokens=past_seen_tokens,
             )
         else:
-            key_states, value_states, _ = past_key_value_update(
+            key_states, value_states, attention_mask, _ = past_key_value_update(
                 module=self,
                 key=key_states,
                 value=value_states,
@@ -333,12 +334,6 @@ class QEffGemma2Model(Gemma2Model):
         causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_seen_tokens)
         # embed positions
         hidden_states = inputs_embeds
-
-        # normalized
-        # Gemma2 downcasts the below to float16, causing sqrt(3072)=55.4256 to become 55.5
-        # See https://github.com/huggingface/transformers/pull/29402
-        normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=hidden_states.dtype)
-        hidden_states = hidden_states * normalizer
 
         # decoder layers
         all_hidden_states = () if output_hidden_states else None

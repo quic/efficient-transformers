@@ -19,7 +19,7 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 subfunc_npi_file_path = os.path.join(dir_path, "subfunction_120b_npi.yaml")
 non_subfunc_npi_file_path = os.path.join(dir_path, "non_subfunction_120b_npi.yaml")
 
-model_id = "openai/gpt-oss-120b"  # weights are not required to convert to fp32
+model_id = "tiny-random/gpt-oss-bf16"  # weights are not required to convert to fp32
 
 prompt = """
 Once upon a time, in a small town, there lived a young boy named Alex. Alex was a curious and adventurous child, always eager to explore the world around him. One day, while playing in the park, Alex stumbled upon a mysterious old book hidden beneath a pile of leaves. The book was filled with stories of distant lands, magical creatures, and extraordinary adventures.
@@ -31,21 +31,24 @@ The path to the treasure was not an easy one. Alex had to navigate through dense
 # Run prefill
 config = AutoConfig.from_pretrained(model_id)
 tokenizer = AutoTokenizer.from_pretrained(model_id)
-PREFILL_SEQ_LEN = 128
-CTX_LEN = 8192
+PREFILL_SEQ_LEN = 512
+CTX_LEN = 1024
+NUM_CORES = 4
+MOE_PREFILL_PACKED_CHUNK_SIZE = 256
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id)
 
 decode_qpc_path = qeff_model.compile(
     prefill_seq_len=1,
     ctx_len=CTX_LEN,
-    num_cores=16,
+    num_cores=NUM_CORES,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     num_devices=1,
     mos=1,
     aic_enable_depth_first=True,
     num_speculative_tokens=None,
+    use_onnx_subfunctions=True,
     offload_pt_weights=False,  # Need the weights in memory for prefill-model export/compilation in the next step
     retain_full_kv=True,
     # split_retained_state_io=True,   # This should be used for disagg serving via VLLM
@@ -58,12 +61,14 @@ decode_qpc_path = qeff_model.compile(
 prefill_qpc_path = qeff_model.compile(
     prefill_seq_len=PREFILL_SEQ_LEN,
     ctx_len=CTX_LEN,
-    num_cores=16,
+    num_cores=NUM_CORES,
+    moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
     mxfp6_matmul=True,
     mxint8_kv_cache=True,
     num_devices=1,
     mos=1,
-    aic_enable_depth_first=True,
+    user_tiled=True,
+    aic_enable_depth_first=False,
     num_speculative_tokens=None,
     prefill_only=True,
     enable_chunking=True,

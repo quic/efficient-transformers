@@ -23,7 +23,12 @@ from QEfficient.diffusers.pipelines.pipeline_utils import (
 )
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.utils._utils import load_json
-from tests.diffusers.diffusers_utils import DiffusersTestUtils, MADValidator
+from tests.diffusers.diffusers_utils import (
+    DiffusersTestUtils,
+    MADValidator,
+    release_pipeline_qpc_sessions,
+    release_qpc_session,
+)
 
 # Test Configuration for 256x256 resolution with 2 layers # update mad tolerance
 CONFIG_PATH = "tests/diffusers/flux_test_config.json"
@@ -60,6 +65,7 @@ def flux_pipeline_call_with_mad_validation(
     custom_config_path: Optional[str] = None,
     use_onnx_subfunctions: bool = False,
     parallel_compile: bool = False,
+    cache_threshold: Optional[float] = None,
     mad_tolerances: Dict[str, float] = None,
 ):
     """
@@ -124,8 +130,8 @@ def flux_pipeline_call_with_mad_validation(
         max_sequence_length=max_sequence_length,
     )
     # Deactivate text encoder qpc sessions
-    pipeline.text_encoder.qpc_session.deactivate()
-    pipeline.text_encoder_2.qpc_session.deactivate()
+    release_qpc_session(pipeline.text_encoder)
+    release_qpc_session(pipeline.text_encoder_2)
 
     # MAD Validation for Text Encoders
     print(" Performing MAD validation for text encoders...")
@@ -168,6 +174,16 @@ def flux_pipeline_call_with_mad_validation(
         "output": np.zeros((batch_size, cl, pipeline.transformer.model.config.in_channels), dtype=np.float32),
     }
     pipeline.transformer.qpc_session.set_buffers(output_buffer)
+    if getattr(pipeline, "enable_first_block_cache", False):
+        pipeline.transformer.qpc_session.skip_buffers(
+            [
+                tensor_name
+                for tensor_name in (
+                    pipeline.transformer.qpc_session.input_names + pipeline.transformer.qpc_session.output_names
+                )
+                if tensor_name.startswith("prev_") or tensor_name.endswith("_RetainedState")
+            ]
+        )
 
     transformer_perf = []
     pipeline.scheduler.set_begin_index(0)
@@ -218,6 +234,9 @@ def flux_pipeline_call_with_mad_validation(
                 "adaln_single_emb": adaln_single_emb.detach().numpy(),
                 "adaln_out": adaln_out.detach().numpy(),
             }
+            if getattr(pipeline, "enable_first_block_cache", False):
+                stage_cache_threshold = 0.0 if cache_threshold is None else cache_threshold
+                inputs_aic["cache_threshold"] = np.array(stage_cache_threshold, dtype=np.float32)
 
             # MAD Validation for Transformer - PyTorch reference inference
             noise_pred_torch = pytorch_pipeline.transformer(
@@ -259,7 +278,7 @@ def flux_pipeline_call_with_mad_validation(
             if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % pipeline.scheduler.order == 0):
                 progress_bar.update()
 
-    pipeline.transformer.qpc_session.deactivate()  # deactivate transformer qpc session
+    release_qpc_session(pipeline.transformer)
     # Step 8: Decode latents to images
     if output_type == "latent":
         image = latents
@@ -290,7 +309,7 @@ def flux_pipeline_call_with_mad_validation(
         image = pipeline.vae_decode.qpc_session.run(inputs)
         end_decode_time = time.time()
         vae_decode_perf = end_decode_time - start_decode_time
-        pipeline.vae_decode.qpc_session.deactivate()  # deactivate vae decoder qpc session
+        release_qpc_session(pipeline.vae_decode)
 
         # VAE MAD validation
         mad_validator.validate_module_mad(image_torch.detach().cpu().numpy(), image["sample"], "vae_decoder")
@@ -313,9 +332,8 @@ def flux_pipeline_call_with_mad_validation(
     )
 
 
-@pytest.fixture(scope="session")
-def flux_pipeline():
-    """Setup Flux test pipelines with random-initialized (dummy) weights."""
+def _build_flux_pipeline(enable_first_block_cache: bool = False):
+    """Build Flux test pipelines with random-initialized (dummy) weights."""
     torch.manual_seed(TEST_SEED)
     np.random.seed(TEST_SEED)
 
@@ -363,14 +381,29 @@ def flux_pipeline():
     # Use QEff wrapper on a copy of the random-init reference model.
     import copy
 
-    pipeline = QEffFluxPipeline(copy.deepcopy(pytorch_pipeline))
+    pipeline = QEffFluxPipeline(
+        copy.deepcopy(pytorch_pipeline),
+        enable_first_block_cache=enable_first_block_cache,
+    )
     return pipeline, pytorch_pipeline
 
 
-@pytest.mark.flux
-@pytest.mark.diffusion_models
-@pytest.mark.on_qaic
-def test_flux_pipeline(flux_pipeline):
+@pytest.fixture(scope="session")
+def flux_pipeline():
+    return _build_flux_pipeline(enable_first_block_cache=False)
+
+
+@pytest.fixture(scope="session")
+def flux_pipeline_first_block_cache():
+    return _build_flux_pipeline(enable_first_block_cache=True)
+
+
+def _run_flux_pipeline_test_case(
+    flux_pipeline_data,
+    config,
+    test_label: str,
+    pipeline_call_overrides: Optional[Dict[str, Any]] = None,
+):
     """
     Comprehensive Flux pipeline test that follows the exact same flow as pipeline_flux.py:
     - 256x256 resolution - 2 transformer layers
@@ -379,12 +412,11 @@ def test_flux_pipeline(flux_pipeline):
     - Export/compilation checks
     - Returns QEffPipelineOutput with performance metrics
     """
-    pipeline, pytorch_pipeline = flux_pipeline
-    config = INITIAL_TEST_CONFIG
+    pipeline, pytorch_pipeline = flux_pipeline_data
 
     # Print test header
     DiffusersTestUtils.print_test_header(
-        f"FLUX PIPELINE TEST - {config['model_setup']['height']}x{config['model_setup']['width']} Resolution, {config['model_setup']['num_transformer_layers']} Layers",
+        test_label,
         config,
     )
 
@@ -399,6 +431,7 @@ def test_flux_pipeline(flux_pipeline):
     start_time = time.time()
 
     try:
+        pipeline_call_overrides = pipeline_call_overrides or {}
         # Run the pipeline with integrated MAD validation (follows exact pipeline flow)
         result = flux_pipeline_call_with_mad_validation(
             pipeline,
@@ -415,6 +448,7 @@ def test_flux_pipeline(flux_pipeline):
             use_onnx_subfunctions=config["pipeline_params"]["use_onnx_subfunctions"],
             parallel_compile=True,
             return_dict=True,
+            **pipeline_call_overrides,
         )
 
         execution_time = time.time() - start_time
@@ -467,6 +501,39 @@ def test_flux_pipeline(flux_pipeline):
     except Exception as e:
         print(f"\nTEST FAILED: {e}")
         raise
+    finally:
+        release_pipeline_qpc_sessions(pipeline, ["text_encoder", "text_encoder_2", "transformer", "vae_decode"])
+
+
+@pytest.mark.flux
+@pytest.mark.diffusion_models
+@pytest.mark.on_qaic
+def test_flux_pipeline(flux_pipeline):
+    _run_flux_pipeline_test_case(
+        flux_pipeline,
+        INITIAL_TEST_CONFIG,
+        (
+            f"FLUX PIPELINE TEST - {INITIAL_TEST_CONFIG['model_setup']['height']}x"
+            f"{INITIAL_TEST_CONFIG['model_setup']['width']} Resolution, "
+            f"{INITIAL_TEST_CONFIG['model_setup']['num_transformer_layers']} Layers"
+        ),
+    )
+
+
+@pytest.mark.flux
+@pytest.mark.diffusion_models
+@pytest.mark.on_qaic
+def test_flux_pipeline_first_block_cache(flux_pipeline_first_block_cache):
+    _run_flux_pipeline_test_case(
+        flux_pipeline_first_block_cache,
+        INITIAL_TEST_CONFIG,
+        (
+            f"FLUX PIPELINE FIRST-BLOCK-CACHE TEST - {INITIAL_TEST_CONFIG['model_setup']['height']}x"
+            f"{INITIAL_TEST_CONFIG['model_setup']['width']} Resolution, "
+            f"{INITIAL_TEST_CONFIG['model_setup']['num_transformer_layers']} Layers"
+        ),
+        pipeline_call_overrides={"cache_threshold": 0.0},
+    )
 
 
 if __name__ == "__main__":

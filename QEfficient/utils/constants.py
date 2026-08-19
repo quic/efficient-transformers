@@ -6,6 +6,8 @@
 # -----------------------------------------------------------------------------
 
 import os
+import re
+import subprocess
 from dataclasses import dataclass
 
 UTILS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -15,6 +17,7 @@ QEFF_CACHE_DIR_NAME = "qeff_cache"
 
 ONNX_EXPORT_EXAMPLE_BATCH_SIZE = 1
 ONNX_EXPORT_EXAMPLE_SEQ_LEN = 32
+MOE_PREFILL_PACKED_CHUNK_SIZE = 256
 ONNX_EXPORT_EXAMPLE_FBS = 4
 ONNX_EXPORT_EXAMPLE_NLK = 2  # Number of Logits to Keep
 ONNX_EXPORT_MAX_NUM_IMAGES = 1
@@ -23,6 +26,8 @@ ONNX_EXPORT_IMAGE_WIDTH = 560
 ONNX_EXPORT_IMAGE_LENGHT = 560
 ONNX_EXPORT_IMAGE_DEPTH = 3
 ONNX_EXPORT_CTX_LEN = 1024
+DYNAMO_DIM_MAX_BATCH_SIZE = 1024
+DYNAMO_DIM_MIN_COMP_CTX_LENGTHS = 4
 
 NPI_MAPPING = {
     "google/gemma-3-4b-it": os.path.join(
@@ -95,14 +100,58 @@ ONNX_EXPORT_EXAMPLE_TEMPERATURES = 0.80
 ONNX_EXPORT_EXAMPLE_MAX_TOP_K_IDS = 512
 ONNX_EXPORT_EXAMPLE_TOP_PS = 0.80
 ONNX_EXPORT_EXAMPLE_MIN_PS = 0.99
-ONNX_EXPORT_OPSET = 17
+ONNX_LEGACY_EXPORT_OPSET = 17
+ONNX_DYNAMO_EXPORT_OPSET = 18
+ONNX_EXPORT_OPSET = ONNX_LEGACY_EXPORT_OPSET
 FILE_CHUNK_SIZE_DEFAULT = 10 * 2**30  # 10 GB
 SIZE_THRESHOLD_DEFAULT = 1024
 
 
+def get_onnx_export_opset(dynamo: bool = False) -> int:
+    return ONNX_DYNAMO_EXPORT_OPSET if dynamo else ONNX_LEGACY_EXPORT_OPSET
+
+
 COMPILER = ["/opt/qti-aic/exec/qaic-compile", "-aic-hw"]
-DEFAULT_AIC_HW_VERSION = "ai100"
+
+
+def get_default_aic_hw_version() -> str:
+    """Detect the AIC hardware version from the first available device.
+
+    Runs ``qaic-util -q`` and inspects the ``FW IMAGE_VARIANT`` field of the
+    first device (QID 0) to determine whether the hardware is ``ai100`` or
+    ``ai200``.  Falls back to ``"ai100"`` when no device is found or the tool
+    is unavailable.
+
+    Returns:
+        str: ``"ai200"`` if an AI200 device is detected, otherwise ``"ai100"``.
+    """
+    qaic_util = "/opt/qti-aic/tools/qaic-util"
+    try:
+        result = subprocess.run(
+            [qaic_util, "-q"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        output = result.stdout
+    except Exception:
+        return "ai100"
+
+    match = re.search(r"FW IMAGE_VARIANT\s*:\s*(\S+)", output)
+    if match:
+        variant = match.group(1).upper()
+        if "AIC200" in variant:
+            return "ai200"
+    return "ai100"
+
+
+DEFAULT_AIC_HW_VERSION = get_default_aic_hw_version()
 ONNX_TRANSFORM_MEMORY_CLEANUP_INTERVAL = 100
+
+# Generic config key aliases used across model families.
+ATTENTION_HEAD_CONFIG_KEYS = ("num_attention_heads", "n_head", "n_heads", "num_heads")
+KV_HEAD_CONFIG_KEYS = ("num_key_value_heads", "n_kv_heads", "num_kv_heads", "effective_n_kv_heads")
+HIDDEN_SIZE_CONFIG_KEYS = ("hidden_size", "n_embd", "d_model")
 
 # InternVL constants
 # Fixing the feature size with reference to OpenGVLab/InternVL2_5-1B, OpenGVLab/InternVL2_5-38B and OpenGVLab/InternVL2_5-78B
@@ -136,7 +185,11 @@ VISION_MXFP6_MATMUL = False
 LLAMA4_ATTENTION_CHUNK_SIZE = 8192
 LLAMA4_MAX_POSITION_EMBEDDINGS = 65536
 
-# DeepSeek Kimi-k2 Constant
+# DeepSeek Kimi-k2.5 Constants
+KIMI_PATCH_SIZE = 14
+KIMI_EXAMPLE_IMAGE_NUM_IMAGE_TOKENS = 600
+KIMI_EXAMPLE_IMAGE_NUM_PATCHES_HEIGHT = 30
+KIMI_EXAMPLE_IMAGE_NUM_PATCHES_WIDTH = 80
 MAX_POSITION_EMBEDDINGS = 32768
 FP16_BYTES = 2
 DEFAULT_NUM_HEADS = 64
@@ -149,10 +202,14 @@ WAV2VEC2_MAX_SEQ_LEN = 480000  # 30 seconds of audio at 16 kHz sampling rate (16
 # Qwen2_5_vl Constants
 QWEN2_5_VL_HEIGHT = 354
 QWEN2_5_VL_WIDTH = 536
+IMAGE_FACTOR_QWEN_2_5 = 28
+IMAGE_MIN_TOKEN_NUM = 4
+IMAGE_MAX_TOKEN_NUM = 16384
 
 # Qwen3_vl Constanst
 QWEN3_VL_HEIGHT = 354
 QWEN3_VL_WIDTH = 536
+IMAGE_FACTOR_QWEN_3 = 32
 
 # Modules to cache while clearing the pytorch weights
 CACHE_MODULES = ["get_output_names", "get_dummy_inputs", "get_onnx_dynamic_axes", "get_specializations"]
@@ -316,3 +373,43 @@ class QnnConstants:
         },
         "SKIP_QNN_CONVERTER_STEP": False,
     }
+
+
+_KNOWN_DECODER_LAYER_ATTR_PATHS = (
+    "layers",
+    "h",
+    "model.layers",
+    "model.h",
+    "decoder.layers",
+    "model.decoder.layers",
+    "encoder.layer",
+    "encoder.layers",
+    "model.encoder.layer",
+    "model.encoder.layers",
+    "transformer.h",
+    "transformer.layers",
+    "model.transformer.h",
+    "model.transformer.layers",
+    "language_model.layers",
+    "language_model.model.layers",
+    "llm.layers",
+    "llm.model.layers",
+    "vision_model.encoder.layers",
+    "vision_model.transformer.layers",
+    "model.vision_model.encoder.layers",
+    "model.vision_model.transformer.layers",
+    "vision_tower.transformer.layers",
+    "vision_tower.vision_model.encoder.layers",
+    "model.vision_tower.transformer.layers",
+    "model.vision_tower.vision_model.encoder.layers",
+)
+
+_KNOWN_DECODER_LAYER_SUFFIXES = (
+    ".layers",
+    ".layer",
+    ".h",
+    ".blocks",
+    ".block",
+    ".encoder_layers",
+    ".decoder_layers",
+)

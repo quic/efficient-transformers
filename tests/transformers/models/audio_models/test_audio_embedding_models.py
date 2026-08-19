@@ -139,7 +139,6 @@ def check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
     qnn_config: Optional[str] = None,
     compare_results: Optional[bool] = False,
 ):
-
     replace_transformers_quantizers()
     model_config = {"model_name": model_name}
     model_config["n_layer"] = n_layer
@@ -200,7 +199,6 @@ def check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
 def test_full_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
-
     torch.manual_seed(42)
     check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(
         model_name=model_name, compare_results=True, manual_cleanup=manual_cleanup, num_devices=4
@@ -211,7 +209,6 @@ def test_full_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_name", test_models)
 def test_few_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name, manual_cleanup):
-
     torch.manual_seed(42)
     check_ctc_pytorch_vs_kv_vs_ort_vs_ai100(model_name=model_name, n_layer=4, manual_cleanup=manual_cleanup)
 

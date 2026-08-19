@@ -70,7 +70,7 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         self.num_key_value_heads = config.num_key_value_heads
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.max_position_embeddings = config.max_position_embeddings
-        self.rope_theta = config.rope_theta
+        self.rope_theta = config.rope_parameters["rope_theta"]
         self.is_causal = True
         self.layer_idx = layer_idx
         self.q_proj_swiftkv = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias)
@@ -127,12 +127,18 @@ class QEffLlamaSwiftKVAttention(nn.Module):
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+        # if attention_mask is not None:
+        #     attn_weights = torch.where(
+        #         attention_mask,
+        #         torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=self.k_proj_swiftkv.weight.dtype),
+        #         attn_weights,
+        #     )
+        mask_value = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=self.k_proj_swiftkv.weight.dtype)
+
         if attention_mask is not None:
-            attn_weights = torch.where(
-                attention_mask,
-                torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=self.k_proj_swiftkv.weight.dtype),
-                attn_weights,
-            )
+            # Apply the attention mask
+            attn_weights = torch.where(attention_mask, mask_value, attn_weights)
+
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_output = torch.matmul(attn_weights, value_states)
@@ -440,6 +446,8 @@ class QEffLlamaSwiftKVModel(nn.Module):
 class QEffLlamaSwiftKVForCausalLM(PreTrainedModel):
     config_class = QEffLlamaSwiftKVConfig
 
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
+
     def __init__(self, config: QEffLlamaSwiftKVConfig):
         super().__init__(config=config)
 
@@ -449,6 +457,7 @@ class QEffLlamaSwiftKVForCausalLM(PreTrainedModel):
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.config = config
+        self.post_init()
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         """
@@ -458,6 +467,18 @@ class QEffLlamaSwiftKVForCausalLM(PreTrainedModel):
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
         return {QEffLlamaSwiftKVDecoderLayer}
+
+    def get_input_embeddings(self):
+        return self.model.embed_tokens
+
+    def set_input_embeddings(self, value):
+        self.model.embed_tokens = value
+
+    def get_output_embeddings(self):
+        return self.lm_head
+
+    def set_output_embeddings(self, new_embeddings):
+        self.lm_head = new_embeddings
 
     def forward(
         self,
