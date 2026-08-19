@@ -3871,9 +3871,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         # TODO: Remove this hack ##################
-        if dynamo and not (
-            getattr(self.model.config, "model_type", None) == "gpt_oss" and not self.continuous_batching
-        ):
+        if dynamo:
             # torch.export requires example inputs to satisfy dynamic_shapes min=2; gpt_oss non-CB keeps bs=1.
             bs = max(2, bs)
         ###########################################
