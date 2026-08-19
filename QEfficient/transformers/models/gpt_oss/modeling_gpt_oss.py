@@ -900,9 +900,8 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
                 v_cache = value_states[:, :, read_idx, :]
             else:
                 k_cache, v_cache = key_states, value_states
-            key_states, value_states = past_key_values.write_only(
-                k_cache, v_cache, self.layer_idx, cache_kwargs
-            )  # dynamo change
+            # Keep the scatter result data-dependent for Dynamo export; otherwise CtxScatter can be inlined.
+            key_states, value_states = past_key_values.write_only(k_cache, v_cache, self.layer_idx, cache_kwargs)
 
         if self.sliding_window is not None:
             attention_mask = sliding_mask
@@ -1116,23 +1115,11 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        full_target_length = self.config.max_position_embeddings
-        # sliding_target_length = self.config.sliding_window
-        if past_key_values is not None:
-            for layer_idx, layer_type in enumerate(self.config.layer_types[: len(past_key_values.layers)]):
-                layer_keys = past_key_values.layers[layer_idx].keys
-                if layer_keys is None or layer_keys.numel() == 0:
-                    continue
-                if layer_type == "sliding_attention":
-                    continue
-                else:
-                    full_target_length = layer_keys.shape[-2]
-
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=full_target_length)
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.max_cache_len)
         sliding_mask = _create_causal_mask(
             position_ids=position_ids,
-            target_length=full_target_length,
-            sliding_window=self.config.sliding_window,
+            target_length=past_key_values.sliding_window_len,
+            sliding_window=past_key_values.sliding_window_len,
         )
 
         hidden_states = inputs_embeds
@@ -1229,22 +1216,10 @@ class QEffGptOssModel(GptOssModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        full_target_length = self.config.max_position_embeddings
-        sliding_target_length = self.config.sliding_window
-        if past_key_values is not None:
-            for layer_idx, layer_type in enumerate(self.config.layer_types[: len(past_key_values.layers)]):
-                layer_keys = past_key_values.layers[layer_idx].keys
-                if layer_keys is None or layer_keys.numel() == 0:
-                    continue
-                if layer_type == "sliding_attention":
-                    sliding_target_length = layer_keys.shape[-2]
-                else:
-                    full_target_length = layer_keys.shape[-2]
-
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=full_target_length)
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.max_cache_len)
         sliding_mask = _create_causal_mask(
             position_ids=position_ids,
-            target_length=sliding_target_length,
+            target_length=past_key_values.sliding_window_len,
             sliding_window=past_key_values.sliding_window_len,
         )
 

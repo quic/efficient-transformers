@@ -46,6 +46,8 @@ qpc_path = qeff_model.compile(
     num_speculative_tokens=None,
     comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
     comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+    use_onnx_subfunctions=True,
+    dynamo=False,
 )
 print(f"qpc path is {qpc_path}")
 streamer = TextStreamer(tokenizer)

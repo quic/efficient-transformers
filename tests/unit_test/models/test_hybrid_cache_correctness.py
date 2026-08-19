@@ -739,6 +739,19 @@ class TestQEffGPTOSSDynamicCacheCorrectness:
         assert torch.isfinite(k_out).all()
         assert torch.isfinite(v_out).all()
 
+    def test_cache_lengths_track_layer_tensor_shapes(self):
+        cache = self._make(sw=4)
+        k_sliding, v_sliding = _kv(ctx_len=4)
+        k_full, v_full = _kv(ctx_len=16)
+
+        cache.update(k_sliding, v_sliding, layer_idx=0, cache_kwargs={"position_ids": _pids(4)})
+        cache.update(k_full, v_full, layer_idx=1, cache_kwargs={"position_ids": _pids(16)})
+
+        assert cache.sliding_window_len == 4
+        assert cache.max_cache_len == 16
+        assert cache.layers[0].cache_len == 4
+        assert cache.layers[1].cache_len == 16
+
     def test_non_sliding_scatter_at_correct_position(self):
         """Write 33.0 at position 4, verify it lands at slot 4."""
         cache = self._make()

@@ -60,7 +60,7 @@ decode_qpc_path = qeff_model.compile(
     prefill_only=False,
     comp_ctx_lengths_decode=comp_ctx_lengths_decode,
     use_onnx_subfunctions=True,
-    dynamo=True,
+    dynamo=False,
     # # split_retained_state_io=True,   # This should be used for disagg serving via VLLM
     # node_precision_info=non_subfunc_npi_file_path,
 )
@@ -83,7 +83,7 @@ prefill_qpc_path = qeff_model1.compile(
     prefill_only=True,
     enable_chunking=True,
     use_onnx_subfunctions=True,
-    dynamo=True,
+    dynamo=False,
     # # split_retained_state_io=True,  # This should be used for disagg serving via VLLM
     # node_precision_info=subfunc_npi_file_path,
 )
