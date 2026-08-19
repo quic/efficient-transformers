@@ -49,6 +49,29 @@ The path to the treasure was not an easy one. Alex had to navigate through dense
 prompt1 = "Once upon a time"
 prompts = [prompt1, prompt2]
 
+# Device-load failure signatures that are transient under shared-CI device pressure.
+# A full-card (num_cores=16) QPC can momentarily find the card short of free NSPs while
+# a previous session is still tearing down, surfacing at session creation as one of these.
+_TRANSIENT_LOAD_MARKERS = ("Qpc Buffer", "ExecObj", "create program")
+
+
+def _qaic_session_with_load_retry(qpc_path, attempts=4, backoff=2.0):
+    """Open a QAICInferenceSession, retrying only transient device-resource-exhaustion.
+
+    These disagg tests compile at the default num_cores=16 (a full 16-NSP card), so under
+    the shared LLM-stage load a load can briefly fail to acquire the card's NSPs even
+    though each xdist worker owns its card slice; the window clears within a second or two.
+    Only the known transient signatures (`_TRANSIENT_LOAD_MARKERS`) are retried -- a
+    genuinely broken QPC raises a different message and fails immediately on the first try.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return QAICInferenceSession(qpc_path)
+        except RuntimeError as exc:
+            if attempt == attempts or not any(m in str(exc) for m in _TRANSIENT_LOAD_MARKERS):
+                raise
+            time.sleep(backoff)
+
 
 def _make_dummy_model(model_id: str) -> AutoModelForCausalLM:
     """Create a tiny model from a dummy config — no weight download required.
@@ -139,7 +162,7 @@ def test_disagg_mode_prefill(model_id, prompt):
         prefill_only=True,
     )
 
-    prefill_session = QAICInferenceSession(prefill_qpc_path)
+    prefill_session = _qaic_session_with_load_retry(prefill_qpc_path)
     logits_out_placeholder = np.zeros((1, 1, config.vocab_size), dtype=np.float32)
     prefill_session.set_buffers({"logits": logits_out_placeholder})
     inputs.pop("past_key_values")
@@ -223,7 +246,7 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
         prefill_only=True,
         enable_chunking=True,
     )
-    prefill_session = QAICInferenceSession(prefill_qpc_path)
+    prefill_session = _qaic_session_with_load_retry(prefill_qpc_path)
     prefill_session.skip_buffers(
         [x for x in prefill_session.input_names + prefill_session.output_names if x.startswith("past_")]
     )
@@ -352,9 +375,10 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
         aic_enable_depth_first=True,
         num_speculative_tokens=None,
         prefill_only=True,
+        offload_pt_weights=False,  # decode_qeff_model reuses this same model; keep weights for its export below
     )
 
-    prefill_session = QAICInferenceSession(prefill_qpc_path)
+    prefill_session = _qaic_session_with_load_retry(prefill_qpc_path)
     logits_out_placeholder = np.zeros((1, 1, config.vocab_size), dtype=np.float32)
     prefill_session.set_buffers({"logits": logits_out_placeholder})
     inputs.pop("past_key_values")
@@ -377,7 +401,7 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
     )
 
     qpc_outputs = []
-    decode_session = QAICInferenceSession(decode_qpc_path)
+    decode_session = _qaic_session_with_load_retry(decode_qpc_path)
     decode_session.set_buffers({"logits": logits_out_placeholder})
 
     decode_inputs = {
@@ -498,7 +522,7 @@ def prefix_caching_inference(model_id, prefill_qpc_path, decode_qpc_path, prompt
     inputs.pop("token_type_ids", None)
     inputs["batch_index"] = np.array([[decode_batch_id]], dtype=np.int64)
 
-    prefill_session = QAICInferenceSession(prefill_qpc_path)
+    prefill_session = _qaic_session_with_load_retry(prefill_qpc_path)
     logits_out_placeholder = np.zeros((1, 1, config.vocab_size), dtype=np.float32)
     prefill_session.set_buffers({"logits": logits_out_placeholder})
     for i in range(num_chunks):
@@ -516,7 +540,7 @@ def prefix_caching_inference(model_id, prefill_qpc_path, decode_qpc_path, prompt
     }
     qpc_outputs.append(decode_inputs["input_ids"][0][0])
 
-    decode_session = QAICInferenceSession(decode_qpc_path)
+    decode_session = _qaic_session_with_load_retry(decode_qpc_path)
     decode_session.set_buffers({"logits": logits_out_placeholder})
     generation_len = 5
 
