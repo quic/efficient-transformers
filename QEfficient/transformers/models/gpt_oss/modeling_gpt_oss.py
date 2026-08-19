@@ -40,7 +40,9 @@ from QEfficient.customop import ctx_gather_3d_generalized, ctx_scatter_3d_genera
 from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("MODEL")
 
 
 class QEffGptOssExperts(GptOssExperts):

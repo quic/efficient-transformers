@@ -653,7 +653,7 @@ from QEfficient.utils.config_utils import (
     set_kv_head_aliases,
 )
 from QEfficient.utils.constants import ATTENTION_HEAD_CONFIG_KEYS, HIDDEN_SIZE_CONFIG_KEYS, KV_HEAD_CONFIG_KEYS
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
 from QEfficient.utils.repeat_kv_utils import (
     duplicate_kv_projection_weights,
     get_attention_module,
@@ -662,6 +662,7 @@ from QEfficient.utils.repeat_kv_utils import (
     is_mla_model,
 )
 
+logger = QEFFLogger.get_logger("MODEL")
 SPD_TARGET = "target"
 
 

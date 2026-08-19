@@ -101,7 +101,10 @@ from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTrans
 from QEfficient.customop import CustomRMSNormAIC
 from QEfficient.proxy.pytorch_transform import QeffProxyModuleTransform
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
+
+logger = QEFFLogger.get_logger("INFRA")
+
 
 if TYPE_CHECKING:
     from QEfficient.base.modeling_qeff import QEFFBaseModel

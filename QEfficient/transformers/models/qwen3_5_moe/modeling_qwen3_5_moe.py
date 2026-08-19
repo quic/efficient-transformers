@@ -66,8 +66,9 @@ from QEfficient.transformers.models._layerwise import (
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
-from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.logging_utils import QEFFLogger
 
+logger = QEFFLogger.get_logger("MODEL")
 # EXPERT_BLOCKING_NUM_NSP = 16
 # EXPERT_BLOCKING_PACKED_CHUNK_SIZE = 32
 QWEN3_5_MOE_ROPE_CACHE_EXPORT_CAP = 76800
