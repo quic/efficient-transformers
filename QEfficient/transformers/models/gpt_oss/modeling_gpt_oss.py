@@ -86,6 +86,7 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
     limit: float,
     alpha: float,
     packed_chunk_size: int,
+    num_packed_chunks: Optional[int] = None,
 ) -> torch.Tensor:
     """Cumsum-scatter-gather-update expert helper for GPT-OSS NSP-blocked dispatch.
 
@@ -105,12 +106,19 @@ def _cumsum_scatter_gather_update_gptoss_expert_blocked(
     batch_size, seq_len = T2Ei.shape
     packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
 
+    if num_packed_chunks is None:
+        packed_chunk_size = min(packed_chunk_size, seq_len)
+        num_packed_chunks = max(1, -(-seq_len // packed_chunk_size))
+    else:
+        num_packed_chunks = max(1, int(num_packed_chunks))
+
     matched_idx = _build_matched_idx_from_cumsum(T2Ei)
     valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
     row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
 
-    for packed_start in range(0, seq_len, packed_chunk_size):
+    for packed_idx in range(num_packed_chunks):
+        packed_start = packed_idx * packed_chunk_size
         packed_stop = packed_start + packed_chunk_size
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
@@ -155,20 +163,28 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)
         top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
 
-        routing_weights = torch.zeros_like(router_logits)
-        routing_weights.scatter_(1, top_i, top_w)
-
         num_experts = self.experts.num_experts
         num_nsp = getattr(self, "expert_blocking_num_nsp", num_experts)
-        packed_chunk_size = getattr(self, "expert_blocking_packed_chunk_size", T)
+        num_packed_chunks = getattr(self, "expert_blocking_num_packed_chunks", None)
+        packed_chunk_size = (
+            T // num_packed_chunks if num_packed_chunks else getattr(self, "expert_blocking_packed_chunk_size", T)
+        )
         if num_experts % num_nsp != 0:
             raise ValueError(f"num_experts ({num_experts}) must be divisible by expert_blocking_num_nsp ({num_nsp})")
 
         local_experts = num_experts // num_nsp
         expert_dim = self.experts.expert_dim
-        routing_weights_by_expert = (
-            routing_weights.transpose(0, 1).contiguous().view(local_experts, num_nsp, T).transpose(0, 1).contiguous()
-        )
+
+        expert_ids = torch.arange(local_experts, device=hidden.device, dtype=top_i.dtype).unsqueeze(
+            0
+        ) * num_nsp + torch.arange(num_nsp, device=hidden.device, dtype=top_i.dtype).unsqueeze(1)  # [N, L]
+
+        # Cast→ReduceSum→Greater rather than .any() because the AOT compiler
+        # currently rejects ReduceMax over the rank-4 bool tensor here.
+        eq = top_i.unsqueeze(0).unsqueeze(0) == expert_ids.unsqueeze(-1).unsqueeze(-1)
+        local_T2E = eq.to(top_i.dtype).sum(dim=-1) > 0  # [N, L, T]
+        local_rw = (eq.to(top_w.dtype) * top_w.unsqueeze(0).unsqueeze(0)).sum(dim=-1)
+
         W_g = self.experts.gate_proj.view(local_experts, num_nsp, H, expert_dim).transpose(0, 1).contiguous()
         W_u = self.experts.up_proj.view(local_experts, num_nsp, H, expert_dim).transpose(0, 1).contiguous()
         W_d = self.experts.down_proj.view(local_experts, num_nsp, expert_dim, H).transpose(0, 1).contiguous()
@@ -177,12 +193,12 @@ class QEffPrefillOnlyChunkedGptOssMLP(GptOssMLP):
         b_d = self.experts.down_proj_bias.view(local_experts, num_nsp, H).transpose(0, 1).contiguous()
 
         expert_out = hidden.new_zeros((num_nsp, T, H))
-        routing_weights_unsqueezed = routing_weights_by_expert.unsqueeze(-1)
+        routing_weights_unsqueezed = local_rw.unsqueeze(-1)
         for local_slot in range(local_experts):
-            T2Ei = routing_weights_by_expert[:, local_slot, :] > 0
+            # T2Ei = routing_weights_by_expert[:, local_slot, :] > 0
             expert_out = _cumsum_scatter_gather_update_gptoss_expert_blocked(
                 x=hidden,
-                T2Ei=T2Ei,
+                T2Ei=local_T2E[:, local_slot],
                 W_g=W_g[:, local_slot],
                 W_u=W_u[:, local_slot],
                 W_d=W_d[:, local_slot],
@@ -830,7 +846,13 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
         else:
             attention_mask = attention_mask
 
-        attention_interface: Callable = eager_attention_forward
+        blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
+        use_blocking = blocking_config is not None and blocking_config.mode.is_prefill and (self.sliding_window is None)
+
+        if use_blocking:
+            attention_interface = generic_blocked_attention_interface
+        else:
+            attention_interface: Callable = eager_attention_forward
         attn_output, attn_weights = attention_interface(
             self,
             query_states,
@@ -841,6 +863,12 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
             scaling=self.scaling,
             sliding_window=self.sliding_window,
             s_aux=self.sinks,  # diff with Llama
+            layer_idx=self.layer_idx,
+            blocking_config=blocking_config,
+            position_ids=position_ids,
+            past_key_value=past_key_values,
+            batch_index=batch_index,
+            prefill_only=True,
             **kwargs,
         )
 

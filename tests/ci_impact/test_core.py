@@ -31,6 +31,7 @@ from scripts.ci_impact.llm import (
     _request_payload,
     _run_external_selector,
     _system_prompt,
+    can_refine_full_plan,
     expand_plan_with_catalog,
     load_catalog,
     merge_selection,
@@ -575,6 +576,8 @@ def test_llm_can_refine_static_analysis_full_plan() -> None:
         stages=_stage_plans(enabled=True),
     )
 
+    assert can_refine_full_plan(deterministic)
+
     merged = merge_selection(
         deterministic,
         _selection("tests/test_component.py::test_calculate"),
@@ -596,6 +599,8 @@ def test_llm_cannot_refine_unconditional_full_plan() -> None:
         unresolved=[],
         stages=_stage_plans(enabled=True),
     )
+
+    assert not can_refine_full_plan(deterministic)
 
     merged = merge_selection(
         deterministic,
@@ -1217,6 +1222,47 @@ def test_cli_skips_llm_for_forced_full_builds(
     assert payload["llm"] == llm_payload
     assert payload["llm"]["response_id"] == "skipped"
     assert payload["llm"]["attempts"] == 0
+
+
+def test_cli_calls_llm_for_refinable_full_builds(
+    repository: tuple[Path, str],
+    tmp_path: Path,
+) -> None:
+    repo, base = repository
+    _write(repo, "QEfficient/component.py", "def calculate(value):\n    return getattr(value, 'real', value)\n")
+    _commit(repo, "unsafe static analysis")
+    catalog = tmp_path / "catalog.json"
+    _write_catalog(
+        catalog,
+        _git(repo, "rev-parse", "HEAD"),
+        [{"nodeid": "tests/test_component.py::test_calculate", "stages": ["export_compile"]}],
+    )
+    args = argparse.Namespace(
+        repo=repo,
+        base=base,
+        head="HEAD",
+        output=tmp_path / "plan.json",
+        deterministic_output=tmp_path / "deterministic.json",
+        llm_output=tmp_path / "llm.json",
+        catalog=catalog,
+        force_full=False,
+        force_reason=None,
+    )
+
+    with patch(
+        "scripts.ci_impact.cli.select_tests",
+        return_value=_selection("tests/test_component.py::test_calculate"),
+    ) as selector:
+        assert _plan(args) == 0
+
+    selector.assert_called_once()
+    deterministic = json.loads(args.deterministic_output.read_text(encoding="utf-8"))
+    payload = json.loads(args.output.read_text(encoding="utf-8"))
+    assert deterministic["mode"] == "full"
+    assert deterministic["reasons"] == ["unsafe static analysis for QEfficient/component.py"]
+    assert payload["mode"] == "selective"
+    assert payload["stages"]["export_compile"]["nodeids"] == ["tests/test_component.py::test_calculate"]
+    assert payload["llm"]["response_id"] == "resp_test"
 
 
 def test_cli_writes_failure_artifact_when_llm_fails(

@@ -276,16 +276,24 @@ def _cumsum_scatter_gather_update_expert_blocked(
     expert_out: torch.Tensor,
     act_fn,
     packed_chunk_size: int,
+    num_packed_chunks: Optional[int] = None,
 ) -> torch.Tensor:
     batch_size, seq_len = T2Ei.shape
     packed_chunk_size = max(1, min(packed_chunk_size, seq_len))
+
+    if num_packed_chunks is None:
+        packed_chunk_size = min(packed_chunk_size, seq_len)
+        num_packed_chunks = max(1, -(-seq_len // packed_chunk_size))
+    else:
+        num_packed_chunks = max(1, int(num_packed_chunks))
 
     matched_idx = _build_matched_idx_from_cumsum(T2Ei)
     valid_rows = T2Ei.to(torch.int32).sum(dim=1, keepdim=True)
     row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
 
-    for packed_start in range(0, seq_len, packed_chunk_size):
+    for packed_index in range(num_packed_chunks):
+        packed_start = packed_index * packed_chunk_size
         packed_stop = packed_start + packed_chunk_size
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
@@ -747,6 +755,11 @@ class QEffPrefillChunkedGlm4MoeMoE(QEffGlm4MoeMoE):
         expert_out = hidden_states.new_zeros((num_nsp, T, H))
         routing_weights_unsqueezed = rw.unsqueeze(-1)
 
+        num_packed_chunks = getattr(self, "expert_blocking_num_packed_chunks", None)
+        packed_chunk_size = (
+            T // num_packed_chunks if num_packed_chunks else getattr(self, "expert_blocking_packed_chunk_size", T)
+        )
+
         for slot in range(local_experts):
             expert_out = _cumsum_scatter_gather_update_expert_blocked(
                 x=hidden_states,
@@ -757,7 +770,8 @@ class QEffPrefillChunkedGlm4MoeMoE(QEffGlm4MoeMoE):
                 routing_weight=routing_weights_unsqueezed[:, slot],
                 expert_out=expert_out,
                 act_fn=self.act_fn,
-                packed_chunk_size=self.expert_blocking_packed_chunk_size,
+                packed_chunk_size=packed_chunk_size,
+                num_packed_chunks=num_packed_chunks,
             )
 
         return torch.einsum("nth->th", expert_out)

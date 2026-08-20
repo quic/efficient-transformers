@@ -19,6 +19,7 @@ from .core import STAGES, ImpactPlan, build_plan, write_plan
 from .llm import (
     LLMSelection,
     LLMStageError,
+    can_refine_full_plan,
     expand_plan_with_catalog,
     load_catalog,
     merge_selection,
@@ -78,7 +79,7 @@ def _plan(args: argparse.Namespace) -> int:
         catalog = load_catalog(args.catalog, plan.head)
         plan = expand_plan_with_catalog(plan, catalog)
         write_plan(plan, args.deterministic_output)
-        if plan.mode == "full":
+        if plan.mode == "full" and not can_refine_full_plan(plan):
             selection = _skipped_llm_selection()
             plan.llm = selection.to_dict()
             write_llm_artifact(selection, args.llm_output)
