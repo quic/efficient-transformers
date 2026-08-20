@@ -8,6 +8,7 @@
 import argparse
 import logging
 import sys
+import warnings
 from typing import List, Optional
 
 import requests
@@ -18,6 +19,20 @@ from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_
 from QEfficient.base.common import QEFFCommonLoader
 from QEfficient.utils import check_and_assign_cache_dir, load_hf_processor, load_hf_tokenizer
 from QEfficient.utils.logging_utils import logger
+
+_DEPRECATED_CLOUD_API_WARNING = (
+    "QEfficient.cloud.infer is deprecated. These APIs will no longer be usable and will be removed after the "
+    "1.23.0 release."
+)
+_DEPRECATION_WARNING_EMITTED = False
+
+
+def _warn_deprecated_cloud_api() -> None:
+    global _DEPRECATION_WARNING_EMITTED
+    if _DEPRECATION_WARNING_EMITTED:
+        return
+    warnings.warn(_DEPRECATED_CLOUD_API_WARNING, FutureWarning, stacklevel=2)
+    _DEPRECATION_WARNING_EMITTED = True
 
 
 # TODO: Remove after adding support for VLM's compile and execute
@@ -76,6 +91,7 @@ def execute_vlm_model(
     ValueError
         If neither ``image_url`` nor ``image_path`` is provided.
     """
+    _warn_deprecated_cloud_api()
     if not (image_url or image_path):
         raise ValueError('Neither Image URL nor Image Path is found, either provide "image_url" or "image_path"')
     raw_image = Image.open(requests.get(image_url, stream=True).raw) if image_url else Image.open(image_path)
@@ -235,6 +251,7 @@ def main(
             --ctx-len 512 --img-size 560 --mxfp6-matmul
 
     """
+    _warn_deprecated_cloud_api()
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
 
     if "--mxfp6" in sys.argv and mxfp6:
