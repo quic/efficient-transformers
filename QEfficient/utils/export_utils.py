@@ -246,6 +246,7 @@ def export_wrapper(func):
 
         # Cache probe flag (used for layerwise inspection runs)
         cache_probe = kwargs.pop("_layerwise_cache_probe", False)
+        kwargs.pop("_skip_pre_export_pytorch_transforms", False)
 
         # Default context managers and state trackers
         export_context = nullcontext()
@@ -342,11 +343,9 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     Returns:
         Tuple of (export_hash: str, filtered_hash_params: dict)
     """
-    # Extract function signature
     original_sig = inspect.signature(func)
     params = list(original_sig.parameters.values())[1:]  # Skip 'self'
     new_sig = inspect.Signature(params)
-    # Bind all arguments
     bound_args = new_sig.bind(*args, **kwargs)
     bound_args.apply_defaults()
     all_args = bound_args.arguments

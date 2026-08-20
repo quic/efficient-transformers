@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 from collections import defaultdict
+from functools import partial
 from pathlib import Path
 from typing import List, Optional, Tuple, Type, Union
 
@@ -21,7 +22,6 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4ForConditionalGeneration,
     Gemma4TextAttention,
     Gemma4TextDecoderLayer,
-    Gemma4TextExperts,
     Gemma4TextModel,
     Gemma4TextRouter,
     Gemma4VisionAttention,
@@ -30,14 +30,18 @@ from transformers.models.gemma4.modeling_gemma4 import (
     repeat_kv,
 )
 
-from QEfficient.customop.ctx_scatter_gather import (
-    CtxGatherFunc3DGeneralized,
-    CtxScatterFunc3DGeneralized,
-    CtxScatterFunc3DInt,
-)
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    MoEProfile,
+    MoEWeights,
+    QEffMoEBlockMixin,
+    build_canonical_expert_weights,
+    delete_module_attrs,
+    silu_glu_mlp,
+)
 from QEfficient.utils import constants
 
 _FP16_CLAMP_MIN = -65504.0
@@ -315,207 +319,59 @@ class QEffGemma4CustomRMSNormAIC(nn.Module):
         return CustomRMSNormFunc.apply(hidden_states, weight, self.eps)
 
 
-class QEffGemma4TextExperts(Gemma4TextExperts):
-    def __qeff_init__(self):
-        # Derive gather-friendly split projections from the checkpoint's fused
-        # gate_up_proj/down_proj, without changing on-disk checkpoint format.
-        gate_up_proj = self.gate_up_proj.detach()
-        down_proj = self.down_proj.detach()
-        self.gate_proj = nn.Parameter(gate_up_proj[:, : self.intermediate_dim, :].transpose(1, 2), requires_grad=False)
-        self.up_proj = nn.Parameter(gate_up_proj[:, self.intermediate_dim :, :].transpose(1, 2), requires_grad=False)
-        self.down_proj_t = nn.Parameter(down_proj.transpose(1, 2), requires_grad=False)
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        top_k_index: torch.Tensor,
-        top_k_weights: torch.Tensor,
-    ) -> torch.Tensor:
-        T, H = hidden_states.shape
-        K = top_k_index.shape[1]
-        idx = top_k_index.reshape(-1)
-
-        gate_proj = self.gate_proj[idx]  # [T*K, H, I] -- gather only the selected experts
-        up_proj = self.up_proj[idx]  # [T*K, H, I]
-        down_proj_t = self.down_proj_t[idx]  # [T*K, I, H]
-
-        xk = hidden_states.unsqueeze(1).expand(-1, K, -1).contiguous().view(-1, 1, H)  # [T*K, 1, H]
-        gate = torch.bmm(xk, gate_proj)  # [T*K, 1, I]
-        up = torch.bmm(xk, up_proj)  # [T*K, 1, I]
-        activated = self.act_fn(gate) * up
-
-        down = torch.bmm(activated, down_proj_t)  # [T*K, 1, H]
-        down = down.view(T, K, H) * top_k_weights.unsqueeze(-1)
-        down = torch.einsum("bnh->bh", down)
-        return down
-
-
-def _build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
-    """Build packed->original token index"""
-    batch_size, seq_len = T2Ei.shape
-    int32_max = torch.iinfo(torch.int32).max
-    int32_max_scalar = torch.tensor(int32_max, dtype=torch.int32, device=T2Ei.device)
-    token_idx = torch.arange(seq_len, dtype=torch.int32, device=T2Ei.device).unsqueeze(0).expand(batch_size, -1)
-    valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
-    valid_dest = valid_prefix - 1
-    scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
-    matched_idx = torch.full_like(token_idx, int32_max)
-    matched_idx = CtxScatterFunc3DInt.apply(
-        matched_idx.unsqueeze(-1),
-        scatter_pos,
-        token_idx.unsqueeze(-1),
-    ).squeeze(-1)
-    return matched_idx
-
-
-def _cumsum_scatter_gather_update_expert_blocked(
-    x: torch.Tensor,
-    T2Ei: torch.Tensor,
-    W_g: torch.Tensor,
-    W_u: torch.Tensor,
-    W_d: torch.Tensor,
-    routing_weight: torch.Tensor,
-    expert_out: torch.Tensor,
-    act_fn,
-    num_packed_chunks: int,
-) -> torch.Tensor:
-    """Cumsum-scatter-gather-update expert helper for NSP-blocked dispatch.
-
-    Accumulates one local expert's contribution in-place onto ``expert_out``.
-    Uses a packed/cumsum layout so the MLP runs only over active rows, then
-    scatters the weighted output back to original token positions.
-    """
-    batch_size, seq_len = T2Ei.shape
-    num_packed_chunks = max(1, int(num_packed_chunks))
-    assert seq_len % num_packed_chunks == 0, (
-        f"seq_len={seq_len} must be divisible by num_packed_chunks={num_packed_chunks}"
+class QEffGemma4TextMoeBlock(QEffMoEBlockMixin, nn.Module):
+    supported_moe_flavours = (
+        MoEFlavour.SIMPLE_LOOP,
+        MoEFlavour.DECODE_BMM,
+        MoEFlavour.EXPERT_PARALLEL,
     )
-    packed_chunk_size = seq_len // num_packed_chunks
-    matched_idx = _build_matched_idx_from_cumsum(T2Ei)
-    valid_rows = torch.einsum("ij->i", T2Ei.to(torch.int32)).unsqueeze(1)
-    x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
-    for chunk_idx in range(num_packed_chunks):
-        packed_start = chunk_idx * packed_chunk_size
-        if chunk_idx == num_packed_chunks - 1:
-            packed_stop = seq_len
-        else:
-            packed_stop = packed_start + packed_chunk_size
-        chunk_rows = packed_stop - packed_start
-        row_range = torch.arange(chunk_rows, dtype=torch.int32, device=x.device).unsqueeze(0)
-        chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
-        x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
-        gate_prime = x_chunk @ W_g
-        up_prime = x_chunk @ W_u
-        down_chunk = (up_prime * act_fn(gate_prime)) @ W_d
+    supports_moe_decode_bmm = True
 
-        rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
-        down_chunk = down_chunk * rw_chunk
-
-        expert_out_chunk = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
-        updated_chunk = expert_out_chunk + down_chunk
-
-        chunk_valid_rows = torch.clamp(
-            valid_rows - packed_start,
-            min=torch.zeros_like(valid_rows),
-            max=torch.full_like(valid_rows, packed_chunk_size),
-        )
-        updated_chunk = torch.where(
-            (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
-        )
-        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
-
-    return expert_out
-
-
-class QEffPrefillChunkedGemma4TextExperts(Gemma4TextExperts):
-    supports_moe_prefill_blocking = True
-
-    def __qeff_init__(self):
-        H = self.hidden_dim
-        # Derive gather-friendly split projections from the checkpoint's fused
-        # gate_up_proj/down_proj, without changing on-disk checkpoint format.
-        gate_up_proj = self.gate_up_proj.detach()
-        down_proj = self.down_proj.detach()
-        self.gate_proj_t = gate_up_proj[:, : self.intermediate_dim, :].transpose(1, 2)
-        self.up_proj_t = gate_up_proj[:, self.intermediate_dim :, :].transpose(1, 2)
-        self.num_nsp = getattr(self, "expert_blocking_num_nsp", self.num_experts)
-        if self.num_experts % self.num_nsp != 0:
-            raise ValueError(
-                f"num_experts ({self.num_experts}) must be divisible by expert_blocking_num_nsp ({self.num_nsp})"
-            )
-        self.local_experts = self.num_experts // self.num_nsp
-        self.W_g = nn.Parameter(
-            self.gate_proj_t.view(self.local_experts, self.num_nsp, H, -1).transpose(0, 1).contiguous().clone(),
-            requires_grad=False,
-        )
-        self.W_u = nn.Parameter(
-            self.up_proj_t.view(self.local_experts, self.num_nsp, H, -1).transpose(0, 1).contiguous().clone(),
-            requires_grad=False,
-        )
-        self.W_d = nn.Parameter(
-            down_proj.transpose(1, 2)
-            .view(self.local_experts, self.num_nsp, -1, H)
-            .transpose(0, 1)
-            .contiguous()
-            .clone(),
-            requires_grad=False,
-        )
-
-    def forward(
+    def __init__(
         self,
-        hidden_states: torch.Tensor,
-        top_k_index: torch.Tensor,
-        top_k_weights: torch.Tensor,
-    ) -> torch.Tensor:
-        # Supports [T, H] or [B, S, H]
-        if hidden_states.dim() == 3:
-            B, S, H = hidden_states.shape
-            x = hidden_states.view(B * S, H)
-            reshape_back = True
-        else:
-            T, H = hidden_states.shape
-            x = hidden_states
-            reshape_back = False
+        router: nn.Module,
+        experts: nn.Module,
+        pre_feedforward_layernorm: nn.Module,
+        post_feedforward_layernorm: nn.Module,
+    ) -> None:
+        super().__init__()
+        self.router = router
+        self.experts = experts
+        self.pre_feedforward_layernorm = pre_feedforward_layernorm
+        self.post_feedforward_layernorm = post_feedforward_layernorm
 
-        T = x.shape[0]
-
-        num_packed_chunks = getattr(self, "expert_blocking_packed_chunk_size", T)
-
-        # Build dense routing weights [T, E] from top-k indices/weights
-        expert_weights = torch.zeros(
-            T,
-            self.num_experts,
-            dtype=top_k_weights.dtype,
-            device=top_k_weights.device,
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+        self.moe_weights = build_canonical_expert_weights(
+            gate_up=self.experts.gate_up_proj,
+            down=self.experts.down_proj,
+            fused=True,
+            fused_split_dim=1,
+            transpose_gate_up=True,
+            transpose_down=True,
+            clone=True,
         )
-        expert_weights.scatter_add_(1, top_k_index, top_k_weights)
-        expert_weights = expert_weights.to(x.dtype)
-        expert_out = x.new_zeros((self.num_nsp, T, H))
-        rw = (
-            expert_weights.transpose(0, 1)
-            .contiguous()
-            .view(self.local_experts, self.num_nsp, T)
-            .transpose(0, 1)
-            .contiguous()
-        )
-        routing_weights_unsqueezed = rw.unsqueeze(-1)
-        for slot in range(self.local_experts):
-            T2Ei = rw[:, slot, :] > 0
-            expert_out = _cumsum_scatter_gather_update_expert_blocked(
-                x=x,
-                T2Ei=T2Ei,
-                W_g=self.W_g[:, slot],
-                W_u=self.W_u[:, slot],
-                W_d=self.W_d[:, slot],
-                routing_weight=routing_weights_unsqueezed[:, slot],
-                expert_out=expert_out,
-                act_fn=self.act_fn,
-                num_packed_chunks=num_packed_chunks,
-            )
-        expert_output = torch.einsum("ijk->jk", expert_out)
-        if reshape_back:
-            return expert_output.view(B, S, H)
-        return expert_output
+        delete_module_attrs(self.experts, "gate_up_proj", "down_proj")
+        self.weights_transformed = True
+        return self.moe_weights
+
+    @property
+    def moe_profile(self) -> MoEProfile:
+        return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.experts.act_fn))
+
+    def route(self, x: torch.Tensor):
+        router_probabilities, top_k_weights, top_k_index = self.router(x)
+        return (top_k_index, top_k_weights.to(x.dtype)), router_probabilities
+
+    def forward(self, hidden_states: torch.Tensor):
+        B, S, H = hidden_states.shape
+        x = hidden_states.reshape(B * S, H)
+        routing, _ = self.route(x)
+        x = self.pre_feedforward_layernorm(x)
+        out = self.execute_moe_flavour(x, routing)
+        out = out.reshape(B, S, H)
+        return self.post_feedforward_layernorm(out)
 
 
 class QEffGemma4VisionAttention(Gemma4VisionAttention):
@@ -676,6 +532,15 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
 
 
 class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
+    def __qeff_init__(self):
+        if not getattr(self, "enable_moe_block", False) or hasattr(self, "moe_block"):
+            return
+        router = self._modules.pop("router")
+        experts = self._modules.pop("experts")
+        pre_norm = self._modules.pop("pre_feedforward_layernorm_2")
+        post_norm = self._modules.pop("post_feedforward_layernorm_2")
+        self.moe_block = QEffGemma4TextMoeBlock(router, experts, pre_norm, post_norm)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -709,13 +574,7 @@ class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
 
         if self.enable_moe_block:
             hidden_states_1 = self.post_feedforward_layernorm_1(hidden_states)
-
-            hidden_states_flat = residual.reshape(-1, residual.shape[-1])
-            _, top_k_weights, top_k_index = self.router(hidden_states_flat)
-            hidden_states_2 = self.pre_feedforward_layernorm_2(hidden_states_flat)
-            hidden_states_2 = self.experts(hidden_states_2, top_k_index, top_k_weights)
-            hidden_states_2 = hidden_states_2.reshape(residual.shape)
-            hidden_states_2 = self.post_feedforward_layernorm_2(hidden_states_2)
+            hidden_states_2 = self.moe_block(residual)
             hidden_states = hidden_states_1 + hidden_states_2
 
         hidden_states = self.post_feedforward_layernorm(hidden_states)

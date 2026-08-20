@@ -9,7 +9,7 @@
 - `ModuleMappingTransform`: exact-type class mapping via `_module_mapping = {HFClass: QEffClass}`; replaces `module.__class__`, preserves module object/parameters/buffers, and calls `__qeff_init__` when the replacement defines it. Examples: `CustomOpsTransform`, `KVCacheTransform`, `PrefillOnlyTransform`, `T5ModelTransform`, `TextClassificationTransform`, VLM offload transforms.
 - `ExternalModuleMapperTransform`: method mapping for external/unvendored modules via `_match_class_replace_method` or `_match_string_replace_method`; binds methods with `MethodType` and calls `__qeff_init__` if present. Examples: `KVCacheExternalModuleMapperTransform`, `PrefillOnlyExternalModuleMapperTransform`, `RevertPrefillOnlyExternalModuleMapperTransform`.
 - `ModuleMutatorTransform`: recursive child replacement for modules matching `_match_class`; `mutate` returns a new module and may change weights/buffers. Examples: AWQ/GPTQ to `QuantLinearORT`, FP8 dequantization to `nn.Linear`, MXFP4 expert dequantization.
-- Bespoke transform classes: custom `apply` signatures or whole-model edits. Examples: `ReplicateKVHeadTransform`, `SpDTransform`, `SamplerTransform`, `PoolingTransform`, `BlockingAttentionTransform`, `SplitGateUpWeightsTransform`.
+- Bespoke transform classes: custom `apply` signatures or whole-model edits. Examples: `ReplicateKVHeadTransform`, `SpDTransform`, `SamplerTransform`, `PoolingTransform`, `BlockingAttentionTransform`.
 
 ## Current Registration Sites
 - Generic constructor-time transforms live in `_pytorch_transforms` lists in `QEfficient/transformers/models/modeling_auto.py`.

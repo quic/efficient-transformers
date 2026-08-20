@@ -5,6 +5,7 @@
 #
 # ----------------------------------------------------------------------------
 
+import math
 import os
 import warnings
 from pathlib import Path
@@ -29,9 +30,8 @@ from transformers import (
 )
 
 import QEfficient
-from QEfficient.base.modeling_qeff import QEFFBaseModel
+from QEfficient.base.modeling_qeff import QEFFBaseModel, reject_legacy_moe_prefill_packed_chunk_size
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
-from QEfficient.base.pytorch_transforms import SplitGateUpWeightsTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfoNew,
@@ -42,7 +42,6 @@ from QEfficient.generation.text_generation_inference import (
 )
 from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 from QEfficient.transformers.modeling_utils import (
-    DYNAMIC_PREFILL_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     DYNAMIC_SEQ_LEN_SUPPORTED_MODEL_ARCH,
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
     _configure_proxy_for_model,
@@ -59,6 +58,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     RevertPrefillOnlyExternalModuleMapperTransform,
     RevertPrefillOnlyTransform,
     SamplerTransform,
+    SimpleDecodeMoeTransform,
     SpDTransform,
     TextClassificationTransform,
     VlmKVOffloadTransform,
@@ -973,9 +973,6 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
             Use MXFP6 compression for weights. Default is False.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Defaults to False
-        moe_prefill_packed_chunk_size : int, optional
-            Packed rows per expert-blocked MoE chunk for prefill-only chunked export. Applies only when
-            ``prefill_only=True`` and ``enable_chunking=True``. Default is 256.
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -1213,7 +1210,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         CustomOpsTransform,
         KVCacheTransform,
         VlmKVOffloadTransform,
-        SplitGateUpWeightsTransform,
+        SimpleDecodeMoeTransform,
     ]
     _onnx_transforms = []
 
@@ -1296,6 +1293,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         str
             Path to the generated ONNX graph file for the language decoder.
         """
+        reject_legacy_moe_prefill_packed_chunk_size(kwargs)
         if prefill_only:
             assert prefill_seq_len > 1
             if not enable_chunking and self.continuous_batching:
@@ -1308,6 +1306,8 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             self.hash_params["prefill_only"] = False
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
+        qaic_config = kwargs.pop("qaic_config", getattr(self.model, "qaic_config", None))
+
         if QEfficient.base.modeling_qeff.QEFFBaseModel._layerwise_active:
             return self._export_layerwise(
                 inputs,
@@ -1319,6 +1319,10 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
                 _layerwise_cache_probe=kwargs.get("_layerwise_cache_probe", False),
                 kv_cache_prefix=kv_cache_prefix,
                 prefill_only=prefill_only,
+                enable_chunking=enable_chunking,
+                num_cores=kwargs.get("num_cores", constants.DEFAULT_AIC_NUM_CORES),
+                qaic_config=qaic_config,
+                prefill_seq_len=prefill_seq_len,
             )
         else:
             return self._export(
@@ -1542,7 +1546,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         prefill_only: bool = False,
         enable_chunking: bool = False,
         num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
-        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
@@ -1570,6 +1573,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             A list containing the paths to the generated ONNX graph files for both components.
         """
         layerwise_cache_probe = kwargs.pop("_layerwise_cache_probe", False)
+        reject_legacy_moe_prefill_packed_chunk_size(kwargs)
         if layerwise:
             return self._run_layerwise_export(
                 export_dir=export_dir,
@@ -1585,25 +1589,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             )
         bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        qaic_config = kwargs.get("qaic_config", getattr(self.lang_model.model, "qaic_config", None))
         # TODO: move this to a DA Serving utility class
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
             if prefill_only:
                 self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
-                for module in self.model.modules():
-                    if getattr(module, "supports_moe_prefill_blocking", False):
-                        module.expert_blocking_num_nsp = num_cores
-                        if prefill_seq_len % moe_prefill_packed_chunk_size == 0:
-                            module.expert_blocking_packed_chunk_size = prefill_seq_len // moe_prefill_packed_chunk_size
-                        else:
-                            raise ValueError("Prefill_seq_len must be divisible by moe_prefill_packed_chunk_size")
-                        if hasattr(module, "__qeff_init__"):
-                            module.__qeff_init__()
-                if self.model.config.model_type in DYNAMIC_PREFILL_SEQ_LEN_SUPPORTED_MODEL_ARCH:
-                    seq_len = (
-                        seq_len
-                        if prefill_seq_len % moe_prefill_packed_chunk_size == 0
-                        else moe_prefill_packed_chunk_size
-                    )
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
         onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": bs}
@@ -1682,8 +1672,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 num_cores=num_cores,
-                moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                 prefill_seq_len=prefill_seq_len,
+                qaic_config=qaic_config,
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
             )
@@ -1929,6 +1919,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         """
         if skip_lang and skip_vision:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
+        reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
 
         if layerwise:
             if skip_lang and not skip_vision:
@@ -2028,10 +2019,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.transform(
             ctx_len=ctx_len,
             seq_len=prefill_seq_len,
-            batch_size=batch_size,
+            bs=batch_size,
             num_devices=num_devices,
             qaic_config=qaic_config,
             aic_num_cores=num_cores,
+            prefill_only=prefill_only,
+            prefill_seq_len=prefill_seq_len,
         )
 
         specializations, compiler_options = self.model.get_specializations(
@@ -2078,6 +2071,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 prefill_only=prefill_only,
                 enable_chunking=enable_chunking,
                 prefill_seq_len=prefill_seq_len,
+                num_cores=num_cores,
+                qaic_config=qaic_config,
                 _layerwise_cache_probe=layerwise_cache_probe,
                 kv_cache_prefix=kv_cache_prefix,
                 offload_pt_weights=offload_pt_weights,
@@ -2624,7 +2619,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         KVCacheTransform,
         KVCacheExternalModuleMapperTransform,
         VlmNoKVOffloadTransform,
-        SplitGateUpWeightsTransform,
+        SimpleDecodeMoeTransform,
     ]
     _onnx_transforms = []
 
@@ -2778,6 +2773,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         str
             Path to the generated ONNX graph file.
         """
+        reject_legacy_moe_prefill_packed_chunk_size(kwargs)
         if prefill_only:
             assert prefill_seq_len > 1
             if not enable_chunking and self.continuous_batching:
@@ -2901,16 +2897,6 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
                 comp_ctx_lengths_prefill, comp_ctx_lengths_decode, ctx_len, prefill_seq_len
             )
 
-        # Apply compile-dependent transforms like blocking transform
-        self.transform(
-            ctx_len=ctx_len,
-            seq_len=prefill_seq_len,
-            batch_size=batch_size,
-            num_devices=num_devices,
-            qaic_config=qaic_config,
-            aic_num_cores=num_cores,
-        )
-
         # Get specializations from modelling file
         # TODO: expose this via the auto class as well
         specializations, compiler_options = self.model.get_specializations(
@@ -2956,6 +2942,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             aic_num_cores=num_cores,
             mxint8_kv_cache=mxint8_kv_cache,
             use_onnx_subfunctions=use_onnx_subfunctions,
+            qaic_config=qaic_config,
             kv_cache_prefix=kv_cache_prefix,
             **compiler_options,
         )
@@ -3447,8 +3434,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         Mxfp4GptOssExpertDequantizeTransform,
         CustomOpsTransform,
         KVCacheTransform,
-        SplitGateUpWeightsTransform,
         KVCacheExternalModuleMapperTransform,
+        SimpleDecodeMoeTransform,
     ]
 
     _onnx_transforms = []
@@ -3705,33 +3692,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         return self.model.config.__dict__
 
-    def get_seq_len_and_handle_specialized_prefill_model(
-        self,
-        prefill_seq_len: Optional[int] = None,
-        enable_chunking=False,
-        num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
-        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
-    ) -> int:
-        self.hash_params["prefill_only"] = True
-        compile_seq_len = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        num_packed_chunks = max(1, -(-compile_seq_len // moe_prefill_packed_chunk_size))
-        for module in self.model.modules():
-            if getattr(module, "supports_moe_prefill_blocking", False):
-                module.expert_blocking_num_nsp = num_cores
-                module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
-                module.expert_blocking_num_packed_chunks = num_packed_chunks
-        self.hash_params["moe_prefill_num_nsp"] = num_cores
-        self.hash_params["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
-        self.hash_params["moe_prefill_num_packed_chunks"] = num_packed_chunks
-
-        if enable_chunking:
-            self.hash_params["chunking"] = True
-            if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe"}:
-                return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-            return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-
+    def handle_gpt_oss_env_variable_legacy_burden(self, prefill_seq_len: Optional[int] = None) -> int:
         num_q_blocks = (
-            self.hash_params["blocking_config"].num_q_blocks if self.hash_params.get("blocking_kwargs", None) else None
+            self.hash_params["blocking_kwargs"].num_q_blocks if self.hash_params.get("blocking_kwargs", None) else None
         )
         if num_q_blocks is None:
             if (
@@ -3768,6 +3731,71 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             if min_seq_len > constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
             else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         )
+
+    def get_seq_len_and_handle_specialized_prefill_model(
+        self,
+        prefill_seq_len: Optional[int] = None,
+        enable_chunking=False,
+        num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
+        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
+    ) -> int:
+        from QEfficient.transformers.moe import MoEFlavour, supports_moe_flavour
+
+        self.hash_params["prefill_only"] = True
+        if enable_chunking:
+            self.hash_params["chunking"] = True
+            if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe"}:
+                return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+
+        if self.model.config.model_type == "gpt_oss":
+            return self.handle_gpt_oss_env_variable_legacy_burden(prefill_seq_len)
+
+        compile_seq_len = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        expert_parallel_is_triggered = False
+        blocking_enabled = False
+        num_kv_blocks = None
+        num_packed_chunks = None
+
+        if self.hash_params.get("moe_prefill_flavour") == "expert_parallel":
+            num_packed_chunks = self.hash_params.get("moe_prefill_num_packed_chunks")
+            if num_packed_chunks is not None:
+                num_packed_chunks = int(num_packed_chunks)
+                if num_packed_chunks <= 0:
+                    raise ValueError(f"moe_prefill_num_packed_chunks must be positive, got {num_packed_chunks}")
+                expert_parallel_is_triggered = True
+
+        if num_packed_chunks is None:
+            num_packed_chunks = max(1, -(-compile_seq_len // moe_prefill_packed_chunk_size))
+
+        for module in self.model.modules():
+            if supports_moe_flavour(module, MoEFlavour.EXPERT_PARALLEL):
+                expert_parallel_is_triggered = True
+            if getattr(module, "supports_moe_prefill_blocking", False):
+                expert_parallel_is_triggered = True
+                module.expert_blocking_num_nsp = num_cores
+                module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
+                module.expert_blocking_num_packed_chunks = num_packed_chunks
+            if attn_blocking_config := getattr(module, "attn_blocking_config", None):
+                module_num_kv_blocks = getattr(attn_blocking_config, "num_kv_blocks", None)
+                if module_num_kv_blocks:
+                    blocking_enabled = True
+                    num_kv_blocks = int(module_num_kv_blocks)
+
+        if expert_parallel_is_triggered:
+            self.hash_params.setdefault("moe_prefill_num_packed_chunks", num_packed_chunks)
+            self.hash_params.setdefault("moe_prefill_num_nsp", num_cores)
+            self.hash_params.setdefault("moe_prefill_packed_chunk_size", moe_prefill_packed_chunk_size)
+
+        export_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        if expert_parallel_is_triggered and blocking_enabled:
+            lcm = (num_kv_blocks * num_packed_chunks) // math.gcd(num_kv_blocks, num_packed_chunks)
+            return export_seq_len if export_seq_len % lcm == 0 else lcm
+        if expert_parallel_is_triggered:
+            return export_seq_len if export_seq_len % num_packed_chunks == 0 else num_packed_chunks
+        if blocking_enabled:
+            return export_seq_len if export_seq_len % num_kv_blocks == 0 else num_kv_blocks
+
+        return export_seq_len
 
     def _run_layerwise(self, *, final_compile: bool, layerwise_window_size: int, **forward_kwargs):
         """Drive the layer-wise export/compile loop for CausalLM models."""
@@ -3808,7 +3836,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         prefill_only: Optional[bool] = False,
         prefill_seq_len: Optional[int] = None,
         num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
-        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
@@ -3841,6 +3868,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "decode_only=True is not supported by QEFFAutoModelForCausalLM.export(). "
                 "Use the default non-prefill export path for standard CausalLM decode graphs."
             )
+        reject_legacy_moe_prefill_packed_chunk_size(kwargs)
+        qaic_config = kwargs.pop("qaic_config", getattr(self.model, "qaic_config", None))
 
         if layerwise:
             return self._run_layerwise(
@@ -3850,7 +3879,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 prefill_only=prefill_only,
                 prefill_seq_len=prefill_seq_len,
                 num_cores=num_cores,
-                moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
+                qaic_config=qaic_config,
                 kv_cache_prefix=kv_cache_prefix,
                 **kwargs,
             )
@@ -3900,19 +3929,16 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     )
                 self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
                 self.hash_params.pop("retain_full_kv", None)
-                seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
-                    prefill_seq_len=prefill_seq_len,
-                    enable_chunking=enable_chunking,
-                    num_cores=num_cores,
-                    moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
-                )
-                if self.model.config.model_type == "gpt_oss" and hasattr(self.model.model, "set_rope_cache_len"):
-                    self.model.model.set_rope_cache_len(seq_len)
-                sliding_window = getattr(self.model.config, "sliding_window", None)
-                kv_cache_shape[2] = (
-                    seq_len + (sliding_window if sliding_window is not None else 0) if enable_chunking else seq_len
-                )
-
+                if "DeepseekV3ForCausalLM" not in (getattr(self.model.config, "architectures", None) or []):
+                    seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
+                        prefill_seq_len=prefill_seq_len,
+                        enable_chunking=enable_chunking,
+                        num_cores=num_cores,
+                    )
+                    sliding_window = getattr(self.model.config, "sliding_window", None)
+                    kv_cache_shape[2] = (
+                        seq_len + (sliding_window if sliding_window is not None else 0) if enable_chunking else seq_len
+                    )
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
                 self.hash_params.pop("prefill_only", None)
@@ -3922,7 +3948,14 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("chunking", None)
                 self.hash_params.pop("moe_prefill_num_nsp", None)
                 self.hash_params.pop("moe_prefill_packed_chunk_size", None)
+                self.hash_params.pop("moe_prefill_total_avl_cores", None)
+                self.hash_params.pop("moe_prefill_cores_per_expert", None)
+                self.hash_params.pop("moe_prefill_tree_reduce", None)
+                self.hash_params.pop("moe_prefill_num_pipeline_stages", None)
+                self.hash_params.pop("moe_prefill_num_parallelized_experts", None)
+                self.hash_params.pop("moe_prefill_expert_parallel_chunk_size", None)
                 self.hash_params.pop("moe_prefill_num_packed_chunks", None)
+                self.hash_params.pop("moe_prefill_flavour", None)
                 self.hash_params.pop("chunking_seq_len", None)
                 if kwargs.get("retain_full_kv", False):
                     sliding_window = getattr(self.model.config, "sliding_window", None)
@@ -4127,6 +4160,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
                 prefill_only=prefill_only,
+                enable_chunking=enable_chunking,
+                num_cores=num_cores,
+                qaic_config=qaic_config,
+                prefill_seq_len=prefill_seq_len,
                 kv_cache_prefix=kv_cache_prefix,
                 _layerwise_cache_probe=kwargs.get("_layerwise_cache_probe", False),
             )
@@ -4139,7 +4176,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
                 dynamo=dynamo,
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
-                prefill_only=prefill_only,
             )
 
     def build_prefill_specialization(
@@ -4291,7 +4327,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         use_onnx_subfunctions: bool = False,
         offload_pt_weights: Optional[bool] = True,
         enable_chunking: Optional[bool] = False,
-        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         retain_full_kv: Optional[bool] = None,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
@@ -4344,9 +4379,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             the decode stage. If None, compiles for both stages. Default is None.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
-        moe_prefill_packed_chunk_size : int, optional
-            Packed rows per expert-blocked MoE chunk for prefill-only chunked export. Applies only when
-            ``prefill_only=True`` and ``enable_chunking=True``. Default is 256.
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -4384,6 +4416,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `prefill_seq_len` is less than `num_speculative_tokens + 1` for TLM models.
 
         """
+        reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
         if layerwise:
             return self._run_layerwise(
                 final_compile=True,
@@ -4406,7 +4439,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 use_onnx_subfunctions=use_onnx_subfunctions,
                 offload_pt_weights=offload_pt_weights,
                 enable_chunking=enable_chunking,
-                moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                 retain_full_kv=retain_full_kv,
                 kv_cache_prefix=kv_cache_prefix,
                 **compiler_options,
@@ -4651,7 +4683,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             mxint8_kv_cache=mxint8_kv_cache,
             use_onnx_subfunctions=use_onnx_subfunctions,
             prefill_only=prefill_only,
-            moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
             offload_pt_weights=offload_pt_weights,
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,
