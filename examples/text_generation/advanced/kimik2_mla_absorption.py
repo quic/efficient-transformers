@@ -5,30 +5,46 @@
 #
 # ----------------------------------------------------------------------------
 
+"""Kimi-K2 MLA absorption: hand-rolled prefill + decode.
+
+Kimi-K2 uses Multi-head Latent Attention (compressed KV via a low-rank projection).
+The MLA-absorbed variant carries ``compressed_kvs`` / ``k_pe`` buffers whose
+shapes and lifetimes don't fit the standard ``.generate()`` runtime, so this
+example drives the compiled ``qeff_model.model(**inputs)`` directly.
+
+The knob combinations for ``mla_absorption`` + ``qaic_config`` form the real
+design surface — the block below lists them explicitly; edit which one is
+active and re-run. This is *not* the canonical entry point for text generation;
+for anything that fits ``QEFFAutoModelForCausalLM``, use
+``examples/text_generation/basic_inference.py``.
+"""
+
 import numpy as np
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 
-# parameters to be configured
+# Runtime configuration. ``TS`` is the tensor-slicing factor (== num_devices).
 prompt = "Once upon a time,"
 num_hidden_layers = 2
 TS = 4
 mla_absorption = {"cache_compressed": False, "absorption": False, "online": False}
-# qaic_config = None # Full PKV Cache
-# qaic_config = {"enable_blocking": True, "blocking_mode": "h"} # Full PKV Cache with Head Blocking
-# qaic_config = {"mla_absorption": mla_absorption} # for No Blocking
-# qaic_config = {"mla_absorption": mla_absorption, "replicate_kv_heads": True}  # No blocking with kv head replication
-# qaic_config = {"mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "kv"}  # for KV blocking
-# qaic_config = {"mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "kv", "replicate_kv_heads": True} # for KV blocking with kv head replication
+
+# qaic_config menu — uncomment the row that matches the workload:
+#   None                                                                  Full PKV cache
+#   {"enable_blocking": True, "blocking_mode": "h"}                       Full PKV + head blocking
+#   {"mla_absorption": mla_absorption}                                    No blocking
+#   {"mla_absorption": mla_absorption, "replicate_kv_heads": True}        + KV-head replication
+#   {"mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "kv"}
+#   {"mla_absorption": mla_absorption, "enable_blocking": True, "blocking_mode": "kv", "replicate_kv_heads": True}
 qaic_config = {
     "mla_absorption": mla_absorption,
     "enable_blocking": True,
     "blocking_mode": "h",
     "replicate_kv_heads": True,
 }
-# for h blocking, it internally sets head_block_size equal to num_devices/num_replicate_kv_heads (computed)
+# For "h" blocking, ``head_block_size`` = num_devices / num_replicate_kv_heads (computed).
 
 model_name = "moonshotai/Kimi-K2-Thinking"
 model = AutoModelForCausalLM.from_pretrained(
@@ -45,10 +61,6 @@ inputs = tokenizer(prompt, return_tensors="pt", padding=True)
 padded_len = inputs["input_ids"].shape[1]
 num_chunks = -(padded_len // -PREFILL_SEQ_LEN)  # ceil divide without float
 padded_len = num_chunks * PREFILL_SEQ_LEN  # Convert to a multiple of prompt_len
-
-# with torch.no_grad():
-#    out = model(**inputs)
-#    predictions = torch.argmax(out.logits, dim=-1)
 
 qeff_model = QEFFAutoModelForCausalLM(model, qaic_config=qaic_config)
 qeff_model.transform(ctx_len=CTX_LEN, seq_len=PREFILL_SEQ_LEN, bs=1, num_devices=TS, qaic_config=qaic_config)
