@@ -6,8 +6,12 @@
 # -----------------------------------------------------------------------------
 
 import argparse
+import warnings
 
-import QEfficient
+_DEPRECATED_CLOUD_API_WARNING = (
+    "QEfficient.cloud.compile is deprecated. These APIs will no longer be usable and will be removed after the "
+    "1.23.0 release."
+)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compilation script.")
@@ -110,4 +114,7 @@ if __name__ == "__main__":
                 else True
             )
             compiler_options_dict[key] = value
+    warnings.warn(_DEPRECATED_CLOUD_API_WARNING, FutureWarning, stacklevel=2)
+    import QEfficient
+
     QEfficient.compile(**args.__dict__, **compiler_options_dict)

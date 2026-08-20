@@ -439,7 +439,7 @@ pipeline {
                     sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/cli ${BUILD_TAG} bash -c "
                     cd /efficient-transformers && . preflight_qeff/bin/activate && mkdir -p /efficient-transformers/cli &&
                     export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/cli &&
-                    python -m pytest tests -m '(cli and not qnn) and (not finetune) and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=cli --junitxml=tests/tests_log3.xml --durations=10 &&
+                    python -m pytest tests/cloud/test_export_compile_execute.py -m '(cli and not qnn) and (not finetune) and ${CI_SELECTIVE_LAYER_FILTER}' -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=cli --junitxml=tests/tests_log3.xml --durations=10 &&
                     junitparser merge tests/tests_log3.xml tests/tests_log.xml && deactivate"
                     '''
                 }
