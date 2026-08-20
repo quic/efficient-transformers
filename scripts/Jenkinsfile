@@ -1,3 +1,6 @@
+import groovy.json.JsonSlurperClassic
+
+
 def testFilter(String profile) {
     switch (profile) {
         case 'dummy_layers_model':
@@ -10,6 +13,41 @@ def testFilter(String profile) {
             error "Unsupported TEST_PROFILE value: ${profile}"
     }
 }
+
+
+def impactStageEnabled(String stageKey, boolean requested) {
+    if (!requested) {
+        return false
+    }
+    return env.CI_IMPACT_MODE == 'full' || env["IMPACT_${stageKey.toUpperCase()}"] == 'true'
+}
+
+
+def qaicWorkerCount(String mode, String profile) {
+    return '3'
+}
+
+
+def noopMarkerFilter() {
+    return '(not qeff_ci_noop_marker)'
+}
+
+
+def loadImpactEnvironment(Map plan, String profile) {
+    env.CI_IMPACT_MODE = plan.mode
+    env.IMPACT_TEST_FILTER = plan.mode == 'full' ? env.TEST_FILTER : noopMarkerFilter()
+    env.CI_SELECTIVE_LAYER_FILTER = plan.mode == 'full' ? noopMarkerFilter() : '(not full_layers)'
+    env.CI_QAIC_WORKERS = qaicWorkerCount(plan.mode, profile)
+    plan.stages.each { stageKey, stagePlan ->
+        env["IMPACT_${stageKey.toUpperCase()}"] = stagePlan.enabled.toString()
+    }
+}
+
+
+def impactOptions(String stageKey) {
+    return "-p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=${stageKey}"
+}
+
 
 pipeline {
     agent { node { label params.NODE_LABEL } }
@@ -24,17 +62,28 @@ pipeline {
         )
         choice(
             name: 'TEST_PROFILE',
-            choices: [
-                'dummy_layers_model',
-                'few_layers_model',
-                'full_layers_model'
-            ],
+            choices: ['dummy_layers_model', 'few_layers_model', 'full_layers_model'],
             description: 'Select test profile'
         )
         string(
             name: 'SELECT_TEST_STAGES',
             defaultValue: 'ALL',
             description: 'Select which test stages you want to run (all run by default)'
+        )
+        booleanParam(
+            name: 'FORCE_FULL_CI',
+            defaultValue: false,
+            description: 'Run the complete regression pipeline regardless of the impact plan'
+        )
+        string(
+            name: 'CI_IMPACT_VALIDATION_PR',
+            defaultValue: '',
+            description: 'Optional PR number to check out and validate with this CI implementation'
+        )
+        booleanParam(
+            name: 'CI_IMPACT_LATEST_COMMIT_ONLY',
+            defaultValue: false,
+            description: 'Validation only: compare the selected PR head with HEAD^ instead of main'
         )
         booleanParam(name: 'RUN_HL_APIS', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_FEATURE', defaultValue: true)
@@ -47,211 +96,364 @@ pipeline {
 
     environment {
         TEST_FILTER = testFilter(params.TEST_PROFILE)
+        IMPACT_TEST_FILTER = testFilter(params.TEST_PROFILE)
+        CI_IMPACT_MODE = 'full'
+        CI_SELECTIVE_LAYER_FILTER = noopMarkerFilter()
+        CI_QAIC_WORKERS = '3'
     }
 
     stages {
+        stage('Checkout Impact Validation Target') {
+            when { expression { params.CI_IMPACT_VALIDATION_PR?.trim() } }
+            steps {
+                script {
+                    def validationPr = params.CI_IMPACT_VALIDATION_PR.trim()
+                    if (!(validationPr ==~ /[1-9][0-9]*/)) {
+                        error("CI_IMPACT_VALIDATION_PR must be a positive integer: ${validationPr}")
+                    }
+
+                    def selectorCommit = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                    if (!(selectorCommit ==~ /[0-9a-f]{40,64}/)) {
+                        error("Could not resolve the CI selector commit: ${selectorCommit}")
+                    }
+                    def validationRef = "refs/remotes/origin/ci-impact-validation-pr-${validationPr}"
+                    sh "git fetch --no-tags origin '+refs/pull/${validationPr}/head:${validationRef}'"
+                    sh "git switch --detach '${validationRef}'"
+                    sh "git archive '${selectorCommit}' scripts/ci_impact | tar -x"
+                    env.CI_IMPACT_VALIDATION_PR_ID = validationPr
+                    echo "Validating CI impact selection against PR-${validationPr} at ${validationRef}"
+                }
+            }
+        }
+
+        stage('Resolve Comparison Base') {
+            steps {
+                script {
+                    def base = ''
+                    def validationPr = params.CI_IMPACT_VALIDATION_PR?.trim()
+                    if (params.CI_IMPACT_LATEST_COMMIT_ONLY && !validationPr) {
+                        error('CI_IMPACT_LATEST_COMMIT_ONLY requires CI_IMPACT_VALIDATION_PR')
+                    }
+                    def forceFull = params.FORCE_FULL_CI || (!env.CHANGE_ID && !validationPr)
+                    def forceReason = params.FORCE_FULL_CI ? 'full CI manually forced' : 'non-PR build'
+                    try {
+                        if (params.CI_IMPACT_LATEST_COMMIT_ONLY) {
+                            if (sh(returnStatus: true, script: 'git rev-parse --verify --quiet HEAD^') != 0) {
+                                error('Cannot compare the validation target with HEAD^')
+                            }
+                            base = sh(returnStdout: true, script: 'git rev-parse HEAD^').trim()
+                        } else if (env.CHANGE_ID || validationPr) {
+                            def target = validationPr ? 'main' : (env.CHANGE_TARGET ?: 'main')
+                            if (!(target ==~ /[A-Za-z0-9._\/-]+/)) {
+                                error("Unsafe CHANGE_TARGET: ${target}")
+                            }
+                            def targetRef = "refs/remotes/origin/${target}"
+                            if (sh(returnStatus: true, script: "git rev-parse --verify --quiet '${targetRef}^{commit}'") != 0) {
+                                sh "git fetch --no-tags origin '+refs/heads/${target}:${targetRef}'"
+                            }
+                            base = sh(returnStdout: true, script: "git merge-base HEAD '${targetRef}'").trim()
+                            if (!(base ==~ /[0-9a-f]{40,64}/)) {
+                                error("Could not resolve a safe merge base for ${targetRef}")
+                            }
+                        } else if (
+                            env.GIT_PREVIOUS_SUCCESSFUL_COMMIT &&
+                            (env.GIT_PREVIOUS_SUCCESSFUL_COMMIT ==~ /[0-9a-f]{40,64}/)
+                        ) {
+                            base = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT
+                        } else if (sh(returnStatus: true, script: 'git rev-parse --verify --quiet HEAD^') == 0) {
+                            base = sh(returnStdout: true, script: 'git rev-parse HEAD^').trim()
+                        } else {
+                            base = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                        }
+                    } catch (resolutionError) {
+                        forceFull = true
+                        forceReason = "comparison-base resolution failed closed: ${resolutionError}"
+                        base = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                    }
+                    env.CI_IMPACT_BASE = base
+                    env.CI_IMPACT_HEAD = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                    env.CI_IMPACT_FORCE_FULL = forceFull.toString()
+                    env.CI_IMPACT_FORCE_REASON = forceReason
+                    echo "Regression impact comparison base: ${base}"
+                }
+            }
+        }
+
         stage('Install QEfficient') {
             steps {
+                script {
+                    retry(3) {
+                        sh '''
+                            . ~/.bashrc
+                            sudo docker rm -f ${BUILD_TAG} >/dev/null 2>&1 || true
+                            export QEFF_PIP_CACHE_PATH="${QEFF_PIP_CACHE_PATH:-${HOME}/.cache/qeff-pip}"
+                            export QEFF_APT_ARCHIVES_PATH="${QEFF_APT_ARCHIVES_PATH:-${HOME}/.cache/qeff-apt/archives}"
+                            export QEFF_APT_LISTS_PATH="${QEFF_APT_LISTS_PATH:-${HOME}/.cache/qeff-apt/lists}"
+                            mkdir -p "${QEFF_PIP_CACHE_PATH}" "${QEFF_APT_ARCHIVES_PATH}/partial" "${QEFF_APT_LISTS_PATH}/partial"
+                            sudo docker run --privileged -dit --name ${BUILD_TAG} \
+                            -e HF_TOKEN=${HF_TOKEN} \
+                            -e TMPDIR=/efficient-transformers/.ci-tmp/default \
+                            -e PIP_CACHE_DIR=/root/.cache/pip \
+                            -v ./:/efficient-transformers \
+                            -v ${HF_PATH}:${DOCKER_HF_PATH} \
+                            -v ${QEFF_PIP_CACHE_PATH}:/root/.cache/pip \
+                            -v ${QEFF_APT_ARCHIVES_PATH}:/var/cache/apt/archives \
+                            -v ${QEFF_APT_LISTS_PATH}:/var/lib/apt/lists \
+                            ${DOCKER_LATEST}:master_latest
+                            sudo docker exec ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            mkdir -p /efficient-transformers/.ci-tmp/{default,export_compile,qaic_llm,qaic_feature,qaic_multimodal,qaic_reranker,qaic_diffusion,cli,dynamo_qaic,finetune} &&
+                            rm -f /etc/apt/apt.conf.d/docker-clean &&
+                            apt update &&
+                            DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv python3.12-dev build-essential &&
+                            python3.12 -m venv preflight_qeff &&
+                            . preflight_qeff/bin/activate &&
+                            pip install --upgrade pip setuptools &&
+                            pip install .[test] &&
+                            pip install junitparser pytest-xdist &&
+                            pip install librosa==0.10.2 soundfile==0.13.1 &&
+                            pip install qwen-vl-utils==0.0.14 &&
+                            pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1 &&
+                            pip install onnx_ir"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Collect Pytest Catalog') {
+            steps {
                 sh '''
-                    . ~/.bashrc
-                    sudo docker run --privileged -dit --name ${BUILD_TAG} -e HF_TOKEN=${HF_TOKEN} -v ./:/efficient-transformers -v ${HF_PATH}:${DOCKER_HF_PATH} ${DOCKER_LATEST}:master_latest
                     sudo docker exec ${BUILD_TAG} bash -c "
                     cd /efficient-transformers &&
-                    apt update &&
-                    DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv python3.12-dev build-essential &&
-                    python3.12 -m venv preflight_qeff &&
                     . preflight_qeff/bin/activate &&
-                    pip install --upgrade pip setuptools &&
-                    pip install .[test] &&
-                    pip install junitparser pytest-xdist &&
-                    pip install librosa==0.10.2 soundfile==0.13.1 &&
-                    pip install qwen-vl-utils==0.0.14 &&
-                    pip install --extra-index-url https://download.pytorch.org/whl/cpu timm==1.0.14 torchvision==0.22.0+cpu einops==0.8.1 &&
-                    pip install onnx_ir
+                    python -m pytest tests --collect-only -q --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -p scripts.ci_impact.pytest_plugin --impact-catalog=.ci-impact-catalog.json --impact-head=${CI_IMPACT_HEAD} &&
+                    deactivate"
+                '''
+                archiveArtifacts artifacts: '.ci-impact-catalog.json', fingerprint: true
+            }
+        }
+
+        stage('Stage Qgenie Tools') {
+            steps {
+                script {
+                    if (!(env.BUILD_TAG ==~ /[A-Za-z0-9_.-]+/)) {
+                        error("BUILD_TAG contains unsafe characters: ${env.BUILD_TAG}")
+                    }
+                    env.CI_IMPACT_TRUSTED_TOOL_DIR = "/opt/qeff-ci/qgenie/${env.BUILD_TAG}"
+                    sh '''
+                        sudo install -d -o root -g root -m 0755 ${CI_IMPACT_TRUSTED_TOOL_DIR}
+                        sudo install -o root -g root -m 0555 scripts/ci_impact/query.py ${CI_IMPACT_TRUSTED_TOOL_DIR}/query.py
+                        sudo install -o root -g root -m 0555 scripts/ci_impact/tool_policy.py ${CI_IMPACT_TRUSTED_TOOL_DIR}/tool_policy.py
+                    '''
+                }
+            }
+        }
+
+        stage('Plan Regression Impact') {
+            steps {
+                script {
+                    def safeForceReason = env.CI_IMPACT_FORCE_REASON.replace("'", '')
+                    def forceArgs = env.CI_IMPACT_FORCE_FULL == 'true' ? "--force-full --force-reason='${safeForceReason}'" : ''
+                    try {
+                        withEnv([
+                            'PATH+QGENIE=/home/ubuntu/.local/bin',
+                            "QEFF_CI_TRUSTED_TOOL_DIR=${env.CI_IMPACT_TRUSTED_TOOL_DIR}",
+                        ]) {
+                            sh "python3 -m scripts.ci_impact.cli plan --base='${env.CI_IMPACT_BASE}' --head=HEAD --catalog=.ci-impact-catalog.json ${forceArgs}"
+                            sh 'python3 -m scripts.ci_impact.cli validate .ci-impact-plan.json'
+                        }
+                    } catch (planningError) {
+                        if (fileExists('.ci-impact-llm.json')) {
+                            echo "LLM decision artifact:\n${readFile('.ci-impact-llm.json').trim()}"
+                        }
+                        archiveArtifacts artifacts: '.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json,.ci-impact-qgenie-audit.jsonl', allowEmptyArchive: true
+                        throw planningError
+                    }
+                    def plan = new JsonSlurperClassic().parseText(readFile('.ci-impact-plan.json'))
+                    def llmDecisionText = fileExists('.ci-impact-llm.json') ? readFile('.ci-impact-llm.json').trim() : '<missing>'
+                    loadImpactEnvironment(plan, params.TEST_PROFILE)
+                    def validationPrefix = env.CI_IMPACT_VALIDATION_PR_ID ? "PR-${env.CI_IMPACT_VALIDATION_PR_ID} validation; " : ''
+                    currentBuild.description = "${validationPrefix}${plan.mode}: ${plan.reasons.join('; ')}"
+                    echo "Regression impact mode: ${plan.mode}\nReasons: ${plan.reasons.join('\n')}"
+                    echo "LLM decision artifact:\n${llmDecisionText}"
+                    if (plan.mode != 'full') {
+                        def selectedTests = []
+                        plan.stages.each { stageKey, stagePlan ->
+                            if (stagePlan.enabled && stagePlan.nodeids) {
+                                stagePlan.nodeids.each { nodeid ->
+                                    selectedTests << "${stageKey}: ${nodeid}"
+                                }
+                            }
+                        }
+                        echo "Final selected tests:\n${selectedTests ? selectedTests.join('\n') : '<none>'}"
+                    }
+                    archiveArtifacts artifacts: '.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json,.ci-impact-qgenie-audit.jsonl', fingerprint: true
+                }
+            }
+        }
+
+        stage('Remove Library Sources') {
+            steps {
+                sh '''
+                    sudo docker exec ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
                     rm -rf QEfficient"
                 '''
             }
         }
 
         stage('HL API Tests') {
-            when { expression { params.RUN_HL_APIS } }
+            when { expression { impactStageEnabled('export_compile', params.RUN_HL_APIS) || impactStageEnabled('qaic_llm', params.RUN_HL_APIS) } }
             parallel {
                 stage('Export & Compile') {
+                    when { expression { impactStageEnabled('export_compile', params.RUN_HL_APIS) } }
                     steps {
-                       timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 60, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
-                           sh '''
-                           sudo docker exec ${BUILD_TAG} bash -c "
-                           cd /efficient-transformers &&
-                           . preflight_qeff/bin/activate &&
-                           mkdir -p $PWD/Non_cli_qaic &&
-                           export TOKENIZERS_PARALLELISM=false &&
-                           export QEFF_HOME=$PWD/Non_cli_qaic &&
-                           pytest tests -m '(not on_qaic) and (not finetune) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 4 --junitxml=tests/tests_log1.xml --durations=10 &&
-                           junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
-                           deactivate"
-                           '''
-                       }
-                   }
+                        timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 60, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
+                            sh '''
+                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/export_compile ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            mkdir -p /efficient-transformers/Non_cli_qaic &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_HOME=/efficient-transformers/Non_cli_qaic &&
+                            python -m pytest tests -m '(not on_qaic) and (not dynamo) and (not finetune) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n 4 -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=export_compile --junitxml=tests/tests_log1.xml --durations=10 &&
+                            junitparser merge tests/tests_log1.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
                 }
 
                 stage('QAIC LLM') {
+                    when { expression { impactStageEnabled('qaic_llm', params.RUN_HL_APIS) } }
                     steps {
-                       timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 240, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
-                           sh '''
-                           sudo docker exec ${BUILD_TAG} bash -c "
-                           cd /efficient-transformers &&
-                           . preflight_qeff/bin/activate &&
-                           mkdir -p $PWD/Non_qaic_llm &&
-                           export TOKENIZERS_PARALLELISM=false &&
-                           export QEFF_HOME=$PWD/Non_qaic_llm &&
-                           pytest tests -m '(llm_model) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log2.xml --durations=10 &&
-                           junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
-                           deactivate"
-                           '''
-                       }
-                   }
+                        timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 240, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
+                            sh '''
+                            sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_llm ${BUILD_TAG} bash -c "
+                            cd /efficient-transformers &&
+                            . preflight_qeff/bin/activate &&
+                            mkdir -p /efficient-transformers/Non_qaic_llm &&
+                            export TOKENIZERS_PARALLELISM=false &&
+                            export QEFF_ISOLATE_QAIC_WORKERS=1 &&
+                            export QEFF_HOME=/efficient-transformers/Non_qaic_llm &&
+                            python -m pytest tests -m '(llm_model) and (not dynamo) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_llm --junitxml=tests/tests_log2.xml --durations=10 &&
+                            junitparser merge tests/tests_log2.xml tests/tests_log.xml &&
+                            deactivate"
+                            '''
+                        }
+                    }
                 }
-                
             }
         }
+
         stage('QAIC FEATURE') {
-            when {expression { params.RUN_QAIC_FEATURE }}
+            when { expression { impactStageEnabled('qaic_feature', params.RUN_QAIC_FEATURE) } }
             steps {
                 timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 120, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Non_qaic_feature &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/Non_qaic_feature &&
-                    pytest tests -m '(on_qaic) and (feature) and (not qnn) and ${TEST_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log2_feature.xml --durations=10 &&
-                    junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml &&
-                    deactivate"
+                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_feature ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers && . preflight_qeff/bin/activate && mkdir -p /efficient-transformers/Non_qaic_feature &&
+                    export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/Non_qaic_feature &&
+                    python -m pytest tests -m '(on_qaic) and (feature) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_feature --junitxml=tests/tests_log2_feature.xml --durations=10 &&
+                    junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml && deactivate"
                     '''
                 }
             }
         }
+
         stage('QAIC Multimodal') {
-            when {expression { params.RUN_QAIC_MM }}
+            when { expression { impactStageEnabled('qaic_multimodal', params.RUN_QAIC_MM) } }
             steps {
                 timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 180, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Non_cli_qaic_multimodal &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/Non_cli_qaic_multimodal &&
-                    pytest tests -m '(multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py --junitxml=tests/tests_log6.xml --durations=10 &&
-                    junitparser merge tests/tests_log6.xml tests/tests_log.xml &&
-                    deactivate"
+                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_multimodal ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers && . preflight_qeff/bin/activate && mkdir -p /efficient-transformers/Non_cli_qaic_multimodal &&
+                    export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/Non_cli_qaic_multimodal &&
+                    python -m pytest tests -m '(multimodal) and (not qnn) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --ignore tests/transformers/models/reranker/test_reranker_mad.py -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_multimodal --junitxml=tests/tests_log6.xml --durations=10 &&
+                    junitparser merge tests/tests_log6.xml tests/tests_log.xml && deactivate"
                     '''
                 }
             }
         }
+
         stage('QAIC Reranker Tests') {
-            when { expression { params.RUN_QAIC_MM } }
+            when { expression { impactStageEnabled('qaic_reranker', params.RUN_QAIC_MM) } }
             steps {
                 timeout(time: 20, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Non_cli_qaic_reranker &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/Non_cli_qaic_reranker &&
-                    export QEFF_RERANKER_DOC_LIMIT=1 &&
-                    pytest -q tests/transformers/models/reranker/test_reranker_mad.py --maxfail=1 --junitxml=tests/tests_log_reranker.xml --durations=10 &&
-                    junitparser merge tests/tests_log_reranker.xml tests/tests_log.xml &&
-                    deactivate"
+                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_reranker ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers && . preflight_qeff/bin/activate && mkdir -p /efficient-transformers/Non_cli_qaic_reranker &&
+                    export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/Non_cli_qaic_reranker && export QEFF_RERANKER_DOC_LIMIT=1 &&
+                    python -m pytest -q tests/transformers/models/reranker/test_reranker_mad.py --maxfail=1 -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_reranker --junitxml=tests/tests_log_reranker.xml --durations=10 &&
+                    junitparser merge tests/tests_log_reranker.xml tests/tests_log.xml && deactivate"
                     '''
                 }
             }
         }
+
         stage('QAIC Diffusion Models Tests') {
-            when { expression { params.RUN_QAIC_DIFFUSION } }
+            when { expression { impactStageEnabled('qaic_diffusion', params.RUN_QAIC_DIFFUSION) } }
             steps {
                 timeout(time: 120, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/Non_cli_qaic_diffusion &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/Non_cli_qaic_diffusion &&
-                    export HF_HUB_CACHE=/huggingface_hub &&
-                    pytest tests -m 'diffusion_models' --ignore tests/vllm  --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log_diffusion.xml --durations=10 &&
-                    junitparser merge tests/tests_log_diffusion.xml tests/tests_log.xml &&
-                    deactivate"
+                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_diffusion ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers && . preflight_qeff/bin/activate && mkdir -p /efficient-transformers/Non_cli_qaic_diffusion &&
+                    export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/Non_cli_qaic_diffusion && export HF_HUB_CACHE=/huggingface_hub &&
+                    python -m pytest tests -m 'diffusion_models and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_diffusion --junitxml=tests/tests_log_diffusion.xml --durations=10 &&
+                    junitparser merge tests/tests_log_diffusion.xml tests/tests_log.xml && deactivate"
                     '''
                 }
             }
         }
 
         stage('CLI Tests') {
-            when { expression { params.RUN_CLI } }
+            when { expression { impactStageEnabled('cli', params.RUN_CLI) } }
             steps {
                 timeout(time: 120, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    #source /qnn_sdk/bin/envsetup.sh &&
-                    #source /qnn_sdk/bin/envcheck -c &&
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    mkdir -p $PWD/cli &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/cli &&
-                    pytest tests -m '(cli and not qnn) and (not finetune)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log3.xml --durations=10 &&
-                    junitparser merge tests/tests_log3.xml tests/tests_log.xml &&
-                    deactivate"
+                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/cli ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers && . preflight_qeff/bin/activate && mkdir -p /efficient-transformers/cli &&
+                    export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/cli &&
+                    python -m pytest tests -m '(cli and not qnn) and (not finetune) and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=cli --junitxml=tests/tests_log3.xml --durations=10 &&
+                    junitparser merge tests/tests_log3.xml tests/tests_log.xml && deactivate"
                     '''
                 }
             }
         }
 
         stage('QAIC DYNAMO') {
-            when { expression { params.RUN_DYNAMO_QAIC } }
+            when { expression { impactStageEnabled('dynamo_qaic', params.RUN_DYNAMO_QAIC) } }
             steps {
                 timeout(time: 240, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    pip install -r examples/dynamo/causal_lm/requirements.txt &&
-                    mkdir -p \\$PWD/dynamo_qeff_qaic &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=\\$PWD/dynamo_qeff_qaic &&
-                    pytest tests/dynamo -m '(dynamo) and (on_qaic) and ${TEST_FILTER}' --ignore tests/dynamo/nightly --dist loadgroup -n auto --junitxml=tests/tests_log_dynamo_qaic.xml --durations=10 &&
-                    junitparser merge tests/tests_log_dynamo_qaic.xml tests/tests_log.xml &&
-                    deactivate"
+                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/dynamo_qaic ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers && . preflight_qeff/bin/activate && pip install -r examples/dynamo/causal_lm/requirements.txt &&
+                    mkdir -p /efficient-transformers/dynamo_qeff_qaic && export TOKENIZERS_PARALLELISM=false && export QEFF_ISOLATE_QAIC_WORKERS=1 && export QEFF_HOME=/efficient-transformers/dynamo_qeff_qaic &&
+                    python -m pytest tests/dynamo -m '(dynamo) and (on_qaic) and ${IMPACT_TEST_FILTER} and ${CI_SELECTIVE_LAYER_FILTER}' --ignore tests/dynamo/nightly -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=dynamo_qaic --junitxml=tests/tests_log_dynamo_qaic.xml --durations=10 &&
+                    junitparser merge tests/tests_log_dynamo_qaic.xml tests/tests_log.xml && deactivate"
                     '''
                 }
             }
         }
 
         stage('Finetune Tests') {
-            when { expression { params.RUN_FINETUNE } }
+            when { expression { env.CI_IMPACT_MODE == 'full' && params.RUN_FINETUNE } }
             steps {
                 timeout(time: 20, unit: 'MINUTES') {
                     sh '''
-                    sudo docker exec ${BUILD_TAG} bash -c "
-                    cd /efficient-transformers &&
-                    . preflight_qeff/bin/activate &&
-                    # TODO: Update torch_qaic path to py312 when migrating to Python 3.12
+                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/finetune ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers && . preflight_qeff/bin/activate &&
                     pip install /opt/qti-aic/integrations/torch_qaic/py312/torch_qaic-0.1.0-cp312-cp312-manylinux_2_34_x86_64.whl &&
-                    # pip install /opt/qti-aic/integrations/torch_qaic/py310/torch_qaic-0.1.0-cp310-cp310-linux_x86_64.whl &&
                     pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cpu &&
-                    mkdir -p $PWD/cli_qaic_finetuning &&
-                    export TOKENIZERS_PARALLELISM=false &&
-                    export QEFF_HOME=$PWD/cli_qaic_finetuning &&
+                    mkdir -p /efficient-transformers/cli_qaic_finetuning && export TOKENIZERS_PARALLELISM=false && export QEFF_HOME=/efficient-transformers/cli_qaic_finetuning &&
                     pytest tests -m '(finetune)' --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log_finetune.xml --durations=10 &&
-                    junitparser merge tests/tests_log_finetune.xml tests/tests_log.xml &&
-                    deactivate"
+                    junitparser merge tests/tests_log_finetune.xml tests/tests_log.xml && deactivate"
                     '''
                 }
             }
         }
+
     }
 
     post {
@@ -259,24 +461,44 @@ pipeline {
             script {
                 try {
                     sh '''
-                    sudo chown -R ubuntu .
+                        sudo docker inspect --format 'status={{.State.Status}} oom_killed={{.State.OOMKilled}} exit_code={{.State.ExitCode}} error={{json .State.Error}} memory_limit={{.HostConfig.Memory}}' ${BUILD_TAG} || true
+                        sudo docker stats --no-stream --format 'container={{.Name}} memory={{.MemUsage}} memory_percent={{.MemPerc}}' ${BUILD_TAG} || true
+                        container_pid=$(sudo docker inspect --format '{{.State.Pid}}' ${BUILD_TAG} 2>/dev/null || true)
+                        if [ -n "${container_pid}" ] && [ "${container_pid}" -gt 0 ] 2>/dev/null; then
+                            cgroup_path=$(awk -F: '$1 == "0" {print $3}' /proc/${container_pid}/cgroup)
+                            if [ -n "${cgroup_path}" ] && [ -f "/sys/fs/cgroup${cgroup_path}/memory.events" ]; then
+                                sudo sed 's/^/container_cgroup_/' "/sys/fs/cgroup${cgroup_path}/memory.events"
+                            fi
+                        fi
+                        sudo journalctl -k --since '-20 minutes' --no-pager 2>/dev/null | grep -Ei 'oom|out of memory|killed process|memory cgroup' | tail -100 || true
+                        df -h /var/lib/docker "${WORKSPACE}" || true
                     '''
+                } catch (error) {
+                    echo "Failed to collect container diagnostics: ${error}"
+                }
+                try {
+                    sh 'sudo chown -R ubuntu .'
                 } catch (error) {
                     echo "Failed to change ownership: ${error}"
                 }
-            }
-            script {
+                if (env.CI_IMPACT_TRUSTED_TOOL_DIR) {
+                    if (!(env.CI_IMPACT_TRUSTED_TOOL_DIR ==~ /\/opt\/qeff-ci\/qgenie\/[A-Za-z0-9_.-]+/)) {
+                        error("Refusing to remove unsafe qgenie tool path: ${env.CI_IMPACT_TRUSTED_TOOL_DIR}")
+                    }
+                    sh "sudo rm -rf '${env.CI_IMPACT_TRUSTED_TOOL_DIR}'"
+                }
                 try {
                     junit testResults: 'tests/tests_log.xml', allowEmptyResults: true
                 } catch (error) {
                     echo "No test results file found or parsing failed: ${error}"
                 }
-            }
-            script {
                 try {
-                    sh '''
-                    sudo docker rm -f ${BUILD_TAG}
-                    '''
+                    archiveArtifacts artifacts: '.ci-impact-catalog.json,.ci-impact-deterministic-plan.json,.ci-impact-llm.json,.ci-impact-plan.json,.ci-impact-qgenie-audit.jsonl', allowEmptyArchive: true, fingerprint: true
+                } catch (error) {
+                    echo "Failed to archive CI impact artifacts: ${error}"
+                }
+                try {
+                    sh 'sudo docker rm -f ${BUILD_TAG}'
                 } catch (error) {
                     echo "Failed to delete container ${BUILD_TAG}: ${error}"
                 }
