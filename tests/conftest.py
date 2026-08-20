@@ -14,8 +14,14 @@ from pathlib import Path
 import pytest
 from transformers import logging as hf_logging
 
-from QEfficient.utils.cache import QEFF_HOME
-from QEfficient.utils.logging_utils import logger
+_xdist_worker = os.environ.get("PYTEST_XDIST_WORKER")
+if _xdist_worker and os.environ.get("QEFF_HOME"):
+    os.environ["QEFF_HOME"] = str(Path(os.environ["QEFF_HOME"]) / _xdist_worker)
+    Path(os.environ["QEFF_HOME"]).mkdir(parents=True, exist_ok=True)
+
+from QEfficient.utils.cache import QEFF_HOME  # noqa: E402
+from QEfficient.utils.device_utils import get_qaic_mdp_device_groups  # noqa: E402
+from QEfficient.utils.logging_utils import logger  # noqa: E402
 
 _QUICKCHECK_FILE = "tests/unit_test/models/test_model_quickcheck.py"
 _QUICKCHECK_SUMMARY = {}
@@ -169,6 +175,16 @@ def pytest_sessionstart(session):
 
 def pytest_configure(config):
     """Register custom markers for test categorization."""
+    if _xdist_worker and os.environ.get("QEFF_ISOLATE_QAIC_WORKERS") == "1":
+        device_groups = get_qaic_mdp_device_groups()
+        worker_index = int(_xdist_worker.removeprefix("gw"))
+        if worker_index >= len(device_groups):
+            raise pytest.UsageError(
+                f"QAIC worker {_xdist_worker} has no isolated 4-device group; found {len(device_groups)} groups"
+            )
+        os.environ["QAIC_VISIBLE_DEVICES"] = ",".join(map(str, device_groups[worker_index]))
+        logger.info("Assigned %s to QAIC devices %s", _xdist_worker, os.environ["QAIC_VISIBLE_DEVICES"])
+
     config.addinivalue_line("markers", "llm_model: mark test as a pure LLM model inference test")
     config.addinivalue_line(
         "markers", "feature: mark test as a feature-specific test (SPD, sampler, prefix caching, LoRA, etc.)"
