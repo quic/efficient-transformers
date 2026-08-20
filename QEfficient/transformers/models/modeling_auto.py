@@ -11,6 +11,7 @@ import warnings
 from pathlib import Path
 from time import perf_counter
 from typing import List, Optional, Union
+from datetime import datetime, timezone, timedelta
 
 import numpy as np
 import onnx
@@ -108,6 +109,15 @@ TORCH_TO_NUMPY_DTYPE_MAP = {
     torch.bfloat16: np.float16,  # Since numpy doesn't support bfloat16
     torch.float32: np.float32,
 }
+
+def get_io_dir(onnx_path: str) -> str:
+    """Return a timestamped io_dir path under the model's onnx directory.
+
+    Format: <onnx_dir>/io_dir/<YYYYMMDD_HHMMSS_EST>
+    """
+    est = timezone(timedelta(hours=-5))
+    timestamp = datetime.now(est).strftime("%Y%m%d_%H%M%S")
+    return os.path.join(os.path.dirname(onnx_path), "io_dir", timestamp)
 
 
 def _resolve_torch_dtype(kwargs: dict) -> None:
@@ -731,7 +741,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         torch.Tensor or np.ndarray
             Output from the AI 100 or PyTorch runtime. The type depends on the runtime and model.
         """
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
+        self._write_io_dir = get_io_dir(self.onnx_path) if write_io else None
 
         # AI_100 runtime
         if runtime_ai100:
@@ -2292,7 +2302,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
         write_io = kwargs.pop("write_io", False)
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path[1]), "io_dir") if write_io else None
+        self._write_io_dir = get_io_dir(self.lang_model.onnx_path) if write_io else None
 
         # Use VisionLanguageGeneration for image-prompt pairs
         if (processor and images) or (tokenizer and prompts) or multi_specs or num_frames:
@@ -3062,7 +3072,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
 
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
+        self._write_io_dir = get_io_dir(self.onnx_path) if write_io else None
 
         return self.cloud_ai_100_generate(
             inputs=inputs, device_ids=device_ids, generation_len=generation_len, streamer=streamer
@@ -4816,7 +4826,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             If `runtime_ai100` is False.
         """
         write_io = kwargs.pop("write_io", False)
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
+        self._write_io_dir = get_io_dir(self.onnx_path) if write_io else None
 
         if runtime_ai100:
             if not isinstance(self.qpc_path, Path):
@@ -5173,7 +5183,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         if not isinstance(self.qpc_path, Path):
             raise TypeError("Please run compile API first!")
 
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
+        self._write_io_dir = get_io_dir(self.onnx_path) if write_io else None
 
         inputs = self.auto_correct_inputs(inputs)
         if self.qpc_session is None:
@@ -5475,7 +5485,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         Returns:
             :dict: Output from the ``AI_100`` or ``PyTorch`` runtime.
         """
-        self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
+        self._write_io_dir = get_io_dir(self.onnx_path) if write_io else None
 
         # AI_100 runtime
         if runtime_ai100:
