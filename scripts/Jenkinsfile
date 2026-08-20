@@ -88,6 +88,7 @@ pipeline {
         booleanParam(name: 'RUN_HL_APIS', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_FEATURE', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_MM', defaultValue: true)
+        booleanParam(name: 'RUN_QAIC_DISAGG', defaultValue: true)
         booleanParam(name: 'RUN_QAIC_DIFFUSION', defaultValue: true)
         booleanParam(name: 'RUN_CLI', defaultValue: true)
         booleanParam(name: 'RUN_FINETUNE', defaultValue: false)
@@ -202,7 +203,7 @@ pipeline {
                             ${DOCKER_LATEST}:master_latest
                             sudo docker exec ${BUILD_TAG} bash -c "
                             cd /efficient-transformers &&
-                            mkdir -p /efficient-transformers/.ci-tmp/{default,export_compile,qaic_llm,qaic_feature,qaic_multimodal,qaic_reranker,qaic_diffusion,cli,dynamo_qaic,finetune} &&
+                            mkdir -p /efficient-transformers/.ci-tmp/{default,export_compile,qaic_llm,qaic_feature,qaic_multimodal,qaic_reranker,qaic_disagg,qaic_diffusion,cli,dynamo_qaic,finetune} &&
                             rm -f /etc/apt/apt.conf.d/docker-clean &&
                             apt update &&
                             DEBIAN_FRONTEND=noninteractive apt install -y tzdata python3.12-venv python3.12-dev build-essential &&
@@ -376,7 +377,25 @@ pipeline {
                 }
             }
         }
-
+        stage('QAIC DISAGG TESTS') {
+            when { expression { impactStageEnabled('qaic_disagg', params.RUN_QAIC_DISAGG) } }
+            steps {
+                timeout(time: params.TEST_PROFILE == 'full_layers_model' ? 0 : 180, unit: params.TEST_PROFILE == 'full_layers_model' ? 'HOURS' : 'MINUTES') {
+                    sh '''
+                    sudo docker exec -e TMPDIR=/efficient-transformers/.ci-tmp/qaic_disagg ${BUILD_TAG} bash -c "
+                    cd /efficient-transformers &&
+                    . preflight_qeff/bin/activate &&
+                    mkdir -p /efficient-transformers/Non_cli_qaic_disagg &&
+                    export TOKENIZERS_PARALLELISM=false &&
+                    export QEFF_ISOLATE_QAIC_WORKERS=1 &&
+                    export QEFF_HOME=/efficient-transformers/Non_cli_qaic_disagg &&
+                    python -m pytest -m \"on_qaic and disagg_dma and ${CI_SELECTIVE_LAYER_FILTER}\" tests/transformers/disaggregated -n ${CI_QAIC_WORKERS} -p scripts.ci_impact.pytest_plugin --impact-plan=.ci-impact-plan.json --impact-stage=qaic_disagg --junitxml=tests/tests_log_disagg.xml --durations=10 &&
+                    junitparser merge tests/tests_log_disagg.xml tests/tests_log.xml &&
+                    deactivate"
+                    '''
+                }
+            }
+        }
         stage('QAIC Reranker Tests') {
             when { expression { impactStageEnabled('qaic_reranker', params.RUN_QAIC_MM) } }
             steps {
