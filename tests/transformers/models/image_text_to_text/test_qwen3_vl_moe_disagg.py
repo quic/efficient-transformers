@@ -22,6 +22,8 @@ PREFILL_SEQ_LEN = 64
 CTX_LEN = 512
 BATCH_SIZE = 1
 GENERATION_LEN = 4
+# Vision, prefill, and decode sessions stay resident together; 3 * 4 cores fits on one 16-core card.
+DISAGG_NUM_CORES = 4
 IMAGE_SIZE = (536, 354)
 TEXT_PROMPT = "Describe all the colors seen in the image."
 
@@ -276,7 +278,7 @@ def test_qwen3_vl_moe_disagg_qaic_vs_hf_fp32(manual_cleanup):
             ctx_len=CTX_LEN,
             height=image.height,
             width=image.width,
-            num_cores=16,
+            num_cores=DISAGG_NUM_CORES,
             num_devices=1,
             mos=1,
             aic_enable_depth_first=True,
@@ -294,7 +296,7 @@ def test_qwen3_vl_moe_disagg_qaic_vs_hf_fp32(manual_cleanup):
             ctx_len=CTX_LEN,
             height=image.height,
             width=image.width,
-            num_cores=16,
+            num_cores=DISAGG_NUM_CORES,
             num_devices=1,
             retain_full_kv=True,
             split_model_io=True,
@@ -315,7 +317,7 @@ def test_qwen3_vl_moe_disagg_qaic_vs_hf_fp32(manual_cleanup):
             ctx_len=CTX_LEN,
             height=image.height,
             width=image.width,
-            num_cores=16,
+            num_cores=DISAGG_NUM_CORES,
             num_devices=1,
             split_model_io=True,
             mos=1,
