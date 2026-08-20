@@ -111,6 +111,7 @@ python examples/image_text_to_text/models/gemma_vision/gemma4/gemma4_diss.py
 
 - First run will export to ONNX and compile — this can take several minutes.
 - Ensure `CTX_LEN ≥ PREFILL_SEQ_LEN + GENERATION_LEN`.
+- During export, sliding-attention KV caches use the actual input sequence length for regular batching and retain the configured sliding-window length for continuous batching.
 - For fast end-to-end validation, uncomment the `_apply_reduced_layer_config()` block
   inside the script to shrink layer counts (CPU-RAM friendly, output will be gibberish).
 - If model download fails, verify your Hugging Face authentication and that you have

@@ -584,6 +584,8 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
+        if self.sliding_window is not None:
+            cache_kwargs["sliding_window"] = self.sliding_window
         token_key_states = None
         token_value_states = None
 
@@ -1087,13 +1089,13 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffGemma4TextDecoderLayer}
 
-    def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len, continuous_batching: bool = False):
         past_key_values = []
         for layer_type in config.layer_types:
             if layer_type == "sliding_attention":
                 n_heads = config.num_key_value_heads
                 d_head = config.head_dim
-                layer_seq_len = min(config.sliding_window, seq_len)
+                layer_seq_len = config.sliding_window if continuous_batching else min(config.sliding_window, seq_len)
             else:
                 use_alternative_attention = getattr(config, "attention_k_eq_v", False)
                 n_heads = (
@@ -1468,13 +1470,13 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
             return {"vision": vision_output_names, "lang": lang_output_names}
         return lang_output_names
 
-    def get_dummy_pkv_cache(self, config, batch_size, seq_len):
+    def get_dummy_pkv_cache(self, config, batch_size, seq_len, continuous_batching: bool = False):
         past_key_values = []
         for i, layer_type in enumerate(config.layer_types):
             if layer_type == "sliding_attention":
                 n_heads = config.num_key_value_heads
                 d_head = config.head_dim
-                layer_seq_len = min(config.sliding_window, seq_len)
+                layer_seq_len = config.sliding_window if continuous_batching else min(config.sliding_window, seq_len)
             else:
                 use_alternative_attention = getattr(config, "attention_k_eq_v", False)
                 n_heads = (
@@ -1543,6 +1545,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
                 config=self.model.language_model.config,
                 batch_size=fbs if continuous_batching else bs,
                 seq_len=seq_len,
+                continuous_batching=continuous_batching,
             ),
         }
         if continuous_batching:
