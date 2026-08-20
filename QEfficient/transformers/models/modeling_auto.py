@@ -2462,6 +2462,10 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         vision_outputs = {}
         if vision_inputs:
             vision_outputs = vision_session.run(vision_inputs)
+            if self._write_io_dir is not None:
+                write_io_files(
+                    vision_inputs, vision_outputs, self._write_io_dir, "vision_prefill_0", "aic_batch_io", True, False
+                )
         vision_end = perf_counter()
 
         lang_inputs = {k: v for k, v in inputs.items() if k not in vision_inputs}
