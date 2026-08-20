@@ -46,6 +46,21 @@ except ImportError as e:
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")
+_DEPRECATED_CLOUD_API_WARNING = (
+    "QEfficient.cloud.finetune is deprecated. These APIs will no longer be usable and will be removed after the "
+    "1.23.0 release."
+)
+_DEPRECATION_WARNING_EMITTED = False
+
+
+def _warn_deprecated_cloud_api() -> None:
+    global _DEPRECATION_WARNING_EMITTED
+    if _DEPRECATION_WARNING_EMITTED:
+        return
+    with warnings.catch_warnings():
+        warnings.simplefilter("default", FutureWarning)
+        warnings.warn(_DEPRECATED_CLOUD_API_WARNING, FutureWarning, stacklevel=2)
+    _DEPRECATION_WARNING_EMITTED = True
 
 
 def setup_distributed_training(train_config: TrainConfig) -> None:
@@ -367,6 +382,7 @@ def main(**kwargs) -> None:
             --model_name "meta-llama/Llama-3.2-1B" \\
             --lr 5e-4
     """
+    _warn_deprecated_cloud_api()
     train_config = TrainConfig()
     update_config(train_config, **kwargs)
     custom_dataset_config_file = kwargs.pop("custom_dataset_config", None)
