@@ -25,7 +25,8 @@ Run with: pytest tests/unit_test/models/test_modeling_auto_cpu.py -n auto -v
 """
 
 import os
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -50,6 +51,8 @@ from QEfficient.transformers.models.modeling_auto import (
     QEFFAutoModelForCTC,
     QEFFAutoModelForSequenceClassification,
     QEFFAutoModelForSpeechSeq2Seq,
+    _QEffAutoModelForImageTextToTextDualQPC,
+    _QEFFAutoModelForImageTextToTextSingleQPC,
 )
 
 # ---------------------------------------------------------------------------
@@ -1179,3 +1182,96 @@ class TestTLMMultiSpecSpecializations:
         decode_specs = [s for s in specs if s.get("seq_len", 0) != 32]
         assert len(decode_specs) == 1, f"Expected 1 decode spec for scalar 0, got: {decode_specs}"
         assert decode_specs[0]["seq_len"] == 1  # k=0 → seq_len=1
+
+
+@pytest.mark.cpu_only
+class TestArtifactOnlyGenerationAPIs:
+    def test_causal_lm_compile_artifact_only_reaches_base_compile(self, tmp_path):
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        expected = tmp_path / "qpc"
+        with patch.object(qeff, "_compile", return_value=expected) as compile_model:
+            result = qeff.compile(prefill_seq_len=8, ctx_len=32, artifact_only=True)
+        assert result == expected
+        assert compile_model.call_args.kwargs["artifact_only"] is True
+
+    def test_causal_lm_proxy_writes_artifact_bundle(self, tmp_path):
+        import numpy as np
+
+        class FakeTokenizer:
+            padding_side = "right"
+            pad_token_id = 0
+            eos_token_id = 0
+
+            def __call__(self, prompt, return_tensors, padding, max_length=None):
+                del prompt, return_tensors
+                input_ids = np.array([[1, 2]], dtype=np.int64)
+                attention_mask = np.ones_like(input_ids)
+                if padding == "max_length":
+                    pad_width = max_length - input_ids.shape[1]
+                    input_ids = np.pad(input_ids, ((0, 0), (0, pad_width)))
+                    attention_mask = np.pad(attention_mask, ((0, 0), (0, pad_width)))
+                return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model, enable_proxy=True)
+        compile_dir = qeff.compile(
+            compile_dir=tmp_path,
+            prefill_seq_len=8,
+            ctx_len=32,
+            artifact_only=True,
+            offload_pt_weights=False,
+        )
+        io_dir = qeff.generate(tokenizer=FakeTokenizer(), prompts=["hello"], artifact_only=True)
+
+        assert compile_dir == qeff.compile_artifacts_path
+        assert (compile_dir / "qaic-compile.sh").is_file()
+        assert (io_dir / "aic_batch_io.json").is_file()
+
+    def test_causal_lm_artifact_only_delegates_without_runtime(self, tmp_path):
+        model, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model)
+        qeff.qpc_path = tmp_path / "qpc"
+        expected = tmp_path / "io"
+        with patch(
+            "QEfficient.transformers.models.modeling_auto.write_causal_lm_runner_bundle",
+            return_value=expected,
+        ) as writer:
+            result = qeff.generate(tokenizer=MagicMock(), prompts=["hello"], artifact_only=True)
+        assert result == expected
+        writer.assert_called_once()
+
+    def test_single_qpc_vlm_artifact_only_delegates_without_runtime(self, tmp_path):
+        model = SimpleNamespace()
+        expected = tmp_path / "io"
+        with patch(
+            "QEfficient.transformers.models.modeling_auto.write_single_qpc_vlm_runner_bundle",
+            return_value=expected,
+        ) as writer:
+            result = _QEFFAutoModelForImageTextToTextSingleQPC.generate(
+                model,
+                processor=MagicMock(),
+                images=["image"],
+                prompts=["prompt"],
+                artifact_only=True,
+            )
+        assert result == expected
+        writer.assert_called_once()
+
+    def test_dual_qpc_vlm_artifact_only_delegates_without_runtime(self, tmp_path):
+        model = SimpleNamespace()
+        expected = tmp_path / "io"
+        with patch(
+            "QEfficient.transformers.models.modeling_auto.write_dual_qpc_vlm_runner_bundle",
+            return_value=expected,
+        ) as writer:
+            result = _QEffAutoModelForImageTextToTextDualQPC.generate(
+                model,
+                processor=MagicMock(),
+                images=["image"],
+                prompts=["prompt"],
+                skip_lang=True,
+                artifact_only=True,
+            )
+        assert result == expected
+        writer.assert_called_once()
