@@ -2565,7 +2565,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
             if self._write_io_dir is not None:
-                write_io_files(lang_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
+                write_io_files(
+                    chunk_inputs, outputs, self._write_io_dir, f"prefill_{i}", "aic_batch_io", True, False
+                )
 
         prefill_time = perf_counter() - lang_start + vision_end - vision_start
         # Skip inputs/outputs again
@@ -2624,14 +2626,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
             outputs = lang_session.run(lang_inputs)
             if self._write_io_dir is not None:
-                write_io_files(lang_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
+                write_io_files(
+                    lang_inputs, outputs, self._write_io_dir, f"decode_{num_token}", "aic_batch_io", True, False
+                )
 
             # Prepare inputs for next iteration
             lang_inputs["input_ids"] = outputs["logits"].argmax(2)
             lang_inputs["position_ids"] += 1
             if "mm_token_type_ids" in lang_inputs:
-                lang_inputs["mm_token_type_ids"] = np.zeros_like(
+                lang_inputs["mm_token_ids"] = np.zeros_like(
                     lang_inputs["input_ids"], dtype=lang_inputs["mm_token_type_ids"].dtype
                 )
             generated_ids[:, num_token] = lang_inputs["input_ids"].squeeze(1)
@@ -3181,7 +3184,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             outputs = qpc_session.run(chunk_inputs)
 
             if self._write_io_dir is not None:
-                write_io_files(chunk_inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
+                write_io_files(
+                    chunk_inputs, outputs, self._write_io_dir, f"prefill_{i}", "aic_batch_io", True, False
+                )
 
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
@@ -3226,8 +3231,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
             outputs = qpc_session.run(inputs)
             if self._write_io_dir is not None:
-                write_io_files(inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
+                write_io_files(
+                    inputs, outputs, self._write_io_dir, f"decode_{num_token}", "aic_batch_io", True, False
+                )
 
             # Prepare inputs for next iteration
             inputs["input_ids"] = outputs["logits"].argmax(2)
@@ -5195,7 +5201,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         outputs = self.qpc_session.run(inputs)
 
         if self._write_io_dir is not None:
-            write_io_files(inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
+            write_io_files(inputs, outputs, self._write_io_dir, "prefill_0", "aic_batch_io", True, False)
 
         # array to hold generated tokens
         generated_ids = np.full((self.batch_size, generation_len + 1), self.model.config.eos_token_id)
@@ -5213,8 +5219,9 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         for num_tokens in range(generation_len):
             outputs = self.qpc_session.run(inputs)
             if self._write_io_dir is not None:
-                write_io_files(inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
+                write_io_files(
+                    inputs, outputs, self._write_io_dir, f"decode_{num_tokens}", "aic_batch_io", True, False
+                )
 
             logits = outputs["logits"]
             next_token = logits.argmax(-1)

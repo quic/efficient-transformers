@@ -848,7 +848,9 @@ class QEffTextGenerationBase:
             outputs = self._session.run(chunk_inputs)
 
             if self._write_io_dir is not None:
-                write_io_files(inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
+                write_io_files(
+                    chunk_inputs, outputs, self._write_io_dir, f"prefill_{i}", "aic_batch_io", True, False
+                )
         return (
             outputs,
             position_ids,
@@ -1020,8 +1022,9 @@ class QEffTextGenerationBase:
             outputs = self._session.run(decode_inputs)
 
             if self._write_io_dir is not None:
-                write_io_files(decode_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
+                write_io_files(
+                    decode_inputs, outputs, self._write_io_dir, f"decode_{num_token}", "aic_batch_io", True, False
+                )
 
             # Prepare inputs for next iteration
             decode_inputs["input_ids"] = self._fetch_next_token_id(outputs)
@@ -1055,8 +1058,9 @@ class QEffTextGenerationBase:
             outputs = self._session.run(decode_inputs)
 
             if self._write_io_dir is not None:
-                write_io_files(decode_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
-                self._write_io_dir = None
+                write_io_files(
+                    decode_inputs, outputs, self._write_io_dir, f"decode_{num_token}", "aic_batch_io", True, False
+                )
 
             # Prepare inputs for next iteration
             decode_inputs["input_ids"] = outputs["logits"].argmax(2)
