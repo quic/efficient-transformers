@@ -109,13 +109,20 @@ def _make_serializable(obj):
 
 
 def _merge_artifacts(existing_data, new_data):
-    """Merge per-model payloads without dropping updates from other workers."""
+    """Recursively merge nested artifact dicts without dropping sibling keys.
+
+    Works for any nesting depth:
+      - causal/sequence:  {model: payload}
+      - audio:            {model: {dtype: payload}}
+      - embedding:        {model: {dtype: {pooling: payload}}}
+    """
     merged = dict(existing_data)
-    for model_name, model_payload in new_data.items():
-        if isinstance(model_payload, dict) and isinstance(merged.get(model_name), dict):
-            merged[model_name] = {**merged[model_name], **model_payload}
+    for key, new_val in new_data.items():
+        existing_val = merged.get(key)
+        if isinstance(new_val, dict) and isinstance(existing_val, dict):
+            merged[key] = _merge_artifacts(existing_val, new_val)
         else:
-            merged[model_name] = model_payload
+            merged[key] = new_val
     return merged
 
 
@@ -291,6 +298,20 @@ def image_text_to_text_model_artifacts(image_text_to_text_model_artifacts_file):
     artifacts = load_artifacts(image_text_to_text_model_artifacts_file)
     yield artifacts
     save_artifacts(image_text_to_text_model_artifacts_file, artifacts)
+
+
+@pytest.fixture(scope="session")
+def diffuser_model_artifacts_file(artifacts_dir):
+    """Path to shared artifacts JSON file."""
+    return artifacts_dir / "diffuser_model_artifacts.json"
+
+
+@pytest.fixture
+def diffuser_model_artifacts(diffuser_model_artifacts_file):
+    """Fixture to get/set model artifacts."""
+    artifacts = load_artifacts(diffuser_model_artifacts_file)
+    yield artifacts
+    save_artifacts(diffuser_model_artifacts_file, artifacts)
 
 
 @pytest.fixture
