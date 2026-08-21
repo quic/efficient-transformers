@@ -275,6 +275,10 @@ def generic_blocked_attention_interface(
                 "slot_id": slot_id,
             }
             past_key_value.write_only_pagedAttention(key, value, module.layer_idx, cache_kwargs)
+        elif use_paged_kv_blocked and sliding_window is not None:
+            raise NotImplementedError(
+                "Sliding window attention is not supported with blocked KV caching. Please set `sliding_window` to None or use a different caching strategy."
+            )
         elif prefill_only:
             if sliding_window is not None:
                 cache_kwargs.update(
@@ -290,6 +294,10 @@ def generic_blocked_attention_interface(
                 past_key_value.write_only_batch(key, value, module.layer_idx, cache_kwargs)
             elif use_kv_blocked and sliding_window is None:
                 past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
+            elif use_kv_blocked and sliding_window is not None:
+                raise NotImplementedError(
+                    "Sliding window attention is not supported with blocked KV caching. Please set `sliding_window` to None or use a different caching strategy."
+                )
             else:
                 key, value, attention_mask, cache_kwargs = past_key_value_update(
                     module=module,
