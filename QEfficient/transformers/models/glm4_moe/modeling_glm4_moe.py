@@ -183,7 +183,7 @@ def eager_attention_forward_blocked_kv(
     for j in range(num_kv_blocks):
         start_index = j * block_size
         end_index = (j + 1) * block_size
-        K_block, V_block = past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
+        K_block, V_block = past_key_value.read_only_blocked_kv(start_index, end_index, layer_idx, cache_kwargs)
         K_block_states = repeat_kv(K_block, module.num_key_value_groups)
         V_block_states = repeat_kv(V_block, module.num_key_value_groups)
         past_seen_tokens_start = start_index
