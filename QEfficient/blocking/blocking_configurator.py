@@ -67,14 +67,14 @@ def _resolve_effective_blocking_mode(attention_cfg: Dict[str, Any], requested_mo
     num_kv_blocks = attention_cfg.get("num_kv_blocks") or 1
     head_block_size = (attention_cfg.get("head_block_size") or 1) if attention_cfg.get("head_blocking_enabled") else 1
 
-    if head_block_size > 1 and num_q_blocks == 1 and num_kv_blocks == 1:
-        return "h"
+    if head_block_size > 1 and num_q_blocks > 1 and num_kv_blocks > 1:
+        return "hqkv"
     if head_block_size > 1 and num_q_blocks > 1:
         return "hq"
     if head_block_size > 1 and num_kv_blocks > 1:
         return "hkv"
     if head_block_size > 1:
-        return "hqkv"
+        return "h"
     if num_q_blocks > 1 and num_kv_blocks > 1:
         return "qkv"
     if num_q_blocks > 1:
@@ -239,8 +239,9 @@ def attention_configurator(
 
         for num_kv_blocks, kv_cl_per_nsp, kv_size_per_nsp in kv_metrics:
             qk_size_per_nsp = num_heads_per_iter * bs * q_sl_per_nsp * kv_cl_per_nsp * data_bytes
-            vtcm_footprint = q_size_per_nsp + kv_size_per_nsp + qk_size_per_nsp
-
+            qkv_size_per_nsp = q_size_per_nsp
+            # For KV Blocking for loop, q input and qkv output should be persistent in VTCM
+            vtcm_footprint = q_size_per_nsp + kv_size_per_nsp + qk_size_per_nsp + qkv_size_per_nsp
             q_kv_ratio = max(q_size_per_nsp / kv_size_per_nsp, kv_size_per_nsp / q_size_per_nsp)
             num_total_blocks = num_q_blocks * num_kv_blocks
 
@@ -309,12 +310,14 @@ def build_transformer_blocking_config(
 
     resolved_mode = _normalize_attention_mode(blocking_mode or "hqkv")
     effective_mode = _resolve_effective_blocking_mode(attention_cfg, resolved_mode)
+    paged_attention = "paged" in str(blocking_mode or "").lower() and "kv" in effective_mode
 
     return AttentionBlockingConfig(
         mode=BlockingMode(effective_mode),
         num_kv_blocks=attention_cfg["num_kv_blocks"],
         num_q_blocks=attention_cfg["num_q_blocks"],
         head_block_size=attention_cfg["head_block_size"],
+        paged_attention=paged_attention,
     )
 
 
@@ -328,9 +331,9 @@ def build_transformer_blocking_config_for_transform(
     **compile_options,
 ) -> Dict[str, Any]:
     if qaic_config:
-        blocking_mode = BlockingMode(qaic_config.get("blocking_mode", "hqkv"))
+        blocking_mode = str(qaic_config.get("blocking_mode", "hqkv")).lower()
     else:
-        blocking_mode = BlockingMode.HQKV
+        blocking_mode = BlockingMode.HQKV.value
     enable_blocking = False if not qaic_config else qaic_config.get("enable_blocking", False)
 
     if qaic_config is None and enable_blocking:
@@ -359,6 +362,9 @@ def build_transformer_blocking_config_for_transform(
         if qaic_config.get("num_batch_blocks", False) and enable_blocking and "b" in blocking_mode:
             mode_from_config = "b" + mode_from_config
             blocking_config.num_batch_blocks = _get_valid_num_blocks(qaic_config, "num_batch_blocks")
+
+        # PagedAttention reads the cache block-wise, so it is only valid alongside KV blocking.
+        blocking_config.paged_attention = "paged" in blocking_mode and "kv" in mode_from_config
 
         # check if qaic config did not provide any blocking details
         if mode_from_config == "":

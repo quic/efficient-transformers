@@ -46,10 +46,15 @@ class AttentionBlockingConfig:
     head_block_size: Optional[int] = None
     skip_kv: Optional[bool] = True
     num_batch_blocks: Optional[int] = None
+    paged_attention: Optional[bool] = False
 
 
 def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
-    return past_key_value is not None and hasattr(past_key_value, "read_only_blockedKV")
+    return past_key_value is not None and hasattr(past_key_value, "read_only_blocked_kv")
+
+
+def supports_paged_attention_blocked_kv(past_key_value: Optional[Cache]) -> bool:
+    return past_key_value is not None and hasattr(past_key_value, "read_only_paged_attention")
 
 
 _STRATEGIES: Dict[BlockingMode, Callable] = {
@@ -82,7 +87,10 @@ def past_key_value_update(
     sliding_window: Optional[int] = None,
 ):
     if past_key_value is not None:
-        cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
+        cache_kwargs = {
+            "batch_index": batch_index,
+            "position_ids": position_ids,
+        }
         if sliding_window is not None:
             cache_kwargs.update(
                 {
@@ -110,6 +118,8 @@ def generic_blocked_attention_interface(
     comp_ctx_lengths: Optional[torch.LongTensor] = None,
     batch_index: Optional[torch.LongTensor] = None,
     position_ids: Optional[torch.LongTensor] = None,
+    block_table: Optional[torch.LongTensor] = None,
+    slot_id: Optional[torch.LongTensor] = None,
     past_seen_tokens: Optional[int] = None,
     non_blocked_forward: Callable = None,
     score_mod: Optional[Callable] = None,
@@ -122,21 +132,32 @@ def generic_blocked_attention_interface(
         blocking_config is not None and "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
     )
 
+    use_paged_kv_blocked = (
+        blocking_config is not None
+        and blocking_config.paged_attention
+        and supports_paged_attention_blocked_kv(past_key_value)
+    )
+
     if past_key_value is not None:
-        if use_kv_blocked and sliding_window is None:
+        if use_paged_kv_blocked and sliding_window is None:
+            cache_kwargs = {
+                "batch_index": batch_index,
+                "position_ids": position_ids,
+                "block_table": block_table,
+                "slot_id": slot_id,
+            }
+            past_key_value.write_only_paged_attention(key, value, module.layer_idx, cache_kwargs)
+        elif use_kv_blocked and sliding_window is None:
             cache_kwargs = {
                 "batch_index": batch_index,
                 "position_ids": position_ids,
                 "past_seen_tokens": past_seen_tokens,
             }
-            if sliding_window is not None:
-                cache_kwargs.update(
-                    {
-                        "is_sliding": sliding_window is not None,
-                        "sliding_window": past_key_value.sliding_window_len,
-                    }
-                )
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
+        elif (use_paged_kv_blocked or use_kv_blocked) and sliding_window is not None:
+            raise NotImplementedError(
+                "Sliding window attention is not supported with blocked KV caching. Please set `sliding_window` to None or use a different caching strategy."
+            )
         else:
             key, value, attention_mask, cache_kwargs = past_key_value_update(
                 module=module,
@@ -165,6 +186,7 @@ def generic_blocked_attention_interface(
         num_q_blocks=blocking_config.num_q_blocks,
         head_block_size=blocking_config.head_block_size,
         num_batch_blocks=blocking_config.num_batch_blocks,
+        paged_attention=blocking_config.paged_attention,
         score_mod=score_mod,
         position_bias=position_bias,
         sinks=sinks,
