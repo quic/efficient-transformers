@@ -210,7 +210,7 @@ class QEffDynamicLayer(CacheLayerMixin):
 
         return k_out, v_out
 
-    def read_only_blockedKV(self, start_index, end_index, cache_kwargs):
+    def read_only_blocked_kv(self, start_index, end_index, cache_kwargs):
         """
         Reads the `key_states` and `value_states` for the layer for each KV block.
 
@@ -255,7 +255,7 @@ class QEffDynamicLayer(CacheLayerMixin):
 
         return k_out, v_out
 
-    def read_only_pagedAttention(self, block_index, updated, cache_kwargs):
+    def read_only_paged_attention(self, block_index, updated, cache_kwargs):
         """
         Reads the `key_states` and `value_states` for the layer for each KV block.
 
@@ -300,7 +300,7 @@ class QEffDynamicLayer(CacheLayerMixin):
         v_out = torch.where((invalid_mask.unsqueeze(1)).unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
         return k_out, v_out
 
-    def write_only_pagedAttention(self, key_states, value_states, cache_kwargs):
+    def write_only_paged_attention(self, key_states, value_states, cache_kwargs):
         """
         Write in the cache with the new `key_states` and `value_states` for the layer.
 
@@ -335,7 +335,7 @@ class QEffDynamicLayer(CacheLayerMixin):
             self.keys = CtxScatterFuncPagedAttention.apply(self.keys, block_id, ctx_indices, key_states)
             self.values = CtxScatterFuncPagedAttention.apply(self.values, block_id, ctx_indices, value_states)
 
-    def get_seq_lengthPagedAttention(self, cache_position=None) -> int:
+    def get_seq_length_paged_attention(self, cache_position=None) -> int:
         """Returns the sequence length of the cached states for pagedAttention."""
         if self.keys is None or self.keys.numel() == 0:
             return 0
@@ -742,7 +742,7 @@ class QEffDynamicCache(Cache):
         for idx in range(len(self.layers)):
             yield self[idx]
 
-    def read_only_blockedKV(self, start_index, end_index, layer_idx, cache_kwargs):
+    def read_only_blocked_kv(self, start_index, end_index, layer_idx, cache_kwargs):
         """
         Reads the `key_states` and `value_states` for the layer `layer_idx`.
 
@@ -759,9 +759,9 @@ class QEffDynamicCache(Cache):
         Return:
             A tuple containing the updated key and value states.
         """
-        return self.layers[layer_idx].read_only_blockedKV(start_index, end_index, cache_kwargs)
+        return self.layers[layer_idx].read_only_blocked_kv(start_index, end_index, cache_kwargs)
 
-    def read_only_pagedAttention(self, block_index, updated, layer_idx, cache_kwargs):
+    def read_only_paged_attention(self, block_index, updated, layer_idx, cache_kwargs):
         """
         Reads the `key_states` and `value_states` for the layer `layer_idx`.
 
@@ -778,10 +778,10 @@ class QEffDynamicCache(Cache):
         Return:
             A tuple containing the updated key and value states.
         """
-        return self.layers[layer_idx].read_only_pagedAttention(block_index, updated, cache_kwargs)
-        # return self.layers[layer_idx].read_only_pagedAttention(start_index, end_index, cache_kwargs)
+        return self.layers[layer_idx].read_only_paged_attention(block_index, updated, cache_kwargs)
+        # return self.layers[layer_idx].read_only_paged_attention(start_index, end_index, cache_kwargs)
 
-    def write_only_pagedAttention(self, key_states, value_states, layer_idx, cache_kwargs):
+    def write_only_paged_attention(self, key_states, value_states, layer_idx, cache_kwargs):
         """
         Write in the cache with the new `key_states` and `value_states` for the layer `layer_idx`.
 
@@ -796,16 +796,16 @@ class QEffDynamicCache(Cache):
                 Additional arguments for the cache subclass. No additional arguments are used in `DynamicCache`.
         """
         self.append_new_layers(layer_idx)
-        return self.layers[layer_idx].write_only_pagedAttention(key_states, value_states, cache_kwargs)
+        return self.layers[layer_idx].write_only_paged_attention(key_states, value_states, cache_kwargs)
 
-    def get_seq_lengthPagedAttention(self, layer_idx: int = 0, cache_position=None) -> int:
+    def get_seq_length_paged_attention(self, layer_idx: int = 0, cache_position=None) -> int:
         """Returns the sequence length of the cache for the given layer. TODO: deprecate in favor of cache_position"""
         if layer_idx >= len(self.layers):
             return 0
         # Hack since QuantizedCache messes with keys shape as it becomes the residual cache
         # if self.cache_processor is not None and isinstance(self.cache_processor, QuantizedCacheProcessor):
         # return self.cache_processor.erased_length + self.layers[layer_idx].get_seq_length(cache_position)
-        return self.layers[layer_idx].get_seq_lengthPagedAttention(cache_position)
+        return self.layers[layer_idx].get_seq_length_paged_attention(cache_position)
 
     def write_only(self, key_states, value_states, layer_idx, cache_kwargs):
         """
@@ -1407,7 +1407,7 @@ class QEffHybridCacheForGPTOSS:
             k_out, v_out = self.key_cache[layer_idx], self.value_cache[layer_idx]
         return k_out, v_out
 
-    def read_only_blockedKV(
+    def read_only_blocked_kv(
         self,
         start_idx: torch.Tensor,
         end_idx: torch.Tensor,

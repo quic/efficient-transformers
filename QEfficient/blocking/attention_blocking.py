@@ -50,11 +50,11 @@ class AttentionBlockingConfig:
 
 
 def supports_blocked_kv(past_key_value: Optional[Cache]) -> bool:
-    return past_key_value is not None and hasattr(past_key_value, "read_only_blockedKV")
+    return past_key_value is not None and hasattr(past_key_value, "read_only_blocked_kv")
 
 
 def supports_paged_attention_blocked_kv(past_key_value: Optional[Cache]) -> bool:
-    return past_key_value is not None and hasattr(past_key_value, "read_only_pagedAttention")
+    return past_key_value is not None and hasattr(past_key_value, "read_only_paged_attention")
 
 
 _STRATEGIES: Dict[BlockingMode, Callable] = {
@@ -146,7 +146,7 @@ def generic_blocked_attention_interface(
                 "block_table": block_table,
                 "slot_id": slot_id,
             }
-            past_key_value.write_only_pagedAttention(key, value, module.layer_idx, cache_kwargs)
+            past_key_value.write_only_paged_attention(key, value, module.layer_idx, cache_kwargs)
         elif use_kv_blocked and sliding_window is None:
             cache_kwargs = {
                 "batch_index": batch_index,

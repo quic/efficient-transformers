@@ -111,8 +111,8 @@ def _read_kv_block(
         position_ids = cache_kwargs.get("position_ids")
         block_index = block_table[:, j]
         updated = (position_ids.max(1, keepdim=True).values // kv_block_size) == j
-        return past_key_value.read_only_pagedAttention(block_index, updated, layer_idx, cache_kwargs)
-    return past_key_value.read_only_blockedKV(start_index, end_index, layer_idx, cache_kwargs)
+        return past_key_value.read_only_paged_attention(block_index, updated, layer_idx, cache_kwargs)
+    return past_key_value.read_only_blocked_kv(start_index, end_index, layer_idx, cache_kwargs)
 
 
 def blocked_kv_attention_forward(
