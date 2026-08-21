@@ -153,14 +153,11 @@ def generic_blocked_attention_interface(
                 "position_ids": position_ids,
                 "past_seen_tokens": past_seen_tokens,
             }
-            if sliding_window is not None:
-                cache_kwargs.update(
-                    {
-                        "is_sliding": sliding_window is not None,
-                        "sliding_window": past_key_value.sliding_window_len,
-                    }
-                )
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
+        elif (use_paged_kv_blocked or use_kv_blocked) and sliding_window is not None:
+            raise NotImplementedError(
+                "Sliding window attention is not supported with blocked KV caching. Please set `sliding_window` to None or use a different caching strategy."
+            )
         else:
             key, value, attention_mask, cache_kwargs = past_key_value_update(
                 module=module,
