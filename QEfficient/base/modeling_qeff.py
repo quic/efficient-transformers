@@ -9,6 +9,7 @@ import gc
 import inspect
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import warnings
@@ -159,6 +160,7 @@ class QEFFBaseModel(ABC):
         self.hash_params = create_model_params(self, **kwargs)
         self.onnx_path: Optional[str] = None
         self.qpc_path: Optional[str] = None
+        self.compile_artifacts_path: Optional[Path] = None
         self.qpc_session: Optional[QAICInferenceSession] = None
         self.model_architecture = (
             (arch := getattr(self.model.config, "architectures", None)) and len(arch) > 0 and arch[0]
@@ -976,6 +978,7 @@ class QEFFBaseModel(ABC):
         qaic_config: Optional[dict] = None,
         specialization_module_name: Optional[str] = None,
         kv_cache_prefix: Optional[str] = None,
+        artifact_only: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -996,6 +999,7 @@ class QEFFBaseModel(ABC):
             :num_speculative_tokens (int | List[int], optional): Number of speculative tokens for TLM decode. A plain int K compiles one decode specialization (seq_len=K+1). A list [K0, K1, ...] compiles one specialization per value, enabling per-step dispatch to the cheapest kernel.
             :enable_qnn (bool): Enables QNN Compilation. ``Defaults to False.``
             :qnn_config (str): Path of QNN Config parameters file. Any extra parameters for QNN compilation can be passed via this file. ``Defaults to None.``
+            :artifact_only (bool): Export the model and write compiler inputs and a replay script without invoking the compiler. ``Defaults to False.``
             :compiler_options: Pass any compiler option as input.
                 Any flag that is supported by `qaic-compile` can be passed. Params are converted to flags as below:
 
@@ -1048,6 +1052,8 @@ class QEFFBaseModel(ABC):
             onnx_path = Path(onnx_path)
             return onnx_path
         onnx_path = Path(onnx_path)
+        if artifact_only:
+            self.onnx_path = onnx_path
 
         compile_dir = Path(compile_dir or onnx_path.parent)
         qpc_path = compile_dir / "qpc"
@@ -1055,6 +1061,8 @@ class QEFFBaseModel(ABC):
             raise FileNotFoundError(f"ONNX file not found at: {onnx_path}")
 
         if enable_qnn:
+            if artifact_only:
+                raise NotImplementedError("`artifact_only` is not supported by the QNN compilation path.")
             if compiler_options:
                 logger.warning(
                     f"Extra arguments to QNN compilation are supported only via qnn_config file. Ignoring {compiler_options}"
@@ -1174,12 +1182,14 @@ class QEFFBaseModel(ABC):
 
         compile_dir = qpc_path.with_name(qpc_path.name + "-" + compile_hash)
         qpc_path = compile_dir / "qpc"
-        if (qpc_path / "programqpc.bin").is_file():
-            self.qpc_path = qpc_path
-            return qpc_path
-        if qpc_path.is_dir():
-            # Probably compilation failure last time, delete directory to start over.
-            shutil.rmtree(qpc_path)
+        if not artifact_only:
+            if (qpc_path / "programqpc.bin").is_file():
+                self.qpc_path = qpc_path
+                self.compile_artifacts_path = compile_dir
+                return qpc_path
+            if qpc_path.is_dir():
+                # Probably compilation failure last time, delete directory to start over.
+                shutil.rmtree(qpc_path)
         compile_dir.mkdir(parents=True, exist_ok=True)
 
         # Write tensor-slice MDP partition config now that compile_dir exists.
@@ -1215,7 +1225,44 @@ class QEFFBaseModel(ABC):
                 command.append(f"-custom-IO-list-file={custom_io_yaml}")
 
         command.append(f"-aic-binary-dir={qpc_path}")
-        logger.info(f"Running compiler: {' '.join(command)}")
+        if artifact_only:
+            logger.info(f"Writing compiler replay command: {' '.join(command)}")
+        else:
+            logger.info(f"Running compiler: {' '.join(command)}")
+
+        if artifact_only:
+            path_flags = {
+                "-aic-binary-dir",
+                "-custom-IO-list-file",
+                "-mdp-dump-partition-config",
+                "-mdp-load-partition-config",
+                "-m",
+                "-network-specialization-config",
+                "-node-precision-info",
+                "-ols-config",
+            }
+            replay_command = [Path(command[0]).name]
+            for argument in command[1:]:
+                flag, separator, value = argument.partition("=")
+                if separator and flag in path_flags:
+                    argument = f"{flag}={os.path.relpath(Path(value).resolve(), compile_dir)}"
+                replay_command.append(argument)
+            compile_command = shlex.join(replay_command)
+            script_lines = (
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'cd -- "$(dirname -- "$0")"',
+                compile_command,
+                "",
+            )
+            script_path = compile_dir / "qaic-compile.sh"
+            script_path.write_text("\n".join(script_lines))
+            script_path.chmod(0o755)
+            create_json(str(compile_dir / "hashed_compile_params.json"), compile_hash_params)
+            self.qpc_path = None
+            self.compile_artifacts_path = compile_dir
+            logger.info(f"Compiler artifacts written to {compile_dir}")
+            return compile_dir
 
         try:
             subprocess.run(command, capture_output=True, check=True)

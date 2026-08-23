@@ -10,7 +10,7 @@ from transformers import AutoConfig, AutoProcessor, TextStreamer
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-model_id = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+model_id = "tiny-random/qwen3-vl-moe"
 config = AutoConfig.from_pretrained(model_id)
 
 # For faster execution user can run with lesser layers, For Testing Purpose Only
@@ -43,6 +43,7 @@ qeff_model.compile(
     mxint8_kv_cache=True,
     aic_enable_depth_first=True,
     mos=1,
+    artifact_only=True,
 )
 
 image_urls = [
@@ -60,13 +61,25 @@ prompts = [
 ]
 
 streamer = TextStreamer(tokenizer)
-output = qeff_model.generate(
+vision_io_dir = qeff_model.generate(
     tokenizer=tokenizer,
     prompts=prompts,
     processor=processor,
     images=image_urls,
+    streamer=streamer,
     generation_len=100,
+    skip_lang=True,
+    artifact_only=True,
 )
-print(output.generated_ids)
-print(tokenizer.batch_decode(output.generated_ids))
-print(output)
+language_io_dir = qeff_model.generate(
+    tokenizer=tokenizer,
+    prompts=prompts,
+    processor=processor,
+    images=image_urls,
+    streamer=streamer,
+    generation_len=100,
+    skip_vision=True,
+    artifact_only=True,
+)
+print(f"Vision runner inputs: {vision_io_dir}")
+print(f"Language runner inputs: {language_io_dir}")

@@ -1331,3 +1331,136 @@ class TestGemma4DissVariant:
             "image_idx": np.array([[0]], dtype=np.int64),
         }
         assert "mm_token_type_ids" not in decode_inputs
+
+
+@pytest.mark.cpu_only
+def test_runner_io_resolves_exporter_generated_logits_symbols():
+    from onnx import TensorProto, helper
+
+    from QEfficient.generation.runner_io import _resolve_output_shape
+
+    logits = helper.make_tensor_value_info("logits", TensorProto.FLOAT, ["Castlogits_dim_0", "Castlogits_dim_1", 32000])
+
+    assert _resolve_output_shape(logits, {"seq_len": 1}, fallback_batch_size=1) == [1, 1, 32000]
+
+
+@pytest.mark.cpu_only
+def test_graph_input_filter_selects_model_specific_vision_metadata(tmp_path):
+    import onnx
+    from onnx import TensorProto, helper
+
+    from QEfficient.generation.runner_io import _filter_graph_inputs
+
+    pixel_values = helper.make_tensor_value_info("pixel_values", TensorProto.FLOAT, [1, 3, 2, 2])
+    image_grid_thw = helper.make_tensor_value_info("image_grid_thw", TensorProto.INT64, [1, 3])
+    graph = helper.make_graph([], "vision_inputs", [pixel_values, image_grid_thw], [pixel_values, image_grid_thw])
+    onnx_path = tmp_path / "vision.onnx"
+    onnx.save(helper.make_model(graph), onnx_path)
+
+    inputs = _filter_graph_inputs(
+        onnx_path,
+        {"pixel_values": np.ones((1, 3, 2, 2), dtype=np.float32)},
+        {"image_grid_thw": np.array([[1, 2, 2]]), "input_ids": np.array([[1]])},
+    )
+
+    assert set(inputs) == {"pixel_values", "image_grid_thw"}
+    np.testing.assert_array_equal(inputs["image_grid_thw"], [[1, 2, 2]])
+
+
+@pytest.mark.cpu_only
+def test_cross_qpc_output_shapes_follow_language_input_contract(tmp_path):
+    from types import SimpleNamespace
+
+    import onnx
+    from onnx import TensorProto, helper
+
+    from QEfficient.generation.runner_io import _cross_qpc_output_shapes
+
+    vision_output = helper.make_tensor_value_info(
+        "vision_embeds", TensorProto.FLOAT, ["opaque_batch", "opaque_tokens", "opaque_width"]
+    )
+    vision_path = tmp_path / "vision.onnx"
+    onnx.save(helper.make_model(helper.make_graph([], "vision", [], [vision_output])), vision_path)
+
+    language_input = helper.make_tensor_value_info(
+        "vision_embeds", TensorProto.FLOAT, ["vision_batch_size", "vision_size", 8]
+    )
+    language_path = tmp_path / "language.onnx"
+    onnx.save(helper.make_model(helper.make_graph([], "language", [language_input], [language_input])), language_path)
+    model = SimpleNamespace(
+        vision_model=SimpleNamespace(onnx_path=vision_path),
+        lang_model=SimpleNamespace(onnx_path=language_path),
+    )
+
+    assert _cross_qpc_output_shapes(model, {"batch_size": 1, "vision_size": 187}) == {"vision_embeds": [1, 187, 8]}
+
+    model.lang_model.onnx_path = None
+    model.model = SimpleNamespace(config=SimpleNamespace(text_config=SimpleNamespace(hidden_size=8)))
+    assert _cross_qpc_output_shapes(model, {"batch_size": 1, "vision_size": 187}) == {"vision_embeds": [1, 187, 8]}
+
+
+@pytest.mark.cpu_only
+def test_causal_lm_runner_bundle_uses_live_prefill_preparation(tmp_path):
+    from types import SimpleNamespace
+
+    import onnx
+    from onnx import TensorProto, helper
+
+    from QEfficient.generation.runner_io import write_causal_lm_runner_bundle
+
+    class FakeTokenizer:
+        padding_side = "left"
+        pad_token_id = None
+        eos_token_id = 0
+
+        def __call__(self, prompt, return_tensors, padding, max_length=None):
+            del prompt, return_tensors
+            input_ids = np.array([[5, 6, 7]], dtype=np.int64)
+            attention_mask = np.ones_like(input_ids)
+            if padding == "max_length":
+                pad_width = max_length - input_ids.shape[1]
+                input_ids = np.pad(input_ids, ((0, 0), (0, pad_width)))
+                attention_mask = np.pad(attention_mask, ((0, 0), (0, pad_width)))
+            return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+    input_ids = helper.make_tensor_value_info("input_ids", TensorProto.INT64, [1, 4])
+    position_ids = helper.make_tensor_value_info("position_ids", TensorProto.INT64, [1, 4])
+    past_key = helper.make_tensor_value_info("past_key.0", TensorProto.FLOAT, [1, 2, 8, 4])
+    batch_index = helper.make_tensor_value_info("batch_index", TensorProto.INT64, [1, 1])
+    logits = helper.make_tensor_value_info("logits", TensorProto.FLOAT, [1, 1, 10])
+    retained_key = helper.make_tensor_value_info("past_key.0_RetainedState", TensorProto.FLOAT, [1, 2, 8, 4])
+    graph = helper.make_graph(
+        [
+            helper.make_node("Identity", ["past_key.0"], ["past_key.0_RetainedState"]),
+            helper.make_node(
+                "Constant", [], ["logits"], value=helper.make_tensor("value", TensorProto.FLOAT, [1, 1, 10], [0.0] * 10)
+            ),
+        ],
+        "causal_runner",
+        [input_ids, position_ids, past_key, batch_index],
+        [logits, retained_key],
+    )
+    onnx_path = tmp_path / "model.onnx"
+    onnx.save(helper.make_model(graph), onnx_path)
+    compile_dir = tmp_path / "qpc-hash"
+    compile_dir.mkdir()
+    (compile_dir / "specializations.json").write_text(
+        json.dumps({"specializations": [{"batch_size": 1, "full_batch_size": 4, "seq_len": 4, "ctx_len": 8}]})
+    )
+    qeff_model = SimpleNamespace(
+        qpc_path=None,
+        compile_artifacts_path=compile_dir,
+        onnx_path=onnx_path,
+        model=SimpleNamespace(config=SimpleNamespace(n_head=2, n_embd=8)),
+    )
+
+    tokenizer = FakeTokenizer()
+    io_dir = write_causal_lm_runner_bundle(model=qeff_model, tokenizer=tokenizer, prompts=["hello"])
+
+    entries = json.loads((io_dir / "aic_batch_io.json").read_text())["IO-files"][0]
+    assert tokenizer.padding_side == "right"
+    assert tokenizer.pad_token_id == tokenizer.eos_token_id
+    assert [entry["map-to"] for entry in entries] == ["input_ids", "position_ids", "batch_index", "logits"]
+    assert np.fromfile(io_dir / "data/input_ids.raw", dtype=np.int64).tolist() == [5, 6, 7, 0]
+    assert np.fromfile(io_dir / "data/position_ids.raw", dtype=np.int64).tolist() == [0, 1, 2, -1]
+    assert np.fromfile(io_dir / "data/batch_index.raw", dtype=np.int64).tolist() == [0]
