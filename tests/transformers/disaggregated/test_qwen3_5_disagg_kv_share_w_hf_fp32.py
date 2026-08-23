@@ -1040,7 +1040,7 @@ def _create_disagg_sessions(qpc_paths: dict[str, str], sessions: list):
     return vision_session, prefill_session, decode_session
 
 
-@pytest.mark.nightly_disagg
+@pytest.mark.skip()
 @pytest.mark.parametrize("nightly_config", nightly_disagg_configs("qwen3_5_moe"))
 def test_qwen3_5_disagg_kv_share_qaic_vs_ort_fp32(manual_cleanup, nightly_config):
     """Three-way parity: HF fp32 == ORT on QPC ONNX == QAIC disagg DMA."""

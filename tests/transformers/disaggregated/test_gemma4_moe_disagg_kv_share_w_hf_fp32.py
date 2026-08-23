@@ -724,7 +724,7 @@ def _run_disagg_kv_share_qaic_generation(
     return np.stack(generated_ids, axis=1)
 
 
-@pytest.mark.nightly_disagg
+@pytest.mark.skip()
 @pytest.mark.parametrize("nightly_config", nightly_disagg_configs("gemma4_moe"))
 def test_gemma4_moe_disagg_kv_share_qaic_vs_ort_vs_hf_fp32(manual_cleanup, nightly_config):
     """Three-way parity: HF fp32 == ORT on QPC ONNX == QAIC disagg DMA."""

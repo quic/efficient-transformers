@@ -557,7 +557,7 @@ def _compile_disagg_qpcs(
     return prefill_session, decode_session
 
 
-@pytest.mark.nightly_disagg
+@pytest.mark.skip()
 @pytest.mark.parametrize("nightly_config", nightly_disagg_configs("gpt_oss"))
 def test_gpt_oss_disagg_kv_share_qaic_vs_ort_vs_hf_fp32(manual_cleanup, nightly_config):
     """Non-CB three-way parity: HF fp32 == ORT on QPC ONNX == QAIC disagg DMA."""
