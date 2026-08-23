@@ -13,6 +13,8 @@ import torch
 from datasets import Features, Sequence, Value, load_dataset
 from huggingface_hub import hf_hub_download
 from safetensors import safe_open
+from torch import nn
+from transformers import AutoModelForCausalLM
 
 from QEfficient.utils.logging_utils import logger
 
@@ -204,6 +206,250 @@ def compile_dlm_qpc(
     )
     qpc = str(qpc)
     logger.info(f"[compile_dlm] qpc={qpc}")
+    return qpc
+
+
+# fc-output range used to scale the injected DFlash fc so activations stay in fp16 range
+# (RMSNorm(x/s) == RMSNorm(x), so the scaling is zero-accuracy-cost).
+_VLM_FC_TARGET_ABSMAX = 128.0
+
+
+def compile_gemma_vlm_qpcs(
+    tlm_repo: str,
+    dlm_repo: str,
+    *,
+    prefill_seq_len: int,
+    ctx_len: int,
+    num_cores: int,
+    num_devices: int,
+    hf_token: Optional[str] = None,
+) -> tuple[str, str]:
+    """Build a vision-language model (VLM) TLM — vision encoder + language decoder — and
+    compile it for SPD. Returns ``(lang_qpc, vision_qpc)``.
+
+    Built through the VLM class ``QEFFAutoModelForImageTextToText`` (``kv_offload=True``) so
+    the language QPC accepts image features (``vision_embeds``) and a matching
+    vision-encoder QPC is produced. The DFlash ``fc``/``hidden_norm`` are copied from the
+    DFlash checkpoint into the inner text model and fc is scaled into fp16 range (same
+    scaling as the text ``compile_tlm_qpc`` path); the DFlashTLMTransform attaches the
+    modules but leaves them random until this injection runs.
+
+    The vision encoder compiles on the same ``num_cores``/``num_devices`` budget as the
+    language decoder. ``node_precision_info`` stays on: the VLM language decoder needs
+    FP32 node-precision-info on its precision-sensitive ops or decode collapses.
+
+    Currently exercised with the gemma4 VLM family; other VLMs can be added to MODEL_MAP.
+    """
+    from transformers import AutoConfig
+
+    from QEfficient import QEFFAutoModelForImageTextToText
+
+    state_dict, target_layer_ids, block_size = read_dlm_meta(dlm_repo, hf_token)
+    tlm_target_ids = [i + 1 for i in target_layer_ids]
+
+    logger.info(f"[compile_vlm_tlm] base={tlm_repo}  dlm={dlm_repo}  block_size={block_size}")
+    config = AutoConfig.from_pretrained(tlm_repo, trust_remote_code=True, token=hf_token)
+    tlm_qeff = QEFFAutoModelForImageTextToText.from_pretrained(
+        tlm_repo,
+        config=config,
+        trust_remote_code=True,
+        dtype="float32",
+        kv_offload=True,
+        ignore_mismatched_sizes=True,
+        token=hf_token,
+        qaic_config={"target_layer_ids": tlm_target_ids},
+    )
+
+    # DFlashTLMTransform attached fc/hidden_norm but left them random; copy in the real
+    # DFlash weights and scale fc into fp16 range.
+    text_model = tlm_qeff.lang_model.model.language_model
+    text_model.fc.weight.data.copy_(state_dict["fc.weight"].to(torch.float32))
+    with torch.no_grad():
+        in_feat = text_model.fc.in_features
+        max_row_norm = text_model.fc.weight.data.norm(dim=1).max().item()
+        s = max((in_feat**0.5) * max_row_norm / _VLM_FC_TARGET_ABSMAX, 1.0)
+        text_model.fc.weight.data.div_(s)
+    text_model.hidden_norm.weight.data.copy_(state_dict["hidden_norm.weight"].to(torch.float32))
+    logger.info(f"[compile_vlm_tlm] fc/hidden_norm injected (fc scale s={s:.6f})")
+
+    qpc = tlm_qeff.compile(
+        prefill_seq_len=prefill_seq_len,
+        ctx_len=ctx_len,
+        num_cores=num_cores,
+        num_devices=num_devices,
+        mxfp6_matmul=True,
+        mxint8_kv_cache=True,
+        aic_enable_depth_first=True,
+        mos=1,
+        use_onnx_subfunctions=False,
+        split_model_io=True,
+        batch_size=1,
+        dflash_block_size=block_size,
+        node_precision_info=True,
+    )
+    lang_qpc = str(qpc["lang_qpc_path"])
+    vision_qpc = str(qpc["vision_qpc_path"])
+    logger.info(f"[compile_vlm_tlm] lang_qpc={lang_qpc}  vision_qpc={vision_qpc}")
+    return lang_qpc, vision_qpc
+
+
+def _get_text_inner(base_model: AutoModelForCausalLM) -> nn.Module:
+    """Return the submodule that owns the text decoder (``.layers`` / ``.embed_tokens``).
+
+    Plain causal LMs (Llama, Qwen3): ``base_model.model``. VLMs whose text decoder is
+    nested (e.g. gemma4 ``Gemma4ForConditionalGeneration``): ``base_model.model.language_model``.
+    """
+    inner = base_model.model
+    if not hasattr(inner, "layers") and hasattr(inner, "language_model"):
+        inner = inner.language_model
+    return inner
+
+
+def extract_lm_head(model: AutoModelForCausalLM) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """Return (lm_head_weight, lm_head_bias) as fp32. Falls back to the module when the
+    state_dict has no ``lm_head.weight`` (tied embeddings deduplicate it)."""
+    sd = model.state_dict()
+    if "lm_head.weight" in sd:
+        weight = sd["lm_head.weight"].to(torch.float32)
+    else:
+        weight = model.lm_head.weight.detach().to(torch.float32)
+    bias = sd.get("lm_head.bias")
+    if bias is None:
+        b = getattr(getattr(model, "lm_head", None), "bias", None)
+        if b is not None:
+            bias = b.detach()
+    if bias is not None:
+        bias = bias.to(torch.float32)
+    return weight, bias
+
+
+def extract_embed(model: AutoModelForCausalLM) -> torch.Tensor:
+    """Return embed_tokens.weight (fp32). Handles flat layouts (Llama/Qwen3) and nested
+    VLM wrappers (gemma4 ``model.language_model.embed_tokens``)."""
+    sd = model.state_dict()
+    for key in (
+        "model.embed_tokens.weight",  # Llama, Qwen3, gemma2/3 text-only
+        "model.language_model.embed_tokens.weight",  # gemma4 VLM
+        "model.text_model.embed_tokens.weight",  # other wrapped layouts
+        "language_model.model.embed_tokens.weight",
+    ):
+        if key in sd:
+            return sd[key].to(torch.float32)
+    inner = _get_text_inner(model)
+    if hasattr(inner, "embed_tokens"):
+        return inner.embed_tokens.weight.detach().to(torch.float32)
+    raise KeyError(f"Could not locate embed_tokens.weight in {type(model).__name__}.")
+
+
+def build_dlm_model(
+    dflash_model_path: str,
+    lm_head_weight: torch.Tensor,
+    lm_head_bias: torch.Tensor | None = None,
+    embed_weight: torch.Tensor | None = None,
+) -> AutoModelForCausalLM:
+    """Load the DFlash draft and inject lm_head / embed_tokens from the base TLM.
+
+    The draft checkpoint ships WITHOUT lm_head / embed_tokens (huge, identical to the
+    base), so ``from_pretrained`` newly-initializes them (a "MISSING" load report — that
+    is EXPECTED). We overwrite them with the real base weights. For a VLM base the head /
+    embedding are nested and tied; ``extract_lm_head`` / ``extract_embed`` return those.
+    Also strips fc / hidden_norm if the checkpoint carries them.
+    """
+    dlm_model = AutoModelForCausalLM.from_pretrained(dflash_model_path, torch_dtype=torch.float32)
+    dlm_inner = _get_text_inner(dlm_model)
+
+    lm_w = dlm_model.lm_head.weight
+    if tuple(lm_head_weight.shape) != tuple(lm_w.shape):
+        raise ValueError(
+            f"lm_head shape mismatch: base {tuple(lm_head_weight.shape)} vs DLM {tuple(lm_w.shape)}."
+        )
+    if embed_weight is not None and tuple(embed_weight.shape) != tuple(dlm_inner.embed_tokens.weight.shape):
+        raise ValueError(
+            f"embed_tokens shape mismatch: base {tuple(embed_weight.shape)} "
+            f"vs DLM {tuple(dlm_inner.embed_tokens.weight.shape)}."
+        )
+
+    with torch.no_grad():
+        dlm_model.lm_head.weight.copy_(lm_head_weight)
+        if embed_weight is not None:
+            dlm_inner.embed_tokens.weight.copy_(embed_weight)
+
+    if lm_head_bias is not None:
+        if dlm_model.lm_head.bias is None:
+            dlm_model.lm_head.bias = nn.Parameter(lm_head_bias)
+        else:
+            with torch.no_grad():
+                dlm_model.lm_head.bias.copy_(lm_head_bias)
+
+    # The draft config has tie_word_embeddings=True; make the tie explicit so a later
+    # tie_weights() cannot silently undo one copy. For a VLM base lm_head == embed.
+    if getattr(dlm_model.config, "tie_word_embeddings", False) and embed_weight is not None:
+        with torch.no_grad():
+            dlm_model.lm_head.weight.copy_(embed_weight)
+        if not torch.equal(lm_head_weight, embed_weight):
+            logger.warning("[DLM] tie_word_embeddings=True but base lm_head != embed_tokens; using embed_tokens.")
+
+    for attr in ("fc", "hidden_norm"):
+        if hasattr(dlm_model, attr):
+            delattr(dlm_model, attr)
+            logger.info(f"[DLM] Removed dlm_model.{attr}")
+
+    # print (not logger.info) — proof the injected weights landed (logger defaults to WARNING).
+    with torch.no_grad():
+        lm_absmax = dlm_model.lm_head.weight.abs().max().item()
+        emb_absmax = dlm_inner.embed_tokens.weight.abs().max().item()
+    print(
+        f"[DLM] lm_head injected     shape={tuple(dlm_model.lm_head.weight.shape)} absmax={lm_absmax:.4f}"
+        + ("  ⚠ ZERO — injection may have failed!" if lm_absmax < 1e-6 else "  ✓")
+    )
+    print(
+        f"[DLM] embed_tokens injected shape={tuple(dlm_inner.embed_tokens.weight.shape)} absmax={emb_absmax:.4f}"
+        + ("  ⚠ ZERO — injection may have failed!" if emb_absmax < 1e-6 else "  ✓")
+    )
+    return dlm_model
+
+
+def compile_gemma_vlm_dlm_qpc(
+    tlm_repo: str,
+    dlm_repo: str,
+    *,
+    ctx_len: int,
+    num_cores: int,
+    num_devices: int,
+    hf_token: Optional[str] = None,
+) -> str:
+    """Build + compile the DFlash DLM (draft) for a vision-language model base.
+
+    Unlike the text ``compile_dlm_qpc`` (which lets DFlashDLMTransform load lm_head/embed
+    from ``dflash_tlm_repo`` via flat state-dict keys), a VLM base like gemma4 keeps
+    lm_head/embed on a nested ``language_model`` submodule that the flat loader cannot
+    find. So here we load the base VLM, extract those weights VLM-aware, and inject them
+    into the draft explicitly.
+    """
+    from QEfficient import QEFFAutoModelForCausalLM
+
+    _, _, block_size = read_dlm_meta(dlm_repo, hf_token)
+
+    logger.info(f"[compile_vlm_dlm] base={tlm_repo}  dlm={dlm_repo}  block_size={block_size}")
+    base_model = AutoModelForCausalLM.from_pretrained(tlm_repo, torch_dtype=torch.float32, token=hf_token)
+    lm_head_w, lm_head_b = extract_lm_head(base_model)
+    embed_w = extract_embed(base_model)
+    del base_model
+
+    dlm_model = build_dlm_model(dlm_repo, lm_head_w, lm_head_b, embed_w)
+    dlm_qeff = QEFFAutoModelForCausalLM(dlm_model, qaic_config={"dflash_dlm": True})
+    qpc = dlm_qeff.compile(
+        prefill_seq_len=block_size,
+        ctx_len=ctx_len,
+        num_cores=num_cores,
+        num_devices=num_devices,
+        mxfp6_matmul=True,
+        mxint8_kv_cache=True,
+        mos=1,
+        prefill_only=True,
+    )
+    qpc = str(qpc)
+    logger.info(f"[compile_vlm_dlm] qpc={qpc}")
     return qpc
 
 
