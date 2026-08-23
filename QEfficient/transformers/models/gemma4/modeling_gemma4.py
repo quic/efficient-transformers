@@ -780,7 +780,13 @@ class QEffGemma4TextModel(Gemma4TextModel):
         for layer_type in self.unique_layer_types:
             position_embeddings[layer_type] = self.rotary_emb(hidden_states, position_ids, layer_type)
 
+        # DFlash TLM: collect hidden states entering the selected target layers.
+        self.target_layer_ids = getattr(self, "target_layer_ids", None)
+        target_hidden_list = []
+
         for i, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
+            if self.target_layer_ids and i in self.target_layer_ids:
+                target_hidden_list.append(hidden_states)
             per_layer_input = per_layer_inputs[:, :, i, :] if per_layer_inputs is not None else None
             layer_type = self.config.layer_types[i]
             layer_attention_mask = attention_mask
@@ -824,6 +830,18 @@ class QEffGemma4TextModel(Gemma4TextModel):
 
         hidden_states = self.norm(hidden_states)
         next_cache = past_key_values.to_legacy_cache() if use_cache else None
+
+        # DFlash TLM: concat collected target-layer hidden states -> fc -> hidden_norm.
+        if self.target_layer_ids:
+            target_hidden = torch.cat(target_hidden_list, dim=-1)
+            target_hidden = self.hidden_norm(self.fc(target_hidden))
+            output = BaseModelOutputWithPast(
+                last_hidden_state=hidden_states,
+                past_key_values=next_cache,
+                hidden_states=target_hidden,
+            )
+            return output if return_dict else output.to_tuple()
+
         output = BaseModelOutputWithPast(last_hidden_state=hidden_states, past_key_values=next_cache)
         return output if return_dict else output.to_tuple()
 
@@ -1136,11 +1154,13 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
         )
 
         hidden_states = outputs.last_hidden_state
-        if position_ids is not None:
-            logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-            hidden_states = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
-        else:
-            hidden_states = hidden_states[:, -1:, :]
+        # DFlash TLM emits full per-position logits; the plain path keeps last-token logits.
+        if not getattr(self.model, "target_layer_ids", None):
+            if position_ids is not None:
+                logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+                hidden_states = hidden_states[torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+            else:
+                hidden_states = hidden_states[:, -1:, :]
 
         logits = self.lm_head(hidden_states)
         if self.config.final_logit_softcapping is not None:
@@ -1234,8 +1254,12 @@ class QEffGemma4DecoderWrapper(nn.Module):
             )
         finally:
             _DISABLE_EXPORT_FP16_CLAMP = restore_disable_clamp
-        logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
-        hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
+        # DFlash TLM emits full per-position logits; the plain path keeps last-token logits.
+        if getattr(self.language_model, "target_layer_ids", None):
+            hidden_states = outputs[0]
+        else:
+            logit_index = position_ids.to(torch.int32).argmax(1, keepdim=True)
+            hidden_states = outputs[0][torch.arange(position_ids.shape[0]).view(-1, 1), logit_index]
         logits = self.lm_head(hidden_states)
         if self.config.text_config.final_logit_softcapping is not None:
             logits = logits / self.config.text_config.final_logit_softcapping
@@ -1244,6 +1268,11 @@ class QEffGemma4DecoderWrapper(nn.Module):
         logits = logits.float()
         if next_image_idx is None:
             next_image_idx = torch.zeros((1, 1), dtype=torch.int64, device=logits.device)
+
+        # DFlash TLM: emit the collected target-layer features as an extra output.
+        if getattr(self.language_model, "target_layer_ids", None):
+            return logits, vision_embeds, next_image_idx, outputs.past_key_values, outputs.hidden_states
+
         return logits, vision_embeds, next_image_idx, outputs.past_key_values
 
 
@@ -1404,7 +1433,7 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         def build_lang_decode_spec(comp_ctx_lengths: Optional[int] = None):
             spec = {
                 "batch_size": full_batch_size if continuous_batching else batch_size,
-                "seq_len": "1",
+                "seq_len": compiler_options.pop("dflash_block_size", None) or "1",
                 "ctx_len": ctx_len,
                 "sliding_window": self.model.language_model.config.sliding_window,
                 "vision_batch_size": batch_size,
@@ -1464,6 +1493,9 @@ class QEffGemma4ForConditionalGeneration(Gemma4ForConditionalGeneration):
         for i in range(self.model.language_model.config.num_hidden_layers):
             for kv in ("key", "value"):
                 lang_output_names.append(f"past_{kv}.{i}_RetainedState")
+        # DFlash TLM: extra collected target-layer features output.
+        if getattr(self.model.language_model, "target_layer_ids", None):
+            lang_output_names.append("target_hidden_states")
         if kv_offload:
             return {"vision": vision_output_names, "lang": lang_output_names}
         return lang_output_names

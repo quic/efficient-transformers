@@ -1449,6 +1449,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.input_shapes, self.output_names = None, None
+
+        # DFlash TLM: attach fc/hidden_norm and enable target-layer hidden-state collect.
+        self.dflash_tlm = bool(qaic_config and qaic_config.get("target_layer_ids", None))
+        if self.dflash_tlm:
+            qaic_config.setdefault("pretrained_model_name_or_path", kwargs.get("pretrained_model_name_or_path"))
+            self.model, _ = DFlashTLMTransform.apply(self.model, qaic_config)
+
         # ---Sampling---
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
@@ -1869,6 +1876,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         prefill_only=None,
         offload_pt_weights: Optional[bool] = None,
         enable_chunking=False,
+        dflash_block_size: Optional[int] = None,
         qaic_config: Optional[dict] = None,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
@@ -2050,6 +2058,12 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             full_batch_size=full_batch_size,
             **compiler_options,
         )
+
+        # DFlash TLM: override the lang decode spec's seq_len to dflash_block_size.
+        if self.dflash_tlm and dflash_block_size is not None:
+            for spec in specializations["lang"]:
+                if str(spec.get("seq_len")) == "1":
+                    spec["seq_len"] = dflash_block_size
 
         custom_io_vision = {}
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
@@ -2443,6 +2457,37 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         lang_session.set_buffers(vision_outputs)
 
+        # DFlash TLM: target_hidden_states is dynamic in seq; (re)bind buffer per run.
+        dflash_ths_name = "target_hidden_states"
+        dflash_ths_active = dflash_ths_name in lang_session.output_names
+        if dflash_ths_active:
+            ths_index = lang_session.binding_index_map[dflash_ths_name]
+            ths_binding = lang_session.bindings[ths_index]
+            ths_dtype = lang_session.aic_to_np_dtype_mapping.get(ths_binding.type, np.dtype(np.float32))
+            ths_hidden = None
+            for allowed_shape in lang_session.allowed_shapes:
+                dims = allowed_shape[ths_index][1]
+                if len(dims) == 3:
+                    ths_hidden = int(dims[-1])
+                    break
+            if ths_hidden is None:
+                ths_hidden = int(self.model.language_model.config.hidden_size)
+
+            def _bind_target_hidden(seq_len):
+                lang_session.set_buffers(
+                    {dflash_ths_name: np.zeros((batch_size, seq_len, ths_hidden), dtype=ths_dtype)}
+                )
+
+        # If the vision pass produced no outputs (text-only prompt, or skip_vision=True
+        # with an image-aware language QPC), the `vision_embeds` graph input is still part
+        # of the lang QPC's signature. Leaving it unbound reads stale state and collapses
+        # decoding; bind explicit zeros instead.
+        if not vision_outputs and "vision_embeds" in lang_session.input_names:
+            ve_binding = lang_session.bindings[lang_session.binding_index_map["vision_embeds"]]
+            ve_shape = tuple(int(d) for d in ve_binding.dims)
+            ve_dtype = lang_session.aic_to_np_dtype_mapping.get(ve_binding.type, np.dtype(np.float32))
+            lang_inputs["vision_embeds"] = np.zeros(ve_shape, dtype=ve_dtype)
+
         if self.comp_ctx_lengths_prefill is not None:
             list_of_comp_ctx_lengths_prefill = [
                 np.zeros(length, dtype=np.int64) for length in self.comp_ctx_lengths_prefill
@@ -2517,6 +2562,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     logits_vocab_size,
                 )
                 lang_session.set_buffers({"logits": np.zeros(logits_shape, dtype=logits_dtype)})
+            if dflash_ths_active:
+                _bind_target_hidden(chunk_inputs["input_ids"].shape[1])
             outputs = lang_session.run(chunk_inputs)
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
@@ -2578,6 +2625,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     ccl_id = min(ccl_id + 1, max_ccl_id)
                     lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_decode[ccl_id]
 
+            if dflash_ths_active:
+                _bind_target_hidden(lang_inputs["input_ids"].shape[1])
             outputs = lang_session.run(lang_inputs)
             if self._write_io_dir is not None:
                 write_io_files(lang_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
@@ -4213,11 +4262,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if not self.continuous_batching:
             exec_batch_size = batch_size
         elif self.dflash_dlm:
-            # The DFlash DLM runs a batched block-forward (seq_len == block_size,
-            # not 1): `decode_bsz` activation rows, each routed to its own KV
-            # slot via batch_index. The activation batch dim must therefore equal
-            # the decode batch (full_batch_size), not the continuous-batching
-            # prefill default of 1.
+            # DFlash DLM: route decode_bsz rows via batch_index; use full_batch_size.
             exec_batch_size = full_batch_size or batch_size
         elif prefill_seq_len == 1:
             exec_batch_size = full_batch_size

@@ -1344,18 +1344,29 @@ class DFlashTLMTransform:
         if not target_layer_ids:
             return model, False
 
+        # Conditional-generation (VLM) models (e.g. gemma4) nest the language config
+        # under text_config and the decoder under model.model.language_model; plain
+        # CausalLM models (qwen3/llama) expose them directly.
+        config = model.config
+        text_config = getattr(config, "text_config", config)
+        hidden_size = text_config.hidden_size
         inner = model.model
-        hidden_size = model.config.hidden_size
+        if hasattr(inner, "language_model"):
+            inner = inner.language_model
         n = len(target_layer_ids)
 
         # Skip if a caller pre-injected fc/hidden_norm before constructing the model.
         if not (hasattr(inner, "fc") and hasattr(inner, "hidden_norm")):
-            model_type = getattr(model.config, "model_type", "")
-            eps = getattr(model.config, "rms_norm_eps", 1e-6)
-            if "qwen3" in model_type:
-                from transformers.models.qwen3.modeling_qwen3 import Qwen3RMSNorm as RMSNorm
+            model_type = getattr(config, "model_type", "")
+            eps = getattr(text_config, "rms_norm_eps", getattr(config, "rms_norm_eps", 1e-6))
+            if "gemma" in model_type:
+                RMSNorm = Gemma4RMSNorm
+            elif "qwen3_vl" in model_type:
+                RMSNorm = Qwen3VLTextRMSNorm
+            elif "qwen3" in model_type:
+                RMSNorm = Qwen3RMSNorm
             elif "llama" in model_type:
-                from transformers.models.llama.modeling_llama import LlamaRMSNorm as RMSNorm
+                RMSNorm = LlamaRMSNorm
             else:
                 RMSNorm = nn.RMSNorm
             inner.fc = nn.Linear(n * hidden_size, hidden_size, bias=False)
