@@ -3742,6 +3742,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.hash_params["prefill_only"] = True
         if enable_chunking:
             self.hash_params["chunking"] = True
+            if self.hash_params.get("moe_prefill_flavour") == "expert_parallel":
+                num_packed_chunks = self.hash_params.get("moe_prefill_num_packed_chunks", 1)
+                if constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN % num_packed_chunks:
+                    return num_packed_chunks
             if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe"}:
                 return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
 
@@ -3885,7 +3889,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
                         prefill_seq_len=prefill_seq_len,
                         enable_chunking=enable_chunking,
-                        num_cores=num_cores,
                     )
                     sliding_window = getattr(self.model.config, "sliding_window", None)
                     kv_cache_shape[2] = (
@@ -3913,7 +3916,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         for_loop_number_forced_by_blocking = (
             self.hash_params.get("blocking_kwargs", None).num_q_blocks if blocking_enabled else None
         )
-        for_loop_number_forced_by_expert_parallel = self.hash_params.get("moe_packed_chunk_size", None)
+        for_loop_number_forced_by_expert_parallel = self.hash_params.get("moe_prefill_expert_parallel_chunk_size", None)
         if expert_parallel_is_triggered and blocking_enabled:
             lcm = (for_loop_number_forced_by_blocking * for_loop_number_forced_by_expert_parallel) // math.gcd(
                 for_loop_number_forced_by_blocking, for_loop_number_forced_by_expert_parallel

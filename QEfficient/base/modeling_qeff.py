@@ -662,7 +662,9 @@ class QEFFBaseModel(ABC):
             kwargs["_layerwise_cache_probe"] = True
         if kv_cache_prefix:
             kwargs["kv_cache_prefix"] = kv_cache_prefix
-        mdp_ts_num_devices = int(compiler_options.get("mdp_ts_num_devices", 1))
+        num_devices = compiler_options.pop("num_devices", None)
+        mdp_ts_num_devices = compiler_options.pop("mdp_ts_num_devices", 1)
+        num_devices = int(mdp_ts_num_devices if num_devices is None else num_devices)
         if prefill_only:
             kwargs.update(
                 {
@@ -690,7 +692,7 @@ class QEFFBaseModel(ABC):
             ctx_len=ctx_len,
             seq_len=seq_len,
             bs=bs,
-            num_devices=mdp_ts_num_devices,
+            num_devices=num_devices,
             qaic_config=qaic_config,
             prefill_only=prefill_only,
             enable_chunking=enable_chunking,
