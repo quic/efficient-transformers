@@ -2286,6 +2286,13 @@ def test_resolve_torch_dtype_normalizes_dtype_alias(caplog):
     assert kwargs["dtype"] == torch.bfloat16
     assert "on-device generation is expected to fail" in caplog.text
 
+    # Regression guard: when torch_dtype/dtype is not set at all, default to float32 on
+    # ai100 so models whose config.json declares bfloat16 (e.g. Mistral-7B-v0.1) aren't
+    # silently loaded in bfloat16, which breaks KV-cache dtype (float32) parity.
+    kwargs = {}
+    _resolve_torch_dtype(kwargs)
+    assert kwargs["torch_dtype"] == torch.float32
+
 
 def test_qwen3_5_moe_gated_norm_preserves_float16():
     """GatedDeltaNet RMSNorm must keep the input dtype so the gated output feeds
