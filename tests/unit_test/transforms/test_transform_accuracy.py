@@ -29,7 +29,6 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 import torch
-import warnings
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import (
