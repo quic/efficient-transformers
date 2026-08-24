@@ -1,0 +1,102 @@
+{
+  "gemma4_moe": {
+    "model_id": "google/gemma-4-26B-A4B-it",
+    "test_configs": [
+      {
+        "id": "full_model_vision4_prefill8_decode4_stages4",
+        "vision_num_devices": 4,
+        "prefill_num_devices": 8,
+        "decode_num_devices": 4,
+        "stages": 4
+      }
+    ]
+  },
+  "gpt_oss": {
+    "model_id": "openai/gpt-oss-20b",
+    "test_configs": [
+      {
+        "id": "full_model_prefill8_decode4_stages4",
+        "prefill_num_devices": 8,
+        "decode_num_devices": 4,
+        "stages": 4
+      },
+      {
+        "id": "reduced_layers_prefill2_decode1_stages2",
+        "prefill_num_devices": 2,
+        "decode_num_devices": 1,
+        "stages": 2
+      }
+    ]
+  },
+  "qwen3_5_moe": {
+    "model_id": "Qwen/Qwen3.5-35B-A3B",
+    "test_configs": [
+      {
+        "id": "full_model_vision4_prefill8_decode4_stages4",
+        "vision_num_devices": 4,
+        "prefill_num_devices": 8,
+        "decode_num_devices": 4,
+        "stages": 4
+      }
+    ]
+  },
+  "qwen3_vl_moe": {
+    "model_id": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+    "test_configs": [
+      {
+        "id": "full_model_vision2_prefill8_decode4_stages4",
+        "vision_num_devices": 2,
+        "prefill_num_devices": 8,
+        "decode_num_devices": 4,
+        "stages": 4
+      }
+    ]
+  },
+  "qwen3moe": {
+    "model_id": "yujiepan/qwen3-moe-tiny-random",
+    "test_configs": [
+      {
+        "id": "full_model_prefill2_decode1_stages2",
+        "prefill_num_devices": 2,
+        "decode_num_devices": 1,
+        "stages": 2
+      }
+    ]
+  },
+  "gemma4_moe_tiny": {
+    "model_id": "tiny-random/gemma-4-moe",
+    "test_configs": [
+      {
+        "id": "tiny_model_vision1_prefill2_decode2_stages2",
+        "vision_num_devices": 1,
+        "prefill_num_devices": 2,
+        "decode_num_devices": 2,
+        "stages": 2
+      }
+    ]
+  },
+  "qwen3_5_moe_tiny": {
+    "model_id": "tiny-random/qwen3.5-moe",
+    "test_configs": [
+      {
+        "id": "tiny_model_vision1_prefill2_decode2_stages2",
+        "vision_num_devices": 1,
+        "prefill_num_devices": 2,
+        "decode_num_devices": 2,
+        "stages": 2
+      }
+    ]
+  },
+  "qwen3_vl_moe_tiny": {
+    "model_id": "tiny-random/qwen3-vl-moe",
+    "test_configs": [
+      {
+        "id": "tiny_model_vision1_prefill2_decode1_stages2",
+        "vision_num_devices": 1,
+        "prefill_num_devices": 2,
+        "decode_num_devices": 1,
+        "stages": 2
+      }
+    ]
+  }
+}

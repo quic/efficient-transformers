@@ -26,6 +26,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageText
 
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from tests.transformers.disaggregated._disagg_dma_config import disagg_dma_config
 from tests.transformers.disaggregated._disagg_ort_test_utils import (
     assert_three_way_tokens_match as _assert_three_way_tokens_match,
 )
@@ -869,7 +870,17 @@ def _run_ort_generation(
     return np.stack(tokens, axis=1).astype(np.int64)
 
 
-def _compile_disagg_sessions(qeff_model, image, sessions: list, compiled_onnx_paths: dict):
+def _compile_disagg_sessions(
+    qeff_model,
+    image,
+    sessions: list,
+    compiled_onnx_paths: dict,
+    *,
+    vision_num_devices: int = 1,
+    prefill_num_devices: int = 2,
+    decode_num_devices: int = 2,
+    stages: int = 2,
+):
     vision_qpc_path = qeff_model.compile(
         batch_size=BATCH_SIZE,
         prefill_seq_len=PREFILL_SEQ_LEN,
@@ -877,7 +888,7 @@ def _compile_disagg_sessions(qeff_model, image, sessions: list, compiled_onnx_pa
         height=image.height,
         width=image.width,
         num_cores=16,
-        num_devices=1,
+        num_devices=vision_num_devices,
         mos=1,
         aic_enable_depth_first=True,
         skip_vision=False,
@@ -895,7 +906,7 @@ def _compile_disagg_sessions(qeff_model, image, sessions: list, compiled_onnx_pa
         height=image.height,
         width=image.width,
         num_cores=16,
-        num_devices=2,
+        num_devices=decode_num_devices,
         retain_full_kv=True,  # required for DMA slice writes into full KV
         split_retained_state_io=True,
         mos=1,
@@ -917,14 +928,14 @@ def _compile_disagg_sessions(qeff_model, image, sessions: list, compiled_onnx_pa
         height=image.height,
         width=image.width,
         num_cores=16,
-        num_devices=2,
+        num_devices=prefill_num_devices,
         retain_full_kv=True,
         split_retained_state_io=True,
         mos=1,
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
         aic_enable_depth_first=True,
-        mdp_num_partitions=2,
+        mdp_num_partitions=stages,
         prefill_only=True,
         enable_chunking=True,
         skip_vision=True,
@@ -1122,8 +1133,11 @@ def test_qwen3_5_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
     pytest.importorskip("qwen_vl_utils")
     torch.manual_seed(42)
 
-    hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32"))
-    processor = AutoProcessor.from_pretrained(MODEL_NAME, trust_remote_code=True)
+    dma_config = disagg_dma_config("qwen3_5_moe_tiny")
+    model_id = dma_config["model_id"]
+
+    hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32", model_name=model_id), model_name=model_id)
+    processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
 
     image = Image.new("RGB", IMAGE_SIZE, color=(127, 127, 127))
     messages = _prepare_messages(image)
@@ -1136,7 +1150,14 @@ def test_qwen3_5_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
     compiled_onnx_paths = {}
     try:
         vision_session, prefill_session, decode_session = _compile_disagg_sessions(
-            qeff_model, image, sessions, compiled_onnx_paths
+            qeff_model,
+            image,
+            sessions,
+            compiled_onnx_paths,
+            vision_num_devices=dma_config["vision_num_devices"],
+            prefill_num_devices=dma_config["prefill_num_devices"],
+            decode_num_devices=dma_config["decode_num_devices"],
+            stages=dma_config["stages"],
         )
 
         qaic_tokens = _run_disagg_kv_share_qaic_generation(

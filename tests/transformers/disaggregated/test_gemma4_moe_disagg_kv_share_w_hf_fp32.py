@@ -30,6 +30,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageText
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.base.onnx_transforms import FP16ClipTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from tests.transformers.disaggregated._disagg_dma_config import disagg_dma_config
 from tests.transformers.disaggregated._disagg_ort_test_utils import (
     assert_three_way_tokens_match as _assert_three_way_tokens_match,
 )
@@ -826,8 +827,11 @@ def test_gemma4_moe_disagg_kv_share_qaic_vs_ort_vs_hf_fp32(manual_cleanup, night
 def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
     torch.manual_seed(42)
 
-    hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32"))
-    processor = AutoProcessor.from_pretrained(MODEL_NAME, trust_remote_code=True)
+    dma_config = disagg_dma_config("gemma4_moe_tiny")
+    model_id = dma_config["model_id"]
+
+    hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32", model_name=model_id), model_name=model_id)
+    processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
 
     if SKIP_VISION:
         messages = _prepare_text_only_messages()
@@ -858,11 +862,15 @@ def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
     try:
         vision_qpc_path = None
         if not SKIP_VISION:
-            vision_qpc_path = _compile_vision(qeff_model)
+            vision_qpc_path = _compile_vision(qeff_model, num_devices=dma_config["vision_num_devices"])
             compiled_onnx_paths["vision"] = _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
 
         prefill_qpc_path, decode_qpc_path, lang_onnx_paths = _compile_kv_share_lang(
-            qeff_model, moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE
+            qeff_model,
+            moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
+            prefill_num_devices=dma_config["prefill_num_devices"],
+            decode_num_devices=dma_config["decode_num_devices"],
+            mdp_num_partitions=dma_config["stages"],
         )
         compiled_onnx_paths.update(lang_onnx_paths)
         print(f"Disagg ONNX paths: {compiled_onnx_paths}")

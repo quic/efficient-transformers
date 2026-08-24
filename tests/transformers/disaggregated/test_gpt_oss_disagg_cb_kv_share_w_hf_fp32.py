@@ -32,6 +32,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from tests.transformers.disaggregated._disagg_dma_config import disagg_dma_config
 from tests.transformers.disaggregated._disagg_ort_test_utils import (
     assert_three_way_tokens_match as _assert_three_way_tokens_match,
 )
@@ -53,7 +54,6 @@ from tests.transformers.disaggregated._disagg_ort_test_utils import (
 from tests.transformers.disaggregated._nightly_disagg_config import nightly_disagg_configs
 
 MODEL_NAME = "openai/gpt-oss-20b"
-TOKENIZER_ID = MODEL_NAME
 NUM_HIDDEN_LAYERS = 4
 PREFILL_SEQ_LEN = 32
 CTX_LEN = 256
@@ -67,9 +67,6 @@ TEXT_PROMPTS = [
 
 NUM_CORES = 16
 MOE_PREFILL_PACKED_CHUNK_SIZE = 16
-STAGES = 2
-PREFILL_NUM_DEVICES = 2
-DECODE_NUM_DEVICES = 1
 
 
 def _assert_onnx_path(onnx_path, label: str) -> Path:
@@ -612,9 +609,12 @@ def test_gpt_oss_disagg_kv_share_qaic_vs_ort_vs_hf_fp32(manual_cleanup, nightly_
 def test_gpt_oss_disagg_cb_kv_handoff_and_hf_parity(manual_cleanup):
     torch.manual_seed(42)
 
-    config = _build_config(dtype="float32")
-    hf_model = _load_hf_model(config)
-    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_ID)
+    dma_config = disagg_dma_config("gpt_oss", "reduced_layers_prefill2_decode1_stages2")
+    model_id = dma_config["model_id"]
+
+    config = _build_config(dtype="float32", model_name=model_id)
+    hf_model = _load_hf_model(config, model_name=model_id)
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -630,7 +630,7 @@ def test_gpt_oss_disagg_cb_kv_handoff_and_hf_parity(manual_cleanup):
             ctx_len=CTX_LEN,
             full_batch_size=FULL_BATCH_SIZE,
             num_cores=NUM_CORES,
-            num_devices=DECODE_NUM_DEVICES,
+            num_devices=dma_config["decode_num_devices"],
             mos=1,
             mxfp6_matmul=False,
             mxint8_kv_cache=False,
@@ -649,8 +649,8 @@ def test_gpt_oss_disagg_cb_kv_handoff_and_hf_parity(manual_cleanup):
             full_batch_size=FULL_BATCH_SIZE,
             num_cores=NUM_CORES,
             moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
-            num_devices=PREFILL_NUM_DEVICES,
-            mdp_num_partitions=STAGES,
+            num_devices=dma_config["prefill_num_devices"],
+            mdp_num_partitions=dma_config["stages"],
             split_retained_state_io=True,
             mos=1,
             mxfp6_matmul=False,
