@@ -33,6 +33,24 @@ def noopMarkerFilter() {
 }
 
 
+def positiveIntegerOrEmpty(Object value) {
+    def text = value?.toString()?.trim()
+    if (text && (text ==~ /[1-9][0-9]*/)) {
+        return text
+    }
+    return ''
+}
+
+
+def pipelinePrNumber() {
+    return positiveIntegerOrEmpty(env.CI_IMPACT_VALIDATION_PR_ID) ?:
+        positiveIntegerOrEmpty(params.get('CI_IMPACT_VALIDATION_PR')) ?:
+        positiveIntegerOrEmpty(params.get('PR_NUMBER')) ?:
+        positiveIntegerOrEmpty(env.PR_NUMBER) ?:
+        positiveIntegerOrEmpty(env.CHANGE_ID)
+}
+
+
 def loadImpactEnvironment(Map plan, String profile) {
     env.CI_IMPACT_MODE = plan.mode
     env.IMPACT_TEST_FILTER = plan.mode == 'full' ? env.TEST_FILTER : noopMarkerFilter()
@@ -131,10 +149,11 @@ pipeline {
                 script {
                     def base = ''
                     def validationPr = params.CI_IMPACT_VALIDATION_PR?.trim()
+                    def prNumber = pipelinePrNumber()
                     if (params.CI_IMPACT_LATEST_COMMIT_ONLY && !validationPr) {
                         error('CI_IMPACT_LATEST_COMMIT_ONLY requires CI_IMPACT_VALIDATION_PR')
                     }
-                    def forceFull = params.FORCE_FULL_CI || (!env.CHANGE_ID && !validationPr)
+                    def forceFull = params.FORCE_FULL_CI || !prNumber
                     def forceReason = params.FORCE_FULL_CI ? 'full CI manually forced' : 'non-PR build'
                     try {
                         if (params.CI_IMPACT_LATEST_COMMIT_ONLY) {
@@ -142,7 +161,7 @@ pipeline {
                                 error('Cannot compare the validation target with HEAD^')
                             }
                             base = sh(returnStdout: true, script: 'git rev-parse HEAD^').trim()
-                        } else if (env.CHANGE_ID || validationPr) {
+                        } else if (prNumber) {
                             def target = validationPr ? 'main' : (env.CHANGE_TARGET ?: 'main')
                             if (!(target ==~ /[A-Za-z0-9._\/-]+/)) {
                                 error("Unsafe CHANGE_TARGET: ${target}")
@@ -172,8 +191,11 @@ pipeline {
                     }
                     env.CI_IMPACT_BASE = base
                     env.CI_IMPACT_HEAD = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
-                    def prNumber = env.CI_IMPACT_VALIDATION_PR_ID ?: env.CHANGE_ID ?: 'no-pr'
-                    currentBuild.displayName = "#${env.BUILD_NUMBER} PR-${prNumber} ${env.CI_IMPACT_HEAD.take(12)}"
+                    env.CI_IMPACT_PR_NUMBER = prNumber ?: ''
+                    def displayPrNumber = prNumber ?: 'no-pr'
+                    currentBuild.displayName = (
+                        "#${env.BUILD_NUMBER} PR-${displayPrNumber} ${env.CI_IMPACT_HEAD.take(12)}"
+                    )
                     env.CI_IMPACT_FORCE_FULL = forceFull.toString()
                     env.CI_IMPACT_FORCE_REASON = forceReason
                     echo "Regression impact comparison base: ${base}"
@@ -275,8 +297,8 @@ pipeline {
                     def plan = new JsonSlurperClassic().parseText(readFile('.ci-impact-plan.json'))
                     def llmDecisionText = fileExists('.ci-impact-llm.json') ? readFile('.ci-impact-llm.json').trim() : '<missing>'
                     loadImpactEnvironment(plan, params.TEST_PROFILE)
-                    def validationPrefix = env.CI_IMPACT_VALIDATION_PR_ID ? "PR-${env.CI_IMPACT_VALIDATION_PR_ID} validation; " : ''
-                    currentBuild.description = "${validationPrefix}${plan.mode}: ${plan.reasons.join('; ')}"
+                    def prPrefix = env.CI_IMPACT_PR_NUMBER ? "PR-${env.CI_IMPACT_PR_NUMBER}; " : ''
+                    currentBuild.description = "${prPrefix}${plan.mode}: ${plan.reasons.join('; ')}"
                     echo "Regression impact mode: ${plan.mode}\nReasons: ${plan.reasons.join('\n')}"
                     echo "LLM decision artifact:\n${llmDecisionText}"
                     if (plan.mode != 'full') {
