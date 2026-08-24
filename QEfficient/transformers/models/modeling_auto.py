@@ -81,6 +81,7 @@ from QEfficient.utils import (
     validate_kv_cache_prefix,
 )
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
+from QEfficient.utils.export_utils import export_from_compile
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
@@ -1860,7 +1861,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
-        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
         **compiler_options,
     ) -> str:
         """
@@ -1947,7 +1947,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     offload_pt_weights=offload_pt_weights,
                     enable_chunking=enable_chunking,
                     qaic_config=qaic_config,
-                    moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                     kv_cache_prefix=kv_cache_prefix,
                     **compiler_options,
                 )
@@ -2064,19 +2063,20 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         needs_lang_export = not skip_lang and lang_onnx_path is None
 
         if needs_vision_export or needs_lang_export:
-            self.export(
-                use_onnx_subfunctions=use_onnx_subfunctions,
-                skip_vision=skip_vision,
-                skip_lang=skip_lang,
-                prefill_only=prefill_only,
-                enable_chunking=enable_chunking,
-                prefill_seq_len=prefill_seq_len,
-                num_cores=num_cores,
-                qaic_config=qaic_config,
-                _layerwise_cache_probe=layerwise_cache_probe,
-                kv_cache_prefix=kv_cache_prefix,
-                offload_pt_weights=offload_pt_weights,
-            )
+            with export_from_compile():
+                self.export(
+                    use_onnx_subfunctions=use_onnx_subfunctions,
+                    skip_vision=skip_vision,
+                    skip_lang=skip_lang,
+                    prefill_only=prefill_only,
+                    enable_chunking=enable_chunking,
+                    prefill_seq_len=prefill_seq_len,
+                    num_cores=num_cores,
+                    qaic_config=qaic_config,
+                    _layerwise_cache_probe=layerwise_cache_probe,
+                    kv_cache_prefix=kv_cache_prefix,
+                    offload_pt_weights=offload_pt_weights,
+                )
             if layerwise_cache_probe:
                 return self.lang_model.onnx_path
 

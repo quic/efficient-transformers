@@ -22,8 +22,9 @@ For other models, there is comprehensive documentation to inspire upon the chang
 
 
 *Latest news* : <br>
+- [08/2026] Direct QEff model `.export()` calls are deprecated. Use `.compile()` so export uses the complete model and compiler configuration.
 - [07/2026] Added support for Kimi-K2.5 vision-language model [moonshotai/Kimi-K2.5](https://huggingface.co/moonshotai/Kimi-K2.5) via `QEFFAutoModelForImageTextToText`.
-- [07/2026] Added `dynamo` flag to `QEFFAutoModelForCausalLM.export()` to support `torch.onnx.export` dynamo-based ONNX export for CausalLM models
+- [07/2026] Added `dynamo` support to `QEFFAutoModelForCausalLM.compile()` for torch.onnx.export dynamo-based ONNX export of CausalLM models
 - [06/2026] Added support for Gemma4 models, [google/gemma-4-E2B-it](https://huggingface.co/google/gemma-4-E2B), [google/gemma-4-26B-A4B-it](https://huggingface.co/google/gemma-4-26B-A4B-it)
 - [06/2026] Added support for Qwen3.6 model [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B)
 - [06/2026] Added support for Qwen3.5 model[Qwen/Qwen3.5-0.8B](https://huggingface.co/Qwen/Qwen3.5-0.8B)

@@ -7,29 +7,16 @@
 
 import argparse
 import os
-import warnings
 from typing import Optional
 
 from QEfficient.base.common import QEFFCommonLoader
+from QEfficient.cloud import warn_deprecated_cloud_api
 from QEfficient.utils import check_and_assign_cache_dir
 from QEfficient.utils.custom_yaml import generate_custom_io
 from QEfficient.utils.logging_utils import logger
 
 # Specifically for Docker images.
 ROOT_DIR = os.path.dirname(os.path.abspath(""))
-_DEPRECATED_CLOUD_API_WARNING = (
-    "QEfficient.cloud.export is deprecated. These APIs will no longer be usable and will be removed after the "
-    "1.23.0 release."
-)
-_DEPRECATION_WARNING_EMITTED = False
-
-
-def _warn_deprecated_cloud_api() -> None:
-    global _DEPRECATION_WARNING_EMITTED
-    if _DEPRECATION_WARNING_EMITTED:
-        return
-    warnings.warn(_DEPRECATED_CLOUD_API_WARNING, FutureWarning, stacklevel=2)
-    _DEPRECATION_WARNING_EMITTED = True
 
 
 def get_onnx_path_and_setup_customIO(
@@ -68,7 +55,7 @@ def get_onnx_path_and_setup_customIO(
     str
         Path of the generated ONNX graph file.
     """
-    _warn_deprecated_cloud_api()
+    warn_deprecated_cloud_api("export")
     logger.info(f"Exporting Pytorch {model_name} model to ONNX...")
 
     qeff_model = QEFFCommonLoader.from_pretrained(
@@ -126,7 +113,7 @@ def main(
         python -m QEfficient.cloud.export --model-name gpt2 --cache-dir /path/to/cache
 
     """
-    _warn_deprecated_cloud_api()
+    warn_deprecated_cloud_api("export")
     cache_dir = check_and_assign_cache_dir(local_model_dir, cache_dir)
     get_onnx_path_and_setup_customIO(
         model_name=model_name,
