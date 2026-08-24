@@ -1657,7 +1657,6 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
                 module.tree_reduce = tree_reduce
                 module.expert_parallel_num_packed_chunks = num_packed_chunks
                 module.expert_blocking_packed_chunk_size = expert_parallel_chunk_size
-                module.expert_blocking_num_packed_chunks = num_packed_chunks
             transformed = True
 
         if transformed and expert_parallel_chunk_size_requested and not uses_expert_parallel:

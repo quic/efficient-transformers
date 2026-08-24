@@ -662,7 +662,7 @@ class QEFFBaseModel(ABC):
             kwargs["_layerwise_cache_probe"] = True
         if kv_cache_prefix:
             kwargs["kv_cache_prefix"] = kv_cache_prefix
-        num_devices = int(compiler_options.pop("num_devices", 1))
+        mdp_ts_num_devices = int(compiler_options.get("mdp_ts_num_devices", 1))
         if prefill_only:
             kwargs.update(
                 {
@@ -690,7 +690,7 @@ class QEFFBaseModel(ABC):
             ctx_len=ctx_len,
             seq_len=seq_len,
             bs=bs,
-            num_devices=num_devices,
+            num_devices=mdp_ts_num_devices,
             qaic_config=qaic_config,
             prefill_only=prefill_only,
             enable_chunking=enable_chunking,
@@ -972,6 +972,8 @@ class QEFFBaseModel(ABC):
         if blocking_config is not None:
             self.model, _ = BlockingAttentionTransform.apply(self.model, attn_blocking_config=blocking_config)
             self.hash_params["blocking_kwargs"] = blocking_config
+        else:
+            self.hash_params.pop("blocking_kwargs", None)
         if qaic_config is not None:
             self.hash_params["qaic_config"] = qaic_config
         self.hash_params["num_replicate_kv_heads"] = effective_num_replicate_kv_heads
@@ -1072,7 +1074,7 @@ class QEFFBaseModel(ABC):
                     use_onnx_subfunctions,
                     dynamo,
                     retain_full_kv,
-                    num_devices=mdp_ts_num_devices,
+                    mdp_ts_num_devices=mdp_ts_num_devices,
                     qaic_config=qaic_config,
                     _layerwise_cache_probe=layerwise_cache_probe,
                     kv_cache_prefix=kv_cache_prefix,
