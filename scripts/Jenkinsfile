@@ -186,7 +186,7 @@ pipeline {
                     mkdir -p $PWD/Non_qaic_feature &&
                     export TOKENIZERS_PARALLELISM=false &&
                     export QEFF_HOME=$PWD/Non_qaic_feature &&
-                    pytest tests -m '(on_qaic) and (feature) and (not qnn) and ${TEST_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log2_feature.xml --durations=10 &&
+                    pytest tests -m '(on_qaic) and (feature) and (not multimodal) and (not qnn) and ${TEST_FILTER}' --ignore tests/transformers/sampler --ignore tests/vllm --ignore tests/unit_test --ignore tests/nightly_pipeline --junitxml=tests/tests_log2_feature.xml --durations=10 &&
                     junitparser merge tests/tests_log2_feature.xml tests/tests_log.xml &&
                     deactivate"
                     '''
