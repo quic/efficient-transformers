@@ -172,6 +172,8 @@ pipeline {
                     }
                     env.CI_IMPACT_BASE = base
                     env.CI_IMPACT_HEAD = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                    def prNumber = env.CI_IMPACT_VALIDATION_PR_ID ?: env.CHANGE_ID ?: 'no-pr'
+                    currentBuild.displayName = "#${env.BUILD_NUMBER} PR-${prNumber} ${env.CI_IMPACT_HEAD.take(12)}"
                     env.CI_IMPACT_FORCE_FULL = forceFull.toString()
                     env.CI_IMPACT_FORCE_REASON = forceReason
                     echo "Regression impact comparison base: ${base}"
