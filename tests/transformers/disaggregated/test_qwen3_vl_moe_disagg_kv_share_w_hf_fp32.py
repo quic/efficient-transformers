@@ -23,6 +23,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageText
 
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from tests.transformers.disaggregated._disagg_dma_config import disagg_dma_config
 
 MODEL_NAME = "tiny-random/qwen3-vl-moe"
 TINY_RANDOM_MODEL_NAMES = {"tiny-random/qwen3-vl-moe"}
@@ -329,8 +330,11 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
     pytest.importorskip("qwen_vl_utils")
     torch.manual_seed(42)
 
-    hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32"))
-    processor = AutoProcessor.from_pretrained(MODEL_NAME, trust_remote_code=True)
+    dma_config = disagg_dma_config("qwen3_vl_moe_tiny")
+    model_id = dma_config["model_id"]
+
+    hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32", model_name=model_id), model_name=model_id)
+    processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
 
     image = Image.new("RGB", IMAGE_SIZE, color=(127, 127, 127))
 
@@ -354,7 +358,7 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
             height=image.height,
             width=image.width,
             num_cores=16,
-            num_devices=1,
+            num_devices=dma_config["vision_num_devices"],
             mos=1,
             aic_enable_depth_first=True,
             skip_vision=False,
@@ -373,7 +377,7 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
             height=image.height,
             width=image.width,
             num_cores=16,
-            num_devices=1,
+            num_devices=dma_config["decode_num_devices"],
             retain_full_kv=True,
             split_retained_state_io=True,
             mos=1,
@@ -395,14 +399,14 @@ def test_qwen3_vl_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
             height=image.height,
             width=image.width,
             num_cores=16,
-            num_devices=2,
+            num_devices=dma_config["prefill_num_devices"],
             retain_full_kv=True,
             mxfp6_matmul=False,
             mxint8_kv_cache=False,
             split_retained_state_io=True,
             mos=1,
             aic_enable_depth_first=True,
-            mdp_num_partitions=2,
+            mdp_num_partitions=dma_config["stages"],
             prefill_only=True,
             enable_chunking=True,
             skip_vision=True,
