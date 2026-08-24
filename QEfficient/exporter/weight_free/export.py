@@ -5,7 +5,9 @@
 #
 # ----------------------------------------------------------------------------
 
+import contextlib
 import copy
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -49,6 +51,64 @@ def _to_meta(value: Any) -> Any:
     return value
 
 
+def _move_materialized_buffers_to_meta(module):
+    for child in module.modules():
+        for name, buffer in list(child._buffers.items()):
+            if torch.is_tensor(buffer) and not buffer.is_meta:
+                child._buffers[name] = torch.empty_like(buffer, device="meta")
+
+
+@contextlib.contextmanager
+def _cache_torch_export_signature_maps():
+    """Avoid quadratic PyTorch graph-signature map rebuilding on huge weight-free graphs."""
+    import torch._export.utils as export_utils
+    import torch.export.exported_program as exported_program
+    from torch.export.graph_signature import InputKind, TensorArgument
+
+    original_utils_fn = export_utils._populate_param_buffer_metadata_to_new_gm
+    original_exported_program_fn = getattr(
+        exported_program, "_populate_param_buffer_metadata_to_new_gm", original_utils_fn
+    )
+
+    def patched_populate(params_buffers_to_node_meta, gm, new_sig):
+        for metadata in params_buffers_to_node_meta.values():
+            metadata.pop("nn_module_stack", None)
+            metadata.pop("stack_trace", None)
+
+        inputs_to_parameters = {
+            spec.arg.name: spec.target
+            for spec in new_sig.input_specs
+            if spec.kind == InputKind.PARAMETER
+            and isinstance(spec.arg, TensorArgument)
+            and isinstance(spec.target, str)
+        }
+        inputs_to_buffers = {
+            spec.arg.name: spec.target
+            for spec in new_sig.input_specs
+            if spec.kind == InputKind.BUFFER and isinstance(spec.arg, TensorArgument) and isinstance(spec.target, str)
+        }
+
+        for node in gm.graph.nodes:
+            if node.op != "placeholder":
+                continue
+            param_name = inputs_to_parameters.get(node.target)
+            if param_name in params_buffers_to_node_meta:
+                node.meta.update(params_buffers_to_node_meta[param_name])
+            buffer_name = inputs_to_buffers.get(node.target)
+            if buffer_name in params_buffers_to_node_meta:
+                node.meta.update(params_buffers_to_node_meta[buffer_name])
+
+    export_utils._populate_param_buffer_metadata_to_new_gm = patched_populate
+    if hasattr(exported_program, "_populate_param_buffer_metadata_to_new_gm"):
+        exported_program._populate_param_buffer_metadata_to_new_gm = patched_populate
+    try:
+        yield
+    finally:
+        export_utils._populate_param_buffer_metadata_to_new_gm = original_utils_fn
+        if hasattr(exported_program, "_populate_param_buffer_metadata_to_new_gm"):
+            exported_program._populate_param_buffer_metadata_to_new_gm = original_exported_program_fn
+
+
 def _build_meta_qeff_model(qeff_model):
     """Build a QEfficient wrapper backed by an equivalent meta-device HF model."""
     model_ref = qeff_model.hash_params.get("pretrained_model_name_or_path")
@@ -58,11 +118,20 @@ def _build_meta_qeff_model(qeff_model):
             "Pass `pretrained_model_name_or_path=...` when constructing the QEff model manually."
         )
 
-    quant_config = getattr(qeff_model.model.config, "quantization_config", None)
-
     config = copy.deepcopy(qeff_model.model.config)
-    with init_empty_weights():
-        meta_model = qeff_model._hf_auto_class.from_config(config, attn_implementation="eager")
+    quant_config = getattr(config, "quantization_config", None)
+    quantizer_applied_during_build = False
+
+    if getattr(config, "model_type", None) == "kimi_k25":
+        from QEfficient.transformers.models.modeling_auto import _build_image_text_weight_free_config_model
+
+        meta_model = _build_image_text_weight_free_config_model(
+            model_ref, {"config": config, "trust_remote_code": True}
+        )
+        quantizer_applied_during_build = quant_config is not None
+    else:
+        with init_empty_weights():
+            meta_model = qeff_model._hf_auto_class.from_config(config, attn_implementation="eager")
 
     if quant_config is None:
         target_dtype = getattr(config, "dtype", None) or torch.float32
@@ -79,11 +148,12 @@ def _build_meta_qeff_model(qeff_model):
         enable_proxy=getattr(qeff_model, "_enable_proxy", False),
     )
     meta_qeff_model.hash_params.update(copy.deepcopy(qeff_model.hash_params))
+    _move_materialized_buffers_to_meta(meta_qeff_model.model)
 
     if isinstance(qeff_model.model, PooledModel):
         meta_qeff_model.model, _ = PoolingTransform.apply(meta_qeff_model.model, qeff_model.model.pooling_fn)
 
-    if quant_config is not None:
+    if quant_config is not None and not quantizer_applied_during_build:
         # For quantized models the meta model must use the same quantized layer types as the
         # checkpoint so that ONNX initializer names match the checkpoint's storage keys.
         # We apply the quantizer's architecture preprocessing (layer-type replacement only,
@@ -159,10 +229,34 @@ def _upsert_metadata_prop(model, key: str, value: str) -> None:
     model.metadata_props.append(onnx.StringStringEntryProto(key=key, value=value))
 
 
+def _checkpoint_key_variants(name: str) -> set[str]:
+    variants = {name}
+    stripped = name[len("model.") :] if name.startswith("model.") else name
+    variants.add(stripped)
+    if stripped.startswith("language_model."):
+        variants.add(stripped[len("language_model.") :])
+    elif stripped.startswith("lm_head."):
+        variants.add(f"language_model.{stripped}")
+    return variants
+
+
+def _collect_allowed_checkpoint_keys(qeff_model, onnx_initializer_names: Optional[set[str]] = None) -> set[str]:
+    if onnx_initializer_names is None:
+        names = {name for name, _ in qeff_model.model.named_parameters()}
+        names.update(name for name, _ in qeff_model.model.named_buffers())
+    else:
+        names = set(onnx_initializer_names)
+    allowed = set()
+    for name in names:
+        allowed.update(_checkpoint_key_variants(name))
+    return allowed
+
+
 def _prepare_checkpoint_for_weight_free_export(
     qeff_model,
     model_ref: str,
     target_dtype: torch.dtype,
+    onnx_initializer_names: Optional[set[str]] = None,
 ) -> str:
     """Prepare a checkpoint directory for weight-free ONNX export.
 
@@ -184,13 +278,27 @@ def _prepare_checkpoint_for_weight_free_export(
 
     source_dir = resolve_checkpoint_dir(model_ref)
     dtype_suffix = str(target_dtype).replace("torch.", "")
-    prepared_out = source_dir.parent / (source_dir.name + f"-qeff-prepared-{dtype_suffix}")
+    allowed_checkpoint_keys = _collect_allowed_checkpoint_keys(qeff_model, onnx_initializer_names)
+    allowed_hash = hashlib.sha256("\n".join(sorted(allowed_checkpoint_keys)).encode("utf-8")).hexdigest()[:12]
+    config = getattr(qeff_model.model, "config", None)
+    text_config = getattr(config, "text_config", None) or config
+    vision_config = getattr(config, "vision_config", None)
+    prep_suffix = f"qeff-prepared-{dtype_suffix}"
+    if getattr(config, "model_type", None) == "kimi_k25":
+        text_layers = getattr(text_config, "num_hidden_layers", None)
+        vision_layers = getattr(vision_config, "vt_num_hidden_layers", None)
+        experts = getattr(text_config, "n_routed_experts", None)
+        prep_suffix = f"{prep_suffix}-t{text_layers}-v{vision_layers}-e{experts}"
+    prep_suffix = f"{prep_suffix}-{qeff_model.model_name}-{allowed_hash}"
+    prepared_out = source_dir.parent / (source_dir.name + f"-{prep_suffix}")
     prep_pipeline = CheckpointTransformPipeline(transforms=qeff_model._checkpoint_transforms)
     return str(
         prep_pipeline.apply(
             src=source_dir,
             out=prepared_out,
             target_dtype=target_dtype,
+            model_config=config,
+            allowed_checkpoint_keys=allowed_checkpoint_keys,
         )
     )
 
@@ -241,10 +349,10 @@ def export_weight_free_onnx(
             meta_qeff_model,
             (),
             {
-                "use_dynamo": True,
                 "onnx_transform_kwargs": copy.deepcopy(onnx_transform_kwargs),
                 "output_names": list(output_names),
             },
+            dynamo=True,
         )
         onnx_transform_kwargs = subfunc_kwargs.get("onnx_transform_kwargs", onnx_transform_kwargs)
         cleanup_required = True
@@ -259,7 +367,7 @@ def export_weight_free_onnx(
     model_ref = meta_qeff_model.hash_params["pretrained_model_name_or_path"]
 
     meta_qeff_model.model.requires_grad_(False)
-    with export_context:
+    with export_context, _cache_torch_export_signature_maps():
         onnx_program = torch.onnx.export(
             meta_qeff_model.model,
             args=(),
@@ -279,7 +387,10 @@ def export_weight_free_onnx(
             target_dtype = torch.float16
 
         prep_start = time.perf_counter()
-        prepared_model_ref = _prepare_checkpoint_for_weight_free_export(meta_qeff_model, model_ref, target_dtype)
+        onnx_initializer_names = set(onnx_program.model.graph.initializers)
+        prepared_model_ref = _prepare_checkpoint_for_weight_free_export(
+            meta_qeff_model, model_ref, target_dtype, onnx_initializer_names
+        )
 
         _last_prep_duration_seconds = time.perf_counter() - prep_start
         _last_prep_peak_rss_mb = None

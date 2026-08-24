@@ -59,6 +59,17 @@ def find_checkpoint_key(
     if stripped in checkpoint_index:
         return stripped
 
+    if stripped.startswith("model."):
+        without_wrapper_model = stripped[len("model.") :]
+        if without_wrapper_model in checkpoint_index:
+            return without_wrapper_model
+        stripped = without_wrapper_model
+
+    if stripped.startswith("lm_head."):
+        with_language_model = f"language_model.{stripped}"
+        if with_language_model in checkpoint_index:
+            return with_language_model
+
     prefix = getattr(backbone, "base_model_prefix", "")
     if prefix:
         prefixed = f"{prefix}.{stripped}"
@@ -110,6 +121,12 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
     model_ir = onnx_program.model
     model_names = {name for name, _ in qeff_model.model.named_parameters()}
     model_names.update({name for name, _ in qeff_model.model.named_buffers()})
+    for name in list(model_names):
+        stripped = name[len("model.") :] if name.startswith("model.") else name
+        if stripped != name:
+            model_names.add(stripped)
+        if stripped.startswith("language_model.lm_head."):
+            model_names.add(stripped[len("language_model.") :])
     tied_weight_map = {entry.alias: entry.canonical for entry in _collect_tied_weights(qeff_model.model)}
     checkpoint_files = resolve_checkpoint_files(model_ref)
     root = checkpoint_root(model_ref, checkpoint_files)

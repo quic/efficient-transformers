@@ -56,7 +56,7 @@ def reorder_inputs_by_signature(model, example_inputs, dynamic_shapes=None):
             ordered_shapes[k] = dynamic_shapes[k]
     reordered_inputs = {**ordered_inputs, **{k: v for k, v in example_inputs.items() if k not in sig_key_set}}
     if dynamic_shapes is not None:
-        reordered_shapes = {**ordered_shapes, **{k: v for k, v in dynamic_shapes.items() if k not in sig_key_set}}
+        reordered_shapes = {k: dynamic_shapes.get(k, {}) for k in reordered_inputs}
         return reordered_inputs, reordered_shapes
     return reordered_inputs, None
 
@@ -111,8 +111,9 @@ def convert_dynamic_axes_to_dynamic_shapes(
         torch.onnx.export(dynamic_shapes=...).
     """
     max_seq_len = getattr(model_config, "max_position_embeddings", 1024)
+    max_image_dim = max(max_seq_len, 65536)
     model_type = getattr(model_config, "model_type", None)
-    batch_min = 1 if model_type == "gpt_oss" else 2
+    batch_min = 1 if model_type in {"gpt_oss", "kimi_k25"} else 2
 
     dim_registry: Dict[str, Any] = {}
 
@@ -128,7 +129,13 @@ def convert_dynamic_axes_to_dynamic_shapes(
             elif "comp_ctx_lengths" in dim_name:
                 dim_registry[dim_name] = Dim("comp_ctx_lengths", min=DYNAMO_DIM_MIN_COMP_CTX_LENGTHS, max=max_seq_len)
             elif "ctx_len" in dim_name:
-                dim_registry[dim_name] = Dim("ctx_len", min=2, max=max_seq_len)
+                dim_registry[dim_name] = Dim("ctx_len", min=1, max=max_seq_len)
+            elif dim_name == "num_patches":
+                dim_registry[dim_name] = Dim("num_patches", min=1, max=max_image_dim)
+            elif dim_name == "num_image_tokens":
+                dim_registry[dim_name] = Dim("num_image_tokens", min=1, max=max_image_dim)
+            elif dim_name in {"grid_h", "grid_w"}:
+                dim_registry[dim_name] = Dim(dim_name, min=1, max=max_image_dim)
             elif "sliding_window" in dim_name:
                 dim_registry[dim_name] = Dim(
                     "sliding_window",
@@ -167,7 +174,7 @@ def convert_dynamic_axes_to_dynamic_shapes(
     if compressed_kv_layers or k_pe_layers:
         max_layer = max(list(compressed_kv_layers.keys()) + list(k_pe_layers.keys()))
         dynamic_shapes["compressed_kvs"] = [
-            (compressed_kv_layers.get(i, {}), k_pe_layers.get(i, {})) for i in range(max_layer + 1)
+            [compressed_kv_layers.get(i, {}), k_pe_layers.get(i, {})] for i in range(max_layer + 1)
         ]
 
     return dynamic_shapes

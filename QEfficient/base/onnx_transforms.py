@@ -44,9 +44,8 @@ from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxScatterFuncCB,
     CtxScatterFuncCB3D,
 )
-
-# from QEfficient.customop.quantization_ops import CastToUInt4, CastToUInt4Func
 from QEfficient.customop.onnxscript_utils import get_onnxscript_func
+from QEfficient.customop.quantization_ops import CastToUInt4, CastToUInt4Func, update_cast_to_uint4_output_types
 from QEfficient.customop.rms_norm import CustomRMSNorm, CustomRMSNormFunc
 from QEfficient.utils import constants
 from QEfficient.utils.constants import FILE_CHUNK_SIZE_DEFAULT, SIZE_THRESHOLD_DEFAULT
@@ -112,7 +111,7 @@ class CustomOpTransform(BaseOnnxTransform):
         "CtxGatherFuncBlockedKVCB": (CtxGatherFuncBlockedKVCB, CtxGatherBlockedKVCB),
         "CtxScatterFuncCB": (CtxScatterFuncCB, CtxScatterCB),
         "CtxGatherFuncCB": (CtxGatherFuncCB, CtxGatherCB),
-        # "CastToUInt4": (CastToUInt4Func, CastToUInt4),
+        "CastToUInt4": (CastToUInt4Func, CastToUInt4),
     }
 
     @classmethod
@@ -598,7 +597,7 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         **kwargs,
     ) -> Tuple[ModelProto, bool]:
         if not self.transforms:
-            return model, False
+            return model, update_cast_to_uint4_output_types(model)
 
         # Same logic as before, but replace `transforms` with `self.transforms`
         mapping: Dict[str, Tuple[TensorProto, str]] = {}
@@ -649,6 +648,8 @@ class OnnxTransformPipeline(BaseOnnxTransform):
                 model, onnx_export_opset=kwargs.get("onnx_export_opset", constants.ONNX_LEGACY_EXPORT_OPSET)
             )
 
+        cast_to_uint4_types_updated = update_cast_to_uint4_output_types(model)
+
         if RenameFunctionOutputsTransform in requested:
             applied[RenameFunctionOutputsTransform] = RenameFunctionOutputsTransform.apply(
                 model, layer_idx=kwargs.get("layer_idx", 0)
@@ -666,4 +667,4 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         for t, done in applied.items():
             logger.info(f"Transform '{t.__name__}' applied={done}")
 
-        return model, any(applied.values())
+        return model, any(applied.values()) or cast_to_uint4_types_updated
