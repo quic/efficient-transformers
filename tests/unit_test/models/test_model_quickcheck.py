@@ -1259,6 +1259,34 @@ def test_causal_subfunction_export_smoke(tmp_path):
 
 
 @pytest.mark.llm_model
+def test_causal_subfunction_export_uses_semantic_weight_and_node_names(tmp_path):
+    config = LlamaConfig(
+        vocab_size=128,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        max_position_embeddings=64,
+    )
+    model_hf = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS).eval()
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+
+    onnx_path = _exported_onnx_path(
+        qeff_model.export(tmp_path / "semantic-wsub-names", use_onnx_subfunctions=True, offload_pt_weights=False)
+    )
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+
+    initializer_names = {initializer.name for initializer in onnx_model.graph.initializer}
+    assert "model.layers.0.self_attn.q_proj.weight" in initializer_names
+    assert not any(name.startswith("onnx::MatMul_") for name in initializer_names)
+
+    function_node_names = {node.name for function in onnx_model.functions for node in function.node}
+    assert "self_attn/q_proj/MatMul" in function_node_names
+    assert "mlp/down_proj/MatMul" in function_node_names
+
+
+@pytest.mark.llm_model
 def test_gemma3_vlm_export_parity_with_and_without_subfunctions(tmp_path):
     """Gemma3 VLM export keeps retained-state/output signatures stable across subfunction toggles.
 
