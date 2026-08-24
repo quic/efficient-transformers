@@ -64,6 +64,7 @@ from QEfficient.transformers.models.pytorch_transforms import (
     VlmKVOffloadTransform,
     VlmNoKVOffloadTransform,
 )
+from QEfficient.transformers.moe.flavours import MoEFlavour
 from QEfficient.transformers.quantizers.auto import QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING, with_replaced_quantizers
 from QEfficient.transformers.quantizers.quant_transforms import (
     AwqToMatmulNbitsTransform,
@@ -3736,10 +3737,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self,
         prefill_seq_len: Optional[int] = None,
         enable_chunking=False,
-        num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
-        moe_prefill_packed_chunk_size: int = constants.MOE_PREFILL_PACKED_CHUNK_SIZE,
     ) -> int:
-        from QEfficient.transformers.moe import MoEFlavour, supports_moe_flavour
 
         self.hash_params["prefill_only"] = True
         if enable_chunking:
@@ -3749,53 +3747,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         if self.model.config.model_type == "gpt_oss":
             return self.handle_gpt_oss_env_variable_legacy_burden(prefill_seq_len)
-
-        compile_seq_len = prefill_seq_len or constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        expert_parallel_is_triggered = False
-        blocking_enabled = False
-        num_kv_blocks = None
-        num_packed_chunks = None
-
-        if self.hash_params.get("moe_prefill_flavour") == "expert_parallel":
-            num_packed_chunks = self.hash_params.get("moe_prefill_num_packed_chunks")
-            if num_packed_chunks is not None:
-                num_packed_chunks = int(num_packed_chunks)
-                if num_packed_chunks <= 0:
-                    raise ValueError(f"moe_prefill_num_packed_chunks must be positive, got {num_packed_chunks}")
-                expert_parallel_is_triggered = True
-
-        if num_packed_chunks is None:
-            num_packed_chunks = max(1, -(-compile_seq_len // moe_prefill_packed_chunk_size))
-
-        for module in self.model.modules():
-            if supports_moe_flavour(module, MoEFlavour.EXPERT_PARALLEL):
-                expert_parallel_is_triggered = True
-            if getattr(module, "supports_moe_prefill_blocking", False):
-                expert_parallel_is_triggered = True
-                module.expert_blocking_num_nsp = num_cores
-                module.expert_blocking_packed_chunk_size = moe_prefill_packed_chunk_size
-                module.expert_blocking_num_packed_chunks = num_packed_chunks
-            if attn_blocking_config := getattr(module, "attn_blocking_config", None):
-                module_num_kv_blocks = getattr(attn_blocking_config, "num_kv_blocks", None)
-                if module_num_kv_blocks:
-                    blocking_enabled = True
-                    num_kv_blocks = int(module_num_kv_blocks)
-
-        if expert_parallel_is_triggered:
-            self.hash_params.setdefault("moe_prefill_num_packed_chunks", num_packed_chunks)
-            self.hash_params.setdefault("moe_prefill_num_nsp", num_cores)
-            self.hash_params.setdefault("moe_prefill_packed_chunk_size", moe_prefill_packed_chunk_size)
-
-        export_seq_len = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-        if expert_parallel_is_triggered and blocking_enabled:
-            lcm = (num_kv_blocks * num_packed_chunks) // math.gcd(num_kv_blocks, num_packed_chunks)
-            return export_seq_len if export_seq_len % lcm == 0 else lcm
-        if expert_parallel_is_triggered:
-            return export_seq_len if export_seq_len % num_packed_chunks == 0 else num_packed_chunks
-        if blocking_enabled:
-            return export_seq_len if export_seq_len % num_kv_blocks == 0 else num_kv_blocks
-
-        return export_seq_len
+        return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
 
     def _run_layerwise(self, *, final_compile: bool, layerwise_window_size: int, **forward_kwargs):
         """Drive the layer-wise export/compile loop for CausalLM models."""
@@ -3946,21 +3898,38 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("NUM_FFN_BLOCKS", None)
                 self.hash_params.pop("ENABLE_OPT_SWA", None)
                 self.hash_params.pop("chunking", None)
-                self.hash_params.pop("moe_prefill_num_nsp", None)
-                self.hash_params.pop("moe_prefill_packed_chunk_size", None)
-                self.hash_params.pop("moe_prefill_total_avl_cores", None)
-                self.hash_params.pop("moe_prefill_cores_per_expert", None)
-                self.hash_params.pop("moe_prefill_tree_reduce", None)
-                self.hash_params.pop("moe_prefill_num_pipeline_stages", None)
-                self.hash_params.pop("moe_prefill_num_parallelized_experts", None)
-                self.hash_params.pop("moe_prefill_expert_parallel_chunk_size", None)
-                self.hash_params.pop("moe_prefill_num_packed_chunks", None)
-                self.hash_params.pop("moe_prefill_flavour", None)
                 self.hash_params.pop("chunking_seq_len", None)
                 if kwargs.get("retain_full_kv", False):
                     sliding_window = getattr(self.model.config, "sliding_window", None)
                     kv_cache_shape[2] = seq_len + (sliding_window if sliding_window is not None else 0)
                     self.hash_params["retain_full_kv"] = True
+
+        #################
+        # Handle OptimizedMoeTransform, BlockingTransform introduced changes
+        ################
+        # TODO: We should change the ctx_len i.e. the past_key_values shape based on num_kv_blocks which is not yet handled.
+        expert_parallel_is_triggered = self.hash_params.get("moe_prefill_flavour") == MoEFlavour.EXPERT_PARALLEL
+        blocking_enabled = self.hash_params.get("blocking_kwargs", None) is not None
+        for_loop_number_forced_by_blocking = (
+            self.hash_params.get("blocking_kwargs", None).num_q_blocks if blocking_enabled else None
+        )
+        for_loop_number_forced_by_expert_parallel = self.hash_params.get("moe_packed_chunk_size", None)
+        if expert_parallel_is_triggered and blocking_enabled:
+            lcm = (for_loop_number_forced_by_blocking * for_loop_number_forced_by_expert_parallel) // math.gcd(
+                for_loop_number_forced_by_blocking, for_loop_number_forced_by_expert_parallel
+            )
+            seq_len = seq_len if seq_len % lcm == 0 else lcm
+        if expert_parallel_is_triggered:
+            seq_len = (
+                seq_len
+                if seq_len % for_loop_number_forced_by_expert_parallel == 0
+                else for_loop_number_forced_by_expert_parallel
+            )
+        if blocking_enabled:
+            seq_len = (
+                seq_len if seq_len % for_loop_number_forced_by_blocking == 0 else for_loop_number_forced_by_blocking
+            )
+        ##################################
 
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
