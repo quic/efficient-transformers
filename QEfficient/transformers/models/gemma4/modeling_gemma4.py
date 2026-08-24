@@ -584,8 +584,6 @@ class QEffGemma4TextAttention(Gemma4TextAttention):
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
         cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
-        if self.sliding_window is not None:
-            cache_kwargs["sliding_window"] = self.sliding_window
         token_key_states = None
         token_value_states = None
 
