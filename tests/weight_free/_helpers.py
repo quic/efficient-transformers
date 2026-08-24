@@ -23,8 +23,7 @@ import onnx
 import onnxruntime
 import pytest
 import torch
-from accelerate import init_empty_weights
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from QEfficient.exporter.weight_free import load_weight_free_ort_inputs
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
@@ -49,7 +48,7 @@ WEIGHT_FREE_CAUSAL_LM_MODEL_IDS = {
     "gpt_oss": "tiny-random/gpt-oss-bf16",
     "gptj": "hf-internal-testing/tiny-random-GPTJForCausalLM",
     "granite": "hf-internal-testing/tiny-random-GraniteForCausalLM",
-    "granitemoe": "hf-internal-testing/tiny-random-GraniteMoeForCausalLM",
+    "granitemoe": "ibm-granite/granite-3.1-1b-a400m-instruct",
     "llama": "hf-internal-testing/tiny-random-LlamaForCausalLM",
     "mistral": "hf-internal-testing/tiny-random-MistralForCausalLM",
     "mixtral": "hf-internal-testing/tiny-random-MixtralForCausalLM",
@@ -103,25 +102,6 @@ def load_tokenizer(model_id: str) -> AutoTokenizer:
         load_hf_model(model_id)
     _, tokenizer = _HF_MODEL_CACHE[model_id]
     return tokenizer
-
-
-def build_meta_qeff_model(model_id: str, num_hidden_layers: int = 2, **qeff_kwargs) -> QEFFAutoModelForCausalLM:
-    """Build a meta-device QEff model from config — no weights loaded into memory.
-
-    This is the correct pattern for weight-free export: the model is traced on the
-    meta device (shapes only, no data), and pretrained_model_name_or_path tells the
-    export where to find the real weights for weight_spec.json.
-
-    num_hidden_layers limits the layer count so tests run quickly, matching the
-    --layers flag used by the weight-free example scripts.
-    Extra kwargs (e.g. continuous_batching=True) are forwarded to QEFFAutoModelForCausalLM.
-    """
-    config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-    config.num_hidden_layers = num_hidden_layers
-    config.torch_dtype = torch.float32
-    with init_empty_weights():
-        meta_model = AutoModelForCausalLM.from_config(config, attn_implementation="eager")
-    return QEFFAutoModelForCausalLM(meta_model, pretrained_model_name_or_path=model_id, **qeff_kwargs)
 
 
 def exported_onnx_path(export_result) -> Path:

@@ -7,14 +7,14 @@
 
 import argparse
 
-from transformers import AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 
 
 def main():
     parser = argparse.ArgumentParser(description="Continuous batching inference")
-    parser.add_argument("--model-name", type=str, default="Qwen/Qwen2-1.5B-Instruct", help="HuggingFace model ID")
+    parser.add_argument("--model-name", type=str, default="openai/gpt-oss-20b", help="HuggingFace model ID")
     parser.add_argument(
         "--prompts",
         type=str,
@@ -23,9 +23,19 @@ def main():
     )
     parser.add_argument("--prefill-seq-len", type=int, default=128, help="Prefill sequence length")
     parser.add_argument("--ctx-len", type=int, default=512, help="Context length")
-    parser.add_argument("--num-hidden-layers", type=int, default=4, help="Num hidden layers")
+    parser.add_argument("--num-hidden-layers", type=int, default=-1, help="Num hidden layers")
     parser.add_argument("--full-batch-size", type=int, default=4, help="Full batch size for continuous batching")
     parser.add_argument("--dynamo", action="store_true", help="Export via dynamo")
+    parser.add_argument(
+        "--weight-free",
+        action="store_true",
+        help="Build the model on meta tensors and load weights at compile time",
+    )
+    parser.add_argument(
+        "--enable-proxy",
+        action="store_true",
+        help="Use proxy modules (QeffProxyEmbedding/QeffProxyLinear) in place of real weights during export",
+    )
     parser.add_argument("--generation-len", type=int, default=100, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
     parser.add_argument(
@@ -42,8 +52,15 @@ def main():
 
     # Load tokenizer and model with continuous batching enabled
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    config = AutoConfig.from_pretrained(args.model_name)
+    if args.num_hidden_layers > 0:
+        config.num_hidden_layers = args.num_hidden_layers
     model = QEFFAutoModelForCausalLM.from_pretrained(
-        args.model_name, num_hidden_layers=args.num_hidden_layers, continuous_batching=True
+        args.model_name,
+        config=config,
+        continuous_batching=True,
+        weight_free=args.weight_free,
+        enable_proxy=args.enable_proxy,
     )
 
     # Compile the model with full_batch_size for continuous batching
@@ -52,7 +69,7 @@ def main():
         ctx_len=args.ctx_len,
         full_batch_size=args.full_batch_size,
         num_cores=args.num_cores,
-        num_devices=(1 if args.device_group is None else len(args.device_group)),
+        num_devices=(2 if args.device_group is None else len(args.device_group)),
         dynamo=args.dynamo,
         use_onnx_subfunctions=True,
     )

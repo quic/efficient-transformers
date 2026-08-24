@@ -5,7 +5,6 @@
 #
 # ----------------------------------------------------------------------------
 
-import copy
 import json
 import time
 from pathlib import Path
@@ -16,20 +15,9 @@ from accelerate import init_empty_weights
 
 from QEfficient.exporter.weight_free.checkpoint_key_resolver import promote_initializers_and_build_spec
 from QEfficient.exporter.weight_free.weight_spec import load_weight_spec, resolve_weight_spec_path, save_weight_spec
-from QEfficient.transformers.embeddings.embedding_utils import PooledModel
-from QEfficient.transformers.models.pytorch_transforms import PoolingTransform
 from QEfficient.utils import load_json
 from QEfficient.utils.checkpoint_utils import resolve_checkpoint_dir
-from QEfficient.utils.export_utils import (
-    _cleanup_onnx_subfunctions,
-    _setup_onnx_subfunctions,
-    get_decoder_layer_classes_for_export,
-)
 from QEfficient.utils.logging_utils import logger
-from QEfficient.utils.torch_patches import (
-    temporarily_disable_nested_compile_regions,
-    temporarily_enable_nested_compile_regions,
-)
 
 _last_prep_peak_rss_mb: Optional[float] = None
 _last_prep_duration_seconds: float = 0.0
@@ -49,8 +37,24 @@ def _to_meta(value: Any) -> Any:
     return value
 
 
+def _resolve_weight_free_target_dtype(model_dtype: Optional[torch.dtype]) -> torch.dtype:
+    """Resolve the export/checkpoint dtype for weight-free export.
+
+    Delegates to _resolve_torch_dtype (modeling_auto.py) so weight-free export
+    downgrades bfloat16 the same way the real-weight from_pretrained path
+    does: to float32 on ai100 (bfloat16 unsupported), left as bfloat16 on
+    ai200 (supported). Deferred import avoids a circular import at module
+    load time (modeling_auto.py imports from this package's sibling module).
+    """
+    from QEfficient.transformers.models.modeling_auto import _resolve_torch_dtype
+
+    kwargs = {"torch_dtype": model_dtype or torch.float32}
+    _resolve_torch_dtype(kwargs)
+    return kwargs["torch_dtype"]
+
+
 def _build_meta_qeff_model(qeff_model):
-    """Build a QEfficient wrapper backed by an equivalent meta-device HF model."""
+    """Finish preparing a meta-device QEfficient wrapper for weight-free tracing, in place."""
     model_ref = qeff_model.hash_params.get("pretrained_model_name_or_path")
     if not model_ref:
         raise ValueError(
@@ -60,36 +64,12 @@ def _build_meta_qeff_model(qeff_model):
 
     quant_config = getattr(qeff_model.model.config, "quantization_config", None)
 
-    config = copy.deepcopy(qeff_model.model.config)
-    with init_empty_weights():
-        meta_model = qeff_model._hf_auto_class.from_config(config, attn_implementation="eager")
-
-    if quant_config is None:
-        target_dtype = getattr(config, "dtype", None) or torch.float32
-        if target_dtype == torch.bfloat16:
-            target_dtype = torch.float16
-        meta_model = meta_model.to(dtype=target_dtype)
-
-    meta_qeff_model = qeff_model.__class__(
-        meta_model,
-        continuous_batching=getattr(qeff_model, "continuous_batching", False),
-        qaic_config=copy.deepcopy(getattr(qeff_model.model, "qaic_config", None)),
-        max_seq_len_cached=getattr(qeff_model.model.config, "max_seq_len_cached", None),
-        pretrained_model_name_or_path=model_ref,
-        enable_proxy=getattr(qeff_model, "_enable_proxy", False),
-    )
-    meta_qeff_model.hash_params.update(copy.deepcopy(qeff_model.hash_params))
-
-    if isinstance(qeff_model.model, PooledModel):
-        meta_qeff_model.model, _ = PoolingTransform.apply(meta_qeff_model.model, qeff_model.model.pooling_fn)
-
     if quant_config is not None:
         # For quantized models the meta model must use the same quantized layer types as the
         # checkpoint so that ONNX initializer names match the checkpoint's storage keys.
-        # We apply the quantizer's architecture preprocessing (layer-type replacement only,
-        # no weight loading) AFTER __init__ so that Mxfp4GptOssExpertDequantizeTransform —
-        # which is part of _pytorch_transforms and targets QEffMxfp4GptOssExperts — has
-        # already run as a no-op and will not undo the replacement below.
+        # qeff_model.model was built via from_config (no real quantized checkpoint load), so
+        # Mxfp4GptOssExpertDequantizeTransform already ran as a no-op during __init__ and will
+        # not undo the replacement applied here.
         from QEfficient.transformers.quantizers.auto import (
             QEFF_AUTO_QUANTIZATION_CONFIG_MAPPING,
             QEFF_AUTO_QUANTIZER_MAPPING,
@@ -119,10 +99,13 @@ def _build_meta_qeff_model(qeff_model):
         # Run inside init_empty_weights so newly created quantized layer buffers stay on
         # the meta device and are treated as weight-spec entries, not embedded constants.
         with init_empty_weights():
-            quantizer._process_model_before_weight_loading(meta_qeff_model.model)
+            quantizer._process_model_before_weight_loading(qeff_model.model)
+    else:
+        target_dtype = _resolve_weight_free_target_dtype(getattr(qeff_model.model.config, "dtype", None))
+        qeff_model.model = qeff_model.model.to(dtype=target_dtype)
 
-    meta_qeff_model.model.eval()
-    return meta_qeff_model
+    qeff_model.model.eval()
+    return qeff_model
 
 
 def _prune_unused_fake_initializers(onnx_program) -> None:
@@ -181,10 +164,15 @@ def _prepare_checkpoint_for_weight_free_export(
         Path to the prepared checkpoint directory.
     """
     from QEfficient.base.checkpoint_transforms import CheckpointTransformPipeline
+    from QEfficient.utils.cache import QEFF_CHECKPOINT_HOME
 
     source_dir = resolve_checkpoint_dir(model_ref)
     dtype_suffix = str(target_dtype).replace("torch.", "")
-    prepared_out = source_dir.parent / (source_dir.name + f"-qeff-prepared-{dtype_suffix}")
+    prepared_name = f"{source_dir.name}-wf-{dtype_suffix}"
+    if QEFF_CHECKPOINT_HOME:
+        prepared_out = QEFF_CHECKPOINT_HOME.expanduser() / prepared_name
+    else:
+        prepared_out = source_dir.parent / prepared_name
     prep_pipeline = CheckpointTransformPipeline(transforms=qeff_model._checkpoint_transforms)
     return str(
         prep_pipeline.apply(
@@ -234,76 +222,62 @@ def export_weight_free_onnx(
     global _checkpoint_prep_ran, _last_prep_duration_seconds, _last_prep_peak_rss_mb
 
     meta_qeff_model = _build_meta_qeff_model(qeff_model)
-    cleanup_required = False
 
-    if getattr(qeff_model, "_use_onnx_subfunctions", False):
-        _, subfunc_kwargs, _ = _setup_onnx_subfunctions(
-            meta_qeff_model,
-            (),
-            {
-                "use_dynamo": True,
-                "onnx_transform_kwargs": copy.deepcopy(onnx_transform_kwargs),
-                "output_names": list(output_names),
-            },
-        )
-        onnx_transform_kwargs = subfunc_kwargs.get("onnx_transform_kwargs", onnx_transform_kwargs)
-        cleanup_required = True
-
-    decoder_layer_classes = get_decoder_layer_classes_for_export(meta_qeff_model.model)
-    if getattr(meta_qeff_model, "_use_onnx_subfunctions", False) and decoder_layer_classes:
-        export_context = temporarily_enable_nested_compile_regions(meta_qeff_model.model, decoder_layer_classes)
-    else:
-        export_context = temporarily_disable_nested_compile_regions(meta_qeff_model.model, decoder_layer_classes)
+    # export_wrapper (the @export_wrapper decorator on _export) already ran
+    # _setup_onnx_subfunctions on this same object before calling into this
+    # function, and already has temporarily_enable_nested_compile_regions active
+    # around the whole call chain — meta_qeff_model is qeff_model is self, mutated
+    # in place, not a clone. Re-running subfunction setup here would only be
+    # necessary if _build_meta_qeff_model's quantizer rewrite (which runs after
+    # export_wrapper's setup) changed the repeated decoder-block class itself;
+    # quantizer rewrites replace layer types inside a decoder block (e.g. MoE
+    # experts), not the decoder block class, so the classes export_wrapper already
+    # resolved remain correct.
 
     meta_example_inputs = _to_meta(example_inputs)
     model_ref = meta_qeff_model.hash_params["pretrained_model_name_or_path"]
 
     meta_qeff_model.model.requires_grad_(False)
-    with export_context:
-        onnx_program = torch.onnx.export(
-            meta_qeff_model.model,
-            args=(),
-            f=None,
-            kwargs=meta_example_inputs,
-            input_names=input_names,
-            output_names=output_names,
-            dynamic_axes=None,
-            dynamic_shapes=dynamic_shapes,
-            **export_kwargs,
-        )
-        if onnx_program is None:
-            raise RuntimeError("torch.onnx.export returned None for weight-free dynamo export")
+    onnx_program = torch.onnx.export(
+        meta_qeff_model.model,
+        args=(),
+        f=None,
+        kwargs=meta_example_inputs,
+        input_names=input_names,
+        output_names=output_names,
+        dynamic_axes=None,
+        dynamic_shapes=dynamic_shapes,
+        **export_kwargs,
+    )
+    if onnx_program is None:
+        raise RuntimeError("torch.onnx.export returned None for weight-free dynamo export")
 
-        target_dtype = getattr(qeff_model.model.config, "dtype", None) or torch.float32
-        if target_dtype == torch.bfloat16:
-            target_dtype = torch.float16
+    target_dtype = _resolve_weight_free_target_dtype(getattr(qeff_model.model.config, "dtype", None))
 
-        prep_start = time.perf_counter()
-        prepared_model_ref = _prepare_checkpoint_for_weight_free_export(meta_qeff_model, model_ref, target_dtype)
+    prep_start = time.perf_counter()
+    prepared_model_ref = _prepare_checkpoint_for_weight_free_export(meta_qeff_model, model_ref, target_dtype)
 
-        _last_prep_duration_seconds = time.perf_counter() - prep_start
-        _last_prep_peak_rss_mb = None
-        _checkpoint_prep_ran = True
-        logger.info(
-            "Weight-free checkpoint preparation completed in %.2fs: %s",
-            _last_prep_duration_seconds,
-            prepared_model_ref,
-        )
+    _last_prep_duration_seconds = time.perf_counter() - prep_start
+    _last_prep_peak_rss_mb = None
+    _checkpoint_prep_ran = True
+    logger.info(
+        "Weight-free checkpoint preparation completed in %.2fs: %s",
+        _last_prep_duration_seconds,
+        prepared_model_ref,
+    )
 
-        spec = promote_initializers_and_build_spec(
-            onnx_program=onnx_program,
-            model_ref=prepared_model_ref,
-            model_name=qeff_model.model_name,
-            qeff_model=meta_qeff_model,
-        )
-        _prune_unused_fake_initializers(onnx_program)
-        onnx_program.save(str(tmp_onnx_path))
-        save_weight_spec(resolve_weight_spec_path(tmp_onnx_path), spec)
+    spec = promote_initializers_and_build_spec(
+        onnx_program=onnx_program,
+        model_ref=prepared_model_ref,
+        model_name=qeff_model.model_name,
+        qeff_model=meta_qeff_model,
+    )
+    _prune_unused_fake_initializers(onnx_program)
+    onnx_program.save(str(tmp_onnx_path))
+    save_weight_spec(resolve_weight_spec_path(tmp_onnx_path), spec)
 
     def cleanup():
         """Release ONNX subfunction state created for this export, if any."""
-        if cleanup_required:
-            _cleanup_onnx_subfunctions(meta_qeff_model)
 
     return meta_qeff_model, onnx_transform_kwargs, cleanup
 

@@ -268,7 +268,7 @@ def export_wrapper(func):
 
     def wrapper(self, *args, **kwargs):
         # Extract flags
-        dynamo = kwargs.get("dynamo", False) or kwargs.get("use_weight_free_export", False)
+        dynamo = kwargs.get("dynamo", False)
         if dynamo:
             kwargs["dynamo"] = True
         use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)

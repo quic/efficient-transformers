@@ -168,6 +168,9 @@ class QEFFBaseModel(ABC):
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
 
+        # Flag for weight-free export, set only by from_pretrained(weight_free=True)
+        self._weight_free: bool = False
+
         # Flag for checking if model has been transformed yet
         self.is_transformed: bool = False
 
@@ -360,7 +363,6 @@ class QEFFBaseModel(ABC):
         prefill_only: Optional[bool] = False,
         dynamo: bool = False,
         dynamic_shapes: Optional[Dict[str, Dict[int, Any]]] = None,
-        use_weight_free_export: bool = False,
         **export_kwargs,
     ) -> str:
         """
@@ -405,12 +407,12 @@ class QEFFBaseModel(ABC):
             self.weight_spec_path = str(_weight_spec_path) if _weight_spec_path.is_file() else None
             return onnx_path
 
-        if use_weight_free_export:
+        if self._weight_free:
             dynamo = True
 
         # check if the model is in meta state or weights are offloaded
         # (skip for weight-free export which intentionally uses a meta-device model)
-        if not use_weight_free_export:
+        if not self._weight_free:
             self._model_offloaded_check()
 
         export_dir.mkdir(parents=True, exist_ok=True)
@@ -485,7 +487,7 @@ class QEFFBaseModel(ABC):
             input_names = aligned_input_names
 
         try:
-            if use_weight_free_export:
+            if self._weight_free:
                 from QEfficient.exporter.onnx_exporter import export_via_weightfree
 
                 export_result = export_via_weightfree(
@@ -589,7 +591,6 @@ class QEFFBaseModel(ABC):
         qaic_config: Optional[dict] = None,
         moe_prefill_packed_chunk_size: Optional[int] = None,
         kv_cache_prefix: Optional[str] = None,
-        use_weight_free_export: bool = False,
         **compiler_options,
     ):
         kwargs = {
@@ -597,7 +598,6 @@ class QEFFBaseModel(ABC):
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "dynamo": dynamo,
             "retain_full_kv": retain_full_kv,
-            "use_weight_free_export": use_weight_free_export,
         }
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
         if layerwise_cache_probe:
@@ -935,7 +935,6 @@ class QEFFBaseModel(ABC):
         qaic_config: Optional[dict] = None,
         specialization_module_name: Optional[str] = None,
         kv_cache_prefix: Optional[str] = None,
-        use_weight_free_export: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -984,7 +983,7 @@ class QEFFBaseModel(ABC):
             # ONNX because re-exporting is no longer possible. Otherwise export for
             # the current compile mode, e.g. decode vs. disaggregated prefill.
             weights_offloaded = self._is_weights_offloaded or any(param.is_meta for param in self.model.parameters())
-            if self.onnx_path is not None and weights_offloaded:
+            if self.onnx_path is not None and weights_offloaded and not self._weight_free:
                 onnx_path = self.onnx_path
             else:
                 onnx_path = self.get_onnx_path(
@@ -1000,7 +999,6 @@ class QEFFBaseModel(ABC):
                     moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
                     _layerwise_cache_probe=layerwise_cache_probe,
                     kv_cache_prefix=kv_cache_prefix,
-                    use_weight_free_export=use_weight_free_export,
                     **compiler_options,
                 )
         if QEFFBaseModel._layerwise_active:

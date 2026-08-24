@@ -27,6 +27,7 @@ Patches removed (upstreamed to PyTorch):
 """
 
 import inspect
+import os
 from contextlib import contextmanager
 
 import torch
@@ -417,3 +418,23 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
                 delattr(module, "forward")
             else:
                 setattr(module, "forward", previous_forward)
+
+
+@contextmanager
+def dynamo_invoke_subgraph_fallback_env():
+    """Temporarily set TORCH_INVOKE_ALLOW_CREATE_FALLBACK=1 for dynamo export.
+
+    torch.onnx.export's dynamo path (dynamo=True) needs this env var set to
+    allow invoke_subgraph placeholders to fall back correctly during tracing.
+    Saves and restores whatever value (or absence) the caller's environment
+    already had, rather than assuming it was previously unset.
+    """
+    prev_value = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
+    os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = "1"
+    try:
+        yield
+    finally:
+        if prev_value is None:
+            os.environ.pop("TORCH_INVOKE_ALLOW_CREATE_FALLBACK", None)
+        else:
+            os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = prev_value

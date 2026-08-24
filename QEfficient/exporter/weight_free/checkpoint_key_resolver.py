@@ -23,22 +23,20 @@ from QEfficient.utils.checkpoint_utils import checkpoint_root, load_checkpoint_i
 
 
 def _collect_tied_weights(model: nn.Module) -> List[TiedWeightAlias]:
-    """Return aliases for tied input/output embedding weights."""
-    if not getattr(model.config, "tie_word_embeddings", False):
+    """Return aliases for tied weights, keyed by the model's own tied-weights contract.
+
+    Uses ``get_expanded_tied_weights_keys`` instead of comparing live module identity
+    (``get_input_embeddings()``/``get_output_embeddings()`` against ``named_modules()``)
+    so this stays correct even if a module was rebuilt/replaced since the tie was
+    established — the mapping comes from ``model._tied_weights_keys``, not from
+    whatever object graph happens to exist at export time.
+    """
+    get_expanded_tied_weights_keys = getattr(model, "get_expanded_tied_weights_keys", None)
+    if get_expanded_tied_weights_keys is None:
         return []
 
-    input_embeddings = model.get_input_embeddings()
-    output_embeddings = model.get_output_embeddings()
-    if input_embeddings is None or output_embeddings is None:
-        return []
-
-    module_names = {id(module): name for name, module in model.named_modules()}
-    canonical_name = module_names.get(id(input_embeddings))
-    alias_name = module_names.get(id(output_embeddings))
-    if not canonical_name or not alias_name or canonical_name == alias_name:
-        return []
-
-    return [TiedWeightAlias(alias=f"{alias_name}.weight", canonical=f"{canonical_name}.weight")]
+    tied_mapping = get_expanded_tied_weights_keys(all_submodels=True)
+    return [TiedWeightAlias(alias=alias, canonical=canonical) for alias, canonical in tied_mapping.items()]
 
 
 def find_checkpoint_key(
@@ -111,6 +109,11 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
     model_names = {name for name, _ in qeff_model.model.named_parameters()}
     model_names.update({name for name, _ in qeff_model.model.named_buffers()})
     tied_weight_map = {entry.alias: entry.canonical for entry in _collect_tied_weights(qeff_model.model)}
+    # named_parameters()/named_buffers() dedup tied tensors by identity, so a tied alias
+    # (e.g. lm_head.weight when tie_word_embeddings=True) is absent from model_names even
+    # though torch.export still emits a distinct ONNX initializer for it. Add tied aliases
+    # explicitly so they aren't skipped below and reach the tied_weight_map redirect.
+    model_names.update(tied_weight_map.keys())
     checkpoint_files = resolve_checkpoint_files(model_ref)
     root = checkpoint_root(model_ref, checkpoint_files)
     checkpoint_index = load_checkpoint_index(checkpoint_files)
