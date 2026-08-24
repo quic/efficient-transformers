@@ -100,7 +100,6 @@ def test_moe_block_mixin_allows_fx_attr_proxy_subclasses():
     with pytest.raises(TypeError, match="must explicitly define supported_moe_flavours"):
         type("RegularDerivedMoE", (FxProxyTargetMoE,), {})
 
-
 def test_build_canonical_expert_weights_clone_breaks_fused_gate_up_aliasing():
     gate_up = torch.randn(MOE_BLOCK_NUM_EXPERTS, 2 * MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE, MOE_BLOCK_HIDDEN_SIZE)
     down = torch.randn(MOE_BLOCK_NUM_EXPERTS, MOE_BLOCK_HIDDEN_SIZE, MOE_BLOCK_EXPERT_INTERMEDIATE_SIZE)
@@ -331,7 +330,7 @@ MOE_BLOCK_PARITY_CASES = (
             qk_nope_head_dim=8,
         ),
         "DeepseekV3MoE",
-        ("decode_bmm", "simple_loop"),
+        ("decode_bmm", "simple_loop", "expert_parallel"),
         {"external_mapper": True},
         id="deepseek_v3",
     ),

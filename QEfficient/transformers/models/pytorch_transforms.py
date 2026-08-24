@@ -1426,6 +1426,9 @@ def _get_moe_num_experts(module: nn.Module) -> Optional[int]:
     weights = getattr(module, "moe_weights", None)
     if weights is not None:
         return int(weights.num_experts)
+    quantized_gate_weights = getattr(module, "all_gate_qweight", None)
+    if quantized_gate_weights is not None:
+        return int(quantized_gate_weights.shape[0])
     num_experts = getattr(module, "num_experts", None)
     if num_experts is not None:
         return int(num_experts)
@@ -1530,6 +1533,7 @@ class ExternalOptimizedMoEMapperTransform(ExternalModuleMapperTransform):
         "MoeBlock": {
             "forward": QEffGrok1MoeBlock.forward,
             "get_supported_moe_flavours": QEffMoEBlockMixin.get_supported_moe_flavours,
+            "routing_input": QEffMoEBlockMixin.routing_input,
             "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
             "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
             "transform_weights": QEffGrok1MoeBlock.transform_weights,
@@ -1544,13 +1548,13 @@ class ExternalOptimizedMoEMapperTransform(ExternalModuleMapperTransform):
         },
         "DeepseekV3MoE": {
             "forward": QEffDeepseekV3MoE.forward,
-            "get_supported_moe_flavours": QEffMoEBlockMixin.get_supported_moe_flavours,
+            "get_supported_moe_flavours": QEffDeepseekV3MoE.get_supported_moe_flavours,
+            "routing_input": QEffDeepseekV3MoE.routing_input,
             "execute_moe_flavour": QEffMoEBlockMixin.execute_moe_flavour,
             "moe_dispatch": QEffMoEBlockMixin.moe_dispatch,
             "transform_weights": QEffDeepseekV3MoE.transform_weights,
             "_stack_quantized_projection_params": QEffDeepseekV3MoE._stack_quantized_projection_params,
             "_transform_quantized_expert_weights": QEffDeepseekV3MoE._transform_quantized_expert_weights,
-            "moe_waa_unpack": QEffDeepseekV3MoE.moe_waa_unpack,
             "route": QEffDeepseekV3MoE.route,
             "moe_profile": QEffDeepseekV3MoE.moe_profile,
             "apply_shared_experts": QEffDeepseekV3MoE.apply_shared_experts,
