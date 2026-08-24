@@ -24,6 +24,7 @@ All tests run on CPU only, using tiny in-memory models.
 import copy
 import inspect
 import logging
+import warnings
 from types import MethodType, SimpleNamespace
 
 import pytest
@@ -2016,8 +2017,8 @@ class TestSplitOptimizedMoETransform:
 
         assert transformed
 
-    def test_export_wrapper_does_not_run_pre_export_pytorch_hook(self, tmp_path):
-        from QEfficient.utils.export_utils import export_wrapper
+    def test_export_wrapper_warns_for_direct_export(self, tmp_path):
+        from QEfficient.utils.export_utils import export_from_compile, export_wrapper
 
         class DummyInner(nn.Module):
             config = SimpleNamespace(to_diff_dict=lambda: {"model_type": "dummy"})
@@ -2028,9 +2029,6 @@ class TestSplitOptimizedMoETransform:
             model_name = "DummyQEff"
             hash_params = {}
             _onnx_transforms = []
-
-            def _apply_pre_export_pytorch_transforms(self, **kwargs):
-                raise AssertionError("export_wrapper should not run PyTorch transforms")
 
             @export_wrapper
             def export(
@@ -2052,18 +2050,24 @@ class TestSplitOptimizedMoETransform:
                 return export_dir / "DummyQEff.onnx"
 
         qeff = DummyQEff()
-        onnx_path = qeff.export(
-            export_dir=tmp_path,
-            prefill_only=True,
-            enable_chunking=True,
-            num_cores=2,
-            prefill_seq_len=32,
-        )
+        with pytest.warns(DeprecationWarning, match="Direct \\.export\\(\\) is deprecated"):
+            onnx_path = qeff.export(
+                export_dir=tmp_path,
+                prefill_only=True,
+                enable_chunking=True,
+                num_cores=2,
+                prefill_seq_len=32,
+            )
 
         assert onnx_path.parent.is_dir()
         assert qeff.export_kwargs["enable_chunking"] is True
         assert qeff.export_kwargs["num_cores"] == 2
         assert qeff.export_kwargs["prefill_seq_len"] == 32
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            with export_from_compile():
+                qeff.export(export_dir=tmp_path)
 
     def test_base_export_signature_does_not_expose_transform_compile_kwargs(self):
         from QEfficient.base.modeling_qeff import QEFFBaseModel
@@ -2175,6 +2179,12 @@ class TestSplitOptimizedMoETransform:
                 export_dir=tmp_path,
                 aic_num_cores=2,
             )
+
+    def test_dual_qpc_compile_rejects_legacy_packed_chunk_size(self):
+        from QEfficient.transformers.models.modeling_auto import _QEffAutoModelForImageTextToTextDualQPC
+
+        with pytest.raises(TypeError, match=r"qaic_config\['moe_config'\]\['expert_parallel_chunk_size'\]"):
+            _QEffAutoModelForImageTextToTextDualQPC.compile(object(), moe_prefill_packed_chunk_size=16)
 
 
 # ---------------------------------------------------------------------------

@@ -894,7 +894,9 @@ class QEffDeepseekV3MoE(QEffMoEBlockMixin, nn.Module):
         if hasattr(self, "all_gate_qweight"):
             return
 
-        first_expert = self.experts[0]
+        first_expert = _deepseek_first_unfused_expert(self.experts)
+        if first_expert is None:
+            raise RuntimeError("Quantized DeepSeek experts must use an unfused expert container.")
         self.bits = first_expert.gate_proj.bits
         self.group_size = first_expert.gate_proj.group_size
         assert first_expert.gate_proj.act_order == first_expert.up_proj.act_order == first_expert.down_proj.act_order, (

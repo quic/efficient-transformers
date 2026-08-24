@@ -57,7 +57,7 @@ from QEfficient.utils import (
     to_named_specializations,
 )
 from QEfficient.utils.config_utils import calculate_num_replicate_kv_heads
-from QEfficient.utils.export_utils import export_wrapper
+from QEfficient.utils.export_utils import export_from_compile, export_wrapper
 from QEfficient.utils.torch_patches import layerwise_safe_onnx_export_patches
 
 logger = logging.getLogger(__name__)
@@ -317,6 +317,10 @@ class QEFFBaseModel(ABC):
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
 
+        .. deprecated::
+            Use :meth:`compile` instead. Compilation performs the export with
+            the complete model and compiler configuration.
+
         Args:
             :export_dir (str): Specify the export directory. The export_dir will be suffixed with a hash corresponding to current model.
 
@@ -360,38 +364,6 @@ class QEFFBaseModel(ABC):
         Returns:
             :str: Path of the compiled ``qpc`` package.
         """
-
-    def _apply_pre_export_pytorch_transforms(
-        self,
-        *,
-        prefill_only: Optional[bool] = False,
-        enable_chunking: Optional[bool] = False,
-        num_cores: Optional[int] = constants.DEFAULT_AIC_NUM_CORES,
-        moe_prefill_packed_chunk_size: Optional[int] = None,
-        qaic_config: Optional[dict] = None,
-        prefill_seq_len: Optional[int] = None,
-        **_,
-    ) -> bool:
-        """Apply mode-dependent PyTorch transforms before export hashing and ONNX tracing."""
-        from QEfficient.transformers.models.pytorch_transforms import OptimizedMoETransform
-
-        if num_cores is None:
-            num_cores = constants.DEFAULT_AIC_NUM_CORES
-        if moe_prefill_packed_chunk_size is None:
-            moe_prefill_packed_chunk_size = constants.MOE_PREFILL_PACKED_CHUNK_SIZE
-        qaic_config = qaic_config if qaic_config is not None else getattr(self.model, "qaic_config", None)
-
-        self.model, transformed = OptimizedMoETransform.apply(
-            self.model,
-            prefill_only=bool(prefill_only),
-            enable_chunking=bool(enable_chunking),
-            num_cores=num_cores,
-            moe_prefill_packed_chunk_size=moe_prefill_packed_chunk_size,
-            qaic_config=qaic_config,
-            prefill_seq_len=prefill_seq_len,
-            hash_params=self.hash_params,
-        )
-        return transformed
 
     def _export_via_legacy(
         self,
@@ -727,7 +699,8 @@ class QEFFBaseModel(ABC):
             **compiler_options,
         )
 
-        self.export(**kwargs)
+        with export_from_compile():
+            self.export(**kwargs)
         return self.onnx_path
 
     @export_wrapper
