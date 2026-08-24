@@ -1500,6 +1500,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         # Note: SamplerTransform should be applied after all other transforms
         # are done. The role of the sampler is to just add nodes at the output of the
         # previous transform function.
+        self.lang_model.model.qaic_config = qaic_config
         self.lang_model.model, _ = SamplerTransform.apply(self.lang_model.model, qaic_config, **kwargs)
 
     @classmethod
@@ -1669,7 +1670,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         output_names = self.model.get_output_names(kv_offload=True)
         # Prefix only the language-side KV-cache retained buffers (vision buffers are untouched).
         output_names = apply_kv_cache_prefix(output_names, validate_kv_cache_prefix(kv_cache_prefix))
-        if self.lang_model.model.qaic_config is not None and self.lang_model.model.qaic_config.get(
+        if self.lang_model.qaic_config is not None and self.lang_model.qaic_config.get(
             "include_sampler", False
         ):
             logits_index = output_names["lang"].index("logits")
@@ -1680,7 +1681,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 dynamic_axes=dynamic_axes["lang"],
                 continuous_batching=self.continuous_batching,
                 vocab_size=self.model.language_model.config.vocab_size,
-                qaic_config=self.lang_model.model.qaic_config,
+                qaic_config=self.lang_model.qaic_config,
             )
 
         layerwise_export = QEFFBaseModel._layerwise_active
