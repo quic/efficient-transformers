@@ -377,3 +377,32 @@ def build_transformer_blocking_config_for_transform(
             blocking_config.skip_kv = qaic_config.get("skip_kv")
 
     return blocking_config
+
+
+def build_gated_delta_config_for_transform(
+    seq_len: Optional[int] = None, qaic_config: Optional[dict] = None
+) -> Optional[Dict[str, int]]:
+    if not qaic_config:
+        return None
+
+    enable_linear_blocking = bool(qaic_config.get("enable_linear_blocking", False))
+    chunk_size = qaic_config.get("qeff_chunk_size")
+
+    if enable_linear_blocking:
+        # Linear blocking mode uses fixed chunking with unroll target from compile seq_len.
+        return {
+            "chunk_size": 64,
+            "force_unroll_seq": int(seq_len) if seq_len is not None else 0,
+        }
+
+    if chunk_size is None:
+        return None
+
+    chunk_size = int(chunk_size)
+    if chunk_size <= 0:
+        return None
+
+    return {
+        "chunk_size": chunk_size,
+        "force_unroll_seq": 0,
+    }
