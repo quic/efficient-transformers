@@ -1212,10 +1212,6 @@ class QEFFBaseModel(ABC):
             "mdp_ts_json": mdp_ts_json,
             "num_speculative_tokens": num_speculative_tokens,
             "prefill_only": prefill_only,
-            "expert_parallel": expert_parallel,
-            "moe_prefill_packed_chunk_size": moe_prefill_packed_chunk_size,
-            "cores_per_expert": cores_per_expert,
-            "tree_reduce": tree_reduce,
         }
         compile_hash = hash_dict_params(compile_hash_params)
 
