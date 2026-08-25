@@ -27,6 +27,7 @@ comp_ctx_lengths_prefill = comp_ctx_lengths_decode = [1024, ctx_len]
 
 qeff_model = QEFFAutoModelForCausalLM.from_pretrained(
     model_id,
+    num_hidden_layers=4,
     qaic_config={
         "ccl_enabled": True,
     },
@@ -45,6 +46,8 @@ qpc_path = qeff_model.compile(
     num_speculative_tokens=None,
     comp_ctx_lengths_prefill=comp_ctx_lengths_prefill,
     comp_ctx_lengths_decode=comp_ctx_lengths_decode,
+    use_onnx_subfunctions=True,
+    dynamo=False,
 )
 print(f"qpc path is {qpc_path}")
 streamer = TextStreamer(tokenizer)

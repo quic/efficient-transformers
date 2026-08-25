@@ -20,7 +20,7 @@ def main():
     parser.add_argument(
         "--ctx-len", type=int, default=131072, help="Context length high enough to force blocking computation"
     )
-    parser.add_argument("--generation-len", type=int, default=64000, help="Number of tokens to generate")
+    parser.add_argument("--generation-len", type=int, default=1024, help="Number of tokens to generate")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of cores")
     parser.add_argument(
         "--device-group",
@@ -74,7 +74,7 @@ def main():
         "num_kv_blocks": 16,
         "skip_kv": True,
     }
-    model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, num_hidden_layers=2)
+    model_blocked = QEFFAutoModelForCausalLM.from_pretrained(args.model_name, num_hidden_layers=4)
 
     # Compile the model
     qpc_path_blocked = model_blocked.compile(
@@ -85,6 +85,7 @@ def main():
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         use_onnx_subfunctions=True,
+        dynamo=False,
         qaic_config=qaic_config,
         user_tiled=True,
     )

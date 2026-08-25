@@ -983,8 +983,12 @@ class QEFFBaseModel(ABC):
             # If weights were offloaded after export, compiling must use the existing
             # ONNX because re-exporting is no longer possible. Otherwise export for
             # the current compile mode, e.g. decode vs. disaggregated prefill.
+            # TODO: this reuses self.onnx_path as-is without checking whether it matches
+            # the requested mode. Fold all mode-dependent transforms (e.g.
+            # PrefillOnlyExternalModuleMapperTransform) into hash creation so this path
+            # never hands back a prefill-mode ONNX for a decode compile (or vice versa).
             weights_offloaded = self._is_weights_offloaded or any(param.is_meta for param in self.model.parameters())
-            if self.onnx_path is not None and weights_offloaded:
+            if self.onnx_path is not None and weights_offloaded and not use_weight_free_export:
                 onnx_path = self.onnx_path
             else:
                 onnx_path = self.get_onnx_path(
