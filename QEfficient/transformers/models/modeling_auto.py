@@ -3684,8 +3684,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         if layerwise and weight_free:
             raise ValueError(
-                "`layerwise=True` and `weight_free=True` are mutually exclusive; "
-                "weight_free replaces layerwise mode."
+                "`layerwise=True` and `weight_free=True` are mutually exclusive; weight_free replaces layerwise mode."
             )
 
         enable_proxy = kwargs.pop("enable_proxy", False)
@@ -4229,7 +4228,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
                 prefill_only=prefill_only,
             )
-
 
     def build_prefill_specialization(
         self,

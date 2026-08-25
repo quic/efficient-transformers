@@ -27,7 +27,6 @@ from transformers import AutoConfig
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import get_num_layers_from_config
-from QEfficient.utils.device_utils import get_available_device_id
 
 from ._helpers import (
     BATCH_SIZE,
@@ -79,7 +78,6 @@ def test_weight_free_generate_fp16(model_type, model_id, tmp_export_dir):
     output = qeff_model.generate(
         tokenizer=tokenizer,
         prompts=["hello world"],
-        device_id=get_available_device_id(),
     )
     assert output is not None
     assert output.generated_texts is not None
@@ -142,7 +140,6 @@ def test_weight_free_hw_hf_parity(model_type, model_id, tmp_export_dir):
     qaic_output = qeff_model.generate(
         tokenizer=tokenizer,
         prompts=["hello world"],
-        device_id=get_available_device_id(),
     )
 
     assert qaic_output is not None, "QAIC generate returned None"
@@ -193,7 +190,6 @@ def test_weight_free_vs_legacy_qaic_parity(model_type, model_id, tmp_export_dir)
     legacy_output = qeff_legacy.generate(
         tokenizer=tokenizer,
         prompts=["hello world"],
-        device_id=get_available_device_id(),
     )
     assert legacy_output is not None, "Legacy QAIC generate returned None"
 
@@ -224,7 +220,6 @@ def test_weight_free_vs_legacy_qaic_parity(model_type, model_id, tmp_export_dir)
     weight_free_output = qeff_weight_free.generate(
         tokenizer=tokenizer,
         prompts=["hello world"],
-        device_id=get_available_device_id(),
     )
     assert weight_free_output is not None, "Weight-free QAIC generate returned None"
 
