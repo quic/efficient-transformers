@@ -57,7 +57,7 @@ Welcome to the official release of **Efficient Transformer Library v1.22.0**! Th
 
 - **NSP-Blocked Expert Dispatch for MoE Prefill**
   - Batched packed-prefix expert dispatch for Qwen3MOE and GPT-OSS chunked prefill
-  - Configurable via `num_cores` and `moe_prefill_packed_chunk_size` in compile API
+  - Configurable via `num_cores` and `qaic_config["moe_config"]["expert_parallel_chunk_size"]`
   - Replaces sequential per-expert loop for improved throughput
 
 - **First-Block Caching for Diffusers (Wan)**

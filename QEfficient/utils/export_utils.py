@@ -9,7 +9,8 @@ import copy
 import inspect
 import re
 import warnings
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict
 
@@ -39,6 +40,18 @@ from QEfficient.utils.torch_patches import (
     temporarily_enable_nested_compile_regions,
     undo_torch_patches,
 )
+
+_EXPORT_FROM_COMPILE = ContextVar("export_from_compile", default=False)
+
+
+@contextmanager
+def export_from_compile():
+    """Suppress the direct-export deprecation warning during compilation."""
+    token = _EXPORT_FROM_COMPILE.set(True)
+    try:
+        yield
+    finally:
+        _EXPORT_FROM_COMPILE.reset(token)
 
 
 def convert_dynamic_axes_to_dynamic_shapes(
@@ -225,6 +238,13 @@ def export_wrapper(func):
     """
 
     def wrapper(self, *args, **kwargs):
+        if not _EXPORT_FROM_COMPILE.get():
+            warnings.warn(
+                "Direct .export() is deprecated. Use .compile() to export and compile with the complete configuration.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Extract flags
         dynamo = kwargs.get("dynamo", False)
         use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
@@ -343,11 +363,9 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     Returns:
         Tuple of (export_hash: str, filtered_hash_params: dict)
     """
-    # Extract function signature
     original_sig = inspect.signature(func)
     params = list(original_sig.parameters.values())[1:]  # Skip 'self'
     new_sig = inspect.Signature(params)
-    # Bind all arguments
     bound_args = new_sig.bind(*args, **kwargs)
     bound_args.apply_defaults()
     all_args = bound_args.arguments
