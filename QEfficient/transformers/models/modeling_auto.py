@@ -3902,15 +3902,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         str
             Path to the generated ONNX graph file.
         """
-        if "weight_free" in kwargs:
-            kwargs.pop("weight_free")
-            warnings.warn(
-                "`weight_free` is not accepted by export()/compile(); "
-                "set it once via `from_pretrained(..., weight_free=True)` instead. "
-                "This argument is ignored.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
+        
         weight_free = self._weight_free
 
         if kwargs.pop("decode_only", False):
