@@ -107,13 +107,14 @@ def _resolve_torch_dtype(kwargs: dict) -> None:
     * If the caller already set torch_dtype to something other than
       bfloat16 (e.g. float16 or float32), leave it untouched.
     * If torch_dtype is bfloat16 **and** the target HW is ai100
-      (the default), override it to float32 because the ai100 compiler
-      does not support bfloat16.
+      (the default), leave it as bfloat16 so export/compile still run in
+      bfloat16, but warn that on-device generation is expected to fail
+      because the ai100 runtime does not support bfloat16.
     * If torch_dtype is bfloat16 and the target HW is ai200,
       leave it as-is (ai200 supports bfloat16).
-    * If torch_dtype is not set at all, default to float32 so that
-      models whose config.json declares bfloat16 are still loaded in
-      a dtype that the ai100 compiler accepts.
+    * If torch_dtype is not set at all and the target HW is ai100 (the
+      default), default to float32 so that models whose config.json
+      declares bfloat16 are not silently loaded in bfloat16.
 
     Transformers v5 renamed the ``torch_dtype`` argument to ``dtype``. To keep
     backward compatibility for callers (and examples) that pass either name,
@@ -127,13 +128,15 @@ def _resolve_torch_dtype(kwargs: dict) -> None:
         kwargs["torch_dtype"] = kwargs["dtype"]
     current_dtype = kwargs.get("torch_dtype", None)
 
-    if (current_dtype is None or current_dtype == torch.bfloat16) and aic_hw_version != "ai200":
-        if current_dtype == torch.bfloat16:
+    if aic_hw_version != "ai200":
+        if current_dtype is None:
+            kwargs["torch_dtype"] = torch.float32
+        elif current_dtype == torch.bfloat16:
             logger.warning(
-                "torch_dtype=bfloat16 is not supported on %s. Overriding to torch.float32.",
+                "torch_dtype=bfloat16 is not supported on %s. Export and compilation will proceed in "
+                "bfloat16, but on-device generation is expected to fail.",
                 aic_hw_version,
             )
-        kwargs["torch_dtype"] = torch.float32
 
     # Keep the v5 alias in sync so HF from_pretrained and config see one dtype.
     if "dtype" in kwargs:

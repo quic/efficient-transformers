@@ -2258,7 +2258,7 @@ def test_layerwise_supported_guard_rejects_unrelated_model():
         _layerwise.assert_layerwise_supported(config)
 
 
-def test_resolve_torch_dtype_normalizes_dtype_alias():
+def test_resolve_torch_dtype_normalizes_dtype_alias(caplog):
     """transformers-v5 ``dtype`` alias must be honored and kept in sync with ``torch_dtype``.
 
     Regression guard: passing ``dtype=float16`` used to be ignored, leaving the
@@ -2277,11 +2277,21 @@ def test_resolve_torch_dtype_normalizes_dtype_alias():
     _resolve_torch_dtype(kwargs)
     assert kwargs["torch_dtype"] == torch.float16
 
-    # bfloat16 is downgraded to float32 on ai100 regardless of which name is used.
+    # bfloat16 is kept as-is on ai100 (regardless of which name is used) so export/compile
+    # still run in bfloat16, with a warning that on-device generation is expected to fail.
+    caplog.set_level(logging.WARNING, logger="QEfficient")
     kwargs = {"dtype": torch.bfloat16}
     _resolve_torch_dtype(kwargs)
+    assert kwargs["torch_dtype"] == torch.bfloat16
+    assert kwargs["dtype"] == torch.bfloat16
+    assert "on-device generation is expected to fail" in caplog.text
+
+    # Regression guard: when torch_dtype/dtype is not set at all, default to float32 on
+    # ai100 so models whose config.json declares bfloat16 (e.g. Mistral-7B-v0.1) aren't
+    # silently loaded in bfloat16, which breaks KV-cache dtype (float32) parity.
+    kwargs = {}
+    _resolve_torch_dtype(kwargs)
     assert kwargs["torch_dtype"] == torch.float32
-    assert kwargs["dtype"] == torch.float32
 
 
 def test_qwen3_5_moe_gated_norm_preserves_float16():
