@@ -198,7 +198,15 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLVisionAttention,
     Qwen2_5_VLVisionBlock,
 )
-
+from transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
+        DiffusionGemmaEncoderTextAttention,
+        DiffusionGemmaEncoderTextLayer,
+        DiffusionGemmaEncoderTextModel,
+        DiffusionGemmaForBlockDiffusion,
+        DiffusionGemmaRMSNorm,
+        DiffusionGemmaTextExperts,
+        DiffusionGemmaTextRouter,
+    )
 try:
     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2RMSNorm as Qwen2_5RMSNorm
 except ImportError:
@@ -640,6 +648,16 @@ from QEfficient.transformers.moe import (
     pack_moe_weights_for_expert_parallel,
     unpack_moe_weights_from_expert_parallel,
 )
+
+from QEfficient.transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
+        QEffDiffusionGemmaRMSNorm,
+        QEffDiffusionGemmaEncoderTextAttention,
+        QEffDiffusionGemmaEncoderTextLayer,
+        QEffDiffusionGemmaEncoderTextModel,
+        QEffDiffusionGemmaForBlockDiffusion,
+        QEffDiffusionGemmaTextExperts,
+        QEffDiffusionGemmaTextRouter,
+    )
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
 from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward
@@ -686,7 +704,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         MllamaTextRMSNorm: CustomRMSNormAIC,
         GraniteRMSNorm: CustomRMSNormAIC,
         PixtralRMSNorm: CustomRMSNormAIC,
-        GraniteMoeRMSNorm: CustomRMSNormAIC,
+        # GraniteMoeRMSNorm: CustomRMSNormAIC,
         Qwen3MoeRMSNorm: CustomRMSNormAIC,
         Gemma3RMSNorm: QEffGemma3CustomRMSNormAIC,
         Gemma4RMSNorm: QEffGemma4CustomRMSNormAIC,
@@ -705,6 +723,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Qwen3_5MoeRMSNorm: GemmaCustomRMSNormAIC,
         Qwen3_5RMSNormGated: QEffQwen3_5GatedDeltaNetCustomRMSNormAIC,
         Qwen3_5MoeRMSNormGated: QEffQwen3_5MoeGatedDeltaNetCustomRMSNormAIC,
+        DiffusionGemmaRMSNorm: QEffDiffusionGemmaRMSNorm,
     }
 
 
@@ -919,6 +938,13 @@ class KVCacheTransform(ModuleMappingTransform):
         WhisperDecoder: QEffWhisperDecoder,
         WhisperModel: QEffWhisperModel,
         WhisperForConditionalGeneration: QEffWhisperForConditionalGeneration,
+        # DiffusionGemma
+        DiffusionGemmaEncoderTextAttention: QEffDiffusionGemmaEncoderTextAttention,
+        DiffusionGemmaEncoderTextLayer: QEffDiffusionGemmaEncoderTextLayer,
+        DiffusionGemmaEncoderTextModel: QEffDiffusionGemmaEncoderTextModel,
+        DiffusionGemmaForBlockDiffusion: QEffDiffusionGemmaForBlockDiffusion,
+        DiffusionGemmaTextExperts: QEffDiffusionGemmaTextExperts,
+        DiffusionGemmaTextRouter: QEffDiffusionGemmaTextRouter,
     }
 
     @classmethod
@@ -1175,7 +1201,7 @@ class SamplerTransform:
         QEffGPT2LMHeadModel,
         QEffGPTJForCausalLM,
         QEffGraniteForCausalLM,
-        QEffGraniteMoeForCausalLM,
+        # QEffGraniteMoeForCausalLM,
         QEffInternDecoderWrapper,
         QEffLlamaForCausalLM,
         QEffLlama4DecoderWrapper,
