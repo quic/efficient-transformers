@@ -137,6 +137,7 @@ class QEffCohereAsrSelfAttention(CohereAsrSelfAttention):
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor,
         position_ids: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
         past_key_values: Cache | None = None,
         **kwargs,
     ):
@@ -153,7 +154,7 @@ class QEffCohereAsrSelfAttention(CohereAsrSelfAttention):
 
         if past_key_values is not None:
             self_attention_cache = past_key_values.self_attention_cache
-            cache_kwargs = {"position_ids": position_ids}
+            cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
             key_states, value_states = self_attention_cache.update(
                 key_states, value_states, self.layer_idx, cache_kwargs
             )
@@ -192,6 +193,7 @@ class QEffCohereAsrCrossAttention(CohereAsrCrossAttention):
         attention_mask: torch.Tensor | None = None,
         past_key_values: Cache | None = None,
         input_features: torch.Tensor | None = None,
+        batch_index: torch.LongTensor | None = None,
         **kwargs,
     ):
         bsz, tgt_len = hidden_states.shape[:-1]
@@ -214,24 +216,39 @@ class QEffCohereAsrCrossAttention(CohereAsrCrossAttention):
             key_states_computed = self.k_proj(encoder_hidden_states).view(*kv_input_shape).transpose(1, 2)
             value_states_computed = self.v_proj(encoder_hidden_states).view(*kv_input_shape).transpose(1, 2)
 
-            # Write newly computed K/V into the cache buffer via index_put.
-            # This produces a ScatterND ONNX node that reads from past_key_cross.{i},
-            # keeping it live in both the Encoder and Decode specialization subgraphs.
-            # Without this, past_key_cross.{i} is only used by the Where True-branch
-            # (Decode spec) and gets DCE'd in the Encoder spec, causing qaic-compile to
-            # reject the graph with "retained state input not found: past_key_cross.{i}".
-            # Matches Whisper's torch.index_put pattern exactly (see modeling_whisper.py).
-            indices = (torch.arange(bsz),)
-            key_states_new = torch.index_put(key_states_old, indices, key_states_computed)
-            value_states_new = torch.index_put(value_states_old, indices, value_states_computed)
+            if batch_index is None:
+                indices = (torch.arange(bsz),)
+                key_cache_updated = torch.index_put(key_states_old, indices, key_states_computed)
+                value_cache_updated = torch.index_put(value_states_old, indices, value_states_computed)
+                key_states_cached, value_states_cached = key_states_old, value_states_old
+                key_states_updated, value_states_updated = key_cache_updated, value_cache_updated
+            else:
+                cross_position_ids = torch.arange(
+                    key_states_computed.shape[2], dtype=torch.int64, device=key_states_computed.device
+                ).view(1, -1)
+                cross_position_ids = cross_position_ids.repeat(bsz, 1)
+                cache_kwargs = {"position_ids": cross_position_ids, "batch_index": batch_index}
+
+                # Read and update only the request-owned rows. QEffDynamicCache emits the
+                # compiler-recognized continuous-batching gather/scatter operators while
+                # retaining the complete full-batch cache as the QPC state buffer.
+                key_states_cached, value_states_cached = past_key_values.read_only(self.layer_idx, cache_kwargs)
+                key_states_updated, value_states_updated = past_key_values.update(
+                    key_states_computed, value_states_computed, self.layer_idx, cache_kwargs
+                )
+                key_cache_updated = past_key_values[self.layer_idx][0]
+                value_cache_updated = past_key_values[self.layer_idx][1]
 
             # Select cache (Decode) or freshly written (Encode) based on the dummy
             # input_features shape used by compiler specializations.
-            key_states = torch.where(input_features.shape[2] == torch.tensor(1), key_states_old, key_states_new)
-            value_states = torch.where(input_features.shape[2] == torch.tensor(1), value_states_old, value_states_new)
+            is_decode = input_features.shape[2] == torch.tensor(1)
+            key_states = torch.where(is_decode, key_states_cached, key_states_updated)
+            value_states = torch.where(is_decode, value_states_cached, value_states_updated)
 
-            past_key_values.layers[self.layer_idx].keys = key_states
-            past_key_values.layers[self.layer_idx].values = value_states
+            past_key_values.layers[self.layer_idx].keys = torch.where(is_decode, key_states_old, key_cache_updated)
+            past_key_values.layers[self.layer_idx].values = torch.where(
+                is_decode, value_states_old, value_cache_updated
+            )
         else:
             key_states = self.k_proj(encoder_hidden_states).view(*kv_input_shape).transpose(1, 2)
             value_states = self.v_proj(encoder_hidden_states).view(*kv_input_shape).transpose(1, 2)
@@ -266,6 +283,7 @@ class QEffCohereAsrDecoderLayer(CohereAsrDecoderLayer):
         position_ids: torch.LongTensor | None = None,
         past_key_values: Cache | None = None,
         input_features: torch.Tensor | None = None,
+        batch_index: torch.LongTensor | None = None,
         **kwargs,
     ) -> tuple[torch.FloatTensor, tuple[torch.FloatTensor, torch.FloatTensor] | None]:
         residual = hidden_states
@@ -275,6 +293,7 @@ class QEffCohereAsrDecoderLayer(CohereAsrDecoderLayer):
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            batch_index=batch_index,
             past_key_values=past_key_values,
             **kwargs,
         )
@@ -294,6 +313,7 @@ class QEffCohereAsrDecoderLayer(CohereAsrDecoderLayer):
                 attention_mask=encoder_attention_mask,
                 past_key_values=cross_attn_past_key_value,
                 input_features=input_features,
+                batch_index=batch_index,
             )
             hidden_states = residual + hidden_states
 
@@ -327,6 +347,7 @@ class QEffCohereAsrDecoder(CohereAsrDecoder):
         encoder_hidden_states: torch.FloatTensor | None = None,
         encoder_attention_mask: torch.Tensor | None = None,
         input_features: torch.Tensor | None = None,
+        batch_index: torch.LongTensor | None = None,
         **kwargs,
     ) -> BaseModelOutputWithPastAndCrossAttentions:
         encoder_hidden_states = self.proj(encoder_hidden_states)
@@ -366,6 +387,7 @@ class QEffCohereAsrDecoder(CohereAsrDecoder):
                 position_ids=position_ids,
                 past_key_values=past_key_values,
                 input_features=input_features,
+                batch_index=batch_index,
                 **kwargs,
             )
 
@@ -423,6 +445,7 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
         encoder_outputs: tuple[tuple[torch.FloatTensor]] | None = None,
         past_key_values: EncoderDecoderCache | tuple[torch.FloatTensor] | None = None,
         position_ids: torch.LongTensor | None = None,
+        batch_index: torch.LongTensor | None = None,
         feature_lengths: torch.LongTensor | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
@@ -498,6 +521,7 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
             past_key_values=past_key_values,
             use_cache=use_cache,
             input_features=input_features,
+            batch_index=batch_index,
         )
         logits = self.proj_out(decoder_outputs.last_hidden_state)
 
@@ -512,7 +536,9 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
         )
 
     def get_dummy_inputs(self, **kwargs):
-        bs = 1
+        bs = int(kwargs.get("batch_size", 1))
+        full_batch_size = int(kwargs.get("full_batch_size") or bs)
+        continuous_batching = bool(kwargs.get("continuous_batching", False) or full_batch_size != bs)
         seq_len = int(kwargs.get("prefill_seq_len", ONNX_EXPORT_EXAMPLE_SEQ_LEN))
         # encoder_ctx_len is the encoder OUTPUT sequence length (after subsampling).
         # encoder_config.max_position_embeddings is the INPUT length (max audio frames).
@@ -543,9 +569,12 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
             "past_key_values": [[] for _ in range(num_layers)],
         }
+        if continuous_batching:
+            inputs["batch_index"] = torch.arange(bs, dtype=torch.int64).view(bs, 1)
 
-        kv_cache_shape = (bs, num_key_value_heads, seq_len, head_dim)
-        kv_cross_cache_shape = (bs, num_key_value_heads, encoder_ctx_len, head_dim)
+        cache_batch_size = full_batch_size if continuous_batching else bs
+        kv_cache_shape = (cache_batch_size, num_key_value_heads, seq_len, head_dim)
+        kv_cross_cache_shape = (cache_batch_size, num_key_value_heads, encoder_ctx_len, head_dim)
 
         for i in range(num_layers):
             for self_cross in ["self", "cross"]:
@@ -558,7 +587,9 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
 
         return inputs
 
-    def get_specializations(self, batch_size: int, encoder_ctx_len, ctx_len, **compiler_options):
+    def get_specializations(
+        self, batch_size: int, encoder_ctx_len, ctx_len, full_batch_size: int | None = None, **compiler_options
+    ):
         subsampling_factor = self.config.encoder_config.subsampling_factor
         if encoder_ctx_len is None:
             # encoder_ctx_len = encoder OUTPUT length (after subsampling).
@@ -585,11 +616,16 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
             "feature_len": 1,  # dummy feature so torch.where knows whether to run cross attention or not
         }
 
+        if full_batch_size is not None:
+            encoder_specializations["full_batch_size"] = full_batch_size
+            decoder_specializations["full_batch_size"] = full_batch_size
+            decoder_specializations["batch_size"] = full_batch_size
+
         specializations = [encoder_specializations, decoder_specializations]
 
         return specializations, compiler_options
 
-    def get_onnx_dynamic_axes(self):
+    def get_onnx_dynamic_axes(self, continuous_batching: bool = False):
         num_layers = self.config.num_hidden_layers
 
         dynamic_axes = {
@@ -598,12 +634,14 @@ class QEffCohereAsrForConditionalGeneration(CohereAsrForConditionalGeneration):
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
         }
+        if continuous_batching:
+            dynamic_axes["batch_index"] = {0: "batch_size"}
         pkv_self_dynamic_axes = {
-            0: "batch_size",
+            0: "full_batch_size" if continuous_batching else "batch_size",
             2: "decoder_ctx_len",
         }
         pkv_cross_dynamic_axes = {
-            0: "batch_size",
+            0: "full_batch_size" if continuous_batching else "batch_size",
             2: "encoder_ctx_len",
         }
         for i in range(num_layers):
