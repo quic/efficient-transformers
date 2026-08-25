@@ -358,6 +358,11 @@ def _filter_custom_io_for_onnx(custom_io: dict, onnx_path: str | Path | None) ->
     return filtered
 
 
+def _is_diffusion_gemma_arch(config) -> bool:
+    architectures = getattr(config, "architectures", None) or []
+    return "DiffusionGemmaForBlockDiffusion" in architectures
+
+
 class QEFFTransformersBase(QEFFBaseModel):
     """
     Base class for QEfficient wrappers around HuggingFace transformer models.
@@ -3129,19 +3134,16 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             A dictionary specifying the dynamic axes for inputs.
         """
         return self.model.get_onnx_dynamic_axes()
-
     def generate(
         self,
         inputs: Optional[torch.Tensor] = None,
         streamer: Optional[TextStreamer] = None,
         device_ids: List[int] = None,
         runtime_ai100: bool = True,
-        generation_len: int | None = None,
-        processor: Optional[AutoImageProcessor] = None,
-        images: List[str] = None,
-        prompts: List[str] = None,
-        artifacts: bool = False,
-    ) -> Union[torch.Tensor, np.ndarray, Path]:
+        generation_len: Optional[int] = None,
+        write_io: bool = False,
+        **kwargs,
+    ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generates output by executing the compiled single QPC on Cloud AI 100 Hardware cards.
 
@@ -3177,9 +3179,54 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             return write_single_qpc_vlm_runner_bundle(model=self, processor=processor, images=images, prompts=prompts)
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
+        
+        # if _is_diffusion_gemma_arch(self.model.config):
+        #     return self.diffusion_gemma_generate_singleqpc(
+        #         inputs=inputs,
+        #         device_ids=device_ids,
+        #         runtime_ai100=runtime_ai100,
+        #         generation_len=generation_len,
+        #         qpc_path=kwargs.pop("qpc_path", None),
+        #         **kwargs,
+        #     )
 
         return self.cloud_ai_100_generate(
             inputs=inputs, device_ids=device_ids, generation_len=generation_len, streamer=streamer
+        )
+
+    # def diffusion_gemma_generate_singleqpc(
+    #     self,
+    #     inputs: Optional[torch.Tensor],
+    #     device_ids: Optional[List[int]] = None,
+    #     runtime_ai100: bool = True,
+    #     generation_len: Optional[int] = None,
+    #     qpc_path: Optional[Union[str, Path]] = None,
+    #     **kwargs,
+    # ):
+    #     if not runtime_ai100:
+    #         raise NotImplementedError("PyTorch execution is not supported for DiffusionGemma single-QPC generation.")
+    #     if not _is_diffusion_gemma_arch(self.model.config):
+    #         raise ValueError("`diffusion_gemma_generate_singleqpc` only supports DiffusionGemma models.")
+    #     raise NotImplementedError(
+    #         "DiffusionGemma single-QPC generation is supported through "
+    #         "examples/image_text_to_text/models/gemma_vision/diffusion_gemma/"
+    #         "diffusion_gemma_single_qpc_example_correct.py."
+    #     )
+
+    def cloud_ai_100_diffusion_generate(
+        self,
+        inputs: Optional[torch.Tensor],
+        device_ids: Optional[List[int]] = None,
+        runtime_ai100: bool = True,
+        qpc_path: Optional[Union[str, Path]] = None,
+        **kwargs,
+    ):
+        return self.diffusion_gemma_generate_singleqpc(
+            inputs=inputs,
+            device_ids=device_ids,
+            runtime_ai100=runtime_ai100,
+            qpc_path=qpc_path,
+            **kwargs,
         )
 
     def cloud_ai_100_generate(
@@ -3532,6 +3579,10 @@ class QEFFAutoModelForImageTextToText:
         """
         _disable_unsupported_weight_free(kwargs, cls.__name__)
         enable_proxy = kwargs.pop("enable_proxy", False)
+        cfg = kwargs.get("config", None)
+        is_diffusion_gemma = "DiffusionGemmaForBlockDiffusion" in (getattr(cfg, "architectures", None) or [])
+        if is_diffusion_gemma:
+            kv_offload = False
 
         # TODO: add a check to see if kv_offload is allowed for given model by loading the config and checking architecture or type of config here.
         if continuous_batching and not kv_offload:
