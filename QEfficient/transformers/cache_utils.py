@@ -1579,7 +1579,7 @@ class QEffGemma4DynamicLayer(QEffDynamicLayer):
         self._mark_initialized(self.keys)
         position_ids = cache_kwargs.get("position_ids")
         batch_index = cache_kwargs.get("batch_index", None)
-        layer_ctx_len = self.sliding_window or cache_kwargs.get("sliding_window")
+        layer_ctx_len = self.sliding_window
         if layer_ctx_len is None:
             layer_ctx_len = self.keys.shape[2]
 
