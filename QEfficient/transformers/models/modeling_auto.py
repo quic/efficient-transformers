@@ -3736,26 +3736,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         )
 
-    def get_seq_len_and_handle_specialized_prefill_model(
-        self,
-        prefill_seq_len: Optional[int] = None,
-        enable_chunking=False,
-    ) -> int:
-
-        self.hash_params["prefill_only"] = True
-        if enable_chunking:
-            self.hash_params["chunking"] = True
-            if self.hash_params.get("moe_prefill_flavour") == "expert_parallel":
-                num_packed_chunks = self.hash_params.get("moe_prefill_num_packed_chunks", 1)
-                if constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN % num_packed_chunks:
-                    return num_packed_chunks
-            if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe"}:
-                return max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
-
-        if self.model.config.model_type == "gpt_oss":
-            return self.handle_gpt_oss_env_variable_legacy_burden(prefill_seq_len)
-        return constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-
     def _run_layerwise(self, *, final_compile: bool, layerwise_window_size: int, **forward_kwargs):
         """Drive the layer-wise export/compile loop for CausalLM models."""
         from QEfficient.transformers.models import _layerwise
@@ -3830,6 +3810,17 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         reject_legacy_moe_prefill_packed_chunk_size(kwargs)
         qaic_config = kwargs.pop("qaic_config", getattr(self.model, "qaic_config", None))
 
+        if (
+            kwargs.get("retain_full_kv", False)
+            and self.model.config.model_type not in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH
+        ):
+            logger.warning(
+                "retain_full_kv=True is only supported for specialized disaggregated serving models "
+                f"{sorted(SPECIALIZED_DISAGG_SERVING_MODEL_ARCH)}; ignoring it for model_type "
+                f"'{self.model.config.model_type}'."
+            )
+
+        ## TODO: Remove this deprecated code ###
         if layerwise:
             return self._run_layerwise(
                 final_compile=False,
@@ -3842,44 +3833,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 kv_cache_prefix=kv_cache_prefix,
                 **kwargs,
             )
+        ########################################
 
-        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
-        seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
-
-        # increase seq_len if using a larger number of blocks
-        if self.hash_params.get("blocking_kwargs", None):
-            max_blocks = -1
-            for num_blocks in self.hash_params.get("blocking_kwargs").__dict__.values():
-                if isinstance(num_blocks, int):
-                    max_blocks = max(max_blocks, num_blocks)
-            block_size = -(-seq_len // max_blocks)
-            seq_len = block_size * max_blocks
-        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
-        if dynamo and not (
-            getattr(self.model.config, "model_type", None) == "gpt_oss" and not self.continuous_batching
-        ):
-            # torch.export requires example inputs to satisfy dynamic_shapes min=2; gpt_oss non-CB keeps bs=1.
-            bs = max(2, bs)
-        kv_cache_shape = get_padding_shape_from_config(
-            self.model.config, fbs if self.continuous_batching else bs, seq_len
-        )
-        if dynamo:
-            kv_cache_shape = list(kv_cache_shape)
-            kv_cache_shape[1 if len(kv_cache_shape) == 3 else 2] = max(
-                2, kv_cache_shape[1 if len(kv_cache_shape) == 3 else 2]
-            )
         enable_chunking = kwargs.get("enable_chunking", False)
-        if (
-            kwargs.get("retain_full_kv", False)
-            and self.model.config.model_type not in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH
-        ):
-            logger.warning(
-                "retain_full_kv=True is only supported for specialized disaggregated serving models "
-                f"{sorted(SPECIALIZED_DISAGG_SERVING_MODEL_ARCH)}; ignoring it for model_type "
-                f"'{self.model.config.model_type}'."
-            )
-
-        # TODO: move this to a DA Serving utility class
+        ####### HANDLE DA PREFILL And REVERT PREFILL Transform ################
+        # TODO: move this code inside self.transform in modeling_qeff.py
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
             if prefill_only:
                 if not enable_chunking and self.continuous_batching:
@@ -3889,14 +3847,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.__update_prefill_transform(enable=True, enable_chunking=enable_chunking)
                 self.hash_params.pop("retain_full_kv", None)
                 if "DeepseekV3ForCausalLM" not in (getattr(self.model.config, "architectures", None) or []):
-                    seq_len = self.get_seq_len_and_handle_specialized_prefill_model(
-                        prefill_seq_len=prefill_seq_len,
-                        enable_chunking=enable_chunking,
-                    )
-                    sliding_window = getattr(self.model.config, "sliding_window", None)
-                    kv_cache_shape[2] = (
-                        seq_len + (sliding_window if sliding_window is not None else 0) if enable_chunking else seq_len
-                    )
+                    self.hash_params["prefill_only"] = True
+                    if enable_chunking:
+                        self.hash_params["chunking"] = True
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
                 self.hash_params.pop("prefill_only", None)
@@ -3906,34 +3859,73 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 self.hash_params.pop("chunking", None)
                 self.hash_params.pop("chunking_seq_len", None)
                 if kwargs.get("retain_full_kv", False):
+                    self.hash_params["retain_full_kv"] = True
+        #######################################################################
+
+        bs: int = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
+        seq_len: int = constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
+
+        # TODO: Remove this hack ##################
+        if dynamo and not (
+            getattr(self.model.config, "model_type", None) == "gpt_oss" and not self.continuous_batching
+        ):
+            # torch.export requires example inputs to satisfy dynamic_shapes min=2; gpt_oss non-CB keeps bs=1.
+            bs = max(2, bs)
+        ###########################################
+
+        #### HANDLE KV CACHE SHAPE ################
+        kv_cache_shape = get_padding_shape_from_config(
+            self.model.config, fbs if self.continuous_batching else bs, seq_len
+        )
+        if dynamo:
+            kv_cache_shape = list(kv_cache_shape)
+            kv_cache_shape[1 if len(kv_cache_shape) == 3 else 2] = max(
+                2, kv_cache_shape[1 if len(kv_cache_shape) == 3 else 2]
+            )
+        ############################################
+
+        ############################################
+        # Handle seq_len for export to succeed based on expert-parallel and blocking for loop requirements
+        ############################################
+        # TODO: We should change the ctx_len i.e. the past_key_values shape based on num_kv_blocks which is not yet handled.
+        if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
+            if prefill_only and "DeepseekV3ForCausalLM" not in (
+                getattr(self.model.config, "architectures", None) or []
+            ):
+                if enable_chunking:
+                    if self.model.config.model_type in {"qwen3_moe", "gpt_oss", "glm4_moe"}:
+                        seq_len = max(prefill_seq_len or 0, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+
+                elif self.model.config.model_type == "gpt_oss":
+                    seq_len = self.handle_gpt_oss_env_variable_legacy_burden(prefill_seq_len)
+                sliding_window = getattr(self.model.config, "sliding_window", None)
+                kv_cache_shape[2] = (
+                    seq_len + (sliding_window if sliding_window is not None else 0) if enable_chunking else seq_len
+                )
+            else:
+                if kwargs.get("retain_full_kv", False):
                     sliding_window = getattr(self.model.config, "sliding_window", None)
                     kv_cache_shape[2] = seq_len + (sliding_window if sliding_window is not None else 0)
-                    self.hash_params["retain_full_kv"] = True
 
-        #################
-        # Handle OptimizedMoeTransform, BlockingTransform introduced changes
-        ################
-        # TODO: We should change the ctx_len i.e. the past_key_values shape based on num_kv_blocks which is not yet handled.
         expert_parallel_is_triggered = self.hash_params.get("moe_prefill_flavour") == MoEFlavour.EXPERT_PARALLEL
         blocking_enabled = self.hash_params.get("blocking_kwargs", None) is not None
-        for_loop_number_forced_by_blocking = (
-            self.hash_params.get("blocking_kwargs", None).num_q_blocks if blocking_enabled else None
-        )
-        for_loop_number_forced_by_expert_parallel = self.hash_params.get("moe_prefill_expert_parallel_chunk_size", None)
-        if expert_parallel_is_triggered and blocking_enabled:
-            lcm = (for_loop_number_forced_by_blocking * for_loop_number_forced_by_expert_parallel) // math.gcd(
-                for_loop_number_forced_by_blocking, for_loop_number_forced_by_expert_parallel
-            )
-            seq_len = seq_len if seq_len % lcm == 0 else lcm
+        for_loop_number_forced_by_expert_parallel = self.hash_params.get("moe_prefill_num_packed_chunks", None)
+        if blocking_enabled:
+            max_blocks = -1
+            for num_blocks in self.hash_params.get("blocking_kwargs").__dict__.values():
+                if isinstance(num_blocks, int):
+                    max_blocks = max(max_blocks, num_blocks)
+            block_size = -(-seq_len // max_blocks)
+            for_loop_number_forced_by_blocking = block_size * max_blocks
+
         if expert_parallel_is_triggered:
-            seq_len = (
-                seq_len
-                if seq_len % for_loop_number_forced_by_expert_parallel == 0
-                else for_loop_number_forced_by_expert_parallel
+            seq_len = (for_loop_number_forced_by_expert_parallel * seq_len) // math.gcd(
+                for_loop_number_forced_by_expert_parallel, seq_len
             )
         if blocking_enabled:
-            seq_len = (
-                seq_len if seq_len % for_loop_number_forced_by_blocking == 0 else for_loop_number_forced_by_blocking
+            seq_len = (for_loop_number_forced_by_blocking * seq_len) // math.gcd(
+                for_loop_number_forced_by_blocking, seq_len
             )
         ##################################
 
