@@ -1622,6 +1622,11 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
             raise ValueError("moe expert_parallel_chunk_size must be greater than zero")
         compile_seq_len = prefill_seq_len or ONNX_EXPORT_EXAMPLE_SEQ_LEN
         num_packed_chunks = max(1, -(-compile_seq_len // expert_parallel_chunk_size))
+        if compile_seq_len % expert_parallel_chunk_size != 0:
+            logger.warning(
+                f"qaic_config['moe_config']['expert_parallel_chunk_size']={expert_parallel_chunk_size} does not evenly divide "
+                f"the compile sequence length {compile_seq_len}; the number of packed chunks will be {num_packed_chunks}."
+            )
 
         transformed = False
         flavour = None
