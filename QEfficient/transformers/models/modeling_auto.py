@@ -4817,7 +4817,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, KVCacheTransform]
     _onnx_transforms = []
 
-    def __init__(self, model: nn.Module, **kwargs):
+    def __init__(self, model: nn.Module, continuous_batching: bool = False, **kwargs):
         """
         Initialize a QEFFAutoModelForSpeechSeq2Seq instance.
 
@@ -4839,9 +4839,23 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             raise TypeError(f"Required pytorch module with ForConditionalGeneration, got {model_class_name}")
 
         model.config.use_cache = True
+        if continuous_batching and model.config.model_type != "cohere_asr":
+            raise NotImplementedError("Continuous batching is currently supported only for Cohere ASR speech models")
+        self.continuous_batching = continuous_batching
         super().__init__(model, **kwargs)
         self.num_layers = model.config.num_hidden_layers
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+
+    @classmethod
+    def from_pretrained(
+        cls, pretrained_model_name_or_path: str, *args, continuous_batching: bool = False, **kwargs
+    ):
+        qeff_model = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        if continuous_batching and qeff_model.model.config.model_type != "cohere_asr":
+            raise NotImplementedError("Continuous batching is currently supported only for Cohere ASR speech models")
+        qeff_model.continuous_batching = continuous_batching
+        qeff_model.hash_params["continuous_batching"] = continuous_batching
+        return qeff_model
 
     @property
     def get_model_config(self) -> dict:
@@ -4883,8 +4897,12 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         dummy_input_kwargs = {}
         if "encoder_ctx_len" in kwargs:
             dummy_input_kwargs["encoder_ctx_len"] = kwargs["encoder_ctx_len"]
+        if self.continuous_batching:
+            dummy_input_kwargs["continuous_batching"] = True
+            dummy_input_kwargs["full_batch_size"] = kwargs.get("full_batch_size")
+            dummy_input_kwargs["batch_size"] = kwargs.get("batch_size", 1)
         inputs = self.model.get_dummy_inputs(**dummy_input_kwargs)
-        dynamic_axes = self.model.get_onnx_dynamic_axes()
+        dynamic_axes = self.model.get_onnx_dynamic_axes(continuous_batching=self.continuous_batching)
         output_names = self.model.get_output_names()
         return self._export(
             inputs,
@@ -4978,11 +4996,14 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             batch_size,
             encoder_ctx_len,
             ctx_len,
+            full_batch_size=full_batch_size if self.continuous_batching else None,
             **compiler_options,
         )
 
-        if full_batch_size:
-            logger.warning("Continuous batching is not yet enabled for AutoModelForSpeechSeq2Seq")
+        if self.continuous_batching and full_batch_size is None:
+            raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
+        if full_batch_size and not self.continuous_batching:
+            raise ValueError("Enable `continuous_batching=True` when passing `full_batch_size`.")
 
         if kv_cache_batch_size:
             logger.warning("Prefix caching is not yet enabled for AutoModelForSpeechSeq2Seq")
@@ -4994,6 +5015,15 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             logger.warning("Speculative decoding is not yet enabled for AutoModelForSpeechSeq2Seq")
 
         output_names = self.model.get_output_names()
+
+        if onnx_path is None and self.continuous_batching:
+            onnx_path = self.export(
+                export_dir=compile_dir,
+                encoder_ctx_len=encoder_ctx_len,
+                batch_size=batch_size,
+                full_batch_size=full_batch_size,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+            )
 
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
         kv_cache_dtype = CUSTOM_IO_DTYPE_MAP[target_dtype]

@@ -397,6 +397,63 @@ def test_cohere_asr_decode_reuses_cross_attention_cache(cohere_asr_qeff_model):
     assert torch.equal(prefill_cross_value, decode_outputs.past_key_values[0][3])
 
 
+@pytest.mark.parametrize("batch_indices", [torch.tensor([[2]]), torch.tensor([[1], [3]])])
+def test_cohere_asr_continuous_batching_updates_only_owned_cache_rows(cohere_asr_qeff_model, batch_indices):
+    active_batch_size = batch_indices.shape[0]
+    full_batch_size = 4
+    cache = [[
+        torch.zeros((full_batch_size, 2, 4, 4)),
+        torch.zeros((full_batch_size, 2, 4, 4)),
+        torch.zeros((full_batch_size, 2, 2, 4)),
+        torch.zeros((full_batch_size, 2, 2, 4)),
+    ]]
+
+    outputs = cohere_asr_qeff_model(
+        input_features=torch.randn(active_batch_size, 8, 16),
+        feature_lengths=torch.full((active_batch_size,), 9),
+        input_ids=torch.full((active_batch_size, 1), 4),
+        position_ids=torch.zeros((active_batch_size, 1), dtype=torch.int64),
+        batch_index=batch_indices,
+        past_key_values=cache,
+        use_cache=True,
+    )
+
+    owned_rows = set(batch_indices.view(-1).tolist())
+    for row in range(full_batch_size):
+        if row in owned_rows:
+            assert any(torch.count_nonzero(cache_tensor[row]).item() > 0 for cache_tensor in outputs.past_key_values[0])
+        else:
+            for cache_tensor in outputs.past_key_values[0]:
+                assert torch.count_nonzero(cache_tensor[row]).item() == 0
+
+    cross_key_before_decode = outputs.past_key_values[0][2].clone()
+    cross_value_before_decode = outputs.past_key_values[0][3].clone()
+    decode_outputs = cohere_asr_qeff_model(
+        input_features=torch.zeros(active_batch_size, 8, 1),
+        feature_lengths=torch.full((active_batch_size,), 9),
+        input_ids=torch.full((active_batch_size, 1), 5),
+        position_ids=torch.ones((active_batch_size, 1), dtype=torch.int64),
+        batch_index=batch_indices,
+        past_key_values=outputs.past_key_values,
+        use_cache=True,
+    )
+
+    assert torch.equal(cross_key_before_decode, decode_outputs.past_key_values[0][2])
+    assert torch.equal(cross_value_before_decode, decode_outputs.past_key_values[0][3])
+
+
+def test_cohere_asr_continuous_batching_export_contract(tmp_path, cohere_asr_qeff_model):
+    wrapper = QEFFAutoModelForSpeechSeq2Seq(deepcopy(cohere_asr_qeff_model), continuous_batching=True)
+    onnx_path = wrapper.export(export_dir=tmp_path, batch_size=1, full_batch_size=4, encoder_ctx_len=2)
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+    graph_inputs = {value.name: value for value in onnx_model.graph.input}
+
+    assert "batch_index" in graph_inputs
+    assert graph_inputs["batch_index"].type.tensor_type.shape.dim[0].dim_param == "batch_size"
+    assert graph_inputs["past_key_self.0"].type.tensor_type.shape.dim[0].dim_param == "full_batch_size"
+    assert graph_inputs["past_key_cross.0"].type.tensor_type.shape.dim[0].dim_param == "full_batch_size"
+
+
 def test_cohere_asr_native_and_qeff_logits_match_with_cached_decode():
     encoder_config = {
         "model_type": "parakeet_encoder",
