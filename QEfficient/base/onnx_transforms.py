@@ -9,7 +9,7 @@ import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any
 
 import numpy as np
 import onnx
@@ -47,6 +47,13 @@ from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxScatterCB3D,
     CtxScatterFuncCB,
     CtxScatterFuncCB3D,
+)
+from QEfficient.customop.fp8_dequantize import (
+    FP8DequantizeBlockedFunc,
+    FP8DequantizePerAxis,
+    FP8DequantizePerAxisFunc,
+    FP8DequantizePerTensor,
+    FP8DequantizePerTensorFunc,
 )
 
 # from QEfficient.customop.quantization_ops import CastToUInt4, CastToUInt4Func
@@ -93,7 +100,7 @@ class SplitTensorsTransform(BaseOnnxTransform):
 
     @classmethod
     def apply(
-        cls, tensor: TensorProto, model_name: str, file_num: int, mapping: Dict[str, Tuple[TensorProto, str]]
+        cls, tensor: TensorProto, model_name: str, file_num: int, mapping: dict[str, tuple[TensorProto, str]]
     ) -> None:
         file_name = f"{model_name}_{file_num}.onnx.data"
         mapping[tensor.name] = (tensor, file_name)
@@ -102,7 +109,7 @@ class SplitTensorsTransform(BaseOnnxTransform):
 class CustomOpTransform(BaseOnnxTransform):
     """Register custom ONNX ops and append their function prototypes to the model."""
 
-    _custom_ops: Dict[str, Tuple[Any, Any]] = {
+    _custom_ops: dict[str, tuple[Any, Any]] = {
         "CustomRMSNormFunc": (CustomRMSNormFunc, CustomRMSNorm),
         "CtxScatterFunc": (CtxScatterFunc, CtxScatter),
         "CtxScatterFunc3D": (CtxScatterFunc3D, CtxScatter3D),
@@ -158,7 +165,7 @@ class CustomOpTransform(BaseOnnxTransform):
         return op_applied
 
     @staticmethod
-    def _ensure_opset_imports(container: Union[ModelProto, onnx.FunctionProto], domain: str, version: int) -> None:
+    def _ensure_opset_imports(container: ModelProto | onnx.FunctionProto, domain: str, version: int) -> None:
         if any(opset.domain == domain for opset in container.opset_import):
             return
         container.opset_import.append(onnx.helper.make_opsetid(domain, version))
@@ -334,7 +341,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
 
         fn_by_name = {fn.name: fn for fn in model.functions}
         changed = False
-        kv_rename_map: Dict[str, str] = {}
+        kv_rename_map: dict[str, str] = {}
 
         for node in graph.node:
             fn = fn_by_name.get(node.op_type)
@@ -411,7 +418,7 @@ class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
         return changed
 
     @staticmethod
-    def _rename_graph_inputs_bulk(graph: onnx.GraphProto, rename_map: Dict[str, str]) -> bool:
+    def _rename_graph_inputs_bulk(graph: onnx.GraphProto, rename_map: dict[str, str]) -> bool:
         if not rename_map:
             return False
         changed = False
@@ -459,13 +466,13 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
                     yield from cls._iter_all_nodes(attr.g.node)
 
     @staticmethod
-    def _rename_op_types(nodes, old_to_new: Dict[str, str]) -> None:
+    def _rename_op_types(nodes, old_to_new: dict[str, str]) -> None:
         for node in RenameRepeatedSubgraphTransform._iter_all_nodes(nodes):
             if node.op_type in old_to_new:
                 node.op_type = old_to_new[node.op_type]
 
     @classmethod
-    def apply(cls, model: ModelProto, target_classnames: Optional[List[str]] = None, **kwargs) -> bool:
+    def apply(cls, model: ModelProto, target_classnames: list[str] | None = None, **kwargs) -> bool:
         target_classnames = [name for name in (target_classnames or []) if name]
         if not target_classnames:
             logger.warning(
@@ -524,12 +531,85 @@ class RenameRepeatedSubgraphTransform(BaseOnnxTransform):
         for fn in model.functions:
             cls._rename_op_types(fn.node, old_to_new)
 
+        # Fix pkg.torch.__subgraph__ domain so ORT can inline the functions.
+        target_class_modules = kwargs.get("target_class_modules")
+        cls._fix_subgraph_domains(model, old_to_new, target_class_modules)
+
         return True
+
+    @classmethod
+    def _fix_subgraph_domains(
+        cls,
+        model: ModelProto,
+        old_to_new: dict[str, str],
+        target_class_modules: dict[str, str] | None,
+    ) -> None:
+        """Change pkg.torch.__subgraph__ domain to the class's Python module path.
+
+        torch.export emits repeated subgraph functions in domain 'pkg.torch.__subgraph__'.
+        ORT cannot execute functions in that domain.  After renaming the function to its
+        QEff class name we also update the domain to the class's module path so ORT can
+        inline and execute the function body.
+        """
+        if not target_class_modules:
+            return
+        _TORCH_SUBGRAPH_DOMAIN = "pkg.torch.__subgraph__"
+        # Build new_name -> module mapping (old_to_new maps old_name -> new_name).
+        # Renaming can append numeric suffixes for collisions (e.g. FooLayer_1),
+        # while target_class_modules is keyed by base class names (FooLayer).
+        new_name_to_module = {}
+        for new_name in old_to_new.values():
+            module = target_class_modules.get(new_name)
+            if module is None:
+                base_name = re.sub(r"_\d+$", "", new_name)
+                module = target_class_modules.get(base_name)
+            if module is not None:
+                new_name_to_module[new_name] = module
+        for fn in model.functions:
+            if fn.domain == _TORCH_SUBGRAPH_DOMAIN and fn.name in new_name_to_module:
+                fn.domain = new_name_to_module[fn.name]
+                if not any(op.domain == fn.domain for op in model.opset_import):
+                    model.opset_import.append(onnx.helper.make_opsetid(fn.domain, 1))
+        # Remove FP8 value_info entries from the main graph.  ORT uses graph-level value_info to validate call-site input types for local functions and rejects float8e4m3fn even when the function body handles it correctly.  Removing these annotations lets ORT infer the type from the initializer at runtime.
+        _fp8_type = 17  # TensorProto.FLOAT8E4M3FN
+        _fp8_vi_names = {vi.name for vi in model.graph.value_info if vi.type.tensor_type.elem_type == _fp8_type}
+        if _fp8_vi_names:
+            _kept_vi = [vi for vi in model.graph.value_info if vi.name not in _fp8_vi_names]
+            del model.graph.value_info[:]
+            model.graph.value_info.extend(_kept_vi)
+        # Update call-site node domains in the graph and all functions
+        for node in cls._iter_all_nodes(model.graph.node):
+            if node.domain == _TORCH_SUBGRAPH_DOMAIN and node.op_type in new_name_to_module:
+                node.domain = new_name_to_module[node.op_type]
+        for fn in model.functions:
+            for node in cls._iter_all_nodes(fn.node):
+                if node.domain == _TORCH_SUBGRAPH_DOMAIN and node.op_type in new_name_to_module:
+                    node.domain = new_name_to_module[node.op_type]
+
+        # Drop pkg.torch.__subgraph__ import only when all usage has been remapped.
+        # Otherwise keep (or restore) the import so ONNX remains valid.
+        has_pkg_usage = any(fn.domain == _TORCH_SUBGRAPH_DOMAIN for fn in model.functions)
+        if not has_pkg_usage:
+            has_pkg_usage = any(node.domain == _TORCH_SUBGRAPH_DOMAIN for node in cls._iter_all_nodes(model.graph.node))
+        if not has_pkg_usage:
+            for fn in model.functions:
+                if any(node.domain == _TORCH_SUBGRAPH_DOMAIN for node in cls._iter_all_nodes(fn.node)):
+                    has_pkg_usage = True
+                    break
+
+        if has_pkg_usage:
+            if not any(op.domain == _TORCH_SUBGRAPH_DOMAIN for op in model.opset_import):
+                model.opset_import.append(onnx.helper.make_opsetid(_TORCH_SUBGRAPH_DOMAIN, 1))
+            return
+
+        kept = [op for op in model.opset_import if op.domain != _TORCH_SUBGRAPH_DOMAIN]
+        del model.opset_import[:]
+        model.opset_import.extend(kept)
 
 
 class AdapterWeightsToInputsTransform(BaseOnnxTransform):
     @classmethod
-    def apply(cls, model: onnx.ModelProto, *, adapter_name: str, **kwargs) -> Tuple[onnx.ModelProto, bool]:
+    def apply(cls, model: onnx.ModelProto, *, adapter_name: str, **kwargs) -> tuple[onnx.ModelProto, bool]:
         transformed = False
         removed_initializers = []
 
@@ -625,10 +705,159 @@ class RenameWsubNodesTransform(BaseOnnxTransform):
         return transformed
 
 
+class HoistFP8DequantFromSubfunctionTransform(BaseOnnxTransform):
+    """Hoist FP8 dequantization nodes out of local subfunctions to the main graph.
+
+    ORT 1.22.0 cannot execute FP8 tensors passed as inputs through local function
+    boundaries.  This transform moves FP8DequantizeBlocked / FP8DequantizePerAxis /
+    FP8DequantizePerTensor nodes from inside the decoder subfunction to the main
+    graph.
+
+    Strategy: for each FP8DequantizeX node inside the function:
+    1. Create an equivalent node in the main graph using the actual initializer names.
+    2. Replace the FP8 initializer input in the call node with the dequant output.
+       The scale input is replaced with an empty string (unused after hoisting).
+    3. Remove the dequant node from the function body.
+    4. Update the function's value_info: change the FP8 arg type to FLOAT and
+       add FLOAT type info for the dequant output name.
+
+    Crucially, we do NOT change the number of function inputs or their positions —
+    the function body uses positional arg names (arg0_1, arg1_1, ...) and any
+    reordering would break all downstream nodes.
+    """
+
+    _FP8_DEQUANT_OPS = frozenset({"FP8DequantizeBlocked", "FP8DequantizePerAxis", "FP8DequantizePerTensor"})
+    _FP8_TYPE = 17  # TensorProto.FLOAT8E4M3FN
+
+    @classmethod
+    def apply(cls, model: ModelProto) -> bool:
+        fp8_init_names = {i.name for i in model.graph.initializer if i.data_type == cls._FP8_TYPE}
+        if not fp8_init_names:
+            return False
+
+        changed = False
+        for fn in model.functions:
+            fp8_dequant_nodes = [n for n in fn.node if n.op_type in cls._FP8_DEQUANT_OPS]
+            if not fp8_dequant_nodes:
+                continue
+
+            fp8_arg_names = {vi.name for vi in fn.value_info if vi.type.tensor_type.elem_type == cls._FP8_TYPE}
+            if not fp8_arg_names:
+                continue
+
+            original_fn_inputs = list(fn.input)
+            arg_to_idx = {arg_name: idx for idx, arg_name in enumerate(original_fn_inputs)}
+            fp8_arg_to_dq_output = {}
+            fn_changed = False
+
+            for call_node in model.graph.node:
+                if call_node.op_type != fn.name:
+                    continue
+
+                call_inputs = list(call_node.input)
+                arg_to_actual = {
+                    original_fn_inputs[i]: call_inputs[i] for i in range(min(len(original_fn_inputs), len(call_inputs)))
+                }
+
+                # Map: fp8_arg_idx -> actual_dq_output_name (in main graph)
+                fp8_idx_to_actual_dq = {}
+                scale_arg_indices = set()
+
+                for dq_node in fp8_dequant_nodes:
+                    fp8_arg = dq_node.input[0]
+                    if fp8_arg not in fp8_arg_names:
+                        continue
+
+                    fp8_arg_idx = arg_to_idx.get(fp8_arg)
+                    if fp8_arg_idx is None:
+                        continue
+
+                    actual_fp8_name = arg_to_actual.get(fp8_arg)
+                    if actual_fp8_name not in fp8_init_names:
+                        continue
+
+                    scale_arg = dq_node.input[1] if len(dq_node.input) > 1 else None
+                    actual_scale_name = arg_to_actual.get(scale_arg) if scale_arg else None
+
+                    # Dequant output name inside the function body
+                    dq_fn_output = dq_node.output[0]
+                    # Hoisted dequant output name in the main graph
+                    actual_dq_output = f"_hoisted_dequant_{actual_fp8_name}"
+
+                    # Create the dequant node in the main graph
+                    new_node_inputs = [actual_fp8_name]
+                    if actual_scale_name:
+                        new_node_inputs.append(actual_scale_name)
+                    for extra_inp in dq_node.input[2:]:
+                        new_node_inputs.append(arg_to_actual.get(extra_inp, extra_inp))
+
+                    new_dq_node = onnx.helper.make_node(
+                        dq_node.op_type,
+                        inputs=new_node_inputs,
+                        outputs=[actual_dq_output],
+                        domain=dq_node.domain,
+                        name=f"hoisted_{actual_fp8_name}",
+                    )
+                    for attr in dq_node.attribute:
+                        new_dq_node.attribute.append(attr)
+
+                    call_idx = list(model.graph.node).index(call_node)
+                    model.graph.node.insert(call_idx, new_dq_node)
+
+                    fp8_arg_to_dq_output[fp8_arg] = dq_fn_output
+                    fp8_idx_to_actual_dq[fp8_arg_idx] = actual_dq_output
+                    if scale_arg:
+                        scale_arg_idx = arg_to_idx.get(scale_arg)
+                        if scale_arg_idx is not None:
+                            scale_arg_indices.add(scale_arg_idx)
+
+                    changed = True
+                    fn_changed = True
+
+                if not fp8_idx_to_actual_dq:
+                    continue
+
+                # Replace FP8 and scale inputs in this call-site only.
+                for fp8_arg_idx, actual_dq_output in fp8_idx_to_actual_dq.items():
+                    call_node.input[fp8_arg_idx] = actual_dq_output
+                for scale_idx in scale_arg_indices:
+                    call_node.input[scale_idx] = ""
+
+            if not fn_changed:
+                continue
+
+            # Remove dequant nodes from function body once after all call-sites are updated.
+            for n in fp8_dequant_nodes:
+                if n in fn.node:
+                    fn.node.remove(n)
+
+            # Rename function inputs from FP8 arg names to dequant output names.
+            for fp8_arg, dq_fn_output in fp8_arg_to_dq_output.items():
+                fp8_arg_idx = arg_to_idx.get(fp8_arg)
+                if fp8_arg_idx is not None:
+                    fn.input[fp8_arg_idx] = dq_fn_output
+
+            # Update function value_info:
+            # - Remove FP8 type annotations (those args now receive float)
+            # - Add FLOAT type info for the dequant output names
+            for vi in fn.value_info:
+                if vi.name in fp8_arg_names:
+                    vi.type.tensor_type.elem_type = onnx.TensorProto.FLOAT
+                    # Also rename the value_info entry to the dequant output name
+                    vi.name = fp8_arg_to_dq_output.get(vi.name, vi.name)
+            for dq_fn_output in fp8_arg_to_dq_output.values():
+                # Only add if not already present (renamed above)
+                if not any(vi.name == dq_fn_output for vi in fn.value_info):
+                    float_vi = onnx.helper.make_tensor_value_info(dq_fn_output, onnx.TensorProto.FLOAT, None)
+                    fn.value_info.append(float_vi)
+
+        return changed
+
+
 class OnnxTransformPipeline(BaseOnnxTransform):
     """Pipeline to apply multiple ONNX transformations in sequence."""
 
-    def __init__(self, transforms: List[Type[BaseOnnxTransform]]):
+    def __init__(self, transforms: list[type[BaseOnnxTransform]]):
         self.transforms = transforms
 
     def apply(
@@ -636,16 +865,16 @@ class OnnxTransformPipeline(BaseOnnxTransform):
         model: ModelProto,
         *,
         model_name: str = "",
-        onnx_base_dir: Optional[str] = None,
+        onnx_base_dir: str | None = None,
         file_chunk_size: int = FILE_CHUNK_SIZE_DEFAULT,
         size_threshold: int = SIZE_THRESHOLD_DEFAULT,
         **kwargs,
-    ) -> Tuple[ModelProto, bool]:
+    ) -> tuple[ModelProto, bool]:
         if not self.transforms:
             return model, False
 
         # Same logic as before, but replace `transforms` with `self.transforms`
-        mapping: Dict[str, Tuple[TensorProto, str]] = {}
+        mapping: dict[str, tuple[TensorProto, str]] = {}
         requested = set(self.transforms)
         applied = {t: False for t in requested}
         f16_applied = False
@@ -709,6 +938,9 @@ class OnnxTransformPipeline(BaseOnnxTransform):
 
         if AdapterWeightsToInputsTransform in requested:
             applied[AdapterWeightsToInputsTransform] = AdapterWeightsToInputsTransform.apply(model, **kwargs)
+
+        if HoistFP8DequantFromSubfunctionTransform in requested:
+            applied[HoistFP8DequantFromSubfunctionTransform] = HoistFP8DequantFromSubfunctionTransform.apply(model)
 
         for t, done in applied.items():
             logger.info(f"Transform '{t.__name__}' applied={done}")

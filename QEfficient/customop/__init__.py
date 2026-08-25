@@ -39,6 +39,9 @@ from QEfficient.customop.utils import (
     ctx_scatter_3d_int,
     ctx_scatter_cb,
     ctx_scatter_cb_3d,
+    fp8_dequantize_blocked,
+    fp8_dequantize_per_axis,
+    fp8_dequantize_per_tensor,
 )
 
 __all__ = [
@@ -74,4 +77,7 @@ __all__ = [
     "ctx_gather_cb",
     "ctx_gather_blocked_kv_cb",
     "ctx_gather_cb_3d",
+    "fp8_dequantize_per_tensor",
+    "fp8_dequantize_per_axis",
+    "fp8_dequantize_blocked",
 ]

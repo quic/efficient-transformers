@@ -134,6 +134,24 @@ class TestONNXTransformsModuleStructure:
         assert RenameFunctionOutputsTransform is not None
         assert hasattr(RenameFunctionOutputsTransform, "apply")
 
+    def test_onnx_pipeline_dispatches_hoist_fp8_dequant_transform(self, monkeypatch):
+        from QEfficient.base.onnx_transforms import HoistFP8DequantFromSubfunctionTransform, OnnxTransformPipeline
+
+        model = object()
+        called = {"count": 0}
+
+        def _fake_apply(cls, model_proto):
+            assert model_proto is model
+            called["count"] += 1
+            return True
+
+        monkeypatch.setattr(HoistFP8DequantFromSubfunctionTransform, "apply", classmethod(_fake_apply))
+        pipeline = OnnxTransformPipeline([HoistFP8DequantFromSubfunctionTransform])
+        _, changed = pipeline.apply(model)
+
+        assert called["count"] == 1
+        assert changed is True
+
 
 @pytest.mark.onnx
 @pytest.mark.slow
@@ -272,8 +290,7 @@ class TestFP16ClipTransformFunctional:
         """Create a minimal ONNX model with an initializer value > FP16 max (65504)."""
         import numpy as np
         import onnx
-        import onnx.helper as helper
-        import onnx.numpy_helper as numpy_helper
+        from onnx import helper, numpy_helper
 
         # Create a simple Add node: output = input + large_weight
         large_value = np.array([100000.0, -100000.0, 1.0, 0.5], dtype=np.float32)
@@ -291,7 +308,7 @@ class TestFP16ClipTransformFunctional:
         """FP16ClipTransform.apply operates on individual tensors.
         It must clip FP32 values > 65504 to fp16_max."""
         import numpy as np
-        import onnx.numpy_helper as numpy_helper
+        from onnx import numpy_helper
 
         from QEfficient.base.onnx_transforms import FP16ClipTransform
 
@@ -320,8 +337,7 @@ class TestFP16ClipTransformFunctional:
         """FP16ClipTransform must not modify values within the FP16 range."""
         import numpy as np
         import onnx
-        import onnx.helper as helper
-        import onnx.numpy_helper as numpy_helper
+        from onnx import helper, numpy_helper
 
         from QEfficient.base.onnx_transforms import FP16ClipTransform
 
@@ -350,7 +366,7 @@ class TestFP16ClipTransformFunctional:
     def test_fp16_clip_transform_handles_negative_out_of_range(self, tmp_export_dir):
         """FP16ClipTransform must clip negative values < -65504 to -65504."""
         import numpy as np
-        import onnx.numpy_helper as numpy_helper
+        from onnx import numpy_helper
 
         from QEfficient.base.onnx_transforms import FP16ClipTransform
 
@@ -477,7 +493,7 @@ class TestSplitTensorsTransformFunctional:
     def test_split_tensors_apply_populates_mapping(self):
         """SplitTensorsTransform.apply must add tensor to mapping dict."""
         import numpy as np
-        import onnx.numpy_helper as numpy_helper
+        from onnx import numpy_helper
 
         from QEfficient.base.onnx_transforms import SplitTensorsTransform
 
@@ -495,7 +511,7 @@ class TestSplitTensorsTransformFunctional:
     def test_split_tensors_apply_assigns_correct_file_name(self):
         """SplitTensorsTransform.apply must assign correct file name."""
         import numpy as np
-        import onnx.numpy_helper as numpy_helper
+        from onnx import numpy_helper
 
         from QEfficient.base.onnx_transforms import SplitTensorsTransform
 
@@ -512,7 +528,7 @@ class TestSplitTensorsTransformFunctional:
     def test_split_tensors_apply_stores_tensor_in_mapping(self):
         """SplitTensorsTransform.apply must store the tensor proto in mapping."""
         import numpy as np
-        import onnx.numpy_helper as numpy_helper
+        from onnx import numpy_helper
 
         from QEfficient.base.onnx_transforms import SplitTensorsTransform
 
@@ -528,7 +544,7 @@ class TestSplitTensorsTransformFunctional:
     def test_split_tensors_apply_multiple_tensors(self):
         """SplitTensorsTransform.apply must handle multiple tensors in same mapping."""
         import numpy as np
-        import onnx.numpy_helper as numpy_helper
+        from onnx import numpy_helper
 
         from QEfficient.base.onnx_transforms import SplitTensorsTransform
 

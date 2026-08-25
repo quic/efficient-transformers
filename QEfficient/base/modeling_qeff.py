@@ -14,7 +14,7 @@ import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import onnx
 import torch
@@ -117,7 +117,7 @@ def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) ->
             value_info.name = new_name
 
 
-def _restore_retained_state_output_names(model: onnx.ModelProto, output_names: List[str]) -> None:
+def _restore_retained_state_output_names(model: onnx.ModelProto, output_names: list[str]) -> None:
     """Restore retained-state output names when ONNX subfunction transforms rewrite them."""
     for output_idx, expected_name in enumerate(output_names):
         if output_idx >= len(model.graph.output):
@@ -132,7 +132,7 @@ def _restore_retained_state_output_names(model: onnx.ModelProto, output_names: L
             _rename_graph_value(model.graph, current_name, expected_name)
 
 
-def _restore_output_names_exact(model: onnx.ModelProto, output_names: List[str]) -> None:
+def _restore_output_names_exact(model: onnx.ModelProto, output_names: list[str]) -> None:
     """Force graph output names to match ``output_names`` by positional index."""
     for output_idx, expected_name in enumerate(output_names):
         if output_idx >= len(model.graph.output):
@@ -155,13 +155,13 @@ class QEFFBaseModel(ABC):
     _end = 0
     _total_layers = None
     _layerwise_active = False
-    _pytorch_transforms: List[PytorchTransform]
+    _pytorch_transforms: list[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
 
-    def _transform_names(self) -> List[str]:
+    def _transform_names(self) -> list[str]:
         return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
 
-    def maybe_apply_replicate_kv_transform(self, model_config, num_devices: int, qaic_config: Optional[dict]) -> int:
+    def maybe_apply_replicate_kv_transform(self, model_config, num_devices: int, qaic_config: dict | None) -> int:
         if model_config is None or qaic_config is None or "EncoderWrapper" in self.model.__class__.__name__:
             return 1
 
@@ -197,9 +197,9 @@ class QEFFBaseModel(ABC):
         self.model = model
         self.config = model.config
         self.hash_params = create_model_params(self, **kwargs)
-        self.onnx_path: Optional[str] = None
-        self.qpc_path: Optional[str] = None
-        self.qpc_session: Optional[QAICInferenceSession] = None
+        self.onnx_path: str | None = None
+        self.qpc_path: str | None = None
+        self.qpc_session: QAICInferenceSession | None = None
         self.model_architecture = (
             (arch := getattr(self.model.config, "architectures", None)) and len(arch) > 0 and arch[0]
         ) or None
@@ -326,7 +326,7 @@ class QEFFBaseModel(ABC):
 
     @property
     @abstractmethod
-    def get_model_config(self) -> Dict:
+    def get_model_config(self) -> dict:
         """
         Get the model configuration as a dictionary.
 
@@ -336,10 +336,9 @@ class QEFFBaseModel(ABC):
         Returns:
             Dict: The configuration dictionary of the underlying model
         """
-        pass
 
     @abstractmethod
-    def export(self, export_dir: Optional[str] = None) -> Path:
+    def export(self, export_dir: str | None = None) -> Path:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
 
@@ -394,11 +393,11 @@ class QEFFBaseModel(ABC):
     def _export_via_legacy(
         self,
         onnx_path: Path,
-        example_inputs: Dict[str, torch.Tensor],
-        input_names: List[str],
-        output_names: List[str],
-        dynamic_axes: Dict,
-        export_kwargs: Dict,
+        example_inputs: dict[str, torch.Tensor],
+        input_names: list[str],
+        output_names: list[str],
+        dynamic_axes: dict,
+        export_kwargs: dict,
     ) -> None:
         """Export via TorchScript symbolic tracing (dynamo=False)."""
         with layerwise_safe_onnx_export_patches(enabled=bool(QEFFBaseModel._layerwise_active)):
@@ -418,11 +417,11 @@ class QEFFBaseModel(ABC):
     def _export_via_dynamo(
         self,
         onnx_path: Path,
-        example_inputs: Dict[str, torch.Tensor],
-        input_names: List[str],
-        output_names: List[str],
-        dynamic_shapes: Optional[Dict],
-        export_kwargs: Dict,
+        example_inputs: dict[str, torch.Tensor],
+        input_names: list[str],
+        output_names: list[str],
+        dynamic_shapes: dict | None,
+        export_kwargs: dict,
     ) -> None:
         """Export via torch.export (dynamo=True) with custom op translation."""
         # Reorder example_inputs and dynamic_shapes to match model.forward signature order,
@@ -440,32 +439,61 @@ class QEFFBaseModel(ABC):
             dynamic_shapes = {**ordered_shapes, **{k: v for k, v in dynamic_shapes.items() if k not in sig_key_set}}
 
         export_kwargs = dict(export_kwargs)
-        export_kwargs.setdefault("report", False)
-        export_kwargs.setdefault("optimize", False)
-        export_kwargs["dynamo"] = True
-        export_kwargs["custom_translation_table"] = {
+        report = export_kwargs.pop("report", False)
+        optimize = export_kwargs.pop("optimize", False)
+        export_kwargs.pop("dynamo", None)
+        export_kwargs.pop("use_onnx_subfunctions", None)
+        custom_translation_table = {
             **(export_kwargs.pop("custom_translation_table", None) or {}),
             **DYNAMO_CUSTOM_OP_TABLE,
         }
 
+        # Build the ONNX registry with our custom ops registered.
+        # We call the lower-level _core.export directly (bypassing torch.onnx.export /
+        # export_compat) so that convert_version is NOT triggered.  convert_version
+        # inlines local ONNX functions before upgrading the opset, which fails when
+        # our custom functions reference a higher opset than the model's base opset.
+        # By passing opset_version=None to _core.export, the model stays at
+        # TORCHLIB_OPSET (18) and no inlining occurs.  For FP8 models we bump the
+        # opset declaration post-export so ORT accepts FP8 DequantizeLinear nodes.
+        from torch.onnx._internal.exporter import _core as _onnx_core
+        from torch.onnx._internal.exporter import _registration as _onnx_reg
+
+        _registry = _onnx_reg.ONNXRegistry().from_torchlib(opset_version=constants.ONNX_DYNAMO_EXPORT_OPSET)
+        for _torch_op, _onnx_op in custom_translation_table.items():
+            _registry.register_op(_torch_op, _onnx_op, is_complex=False)
+
         prev_invoke_fallback = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
         os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = "1"
         try:
-            onnx_program = torch.onnx.export(
+            onnx_program = _onnx_core.export(
                 self.model,
                 args=(),
-                f=None,
                 kwargs=example_inputs,
+                registry=_registry,
                 input_names=input_names,
                 output_names=output_names,
-                dynamic_axes=None,
                 dynamic_shapes=dynamic_shapes,
-                opset_version=constants.ONNX_DYNAMO_EXPORT_OPSET,
+                report=report,
+                optimize=optimize,
+                opset_version=None,
                 **export_kwargs,
             )
             if onnx_program is None:
                 raise RuntimeError("torch.onnx.export returned None for dynamo export")
             PruneFakeInitializersTransform.apply(onnx_program)
+            # Bump the default-domain opset declaration to 21 when the model contains
+            # FP8 initializers so ORT accepts FP8 DequantizeLinear nodes.
+            # We modify the IR model's opset_imports directly (not model_proto, which
+            # is re-serialized from the IR model on every access and would discard
+            # any proto-level changes).
+            import onnx_ir as _ir
+
+            _has_fp8 = any(v.dtype == _ir.DataType.FLOAT8E4M3FN for v in onnx_program.model.graph.initializers.values())
+            if _has_fp8:
+                onnx_program.model.opset_imports[""] = 21
+                for fn in onnx_program.model.functions.values():
+                    fn.opset_imports[""] = 21
             onnx_program.save(str(onnx_path))
         finally:
             if prev_invoke_fallback is None:
@@ -476,13 +504,13 @@ class QEFFBaseModel(ABC):
     @export_wrapper
     def _export(
         self,
-        example_inputs: Dict[str, torch.Tensor],
-        output_names: List[str],
-        dynamic_axes: Dict[str, Dict[int, str]],
-        onnx_transform_kwargs: Optional[Dict[str, Any]] = None,
-        export_dir: Optional[str] = None,
+        example_inputs: dict[str, torch.Tensor],
+        output_names: list[str],
+        dynamic_axes: dict[str, dict[int, str]],
+        onnx_transform_kwargs: dict[str, Any] | None = None,
+        export_dir: str | None = None,
         offload_pt_weights: bool = True,
-        prefill_only: Optional[bool] = False,
+        prefill_only: bool | None = False,
         dynamo: bool = False,
         dynamic_shapes: Optional[Dict[str, Dict[int, Any]]] = None,
         enable_chunking: Optional[bool] = False,
@@ -733,11 +761,11 @@ class QEFFBaseModel(ABC):
     @export_wrapper
     def _export_layerwise(
         self,
-        example_inputs: Dict[str, torch.Tensor],
-        output_names: List[str],
-        dynamic_axes: Dict[str, Dict[int, str]],
-        onnx_transform_kwargs: Optional[Dict[str, any]] = None,
-        export_dir: Optional[str] = None,
+        example_inputs: dict[str, torch.Tensor],
+        output_names: list[str],
+        dynamic_axes: dict[str, dict[int, str]],
+        onnx_transform_kwargs: dict[str, any] | None = None,
+        export_dir: str | None = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
         enable_chunking: Optional[bool] = False,
@@ -966,11 +994,11 @@ class QEFFBaseModel(ABC):
 
     def transform(
         self,
-        ctx_len: Optional[int] = None,
-        seq_len: Optional[int] = None,
-        bs: Optional[int] = 1,
+        ctx_len: int | None = None,
+        seq_len: int | None = None,
+        bs: int | None = 1,
         num_devices: int = 1,
-        qaic_config: Optional[dict] = None,
+        qaic_config: dict | None = None,
         **compiler_options,
     ):
         # Apply the transformations that are dependent on compilation parameters
@@ -1023,26 +1051,26 @@ class QEFFBaseModel(ABC):
     @dump_qconfig
     def _compile(
         self,
-        onnx_path: Optional[str] = None,
-        compile_dir: Optional[str] = None,
+        onnx_path: str | None = None,
+        compile_dir: str | None = None,
         *,
         mxint8_kv_cache: bool = False,
-        specializations: Optional[List[Dict[str, int]]] = None,
-        custom_io: Optional[Dict[str, str]] = None,
+        specializations: list[dict[str, int]] | None = None,
+        custom_io: dict[str, str] | None = None,
         mdp_ts_num_devices: int = 1,
-        mdp_num_partitions: Optional[int] = 1,
-        num_speculative_tokens: Optional[Union[int, List[int]]] = None,
-        enable_qnn: Optional[bool] = False,
-        qnn_config: Optional[str] = None,
+        mdp_num_partitions: int | None = 1,
+        num_speculative_tokens: int | list[int] | None = None,
+        enable_qnn: bool | None = False,
+        qnn_config: str | None = None,
         use_onnx_subfunctions: bool = False,
         dynamo: bool = False,
-        prefill_only: Optional[str] = None,
-        offload_pt_weights: Optional[bool] = True,
-        enable_chunking: Optional[bool] = False,
-        retain_full_kv: Optional[bool] = None,
-        qaic_config: Optional[dict] = None,
-        specialization_module_name: Optional[str] = None,
-        kv_cache_prefix: Optional[str] = None,
+        prefill_only: str | None = None,
+        offload_pt_weights: bool | None = True,
+        enable_chunking: bool | None = False,
+        retain_full_kv: bool | None = None,
+        qaic_config: dict | None = None,
+        specialization_module_name: str | None = None,
+        kv_cache_prefix: str | None = None,
         **compiler_options,
     ) -> str:
         """

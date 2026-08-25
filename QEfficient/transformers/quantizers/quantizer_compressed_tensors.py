@@ -7,7 +7,6 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional
 
 import torch
 from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextExperts
@@ -17,12 +16,7 @@ from transformers.utils.quantization_config import CompressedTensorsConfig, Quan
 
 # Importing the custom ops registers them with torch.ops.qefficient.*
 import QEfficient.customop.dynamo_ops  # noqa: F401
-from QEfficient.customop.fp8_dequantize import (
-    FP8DequantizeBlockedFunc,
-    FP8DequantizePerAxisFunc,
-    FP8DequantizePerTensorFunc,
-)
-from QEfficient.customop.utils import select_interface
+from QEfficient.customop.utils import fp8_dequantize_blocked, fp8_dequantize_per_axis, fp8_dequantize_per_tensor
 from QEfficient.transformers.quantizers.quantizer_utils import blockwise_dequantize, get_keys_to_not_convert
 from QEfficient.utils.logging_utils import logger
 
@@ -140,7 +134,7 @@ class FP8DeQuantLinear(torch.nn.Module):
         cls,
         in_features: int,
         out_features: int,
-        activation_quantization_strategy: Optional[str],
+        activation_quantization_strategy: str | None,
         bias: bool,
         scale_dtype: torch.dtype = torch.bfloat16,
     ):
@@ -159,16 +153,10 @@ class FP8DeQuantLinear(torch.nn.Module):
             scale = scale.squeeze(-1)
         if scale.ndim == 0 or scale.numel() == 1:
             # Per-tensor: scalar scale — dispatches to DequantizeLinear (no axis) in ONNX.
-            dequantized_weights = select_interface(
-                FP8DequantizePerTensorFunc.apply,
-                torch.ops.qefficient.fp8_dequantize_per_tensor,
-            )(self.weight, scale)
+            dequantized_weights = fp8_dequantize_per_tensor(self.weight, scale)
         else:
             # Per-axis: (out_features,) scale — dispatches to DequantizeLinear(axis=0) in ONNX.
-            dequantized_weights = select_interface(
-                FP8DequantizePerAxisFunc.apply,
-                torch.ops.qefficient.fp8_dequantize_per_axis,
-            )(self.weight, scale)
+            dequantized_weights = fp8_dequantize_per_axis(self.weight, scale)
         with torch.no_grad():
             out = torch.matmul(x.to(scale.dtype), dequantized_weights.T)
             out = out + self.bias if self.bias is not None else out
@@ -193,7 +181,7 @@ class FP8BlockWiseDequantLinear(torch.nn.Module):
         self,
         in_features: int,
         out_features: int,
-        weight_block_size: List[int],
+        weight_block_size: list[int],
         bias: bool = False,
         scale_dtype: torch.dtype = torch.bfloat16,
     ):
@@ -215,7 +203,7 @@ class FP8BlockWiseDequantLinear(torch.nn.Module):
         cls,
         in_features: int,
         out_features: int,
-        weight_block_size: List[int],
+        weight_block_size: list[int],
         fmt: str,
         bias: bool,
         scale_dtype: torch.dtype = torch.bfloat16,
@@ -245,14 +233,7 @@ class FP8BlockWiseDequantLinear(torch.nn.Module):
 
     def forward(self, x):
         row_bs, col_bs = self.weight_block_size
-        # Pass the compact scale directly. The custom op expands it eagerly for
-        # correctness; the ONNX symbolic emits Tile(scale,[row_bs,1]) followed by
-        # DequantizeLinear(axis=-1, block_size=col_bs) so the ONNX graph stays
-        # clean — no 3D intermediates from repeat_interleave lowering.
-        dequantized_weights = select_interface(
-            FP8DequantizeBlockedFunc.apply,
-            torch.ops.qefficient.fp8_dequantize_blocked,
-        )(self.weight, self.weight_scale_inv, row_bs, col_bs)
+        dequantized_weights = fp8_dequantize_blocked(self.weight, self.weight_scale_inv, row_bs, col_bs)
         with torch.no_grad():
             out = torch.matmul(x.to(self.weight_scale_inv.dtype), dequantized_weights.T)
             out = out + self.bias if self.bias is not None else out
@@ -299,7 +280,7 @@ class FP8BlockWiseDequantQwen3VLMoeTextExperts(torch.nn.Module):
     def for_fp8_layer_with_blocksize(
         cls,
         old_module,
-        weight_block_size: List[int],
+        weight_block_size: list[int],
         fmt: str,
         scale_dtype: torch.dtype = torch.bfloat16,
     ):
@@ -337,11 +318,11 @@ class QEffFP8Config(QuantizationConfigMixin):
         self,
         quant_method: str,
         activation_scheme: str,
-        ignored_layers: List[str] = None,
+        ignored_layers: list[str] = None,
         kv_cache_scheme: str = None,
         run_compressed: bool = False,
         fmt: str = None,
-        weight_block_size: List[int] = None,
+        weight_block_size: list[int] = None,
         scale_dtype: torch.dtype = torch.bfloat16,
     ):
         self.quant_method = quant_method
@@ -502,10 +483,10 @@ class QEffFP8Quantizer(CompressedTensorsHfQuantizer):
     def _process_model_after_weight_loading(self, model, **kwargs):
         _squeeze_fp8_per_channel_scales(model)
 
-    def update_missing_keys_after_loading(self, model, missing_keys: List[str], prefix: str) -> List[str]:
+    def update_missing_keys_after_loading(self, model, missing_keys: list[str], prefix: str) -> list[str]:
         return missing_keys
 
-    def update_unexpected_keys(self, model, unexpected_keys: List[str], prefix: str = None) -> List[str]:
+    def update_unexpected_keys(self, model, unexpected_keys: list[str], prefix: str = None) -> list[str]:
         return unexpected_keys
 
 
@@ -803,10 +784,10 @@ class QEffCompressedTensorsFP8Quantizer(CompressedTensorsHfQuantizer):
             return
         _squeeze_fp8_per_channel_scales(model)
 
-    def update_missing_keys_after_loading(self, model, missing_keys: List[str], prefix: str) -> List[str]:
+    def update_missing_keys_after_loading(self, model, missing_keys: list[str], prefix: str) -> list[str]:
         if self.is_pack_quantized(self.quantization_config):
             return super().update_missing_keys_after_loading(model, missing_keys=missing_keys, prefix=prefix)
         return missing_keys
 
-    def update_unexpected_keys(self, model, unexpected_keys: List[str], prefix: str = None) -> List[str]:
+    def update_unexpected_keys(self, model, unexpected_keys: list[str], prefix: str = None) -> list[str]:
         return unexpected_keys
