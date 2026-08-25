@@ -3913,8 +3913,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         for_loop_number_forced_by_expert_parallel = self.hash_params.get("moe_prefill_num_packed_chunks", None)
         if blocking_enabled:
             max_blocks = -1
-            for num_blocks in self.hash_params.get("blocking_kwargs").__dict__.values():
-                if isinstance(num_blocks, int):
+            for key, num_blocks in self.hash_params.get("blocking_kwargs").__dict__.items():
+                if isinstance(num_blocks, int) and key in ["num_kv_blocks", "num_q_blocks"]:
                     max_blocks = max(max_blocks, num_blocks)
             block_size = -(-seq_len // max_blocks)
             for_loop_number_forced_by_blocking = block_size * max_blocks

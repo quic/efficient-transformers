@@ -270,7 +270,6 @@ def blocked_kv_attention_forward_decode_headpar_batch(
     attention use [1, B*Hkv, ...], with batch_index mapping B into FBS.
     """
     batch_size, num_heads, seq_len, head_dim = query.shape
-    assert seq_len == 1, "blocked_kv_attention_forward_decode_headpar_batch is decode-only (seq_len must be 1)."
     num_kv_groups = getattr(module, "num_key_value_groups", None)
     num_kv_heads = num_heads // num_kv_groups
     BH = batch_size * num_kv_heads  # static at compile time

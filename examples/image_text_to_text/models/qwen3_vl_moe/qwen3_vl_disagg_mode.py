@@ -43,7 +43,7 @@ NUM_KV_BLOCKS = 4
 NUM_Q_BLOCKS = 2
 PREFILL_QL_CHUNK = 128
 PREFILL_N_REP_CHUNK = 4
-MOE_PREFILL_PACKED_CHUNK_SIZE = 256
+EXPERT_PARALLEL_CHUNK_SIZE = 256
 NUM_CORES = 16
 NUM_DEVICES_DECODE = 16
 NUM_DEVICES_PREFILL = 1
@@ -87,10 +87,10 @@ def parse_args():
         "--prefill-n-rep-chunk", type=int, default=PREFILL_N_REP_CHUNK, help="Prefill n_rep_chunk (batch_fold only)"
     )
     p.add_argument(
-        "--moe-prefill-packed-chunk-size",
+        "--expert-parallel-chunk-size",
         type=int,
-        default=MOE_PREFILL_PACKED_CHUNK_SIZE,
-        help="MoE prefill packed chunk size (batch_fold only)",
+        default=EXPERT_PARALLEL_CHUNK_SIZE,
+        help="MoE expert-parallel chunk size for prefill (batch_fold and headpar only)",
     )
     p.add_argument("--num-cores", type=int, default=NUM_CORES)
     p.add_argument("--num-devices-decode", type=int, default=NUM_DEVICES_DECODE)
@@ -111,10 +111,21 @@ def parse_args():
 
 
 def _decode_qaic_config(args) -> dict | None:
+    moe_config = {"flavour": "expert_parallel", "tree_reduce": True, "cores_per_expert": 2}
     if args.mode == "batch_fold":
-        return {"blocking_mode": "kv_batch_fold", "num_kv_blocks": args.num_kv_blocks, "ctx_len": args.ctx_len}
+        return {
+            "blocking_mode": "kv_batch_fold",
+            "num_kv_blocks": args.num_kv_blocks,
+            "ctx_len": args.ctx_len,
+            "moe_config": moe_config,
+        }
     if args.mode == "headpar":
-        return {"blocking_mode": "kv_headpar", "num_kv_blocks": args.num_kv_blocks, "ctx_len": args.ctx_len}
+        return {
+            "blocking_mode": "kv_headpar",
+            "num_kv_blocks": args.num_kv_blocks,
+            "ctx_len": args.ctx_len,
+            "moe_config": moe_config,
+        }
     return None  # no_blocking: no qaic_config
 
 
@@ -126,6 +137,7 @@ def _prefill_qaic_config(args, prefill_block_chunks: int) -> dict | None:
             "num_q_blocks": prefill_block_chunks,
             "n_rep_chunk": args.prefill_n_rep_chunk,
             "ctx_len": args.ctx_len,
+            "moe_config": {"expert_parallel_chunk_size": args.expert_parallel_chunk_size},
         }
     return None  # no_blocking: no qaic_config
 
@@ -214,18 +226,12 @@ def main():
             full_batch_size=bs,
             kv_cache_batch_size=bs,
             user_tiled=True,
-            expert_parallel=True,
-            tree_reduce=True,
-            cores_per_expert=2,
             qaic_config=decode_qaic_config,
         )
     elif args.mode == "headpar":
         decode_compile_kwargs.update(
             retain_full_kv=True,
             user_tiled=True,
-            expert_parallel=True,
-            tree_reduce=True,
-            cores_per_expert=2,
             qaic_config=decode_qaic_config,
         )
     else:  # no_blocking
@@ -235,7 +241,7 @@ def main():
     print(f"Decode export + compile time is {(perf_counter() - decode_start_time):.3f}s")
 
     # ── Prefill compile ───────────────────────────────────────────────────────
-    # batch_fold:   bs=1, kv_cache_batch_size=7, moe_prefill_packed_chunk_size
+    # batch_fold:   bs=1, kv_cache_batch_size=7, expert_parallel_chunk_size via moe_config
     # no_blocking:  bs=<bs>, depth-first, no blocking config
     # headpar:      bs=1, user-tiled, prefill blocking config
     prefill_qaic_config = _prefill_qaic_config(args, prefill_block_chunks)
@@ -266,14 +272,12 @@ def main():
             batch_size=1,
             full_batch_size=1,
             kv_cache_batch_size=7,
-            moe_prefill_packed_chunk_size=args.moe_prefill_packed_chunk_size,
             user_tiled=True,
             qaic_config=prefill_qaic_config,
         )
     elif args.mode == "headpar":
         prefill_compile_kwargs.update(
             batch_size=1,
-            moe_prefill_packed_chunk_size=args.moe_prefill_packed_chunk_size,
             user_tiled=True,
             qaic_config=prefill_qaic_config,
         )
