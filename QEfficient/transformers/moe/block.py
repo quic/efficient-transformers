@@ -36,7 +36,7 @@ from QEfficient.transformers.moe.flavours import (
     resolve_routing,
 )
 from QEfficient.transformers.moe.profiles import SILU_GLU_PROFILE, MoEProfile
-from QEfficient.transformers.moe.quantized import (
+from QEfficient.transformers.moe.qflavours import (
     QuantizedMoEWeights,
     moe_quantized_decode_bmm,
     moe_quantized_expert_parallel,
