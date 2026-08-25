@@ -90,14 +90,6 @@ class QEffMoEBlockMixin(metaclass=ABCMeta):
         if "weights_transformed" not in self.__dict__:
             self.weights_transformed = False
 
-    @property
-    def expert_blocking_num_packed_chunks(self) -> int:
-        return self.expert_parallel_num_packed_chunks
-
-    @expert_blocking_num_packed_chunks.setter
-    def expert_blocking_num_packed_chunks(self, value: int) -> None:
-        self.expert_parallel_num_packed_chunks = value
-
     # ---- variation points (override per model) --------------------------------
     def route(self, x: torch.Tensor):
         raise NotImplementedError
