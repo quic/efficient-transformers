@@ -296,10 +296,6 @@ def generate_disagg_mdp_partition_config(
     folded_nodes = _get_compiler_folded_nodes(model.graph)
     logger.info(f"Found {len(folded_nodes)} compiler-folded nodes (excluded from nodeList)")
 
-    _, non_inlined_functions = _get_inlined_node_map(model)
-    inlined_functions = {f.name for f in model.functions} - non_inlined_functions
-    local_functions = {f.name: f for f in model.functions}
-
     # Single pass: assign main-graph nodes by layer index.  Inlined call-sites
     # are expanded in topological position so nodeList order matches the ONNX
     # topsort — required by the compiler's SplitPlanMerge.
