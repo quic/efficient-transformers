@@ -97,6 +97,7 @@ from transformers.models.granite.modeling_granite import (
 from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeAttention,
     GraniteMoeDecoderLayer,
+    GraniteMoeExperts as GraniteMoeParallelExperts,
     GraniteMoeForCausalLM,
     GraniteMoeModel,
     GraniteMoeMoE,
