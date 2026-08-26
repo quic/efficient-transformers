@@ -18,11 +18,13 @@ pass attention_mask=None directly to the encoder (CLIP uses causal attention via
 is_causal=True, so no explicit mask tensor is needed for export).
 """
 
-from typing import Optional
-
 import torch
 from transformers.modeling_outputs import BaseModelOutputWithPooling
-from transformers.models.clip.modeling_clip import CLIPTextTransformer
+
+try:
+    from transformers.models.clip.modeling_clip import CLIPTextTransformer
+except ImportError:
+    from transformers.models.clip.modeling_clip import CLIPTextModel as CLIPTextTransformer
 
 
 class QEffCLIPTextTransformer(CLIPTextTransformer):
@@ -35,10 +37,10 @@ class QEffCLIPTextTransformer(CLIPTextTransformer):
 
     def forward(
         self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        output_hidden_states: Optional[bool] = None,
+        input_ids: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.Tensor | None = None,
+        output_hidden_states: bool | None = None,
         **kwargs,
     ) -> BaseModelOutputWithPooling:
         if input_ids is None:
