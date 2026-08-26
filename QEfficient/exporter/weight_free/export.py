@@ -31,6 +31,8 @@ from QEfficient.utils.torch_patches import (
     temporarily_enable_nested_compile_regions,
 )
 
+_PREPARED_CHECKPOINT_LAYOUT_VERSION = "moe-weights-v1"
+
 _last_prep_peak_rss_mb: Optional[float] = None
 _last_prep_duration_seconds: float = 0.0
 _checkpoint_prep_ran: bool = False
@@ -184,7 +186,9 @@ def _prepare_checkpoint_for_weight_free_export(
 
     source_dir = resolve_checkpoint_dir(model_ref)
     dtype_suffix = str(target_dtype).replace("torch.", "")
-    prepared_out = source_dir.parent / (source_dir.name + f"-qeff-prepared-{dtype_suffix}")
+    prepared_out = source_dir.parent / (
+        source_dir.name + f"-qeff-prepared-{dtype_suffix}-{_PREPARED_CHECKPOINT_LAYOUT_VERSION}"
+    )
     prep_pipeline = CheckpointTransformPipeline(transforms=qeff_model._checkpoint_transforms)
     return str(
         prep_pipeline.apply(

@@ -59,9 +59,10 @@ def _estimate_layer_stack_gb(
           up    [E, I, H]
           down  [E, H, I]
 
-        Outputs (target_dtype, e.g. FP32 — twice as large when converting BF16→FP32):
-          gate_up  [E, 2I, H]   cat(gate, up).to(target_dtype)
-          down_out [E,  H, I]   down.to(target_dtype)
+        Outputs (target_dtype, e.g. FP32 — twice as large when converting BF16->FP32):
+          gate [E, H, I]
+          up   [E, H, I]
+          down [E, I, H]
 
     Using source dtype bytes for the outputs underestimates by ~45% when
     converting BF16→FP32, causing too many parallel workers and OOM.
@@ -87,11 +88,11 @@ def _estimate_layer_stack_gb(
     tgt_bytes = {torch.float32: 4, torch.float16: 2, torch.bfloat16: 2}.get(target_dtype, 4)
     ffn_dim, hidden_dim = shape
 
-    # Three input accumulators in source dtype + two output tensors in target dtype
+    # Three input accumulators in source dtype + three output tensors in target dtype
     input_elements = num_experts * (
         ffn_dim * hidden_dim + ffn_dim * hidden_dim + hidden_dim * ffn_dim
     )  # gate + up + down
-    output_elements = num_experts * (2 * ffn_dim * hidden_dim + hidden_dim * ffn_dim)  # gate_up + down_out
+    output_elements = num_experts * (2 * ffn_dim * hidden_dim + hidden_dim * ffn_dim)  # gate + up + down
     return (input_elements * src_bytes + output_elements * tgt_bytes) / 1024**3
 
 
@@ -99,6 +100,82 @@ def _estimate_layer_stack_gb(
 # Sentinel marking a fully-prepared checkpoint directory
 # ---------------------------------------------------------------------------
 _SENTINEL = CHECKPOINT_PREPARED_SENTINEL
+
+
+def _moe_weights_prefix_from_experts_prefix(prefix: str) -> str:
+    """Return the parent ``moe_weights`` prefix for a checkpoint expert prefix."""
+    if prefix.endswith(".experts"):
+        return prefix[: -len(".experts")] + ".moe_weights"
+    return f"{prefix}.moe_weights"
+
+
+def _infer_fused_gate_up_split_dim(
+    gate_up_shape: Tuple[int, ...],
+    down_shape: Optional[Tuple[int, ...]],
+    *,
+    preferred_split_dim: Optional[int] = None,
+) -> int:
+    """Infer whether fused gate/up uses [E,2I,H] or [E,H,2I]."""
+    if len(gate_up_shape) != 3 or down_shape is None or len(down_shape) != 3:
+        return preferred_split_dim if preferred_split_dim in (1, 2) else 1
+
+    split_dim_1_match = gate_up_shape[1] == 2 * down_shape[2] and gate_up_shape[2] == down_shape[1]
+    split_dim_2_match = gate_up_shape[2] == 2 * down_shape[1] and gate_up_shape[1] == down_shape[2]
+    if split_dim_1_match and not split_dim_2_match:
+        return 1
+    if split_dim_2_match and not split_dim_1_match:
+        return 2
+    return preferred_split_dim if preferred_split_dim in (1, 2) else 1
+
+
+def _split_fused_gate_up_to_canonical(
+    gate_up: torch.Tensor,
+    down_shape: Optional[Tuple[int, ...]] = None,
+    *,
+    interleaved: bool = False,
+    preferred_split_dim: Optional[int] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Split fused gate/up tensor into canonical gate/up [E,H,I] tensors."""
+    split_dim = _infer_fused_gate_up_split_dim(
+        tuple(gate_up.shape),
+        down_shape,
+        preferred_split_dim=preferred_split_dim,
+    )
+    if split_dim == 2:
+        if interleaved:
+            return gate_up[..., 0::2].contiguous(), gate_up[..., 1::2].contiguous()
+        ffn_dim = gate_up.shape[2] // 2
+        return gate_up[..., :ffn_dim].contiguous(), gate_up[..., ffn_dim:].contiguous()
+
+    ffn_dim = gate_up.shape[1] // 2
+    gate = gate_up[:, :ffn_dim, :].transpose(1, 2).contiguous()
+    up = gate_up[:, ffn_dim:, :].transpose(1, 2).contiguous()
+    return gate, up
+
+
+def _down_to_canonical(
+    down: torch.Tensor,
+    gate_up_shape: Optional[Tuple[int, ...]] = None,
+    *,
+    preferred_split_dim: Optional[int] = None,
+) -> torch.Tensor:
+    """Return canonical down [E,I,H] for the fused source layout."""
+    split_dim = _infer_fused_gate_up_split_dim(
+        gate_up_shape or (),
+        tuple(down.shape),
+        preferred_split_dim=preferred_split_dim,
+    )
+    if split_dim == 2:
+        return down.contiguous().clone()
+    return down.transpose(1, 2).contiguous()
+
+
+def _split_gate_up_bias(gate_up_bias: torch.Tensor, *, interleaved: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Split fused gate/up bias into canonical gate/up bias [E,I] tensors."""
+    if interleaved:
+        return gate_up_bias[..., 0::2].contiguous(), gate_up_bias[..., 1::2].contiguous()
+    ffn_dim = gate_up_bias.shape[-1] // 2
+    return gate_up_bias[..., :ffn_dim].contiguous(), gate_up_bias[..., ffn_dim:].contiguous()
 
 
 # ---------------------------------------------------------------------------
@@ -218,18 +295,19 @@ class _LayerStacker:
 
     def stack(self, target_dtype: torch.dtype) -> Dict[str, torch.Tensor]:
         """Return stacked expert tensors in the derived QEff checkpoint layout."""
-        # Output in the exact layout that model __qeff_init__ creates so
+        # Output in the canonical layout that OptimizedMoETransform creates so
         # promote_initializers_and_build_spec finds an exact checkpoint key match.
-        #   _gate [E, I, H] → transpose(1,2) → gate_proj  [E, H, I]
-        #   _up   [E, I, H] → transpose(1,2) → up_proj    [E, H, I]
-        #   _down [E, H, I] → transpose(1,2) → down_proj_t [E, I, H]
-        gate_proj = self._gate.to(target_dtype).transpose(1, 2).contiguous()
-        up_proj = self._up.to(target_dtype).transpose(1, 2).contiguous()
-        down_proj_t = self._down.to(target_dtype).transpose(1, 2).contiguous()
+        #   _gate [E, I, H] -> transpose(1,2) -> moe_weights.gate [E, H, I]
+        #   _up   [E, I, H] -> transpose(1,2) -> moe_weights.up   [E, H, I]
+        #   _down [E, H, I] -> transpose(1,2) -> moe_weights.down [E, I, H]
+        moe_prefix = _moe_weights_prefix_from_experts_prefix(self.prefix)
+        gate = self._gate.to(target_dtype).transpose(1, 2).contiguous()
+        up = self._up.to(target_dtype).transpose(1, 2).contiguous()
+        down = self._down.to(target_dtype).transpose(1, 2).contiguous()
         return {
-            f"{self.prefix}.gate_proj": gate_proj,  # [E, H, I]
-            f"{self.prefix}.up_proj": up_proj,  # [E, H, I]
-            f"{self.prefix}.down_proj_t": down_proj_t,  # [E, I, H]
+            f"{moe_prefix}.gate": gate,  # [E, H, I]
+            f"{moe_prefix}.up": up,  # [E, H, I]
+            f"{moe_prefix}.down": down,  # [E, I, H]
         }
 
 
@@ -249,11 +327,11 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
 
     and produces::
 
-        *.experts.gate_proj   [E, H, I]   (gate weights, transposed)
-        *.experts.up_proj     [E, H, I]   (up weights, transposed)
-        *.experts.down_proj_t [E, I, H]   (down weights, transposed)
+        *.moe_weights.gate [E, H, I]   (gate weights, transposed)
+        *.moe_weights.up   [E, H, I]   (up weights, transposed)
+        *.moe_weights.down [E, I, H]   (down weights, transposed)
 
-    matching the derived parameter layout that QEff MoE model __qeff_init__
+    matching the derived parameter layout that OptimizedMoETransform
     creates, so promote_initializers_and_build_spec finds an exact key match.
     Non-expert keys receive dtype conversion in the same pass.
 
@@ -379,6 +457,7 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
         # from the actual tensor shapes in the checkpoint.
         if max_workers_layers is not None:
             n_workers_layers = max_workers_layers
+            layer_gb = 0.0
         elif layer_indices:
             sample_layer = layer_indices[0]
             layer_gb = _estimate_layer_stack_gb(
@@ -460,14 +539,14 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
 
     and produces::
 
-        *.experts.gate_proj      [E, H, I]   (dequant gate_up_proj, first half)
-        *.experts.up_proj        [E, H, I]   (dequant gate_up_proj, second half)
-        *.experts.gate_proj_bias [E, I]       (gate_up_proj_bias, first half)
-        *.experts.up_proj_bias   [E, I]       (gate_up_proj_bias, second half)
-        *.experts.down_proj      [E, H, I]   (dequant down_proj)
-        *.experts.down_proj_bias [E, H]       (dtype-converted, unchanged key)
+        *.moe_weights.gate      [E, H, I]   (dequant gate_up_proj, first half)
+        *.moe_weights.up        [E, H, I]   (dequant gate_up_proj, second half)
+        *.moe_weights.gate_bias [E, I]       (gate_up_proj_bias, first half)
+        *.moe_weights.up_bias   [E, I]       (gate_up_proj_bias, second half)
+        *.moe_weights.down      [E, I, H]   (dequant down_proj)
+        *.moe_weights.down_bias [E, H]       (dtype-converted)
 
-    matching the derived parameter layout that QEffGptOssExperts.__qeff_init__
+    matching the derived parameter layout that OptimizedMoETransform
     creates, so promote_initializers_and_build_spec finds an exact key match.
     Non-expert keys receive dtype conversion in the same pass.
 
@@ -569,6 +648,7 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
         # ── Phase 2: per-layer dequant + split ────────────────────────────────
         def _process_layer(layer_idx: int) -> Tuple[str, List[str]]:
             prefix = layer_prefix[layer_idx]
+            moe_prefix = _moe_weights_prefix_from_experts_prefix(prefix)
             tensors: Dict[str, torch.Tensor] = {}
 
             def _load(shard: str, key: str) -> torch.Tensor:
@@ -583,27 +663,27 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
             gu_blocks = _load(gu_blocks_shard, gu_blocks_key)
             gu_scales = _load(gu_scales_shard, gu_scales_key)
             gate_up = convert_moe_packed_tensors(gu_blocks, gu_scales, dtype=target_dtype)
-            tensors[f"{prefix}.gate_proj"] = gate_up[..., 0::2].contiguous()
-            tensors[f"{prefix}.up_proj"] = gate_up[..., 1::2].contiguous()
+            tensors[f"{moe_prefix}.gate"] = gate_up[..., 0::2].contiguous()
+            tensors[f"{moe_prefix}.up"] = gate_up[..., 1::2].contiguous()
 
             # gate_up_proj_bias: split [E, 2*I] → [E, I] + [E, I] (same interleaved convention)
             if (layer_idx, "gate_up_proj") in bias_locs:
                 bias_shard, bias_key = bias_locs[(layer_idx, "gate_up_proj")]
                 gu_bias = _load(bias_shard, bias_key).to(target_dtype)
-                tensors[f"{prefix}.gate_proj_bias"] = gu_bias[..., 0::2].contiguous()
-                tensors[f"{prefix}.up_proj_bias"] = gu_bias[..., 1::2].contiguous()
+                tensors[f"{moe_prefix}.gate_bias"] = gu_bias[..., 0::2].contiguous()
+                tensors[f"{moe_prefix}.up_bias"] = gu_bias[..., 1::2].contiguous()
 
-            # down_proj: dequant → [E, H, I]
+            # down_proj: dequant -> [E, I, H]
             dp_blocks_shard, dp_blocks_key = expert_locs[(layer_idx, "down_proj")]["blocks"]
             dp_scales_shard, dp_scales_key = expert_locs[(layer_idx, "down_proj")]["scales"]
             dp_blocks = _load(dp_blocks_shard, dp_blocks_key)
             dp_scales = _load(dp_scales_shard, dp_scales_key)
-            tensors[f"{prefix}.down_proj"] = convert_moe_packed_tensors(dp_blocks, dp_scales, dtype=target_dtype)
+            tensors[f"{moe_prefix}.down"] = convert_moe_packed_tensors(dp_blocks, dp_scales, dtype=target_dtype)
 
             # down_proj_bias: pass through with dtype conversion
             if (layer_idx, "down_proj") in bias_locs:
                 dp_bias_shard, dp_bias_key = bias_locs[(layer_idx, "down_proj")]
-                tensors[f"{prefix}.down_proj_bias"] = _load(dp_bias_shard, dp_bias_key).to(target_dtype)
+                tensors[f"{moe_prefix}.down_bias"] = _load(dp_bias_shard, dp_bias_key).to(target_dtype)
 
             out_name = f"experts-layer-{layer_idx:05d}.safetensors"
             atomic_save(tensors, out / out_name)
@@ -672,9 +752,9 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
     The QEff model wrappers create derived parameters that the ONNX
     initializer names refer to:
 
-        *.experts.gate_proj     [E, H, I]  = gate_up_proj[:, :ffn_dim, :].T(1,2)
-        *.experts.up_proj       [E, H, I]  = gate_up_proj[:, ffn_dim:, :].T(1,2)
-        *.experts.down_proj_t   [E, I, H]  = down_proj.T(1,2)
+        *.moe_weights.gate [E, H, I]
+        *.moe_weights.up   [E, H, I]
+        *.moe_weights.down [E, I, H]
 
     is_applicable returns True only when the fused format is detected.
     Old-format checkpoints with per-expert keys (e.g. experts.0.gate_proj.weight)
@@ -684,6 +764,8 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
 
     _FUSED_GATE_UP_RE = re.compile(r"^(.+\.experts)\.gate_up_proj$")
     _FUSED_DOWN_RE = re.compile(r"^(.+\.experts)\.down_proj$")
+    _FUSED_GATE_UP_BIAS_RE = re.compile(r"^(.+\.experts)\.gate_up_proj_bias$")
+    _FUSED_DOWN_BIAS_RE = re.compile(r"^(.+\.experts)\.down_proj_bias$")
 
     @classmethod
     def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
@@ -724,6 +806,151 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
         copy_checkpoint_aux_files(src, out)
 
         new_weight_map: Dict[str, str] = {}
+        source_shapes: Dict[str, Tuple[int, ...]] = {}
+        for shard_name in sorted(set(weight_map.values())):
+            shard_src = src / shard_name
+            if not shard_src.exists():
+                continue
+            with safe_open(str(shard_src), framework="pt") as f:
+                for key in f.keys():
+                    source_shapes[key] = tuple(f.get_slice(key).get_shape())
+
+        for shard_name in sorted(set(weight_map.values())):
+            shard_src = src / shard_name
+            if not shard_src.exists():
+                continue
+
+            out_tensors: Dict[str, torch.Tensor] = {}
+            with safe_open(str(shard_src), framework="pt") as f:
+                for key in f.keys():
+                    raw_tensor = f.get_tensor(key)
+                    tensor = raw_tensor.to(target_dtype) if raw_tensor.is_floating_point() else raw_tensor
+                    gate_up_m = cls._FUSED_GATE_UP_RE.match(key)
+                    down_m = cls._FUSED_DOWN_RE.match(key)
+                    gate_up_bias_m = cls._FUSED_GATE_UP_BIAS_RE.match(key)
+                    down_bias_m = cls._FUSED_DOWN_BIAS_RE.match(key)
+
+                    if gate_up_m:
+                        prefix = gate_up_m.group(1)
+                        moe_prefix = _moe_weights_prefix_from_experts_prefix(prefix)
+                        down_shape = source_shapes.get(f"{prefix}.down_proj")
+                        preferred_split_dim = 2 if f"{prefix}.gate_up_proj_bias" in weight_map else None
+                        split_dim = _infer_fused_gate_up_split_dim(
+                            tuple(tensor.shape),
+                            down_shape,
+                            preferred_split_dim=preferred_split_dim,
+                        )
+                        gate, up = _split_fused_gate_up_to_canonical(
+                            tensor,
+                            down_shape,
+                            interleaved=split_dim == 2 and preferred_split_dim == 2,
+                            preferred_split_dim=split_dim,
+                        )
+                        out_tensors[f"{moe_prefix}.gate"] = gate
+                        out_tensors[f"{moe_prefix}.up"] = up
+                        new_weight_map[f"{moe_prefix}.gate"] = shard_name
+                        new_weight_map[f"{moe_prefix}.up"] = shard_name
+                        # Keep original for completeness
+                        out_tensors[key] = tensor
+                        new_weight_map[key] = shard_name
+                    elif down_m:
+                        prefix = down_m.group(1)
+                        moe_prefix = _moe_weights_prefix_from_experts_prefix(prefix)
+                        gate_up_shape = source_shapes.get(f"{prefix}.gate_up_proj")
+                        preferred_split_dim = 2 if f"{prefix}.gate_up_proj_bias" in weight_map else None
+                        split_dim = _infer_fused_gate_up_split_dim(
+                            gate_up_shape or (),
+                            tuple(tensor.shape),
+                            preferred_split_dim=preferred_split_dim,
+                        )
+                        out_tensors[f"{moe_prefix}.down"] = _down_to_canonical(
+                            tensor,
+                            gate_up_shape,
+                            preferred_split_dim=split_dim,
+                        )
+                        new_weight_map[f"{moe_prefix}.down"] = shard_name
+                        out_tensors[key] = tensor
+                        new_weight_map[key] = shard_name
+                    elif gate_up_bias_m:
+                        prefix = gate_up_bias_m.group(1)
+                        moe_prefix = _moe_weights_prefix_from_experts_prefix(prefix)
+                        split_dim = _infer_fused_gate_up_split_dim(
+                            source_shapes.get(f"{prefix}.gate_up_proj", ()),
+                            source_shapes.get(f"{prefix}.down_proj"),
+                            preferred_split_dim=2,
+                        )
+                        gate_bias, up_bias = _split_gate_up_bias(tensor, interleaved=split_dim == 2)
+                        out_tensors[f"{moe_prefix}.gate_bias"] = gate_bias
+                        out_tensors[f"{moe_prefix}.up_bias"] = up_bias
+                        new_weight_map[f"{moe_prefix}.gate_bias"] = shard_name
+                        new_weight_map[f"{moe_prefix}.up_bias"] = shard_name
+                        out_tensors[key] = tensor
+                        new_weight_map[key] = shard_name
+                    elif down_bias_m:
+                        prefix = down_bias_m.group(1)
+                        moe_prefix = _moe_weights_prefix_from_experts_prefix(prefix)
+                        out_tensors[f"{moe_prefix}.down_bias"] = tensor.clone()
+                        new_weight_map[f"{moe_prefix}.down_bias"] = shard_name
+                        out_tensors[key] = tensor
+                        new_weight_map[key] = shard_name
+                    else:
+                        out_tensors[key] = tensor
+                        new_weight_map[key] = shard_name
+
+            save_file({k: v.contiguous() for k, v in out_tensors.items()}, str(out / shard_name))
+
+        write_index(out, new_weight_map)
+        sentinel.touch()
+        return True
+
+
+# ---------------------------------------------------------------------------
+# Transform 5: split GraniteMoE fused parallel experts
+# ---------------------------------------------------------------------------
+
+
+class GraniteMoeFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
+    """Split GraniteMoE fused parallel expert tensors into MoEWeights keys."""
+
+    _FUSED_GATE_UP_RE = re.compile(r"^(.+)\.input_linear\.weight$")
+    _FUSED_DOWN_RE = re.compile(r"^(.+)\.output_linear\.weight$")
+
+    @classmethod
+    def is_applicable(cls, weight_map: Dict[str, str], **kwargs) -> bool:
+        """Return True when GraniteMoE fused expert tensors are present."""
+        return any(cls._FUSED_GATE_UP_RE.match(k) for k in weight_map)
+
+    @classmethod
+    def apply(
+        cls,
+        src: Path,
+        out: Path,
+        target_dtype: torch.dtype = torch.float32,
+        **kwargs,
+    ) -> bool:
+        """Split GraniteMoE fused expert tensors and write a prepared checkpoint."""
+        sentinel = out / _SENTINEL
+        if sentinel.exists():
+            logger.info("GraniteMoeFusedExpertSplitCheckpointTransform: prepared checkpoint exists, skipping.")
+            return False
+
+        weight_map = read_weight_map(src)
+        if not cls.is_applicable(weight_map):
+            return False
+
+        out.mkdir(parents=True, exist_ok=True)
+        copy_checkpoint_aux_files(src, out)
+
+        new_weight_map: Dict[str, str] = {}
+        source_shapes: Dict[str, Tuple[int, ...]] = {}
+        for shard_name in sorted(set(weight_map.values())):
+            shard_src = src / shard_name
+            if not shard_src.exists():
+                continue
+            with safe_open(str(shard_src), framework="pt") as f:
+                for key in f.keys():
+                    source_shapes[key] = tuple(f.get_slice(key).get_shape())
+
         for shard_name in sorted(set(weight_map.values())):
             shard_src = src / shard_name
             if not shard_src.exists():
@@ -739,20 +966,25 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
 
                     if gate_up_m:
                         prefix = gate_up_m.group(1)
-                        ffn_dim = tensor.shape[1] // 2
-                        # Split fused [E,2I,H] → gate/up each [E,H,I]
-                        out_tensors[f"{prefix}.gate_proj"] = tensor[:, :ffn_dim, :].transpose(1, 2).contiguous()
-                        out_tensors[f"{prefix}.up_proj"] = tensor[:, ffn_dim:, :].transpose(1, 2).contiguous()
-                        new_weight_map[f"{prefix}.gate_proj"] = shard_name
-                        new_weight_map[f"{prefix}.up_proj"] = shard_name
-                        # Keep original for completeness
+                        moe_prefix = f"{prefix}.moe_weights"
+                        down_shape = source_shapes.get(f"{prefix}.output_linear.weight")
+                        gate, up = _split_fused_gate_up_to_canonical(tensor, down_shape, preferred_split_dim=1)
+                        out_tensors[f"{moe_prefix}.gate"] = gate
+                        out_tensors[f"{moe_prefix}.up"] = up
+                        new_weight_map[f"{moe_prefix}.gate"] = shard_name
+                        new_weight_map[f"{moe_prefix}.up"] = shard_name
                         out_tensors[key] = tensor
                         new_weight_map[key] = shard_name
                     elif down_m:
                         prefix = down_m.group(1)
-                        # Transpose [E,H,I] → [E,I,H]
-                        out_tensors[f"{prefix}.down_proj_t"] = tensor.transpose(1, 2).contiguous()
-                        new_weight_map[f"{prefix}.down_proj_t"] = shard_name
+                        moe_prefix = f"{prefix}.moe_weights"
+                        gate_up_shape = source_shapes.get(f"{prefix}.input_linear.weight")
+                        out_tensors[f"{moe_prefix}.down"] = _down_to_canonical(
+                            tensor,
+                            gate_up_shape,
+                            preferred_split_dim=1,
+                        )
+                        new_weight_map[f"{moe_prefix}.down"] = shard_name
                         out_tensors[key] = tensor
                         new_weight_map[key] = shard_name
                     else:
@@ -761,8 +993,6 @@ class MoEFusedExpertSplitCheckpointTransform(BaseCheckpointTransform):
 
             save_file({k: v.contiguous() for k, v in out_tensors.items()}, str(out / shard_name))
 
-        (out / "model.safetensors.index.json").write_text(
-            json.dumps({"metadata": {}, "weight_map": new_weight_map}, indent=2)
-        )
+        write_index(out, new_weight_map)
         sentinel.touch()
         return True
