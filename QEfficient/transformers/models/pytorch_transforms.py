@@ -96,13 +96,13 @@ from transformers.models.granite.modeling_granite import (
 from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeAttention,
     GraniteMoeDecoderLayer,
+    GraniteMoeExperts as GraniteMoeParallelExperts,
     GraniteMoeForCausalLM,
     GraniteMoeModel,
     GraniteMoeMoE,
-    GraniteMoeParallelExperts,
     GraniteMoeRMSNorm,
     GraniteMoeRotaryEmbedding,
-    GraniteMoeTopKGating,
+    GraniteMoeTopKRouter as GraniteMoeTopKGating,
 )
 from transformers.models.llama.modeling_llama import (
     LlamaAttention,
