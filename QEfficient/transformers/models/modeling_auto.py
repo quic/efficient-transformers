@@ -1605,7 +1605,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": bs}
         if getattr(self.model.config, "model_type", None) == "qwen3_vl_moe":
             _blocking_cfg = self.lang_model.hash_params.get("blocking_kwargs", None)
-            batch_fold = not prefill_only and _blocking_cfg is not None and _blocking_cfg.mode == BlockingMode.KV_BATCH_FOLD
+            batch_fold = (
+                not prefill_only and _blocking_cfg is not None and _blocking_cfg.mode == BlockingMode.KV_BATCH_FOLD
+            )
             if batch_fold:
                 onnx_kwargs["batch_fold"] = batch_fold
         # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
