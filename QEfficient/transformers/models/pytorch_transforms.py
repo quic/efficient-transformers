@@ -97,11 +97,13 @@ from transformers.models.granite.modeling_granite import (
 from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeAttention,
     GraniteMoeDecoderLayer,
+    GraniteMoeExperts,
     GraniteMoeForCausalLM,
     GraniteMoeModel,
     GraniteMoeMoE,
     GraniteMoeRMSNorm,
     GraniteMoeRotaryEmbedding,
+    GraniteMoeTopKRouter,
 )
 
 try:
