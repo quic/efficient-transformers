@@ -70,7 +70,7 @@ def main():
         use_onnx_subfunctions=True,
         offload_pt_weights=False,
         retain_full_kv=True,
-        qaic_config={"enable_blocking": True, "blocking_mode": "kv", "num_kv_blocks": 2},
+        qaic_config={"blocking_mode": "kv", "num_kv_blocks": 2},
     )
 
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_id)

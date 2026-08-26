@@ -13,6 +13,7 @@ that can be fed model config + pipeline compile config to derive blocking settin
 
 from __future__ import annotations
 
+import logging
 import math
 import warnings
 from typing import Any, Dict, List, Optional
@@ -27,6 +28,8 @@ from QEfficient.utils.constants import (
     ROPE_DIM,
     VTCM_SIZE_THRESHOLD,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _infer_head_dim(model_config: Any, num_heads: int) -> int:
@@ -307,6 +310,12 @@ def build_transformer_blocking_config_for_transform(
     qaic_config: Optional[dict] = None,
     **compile_options,
 ) -> Dict[str, Any]:
+    if qaic_config and "enable_blocking" in qaic_config:
+        logger.warning(
+            "'enable_blocking' in qaic_config is deprecated and ignored. "
+            "Use 'blocking_mode' to enable attention blocking; omit 'blocking_mode' to disable it."
+        )
+
     requested_blocking_mode = None if not qaic_config else qaic_config.get("blocking_mode")
     if requested_blocking_mode is None:
         return None

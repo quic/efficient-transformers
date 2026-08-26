@@ -646,10 +646,6 @@ class QEFFBaseModel(ABC):
         retain_full_kv: Optional[bool] = False,
         qaic_config: Optional[dict] = None,
         kv_cache_prefix: Optional[str] = None,
-        expert_parallel: Optional[bool] = None,
-        cores_per_expert: Optional[int] = None,
-        tree_reduce: Optional[bool] = None,
-        mdp_num_partitions: Optional[int] = 1,
         **compiler_options,
     ):
         kwargs = {
@@ -1019,7 +1015,6 @@ class QEFFBaseModel(ABC):
         qaic_config: Optional[dict] = None,
         specialization_module_name: Optional[str] = None,
         kv_cache_prefix: Optional[str] = None,
-        expert_parallel: Optional[bool] = None,
         **compiler_options,
     ) -> str:
         """

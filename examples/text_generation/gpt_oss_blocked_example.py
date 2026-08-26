@@ -119,8 +119,8 @@ def main():
     print(f"Generated: {exec_info_blocked.generated_texts[0]}")
 
     # Run comparison to online softmax
-    # setup qaic config to enable blocking, ensure 4 or more device ids are passed
-    qaic_config = {"enable_blocking": True, "blocking_mode": args.blocking_mode}
+    # setup qaic config with blocking mode, ensure 4 or more device ids are passed
+    qaic_config = {"blocking_mode": args.blocking_mode}
     if args.num_layers:
         model_blocked_no_head_par = QEFFAutoModelForCausalLM.from_pretrained(
             args.model_name, num_hidden_layers=args.num_layers

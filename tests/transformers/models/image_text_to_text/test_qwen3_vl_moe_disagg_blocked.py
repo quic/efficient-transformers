@@ -384,7 +384,6 @@ def _run_disagg_blocked(
 @pytest.mark.parametrize("blocking_mode", ["q", "kv", "qkv", "hqkv"])
 def test_qwen3_vl_moe_disagg_blocked_qaic_vs_hf_fp32(blocking_mode, manual_cleanup):
     prefill_qaic_config = {
-        "enable_blocking": True,
         "blocking_mode": blocking_mode,
         "head_block_size": HEAD_BLOCK_SIZE,
         "num_kv_blocks": NUM_KV_BLOCKS,
@@ -394,7 +393,6 @@ def test_qwen3_vl_moe_disagg_blocked_qaic_vs_hf_fp32(blocking_mode, manual_clean
     decode_blocking_mode = blocking_mode.replace("q", "")
     if decode_blocking_mode:
         decode_qaic_config = {
-            "enable_blocking": True,
             "blocking_mode": decode_blocking_mode,
             "head_block_size": HEAD_BLOCK_SIZE,
             "num_kv_blocks": NUM_KV_BLOCKS,
@@ -409,7 +407,6 @@ def test_qwen3_vl_moe_disagg_blocked_qaic_vs_hf_fp32(blocking_mode, manual_clean
 @pytest.mark.multimodal
 def test_qwen3_vl_moe_disagg_headpar_blocked_qaic_vs_hf_fp32(manual_cleanup):
     qaic_config = {
-        "enable_blocking": True,
         "blocking_mode": "kv_headpar",
         "num_kv_blocks": NUM_KV_BLOCKS,
     }
@@ -425,12 +422,10 @@ def test_qwen3_vl_moe_disagg_batch_fold_blocked_qaic_vs_hf_fp32(manual_cleanup):
     PREFILL_N_REP_CHUNK = 2
 
     decode_qaic_config = {
-        "enable_blocking": True,
         "blocking_mode": "kv_batch_fold",
         "num_kv_blocks": NUM_KV_BLOCKS,
     }
     prefill_qaic_config = {
-        "enable_blocking": True,
         "blocking_mode": "prefill_online",
         "num_kv_blocks": NUM_KV_BLOCKS,
         "num_q_blocks": PREFILL_BLOCK_CHUNKS,

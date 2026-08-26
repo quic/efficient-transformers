@@ -27,7 +27,6 @@ NUM_Q_BLOCKS = 2
 NUM_BATCH_BLOCKS = 2
 # head qkv blocking
 qaic_config = dict(
-    enable_blocking=True,
     blocking_mode="hqkv",
 )
 

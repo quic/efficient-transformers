@@ -1616,7 +1616,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             if batch_fold:
                 # Batch-fold is used for the decode graph; export must trace
                 # the same one-token decode shape used by compile/runtime.
-                onnx_kwargs["prefill_seq_len"] = 1 if seq_len else None
+                onnx_kwargs["prefill_seq_len"] = 1
                 onnx_kwargs["batch_fold"] = batch_fold
                 dynamic_axes_kwargs["batch_fold"] = batch_fold
         # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
