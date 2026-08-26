@@ -1259,6 +1259,34 @@ def test_causal_subfunction_export_smoke(tmp_path):
 
 
 @pytest.mark.llm_model
+def test_causal_subfunction_export_uses_semantic_weight_and_node_names(tmp_path):
+    config = LlamaConfig(
+        vocab_size=128,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        max_position_embeddings=64,
+    )
+    model_hf = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS).eval()
+    qeff_model = QEFFAutoModelForCausalLM(model_hf)
+
+    onnx_path = _exported_onnx_path(
+        qeff_model.export(tmp_path / "semantic-wsub-names", use_onnx_subfunctions=True, offload_pt_weights=False)
+    )
+    onnx_model = onnx.load(onnx_path, load_external_data=False)
+
+    initializer_names = {initializer.name for initializer in onnx_model.graph.initializer}
+    assert "model.layers.0.self_attn.q_proj.weight" in initializer_names
+    assert not any(name.startswith("onnx::MatMul_") for name in initializer_names)
+
+    function_node_names = {node.name for function in onnx_model.functions for node in function.node}
+    assert "self_attn/q_proj/MatMul" in function_node_names
+    assert "mlp/down_proj/MatMul" in function_node_names
+
+
+@pytest.mark.llm_model
 def test_gemma3_vlm_export_parity_with_and_without_subfunctions(tmp_path):
     """Gemma3 VLM export keeps retained-state/output signatures stable across subfunction toggles.
 
@@ -1361,6 +1389,16 @@ def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, confi
     model_hf = AutoModelForCausalLM.from_config(config, **MODEL_KWARGS)
     model_hf.eval()
     qeff_model = QEFFAutoModelForCausalLM(model_hf, continuous_batching=False)
+    qeff_model.transform(
+        ctx_len=64,
+        seq_len=64,
+        bs=1,
+        prefill_only=True,
+        enable_chunking=True,
+        num_cores=2,
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": 32}},
+        prefill_seq_len=64,
+    )
 
     onnx_path = _exported_onnx_path(
         qeff_model.export(
@@ -1369,7 +1407,7 @@ def test_moe_prefill_subfunction_export_uses_einsum_reductions(model_type, confi
             enable_chunking=True,
             prefill_seq_len=64,
             num_cores=2,
-            moe_prefill_packed_chunk_size=32,
+            qaic_config={"moe_config": {"expert_parallel_chunk_size": 32}},
             use_onnx_subfunctions=True,
             offload_pt_weights=False,
         )
@@ -2230,7 +2268,7 @@ def test_layerwise_supported_guard_rejects_unrelated_model():
         _layerwise.assert_layerwise_supported(config)
 
 
-def test_resolve_torch_dtype_normalizes_dtype_alias():
+def test_resolve_torch_dtype_normalizes_dtype_alias(caplog):
     """transformers-v5 ``dtype`` alias must be honored and kept in sync with ``torch_dtype``.
 
     Regression guard: passing ``dtype=float16`` used to be ignored, leaving the
@@ -2249,11 +2287,21 @@ def test_resolve_torch_dtype_normalizes_dtype_alias():
     _resolve_torch_dtype(kwargs)
     assert kwargs["torch_dtype"] == torch.float16
 
-    # bfloat16 is downgraded to float32 on ai100 regardless of which name is used.
+    # bfloat16 is kept as-is on ai100 (regardless of which name is used) so export/compile
+    # still run in bfloat16, with a warning that on-device generation is expected to fail.
+    caplog.set_level(logging.WARNING, logger="QEfficient")
     kwargs = {"dtype": torch.bfloat16}
     _resolve_torch_dtype(kwargs)
+    assert kwargs["torch_dtype"] == torch.bfloat16
+    assert kwargs["dtype"] == torch.bfloat16
+    assert "on-device generation is expected to fail" in caplog.text
+
+    # Regression guard: when torch_dtype/dtype is not set at all, default to float32 on
+    # ai100 so models whose config.json declares bfloat16 (e.g. Mistral-7B-v0.1) aren't
+    # silently loaded in bfloat16, which breaks KV-cache dtype (float32) parity.
+    kwargs = {}
+    _resolve_torch_dtype(kwargs)
     assert kwargs["torch_dtype"] == torch.float32
-    assert kwargs["dtype"] == torch.float32
 
 
 def test_qwen3_5_moe_gated_norm_preserves_float16():
@@ -2345,30 +2393,35 @@ def test_qwen3_5_moe_get_specializations_strips_vision_symbols_for_comp_ctx_vari
 
 
 def test_moe_prefill_transform_does_not_require_enable_chunking():
-    from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeMoE, QEffPrefillChunkedGlm4MoeMoE
-    from QEfficient.transformers.models.pytorch_transforms import PrefillOnlyTransform
+    from QEfficient.transformers.models.glm4_moe.modeling_glm4_moe import QEffGlm4MoeMoE
+    from QEfficient.transformers.models.pytorch_transforms import (
+        PrefillOnlyChunkedTransform,
+        PrefillOnlyTransform,
+        RevertPrefillKeepAttentionTransform,
+        RevertPrefillOnlyTransform,
+    )
     from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
-        QEffPrefillChunkedQwen3_5MoeSparseMoeBlock,
         QEffQwen3_5MoeSparseMoeBlock,
     )
     from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
-        QEffPrefillChunkedQwen3MoeSparseMoeBlock,
         QEffQwen3MoeSparseMoeBlock,
     )
     from QEfficient.transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import (
-        QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock,
         QEffQwen3VLMoeTextSparseMoeBlock,
     )
+    from QEfficient.transformers.moe import MoEFlavour
 
-    assert PrefillOnlyTransform._module_mapping[QEffGlm4MoeMoE] is QEffPrefillChunkedGlm4MoeMoE
-    assert PrefillOnlyTransform._module_mapping[QEffQwen3MoeSparseMoeBlock] is QEffPrefillChunkedQwen3MoeSparseMoeBlock
-    assert (
-        PrefillOnlyTransform._module_mapping[QEffQwen3VLMoeTextSparseMoeBlock]
-        is QEffPrefillChunkedQwen3VLMoeTextSparseMoeBlock
-    )
-    assert (
-        PrefillOnlyTransform._module_mapping[QEffQwen3_5MoeSparseMoeBlock] is QEffPrefillChunkedQwen3_5MoeSparseMoeBlock
-    )
+    for moe_cls in (
+        QEffGlm4MoeMoE,
+        QEffQwen3MoeSparseMoeBlock,
+        QEffQwen3VLMoeTextSparseMoeBlock,
+        QEffQwen3_5MoeSparseMoeBlock,
+    ):
+        assert moe_cls not in PrefillOnlyTransform._module_mapping
+        assert moe_cls not in PrefillOnlyChunkedTransform._module_mapping
+        assert moe_cls not in RevertPrefillKeepAttentionTransform._module_mapping
+        assert moe_cls not in RevertPrefillOnlyTransform._module_mapping
+        assert MoEFlavour.EXPERT_PARALLEL in moe_cls.supported_moe_flavours
 
 
 def test_layerwise_matches_default_path_for_qwen3_moe():
@@ -3464,7 +3517,6 @@ def test_causal_compile_custom_io_carries_prefix(tmp_path, monkeypatch):
         "mxfp6_matmul",
         # compile-time args added by causal compile():
         "aic_num_cores",
-        "moe_prefill_packed_chunk_size",
     }
     implicit_compiler_options = {k: v for k, v in captured.items() if k not in _known_explicit_params}
     assert "kv_cache_prefix" not in implicit_compiler_options, (

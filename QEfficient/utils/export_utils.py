@@ -9,7 +9,8 @@ import copy
 import inspect
 import re
 import warnings
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict
 
@@ -22,6 +23,7 @@ from QEfficient.base.onnx_transforms import (
     PreserveNestedCacheRetainedStateTransform,
     RenameFunctionOutputsTransform,
     RenameRepeatedSubgraphTransform,
+    RenameWsubNodesTransform,
 )
 from QEfficient.transformers.cache_utils import InvalidIndexProvider
 from QEfficient.utils.cache import QEFF_HOME
@@ -38,6 +40,18 @@ from QEfficient.utils.torch_patches import (
     temporarily_enable_nested_compile_regions,
     undo_torch_patches,
 )
+
+_EXPORT_FROM_COMPILE = ContextVar("export_from_compile", default=False)
+
+
+@contextmanager
+def export_from_compile():
+    """Suppress the direct-export deprecation warning during compilation."""
+    token = _EXPORT_FROM_COMPILE.set(True)
+    try:
+        yield
+    finally:
+        _EXPORT_FROM_COMPILE.reset(token)
 
 
 def convert_dynamic_axes_to_dynamic_shapes(
@@ -224,6 +238,13 @@ def export_wrapper(func):
     """
 
     def wrapper(self, *args, **kwargs):
+        if not _EXPORT_FROM_COMPILE.get():
+            warnings.warn(
+                "Direct .export() is deprecated. Use .compile() to export and compile with the complete configuration.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Extract flags
         dynamo = kwargs.get("dynamo", False)
         use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
@@ -342,11 +363,9 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     Returns:
         Tuple of (export_hash: str, filtered_hash_params: dict)
     """
-    # Extract function signature
     original_sig = inspect.signature(func)
     params = list(original_sig.parameters.values())[1:]  # Skip 'self'
     new_sig = inspect.Signature(params)
-    # Bind all arguments
     bound_args = new_sig.bind(*args, **kwargs)
     bound_args.apply_defaults()
     all_args = bound_args.arguments
@@ -375,7 +394,7 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
         }
     )
     if getattr(qeff_model, "_use_onnx_subfunctions", False):
-        copy_of_hash_params["onnx_subfunction_version"] = 2
+        copy_of_hash_params["onnx_subfunction_version"] = 3
     # Generate hash from relevant parameters
     export_hash, filtered_hash_params = create_export_hash(
         model_params=copy_of_hash_params,
@@ -421,7 +440,7 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
     orig_hash_subfunction_version = qeff_model.hash_params.get("onnx_subfunction_version")
     qeff_model._use_onnx_subfunctions = True
     qeff_model.hash_params["use_onnx_subfunctions"] = True
-    qeff_model.hash_params["onnx_subfunction_version"] = 2
+    qeff_model.hash_params["onnx_subfunction_version"] = 3
     # TorchScript patches are irrelevant on the dynamo path.
     if not dynamo:
         apply_torch_patches()
@@ -468,6 +487,8 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
             qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
         if CustomOpTransform not in qeff_model._onnx_transforms:
             qeff_model._onnx_transforms.append(CustomOpTransform)
+        if RenameWsubNodesTransform not in qeff_model._onnx_transforms:
+            qeff_model._onnx_transforms.append(RenameWsubNodesTransform)
 
     # TODO: Handle this in the modelling class QEFFTransformersBase, remove from here.
     decoder_layer_classes = get_decoder_layer_classes_for_export(qeff_model.model)
