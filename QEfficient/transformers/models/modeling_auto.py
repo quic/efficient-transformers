@@ -459,6 +459,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             object.__setattr__(self.model.base_model.config, "use_cache", None)
 
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+        self.hash_params["pooling"] = pooling.__name__ if callable(pooling) else pooling
 
     @classmethod
     @with_replaced_quantizers
