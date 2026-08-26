@@ -32,6 +32,7 @@ from transformers import (
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel, reject_legacy_moe_prefill_packed_chunk_size
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
+from QEfficient.blocking.attention_blocking import BlockingMode
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfoNew,
@@ -1602,26 +1603,29 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
         onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": bs}
-        # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
-        try:
-            inputs = self.model.get_dummy_inputs(
-                kv_offload=True,
-                continuous_batching=self.continuous_batching,
-                comp_ctx_lengths=self.comp_ctx_lengths_decode,
-                **onnx_kwargs,
+        dynamic_axes_kwargs = {
+            "kv_offload": True,
+            "continuous_batching": self.continuous_batching,
+            "comp_ctx_lengths": self.comp_ctx_lengths_decode,
+        }
+        if getattr(self.model.config, "model_type", None) == "qwen3_vl_moe":
+            _blocking_cfg = self.lang_model.hash_params.get("blocking_kwargs", None)
+            batch_fold = (
+                not prefill_only and _blocking_cfg is not None and _blocking_cfg.mode == BlockingMode.KV_BATCH_FOLD
             )
-            dynamic_axes = self.model.get_onnx_dynamic_axes(
-                kv_offload=True,
-                continuous_batching=self.continuous_batching,
-                comp_ctx_lengths=self.comp_ctx_lengths_decode,
-            )
-        except TypeError:
-            inputs = self.model.get_dummy_inputs(
-                kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode, **onnx_kwargs
-            )
-            dynamic_axes = self.model.get_onnx_dynamic_axes(
-                kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
-            )
+            if batch_fold:
+                # Batch-fold is used for the decode graph; export must trace
+                # the same one-token decode shape used by compile/runtime.
+                onnx_kwargs["prefill_seq_len"] = 1
+                onnx_kwargs["batch_fold"] = batch_fold
+                dynamic_axes_kwargs["batch_fold"] = batch_fold
+        inputs = self.model.get_dummy_inputs(
+            kv_offload=True,
+            continuous_batching=self.continuous_batching,
+            comp_ctx_lengths=self.comp_ctx_lengths_decode,
+            **onnx_kwargs,
+        )
+        dynamic_axes = self.model.get_onnx_dynamic_axes(**dynamic_axes_kwargs)
         output_names = self.model.get_output_names(kv_offload=True)
         # Prefix only the language-side KV-cache retained buffers (vision buffers are untouched).
         output_names = apply_kv_cache_prefix(output_names, validate_kv_cache_prefix(kv_cache_prefix))
@@ -3913,8 +3917,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         for_loop_number_forced_by_expert_parallel = self.hash_params.get("moe_prefill_num_packed_chunks", None)
         if blocking_enabled:
             max_blocks = -1
-            for num_blocks in self.hash_params.get("blocking_kwargs").__dict__.values():
-                if isinstance(num_blocks, int):
+            for key, num_blocks in self.hash_params.get("blocking_kwargs").__dict__.items():
+                if isinstance(num_blocks, int) and key in ["num_kv_blocks", "num_q_blocks"]:
                     max_blocks = max(max_blocks, num_blocks)
             block_size = -(-seq_len // max_blocks)
             for_loop_number_forced_by_blocking = block_size * max_blocks
