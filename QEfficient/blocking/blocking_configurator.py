@@ -290,7 +290,7 @@ def build_transformer_blocking_config(
     requested = blocking_mode or "hqkv"
     if effective_mode != requested:
         warnings.warn(
-            f"Requested blocking_mode '{requested}' reduced to '{effective_mode}' based on calculated attention config: {attention_cfg}",
+            f"Requested blocking_mode '{requested}'/'AUTO' reduced to '{effective_mode}' based on calculated attention config: {attention_cfg}",
         )
 
     return AttentionBlockingConfig(

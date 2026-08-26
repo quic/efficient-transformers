@@ -33,10 +33,8 @@ from QEfficient.blocking.blocked_attention_forwards import (
 
 
 class BlockingMode(str, Enum):
-    # NONE disables attention blocking.
-    NONE = ""
-    # AUTO lets QEfficient choose a mode from the model shape and VTCM size limit.
-    AUTO = "auto"
+    NONE = ""  # No blocking
+    AUTO = "auto"  # We choose the best blocking mode based on the input configuration
     # decode
     KV = "kv"
     KV_HEADPAR = "kv_headpar"

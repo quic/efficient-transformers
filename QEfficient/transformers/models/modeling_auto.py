@@ -1619,22 +1619,13 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 onnx_kwargs["prefill_seq_len"] = 1
                 onnx_kwargs["batch_fold"] = batch_fold
                 dynamic_axes_kwargs["batch_fold"] = batch_fold
-        # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
-        try:
-            inputs = self.model.get_dummy_inputs(
-                kv_offload=True,
-                continuous_batching=self.continuous_batching,
-                comp_ctx_lengths=self.comp_ctx_lengths_decode,
-                **onnx_kwargs,
-            )
-            dynamic_axes = self.model.get_onnx_dynamic_axes(**dynamic_axes_kwargs)
-        except TypeError:
-            inputs = self.model.get_dummy_inputs(
-                kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode, **onnx_kwargs
-            )
-            dynamic_axes = self.model.get_onnx_dynamic_axes(
-                kv_offload=True, comp_ctx_lengths=self.comp_ctx_lengths_decode
-            )
+        inputs = self.model.get_dummy_inputs(
+            kv_offload=True,
+            continuous_batching=self.continuous_batching,
+            comp_ctx_lengths=self.comp_ctx_lengths_decode,
+            **onnx_kwargs,
+        )
+        dynamic_axes = self.model.get_onnx_dynamic_axes(**dynamic_axes_kwargs)
         output_names = self.model.get_output_names(kv_offload=True)
         # Prefix only the language-side KV-cache retained buffers (vision buffers are untouched).
         output_names = apply_kv_cache_prefix(output_names, validate_kv_cache_prefix(kv_cache_prefix))
