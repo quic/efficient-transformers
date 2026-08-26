@@ -106,8 +106,6 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
         self,
         hidden_states: torch.Tensor,
         position_ids: Optional[torch.LongTensor] = None,
-        block_table: Optional[torch.LongTensor] = None,
-        slot_id: Optional[torch.LongTensor] = None,
         position_embeddings: Tuple[torch.Tensor, torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[Cache] = None,
@@ -144,8 +142,6 @@ class QEffGraniteMoeAttention(GraniteMoeAttention):
                 comp_ctx_length=comp_ctx_lengths,
                 batch_index=batch_index,
                 position_ids=position_ids,
-                block_table=block_table,
-                slot_id=slot_id,
                 past_seen_tokens=past_seen_tokens,
             )
         else:
@@ -212,8 +208,6 @@ class QEffGraniteMoeDecoderLayer(GraniteMoeDecoderLayer):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        block_table: Optional[torch.LongTensor] = None,
-        slot_id: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
@@ -258,8 +252,6 @@ class QEffGraniteMoeDecoderLayer(GraniteMoeDecoderLayer):
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            block_table=block_table,
-            slot_id=slot_id,
             past_key_values=past_key_value,
             output_attentions=output_attentions,
             use_cache=use_cache,
@@ -309,8 +301,6 @@ class QEffGraniteMoeModel(GraniteMoeModel):
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        block_table: Optional[torch.LongTensor] = None,
-        slot_id: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -359,8 +349,8 @@ class QEffGraniteMoeModel(GraniteMoeModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        sin = self.sin_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
-        cos = self.cos_cached[position_ids].unsqueeze(1).to(device=hidden_states.device)
+        sin = self.sin_cached[position_ids].unsqueeze(1)
+        cos = self.cos_cached[position_ids].unsqueeze(1)
 
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             if output_hidden_states:
@@ -371,8 +361,6 @@ class QEffGraniteMoeModel(GraniteMoeModel):
                     hidden_states,
                     attention_mask=causal_mask,
                     position_ids=position_ids,
-                    block_table=block_table,
-                    slot_id=slot_id,
                     past_key_value=past_key_values,
                     comp_ctx_lengths=comp_ctx_lengths,
                     batch_index=batch_index,
@@ -387,8 +375,6 @@ class QEffGraniteMoeModel(GraniteMoeModel):
                     hidden_states,
                     attention_mask=causal_mask,
                     position_ids=position_ids,
-                    block_table=block_table,
-                    slot_id=slot_id,
                     past_key_value=past_key_values,
                     comp_ctx_lengths=comp_ctx_lengths,
                     output_attentions=output_attentions,
@@ -519,24 +505,11 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
 
         """
 
-        logits = self.layer(hidden_states).float()
+        logits = torch.nn.functional.linear(hidden_states, self.weight).float()
 
-        top_k_logits, top_k_indices = torch.topk(logits, self.top_k, dim=1)  # [B, K]
-        top_k_gates = torch.softmax(top_k_logits, dim=1).to(hidden_states.dtype)  # [B, K]
-
-        B, K = top_k_indices.shape
-        E = int(self.num_experts)
-
-        # Create expert indices [E]
-        expert_ids = torch.arange(E, device=top_k_indices.device)
-
-        # Compare and build mask: [B, K, E]
-        expert_mask = (top_k_indices.unsqueeze(-1) == expert_ids).to(torch.int64)
-
-        # Match original layout: [E, K, B]
-        expert_mask = expert_mask.permute(2, 1, 0)
-
-        return top_k_gates, expert_mask, logits, self.num_experts
+        top_k_logits, top_k_index = torch.topk(logits, self.top_k, dim=-1)
+        top_k_weights = torch.softmax(top_k_logits, dim=-1).to(hidden_states.dtype)
+        return top_k_index, top_k_weights, logits
 
 
 class QEffGraniteMoeMoE(QEffMoEBlockMixin, GraniteMoeMoE):
@@ -549,15 +522,16 @@ class QEffGraniteMoeMoE(QEffMoEBlockMixin, GraniteMoeMoE):
         if getattr(self, "weights_transformed", False):
             return self.moe_weights
         self.moe_weights = build_canonical_expert_weights(
-            gate_up=self.input_linear.weight,
-            down=self.output_linear.weight,
+            gate_up=self.experts.gate_up_proj,
+            down=self.experts.down_proj,
             fused=True,
             fused_split_dim=1,
             transpose_gate_up=True,
             transpose_down=True,
             clone=True,
         )
-        delete_module_attrs(self, "input_linear", "output_linear")
+        self.activation = self.experts.act_fn
+        delete_module_attrs(self.experts, "gate_up_proj", "down_proj")
         self.weights_transformed = True
         return self.moe_weights
 
@@ -566,8 +540,11 @@ class QEffGraniteMoeMoE(QEffMoEBlockMixin, GraniteMoeMoE):
         return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.activation))
 
     def route(self, x: torch.Tensor):
-        topk_gates, expert_mask, router_logits, _ = self.router(x)
-        routing_weights = (expert_mask.permute(2, 1, 0).to(topk_gates.dtype) * topk_gates.unsqueeze(-1)).sum(dim=1)
+        top_k_index, top_k_weights, router_logits = self.router(x)
+        routing_weights = torch.zeros(
+            (x.shape[0], self.experts.num_experts), dtype=top_k_weights.dtype, device=top_k_weights.device
+        )
+        routing_weights.scatter_(1, top_k_index, top_k_weights)
         return routing_weights.to(x.dtype), router_logits
 
 
@@ -607,8 +584,6 @@ class QEffGraniteMoeForCausalLM(GraniteMoeForCausalLM):
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        block_table: Optional[torch.LongTensor] = None,
-        slot_id: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
@@ -657,8 +632,6 @@ class QEffGraniteMoeForCausalLM(GraniteMoeForCausalLM):
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            block_table=block_table,
-            slot_id=slot_id,
             past_key_values=past_key_values,
             comp_ctx_lengths=comp_ctx_lengths,
             batch_index=batch_index,
