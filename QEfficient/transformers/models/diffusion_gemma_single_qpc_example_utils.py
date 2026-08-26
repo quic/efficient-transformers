@@ -29,6 +29,7 @@ from QEfficient.transformers.models.modeling_auto import QEffCausalLMForTextImag
 
 
 FP32_ACCUM_OPS = {"CustomRMSNorm", "Clip", "Softmax", "Add", "Sub", "Mul", "Div", "Tanh", "Pow", "ReduceMean"}
+MOE_NODE_NAME_PARTS = ("/router/", "/experts/", ".router.", ".experts.")
 
 @dataclass
 class DiffusionGemmaRuntimeResult:
@@ -627,7 +628,13 @@ def _write_unified_accum_npi(onnx_path):
     producers = {output_name: node for node in graph.node for output_name in node.output}
     keep_nodes = []
 
+    def is_moe_node(node):
+        node_name = node.name.lower()
+        return any(part in node_name for part in MOE_NODE_NAME_PARTS)
+
     for node in graph.node:
+        if is_moe_node(node):
+            continue
         if node.op_type in FP32_ACCUM_OPS:
             keep_nodes.append(node)
         if "/decoder/self_conditioning/" in node.name or node.name.endswith("/decoder/norm/CustomRMSNorm"):
@@ -640,7 +647,7 @@ def _write_unified_accum_npi(onnx_path):
             return
         seen_names.add(tensor_name)
         node = producers.get(tensor_name)
-        if node is None:
+        if node is None or is_moe_node(node):
             return
         keep_nodes.append(node)
         for input_name in node.input:
@@ -666,6 +673,8 @@ def _write_unified_accum_npi(onnx_path):
     tensors = []
     seen_tensors = set()
     for node in keep_nodes:
+        if is_moe_node(node):
+            continue
         for output_name in node.output:
             if not output_name or output_name in seen_tensors or output_name in excluded_outputs:
                 continue

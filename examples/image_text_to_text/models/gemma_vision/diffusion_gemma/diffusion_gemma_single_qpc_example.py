@@ -14,11 +14,10 @@ from transformers import AutoConfig, AutoProcessor
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
-from diffusion_gemma_single_qpc_example_utils import (
+from QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils import (
     build_step_callback,
     clean_diffusion_text,
     compile_unified_qpc,
-    diffusion_gemma_generate_single_qpc_chunked,
     prepare_prompt_inputs,
 )
 
@@ -34,7 +33,7 @@ IMAGE_URL = (
     "/resolve/main/transformers/tasks/car.jpg"
 )
 IMAGE_PROMPT = "Describe this image in detail."
-TEXT_PROMPT = "What is the capital city of France? Answer in one sentence."
+# TEXT_PROMPT = "What is the capital city of Zimbabwe? Answer in one sentence."
 # TEXT_PROMPT = "What are the seven continents? Answer in one sentence."
 TEXT_PROMPT = "What is diffusion based generative learning?"
 # TEXT_PROMPT = "How to make pizza? Answer in one sentence."
@@ -81,18 +80,8 @@ def parse_args():
     parser.add_argument("--canvas-length", type=int, default=CANVAS_LENGTH, help="Tokens per denoising canvas.")
     parser.add_argument("--max-new-tokens", type=int, default=768, help="Total generated tokens.")
     parser.add_argument("--diffusion-steps", type=int, default=DIFFUSION_STEPS, help="Steps per canvas.")
-    parser.add_argument(
-        "--num-layers",
-        type=int,
-        default=None,
-        help="Use a reduced number of language layers; defaults to the full model.",
-    )
-    parser.add_argument(
-        "--sampler",
-        choices=("local", "hf"),
-        default="local",
-        help="Cumulative local freezing or Hugging Face per-step re-noising.",
-    )
+    parser.add_argument("--num-layers", type=int, default=None, help="Use a reduced number of language layers; defaults to the full model.",)
+    parser.add_argument("--sampler", choices=("local", "hf"), default="local", help="Cumulative local freezing or Hugging Face per-step re-noising.",)
     parser.add_argument("--no-stop-on-eos", action="store_true", help="Do not stop at the first EOS token.")
     parser.add_argument("--truncate-first-sentence", action="store_true", help="Return the first sentence only.")
     parser.add_argument("--verbose-steps", action="store_true", help="Decode a preview after each step.")
@@ -135,8 +124,7 @@ def main():
     )
     print(f'Canvas length is {CANVAS_LENGTH} and input ids is of size {inputs['input_ids'].shape[1]}')
     # breakpoint()
-    result = diffusion_gemma_generate_single_qpc_chunked(
-        qeff_model=qeff_model,
+    result = qeff_model.cloud_ai_100_diffusion_generate(
         inputs=inputs,
         generation_len=args.max_new_tokens,
         qpc_path=qpc_path,

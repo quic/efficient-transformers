@@ -3025,38 +3025,34 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             inputs=inputs, device_ids=device_ids, generation_len=generation_len, streamer=streamer
         )
 
-    # def diffusion_gemma_generate_singleqpc(
-    #     self,
-    #     inputs: Optional[torch.Tensor],
-    #     device_ids: Optional[List[int]] = None,
-    #     runtime_ai100: bool = True,
-    #     generation_len: Optional[int] = None,
-    #     qpc_path: Optional[Union[str, Path]] = None,
-    #     **kwargs,
-    # ):
-    #     if not runtime_ai100:
-    #         raise NotImplementedError("PyTorch execution is not supported for DiffusionGemma single-QPC generation.")
-    #     if not _is_diffusion_gemma_arch(self.model.config):
-    #         raise ValueError("`diffusion_gemma_generate_singleqpc` only supports DiffusionGemma models.")
-    #     raise NotImplementedError(
-    #         "DiffusionGemma single-QPC generation is supported through "
-    #         "examples/image_text_to_text/models/gemma_vision/diffusion_gemma/"
-    #         "diffusion_gemma_single_qpc_example_correct.py."
-    #     )
-
     def cloud_ai_100_diffusion_generate(
         self,
         inputs: Optional[torch.Tensor],
         device_ids: Optional[List[int]] = None,
         runtime_ai100: bool = True,
+        generation_len: Optional[int] = None,
         qpc_path: Optional[Union[str, Path]] = None,
         **kwargs,
     ):
-        return self.diffusion_gemma_generate_singleqpc(
+        if not runtime_ai100:
+            raise NotImplementedError("PyTorch execution is not supported for DiffusionGemma single-QPC generation.")
+
+        resolved_qpc_path = qpc_path if qpc_path is not None else getattr(self, "qpc_path", None)
+        if resolved_qpc_path is None:
+            raise ValueError("A compiled QPC path must be provided for DiffusionGemma single-QPC generation.")
+        if generation_len is None:
+            raise ValueError("`generation_len` must be provided for DiffusionGemma single-QPC generation.")
+
+        from QEfficient.transformers.models.diffusion_gemma_single_qpc_example_utils import (
+            diffusion_gemma_generate_single_qpc_chunked,
+        )
+
+        return diffusion_gemma_generate_single_qpc_chunked(
+            qeff_model=self,
             inputs=inputs,
             device_ids=device_ids,
-            runtime_ai100=runtime_ai100,
-            qpc_path=qpc_path,
+            generation_len=generation_len,
+            qpc_path=resolved_qpc_path,
             **kwargs,
         )
 
