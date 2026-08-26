@@ -18,16 +18,25 @@ CPU-only. No QAIC hardware required.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock
 
 import torch
 from onnx import TensorProto, helper
+from safetensors import safe_open
+from safetensors.torch import save_file
 from transformers import LlamaConfig, LlamaForCausalLM
 
 from QEfficient.base.onnx_transforms import (
     PreserveNestedCacheRetainedStateTransform,
     PruneFakeInitializersTransform,
     RenameRepeatedSubgraphTransform,
+)
+from QEfficient.exporter.weight_free.checkpoint_key_resolver import find_checkpoint_key
+from QEfficient.exporter.weight_free.checkpoint_transforms import (
+    GraniteMoeFusedExpertSplitCheckpointTransform,
+    MoEExpertStackingCheckpointTransform,
+    MoEFusedExpertSplitCheckpointTransform,
 )
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
@@ -115,6 +124,167 @@ def _make_minimal_onnx_with_repeated_subgraphs(num_layers: int = 2, scatter_coun
     for fn in functions:
         model.functions.append(fn)
     return model
+
+
+def _write_safetensors_checkpoint(root, tensors):
+    shard_name = "model.safetensors"
+    save_file({key: tensor.contiguous() for key, tensor in tensors.items()}, str(root / shard_name))
+    (root / "model.safetensors.index.json").write_text(
+        json.dumps({"metadata": {}, "weight_map": {key: shard_name for key in tensors}}, indent=2)
+    )
+
+
+def _load_prepared_tensors(root):
+    index = json.loads((root / "model.safetensors.index.json").read_text())["weight_map"]
+    loaded = {}
+    for key, shard_name in index.items():
+        with safe_open(str(root / shard_name), framework="pt") as handle:
+            loaded[key] = handle.get_tensor(key)
+    return loaded
+
+
+# ---------------------------------------------------------------------------
+# Test checkpoint layout transforms
+# ---------------------------------------------------------------------------
+
+
+class TestWeightFreeCheckpointTransforms:
+    def test_stacks_per_expert_weights_to_moe_weights(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        prefix = "model.layers.0.block_sparse_moe"
+
+        gate_0 = torch.arange(8, dtype=torch.float32).reshape(2, 4)
+        gate_1 = gate_0 + 100
+        up_0 = gate_0 + 200
+        up_1 = gate_0 + 300
+        down_0 = torch.arange(8, dtype=torch.float32).reshape(4, 2) + 400
+        down_1 = down_0 + 100
+        _write_safetensors_checkpoint(
+            src,
+            {
+                f"{prefix}.experts.0.w1.weight": gate_0,
+                f"{prefix}.experts.0.w3.weight": up_0,
+                f"{prefix}.experts.0.w2.weight": down_0,
+                f"{prefix}.experts.1.w1.weight": gate_1,
+                f"{prefix}.experts.1.w3.weight": up_1,
+                f"{prefix}.experts.1.w2.weight": down_1,
+                "model.embed_tokens.weight": torch.ones(2, 4),
+            },
+        )
+
+        changed = MoEExpertStackingCheckpointTransform.apply(
+            src,
+            out,
+            target_dtype=torch.float32,
+            max_workers_scan=1,
+            max_workers_layers=1,
+            max_workers_base=1,
+        )
+
+        assert changed
+        tensors = _load_prepared_tensors(out)
+        torch.testing.assert_close(
+            tensors[f"{prefix}.moe_weights.gate"],
+            torch.stack([gate_0, gate_1]).transpose(1, 2),
+        )
+        torch.testing.assert_close(
+            tensors[f"{prefix}.moe_weights.up"],
+            torch.stack([up_0, up_1]).transpose(1, 2),
+        )
+        torch.testing.assert_close(
+            tensors[f"{prefix}.moe_weights.down"],
+            torch.stack([down_0, down_1]).transpose(1, 2),
+        )
+        assert f"{prefix}.experts.gate_proj" not in tensors
+        assert f"{prefix}.experts.down_proj_t" not in tensors
+
+    def test_splits_dim2_fused_experts_with_bias_to_moe_weights(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        prefix = "model.layers.0.mlp.experts"
+        moe_prefix = "model.layers.0.mlp.moe_weights"
+        gate = torch.full((2, 3, 4), 1.0)
+        up = torch.full((2, 3, 4), 2.0)
+        gate_up = torch.empty(2, 3, 8)
+        gate_up[..., 0::2] = gate
+        gate_up[..., 1::2] = up
+        down = torch.arange(24, dtype=torch.float32).reshape(2, 4, 3)
+        gate_bias = torch.full((2, 4), 3.0)
+        up_bias = torch.full((2, 4), 4.0)
+        gate_up_bias = torch.empty(2, 8)
+        gate_up_bias[..., 0::2] = gate_bias
+        gate_up_bias[..., 1::2] = up_bias
+        down_bias = torch.full((2, 3), 5.0)
+        _write_safetensors_checkpoint(
+            src,
+            {
+                f"{prefix}.gate_up_proj": gate_up,
+                f"{prefix}.down_proj": down,
+                f"{prefix}.gate_up_proj_bias": gate_up_bias,
+                f"{prefix}.down_proj_bias": down_bias,
+            },
+        )
+
+        changed = MoEFusedExpertSplitCheckpointTransform.apply(src, out, target_dtype=torch.float32)
+
+        assert changed
+        tensors = _load_prepared_tensors(out)
+        torch.testing.assert_close(tensors[f"{moe_prefix}.gate"], gate)
+        torch.testing.assert_close(tensors[f"{moe_prefix}.up"], up)
+        torch.testing.assert_close(tensors[f"{moe_prefix}.down"], down)
+        torch.testing.assert_close(tensors[f"{moe_prefix}.gate_bias"], gate_bias)
+        torch.testing.assert_close(tensors[f"{moe_prefix}.up_bias"], up_bias)
+        torch.testing.assert_close(tensors[f"{moe_prefix}.down_bias"], down_bias)
+
+    def test_splits_granitemoe_fused_parallel_experts_to_moe_weights(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        prefix = "model.layers.0.block_sparse_moe"
+        gate = torch.arange(8, dtype=torch.float32).reshape(2, 4)
+        up = gate + 100
+        gate_up = torch.cat((gate, up), dim=0).reshape(1, 4, 4)
+        down = torch.arange(8, dtype=torch.float32).reshape(1, 4, 2)
+        _write_safetensors_checkpoint(
+            src,
+            {
+                f"{prefix}.input_linear.weight": gate_up,
+                f"{prefix}.output_linear.weight": down,
+            },
+        )
+
+        changed = GraniteMoeFusedExpertSplitCheckpointTransform.apply(src, out, target_dtype=torch.float32)
+
+        assert changed
+        tensors = _load_prepared_tensors(out)
+        torch.testing.assert_close(tensors[f"{prefix}.moe_weights.gate"], gate_up[:, :2, :].transpose(1, 2))
+        torch.testing.assert_close(tensors[f"{prefix}.moe_weights.up"], gate_up[:, 2:, :].transpose(1, 2))
+        torch.testing.assert_close(tensors[f"{prefix}.moe_weights.down"], down.transpose(1, 2))
+
+    def test_resolver_accepts_moe_weight_aliases(self):
+        checkpoint_index = {
+            "model.layers.0.mlp.moe_weights.gate": "model.safetensors",
+            "model.layers.1.mlp.experts.moe_weights.up": "model.safetensors",
+            "model.layers.2.block_sparse_moe.experts.down_proj_t": "model.safetensors",
+        }
+        backbone = MagicMock()
+        backbone.base_model_prefix = "model"
+
+        assert (
+            find_checkpoint_key("model.layers.0.mlp.experts.moe_weights.gate", checkpoint_index, backbone)
+            == "model.layers.0.mlp.moe_weights.gate"
+        )
+        assert (
+            find_checkpoint_key("model.layers.1.mlp.moe_weights.up", checkpoint_index, backbone)
+            == "model.layers.1.mlp.experts.moe_weights.up"
+        )
+        assert (
+            find_checkpoint_key("model.layers.2.block_sparse_moe.moe_weights.down", checkpoint_index, backbone)
+            == "model.layers.2.block_sparse_moe.experts.down_proj_t"
+        )
 
 
 # ---------------------------------------------------------------------------

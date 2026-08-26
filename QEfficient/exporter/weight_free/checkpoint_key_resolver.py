@@ -21,6 +21,15 @@ from QEfficient.exporter.weight_free.weight_spec import (
 from QEfficient.transformers.embeddings.embedding_utils import PooledModel
 from QEfficient.utils.checkpoint_utils import checkpoint_root, load_checkpoint_index, resolve_checkpoint_files
 
+_MOE_WEIGHT_LEGACY_SUFFIXES = {
+    "gate": "gate_proj",
+    "up": "up_proj",
+    "down": "down_proj_t",
+    "gate_bias": "gate_proj_bias",
+    "up_bias": "up_proj_bias",
+    "down_bias": "down_proj_bias",
+}
+
 
 def _collect_tied_weights(model: nn.Module) -> List[TiedWeightAlias]:
     """Return aliases for tied input/output embedding weights."""
@@ -41,6 +50,41 @@ def _collect_tied_weights(model: nn.Module) -> List[TiedWeightAlias]:
     return [TiedWeightAlias(alias=f"{alias_name}.weight", canonical=f"{canonical_name}.weight")]
 
 
+def _moe_weight_aliases(name: str) -> List[str]:
+    """Return equivalent checkpoint aliases for shared MoEWeights parameters."""
+    aliases = []
+    canonical = name
+    if ".experts.moe_weights." in name:
+        canonical = name.replace(".experts.moe_weights.", ".moe_weights.", 1)
+        aliases.append(canonical)
+    elif ".moe_weights." in name:
+        aliases.append(name.replace(".moe_weights.", ".experts.moe_weights.", 1))
+
+    prefix, separator, suffix = canonical.rpartition(".moe_weights.")
+    if separator and suffix in _MOE_WEIGHT_LEGACY_SUFFIXES:
+        aliases.append(f"{prefix}.experts.{_MOE_WEIGHT_LEGACY_SUFFIXES[suffix]}")
+
+    return aliases
+
+
+def _find_first_checkpoint_key(candidates: List[str], checkpoint_index: Dict[str, str]) -> Optional[str]:
+    """Return the first candidate found in the checkpoint index."""
+    seen = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate in checkpoint_index:
+            return candidate
+        for alias in _moe_weight_aliases(candidate):
+            if alias in seen:
+                continue
+            seen.add(alias)
+            if alias in checkpoint_index:
+                return alias
+    return None
+
+
 def find_checkpoint_key(
     onnx_name: str,
     checkpoint_index: Dict[str, str],
@@ -52,38 +96,45 @@ def find_checkpoint_key(
     task-head/base-model checkpoint differences, and known HF/QEff MoE naming
     differences without putting those details in the export orchestration path.
     """
-    if onnx_name in checkpoint_index:
-        return onnx_name
+    match = _find_first_checkpoint_key([onnx_name], checkpoint_index)
+    if match is not None:
+        return match
 
     stripped = onnx_name[len("base_model.") :] if onnx_name.startswith("base_model.") else onnx_name
-    if stripped in checkpoint_index:
-        return stripped
+    match = _find_first_checkpoint_key([stripped], checkpoint_index)
+    if match is not None:
+        return match
 
     prefix = getattr(backbone, "base_model_prefix", "")
     if prefix:
         prefixed = f"{prefix}.{stripped}"
-        if prefixed in checkpoint_index:
-            return prefixed
+        match = _find_first_checkpoint_key([prefixed], checkpoint_index)
+        if match is not None:
+            return match
 
     if prefix and stripped.startswith(f"{prefix}."):
         without_prefix = stripped[len(f"{prefix}.") :]
-        if without_prefix in checkpoint_index:
-            return without_prefix
+        match = _find_first_checkpoint_key([without_prefix], checkpoint_index)
+        if match is not None:
+            return match
 
     if ".mlp." in stripped:
         candidate = stripped.replace(".mlp.", ".block_sparse_moe.")
-        if candidate in checkpoint_index:
-            return candidate
+        match = _find_first_checkpoint_key([candidate], checkpoint_index)
+        if match is not None:
+            return match
 
     if stripped.endswith(".mlp.gate.weight"):
         candidate = stripped[: -len(".gate.weight")] + ".router.weight"
-        if candidate in checkpoint_index:
-            return candidate
+        match = _find_first_checkpoint_key([candidate], checkpoint_index)
+        if match is not None:
+            return match
 
     if stripped.endswith(".mlp.router.weight"):
         candidate = stripped[: -len(".router.weight")] + ".gate.weight"
-        if candidate in checkpoint_index:
-            return candidate
+        match = _find_first_checkpoint_key([candidate], checkpoint_index)
+        if match is not None:
+            return match
 
     return None
 
@@ -110,6 +161,8 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
     model_ir = onnx_program.model
     model_names = {name for name, _ in qeff_model.model.named_parameters()}
     model_names.update({name for name, _ in qeff_model.model.named_buffers()})
+    for name in list(model_names):
+        model_names.update(_moe_weight_aliases(name))
     tied_weight_map = {entry.alias: entry.canonical for entry in _collect_tied_weights(qeff_model.model)}
     checkpoint_files = resolve_checkpoint_files(model_ref)
     root = checkpoint_root(model_ref, checkpoint_files)
