@@ -647,7 +647,6 @@ class QEFFBaseModel(ABC):
         qaic_config: Optional[dict] = None,
         kv_cache_prefix: Optional[str] = None,
         expert_parallel: Optional[bool] = None,
-        num_devices: int = 1,
         cores_per_expert: Optional[int] = None,
         tree_reduce: Optional[bool] = None,
         mdp_num_partitions: Optional[int] = 1,
