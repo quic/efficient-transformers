@@ -39,6 +39,45 @@ python -m QEfficient.cloud.infer --model_name gpt2 --batch_size 1 --prompt_len 3
 
 ---
 
+(id-weight-free-export)=
+## Weight-Free CausalLM Export
+
+Weight-free export traces a CausalLM model with meta tensors and keeps model
+weights outside the ONNX graph. The export writes a `weight_spec.json` sidecar
+beside the ONNX file so compile and ONNX Runtime validation can load the real
+checkpoint tensors only when needed.
+
+Use the `compile()` flag when exporting large CausalLM models where holding all
+weights in memory during ONNX export is not practical:
+
+```Python
+from QEfficient import QEFFAutoModelForCausalLM
+
+model = QEFFAutoModelForCausalLM.from_pretrained("Qwen/Qwen2-1.5B-Instruct")
+qpc_path = model.compile(
+    prefill_seq_len=128,
+    ctx_len=128,
+    num_cores=16,
+    dynamo=True,
+    use_onnx_subfunctions=True,
+    use_weight_free_export=True,
+)
+```
+
+`use_weight_free_export=True` forces the dynamo export path. When constructing a
+QEfficient wrapper manually from a meta-device model, pass
+`pretrained_model_name_or_path` so the exporter can resolve the checkpoint files
+referenced by `weight_spec.json`.
+
+For ONNX Runtime validation, use
+`QEfficient.exporter.weight_free.load_weight_free_ort_inputs()` to merge runtime
+inputs with the external checkpoint tensors. The helper resolves weights from an
+explicit `weights_root` argument first. If that is not provided, it checks
+`AIC_EXTERNAL_DATA_ROOT`, the ONNX export directory, and the original checkpoint
+location recorded in `weight_spec.json`.
+
+---
+
 (id-qnn-compilation-via-python-api)=
 ## QNN Compilation via Python API
 

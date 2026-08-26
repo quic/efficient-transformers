@@ -19,27 +19,33 @@ CPU-only. No QAIC hardware required.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import onnx_ir as ir
 import torch
 from onnx import TensorProto, helper
 from safetensors import safe_open
 from safetensors.torch import save_file
 from transformers import LlamaConfig, LlamaForCausalLM
 
+from QEfficient.base.checkpoint_transforms import CHECKPOINT_PREPARED_MANIFEST, CheckpointTransformPipeline
 from QEfficient.base.onnx_transforms import (
     PreserveNestedCacheRetainedStateTransform,
     PruneFakeInitializersTransform,
     RenameRepeatedSubgraphTransform,
 )
+from QEfficient.exporter.weight_free import checkpoint_key_resolver
 from QEfficient.exporter.weight_free.checkpoint_key_resolver import find_checkpoint_key
 from QEfficient.exporter.weight_free.checkpoint_transforms import (
+    DtypeConversionCheckpointTransform,
     GraniteMoeFusedExpertSplitCheckpointTransform,
     MoEExpertStackingCheckpointTransform,
     MoEFusedExpertSplitCheckpointTransform,
 )
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+from QEfficient.utils.export_utils import _generate_export_hash
 from QEfficient.utils.torch_patches import temporarily_enable_nested_compile_regions
 
 # ---------------------------------------------------------------------------
@@ -149,6 +155,25 @@ def _load_prepared_tensors(root):
 
 
 class TestWeightFreeCheckpointTransforms:
+    def test_checkpoint_pipeline_rebuilds_when_source_changes(self, tmp_path):
+        src = tmp_path / "src"
+        out = tmp_path / "out"
+        src.mkdir()
+        _write_safetensors_checkpoint(src, {"weight": torch.ones(2, dtype=torch.float16)})
+
+        pipeline = CheckpointTransformPipeline([DtypeConversionCheckpointTransform])
+        prepared = pipeline.apply(src, out, target_dtype=torch.float32)
+
+        assert prepared == out
+        assert (out / CHECKPOINT_PREPARED_MANIFEST).is_file()
+        torch.testing.assert_close(_load_prepared_tensors(out)["weight"], torch.ones(2, dtype=torch.float32))
+
+        _write_safetensors_checkpoint(src, {"weight": torch.ones(3, dtype=torch.float16)})
+        prepared = pipeline.apply(src, out, target_dtype=torch.float32)
+
+        assert prepared == out
+        torch.testing.assert_close(_load_prepared_tensors(out)["weight"], torch.ones(3, dtype=torch.float32))
+
     def test_stacks_per_expert_weights_to_moe_weights(self, tmp_path):
         src = tmp_path / "src"
         out = tmp_path / "out"
@@ -285,6 +310,96 @@ class TestWeightFreeCheckpointTransforms:
             find_checkpoint_key("model.layers.2.block_sparse_moe.moe_weights.down", checkpoint_index, backbone)
             == "model.layers.2.block_sparse_moe.experts.down_proj_t"
         )
+
+    def test_promotes_tied_weight_alias_initializers(self, tmp_path, monkeypatch):
+        src = tmp_path / "src"
+        src.mkdir()
+        tied_weight = torch.arange(12, dtype=torch.float32).reshape(4, 3)
+        _write_safetensors_checkpoint(src, {"model.embed_tokens.weight": tied_weight})
+
+        class TiedModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = SimpleNamespace(tie_word_embeddings=True)
+                self.model = torch.nn.Module()
+                self.model.embed_tokens = torch.nn.Embedding(4, 3)
+                self.lm_head = torch.nn.Linear(3, 4, bias=False)
+                self.lm_head.weight = self.model.embed_tokens.weight
+
+            def get_input_embeddings(self):
+                return self.model.embed_tokens
+
+            def get_output_embeddings(self):
+                return self.lm_head
+
+        initializer = SimpleNamespace(shape=tied_weight.shape, dtype=ir.DataType.FLOAT)
+        graph = SimpleNamespace(initializers={"lm_head.weight": initializer}, inputs=[])
+        onnx_program = SimpleNamespace(model=SimpleNamespace(graph=graph))
+        monkeypatch.setattr(
+            checkpoint_key_resolver.ir,
+            "Value",
+            lambda name, shape, type: SimpleNamespace(name=name, shape=shape, type=type),
+        )
+
+        spec = checkpoint_key_resolver.promote_initializers_and_build_spec(
+            onnx_program=onnx_program,
+            model_ref=str(src),
+            model_name="tiny-tied",
+            qeff_model=SimpleNamespace(model=TiedModel()),
+        )
+
+        assert "lm_head.weight" not in graph.initializers
+        assert [value.name for value in graph.inputs] == ["lm_head.weight"]
+        assert spec.inputs[0].name == "lm_head.weight"
+        assert spec.inputs[0].location.key == "model.embed_tokens.weight"
+
+
+def _fake_export(
+    self,
+    example_inputs,
+    output_names,
+    dynamic_axes,
+    onnx_transform_kwargs=None,
+    export_dir=None,
+    dynamo=False,
+    dynamic_shapes=None,
+    use_weight_free_export=False,
+    **export_kwargs,
+):
+    pass
+
+
+class TestWeightFreeExportHash:
+    def test_weight_free_export_hash_differs_from_regular_dynamo(self):
+        config = SimpleNamespace(to_diff_dict=lambda: {"model_type": "llama"})
+        qeff_model = SimpleNamespace(
+            model=SimpleNamespace(config=config),
+            hash_params={"pretrained_model_name_or_path": "tiny"},
+            _use_onnx_subfunctions=False,
+        )
+        common_kwargs = {
+            "example_inputs": {"input_ids": torch.ones(1, 2, dtype=torch.int64)},
+            "output_names": ["logits"],
+            "dynamic_axes": {"input_ids": {0: "batch_size"}},
+            "dynamo": True,
+        }
+
+        regular_hash, regular_params = _generate_export_hash(
+            qeff_model,
+            (),
+            {**common_kwargs, "use_weight_free_export": False},
+            _fake_export,
+        )
+        weight_free_hash, weight_free_params = _generate_export_hash(
+            qeff_model,
+            (),
+            {**common_kwargs, "use_weight_free_export": True},
+            _fake_export,
+        )
+
+        assert regular_hash != weight_free_hash
+        assert not regular_params["use_weight_free_export"]
+        assert weight_free_params["use_weight_free_export"]
 
 
 # ---------------------------------------------------------------------------

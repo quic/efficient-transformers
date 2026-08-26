@@ -161,9 +161,11 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
     model_ir = onnx_program.model
     model_names = {name for name, _ in qeff_model.model.named_parameters()}
     model_names.update({name for name, _ in qeff_model.model.named_buffers()})
+    tied_weight_map = {entry.alias: entry.canonical for entry in _collect_tied_weights(qeff_model.model)}
+    model_names.update(tied_weight_map)
+    model_names.update(tied_weight_map.values())
     for name in list(model_names):
         model_names.update(_moe_weight_aliases(name))
-    tied_weight_map = {entry.alias: entry.canonical for entry in _collect_tied_weights(qeff_model.model)}
     checkpoint_files = resolve_checkpoint_files(model_ref)
     root = checkpoint_root(model_ref, checkpoint_files)
     checkpoint_index = load_checkpoint_index(checkpoint_files)
