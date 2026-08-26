@@ -30,7 +30,6 @@ def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for AI100 compile/inference knobs."""
     parser = argparse.ArgumentParser(description="Qwen3-VL reranker example.")
     parser.add_argument("--model-name", type=str, default="Qwen/Qwen3-VL-Reranker-2B")
-    parser.add_argument("--ctx-len", type=int, default=2048, help="Context length used at compile time.")
     parser.add_argument("--num-cores", type=int, default=16, help="Number of AI100 cores.")
     parser.add_argument("--num-devices", type=int, default=1, help="Number of AI100 devices.")
     parser.add_argument(
@@ -45,6 +44,15 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Optional fixed prefill sequence length for compile/padding. "
             "Must be >= max prompt length of the current request."
+        ),
+    )
+    parser.add_argument(
+        "--kv-offload",
+        action="store_true",
+        default=False,
+        help=(
+            "Use dual-QPC mode (kv_offload=True): vision and language are compiled into "
+            "separate QPCs. Default is single-QPC mode (kv_offload=False)."
         ),
     )
     return parser.parse_args()
@@ -92,11 +100,13 @@ def main() -> None:
         config.text_config.use_cache = True
 
     processor = AutoProcessor.from_pretrained(model_source, trust_remote_code=True)
+    qaic_config = {} if args.kv_offload else {"no_kv_cache": True}
     model = QEFFAutoModelForImageTextToText.from_pretrained(
         model_source,
-        kv_offload=True,
+        kv_offload=args.kv_offload,
         trust_remote_code=True,
         config=config,
+        qaic_config=qaic_config,
     )
 
     # 2) Build reranker helper and reference payload.
@@ -106,7 +116,6 @@ def main() -> None:
     # 3) Derive compile requirements from current payload.
     compile_specs = reranker.get_compile_specs(
         inputs=inputs,
-        ctx_len=args.ctx_len,
         prefill_seq_len=args.compile_prefill_seq_len,
     )
 
