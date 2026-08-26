@@ -924,7 +924,16 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         logits = self.lm_head(hidden_states).float()
         return logits, image_idx, outputs.past_key_values, pixel_values
 
-    def get_dummy_inputs(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False, **kwargs):
+    def get_dummy_inputs(
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+        **kwargs,
+    ):
+        if continuous_batching:
+            raise NotImplementedError("Continuous batching is not supported for Mllama.")
+
         BS = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         seq_len = kwargs.get("prefill_seq_len")
         if seq_len is None:
@@ -1096,7 +1105,15 @@ class QEffMllamaForConditionalGeneration(MllamaForConditionalGeneration):
         else:
             return lang, compiler_options
 
-    def get_onnx_dynamic_axes(self, comp_ctx_lengths: Optional[List[int]] = None, kv_offload: bool = False):
+    def get_onnx_dynamic_axes(
+        self,
+        comp_ctx_lengths: Optional[List[int]] = None,
+        kv_offload: bool = False,
+        continuous_batching: bool = False,
+    ):
+        if continuous_batching:
+            raise NotImplementedError("Continuous batching is not supported for Mllama.")
+
         txt_cfg = self.config.get_text_config()
         num_hidden_layers = txt_cfg.num_hidden_layers
         cross_attention_layers = txt_cfg.cross_attention_layers

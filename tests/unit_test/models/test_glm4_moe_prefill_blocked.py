@@ -43,7 +43,7 @@ def test_glm4_moe_transform_enables_kv_blocking_on_qeff_attention():
     qeff.transform(
         ctx_len=1024,
         seq_len=512,
-        qaic_config={"enable_blocking": True, "blocking_mode": "kv", "num_kv_blocks": 2},
+        qaic_config={"blocking_mode": "kv", "num_kv_blocks": 2},
     )
 
     attn_modules = [module for module in qeff.model.modules() if isinstance(module, QEffGlm4MoeAttention)]
