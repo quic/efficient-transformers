@@ -377,7 +377,7 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
         weight_map = read_weight_map(src)
         shard_names = sorted(set(weight_map.values()))
 
-        # ── Phase 1: parallel key scan — no tensor data loaded ────────────────
+        # Phase 1: parallel key scan - no tensor data loaded.
         #
         # expert_entries[(layer_idx, expert_idx, kind)] = (shard_name, orig_key)
         # layer_prefix[layer_idx]                        = prefix up to .experts
@@ -424,7 +424,7 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
 
         new_weight_map: Dict[str, str] = {}
 
-        # ── Phase 2: parallel layer stacking ──────────────────────────────────
+        # Phase 2: parallel layer stacking.
         # Each layer thread loads its own experts (grouped by shard to open each
         # shard at most once per layer), stacks, converts dtype, writes atomically.
         def _stack_layer(layer_idx: int) -> Tuple[str, List[str]]:
@@ -484,7 +484,7 @@ class MoEExpertStackingCheckpointTransform(BaseCheckpointTransform):
                     new_weight_map[key] = out_name
                 logger.info(f"    layer {li:5d} → {out_name}")
 
-        # ── Phase 3: parallel base shard conversion ────────────────────────────
+        # Phase 3: parallel base shard conversion.
         by_shard_base: Dict[str, List[str]] = {}
         for key, shard_name in base_entries.items():
             by_shard_base.setdefault(shard_name, []).append(key)
@@ -586,7 +586,7 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
         weight_map = read_weight_map(src)
         shard_names = sorted(set(weight_map.values()))
 
-        # ── Phase 1: scan — collect expert tensor locations ──────────────────
+        # Phase 1: scan - collect expert tensor locations.
         # expert_locs[(layer_idx, kind)] = (blocks_shard, blocks_key, scales_shard, scales_key)
         # bias_locs[(layer_idx, kind)]   = (shard, key)   for gate_up_proj_bias / down_proj_bias
         # layer_prefix[layer_idx]        = prefix up to .experts
@@ -645,7 +645,7 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
 
         new_weight_map: Dict[str, str] = {}
 
-        # ── Phase 2: per-layer dequant + split ────────────────────────────────
+        # Phase 2: per-layer dequant + split.
         def _process_layer(layer_idx: int) -> Tuple[str, List[str]]:
             prefix = layer_prefix[layer_idx]
             moe_prefix = _moe_weights_prefix_from_experts_prefix(prefix)
@@ -702,7 +702,7 @@ class GptOssMxfp4ExpertDequantSplitCheckpointTransform(BaseCheckpointTransform):
                     new_weight_map[key] = out_name
                 logger.info(f"    layer {li:5d} → {out_name}")
 
-        # ── Phase 3: base shard dtype conversion ──────────────────────────────
+        # Phase 3: base shard dtype conversion.
         by_shard_base: Dict[str, List[str]] = {}
         for key, shard_name in base_entries.items():
             by_shard_base.setdefault(shard_name, []).append(key)

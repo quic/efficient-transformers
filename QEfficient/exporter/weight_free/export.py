@@ -38,6 +38,17 @@ _last_prep_duration_seconds: float = 0.0
 _checkpoint_prep_ran: bool = False
 
 
+def _resolve_weight_free_dtype(config) -> torch.dtype:
+    dtype = getattr(config, "torch_dtype", None) or getattr(config, "dtype", None) or torch.float32
+    if isinstance(dtype, str):
+        if dtype.startswith("torch."):
+            dtype = dtype[len("torch.") :]
+        dtype = getattr(torch, dtype, torch.float32)
+    if dtype == torch.bfloat16:
+        return torch.float16
+    return dtype
+
+
 def _to_meta(value: Any) -> Any:
     """Recursively move tensor-like example inputs to equivalent meta tensors."""
     if isinstance(value, torch.Tensor):
@@ -67,10 +78,7 @@ def _build_meta_qeff_model(qeff_model):
         meta_model = qeff_model._hf_auto_class.from_config(config, attn_implementation="eager")
 
     if quant_config is None:
-        target_dtype = getattr(config, "dtype", None) or torch.float32
-        if target_dtype == torch.bfloat16:
-            target_dtype = torch.float16
-        meta_model = meta_model.to(dtype=target_dtype)
+        meta_model = meta_model.to(dtype=_resolve_weight_free_dtype(config))
 
     meta_qeff_model = qeff_model.__class__(
         meta_model,
@@ -238,20 +246,19 @@ def export_weight_free_onnx(
     global _checkpoint_prep_ran, _last_prep_duration_seconds, _last_prep_peak_rss_mb
 
     meta_qeff_model = _build_meta_qeff_model(qeff_model)
-    cleanup_required = False
+    subfunction_state = None
 
     if getattr(qeff_model, "_use_onnx_subfunctions", False):
-        _, subfunc_kwargs, _ = _setup_onnx_subfunctions(
+        _, subfunc_kwargs, subfunction_state = _setup_onnx_subfunctions(
             meta_qeff_model,
             (),
             {
-                "use_dynamo": True,
                 "onnx_transform_kwargs": copy.deepcopy(onnx_transform_kwargs),
                 "output_names": list(output_names),
             },
+            dynamo=True,
         )
         onnx_transform_kwargs = subfunc_kwargs.get("onnx_transform_kwargs", onnx_transform_kwargs)
-        cleanup_required = True
 
     decoder_layer_classes = get_decoder_layer_classes_for_export(meta_qeff_model.model)
     if getattr(meta_qeff_model, "_use_onnx_subfunctions", False) and decoder_layer_classes:
@@ -278,9 +285,7 @@ def export_weight_free_onnx(
         if onnx_program is None:
             raise RuntimeError("torch.onnx.export returned None for weight-free dynamo export")
 
-        target_dtype = getattr(qeff_model.model.config, "dtype", None) or torch.float32
-        if target_dtype == torch.bfloat16:
-            target_dtype = torch.float16
+        target_dtype = _resolve_weight_free_dtype(qeff_model.model.config)
 
         prep_start = time.perf_counter()
         prepared_model_ref = _prepare_checkpoint_for_weight_free_export(meta_qeff_model, model_ref, target_dtype)
@@ -306,8 +311,8 @@ def export_weight_free_onnx(
 
     def cleanup():
         """Release ONNX subfunction state created for this export, if any."""
-        if cleanup_required:
-            _cleanup_onnx_subfunctions(meta_qeff_model)
+        if subfunction_state is not None:
+            _cleanup_onnx_subfunctions(meta_qeff_model, subfunction_state)
 
     return meta_qeff_model, onnx_transform_kwargs, cleanup
 

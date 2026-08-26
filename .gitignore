@@ -101,6 +101,3 @@ docs/hub/
 docs/xet
 **/time-passes.log
 **/custom_io_fp16.yaml
-env1/
-test_models/
-dbg.log

@@ -12,7 +12,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
-import psutil
 import torch
 from safetensors import safe_open
 from safetensors.torch import load_file, save_file
@@ -45,7 +44,14 @@ def load_checkpoint(model, checkpoint: str, strict=False, post_process_func=None
 
 def available_ram_gb() -> float:
     """Available (free + reclaimable) RAM on the current machine in GB."""
-    return psutil.virtual_memory().available / 1024**3
+    try:
+        import psutil
+
+        return psutil.virtual_memory().available / 1024**3
+    except ModuleNotFoundError:
+        if hasattr(os, "sysconf") and "SC_AVPHYS_PAGES" in os.sysconf_names and "SC_PAGE_SIZE" in os.sysconf_names:
+            return os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 1024**3
+        return 1.0
 
 
 def cpu_count() -> int:

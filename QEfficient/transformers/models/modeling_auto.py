@@ -1877,6 +1877,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
+        use_weight_free_export: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1918,6 +1919,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             If True, skips compilation of the language decoder. Default is False.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+        use_weight_free_export: bool, optional
+            Export the model with checkpoint weights externalized into
+            ``weight_spec.json`` before compiling. This forces the dynamo exporter.
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -3825,6 +3829,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         dynamo: bool, optional
             whether to enable dynamo during export.
+        use_weight_free_export: bool, optional
+            Export with model weights externalized into ``weight_spec.json``. This
+            mode requires the dynamo exporter and is intended for lower-memory
+            CausalLM export flows.
         Returns
         -------
         str
@@ -4331,6 +4339,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
+        use_weight_free_export: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -4379,6 +4388,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             the decode stage. If None, compiles for both stages. Default is None.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
+        use_weight_free_export: bool, optional
+            Export with model weights externalized into ``weight_spec.json``. This
+            mode requires the dynamo exporter and is intended for lower-memory
+            CausalLM export flows.
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -4448,6 +4461,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 enable_chunking=enable_chunking,
                 retain_full_kv=retain_full_kv,
                 kv_cache_prefix=kv_cache_prefix,
+                use_weight_free_export=use_weight_free_export,
                 **compiler_options,
             )
         if self.model.qaic_config is not None and self.model.qaic_config.get("mla_absorption", None) is not None:
@@ -4694,6 +4708,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,
             kv_cache_prefix=kv_cache_prefix,
+            use_weight_free_export=use_weight_free_export,
             **compiler_options,
         )
 
