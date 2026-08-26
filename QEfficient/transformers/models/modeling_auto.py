@@ -32,6 +32,7 @@ from transformers import (
 import QEfficient
 from QEfficient.base.modeling_qeff import QEFFBaseModel, reject_legacy_moe_prefill_packed_chunk_size
 from QEfficient.base.onnx_transforms import FP16ClipTransform, SplitTensorsTransform
+from QEfficient.blocking.attention_blocking import BlockingMode
 from QEfficient.generation.cloud_infer import QAICInferenceSession, is_retained_state_name
 from QEfficient.generation.text_generation_inference import (
     CloudAI100ExecInfoNew,
@@ -1602,6 +1603,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             else:
                 self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
         onnx_kwargs = {"prefill_seq_len": seq_len, "batch_size": bs}
+        if getattr(self.model.config, "model_type", None) == "qwen3_vl_moe":
+            _blocking_cfg = self.lang_model.hash_params.get("blocking_kwargs", None)
+            batch_fold = not prefill_only and _blocking_cfg is not None and _blocking_cfg.mode == BlockingMode.KV_BATCH_FOLD
+            if batch_fold:
+                onnx_kwargs["batch_fold"] = batch_fold
         # TODO This is a temporary change as continous batching is enabled only for few models. Once support is added for all the models this exception handing can be removed.
         try:
             inputs = self.model.get_dummy_inputs(
