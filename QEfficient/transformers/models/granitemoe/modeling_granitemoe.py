@@ -505,24 +505,11 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
 
         """
 
-        logits = self.layer(hidden_states).float()
+        logits = torch.nn.functional.linear(hidden_states, self.weight).float()
 
-        top_k_logits, top_k_indices = torch.topk(logits, self.top_k, dim=1)  # [B, K]
-        top_k_gates = torch.softmax(top_k_logits, dim=1).to(hidden_states.dtype)  # [B, K]
-
-        B, K = top_k_indices.shape
-        E = int(self.num_experts)
-
-        # Create expert indices [E]
-        expert_ids = torch.arange(E, device=top_k_indices.device)
-
-        # Compare and build mask: [B, K, E]
-        expert_mask = (top_k_indices.unsqueeze(-1) == expert_ids).to(torch.int64)
-
-        # Match original layout: [E, K, B]
-        expert_mask = expert_mask.permute(2, 1, 0)
-
-        return top_k_gates, expert_mask, logits, self.num_experts
+        top_k_logits, top_k_index = torch.topk(logits, self.top_k, dim=-1)
+        top_k_weights = torch.softmax(top_k_logits, dim=-1).to(hidden_states.dtype)
+        return top_k_index, top_k_weights, logits
 
 
 class QEffGraniteMoeMoE(QEffMoEBlockMixin, GraniteMoeMoE):
@@ -535,15 +522,16 @@ class QEffGraniteMoeMoE(QEffMoEBlockMixin, GraniteMoeMoE):
         if getattr(self, "weights_transformed", False):
             return self.moe_weights
         self.moe_weights = build_canonical_expert_weights(
-            gate_up=self.input_linear.weight,
-            down=self.output_linear.weight,
+            gate_up=self.experts.gate_up_proj,
+            down=self.experts.down_proj,
             fused=True,
             fused_split_dim=1,
             transpose_gate_up=True,
             transpose_down=True,
             clone=True,
         )
-        delete_module_attrs(self, "input_linear", "output_linear")
+        self.activation = self.experts.act_fn
+        delete_module_attrs(self.experts, "gate_up_proj", "down_proj")
         self.weights_transformed = True
         return self.moe_weights
 
@@ -552,8 +540,11 @@ class QEffGraniteMoeMoE(QEffMoEBlockMixin, GraniteMoeMoE):
         return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.activation))
 
     def route(self, x: torch.Tensor):
-        topk_gates, expert_mask, router_logits, _ = self.router(x)
-        routing_weights = torch.einsum("bke,bk->be", expert_mask.permute(2, 1, 0).to(topk_gates.dtype), topk_gates)
+        top_k_index, top_k_weights, router_logits = self.router(x)
+        routing_weights = torch.zeros(
+            (x.shape[0], self.experts.num_experts), dtype=top_k_weights.dtype, device=top_k_weights.device
+        )
+        routing_weights.scatter_(1, top_k_index, top_k_weights)
         return routing_weights.to(x.dtype), router_logits
 
 
