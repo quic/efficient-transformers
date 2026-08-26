@@ -17,18 +17,14 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeAttention,
     GraniteMoeConfig,
     GraniteMoeDecoderLayer,
+    GraniteMoeExperts,
     GraniteMoeForCausalLM,
     GraniteMoeModel,
     GraniteMoeMoE,
     GraniteMoeRotaryEmbedding,
+    GraniteMoeTopKRouter,
     repeat_kv,
     rotate_half,
-)
-from transformers.models.granitemoe.modeling_granitemoe import (
-    GraniteMoeExperts as GraniteMoeParallelExperts,
-)
-from transformers.models.granitemoe.modeling_granitemoe import (
-    GraniteMoeTopKRouter as GraniteMoeTopKGating,
 )
 
 from QEfficient.blocking.attention_blocking import (
@@ -484,7 +480,7 @@ class QEffGraniteMoeModel(GraniteMoeModel):
         return causal_mask
 
 
-class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
+class QEffGraniteMoeTopKRouter(GraniteMoeTopKRouter):
     """
     Routing scores and expert mask are computed here
     """
@@ -512,7 +508,13 @@ class QEffGraniteMoeTopKGating(GraniteMoeTopKGating):
         logits = torch.nn.functional.linear(hidden_states, self.weight).float()
 
         top_k_logits, top_k_index = torch.topk(logits, self.top_k, dim=-1)
-        top_k_weights = torch.softmax(top_k_logits, dim=-1).to(hidden_states.dtype)
+        top_k_logits = top_k_logits - top_k_logits[..., :1]
+        top_k_weights = top_k_logits.exp()
+        if self.top_k == 2:
+            top_k_weights_sum = top_k_weights[..., 0:1] + top_k_weights[..., 1:2]
+        else:
+            top_k_weights_sum = top_k_weights.sum(dim=-1, keepdim=True)
+        top_k_weights = (top_k_weights / top_k_weights_sum).to(hidden_states.dtype)
         return top_k_index, top_k_weights, logits
 
 
@@ -552,10 +554,10 @@ class QEffGraniteMoeMoE(QEffMoEBlockMixin, GraniteMoeMoE):
         return routing_weights.to(x.dtype), router_logits
 
 
-class QEffGraniteMoeParallelExperts(GraniteMoeParallelExperts):
+class QEffGraniteMoeExperts(GraniteMoeExperts):
     def forward(self, inputs, expert_size):
         """
-        Forward pass of the QEffGraniteMoeParallelExperts module.
+        Forward pass of the QEffGraniteMoeExperts module.
         Args:
             inputs (Tensor):
                 Input tensor.

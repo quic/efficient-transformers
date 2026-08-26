@@ -8,26 +8,24 @@
 """
 QEfficient CLIP model overrides for ONNX-tracing compatibility with transformers >= 5.5.
 
-In transformers 5.5+, CLIPTextTransformer.forward calls create_causal_mask(), which
+In transformers 5.5+, CLIPTextModel.forward calls create_causal_mask(), which
 internally calls sdpa_mask(). During ONNX tracing, inputs_embeds.shape[1] is a tensor
 (not an int), and the backward-compat branch in sdpa_mask does q_length[0].to(device)
 on a 0-dim tensor, raising "IndexError: tuple index out of range".
 
-The fix: override CLIPTextTransformer.forward to skip create_causal_mask entirely and
+The fix: override CLIPTextModel.forward to skip create_causal_mask entirely and
 pass attention_mask=None directly to the encoder (CLIP uses causal attention via
 is_causal=True, so no explicit mask tensor is needed for export).
 """
 
+from typing import Optional
+
 import torch
 from transformers.modeling_outputs import BaseModelOutputWithPooling
-
-try:
-    from transformers.models.clip.modeling_clip import CLIPTextTransformer
-except ImportError:
-    from transformers.models.clip.modeling_clip import CLIPTextModel as CLIPTextTransformer
+from transformers.models.clip.modeling_clip import CLIPTextModel
 
 
-class QEffCLIPTextTransformer(CLIPTextTransformer):
+class QEffCLIPTextModel(CLIPTextModel):
     """
     CLIP text transformer with create_causal_mask bypassed for ONNX-tracing compatibility.
 
@@ -37,10 +35,10 @@ class QEffCLIPTextTransformer(CLIPTextTransformer):
 
     def forward(
         self,
-        input_ids: torch.Tensor | None = None,
-        attention_mask: torch.Tensor | None = None,
-        position_ids: torch.Tensor | None = None,
-        output_hidden_states: bool | None = None,
+        input_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        output_hidden_states: Optional[bool] = None,
         **kwargs,
     ) -> BaseModelOutputWithPooling:
         if input_ids is None:

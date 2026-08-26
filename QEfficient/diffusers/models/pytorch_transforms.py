@@ -5,8 +5,6 @@
 #
 # -----------------------------------------------------------------------------
 
-from typing import ClassVar
-
 from diffusers.models.autoencoders.autoencoder_kl_wan import (
     AutoencoderKLWan,
     WanDecoder3d,
@@ -24,11 +22,7 @@ from diffusers.models.transformers.transformer_flux import (
 )
 from diffusers.models.transformers.transformer_wan import WanAttention, WanAttnProcessor, WanTransformer3DModel
 from torch import nn
-
-try:
-    from transformers.models.clip.modeling_clip import CLIPTextTransformer
-except ImportError:
-    from transformers.models.clip.modeling_clip import CLIPTextModel as CLIPTextTransformer
+from transformers.models.clip.modeling_clip import CLIPTextModel
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.customop.rms_norm import CustomRMSNormAIC
@@ -56,24 +50,24 @@ from QEfficient.diffusers.models.transformers.transformer_wan import (
     QEffWanAttnProcessor,
     QEffWanTransformer3DModel,
 )
-from QEfficient.transformers.models.clip.modeling_clip import QEffCLIPTextTransformer
+from QEfficient.transformers.models.clip.modeling_clip import QEffCLIPTextModel
 
 
 class CustomOpsTransform(ModuleMappingTransform):
-    _module_mapping: ClassVar[dict[type, type]] = {
+    _module_mapping = {
         RMSNorm: CustomRMSNormAIC,
         nn.RMSNorm: CustomRMSNormAIC,  #  for torch.nn.RMSNorm
     }
 
 
 class CLIPTextTransform(ModuleMappingTransform):
-    _module_mapping: ClassVar[dict[type, type]] = {
-        CLIPTextTransformer: QEffCLIPTextTransformer,
+    _module_mapping = {
+        CLIPTextModel: QEffCLIPTextModel,
     }
 
 
 class AttentionTransform(ModuleMappingTransform):
-    _module_mapping: ClassVar[dict[type, type]] = {
+    _module_mapping = {
         FluxSingleTransformerBlock: QEffFluxSingleTransformerBlock,
         FluxTransformerBlock: QEffFluxTransformerBlock,
         FluxTransformer2DModel: QEffFluxTransformer2DModel,
@@ -91,7 +85,7 @@ class AttentionTransform(ModuleMappingTransform):
 
 
 class NormalizationTransform(ModuleMappingTransform):
-    _module_mapping: ClassVar[dict[type, type]] = {
+    _module_mapping = {
         AdaLayerNormZero: QEffAdaLayerNormZero,
         AdaLayerNormZeroSingle: QEffAdaLayerNormZeroSingle,
         AdaLayerNormContinuous: QEffAdaLayerNormContinuous,

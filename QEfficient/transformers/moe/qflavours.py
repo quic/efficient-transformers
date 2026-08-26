@@ -12,12 +12,12 @@ from dataclasses import dataclass
 
 import torch
 
-from QEfficient.customop import (
-    ctx_gather_3d_generalized,
-    ctx_scatter_3d_generalized,
-    ctx_scatter_3d_int,
+from QEfficient.customop.ctx_scatter_gather import (
+    CtxGatherFunc3DGeneralized,
+    CtxScatterFunc3DGeneralized,
 )
 from QEfficient.customop.quantization_ops import CastToUInt4Func, DequantizeLinearFunc
+from QEfficient.transformers.moe.flavours import build_matched_idx_from_cumsum
 
 
 @dataclass(frozen=True)
@@ -59,18 +59,6 @@ class QuantizedMoEWeights:
         return self.gate_qweight.shape[-1] * 2
 
 
-def _build_matched_idx_from_cumsum(token_to_expert: torch.Tensor) -> torch.Tensor:
-    """Build packed-to-original token indices for cumsum expert dispatch."""
-    batch_size, seq_len = token_to_expert.shape
-    int32_max = torch.iinfo(torch.int32).max
-    invalid_index = torch.tensor(int32_max, dtype=torch.int32, device=token_to_expert.device)
-    token_indices = torch.arange(seq_len, dtype=torch.int32, device=token_to_expert.device).expand(batch_size, -1)
-    packed_indices = torch.cumsum(token_to_expert.to(torch.int32), dim=1) - 1
-    scatter_indices = torch.where(token_to_expert, packed_indices, invalid_index)
-    matched_indices = torch.full_like(token_indices, int32_max)
-    return ctx_scatter_3d_int(matched_indices.unsqueeze(-1), scatter_indices, token_indices.unsqueeze(-1)).squeeze(-1)
-
-
 def _dequantize_projection(qweight: torch.Tensor, scales: torch.Tensor, qzeros: torch.Tensor, group_size: int):
     return DequantizeLinearFunc.apply(CastToUInt4Func.apply(qweight), scales, CastToUInt4Func.apply(qzeros), group_size)
 
@@ -102,7 +90,7 @@ def moe_quantized_decode_bmm(
         1,
         topk_indices.unsqueeze(-1).expand(-1, topk_indices.shape[1], down_out.shape[-1]),
     )
-    return (selected_out * topk_weights.unsqueeze(-1)).sum(dim=1)
+    return torch.einsum("abc,ab->ac", selected_out, topk_weights)
 
 
 def _cumsum_scatter_gather_update_quantized_expert(
@@ -147,8 +135,8 @@ def _cumsum_scatter_gather_update_quantized_expert(
 
     packed_chunk_size = seq_len // num_packed_chunks
 
-    matched_idx = _build_matched_idx_from_cumsum(token_to_expert)
-    valid_rows = token_to_expert.to(torch.int32).sum(dim=-1, keepdim=True)
+    matched_idx = build_matched_idx_from_cumsum(token_to_expert)
+    valid_rows = torch.einsum("bi->b", token_to_expert.to(torch.int32)).unsqueeze(1)
     row_range = torch.arange(packed_chunk_size, dtype=torch.int32, device=x.device).unsqueeze(0)
     x_expanded = x.unsqueeze(0).expand(batch_size, -1, -1)
 
@@ -161,28 +149,19 @@ def _cumsum_scatter_gather_update_quantized_expert(
 
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
-        x_chunk = ctx_gather_3d_generalized(x_expanded, chunk_matched_idx)
+        x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
 
-        gate_proj_unpacked = CastToUInt4Func.apply(gate_qweight)
-        gate_zeros_unpacked = CastToUInt4Func.apply(gate_qzeros)
-        gate_proj_dq = DequantizeLinearFunc.apply(gate_proj_unpacked, gate_scales, gate_zeros_unpacked, group_size)
-
-        up_proj_unpacked = CastToUInt4Func.apply(up_qweight)
-        up_zeros_unpacked = CastToUInt4Func.apply(up_qzeros)
-        up_proj_dq = DequantizeLinearFunc.apply(up_proj_unpacked, up_scales, up_zeros_unpacked, group_size)
-
-        down_proj_unpacked = CastToUInt4Func.apply(down_qweight)
-        down_zeros_unpacked = CastToUInt4Func.apply(down_qzeros)
-
-        down_proj_dq = DequantizeLinearFunc.apply(down_proj_unpacked, down_scales, down_zeros_unpacked, group_size)
+        gate_proj_dq = _dequantize_projection(gate_qweight, gate_scales, gate_qzeros, group_size)
+        up_proj_dq = _dequantize_projection(up_qweight, up_scales, up_qzeros, group_size)
+        down_proj_dq = _dequantize_projection(down_qweight, down_scales, down_qzeros, group_size)
 
         gate_out = torch.bmm(x_chunk, gate_proj_dq.transpose(1, 2).to(x_chunk.dtype))
         up_out = torch.bmm(x_chunk, up_proj_dq.transpose(1, 2).to(x_chunk.dtype))
         hidden = act_fn(gate_out) * up_out
         down_out = torch.bmm(hidden, down_proj_dq.transpose(1, 2).to(x_chunk.dtype))
 
-        rw_chunk = ctx_gather_3d_generalized(routing_weight, chunk_matched_idx)
-        old_expert_out = ctx_gather_3d_generalized(expert_out, chunk_matched_idx)
+        rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
+        old_expert_out = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
         valid_rows_delta = valid_rows - packed_start
         chunk_valid_rows = torch.where(
             valid_rows_delta < 0,
@@ -202,7 +181,7 @@ def _cumsum_scatter_gather_update_quantized_expert(
             * rw_chunk
         )
         updated_chunk = old_expert_out + current_expert_out
-        expert_out = ctx_scatter_3d_generalized(expert_out, chunk_matched_idx, updated_chunk)
+        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
 
     return expert_out
 
@@ -278,4 +257,4 @@ def moe_quantized_expert_parallel(
             group_size=weights.group_size,
             num_packed_chunks=num_packed_chunks,
         )
-    return expert_out.sum(dim=0)
+    return torch.einsum("nth->th", expert_out)
