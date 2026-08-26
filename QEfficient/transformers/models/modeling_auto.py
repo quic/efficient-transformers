@@ -701,7 +701,7 @@ class QEFFAutoModel(QEFFTransformersBase):
             if not isinstance(self.qpc_path, Path):
                 raise TypeError("Please run compile API first!")
 
-            return self.cloud_ai_100_feature_generate(inputs=inputs, device_ids=device_ids)
+            return self.cloud_ai_100_feature_generate(inputs=inputs, device_ids=device_ids, dtype=dtype)
         # PyTorch runtime
         else:
             return self.pytorch_feature_generate(model=self.model, inputs=inputs)

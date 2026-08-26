@@ -78,7 +78,7 @@ def _generate_embedding_model(model_name, pooling, get_pipeline_config, embeddin
     encoded_input = tokenizer(sentences, return_tensors="pt")
 
     with measure_peak_ram() as ram:
-        sentence_embeddings = qeff_model.generate(inputs=encoded_input)
+        sentence_embeddings = qeff_model.generate(inputs=encoded_input, dtype=torch_dtype)
 
     # Golden output: run PyTorch reference if not already stored, then compare
     golden_key = make_golden_key(
