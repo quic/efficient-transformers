@@ -348,6 +348,9 @@ def build_transformer_blocking_config_for_transform(
             headpar_split = compile_options.get("aic_num_cores", DEFAULT_AIC_NUM_CORES)
         blocking_config.headpar_split = headpar_split
 
+    if blocking_mode == BlockingMode.KV_BATCH_FOLD:
+        blocking_config.batch_fold = True
+
     # optional blocking parameters to set if given in qaic_config
     for param in (
         "skip_kv",

@@ -77,11 +77,12 @@ class BlockingMode(str, Enum):
         is_mla: bool = False,
         mla_kwargs: Optional[Dict[str, Any]] = None,
     ) -> "BlockingMode":
+        requested_mode = cls.resolve(blocking_config.mode)
         if is_mla:
             _mla_map = {cls.KV: cls.KV_MLA, cls.H: cls.H_MLA}
-            mode = _mla_map[blocking_config.mode]
+            mode = _mla_map[requested_mode]
         else:
-            mode = blocking_config.mode
+            mode = requested_mode
         cls._validate_config(mode, blocking_config, prefill_only=prefill_only, mla_kwargs=mla_kwargs)
         return mode
 
