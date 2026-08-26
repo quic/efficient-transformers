@@ -5,6 +5,8 @@
 #
 # -----------------------------------------------------------------------------
 
+from typing import ClassVar
+
 from diffusers.models.autoencoders.autoencoder_kl_wan import (
     AutoencoderKLWan,
     WanDecoder3d,
@@ -22,7 +24,11 @@ from diffusers.models.transformers.transformer_flux import (
 )
 from diffusers.models.transformers.transformer_wan import WanAttention, WanAttnProcessor, WanTransformer3DModel
 from torch import nn
-from transformers.models.clip.modeling_clip import CLIPTextTransformer
+
+try:
+    from transformers.models.clip.modeling_clip import CLIPTextTransformer
+except ImportError:
+    from transformers.models.clip.modeling_clip import CLIPTextModel as CLIPTextTransformer
 
 from QEfficient.base.pytorch_transforms import ModuleMappingTransform
 from QEfficient.customop.rms_norm import CustomRMSNormAIC
@@ -54,20 +60,20 @@ from QEfficient.transformers.models.clip.modeling_clip import QEffCLIPTextTransf
 
 
 class CustomOpsTransform(ModuleMappingTransform):
-    _module_mapping = {
+    _module_mapping: ClassVar[dict[type, type]] = {
         RMSNorm: CustomRMSNormAIC,
         nn.RMSNorm: CustomRMSNormAIC,  #  for torch.nn.RMSNorm
     }
 
 
 class CLIPTextTransform(ModuleMappingTransform):
-    _module_mapping = {
+    _module_mapping: ClassVar[dict[type, type]] = {
         CLIPTextTransformer: QEffCLIPTextTransformer,
     }
 
 
 class AttentionTransform(ModuleMappingTransform):
-    _module_mapping = {
+    _module_mapping: ClassVar[dict[type, type]] = {
         FluxSingleTransformerBlock: QEffFluxSingleTransformerBlock,
         FluxTransformerBlock: QEffFluxTransformerBlock,
         FluxTransformer2DModel: QEffFluxTransformer2DModel,
@@ -85,7 +91,7 @@ class AttentionTransform(ModuleMappingTransform):
 
 
 class NormalizationTransform(ModuleMappingTransform):
-    _module_mapping = {
+    _module_mapping: ClassVar[dict[type, type]] = {
         AdaLayerNormZero: QEffAdaLayerNormZero,
         AdaLayerNormZeroSingle: QEffAdaLayerNormZeroSingle,
         AdaLayerNormContinuous: QEffAdaLayerNormContinuous,

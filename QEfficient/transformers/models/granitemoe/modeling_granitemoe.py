@@ -17,14 +17,18 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeAttention,
     GraniteMoeConfig,
     GraniteMoeDecoderLayer,
-    GraniteMoeExperts as GraniteMoeParallelExperts,
     GraniteMoeForCausalLM,
     GraniteMoeModel,
     GraniteMoeMoE,
     GraniteMoeRotaryEmbedding,
-    GraniteMoeTopKRouter as GraniteMoeTopKGating,
     repeat_kv,
     rotate_half,
+)
+from transformers.models.granitemoe.modeling_granitemoe import (
+    GraniteMoeExperts as GraniteMoeParallelExperts,
+)
+from transformers.models.granitemoe.modeling_granitemoe import (
+    GraniteMoeTopKRouter as GraniteMoeTopKGating,
 )
 
 from QEfficient.blocking.attention_blocking import (
