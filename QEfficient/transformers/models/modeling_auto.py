@@ -508,6 +508,10 @@ class QEFFAutoModel(QEFFTransformersBase):
         _resolve_torch_dtype(kwargs)
         model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
+        # NomicBert loads the model in fp32 eventhough we pass the torch dtype param as fp16
+        if kwargs.get("torch_dtype") == torch.float16 and next(model.parameters()).dtype == torch.float32:
+            model.half()
+
         # This is support models that should be classified to in a different auto class but transformers load them via this class
         kv_offload = kwargs.pop("kv_offload", None)
 
