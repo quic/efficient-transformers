@@ -36,8 +36,18 @@ PREFILL_SEQ_LEN = 64
 PREFILL_CTX_LEN = 192
 DECODE_CTX_LEN = 128
 MOE_PREFILL_PACKED_CHUNK_SIZE = 32
+EXPECTED_MOE_PREFILL_NUM_PACKED_CHUNKS = PREFILL_SEQ_LEN // MOE_PREFILL_PACKED_CHUNK_SIZE
 NUM_CORES = 2
 NUM_LAYERS = 2
+
+
+def _moe_qaic_config() -> dict:
+    return {
+        "moe_config": {
+            "flavour": "expert_parallel",
+            "expert_parallel_chunk_size": MOE_PREFILL_PACKED_CHUNK_SIZE,
+        }
+    }
 
 
 @pytest.fixture
@@ -245,7 +255,7 @@ def test_gpt_oss_prefill_chunked_expert_parallel_subfunction_hf_qaic_token_parit
         ctx_len=PREFILL_CTX_LEN,
         batch_size=BATCH_SIZE,
         num_cores=NUM_CORES,
-        moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
+        qaic_config=_moe_qaic_config(),
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
         offload_pt_weights=False,
@@ -258,9 +268,9 @@ def test_gpt_oss_prefill_chunked_expert_parallel_subfunction_hf_qaic_token_parit
     assert decoder_op_counts["CtxGather3D"] > 0
     assert decoder_op_counts["CtxScatter3D"] > 0
     assert decoder_op_counts["CtxScatter3DInt"] > 0
-    assert qeff_model.hash_params["moe_prefill_num_nsp"] == NUM_CORES
-    assert qeff_model.hash_params["moe_prefill_packed_chunk_size"] == MOE_PREFILL_PACKED_CHUNK_SIZE
-    assert qeff_model.hash_params["moe_prefill_num_packed_chunks"] == 2
+    assert qeff_model.hash_params["moe_prefill_flavour"] == "expert_parallel"
+    assert qeff_model.hash_params["moe_prefill_expert_parallel_chunk_size"] == MOE_PREFILL_PACKED_CHUNK_SIZE
+    assert qeff_model.hash_params["moe_prefill_num_packed_chunks"] == EXPECTED_MOE_PREFILL_NUM_PACKED_CHUNKS
 
     qaic_outputs, _ = _run_chunked_prefill(qpc_path, tokenizer, model_hf.config)
     qaic_first_token = qaic_outputs["logits"].argmax(-1)
@@ -313,6 +323,7 @@ def test_gpt_oss_decode_retain_full_kv_subfunction_hf_qaic_token_parity(tmp_expo
         ctx_len=DECODE_CTX_LEN,
         batch_size=BATCH_SIZE,
         num_cores=NUM_CORES,
+        qaic_config=_moe_qaic_config(),
         mxfp6_matmul=False,
         mxint8_kv_cache=False,
         offload_pt_weights=False,
