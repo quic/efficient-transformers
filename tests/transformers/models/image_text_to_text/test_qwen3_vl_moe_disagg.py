@@ -264,7 +264,6 @@ def test_qwen3_vl_moe_disagg_qaic_vs_hf_fp32(manual_cleanup):
         kv_offload=True,
         config=hf_model.config,
         torch_dtype=torch.float32,
-        layerwise=False,
     )
 
     sessions = []
@@ -284,7 +283,6 @@ def test_qwen3_vl_moe_disagg_qaic_vs_hf_fp32(manual_cleanup):
             split_model_io=True,
             skip_lang=True,
             use_onnx_subfunctions=True,
-            layerwise=False,
         )
         compiled_onnx_paths["vision"] = _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
 
@@ -304,8 +302,6 @@ def test_qwen3_vl_moe_disagg_qaic_vs_hf_fp32(manual_cleanup):
             enable_chunking=True,
             skip_vision=True,
             use_onnx_subfunctions=True,
-            layerwise=False,
-            layerwise_window_size=1,
         )
         compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")
 
@@ -323,8 +319,6 @@ def test_qwen3_vl_moe_disagg_qaic_vs_hf_fp32(manual_cleanup):
             prefill_only=False,
             skip_vision=True,
             use_onnx_subfunctions=True,
-            layerwise=False,
-            layerwise_window_size=1,
         )
         compiled_onnx_paths["decode"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "decode")
         _assert_distinct_onnx_paths(compiled_onnx_paths)

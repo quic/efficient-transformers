@@ -154,7 +154,6 @@ def _compile_disagg_qpcs(qeff_model: QEFFAutoModelForImageTextToText, args, imag
         "mos": 1,
         "aic_enable_depth_first": True,
         "use_onnx_subfunctions": True,
-        "layerwise": False,
     }
 
     print("Compiling vision QPC...")
@@ -353,7 +352,6 @@ def main():
         config=model.config,
         torch_dtype=torch.float32,
         qaic_config=qaic_config,
-        layerwise=False,
     )
 
     image, inputs = _prepare_inputs(processor, args)

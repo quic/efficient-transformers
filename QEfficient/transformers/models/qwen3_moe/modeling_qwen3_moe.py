@@ -37,7 +37,6 @@ from QEfficient.blocking.attention_blocking import (
 )
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.transformers.models._layerwise import is_last_layer_window, is_layerwise_active, resolve_layer_window
 from QEfficient.transformers.moe import (
     MoEFlavour,
     MoEProfile,
@@ -212,8 +211,6 @@ class QEffQwen3MoeAttention(Qwen3MoeAttention):
 
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
-        if is_layerwise_active():
-            self.layer_idx = self.layer_idx - getattr(QEffQwen3MoeModel, "_start", 0)
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
         if use_blocking:
             attn_output, attn_weights = generic_blocked_attention_interface(

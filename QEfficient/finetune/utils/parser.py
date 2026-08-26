@@ -273,7 +273,6 @@ def get_finetune_parser():
         "--enable_pp",
         "--enable-pp",
         action="store_true",
-        help="Enable pipeline parallel training. This will split the of model layerwise in given number of stages and train the model.",
     )
     parser.add_argument(
         "--num_pp_stages",
@@ -281,7 +280,7 @@ def get_finetune_parser():
         required=False,
         type=int,
         default=1,
-        help="Number of stages in which model is split layerwise when training using pipeline parallel.",
+        help="Number of stages in which model is split when training using pipeline parallel.",
     )
     parser.add_argument(
         "--opByOpVerifier",

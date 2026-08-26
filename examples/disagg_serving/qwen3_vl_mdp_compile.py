@@ -140,7 +140,6 @@ def main() -> None:
         kv_offload=True,
         config=config,
         dtype=torch.float16,
-        layerwise=False,
     )
 
     prefill_qpc_path = qeff_model.compile(
@@ -164,7 +163,6 @@ def main() -> None:
         enable_chunking=True,
         skip_vision=True,
         use_onnx_subfunctions=True,
-        layerwise=False,
     )
 
     print(f"Prefill QPC path: {prefill_qpc_path}")
