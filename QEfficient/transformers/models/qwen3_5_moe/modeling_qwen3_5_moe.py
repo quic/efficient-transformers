@@ -1571,16 +1571,7 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
                 ]
             else:
                 layer = self.model.layers[layer_idx].linear_attn
-                if layer.conv_dim % layer.num_k_heads != 0:
-                    raise ValueError(
-                        f"conv_dim ({layer.conv_dim}) must be divisible by num_k_heads ({layer.num_k_heads})"
-                    )
-                conv_shape = (
-                    batch_size,
-                    layer.num_k_heads,
-                    layer.conv_dim // layer.num_k_heads,
-                    layer.conv_kernel_size,
-                )
+                conv_shape = (batch_size, layer.conv_dim, layer.conv_kernel_size)
                 recurrent_shape = (batch_size, layer.num_v_heads, layer.head_k_dim, layer.head_v_dim)
                 layer_names = [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
                 layer_tensors = [
@@ -1722,7 +1713,7 @@ class QEffQwen3_5MoeVisionModel(Qwen3_5MoeVisionModel):
     def rot_pos_emb(self, grid_thw: torch.Tensor) -> torch.Tensor:
         merge_size = self.spatial_merge_size
         bs, num_frames, height, width = grid_thw.shape
-        inv_freq = self.rotary_pos_emb.inv_freq
+        inv_freq = self.rotary_pos_emb.inv_freq.to(device=grid_thw.device)
         device = inv_freq.device
 
         merged_h, merged_w = height // merge_size, width // merge_size
@@ -2521,16 +2512,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
                     lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=kv_dtype))
             else:
                 layer = self.model.language_model.layers[i].linear_attn
-                if layer.conv_dim % layer.num_k_heads != 0:
-                    raise ValueError(
-                        f"conv_dim ({layer.conv_dim}) must be divisible by num_k_heads ({layer.num_k_heads})"
-                    )
-                conv_shape = (
-                    linear_batch_size,
-                    layer.num_k_heads,
-                    layer.conv_dim // layer.num_k_heads,
-                    layer.conv_kernel_size,
-                )
+                conv_shape = (linear_batch_size, layer.conv_dim, layer.conv_kernel_size)
                 recurrent_shape = (linear_batch_size, layer.num_v_heads, layer.head_k_dim, layer.head_v_dim)
                 lang_inputs["past_key_values"][i].append(torch.zeros(conv_shape, dtype=kv_dtype))
                 lang_inputs["past_key_values"][i].append(torch.zeros(recurrent_shape, dtype=kv_dtype))
