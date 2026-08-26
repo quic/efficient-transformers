@@ -20,13 +20,14 @@ Pass the options below to `qeff_model.compile()` together with `prefill_only=Tru
 
 | Option | Type | Description |
 |---|---|---|
-| `mdp_num_partitions` | `int` | Number of pipeline-parallel partitions. Values > 1 cause the compiler to generate a partition config. `mdp_ts_num_devices` must be evenly divisible by `mdp_num_partitions`; if it is not, floor-division is used to assign devices per partition and the remainder devices are unused/unassigned. |
-| `mdp_strategy` | `str` | Partitioning strategy: `"onnx"` derives cuts directly from the ONNX graph; `"intersection"` intersects ONNX graph nodes with a prior compiler dump to refine the cuts. |
-| `mdp_compiler_dump_path` | `str` | Path to the JSON produced by a prior compiler dump run. Required only when `mdp_strategy="intersection"`. |
+| `mdp_ts_num_devices` | `int` | Total number of devices used across all pipeline stages. Each stage receives `mdp_ts_num_devices // mdp_num_partitions` devices. |
+| `mdp_num_partitions` | `int` | Number of pipeline-parallel partitions. Values > 1 cause QEfficient to generate an MDP partition config. |
+| `mdp_strategy` | `str` | Partitioning strategy: `"onnx"` derives cuts directly from the ONNX graph; `"intersection"` first generates a compiler dump, then intersects compiler node names with ONNX-derived partition cuts. |
+| `mdp_compiler_dump_path` | `str` | Optional path to an existing compiler dump JSON. When omitted with `mdp_strategy="intersection"`, QEfficient generates the dump automatically before creating the final MDP config. |
 
 See [`qwen3_vl_mdp_compile.py`](qwen3_vl_mdp_compile.py) for a standalone compile-only script that validates MDP compilation for `Qwen/Qwen3-VL-30B-A3B-Instruct` using these options.
 
-### Example — ONNX strategy (recommended starting point)
+### Example - ONNX strategy
 ```python
 qeff_model.compile(
     prefill_only=True,
@@ -36,14 +37,13 @@ qeff_model.compile(
 )
 ```
 
-### Example — intersection strategy (uses a prior compiler dump to refine partitions)
+### Example - intersection strategy
 ```python
 qeff_model.compile(
     prefill_only=True,
     mdp_ts_num_devices=4,
     mdp_num_partitions=2,
     mdp_strategy="intersection",
-    mdp_compiler_dump_path="/path/to/compiler_dump.json",
 )
 ```
 

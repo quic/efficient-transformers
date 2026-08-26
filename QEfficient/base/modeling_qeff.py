@@ -112,6 +112,59 @@ def _restore_output_names_exact(model: onnx.ModelProto, output_names: List[str])
         _rename_graph_value(model.graph, current_name, expected_name)
 
 
+def generate_mdp_compiler_dump(
+    onnx_path: Path,
+    compile_dir: Path,
+    mdp_ts_num_devices: int,
+    mdp_num_partitions: int,
+    specializations: Optional[List[Dict[str, int]]] = None,
+    specialization_module_name: Optional[str] = None,
+    compiler_options: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Generate the compiler MDP dump required by the intersection strategy."""
+    mdp_compiler_dump_path = str(compile_dir / f"mdp_compiler_dump_{mdp_ts_num_devices}d_{mdp_num_partitions}p.json")
+    dump_path = Path(mdp_compiler_dump_path)
+    if dump_path.exists():
+        return mdp_compiler_dump_path
+
+    dump_path.parent.mkdir(parents=True, exist_ok=True)
+    dump_inputs_dir = compile_dir / "mdp_dump_inputs"
+    dump_inputs_dir.mkdir(parents=True, exist_ok=True)
+
+    dump_command = ["/opt/qti-aic/exec/qaic-compile", f"-m={onnx_path}"]
+    compiler_options = compiler_options or {}
+    user_tiled = compiler_options.get("user_tiled", compiler_options.get("user-tiled", False))
+    if user_tiled:
+        dump_command.append("-user-tiled")
+    if specializations is not None:
+        dump_specializations_json = dump_inputs_dir / "specializations.json"
+        create_json(
+            str(dump_specializations_json),
+            {"specializations": to_named_specializations(specializations, module_name=specialization_module_name)},
+        )
+        dump_command.append(f"-network-specialization-config={dump_specializations_json}")
+    dump_command.append(f"-mdp-dump-partition-config={dump_path}")
+
+    logger.info(f"Running compiler for MDP dump: {' '.join(dump_command)}")
+    try:
+        subprocess.run(dump_command, capture_output=True, check=True)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            "\n".join(
+                [
+                    "MDP compiler dump generation failed!",
+                    f"Compiler command: {e.cmd}",
+                    f"Compiler exitcode: {e.returncode}",
+                    "Compiler stderr:",
+                    e.stderr.decode(),
+                ]
+            )
+        )
+    if not dump_path.exists():
+        raise FileNotFoundError(f"MDP compiler dump was not created at {dump_path} after qaic-compile completed.")
+    return mdp_compiler_dump_path
+
+
 class QEFFBaseModel(ABC):
     """
     Base class for all the model classes (i.e. LLMs, SD, quantized etc.).
@@ -1140,6 +1193,16 @@ class QEFFBaseModel(ABC):
             if num_layers is None:
                 raise AttributeError(
                     "Model or Language Model does not expose 'num_layers' or 'num_hidden_layers' respectively. Cannot generate disagg MDP partition config."
+                )
+            if mdp_strategy is MdpStrategy.INTERSECTION and mdp_compiler_dump_path is None:
+                mdp_compiler_dump_path = generate_mdp_compiler_dump(
+                    onnx_path=onnx_path,
+                    compile_dir=compile_dir,
+                    mdp_ts_num_devices=mdp_ts_num_devices,
+                    mdp_num_partitions=mdp_num_partitions,
+                    specializations=specializations,
+                    specialization_module_name=specialization_module_name,
+                    compiler_options=compiler_options,
                 )
             mdp_ts_json_path, mdp_ts_json = generate_disagg_mdp_config(
                 onnx_path=onnx_path,
