@@ -373,7 +373,20 @@ def qeff_torch_causal_conv1d_update(
     bias: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     _, hidden_size, seq_len = hidden_states.shape
-    state_len = conv_state.shape[-1]
+    grouped_conv_state = conv_state.ndim == 4
+
+    if grouped_conv_state:
+        bsz, num_kv_heads, conv_group_dim, state_len = conv_state.shape
+        if hidden_size != num_kv_heads * conv_group_dim:
+            raise ValueError(
+                "Grouped conv_state shape mismatch: "
+                f"hidden_size={hidden_size}, num_kv_heads={num_kv_heads}, conv_group_dim={conv_group_dim}"
+            )
+        conv_state_flat = conv_state.reshape(bsz, hidden_size, state_len)
+    else:
+        conv_state_flat = conv_state
+
+    state_len = conv_state_flat.shape[-1]
     pos_ids = position_ids[0]
     zeros = torch.zeros((pos_ids.shape[0], state_len), dtype=pos_ids.dtype, device=pos_ids.device)
     out = torch.cat([zeros, pos_ids], dim=1)
@@ -381,12 +394,14 @@ def qeff_torch_causal_conv1d_update(
     last_positions = order[:, -state_len:]  # (B, state_len)
 
     # ad_on = torch.where(hidden_states.shape[2] == torch.tensor(1), torch.tensor(1), cache_position.argmax(0))
-    hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
+    hidden_states_new = torch.cat([conv_state_flat, hidden_states], dim=-1).to(weight.dtype)
 
-    batch_idx = torch.arange(hidden_states_new.shape[0], device=hidden_states_new.device)[:, None, None]
-    hidden_idx = torch.arange(hidden_size, device=hidden_states_new.device)[None, :, None]
-    ctx_idx = last_positions.to(torch.long).unsqueeze(1)
-    updated_conv_state = hidden_states_new[batch_idx, hidden_idx, ctx_idx]
+    ctx_idx = last_positions.to(torch.long).unsqueeze(1).expand(-1, hidden_size, -1)
+    updated_conv_state_flat = torch.gather(hidden_states_new, dim=2, index=ctx_idx)
+    if grouped_conv_state:
+        updated_conv_state = updated_conv_state_flat.reshape(bsz, num_kv_heads, conv_group_dim, state_len)
+    else:
+        updated_conv_state = updated_conv_state_flat
     # updated_conv_state = hidden_states_new[:, :, -state_len:].to(hidden_states_new.dtype)
     # updated_conv_state = hidden_states_new[:, :, position_ids[0].argmax(1) + 1: position_ids[0].argmax(1) + state_len].to(hidden_states_new.dtype)
     out = F.conv1d(hidden_states_new, weight.unsqueeze(1), bias, padding=0, groups=hidden_size)
@@ -764,11 +779,24 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
 
             # Continuous batching path: gather only active rows, then scatter updates back.
             if batch_index is not None:
-                conv_batch_index = batch_index.to(conv_state_all.device)
+                conv_state_grouped = conv_state_all.ndim == 4
+                if conv_state_grouped:
+                    conv_state_all_flat = conv_state_all.reshape(
+                        conv_state_all.shape[0],
+                        conv_state_all.shape[1] * conv_state_all.shape[2],
+                        conv_state_all.shape[3],
+                    )
+                else:
+                    conv_state_all_flat = conv_state_all
+                conv_batch_index = batch_index.to(conv_state_all_flat.device)
                 conv_ctx_indices = torch.arange(
-                    conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
+                    conv_state_all_flat.shape[1], dtype=torch.int64, device=conv_state_all_flat.device
                 )[None, :]
-                conv_state = CtxGatherFuncCB3D.apply(conv_state_all, conv_batch_index, conv_ctx_indices)
+                conv_state = CtxGatherFuncCB3D.apply(conv_state_all_flat, conv_batch_index, conv_ctx_indices)
+                if conv_state_grouped:
+                    conv_state = conv_state.reshape(
+                        conv_state.shape[0], conv_state_all.shape[1], conv_state_all.shape[2], conv_state_all.shape[3]
+                    )
 
                 recurrent_batch_index = batch_index.to(recurrent_state_all.device)
                 recurrent_ctx_indices = torch.arange(
@@ -789,13 +817,35 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 self.conv1d.bias,
             )
             if batch_index is not None:
-                conv_batch_index = batch_index.to(conv_state_all.device)
+                if conv_state_all.ndim == 4:
+                    conv_state_all_flat = conv_state_all.reshape(
+                        conv_state_all.shape[0],
+                        conv_state_all.shape[1] * conv_state_all.shape[2],
+                        conv_state_all.shape[3],
+                    )
+                    new_conv_state_flat = new_conv_state.reshape(
+                        new_conv_state.shape[0],
+                        new_conv_state.shape[1] * new_conv_state.shape[2],
+                        new_conv_state.shape[3],
+                    )
+                else:
+                    conv_state_all_flat = conv_state_all
+                    new_conv_state_flat = new_conv_state
+                conv_batch_index = batch_index.to(conv_state_all_flat.device)
                 conv_position_ids = torch.arange(
-                    conv_state_all.shape[1], dtype=torch.int64, device=conv_state_all.device
+                    conv_state_all_flat.shape[1], dtype=torch.int64, device=conv_state_all_flat.device
                 )[None, :]
-                cache_params.conv_states[self.layer_idx] = CtxScatterFuncCB3D.apply(
-                    conv_state_all, conv_batch_index, conv_position_ids, new_conv_state
+                scattered_conv = CtxScatterFuncCB3D.apply(
+                    conv_state_all_flat, conv_batch_index, conv_position_ids, new_conv_state_flat
                 )
+                if conv_state_all.ndim == 4:
+                    scattered_conv = scattered_conv.reshape(
+                        conv_state_all.shape[0],
+                        conv_state_all.shape[1],
+                        conv_state_all.shape[2],
+                        conv_state_all.shape[3],
+                    )
+                cache_params.conv_states[self.layer_idx] = scattered_conv
             else:
                 cache_params.conv_states[self.layer_idx] = new_conv_state
         else:
@@ -1060,6 +1110,11 @@ class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5DecoderLayer}
 
+    def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
+        if self.config.text_config.layer_types[layer_idx] == "full_attention":
+            return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
+        return [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
+
     @staticmethod
     def _reorder_cache(past_key_values, beam_idx):
         if hasattr(past_key_values, "reorder_cache"):
@@ -1246,7 +1301,7 @@ class QEffQwen3_5VisionModel(Qwen3_5VisionModel):
     def rot_pos_emb(self, grid_thw: torch.Tensor) -> torch.Tensor:
         merge_size = self.spatial_merge_size
         max_hw = max(grid_thw.shape)
-        freq_table = self.rotary_pos_emb(max_hw)
+        freq_table = self.rotary_pos_emb(torch.arange(max_hw, device=grid_thw.device))
         device = freq_table.device
         bs, num_frames, height, width = grid_thw.shape
         grid_thw = (torch.tensor(grid_thw.shape, dtype=torch.int64)).unsqueeze(0)
@@ -1470,6 +1525,11 @@ class QEffQwen3_5DecoderWrapper(nn.Module):
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffQwen3_5DecoderLayer}
+
+    def get_onnx_past_key_value_names(self, layer_idx: int, layer_state=None) -> List[str]:
+        if self.config.text_config.layer_types[layer_idx] == "full_attention":
+            return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
+        return [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
 
     def forward(
         self,
@@ -1760,8 +1820,8 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
                 lang_dynamic_axes[f"past_key.{i}"] = {0: batch_axis_name, 2: "ctx_len"}
                 lang_dynamic_axes[f"past_value.{i}"] = {0: batch_axis_name, 2: "ctx_len"}
             else:
-                lang_dynamic_axes[f"past_key.{i}"] = {0: batch_axis_name}
-                lang_dynamic_axes[f"past_value.{i}"] = {0: batch_axis_name}
+                lang_dynamic_axes[f"conv_state.{i}"] = {0: batch_axis_name}
+                lang_dynamic_axes[f"recurrent_state.{i}"] = {0: batch_axis_name}
 
         if continuous_batching:
             lang_dynamic_axes["batch_index"] = {0: "batch_size"}
@@ -1872,9 +1932,23 @@ class QEffQwen3_5ForConditionalGeneration(Qwen3_5ForConditionalGeneration):
     def get_output_names(self, kv_offload: bool = False):
         vision_output_names = ["vision_embeds"]
         lang_output_names = ["logits"]
-        for i in range(self.model.config.text_config.num_hidden_layers):
-            for kv in ["key", "value"]:
-                lang_output_names.append(f"past_{kv}.{i}_RetainedState")
+        for layer_idx, layer_type in enumerate(self.model.config.text_config.layer_types):
+            if layer_idx >= self.model.config.text_config.num_hidden_layers:
+                continue
+            if layer_type == "full_attention":
+                lang_output_names.extend(
+                    [
+                        f"past_key.{layer_idx}_RetainedState",
+                        f"past_value.{layer_idx}_RetainedState",
+                    ]
+                )
+            else:
+                lang_output_names.extend(
+                    [
+                        f"conv_state.{layer_idx}_RetainedState",
+                        f"recurrent_state.{layer_idx}_RetainedState",
+                    ]
+                )
 
         output_names = {}
         if kv_offload:
