@@ -2460,7 +2460,7 @@ class TestBlockedAttentionTransform:
 
         model = make_tiny_llama()
         kv_model, _ = KVCacheTransform.apply(model)
-        blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=4)
+        blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=4, ctx_len=CTX_LEN)
         transformed, applied = BlockingAttentionTransform.apply(kv_model, attn_blocking_config=blocking_config)
         assert applied, "BlockingAttentionTransform must apply to KV-transformed Llama"
 
@@ -2472,7 +2472,7 @@ class TestBlockedAttentionTransform:
 
         model = make_tiny_llama()
         kv_model, _ = KVCacheTransform.apply(model)
-        blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=4)
+        blocking_config = AttentionBlockingConfig(mode="kv", num_kv_blocks=4, ctx_len=CTX_LEN)
         BlockingAttentionTransform.apply(kv_model, attn_blocking_config=blocking_config)
 
         # After transform, attention modules should have patched forward
