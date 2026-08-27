@@ -3922,7 +3922,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         #### HANDLE KV CACHE SHAPE ################
         kv_cache_shape = get_padding_shape_from_config(
-            self.model.config, fbs if self.continuous_batching else bs, seq_len
+            self.model.config, fbs if self.continuous_batching else bs, seq_len if not self.dflash_dlm else seq_len * 2
         )
         if dynamo:
             kv_cache_shape = list(kv_cache_shape)
