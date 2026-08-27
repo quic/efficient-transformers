@@ -1622,12 +1622,6 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
             raise ValueError("moe expert_parallel_chunk_size must be greater than zero")
         compile_seq_len = prefill_seq_len or ONNX_EXPORT_EXAMPLE_SEQ_LEN
         num_packed_chunks = max(1, -(-compile_seq_len // expert_parallel_chunk_size))
-        if compile_seq_len % expert_parallel_chunk_size != 0:
-            logger.warning(
-                f"qaic_config['moe_config']['expert_parallel_chunk_size']={expert_parallel_chunk_size} does not evenly divide "
-                f"the compile sequence length {compile_seq_len}; the number of packed chunks will be {num_packed_chunks}."
-            )
-
         transformed = False
         flavour = None
         uses_expert_parallel = False
@@ -1667,6 +1661,12 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
                 module.expert_parallel_num_packed_chunks = num_packed_chunks
                 module.expert_blocking_packed_chunk_size = expert_parallel_chunk_size
             transformed = True
+
+        if uses_expert_parallel and compile_seq_len % expert_parallel_chunk_size != 0:
+            logger.warning(
+                f"qaic_config['moe_config']['expert_parallel_chunk_size']={expert_parallel_chunk_size} does not evenly divide "
+                f"the compile sequence length {compile_seq_len}; the number of packed chunks will be {num_packed_chunks}."
+            )
 
         if transformed and expert_parallel_chunk_size_requested and not uses_expert_parallel:
             logger.warning(
@@ -1770,9 +1770,12 @@ class OptimizedMoETransform(PytorchTransform):
         prefill_seq_len: Optional[int] = None,
         hash_params: Optional[dict] = None,
     ) -> Tuple[nn.Module, bool]:
-        _, mapped = OptimizedMoEMapperTransform.apply(model)
-        _, external_mapped = ExternalOptimizedMoEMapperTransform.apply(model)
-        _, weights_ready = OptimizedMoEWeightsTransform.apply(model)
+        model, mapped = OptimizedMoEMapperTransform.apply(model)
+        model, external_mapped = ExternalOptimizedMoEMapperTransform.apply(model)
+        if not (mapped or external_mapped):
+            return model, False
+
+        model, weights_ready = OptimizedMoEWeightsTransform.apply(model)
         model, export_configured = OptimizedMoEExportConfigTransform.apply(
             model,
             prefill_only=prefill_only,
