@@ -242,6 +242,8 @@ class QEffQwen3MoeAttention(Qwen3MoeAttention):
                 batch_index=batch_index,
                 position_ids=position_ids,
             )
+            if attention_mask is not None:
+                attention_mask = attention_mask[..., : key_states.shape[-2]]
             attn_output, attn_weights = eager_attention_forward(
                 self,
                 query_states,
@@ -357,16 +359,34 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
         total_layers = len(self.layers)
         start, end = resolve_layer_window(QEffQwen3MoeModel, total_layers)
 
-        past_key_values_length = 0
-        if past_key_values is not None:
-            past_key_values_length = past_key_values[0][0].shape[2]
+        has_static_cache = past_key_values is not None
+        if isinstance(past_key_values, QEffDynamicCache):
+            past_seen_tokens = past_key_values.get_seq_length()
+        elif past_key_values is not None:
+            past_seen_tokens = past_key_values[0][0].shape[2]
+        else:
+            past_seen_tokens = 0
 
-        past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
+        return_legacy_cache = False
+        if use_cache and not isinstance(past_key_values, QEffDynamicCache):
+            return_legacy_cache = True
+            past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
+
+        if cache_position is None:
+            cache_position = torch.arange(
+                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+            )
 
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values_length)
+        if has_static_cache and isinstance(attention_mask, torch.Tensor):
+            target_length = attention_mask.shape[-1]
+        elif has_static_cache:
+            target_length = past_seen_tokens
+        else:
+            target_length = cache_position[-1] + 1
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=target_length)
 
         hidden_states = inputs_embeds
 
@@ -403,11 +423,12 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
-        past_key_values = past_key_values.to_legacy_cache()
+        if return_legacy_cache:
+            past_key_values = past_key_values.to_legacy_cache()
 
         return MoeModelOutputWithPast(
             last_hidden_state=hidden_states,
-            past_key_values=past_key_values,
+            past_key_values=past_key_values if use_cache else None,
             hidden_states=all_hidden_states,
         )
 

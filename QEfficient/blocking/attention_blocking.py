@@ -96,7 +96,8 @@ class BlockingMode(str, Enum):
     ) -> None:
         if mode.is_prefill and not prefill_only:
             raise ValueError(
-                f"BlockingMode.{mode.name} is a prefill-only mode; set prefill_only=True when calling the blocked attention interface"
+                f"BlockingMode.{mode.name} is a prefill-only mode; set prefill_only=True when calling "
+                "the blocked attention interface"
             )
         missing = [f for f in BLOCKING_MODE_REQUIRED_PARAMS.get(mode, []) if getattr(blocking_config, f, None) is None]
         if missing:
@@ -203,6 +204,7 @@ def past_key_value_update(
     position_ids: Optional[torch.LongTensor] = None,
     sliding_window: Optional[int] = None,
 ):
+    cache_kwargs = {}
     if past_key_value is not None:
         cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
         if sliding_window is not None:

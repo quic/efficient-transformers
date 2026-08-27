@@ -3933,14 +3933,25 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         ##################################
 
+        position_ids = torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1)
+        position_dynamic_axes = {0: "batch_size", 1: "seq_len"}
+        if getattr(self.model.config, "model_type", None) in {
+            "qwen3_5",
+            "qwen3_5_text",
+            "qwen3_5_moe",
+            "qwen3_5_moe_text",
+        }:
+            position_ids = position_ids.unsqueeze(0).repeat(4, 1, 1)
+            position_dynamic_axes = {1: "batch_size", 2: "seq_len"}
+
         example_inputs = {
             "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-            "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
+            "position_ids": position_ids,
             "past_key_values": [[] for _ in range(self.num_layers)],
         }
         dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
-            "position_ids": {0: "batch_size", 1: "seq_len"},
+            "position_ids": position_dynamic_axes,
         }
         if self.ccl_enabled:
             example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (seq_len,), dtype=torch.int64)
@@ -3982,29 +3993,42 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
         else:
-            # HACK: create common function for this including above if condition code
-            pkv_dynamic_axes = (
-                self.model.get_pkv_dynamic_axes(
+            if hasattr(self.model, "get_onnx_retained_state_specs"):
+                retained_state_specs = self.model.get_onnx_retained_state_specs(
+                    batch_size=fbs if self.continuous_batching else bs,
+                    seq_len=seq_len,
+                    kv_cache_shape=kv_cache_shape,
+                    continuous_batching=self.continuous_batching,
                     retain_full_kv=kwargs.get("retain_full_kv", False)
                     or (prefill_only and kwargs.get("enable_chunking", False)),
-                    continuous_batching=self.continuous_batching,
                 )
-                if hasattr(self.model, "get_pkv_dynamic_axes")
-                else pkv_dynamic_axes
-            )
-            pkv_dynamic_axes = (
-                [pkv_dynamic_axes] * self.model.config.num_hidden_layers
-                if isinstance(pkv_dynamic_axes, dict)
-                else pkv_dynamic_axes
-            )
-
-            for i in range(self.num_layers):
-                for kv in ["key", "value"]:
-                    example_inputs["past_key_values"][i].append(
-                        torch.zeros(kv_cache_shape, dtype=self.model.config.torch_dtype)
+                example_inputs["past_key_values"] = retained_state_specs["past_key_values"]
+                dynamic_axes.update(retained_state_specs["dynamic_axes"])
+                output_names.extend(retained_state_specs["output_names"])
+            else:
+                # HACK: create common function for this including above if condition code
+                pkv_dynamic_axes = (
+                    self.model.get_pkv_dynamic_axes(
+                        retain_full_kv=kwargs.get("retain_full_kv", False)
+                        or (prefill_only and kwargs.get("enable_chunking", False)),
+                        continuous_batching=self.continuous_batching,
                     )
-                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
-                    output_names.append(f"past_{kv}.{i}_RetainedState")
+                    if hasattr(self.model, "get_pkv_dynamic_axes")
+                    else pkv_dynamic_axes
+                )
+                pkv_dynamic_axes = (
+                    [pkv_dynamic_axes] * self.model.config.num_hidden_layers
+                    if isinstance(pkv_dynamic_axes, dict)
+                    else pkv_dynamic_axes
+                )
+
+                for i in range(self.num_layers):
+                    for kv in ["key", "value"]:
+                        example_inputs["past_key_values"][i].append(
+                            torch.zeros(kv_cache_shape, dtype=self.model.config.torch_dtype)
+                        )
+                        dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
+                        output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if "DeepseekV3ForCausalLM" in (getattr(self.model.config, "architectures", None) or []):
             if self.model.qaic_config is not None and self.model.qaic_config.get("mla_absorption", None) is not None:
@@ -4611,10 +4635,16 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         custom_io = {}
         if not cache_compressed:
             kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
-            for i in range(self.num_layers):
-                for kv in ["key", "value"]:
+            if hasattr(self.model, "get_retained_state_names"):
+                retained_state_names = self.model.get_retained_state_names()
+                if kv_infix:
+                    retained_state_names = [
+                        name.replace(".", ".", 1) + kv_infix if name.startswith(("past_key.", "past_value.")) else name
+                        for name in retained_state_names
+                    ]
+                for state_name in retained_state_names:
                     output_name = _compile_io_name(
-                        f"past_{kv}.{i}{kv_infix}_RetainedState",
+                        f"{state_name}_RetainedState",
                         use_onnx_subfunctions=use_onnx_subfunctions,
                     )
                     _add_retained_state_custom_io(
@@ -4623,6 +4653,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                         dtype=kv_cache_dtype,
                         use_onnx_subfunctions=False,
                     )
+            else:
+                for i in range(self.num_layers):
+                    for kv in ["key", "value"]:
+                        output_name = _compile_io_name(
+                            f"past_{kv}.{i}{kv_infix}_RetainedState",
+                            use_onnx_subfunctions=use_onnx_subfunctions,
+                        )
+                        _add_retained_state_custom_io(
+                            custom_io,
+                            output_name,
+                            dtype=kv_cache_dtype,
+                            use_onnx_subfunctions=False,
+                        )
         else:
             kv_infix = f"_{kv_cache_prefix}" if kv_cache_prefix else ""
             for i in range(self.num_layers):

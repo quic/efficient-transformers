@@ -510,6 +510,20 @@ def _tiny_qwen3_moe_config() -> Qwen3MoeConfig:
     )
 
 
+def test_qwen3_moe_forward_without_kv_cache_uses_prompt_length_mask():
+    config = _tiny_qwen3_moe_config()
+    model = AutoModelForCausalLM.from_config(config).eval()
+    qeff_model = QEFFAutoModelForCausalLM(model, continuous_batching=False).model
+
+    input_ids = torch.ones((1, 32), dtype=torch.long)
+    position_ids = torch.arange(input_ids.shape[1], dtype=torch.long).reshape(1, -1)
+
+    with torch.no_grad():
+        outputs = qeff_model(input_ids=input_ids, position_ids=position_ids, use_cache=False)
+
+    assert outputs.logits.shape == (1, 1, config.vocab_size)
+
+
 def _tiny_qwen3_5_text_config(*, moe: bool = False) -> Qwen3_5TextConfig | Qwen3_5MoeTextConfig:
     kwargs = dict(
         vocab_size=64,
@@ -630,6 +644,21 @@ def _tiny_qwen3_5_moe_config() -> Qwen3_5MoeConfig:
         vision_start_token_id=5,
         vision_end_token_id=6,
     )
+
+
+def test_qwen3_5_moe_forward_without_kv_cache_passes_position_ids_to_linear_attention():
+    config = _tiny_qwen3_5_text_config(moe=True)
+    config.rope_parameters = {"rope_type": "default", "rope_theta": 10000000, "mrope_section": [1, 1, 1]}
+    model = AutoModelForCausalLM.from_config(config).eval()
+    qeff_model = QEFFAutoModelForCausalLM(model, continuous_batching=False).model
+
+    input_ids = torch.ones((1, 32), dtype=torch.long)
+    position_ids = torch.arange(input_ids.shape[1], dtype=torch.long).reshape(1, 1, -1).expand(4, -1, -1)
+
+    with torch.no_grad():
+        outputs = qeff_model(input_ids=input_ids, position_ids=position_ids, use_cache=False)
+
+    assert outputs.logits.shape == (1, 1, config.vocab_size)
 
 
 def _tiny_qwen_config(model_type: str):

@@ -869,6 +869,7 @@ class QEffQwen3_5GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 value,
                 g=g,
                 beta=beta,
+                position_ids=position_ids,
                 initial_state=None,
                 output_final_state=False,
                 use_qk_l2norm_in_kernel=True,
@@ -1070,6 +1071,12 @@ class QEffQwen3_5ForCausalLM(Qwen3_5ForCausalLM):
 
     def get_retained_state_names(self) -> List[str]:
         return self._iter_retained_state_names()
+
+    def get_onnx_past_key_value_names(self, layer_idx, layer_state):
+        del layer_state
+        if self.config.layer_types[layer_idx] == "full_attention":
+            return [f"past_key.{layer_idx}", f"past_value.{layer_idx}"]
+        return [f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}"]
 
     def get_onnx_retained_state_specs(
         self,
