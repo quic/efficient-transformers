@@ -230,7 +230,9 @@ def _track_scope_attributes_patched(graph, attrs):
     """Ensure scope attributes passed to ONNX are IValue-compatible."""
     safe_attrs = {}
     for key, value in attrs.items():
-        if isinstance(value, (int, float, bool, str, torch.Tensor)) or value is None or isinstance(value, (list, tuple)) and all(
+        if isinstance(value, (int, float, bool, str, torch.Tensor)) or value is None:
+            safe_attrs[key] = value
+        elif isinstance(value, (list, tuple)) and all(
             isinstance(item, (int, float, bool, str, torch.Tensor)) or item is None for item in value
         ):
             safe_attrs[key] = value
@@ -359,7 +361,7 @@ def temporarily_enable_nested_compile_regions(model, target_classes=None):
 
             previous_forward = module.__dict__.get("forward", _MISSING_INSTANCE_ATTR)
             nested_forward = torch.compiler.nested_compile_region(wrapped_forward)
-            module.forward = nested_forward.__get__(module, type(module))
+            setattr(module, "forward", nested_forward.__get__(module, type(module)))
             patched_modules.append((module, previous_forward))
 
         yield
@@ -368,7 +370,7 @@ def temporarily_enable_nested_compile_regions(model, target_classes=None):
             if previous_forward is _MISSING_INSTANCE_ATTR:
                 delattr(module, "forward")
             else:
-                module.forward = previous_forward
+                setattr(module, "forward", previous_forward)
 
 
 @contextmanager
@@ -406,7 +408,7 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
                 continue
 
             previous_forward = module.__dict__.get("forward", _MISSING_INSTANCE_ATTR)
-            module.forward = original_forward.__get__(module, type(module))
+            setattr(module, "forward", original_forward.__get__(module, type(module)))
             patched_modules.append((module, previous_forward))
 
         yield
@@ -415,7 +417,7 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
             if previous_forward is _MISSING_INSTANCE_ATTR:
                 delattr(module, "forward")
             else:
-                module.forward = previous_forward
+                setattr(module, "forward", previous_forward)
 
 
 @contextmanager
