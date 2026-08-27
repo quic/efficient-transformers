@@ -317,10 +317,6 @@ class QEffQwen3MoeDecoderLayer(Qwen3MoeDecoderLayer):
 
 
 class QEffQwen3MoeModel(Qwen3MoeModel):
-    _start = 0
-    _end = 0
-    _total_layers = None
-
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3MoeRotaryEmbedding(config=self.config)
         self.sin_cached = torch.nn.Parameter(self.rotary_emb.sin_cached)
@@ -338,7 +334,6 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
         batch_index: Optional[torch.LongTensor] = None,
         output_hidden_states: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        layer_indices_to_run: Optional[List[int]] = None,
     ) -> MoeModelOutputWithPast:
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -350,9 +345,6 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
-
-        total_layers = len(self.layers)
-        start, end = resolve_layer_window(QEffQwen3MoeModel, total_layers)
 
         past_key_values_length = 0
         if past_key_values is not None:
@@ -372,11 +364,7 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
         sin = self.sin_cached[position_ids].unsqueeze(1)
         cos = self.cos_cached[position_ids].unsqueeze(1)
 
-        for layer_idx, decoder_layer in enumerate(self.layers):
-            if layer_idx < start or layer_idx >= end:
-                continue
-            if layer_indices_to_run is not None and layer_idx not in layer_indices_to_run:
-                continue
+        for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -393,8 +381,7 @@ class QEffQwen3MoeModel(Qwen3MoeModel):
                 cos_cached=cos,
             )
 
-        if is_last_layer_window(QEffQwen3MoeModel, len(self.layers)):
-            hidden_states = self.norm(hidden_states)
+        hidden_states = self.norm(hidden_states)
 
         # add hidden states from the last decoder layer
         if output_hidden_states:
@@ -431,7 +418,6 @@ class QEffQwen3MoeForCausalLM(Qwen3MoeForCausalLM):
         use_cache: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        layer_indices_to_run: Optional[List[int]] = None,
         **kwargs,
     ) -> MoeCausalLMOutputWithPast:
         output_hidden_states = (
@@ -449,17 +435,12 @@ class QEffQwen3MoeForCausalLM(Qwen3MoeForCausalLM):
             use_cache=use_cache,
             output_hidden_states=output_hidden_states,
             cache_position=cache_position,
-            layer_indices_to_run=layer_indices_to_run,
             **kwargs,
         )
 
-        hidden_states = outputs.last_hidden_state
-        if not is_last_layer_window(QEffQwen3MoeModel, len(self.model.layers)):
-            logits = hidden_states
-        else:
-            logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)
-            hidden_states = outputs.last_hidden_state[torch.arange(position_ids.shape[0]).view(-1, 1), logit_idx]
-            logits = self.lm_head(hidden_states).float()
+        logit_idx = position_ids.to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = outputs.last_hidden_state[torch.arange(position_ids.shape[0]).view(-1, 1), logit_idx]
+        logits = self.lm_head(hidden_states).float()
 
         return MoeCausalLMOutputWithPast(
             logits=logits,

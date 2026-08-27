@@ -129,23 +129,6 @@ class QEffQwen3_5MoeDynamicCache(Cache):
                 cache.conv_states[layer_idx] = conv_state
                 cache.recurrent_states[layer_idx] = recurrent_state
         return cache
-        layer_idx = QEffQwen3_5MoeTextModel._start
-        layer_state = past_key_values
-        if len(past_key_values) == len(cache.layer_types) and isinstance(past_key_values[layer_idx], (tuple, list)):
-            layer_state = past_key_values[layer_idx]
-        elif len(past_key_values) == 1 and isinstance(past_key_values[0], (tuple, list)):
-            layer_state = past_key_values[0]
-        if cache.layer_types[layer_idx] == "full_attention":
-            key_states, value_states = layer_state
-            layer = QEffDynamicLayer()
-            layer.keys = key_states
-            layer.values = value_states
-            cache.kv_layers[layer_idx] = layer
-        else:
-            conv_state, recurrent_state = layer_state
-            cache.conv_states[layer_idx] = conv_state
-            cache.recurrent_states[layer_idx] = recurrent_state
-        return cache
 
     def __len__(self):
         return len(self.layer_types)
@@ -216,7 +199,6 @@ class QEffQwen3_5MoeDynamicCache(Cache):
             if self.layer_types[layer_idx] != "linear_attention":
                 return False
             return self.conv_states[layer_idx] is not None
-
 
         if self.last_linear_layer is None:
             return False
@@ -1123,10 +1105,6 @@ class QEffQwen3_5MoeDecoderLayer(Qwen3_5MoeDecoderLayer):
 
 
 class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
-    _start = 0
-    _end = 0
-    _total_layers = None
-
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3_5MoeTextRotaryEmbedding(config=self.config)
         rope_rows = min(int(self.rotary_emb.sin_cached.shape[0]), QWEN3_5_MOE_ROPE_CACHE_EXPORT_CAP)
@@ -1170,10 +1148,8 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        start, end = resolve_layer_window(QEffQwen3_5MoeTextModel, len(self.layers))
         if cache_position is None:
-            past_seen_tokens = past_key_values.get_seq_length(layer_idx=start) if past_key_values is not None else 0
-            active_layer_type = self.config.layer_types[start] if start < len(self.config.layer_types) else None
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
@@ -1199,13 +1175,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
         )
         position_embeddings = (cos, sin)
         all_hidden_states = () if output_hidden_states else None
-        layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
-
-        for layer_idx, decoder_layer in enumerate(self.layers):
-            if layer_idx < start or layer_idx >= end:
-                continue
-            if layer_indices_to_run is not None and layer_idx not in layer_indices_to_run:
-                continue
+        for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -1223,10 +1193,7 @@ class QEffQwen3_5MoeTextModel(Qwen3_5MoeTextModel):
                 **kwargs,
             )
 
-            # break
-
-        if is_last_layer_window(QEffQwen3_5MoeTextModel, len(self.layers)):
-            hidden_states = self.norm(hidden_states)
+        hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
@@ -1366,10 +1333,6 @@ class QEffQwen3_5MoeForCausalLM(Qwen3_5MoeForCausalLM):
 
 
 class QEffQwen3_5MoeModel(Qwen3_5MoeModel):
-    _start = 0
-    _end = 0
-    _total_layers = None
-
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -1711,65 +1674,6 @@ class QEffQwen3_5MoeDecoderWrapper(nn.Module):
         logits = self.model.lm_head(hidden_states)
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         return logits, vision_embeds, image_idx, outputs.past_key_values[: len(past_key_values)]
-        if QEffQwen3_5MoeTextModel._start == 0:
-            B, S, _ = inputs_embeds.shape
-            if input_ids is None:
-                input_ids = torch.zeros((B, S), dtype=torch.int64, device=inputs_embeds.device)
-            _, _, channel_size = inputs_embeds.shape
-            selected = input_ids == self.model.config.image_token_id
-            indices1 = selected.to(torch.int64).cumsum(1) - 1
-            indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-            indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-            image_features_expanded = vision_embeds.reshape(-1, channel_size).unsqueeze(0)[indices0, indices1]
-            image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-            inputs_embeds = image_input_embeds
-            outputs = self.language_model(
-                inputs_embeds=inputs_embeds,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
-                use_cache=True,
-            )
-            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-            if outputs.last_hidden_state.shape[1] > 1:
-                hidden_states = outputs.last_hidden_state
-            else:
-                hidden_states = outputs.last_hidden_state[:, -1:, :]
-            logits = hidden_states
-            image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-            return logits, vision_embeds, image_idx, outputs.past_key_values
-
-        elif QEffQwen3_5MoeTextModel._end == QEffQwen3_5MoeTextModel._total_layers:
-            outputs = self.language_model(
-                inputs_embeds=inputs_embeds,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
-                use_cache=True,
-            )
-            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-            logits = self.model.lm_head(hidden_states)
-            return logits, outputs.past_key_values
-
-        else:
-            outputs = self.language_model(
-                inputs_embeds=inputs_embeds,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
-                use_cache=True,
-            )
-            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-            if outputs.last_hidden_state.shape[1] > 1:
-                hidden_states = outputs.last_hidden_state
-            else:
-                hidden_states = outputs.last_hidden_state[:, -1:, :]
-            logits = hidden_states
-            return logits, outputs.past_key_values
 
 
 class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration):
@@ -2112,7 +2016,7 @@ class QEffQwen3_5MoeForConditionalGeneration(Qwen3_5MoeForConditionalGeneration)
         # KV/state dummy dtype follows the model dtype so the export trace works
         # for float16 as well as float32 (matches the qwen3_vl_moe export path).
         kv_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
-        for i in window_layers:
+        for i in range(self.model.config.text_config.num_hidden_layers):
             if self.model.config.text_config.layer_types[i] == "full_attention":
                 for kv in ["key", "value"]:
                     lang_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=kv_dtype))

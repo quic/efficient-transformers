@@ -530,10 +530,6 @@ class QEffQwen3VLMoeTextDecoderLayer(Qwen3VLMoeTextDecoderLayer):
 
 
 class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
-    _start = 0
-    _end = 0
-    _total_layers = None
-
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3VLMoeTextRotaryEmbedding(config=self.config)
         # Export-only cap to avoid serializing oversized RoPE tables that are
@@ -602,15 +598,7 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
 
-        layer_idx = 0
-        start, end = resolve_layer_window(QEffQwen3VLMoeTextModel, len(self.layers))
-        layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
-
         for layer_idx, decoder_layer in enumerate(self.layers):
-            if layer_idx < start or layer_idx >= end:
-                continue
-            if layer_indices_to_run is not None and layer_idx not in layer_indices_to_run:
-                continue
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -641,10 +629,7 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
                     visual_pos_masks,
                     deepstack_visual_embeds[layer_idx],
                 )
-            layer_idx += 1
-
-        if is_last_layer_window(QEffQwen3VLMoeTextModel, len(self.layers)):
-            hidden_states = self.norm(hidden_states)
+        hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
@@ -786,9 +771,6 @@ class QEffQwen3VLMoeTextExperts(Qwen3VLMoeTextExperts):
 
 
 class QEffQwen3VLDecoderWrapper(nn.Module):
-    _deepstack = None
-    _vision_mask = None
-
     def __init__(self, model):
         super().__init__()
         self.model = model
@@ -855,82 +837,6 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         logits = self.model.lm_head(hidden_states)
         image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
         return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
-        if QEffQwen3VLMoeTextModel._start == 0:
-            B, N, C = inputs_embeds.shape
-            selected = input_ids == self.model.config.image_token_id
-            indices1 = selected.to(torch.int64).cumsum(1) - 1
-            indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-            indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-            image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
-
-            num_features, bs, split_size, C = deepstack_features.shape
-            x = deepstack_features.reshape(num_features, bs * split_size, C)
-            deepstack_features_expanded = x[:, indices1, :]
-            image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-            inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
-
-            image_mask = selected.clone()
-
-            visual_pos_masks = None
-
-            deepstack_visual_embeds = None
-            if image_mask is not None:
-                visual_pos_masks = image_mask
-                QEffQwen3VLDecoderWrapper._vision_mask = visual_pos_masks
-                deepstack_visual_embeds = deepstack_features_expanded
-                QEffQwen3VLDecoderWrapper._deepstack = deepstack_visual_embeds
-
-            outputs = self.language_model(
-                inputs_embeds=inputs_embeds,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
-                use_cache=True,
-                visual_pos_masks=visual_pos_masks,
-                deepstack_visual_embeds=deepstack_visual_embeds,
-            )
-            if outputs.last_hidden_state.shape[1] > 1:
-                hidden_states = outputs.last_hidden_state
-            else:
-                hidden_states = outputs.last_hidden_state[:, -1:, :]
-            logits = hidden_states
-            image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-            return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
-
-        elif QEffQwen3VLMoeTextModel._end == QEffQwen3VLMoeTextModel._total_layers:
-            outputs = self.language_model(
-                inputs_embeds=inputs_embeds,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
-                use_cache=True,
-                visual_pos_masks=QEffQwen3VLDecoderWrapper._vision_mask,
-                deepstack_visual_embeds=QEffQwen3VLDecoderWrapper._deepstack,
-            )
-            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-            logits = self.model.lm_head(hidden_states)
-            return logits, outputs.past_key_values
-
-        else:
-            outputs = self.language_model(
-                inputs_embeds=inputs_embeds,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
-                use_cache=True,
-                visual_pos_masks=QEffQwen3VLDecoderWrapper._vision_mask,
-                deepstack_visual_embeds=QEffQwen3VLDecoderWrapper._deepstack,
-            )
-            if outputs.last_hidden_state.shape[1] > 1:
-                hidden_states = outputs.last_hidden_state
-            else:
-                hidden_states = outputs.last_hidden_state[:, -1:, :]
-            logits = hidden_states
-            return logits, outputs.past_key_values
 
 
 class QEffQwen3VLMoeTextSparseMoeBlock(QEffMoEBlockMixin, Qwen3VLMoeTextSparseMoeBlock):

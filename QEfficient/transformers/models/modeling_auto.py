@@ -145,10 +145,6 @@ def _resolve_torch_dtype(kwargs: dict) -> None:
         kwargs["dtype"] = kwargs["torch_dtype"]
 
 
-
-
-
-
 def _compile_io_name(name: str, *, use_onnx_subfunctions: bool) -> str:
     """Return the compiler-visible name for retained-state ONNX outputs."""
     if not use_onnx_subfunctions or not name.endswith("_RetainedState"):
@@ -1258,8 +1254,15 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             self.hash_params["prefill_only"] = False
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
-        qaic_config = kwargs.pop("qaic_config", getattr(self.model, "qaic_config", None))
-
+        kwargs.pop("qaic_config", None)
+        return self._export(
+            inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            offload_pt_weights=offload_pt_weights,
+            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+        )
 
     def compile(
         self,
@@ -1544,8 +1547,15 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                 qaic_config=self.lang_model.model.qaic_config,
             )
 
-
-        should_export = not skip_vision
+        if not skip_vision:
+            self.vision_model.export(
+                inputs["vision"],
+                output_names["vision"],
+                dynamic_axes["vision"],
+                export_dir=export_dir,
+                offload_pt_weights=False,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+            )
 
         # TODO: remove the current pt weight offload capability once CustomLoader is in place
         if offload_pt_weights is None:
@@ -1597,11 +1607,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             qaic_config=qaic_config,
             **compiler_options,
         )
-
-
-
-
-
 
     def compile(
         self,
@@ -1688,7 +1693,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if skip_lang and skip_vision:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
-
 
         if self.continuous_batching and full_batch_size is None:
             raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
@@ -3412,7 +3416,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
         )
 
-
     def export(
         self,
         export_dir: Optional[str] = None,
@@ -3450,7 +3453,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "Use the default non-prefill export path for standard CausalLM decode graphs."
             )
         reject_legacy_moe_prefill_packed_chunk_size(kwargs)
-        qaic_config = kwargs.pop("qaic_config", getattr(self.model, "qaic_config", None))
+        kwargs.pop("qaic_config", None)
 
         if (
             kwargs.get("retain_full_kv", False)
@@ -3747,7 +3750,15 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if kv_cache_prefix:
             output_names = apply_kv_cache_prefix(output_names, kv_cache_prefix)
             self.hash_params["kv_cache_prefix"] = kv_cache_prefix
-
+        return self._export(
+            example_inputs,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            export_dir=export_dir,
+            use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+            dynamo=dynamo,
+            offload_pt_weights=kwargs.get("offload_pt_weights", True),
+        )
 
     def build_prefill_specialization(
         self,

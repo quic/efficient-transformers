@@ -686,10 +686,6 @@ def _tiny_qwen_checkpoint_path(model_type: str, tmp_path) -> Path:
     return checkpoint_dir
 
 
-
-
-
-
 def _tiny_qwen_text_config(model_type: str):
     config = _tiny_qwen_config(model_type)
     return getattr(config, "text_config", config)
@@ -810,10 +806,6 @@ def _ort_qwen_logits(onnx_path: Path, qeff_model, inputs):
     ort_inputs = _flatten_qwen_ort_inputs(inputs, session_inputs, _qwen_decoder_export_model(qeff_model))
     outputs = dict(zip(session_outputs, session.run(session_outputs, ort_inputs)))
     return outputs["logits"].astype(np.float32)
-
-
-
-
 
 
 def _kimi_k25_prompt_inputs(processor):
@@ -2124,11 +2116,6 @@ class TestDiffusersNamedSpecializations:
 # ---------------------------------------------------------------------------
 
 
-
-
-
-
-
 def test_resolve_torch_dtype_normalizes_dtype_alias(caplog):
     """transformers-v5 ``dtype`` alias must be honored and kept in sync with ``torch_dtype``.
 
@@ -2284,47 +2271,6 @@ def test_moe_prefill_transform_does_not_require_enable_chunking():
         assert moe_cls not in RevertPrefillOnlyTransform._module_mapping
         assert MoEFlavour.EXPERT_PARALLEL in moe_cls.supported_moe_flavours
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 @pytest.mark.llm_model
 def test_subfunction_compile_io_names_use_internal_retained_state():
     from QEfficient.transformers.models.modeling_auto import _compile_io_name, _state_input_name
@@ -2348,10 +2294,6 @@ def test_runtime_aliases_internal_retained_state_outputs():
     bindings = [type("Binding", (), {"name": "layer_0/input_ids", "index": 3})()]
     _add_basename_binding_aliases(binding_map, bindings)
     assert binding_map["input_ids"] == 3
-
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -2699,8 +2641,6 @@ def test_vlm_export_prefix_lang_only(tmp_path):
             assert "_VLLM_" not in name
 
 
-
-
 def _tiny_qwen3_moe_causal():
     from transformers.models.qwen3_moe.modeling_qwen3_moe import Qwen3MoeConfig, Qwen3MoeForCausalLM
 
@@ -2725,12 +2665,6 @@ def _tiny_qwen3_moe_causal():
     torch.manual_seed(0)
     hf = Qwen3MoeForCausalLM(cfg).eval()
     return QEfficient.QEFFAutoModelForCausalLM(hf, continuous_batching=False), cfg.num_hidden_layers
-
-
-
-
-
-
 
 
 def test_kimi_k25_get_specializations_supports_multi_resolution_grid_sizes():
