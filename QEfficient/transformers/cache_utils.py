@@ -1795,8 +1795,6 @@ class QEffGPTOSSDynamicCache(QEffDynamicCache):
         **kwargs,
     ):
         self.config = config
-        self._max_cache_len = None
-        self._sliding_window_len = None
         kwargs.pop("layer_classes", None)
         kwargs.pop("layers", None)
         kwargs.pop("layer_class_to_replicate", None)
@@ -1809,7 +1807,6 @@ class QEffGPTOSSDynamicCache(QEffDynamicCache):
                     value_states,
                     is_sliding=self._is_sliding_layer(layer_idx),
                 )
-                self._record_cache_len(layer_idx)
 
     def _is_sliding_layer(self, layer_idx: int) -> bool:
         layer_types = getattr(self.config, "layer_types", None)
@@ -1817,31 +1814,23 @@ class QEffGPTOSSDynamicCache(QEffDynamicCache):
             layer_types is not None and layer_idx < len(layer_types) and layer_types[layer_idx] == "sliding_attention"
         )
 
-    @property
-    def max_cache_len(self):
-        if self._max_cache_len is not None:
-            return self._max_cache_len
-        return getattr(self.config, "max_position_embeddings", 0)
+    def get_max_cache_len(self, layer_idx: Optional[int] = 1, cache_position: Optional[torch.LongTensor] = None) -> int:
+        """
+        Keep backward-compatible call shape while deferring to upstream implementation.
+        """
+        return super().get_seq_length(layer_idx)
 
-    @property
-    def sliding_window_len(self):
-        if self._sliding_window_len is not None:
-            return self._sliding_window_len
-        return getattr(self.config, "sliding_window", 0)
+    def get_sliding_window_len(
+        self, layer_idx: Optional[int] = 0, cache_position: Optional[torch.LongTensor] = None
+    ) -> int:
+        """
+        Keep backward-compatible call shape while deferring to upstream implementation.
+        """
+        return super().get_seq_length(layer_idx)
 
     def append_new_layers(self, layer_idx: int) -> None:
         while len(self.layers) <= layer_idx:
             self.layers.append(QEffGPTOSSDynamicLayer(is_sliding=self._is_sliding_layer(len(self.layers))))
-
-    def _record_cache_len(self, layer_idx: int) -> None:
-        layer = self.layers[layer_idx]
-        if layer.keys is None:
-            return
-
-        if layer.is_sliding:
-            self._sliding_window_len = layer.cache_len
-        else:
-            self._max_cache_len = layer.cache_len
 
     @classmethod
     def from_legacy_cache(
@@ -1858,7 +1847,6 @@ class QEffGPTOSSDynamicCache(QEffDynamicCache):
                     value_states,
                     is_sliding=cache._is_sliding_layer(layer_idx),
                 )
-                cache._record_cache_len(layer_idx)
         return cache
 
     @classmethod
@@ -1875,19 +1863,17 @@ class QEffGPTOSSDynamicCache(QEffDynamicCache):
                 value_states,
                 is_sliding=cache._is_sliding_layer(layer_idx),
             )
-            cache._record_cache_len(layer_idx)
+
         return cache
 
     def update(self, key_states, value_states, layer_idx, cache_kwargs=None):
         self.append_new_layers(layer_idx)
         outputs = self.layers[layer_idx].update(key_states, value_states, cache_kwargs)
-        self._record_cache_len(layer_idx)
         return outputs
 
     def write_only(self, key_states, value_states, layer_idx, cache_kwargs=None):
         self.append_new_layers(layer_idx)
         outputs = self.layers[layer_idx].write_only(key_states, value_states, cache_kwargs)
-        self._record_cache_len(layer_idx)
         return outputs
 
     def read_only_blockedKV(self, start_idx, end_idx, layer_idx, cache_kwargs=None):
@@ -1896,13 +1882,11 @@ class QEffGPTOSSDynamicCache(QEffDynamicCache):
     def full_cache_update_chunked(self, key_states, value_states, layer_idx, cache_kwargs=None):
         self.append_new_layers(layer_idx)
         outputs = self.layers[layer_idx].full_cache_update_chunked(key_states, value_states, cache_kwargs)
-        self._record_cache_len(layer_idx)
         return outputs
 
     def sliding_window_update_chunked(self, key_states, value_states, layer_idx, cache_kwargs=None):
         self.append_new_layers(layer_idx)
         outputs = self.layers[layer_idx].sliding_window_update_chunked(key_states, value_states, cache_kwargs)
-        self._record_cache_len(layer_idx)
         return outputs
 
 

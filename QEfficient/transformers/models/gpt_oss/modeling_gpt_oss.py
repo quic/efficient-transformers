@@ -941,11 +941,11 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.max_cache_len)
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.get_max_cache_len())
         sliding_mask = _create_causal_mask(
             position_ids=position_ids,
-            target_length=past_key_values.max_cache_len,
-            sliding_window=self.config.sliding_window,
+            target_length=past_key_values.get_max_cache_len(),
+            sliding_window=past_key_values.get_sliding_window_len(),
         )
 
         hidden_states = inputs_embeds
@@ -1054,11 +1054,11 @@ class QEffGptOssModel(GptOssModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.max_cache_len)
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.get_max_cache_len())
         sliding_mask = _create_causal_mask(
             position_ids=position_ids,
-            target_length=past_key_values.sliding_window_len,
-            sliding_window=past_key_values.sliding_window_len,
+            target_length=past_key_values.get_sliding_window_len(),
+            sliding_window=past_key_values.get_sliding_window_len(),
         )
 
         hidden_states = inputs_embeds
