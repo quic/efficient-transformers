@@ -664,7 +664,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
             attention_interface = generic_blocked_attention_interface
         else:
             attention_interface: Callable = eager_attention_forward
-              
+
         attn_output, attn_weights = attention_interface(
             self,
             query_states,
