@@ -260,6 +260,9 @@ CCL_START_CTX_LEN = 4096
 CCL_MIN_CTX_LEN = 1024
 CCL_UNIQNE_STEP = 32
 
+# constant for scaling down FC layer for dflash
+_DFLASH_TARGET_ABSMAX = 128.0
+
 # used for gpt-oss prefill-only model Q-blocking
 GPT_OSS_PREFILL_Q_BLOCK_SIZE = 256
 

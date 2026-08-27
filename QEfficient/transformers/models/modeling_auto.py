@@ -2457,27 +2457,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
         lang_session.set_buffers(vision_outputs)
 
-        # DFlash TLM: target_hidden_states is dynamic in seq; (re)bind buffer per run.
-        dflash_ths_name = "target_hidden_states"
-        dflash_ths_active = dflash_ths_name in lang_session.output_names
-        if dflash_ths_active:
-            ths_index = lang_session.binding_index_map[dflash_ths_name]
-            ths_binding = lang_session.bindings[ths_index]
-            ths_dtype = lang_session.aic_to_np_dtype_mapping.get(ths_binding.type, np.dtype(np.float32))
-            ths_hidden = None
-            for allowed_shape in lang_session.allowed_shapes:
-                dims = allowed_shape[ths_index][1]
-                if len(dims) == 3:
-                    ths_hidden = int(dims[-1])
-                    break
-            if ths_hidden is None:
-                ths_hidden = int(self.model.language_model.config.hidden_size)
-
-            def _bind_target_hidden(seq_len):
-                lang_session.set_buffers(
-                    {dflash_ths_name: np.zeros((batch_size, seq_len, ths_hidden), dtype=ths_dtype)}
-                )
-
         # If the vision pass produced no outputs (text-only prompt, or skip_vision=True
         # with an image-aware language QPC), the `vision_embeds` graph input is still part
         # of the lang QPC's signature. Leaving it unbound reads stale state and collapses
@@ -2562,8 +2541,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     logits_vocab_size,
                 )
                 lang_session.set_buffers({"logits": np.zeros(logits_shape, dtype=logits_dtype)})
-            if dflash_ths_active:
-                _bind_target_hidden(chunk_inputs["input_ids"].shape[1])
             outputs = lang_session.run(chunk_inputs)
             chunk_inputs["image_idx"] = outputs["image_idx_output"]
 
@@ -2625,8 +2602,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
                     ccl_id = min(ccl_id + 1, max_ccl_id)
                     lang_inputs["comp_ctx_lengths"] = list_of_comp_ctx_lengths_decode[ccl_id]
 
-            if dflash_ths_active:
-                _bind_target_hidden(lang_inputs["input_ids"].shape[1])
             outputs = lang_session.run(lang_inputs)
             if self._write_io_dir is not None:
                 write_io_files(lang_inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
@@ -4007,19 +3982,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         }
 
         if self.dflash_dlm:
-            example_inputs = {
-                "input_ids": torch.zeros((bs, seq_len), dtype=torch.int64),
-                "target_hidden": torch.ones((bs, seq_len, self.hidden_size), dtype=torch.float),
-                "position_ids": torch.arange(seq_len, 2 * seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
-                "position_ids_target": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
-                "past_key_values": [[] for _ in range(self.num_layers)],
-            }
-            dynamic_axes = {
-                "input_ids": {0: "batch_size", 1: "seq_len"},
-                "target_hidden": {0: "batch_size", 1: "seq_len"},
-                "position_ids": {0: "batch_size", 1: "seq_len"},
-                "position_ids_target": {0: "batch_size", 1: "seq_len"},
-            }
+            example_inputs["target_hidden"] = torch.ones((bs, seq_len, self.hidden_size), dtype=torch.float)
+            example_inputs["position_ids"] = torch.arange(seq_len, 2 * seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1)
+            example_inputs["position_ids_target"] = torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1)
+            dynamic_axes["target_hidden"] = {0: "batch_size", 1: "seq_len"}
+            dynamic_axes["position_ids_target"] = {0: "batch_size", 1: "seq_len"}
 
         if self.ccl_enabled:
             example_inputs["comp_ctx_lengths"] = torch.randint(0, 127, (seq_len,), dtype=torch.int64)

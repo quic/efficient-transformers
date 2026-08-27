@@ -590,16 +590,10 @@ from QEfficient.transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     QEffQwen3_5MoeVisionModel,
 )
 from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
-    QEffQwen3Attention as QEffQwen3DFlashAttention,
-)
-from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
-    QEffQwen3DecoderLayer as QEffQwen3DFlashDecoderLayer,
-)
-from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
-    QEffQwen3ForCausalLM as QEffQwen3DFlashForCausalLM,
-)
-from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
-    QEffQwen3Model as QEffQwen3DFlashModel,
+    QEffDFlashAttention,
+    QEffDFlashDecoderLayer,
+    QEffDFlashForCausalLM,
+    QEffDFlashModel,
 )
 from QEfficient.transformers.models.qwen3_moe.modeling_qwen3_moe import (
     QEffPrefillChunkedQwen3MoeSparseMoeBlock,
@@ -665,7 +659,7 @@ from QEfficient.utils.config_utils import (
     resolve_kv_heads,
     set_kv_head_aliases,
 )
-from QEfficient.utils.constants import ATTENTION_HEAD_CONFIG_KEYS, HIDDEN_SIZE_CONFIG_KEYS, KV_HEAD_CONFIG_KEYS
+from QEfficient.utils.constants import ATTENTION_HEAD_CONFIG_KEYS, HIDDEN_SIZE_CONFIG_KEYS, KV_HEAD_CONFIG_KEYS, _DFLASH_TARGET_ABSMAX 
 from QEfficient.utils.logging_utils import logger
 from QEfficient.utils.repeat_kv_utils import (
     duplicate_kv_projection_weights,
@@ -1261,17 +1255,14 @@ class SamplerTransform:
         return model, transformed
 
 
-_DFLASH_TARGET_ABSMAX = 128.0
-
-
 class DFlashTransform(ModuleMappingTransform):
     """Replace QEff Qwen3 modules with DFlash variants when dflash_dlm is set."""
 
     _module_mapping = {
-        QEffQwen3Attention: QEffQwen3DFlashAttention,
-        QEffQwen3DecoderLayer: QEffQwen3DFlashDecoderLayer,
-        QEffQwen3Model: QEffQwen3DFlashModel,
-        QEffQwen3ForCausalLM: QEffQwen3DFlashForCausalLM,
+        QEffQwen3Attention: QEffDFlashAttention,
+        QEffQwen3DecoderLayer: QEffDFlashDecoderLayer,
+        QEffQwen3Model: QEffDFlashModel,
+        QEffQwen3ForCausalLM: QEffDFlashForCausalLM,
     }
 
     @classmethod

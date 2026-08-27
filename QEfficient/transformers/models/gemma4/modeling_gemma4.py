@@ -38,6 +38,7 @@ from QEfficient.customop.ctx_scatter_gather import (
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.spd.dflash import compute_dflash_target_hidden_states
 from QEfficient.utils import constants
 
 _FP16_CLAMP_MIN = -65504.0
@@ -832,17 +833,15 @@ class QEffGemma4TextModel(Gemma4TextModel):
         next_cache = past_key_values.to_legacy_cache() if use_cache else None
 
         # DFlash TLM: concat collected target-layer hidden states -> fc -> hidden_norm.
+        target_hidden = None
         if self.target_layer_ids:
-            target_hidden = torch.cat(target_hidden_list, dim=-1)
-            target_hidden = self.hidden_norm(self.fc(target_hidden))
-            output = BaseModelOutputWithPast(
-                last_hidden_state=hidden_states,
-                past_key_values=next_cache,
-                hidden_states=target_hidden,
-            )
-            return output if return_dict else output.to_tuple()
+            target_hidden = compute_dflash_target_hidden_states(target_hidden_list, self.fc, self.hidden_norm)
 
-        output = BaseModelOutputWithPast(last_hidden_state=hidden_states, past_key_values=next_cache)
+        output = BaseModelOutputWithPast(
+            last_hidden_state=hidden_states,
+            past_key_values=next_cache,
+            hidden_states=target_hidden,
+        )
         return output if return_dict else output.to_tuple()
 
 

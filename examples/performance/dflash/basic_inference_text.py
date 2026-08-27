@@ -13,26 +13,26 @@ script:
   1. Looks up the matching DFlash DLM repo on Hugging Face.
   2. Compiles TLM + DLM QPCs (only the side(s) not provided via
      --tlm_qpc / --dlm_qpc).
-  3. Runs the SPD single-prompt inference script.
+  3. Runs SPD single-prompt inference in-process via
+     QEfficient.generation.dflash_generation.run_text_inference.
 
 Examples:
     # Compile + run with all defaults
-    python basic_inference.py --model_name Qwen3-4B \\
+    python basic_inference_text.py --model_name Qwen3-4B \\
         --prompt "Explain speculative decoding in two sentences."
 
     # Full HF path also accepted
-    python basic_inference.py --model_name Qwen/Qwen3-4B \\
+    python basic_inference_text.py --model_name Qwen/Qwen3-4B \\
         --prompt "Hello"
 
     # Reuse pre-compiled QPCs
-    python basic_inference.py --model_name Qwen3-4B \\
+    python basic_inference_text.py --model_name Qwen3-4B \\
         --tlm_qpc /path/to/tlm/qpc --dlm_qpc /path/to/dlm/qpc \\
         --prompt "What is 17 * 23?"
 """
 
 import argparse
 import os
-import subprocess
 import sys
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -40,9 +40,14 @@ REPO_ROOT = os.path.abspath(os.path.join(THIS_DIR, "..", ".."))
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, THIS_DIR)
 
-from utils import MODEL_MAP, compile_dlm_qpc, compile_tlm_qpc, resolve_model_name  # noqa: E402
+from rich.console import Console
+from rich.markup import escape
+from utils import MODEL_MAP, compile_dlm_qpc, compile_tlm_qpc, format_prompt, resolve_model_name
 
-from QEfficient.utils.logging_utils import logger  # noqa: E402
+from QEfficient.generation.dflash_generation import run_text_inference
+from QEfficient.utils.logging_utils import logger
+
+console = Console()
 
 
 def parse_device_list(s):
@@ -77,13 +82,13 @@ def parse_args():
     p.add_argument(
         "--tlm_devices",
         type=parse_device_list,
-        default=[0, 1, 2, 3],
+        default=[40, 41, 42, 43],
         help="Comma-separated device IDs, e.g. '0,1,2,3' or '0'.",
     )
     p.add_argument(
         "--dlm_devices",
         type=parse_device_list,
-        default=[0, 1, 2, 3],
+        default=[40, 41, 42, 43],
         help="Comma-separated device IDs, e.g. '0,1,2,3' or '0'.",
     )
     p.add_argument("--tlm_cores", type=int, default=8)
@@ -136,43 +141,47 @@ def main():
     logger.info(f"TLM qpc        : {tlm_qpc}")
     logger.info(f"DLM qpc        : {dlm_qpc}")
 
-    eval_script = os.path.join(THIS_DIR, "dflash_spd_single_prompt.py")
-    cmd = [
-        sys.executable,
-        eval_script,
-        "--prompt",
-        args.prompt,
-        "--tlm_qpc",
-        tlm_qpc,
-        "--dlm_qpc",
-        dlm_qpc,
-        "--tlm_model_name",
-        tlm_repo,
-        "--dlm_model_name",
-        dlm_repo,
-        "--iteration",
-        str(args.iteration),
-        "--ctx_len",
-        str(args.ctx_len),
-        "--generation_len",
-        str(args.generation_len),
-        "--tlm_devices",
-        *[str(d) for d in args.tlm_devices],
-        "--dlm_devices",
-        *[str(d) for d in args.dlm_devices],
-    ]
-    if args.hf_token:
-        cmd += ["--hf_token", args.hf_token]
-    if args.category:
-        cmd += ["--category", args.category]
-    if args.format_prompt:
-        cmd += ["--format_prompt"]
+    prompt_text = format_prompt(args.prompt, args.category) if args.format_prompt else args.prompt
+    metrics, tokenizer = run_text_inference(
+        prompt=prompt_text,
+        tlm_qpc=tlm_qpc,
+        dlm_qpc=dlm_qpc,
+        tlm_model_name=tlm_repo,
+        dlm_model_name=dlm_repo,
+        tlm_devices=args.tlm_devices,
+        dlm_devices=args.dlm_devices,
+        iteration=args.iteration,
+        ctx_len=args.ctx_len,
+        generation_len=args.generation_len,
+        hf_token=args.hf_token,
+    )
 
-    logger.info("\n>>> launching SPD single-prompt inference:")
-    logger.info(" ".join(cmd))
-    rc = subprocess.run(cmd, check=False).returncode
-    if rc != 0:
-        raise SystemExit(f"single-prompt inference exited with rc={rc}")
+    output_parts = ["Output: "]
+    for tok_id, source in zip(metrics.generated_ids, metrics.generated_sources):
+        text = escape(tokenizer.decode([tok_id], skip_special_tokens=True))
+        if source == "dlm":
+            output_parts.append(f"[blue]{text}[/blue]")
+        else:
+            output_parts.append(f"[white]{text}[/white]")
+    console.print("".join(output_parts))
+
+    ar = metrics.acceptance_rate()
+    dlm_tps = metrics.dlm_tok_rate()
+    tlm_tps = metrics.tlm_tok_rate()
+    spd_tps = metrics.spd_tok_rate()
+
+    w = 46
+    print("\n" + "=" * w)
+    print("  SPD Inference — Metrics")
+    print("=" * w)
+    print(f"  {'Acceptance Rate (tok/iter)':<30} {ar:>6.2f}")
+    print(f"  {'DLM Throughput  (tok/s)':<30} {dlm_tps:>6.1f}")
+    print(f"  {'TLM Throughput  (tok/s)':<30} {tlm_tps:>6.1f}")
+    print(f"  {'SPD Decode Speed (tok/s)':<30} {spd_tps:>6.1f}")
+    print(f"  {'Generated tokens':<30} {metrics.total_generated_tokens:>6}")
+    print(f"  {'Iterations':<30} {metrics.num_total_iters:>6}")
+    print(f"  {'Prefill time (s)':<30} {metrics.total_prefill_time:>6.3f}")
+    print("=" * w + "\n")
 
 
 if __name__ == "__main__":

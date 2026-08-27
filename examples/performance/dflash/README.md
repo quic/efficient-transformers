@@ -1,16 +1,14 @@
 # DFlash SPD Examples
 
-Entry points wrap the SPD (speculative-decoding) compile + run pipeline for both
-**text-only** language models and **vision-language (VLM, multimodal)** models. Each side
-has a model-name *front-end* (compiles the QPCs, or reuses pre-built ones) and a
-lower-level *runner* that takes compiled QPC paths.
+Two entry points wrap the SPD (speculative-decoding) compile + run pipeline for
+**text-only** language models and **vision-language (VLM, multimodal)** models. Each
+resolves/compiles the QPCs (or reuses pre-built ones), then runs SPD inference on a
+single prompt in-process via `QEfficient.generation.dflash_generation`.
 
-| | front-end (`--model_name`, builds QPCs) | runner (QPC paths) |
+| | front-end (`--model_name`, builds QPCs) | runs via |
 |---|---|---|
-| text — single prompt | `basic_inference.py` | `dflash_spd_single_prompt.py` |
-| text — dataset benchmark | `benchmark.py` | `dflash_spd_benchmark.py` |
-| vision — single prompt/image | `basic_inference_vision.py` | `dflash_spd_vision_single_prompt.py` |
-| vision — dataset benchmark | `benchmark_vision.py` | `dflash_spd_vision_benchmark.py` |
+| text — single prompt | `basic_inference_text.py` | `dflash_generation.run_text_inference` |
+| vision — single prompt/image | `basic_inference_vision.py` | `dflash_generation.run_vision_inference` |
 
 ---
 
@@ -21,23 +19,19 @@ lower-level *runner* that takes compiled QPC paths.
 ### Single prompt
 
 ```bash
-python basic_inference.py --model_name Qwen3-4B \
+python basic_inference_text.py --model_name Qwen3-4B \
     --prompt "Explain speculative decoding in two sentences."
-```
-
-### Benchmark (dataset)
-
-```bash
-python benchmark.py --model_name Qwen3-4B --dataset humaneval
 ```
 
 ---
 
 ## Vision-language models (VLM, multimodal)
 
-**Supported models:** `gemma-4-31B-it` (more VLMs are added to `MODEL_MAP` over time —
-run any script with `--help` for the current list). VLM entries have no default TLM path,
-so pass `--tlm_hf_path` (e.g. `google/gemma-4-31B-it` for `gemma-4-31B-it`).
+**Supported models:** `gemma-4-31B-it`, `Qwen3-VL-32B-Instruct` (more VLMs are added to
+`MODEL_MAP` over time — run `--help` for the current list). The VLM family (gemma4 vs.
+qwen3-vl) is auto-detected from the TLM's `config.model_type`, so `basic_inference_vision.py`
+works for either — gemma4 entries have no default TLM HF path (pass `--tlm_hf_path`);
+`Qwen3-VL-32B-Instruct` does, so `--tlm_hf_path` is optional for it.
 
 The vision path compiles **three** QPCs: the language decoder (TLM), the **vision
 encoder** (`pixel_values -> vision_embeds`), and the DFlash draft (DLM). Because the
@@ -52,7 +46,13 @@ TLM and DLM fill their own cards, the vision encoder usually needs its **own** d
 ### Single prompt (text through the VLM)
 
 ```bash
+# gemma4
 python basic_inference_vision.py --model_name gemma-4-31B-it --tlm_hf_path google/gemma-4-31B-it \
+    --tlm_devices 40,41,42,43 --dlm_devices 44,45,46,47 --vision_devices 48,49,50,51 \
+    --prompt "Tell me about the Taj Mahal."
+
+# qwen3-vl
+python basic_inference_vision.py --model_name Qwen3-VL-32B-Instruct \
     --tlm_devices 40,41,42,43 --dlm_devices 44,45,46,47 --vision_devices 48,49,50,51 \
     --prompt "Tell me about the Taj Mahal."
 ```
@@ -60,48 +60,21 @@ python basic_inference_vision.py --model_name gemma-4-31B-it --tlm_hf_path googl
 ### Single image + text prompt
 
 ```bash
+# gemma4
 python basic_inference_vision.py --model_name gemma-4-31B-it --tlm_hf_path google/gemma-4-31B-it \
+    --tlm_devices 40,41,42,43 --dlm_devices 44,45,46,47 --vision_devices 48,49,50,51 \
+    --image \
+    --image_prompt "Describe this image in detail."
+
+# qwen3-vl
+python basic_inference_vision.py --model_name Qwen3-VL-32B-Instruct \
     --tlm_devices 40,41,42,43 --dlm_devices 44,45,46,47 --vision_devices 48,49,50,51 \
     --image \
     --image_prompt "Describe this image in detail."
 ```
 
-### Benchmark — MathVision dataset
-
-```bash
-# full testmini (~304 samples)
-python benchmark_vision.py --model_name gemma-4-31B-it --tlm_hf_path google/gemma-4-31B-it \
-    --tlm_devices 40,41,42,43 --dlm_devices 44,45,46,47 --vision_devices 48,49,50,51 \
-    --split testmini --num_samples 0
-
-# full test split (~3040 samples)
-python benchmark_vision.py --model_name gemma-4-31B-it --tlm_hf_path google/gemma-4-31B-it \
-    --tlm_devices 40,41,42,43 --dlm_devices 44,45,46,47 --vision_devices 48,49,50,51 \
-    --split test --num_samples 200
-```
-
-The dataset (`MathLLMs/MathVision`) must be cached or downloadable; point
-`HF_DATASETS_CACHE` at a disk with space if needed. Results are written to
-`--output_dir` (per-sample + summary CSVs) alongside a printed avg/min/max table.
-
-### Benchmark — text dataset (language part only)
-
-To benchmark the VLM's **language decoder only** on a text dataset (humaneval / gsm8k /
-math500), pass `--dataset`. This runs the language decoder with **no image**
-(`vision_embeds` zero-bound, vision encoder not loaded), so you get language-only
-throughput / acceptance-rate numbers:
-
-```bash
-python benchmark_vision.py --model_name gemma-4-31B-it --tlm_hf_path google/gemma-4-31B-it \
-    --tlm_devices 40,41,42,43 --dlm_devices 44,45,46,47 \
-    --dataset humaneval --num_samples 20
-```
-
-This is the validated language-only path (the vision-capable language QPC fed a text
-prompt with zeroed `vision_embeds`); it does **not** need a separate `SKIP_VISION=True`
-build. The runner `dflash_spd_vision_text_benchmark.py` can also be invoked directly with
-pre-built `--tlm_qpc`/`--dlm_qpc` (no `--vision_qpc` needed).
-
+`--height`/`--width` (qwen3-vl only) set the vision encoder's compiled input resolution;
+they default to `354`/`536` when omitted.
 
 ---
 
@@ -112,9 +85,10 @@ Accepts either the short key or the full HF repo path (case-insensitive):
 ```
 Qwen3-4B          Qwen/Qwen3-4B          qwen3-4b
 gemma-4-31B-it
+Qwen3-VL-32B-Instruct
 ```
 
-Run any script with `--help` to see the full supported list.
+Run either script with `--help` to see the full supported list.
 
 ## Skipping compile (reuse QPCs)
 
@@ -122,7 +96,7 @@ Whichever QPC side you supply skips its compile step; the rest still compiles.
 
 ```bash
 # text
-python basic_inference.py --model_name Qwen3-4B \
+python basic_inference_text.py --model_name Qwen3-4B \
     --tlm_qpc /path/to/tlm/qpc --dlm_qpc /path/to/dlm/qpc --prompt "Hello"
 
 # vision (--tlm_qpc + --vision_qpc must be given together to skip the VLM build)
@@ -141,36 +115,28 @@ python basic_inference_vision.py --model_name gemma-4-31B-it \
 | `--tlm_cores` / `--dlm_cores` | `8` | per-side core count |
 | `--ctx_len` | `4096` (text) / `2048` (vision) | |
 | `--prefill_seq_len` | `128` | |
-| `--generation_len` | `1024` (benchmark) / `256` (single) | |
+| `--generation_len` | `256` | |
+| `--iteration` | `300` | max SPD iterations |
 | `--hf_token` | `$HF_TOKEN` | required for gated repos |
 | `--tlm_hf_path` | from `MODEL_MAP` | required when the map entry has `None` (VLM entries) |
 
-`benchmark.py` only:
-
-| Flag | Default |
-|---|---|
-| `--dataset` | `humaneval` (also: `gsm8k`, `math500`) |
-| `--num_samples` | `0` (= all) |
-| `--iteration` | `300` |
-| `--output_dir` | `./results-<model_name>` |
-
-`basic_inference.py` only:
+`basic_inference_text.py` only:
 
 | Flag | Default |
 |---|---|
 | `--prompt` | *(required)* |
 | `--category` | `""` (math / coding / reasoning / …) |
+| `--format_prompt` | off — wraps `--prompt` with the category template when set |
 
-Vision scripts (`basic_inference_vision.py`, `benchmark_vision.py`) add:
+`basic_inference_vision.py` adds:
 
 | Flag | Default | Notes |
 |---|---|---|
 | `--vision_devices` | `0,1,2,3` | vision-encoder device IDs (usually a separate group) |
-| `--image` | off | (single-prompt) run an image+text prompt instead of text |
-| `--image_url` | — | (single-prompt) image URL for `--image` |
-| `--image_prompt` | — | (single-prompt) prompt text for `--image` |
-| `--split` | `testmini` | (benchmark) MathVision split: `testmini` (~304) or `test` (~3040) |
-| `--num_samples` | `0` (= all) | (benchmark) |
+| `--image` | off | run an image+text prompt instead of text |
+| `--image_url` | — | image URL for `--image` |
+| `--image_prompt` | — | prompt text for `--image` |
+| `--height` / `--width` | `354` / `536` | qwen3-vl only — compiled vision-encoder input resolution |
 
 ## Adding a new model
 
@@ -180,4 +146,4 @@ Edit `MODEL_MAP` in `utils.py`:
 "<short-name>": ("<tlm-hf-repo or None>", "<dlm-hf-repo>"),
 ```
 
-All four entry points reuse the same map automatically.
+Both entry points reuse the same map automatically.
