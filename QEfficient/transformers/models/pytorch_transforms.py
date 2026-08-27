@@ -33,6 +33,7 @@ from transformers.models.deepseek_v4.modeling_deepseek_v4 import (
     DeepseekV4RMSNorm,
     DeepseekV4SparseMoeBlock,
     DeepseekV4TopKRouter,
+    DeepseekV4UnweightedRMSNorm,
 )
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
@@ -370,6 +371,7 @@ from QEfficient.transformers.models.deepseek_v4.modeling_deepseek_v4 import (
     QEffDeepseekV4RMSNorm,
     QEffDeepseekV4SparseMoeBlock,
     QEffDeepseekV4TopKRouter,
+    QEffDeepseekV4UnweightedRMSNorm,
 )
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
@@ -746,6 +748,7 @@ class CustomOpsTransform(ModuleMappingTransform):
         Glm4MoeRMSNorm: CustomRMSNormAIC,
         GlmMoeDsaRMSNorm: QEffGlmMoeDsaRMSNorm,
         DeepseekV4RMSNorm: QEffDeepseekV4RMSNorm,
+        DeepseekV4UnweightedRMSNorm: QEffDeepseekV4UnweightedRMSNorm,
         Wav2Vec2Encoder: QEffWav2Vec2Encoder,
         Wav2Vec2EncoderStableLayerNorm: QEffWav2Vec2EncoderStableLayerNorm,
         # BERT-family: replace _create_attention_masks (uses create_bidirectional_mask,
