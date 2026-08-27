@@ -262,8 +262,6 @@ def _disable_safe_export_pass_patches():
         _safe_export_original_passes.clear()
 
 
-
-
 def apply_torch_patches():
     """Apply monkey patches for ONNX export (TorchScript path)."""
     global _PATCHES_ACTIVE

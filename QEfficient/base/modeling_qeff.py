@@ -24,6 +24,7 @@ from QEfficient.base.onnx_transforms import (
     FP16ClipTransform,
     OnnxTransformPipeline,
     PruneFakeInitializersTransform,
+    RenameFunctionOutputsTransform,
     SplitTensorsTransform,
 )
 from QEfficient.base.pytorch_transforms import PytorchTransform
@@ -117,6 +118,7 @@ class QEFFBaseModel(ABC):
     :_pytorch_transforms: Pytorch transformations to be applied after initialization.
     :_onnx_transforms: ONNX transformations to be applied after ONNX export.
     """
+
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
 
@@ -600,7 +602,8 @@ class QEFFBaseModel(ABC):
             onnx_transforms = OnnxTransformPipeline(transforms=self._onnx_transforms)
             model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
-            # remains backward compatible.
+            if RenameFunctionOutputsTransform in self._onnx_transforms:
+                _restore_retained_state_output_names(model, output_names)
 
             # Add metadata to the model
             model.metadata_props.append(

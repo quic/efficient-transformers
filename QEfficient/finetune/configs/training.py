@@ -51,7 +51,7 @@ class TrainConfig:
         convergence_loss (float): Loss threshold for convergence (default: 1e-4).
         use_profiler (bool): Enable profiling (default: False).
         enable_pp (bool): Enable training with pipeline parallelism (default: False).
-        num_pp_stages (int): Number of stages in which model is split when training using pipeline (default: 1).
+        num_pp_stages (int): Number of stages in which model is split layerwise when training using pipeline (default: 1).
         enable_ddp (bool): Enable distributed data parallel (default: False).
         enable_sorting_for_ddp (bool): Sort data for DDP (default: True).
         opByOpVerifier (bool): Enable operation-by-operation verification (default: False).

@@ -162,6 +162,57 @@ class CustomOpTransform(BaseOnnxTransform):
                     cls._ensure_opset_imports(model, node.domain, 1)
 
 
+class RenameFunctionOutputsTransform(BaseOnnxTransform):
+    """Rename decoder function retained-state outputs to public graph names."""
+
+    @classmethod
+    def apply(cls, model: ModelProto, layer_idx=0) -> bool:
+        graph = model.graph
+        functions_by_name = {function.name: function for function in model.functions}
+        decoder_patterns = ("DecoderLayer", "Block", "Layer")
+        renamed = False
+        graph_output_indices = {value.name: index for index, value in enumerate(graph.output)}
+
+        for node in graph.node:
+            if not any(pattern in node.name or pattern in node.op_type for pattern in decoder_patterns):
+                continue
+
+            function = functions_by_name.get(node.op_type)
+            if not function:
+                continue
+
+            for output_idx, function_output_name in enumerate(function.output):
+                if "_InternalRetainedState" not in function_output_name:
+                    continue
+
+                renamed = True
+                original_name = node.output[output_idx]
+                if original_name.endswith("_InternalRetainedState"):
+                    new_name = original_name[: -len("_InternalRetainedState")] + "_RetainedState"
+                else:
+                    base_name = function_output_name[: -len("_InternalRetainedState")]
+                    new_name = original_name
+                    for prefix in (
+                        "past_key.",
+                        "past_value.",
+                        "compressed_kv.",
+                        "k_pe.",
+                        "recurrent_state.",
+                        "conv_state.",
+                    ):
+                        if not base_name.startswith(prefix):
+                            continue
+                        _, _, infix = base_name[len(prefix) :].partition("_")
+                        infix = f"_{infix}" if infix else ""
+                        new_name = f"{prefix}{layer_idx}{infix}_RetainedState"
+                        break
+                node.output[output_idx] = new_name
+                if original_name in graph_output_indices:
+                    graph.output[graph_output_indices[original_name]].name = new_name
+            layer_idx += 1
+        return renamed
+
+
 class PreserveNestedCacheRetainedStateTransform(BaseOnnxTransform):
     """Expose nested decoder cache side effects as explicit ONNX values.
 

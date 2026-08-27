@@ -21,6 +21,7 @@ from torch.export import Dim
 from QEfficient.base.onnx_transforms import (
     CustomOpTransform,
     PreserveNestedCacheRetainedStateTransform,
+    RenameFunctionOutputsTransform,
     RenameRepeatedSubgraphTransform,
     RenameWsubNodesTransform,
 )
@@ -469,7 +470,9 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
         if RenameRepeatedSubgraphTransform not in qeff_model._onnx_transforms:
             qeff_model._onnx_transforms.append(RenameRepeatedSubgraphTransform)
     else:
-        # TorchScript: CustomOpTransform + RenameWsubNodesTransform.
+        # TorchScript: retained-state output, custom-op, and semantic node renames.
+        if RenameFunctionOutputsTransform not in qeff_model._onnx_transforms:
+            qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
         if CustomOpTransform not in qeff_model._onnx_transforms:
             qeff_model._onnx_transforms.append(CustomOpTransform)
         if RenameWsubNodesTransform not in qeff_model._onnx_transforms:
