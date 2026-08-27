@@ -311,7 +311,10 @@ class TestWeightFreeCheckpointTransforms:
             == "model.layers.2.block_sparse_moe.experts.down_proj_t"
         )
 
-    def test_promotes_tied_weight_alias_initializers(self, tmp_path, monkeypatch):
+    def test_promotes_embed_tokens_for_tied_model(self, tmp_path, monkeypatch):
+        """When tie_word_embeddings=True, torch.export deduplicates tied weights —
+        only model.embed_tokens.weight appears as an ONNX initializer, never
+        lm_head.weight. Verify the canonical name is promoted correctly."""
         src = tmp_path / "src"
         src.mkdir()
         tied_weight = torch.arange(12, dtype=torch.float32).reshape(4, 3)
@@ -320,20 +323,15 @@ class TestWeightFreeCheckpointTransforms:
         class TiedModel(torch.nn.Module):
             def __init__(self):
                 super().__init__()
-                self.config = SimpleNamespace(tie_word_embeddings=True)
                 self.model = torch.nn.Module()
                 self.model.embed_tokens = torch.nn.Embedding(4, 3)
                 self.lm_head = torch.nn.Linear(3, 4, bias=False)
                 self.lm_head.weight = self.model.embed_tokens.weight
 
-            def get_input_embeddings(self):
-                return self.model.embed_tokens
-
-            def get_output_embeddings(self):
-                return self.lm_head
-
         initializer = SimpleNamespace(shape=tied_weight.shape, dtype=ir.DataType.FLOAT)
-        graph = SimpleNamespace(initializers={"lm_head.weight": initializer}, inputs=[])
+        # Realistic: torch.export deduplicates tied weights — only the canonical
+        # name (model.embed_tokens.weight) appears as an ONNX initializer.
+        graph = SimpleNamespace(initializers={"model.embed_tokens.weight": initializer}, inputs=[])
         onnx_program = SimpleNamespace(model=SimpleNamespace(graph=graph))
         monkeypatch.setattr(
             checkpoint_key_resolver.ir,
@@ -348,9 +346,9 @@ class TestWeightFreeCheckpointTransforms:
             qeff_model=SimpleNamespace(model=TiedModel()),
         )
 
-        assert "lm_head.weight" not in graph.initializers
-        assert [value.name for value in graph.inputs] == ["lm_head.weight"]
-        assert spec.inputs[0].name == "lm_head.weight"
+        assert "model.embed_tokens.weight" not in graph.initializers
+        assert [v.name for v in graph.inputs] == ["model.embed_tokens.weight"]
+        assert spec.inputs[0].name == "model.embed_tokens.weight"
         assert spec.inputs[0].location.key == "model.embed_tokens.weight"
 
 
