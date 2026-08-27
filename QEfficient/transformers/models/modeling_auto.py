@@ -1254,7 +1254,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             self.hash_params["prefill_only"] = False
             self.__update_prefill_transform(False, retain_full_kv=kwargs.get("retain_full_kv", False))
 
-        kwargs.pop("qaic_config", None)
+        qaic_config = kwargs.pop("qaic_config", getattr(self.model, "qaic_config", None))
         return self._export(
             inputs,
             output_names=output_names,
@@ -1262,6 +1262,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
             export_dir=export_dir,
             offload_pt_weights=offload_pt_weights,
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
+            qaic_config=qaic_config,
         )
 
     def compile(
@@ -3453,7 +3454,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "Use the default non-prefill export path for standard CausalLM decode graphs."
             )
         reject_legacy_moe_prefill_packed_chunk_size(kwargs)
-        kwargs.pop("qaic_config", None)
+        qaic_config = kwargs.pop("qaic_config", getattr(self.model, "qaic_config", None))
 
         if (
             kwargs.get("retain_full_kv", False)
@@ -3758,6 +3759,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             use_onnx_subfunctions=kwargs.get("use_onnx_subfunctions", False),
             dynamo=dynamo,
             offload_pt_weights=kwargs.get("offload_pt_weights", True),
+            qaic_config=qaic_config,
         )
 
     def build_prefill_specialization(
