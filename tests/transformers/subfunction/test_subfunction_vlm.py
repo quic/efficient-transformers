@@ -231,6 +231,9 @@ def test_few_image_text_to_text_subfunction(model_name, kv_offload, manual_clean
 @pytest.mark.parametrize("model_name", test_mm_models)
 @pytest.mark.parametrize("kv_offload", [True])
 def test_dummy_image_text_to_text_subfunction(model_name, kv_offload, manual_cleanup):
+    if model_name == "Qwen/Qwen3.5-35B-A3B":
+        pytest.skip("Works with Apps SDK 1.23.0.30 but fails with newer Apps SDK >= 1.23.0.37.")
+
     torch.manual_seed(42)
     check_image_text_to_text_subfunction_core(
         model_name,

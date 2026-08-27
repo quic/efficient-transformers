@@ -21,8 +21,8 @@ mla_absorption has 3 keys:
 We have also implemented KV head replication, HEAD Blocking and KV Blocking which can be enable like this : 
 - For No Blocking : qaic_config = {"mla_absorption" : mla_absorption}
 - For No blocking with kv head replication : qaic_config = {"mla_absorption" : mla_absorption, "replicate_kv_heads": True}
-- For KV blocking : qaic_config = {"mla_absorption" : mla_absorption, "enable_blocking": True, "blocking_mode": "kv"}  # for KV blocking
-- For Head Blocking : qaic_config = {"mla_absorption" : mla_absorption, "enable_blocking": True, "blocking_mode": "h", "replicate_kv_heads": True} for h blocking, it internally sets head_block_size equal to num_devices/num_replicate_kv_heads (computed)
+- For KV blocking : qaic_config = {"mla_absorption" : mla_absorption, "blocking_mode": "kv"}  # for KV blocking
+- For Head Blocking : qaic_config = {"mla_absorption" : mla_absorption, "blocking_mode": "h", "replicate_kv_heads": True} for h blocking, it internally sets head_block_size equal to num_devices/num_replicate_kv_heads (computed)
 
 - Currently Decode-Only model is giving best perf with Head Blocking and compressed cache.
 - Contnuous batching is not enabled yet.
