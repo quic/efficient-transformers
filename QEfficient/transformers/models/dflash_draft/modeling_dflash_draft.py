@@ -111,11 +111,16 @@ class QEffDFlashRotaryEmbedding(Qwen3RotaryEmbedding):
 
     def forward(self, x, seq_len=None):
         # x: [bs, num_attention_heads, seq_len, head_size]
-        if seq_len > self.max_seq_len_cached:
+        if seq_len is not None and seq_len > self.max_seq_len_cached:
             self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
 
-        cos_out = self.cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling
-        sin_out = self.sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling
+        # Callers (qeff_apply_rope_two_streams) gather by absolute position (position_ids /
+        # position_ids_target), and DFlash's "noise" positions run block_size ahead of the
+        # context (up to 2x kv_seq_len) -- so the returned table must cover every position a
+        # caller might index, not just [:seq_len]. Return the full (already large enough,
+        # dynamically extended above if needed) cached table instead of truncating it.
+        cos_out = self.cos_cached.to(dtype=x.dtype) * self.attention_scaling
+        sin_out = self.sin_cached.to(dtype=x.dtype) * self.attention_scaling
 
         return (cos_out, sin_out)
 
