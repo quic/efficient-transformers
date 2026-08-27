@@ -7,6 +7,7 @@
 
 import argparse
 import json
+import os
 from typing import Optional
 
 import torch
@@ -14,7 +15,7 @@ from datasets import Features, Sequence, Value, load_dataset
 from huggingface_hub import hf_hub_download
 from safetensors import safe_open
 from torch import nn
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoModelForImageTextToText
 
 from QEfficient.utils.logging_utils import logger
 
@@ -24,26 +25,27 @@ from QEfficient.utils.logging_utils import logger
 # when known; otherwise None and must be supplied via --tlm_hf_path.
 # ─────────────────────────────────────────────────────────────────────────────
 MODEL_MAP = {
-    "gemma-4-31B-it": (None, "z-lab/gemma-4-31B-it-DFlash"),
-    "gemma-4-26B-A4B-it": (None, "z-lab/gemma-4-26B-A4B-it-DFlash"),
-    "MiniMax-M2.7": (None, "z-lab/MiniMax-M2.7-DFlash"),
-    "MiniMax-M2.5": (None, "z-lab/MiniMax-M2.5-DFlash"),
-    "Kimi-K2.6": (None, "z-lab/Kimi-K2.6-DFlash"),
-    "Kimi-K2.5": (None, "z-lab/Kimi-K2.5-DFlash"),
-    "Qwen3.6-27B": (None, "z-lab/Qwen3.6-27B-DFlash"),
-    "Qwen3.6-35B-A3B": (None, "z-lab/Qwen3.6-35B-A3B-DFlash"),
-    "Qwen3.5-4B": (None, "z-lab/Qwen3.5-4B-DFlash"),
-    "Qwen3.5-9B": (None, "z-lab/Qwen3.5-9B-DFlash"),
-    "Qwen3.5-27B": (None, "z-lab/Qwen3.5-27B-DFlash"),
-    "Qwen3.5-35B-A3B": (None, "z-lab/Qwen3.5-35B-A3B-DFlash"),
-    "Qwen3.5-122B-A10B": (None, "z-lab/Qwen3.5-122B-A10B-DFlash"),
+    "gemma-4-31B-it": ("google/gemma-4-31B-it", "z-lab/gemma-4-31B-it-DFlash"),
+    "gemma-4-26B-A4B-it": ("google/gemma-4-26B-A4B-it", "z-lab/gemma-4-26B-A4B-it-DFlash"),
+    "MiniMax-M2.7": ("MiniMaxAI/MiniMax-M2.7", "z-lab/MiniMax-M2.7-DFlash"),
+    "MiniMax-M2.5": ("MiniMaxAI/MiniMax-M2.5", "z-lab/MiniMax-M2.5-DFlash"),
+    "Kimi-K2.6": ("moonshotai/Kimi-K2.6", "z-lab/Kimi-K2.6-DFlash"),
+    "Kimi-K2.5": ("moonshotai/Kimi-K2.5", "z-lab/Kimi-K2.5-DFlash"),
+    "Qwen3.6-27B": ("Qwen/Qwen3.6-27B", "z-lab/Qwen3.6-27B-DFlash"),
+    "Qwen3.6-35B-A3B": ("Qwen/Qwen3.6-35B-A3B", "z-lab/Qwen3.6-35B-A3B-DFlash"),
+    "Qwen3.5-4B": ("Qwen/Qwen3.5-4B", "z-lab/Qwen3.5-4B-DFlash"),
+    "Qwen3.5-9B": ("Qwen/Qwen3.5-9B", "z-lab/Qwen3.5-9B-DFlash"),
+    "Qwen3.5-27B": ("Qwen/Qwen3.5-27B", "z-lab/Qwen3.5-27B-DFlash"),
+    "Qwen3.5-35B-A3B": ("Qwen/Qwen3.5-35B-A3B", "z-lab/Qwen3.5-35B-A3B-DFlash"),
+    "Qwen3.5-122B-A10B": ("Qwen/Qwen3.5-122B-A10B", "z-lab/Qwen3.5-122B-A10B-DFlash"),
     "gpt-oss-20b": ("openai/gpt-oss-20b", "z-lab/gpt-oss-20b-DFlash"),
     "gpt-oss-120b": ("openai/gpt-oss-120b", "z-lab/gpt-oss-120b-DFlash"),
-    "Qwen3-Coder-Next": (None, "z-lab/Qwen3-Coder-Next-DFlash"),
+    "Qwen3-Coder-Next": ("Qwen/Qwen3-Coder-Next", "z-lab/Qwen3-Coder-Next-DFlash"),
     "Qwen3-4B": ("Qwen/Qwen3-4B", "z-lab/Qwen3-4B-DFlash-b16"),
     "Qwen3-8B": ("Qwen/Qwen3-8B", "z-lab/Qwen3-8B-DFlash-b16"),
     "Qwen3-Coder-30B-A3B": ("Qwen/Qwen3-Coder-30B-A3B-Instruct", "z-lab/Qwen3-Coder-30B-A3B-DFlash"),
     "Llama-3.1-8B-Instruct": ("meta-llama/Llama-3.1-8B-Instruct", "z-lab/LLaMA3.1-8B-Instruct-DFlash-UltraChat"),
+    "Qwen3-VL-32B-Instruct": ("Qwen/Qwen3-VL-32B-Instruct", "Path_to_Qwen3-VL-32B_DFlash"),
 }
 
 
@@ -104,15 +106,20 @@ def sample(logits: torch.Tensor, temperature: float = 0.0) -> torch.Tensor:
 
 
 def load_dflash_checkpoint(dflash_model_path: str) -> tuple[dict, dict]:
-    """Download and load the DFlash safetensors checkpoint and config.
+    """Load the DFlash safetensors checkpoint and config, from a local directory or
+    a Hugging Face repo id.
 
     Returns
     -------
     state_dict : dict[str, Tensor]  — all tensors in fp32
     cfg        : dict               — parsed config.json
     """
-    bin_path = hf_hub_download(repo_id=dflash_model_path, filename="model.safetensors")
-    config_path = hf_hub_download(repo_id=dflash_model_path, filename="config.json")
+    if os.path.isdir(dflash_model_path):
+        bin_path = os.path.join(dflash_model_path, "model.safetensors")
+        config_path = os.path.join(dflash_model_path, "config.json")
+    else:
+        bin_path = hf_hub_download(repo_id=dflash_model_path, filename="model.safetensors")
+        config_path = hf_hub_download(repo_id=dflash_model_path, filename="config.json")
 
     with open(config_path, "r") as f:
         cfg = json.load(f)
@@ -293,6 +300,89 @@ def compile_gemma_vlm_qpcs(
     return lang_qpc, vision_qpc
 
 
+def compile_qwen3vl_vlm_qpcs(
+    tlm_repo: str,
+    dlm_repo: str,
+    *,
+    prefill_seq_len: int,
+    ctx_len: int,
+    num_cores: int,
+    num_devices: int,
+    height: Optional[int] = None,
+    width: Optional[int] = None,
+    hf_token: Optional[str] = None,
+) -> tuple[str, str]:
+    """Build the qwen3-vl TLM — vision encoder + language decoder — and compile it for
+    SPD. Returns ``(lang_qpc, vision_qpc)``.
+
+    Same DFlashTLMTransform-attaches-random / inject-real-weights pattern as
+    ``compile_gemma_vlm_qpcs``, kept as a separate function (rather than generalizing
+    that one) since qwen3-vl's compile knobs differ: it needs ``height``/``width``
+    (vision input resolution) and does not use gemma's
+    ``aic_enable_depth_first``/``node_precision_info``/``batch_size`` options.
+    ``split_model_io`` IS required here too -- without it qaic-compile drops most of
+    the graph's I/O from the compiled QPC's binding set (confirmed: only 6 of the
+    expected 266 bindings survive, including no ``vision_embeds`` and no KV cache,
+    even though the ONNX graph itself is correct). When ``height``/``width`` are
+    ``None``, they are omitted so ``get_specializations`` applies its own
+    ``constants.QWEN3_VL_HEIGHT``/``WIDTH`` fallback.
+    """
+    from transformers import AutoConfig
+
+    from QEfficient import QEFFAutoModelForImageTextToText
+
+    state_dict, target_layer_ids, block_size = read_dlm_meta(dlm_repo, hf_token)
+    tlm_target_ids = [i + 1 for i in target_layer_ids]
+
+    logger.info(f"[compile_qwen3vl_tlm] base={tlm_repo}  dlm={dlm_repo}  block_size={block_size}")
+    config = AutoConfig.from_pretrained(tlm_repo, trust_remote_code=True, token=hf_token)
+    tlm_qeff = QEFFAutoModelForImageTextToText.from_pretrained(
+        tlm_repo,
+        config=config,
+        trust_remote_code=True,
+        dtype="float32",
+        kv_offload=True,
+        ignore_mismatched_sizes=True,
+        token=hf_token,
+        qaic_config={"target_layer_ids": tlm_target_ids},
+    )
+
+    # DFlashTLMTransform attached fc/hidden_norm but left them random; copy in the real
+    # DFlash weights and scale fc into fp16 range.
+    text_model = tlm_qeff.lang_model.model.language_model
+    text_model.fc.weight.data.copy_(state_dict["fc.weight"].to(torch.float32))
+    with torch.no_grad():
+        in_feat = text_model.fc.in_features
+        max_row_norm = text_model.fc.weight.data.norm(dim=1).max().item()
+        s = max((in_feat**0.5) * max_row_norm / _VLM_FC_TARGET_ABSMAX, 1.0)
+        text_model.fc.weight.data.div_(s)
+    text_model.hidden_norm.weight.data.copy_(state_dict["hidden_norm.weight"].to(torch.float32))
+    logger.info(f"[compile_qwen3vl_tlm] fc/hidden_norm injected (fc scale s={s:.6f})")
+
+    compile_kwargs = {
+        "prefill_seq_len": prefill_seq_len,
+        "ctx_len": ctx_len,
+        "num_cores": num_cores,
+        "num_devices": num_devices,
+        "mxfp6_matmul": True,
+        "mxint8_kv_cache": True,
+        "mos": 1,
+        "use_onnx_subfunctions": False,
+        "split_model_io": True,
+        "dflash_block_size": block_size,
+    }
+    if height is not None:
+        compile_kwargs["height"] = height
+    if width is not None:
+        compile_kwargs["width"] = width
+
+    qpc = tlm_qeff.compile(**compile_kwargs)
+    lang_qpc = str(qpc["lang_qpc_path"])
+    vision_qpc = str(qpc["vision_qpc_path"])
+    logger.info(f"[compile_qwen3vl_tlm] lang_qpc={lang_qpc}  vision_qpc={vision_qpc}")
+    return lang_qpc, vision_qpc
+
+
 def _get_text_inner(base_model: AutoModelForCausalLM) -> nn.Module:
     """Return the submodule that owns the text decoder (``.layers`` / ``.embed_tokens``).
 
@@ -453,6 +543,49 @@ def compile_gemma_vlm_dlm_qpc(
     return qpc
 
 
+def compile_qwen3vl_vlm_dlm_qpc(
+    tlm_repo: str,
+    dlm_repo: str,
+    *,
+    ctx_len: int,
+    num_cores: int,
+    num_devices: int,
+    hf_token: Optional[str] = None,
+) -> str:
+    """Build + compile the DFlash DLM (draft) for the qwen3-vl TLM.
+
+    Same VLM-aware lm_head/embed injection as ``compile_gemma_vlm_dlm_qpc``, kept as a
+    separate function since qwen3-vl's config is not registered under
+    ``AutoModelForCausalLM`` (it is a conditional-generation VLM config); loading the
+    base TLM here goes through ``AutoModelForImageTextToText`` instead.
+    """
+    from QEfficient import QEFFAutoModelForCausalLM
+
+    _, _, block_size = read_dlm_meta(dlm_repo, hf_token)
+
+    logger.info(f"[compile_qwen3vl_dlm] base={tlm_repo}  dlm={dlm_repo}  block_size={block_size}")
+    base_model = AutoModelForImageTextToText.from_pretrained(tlm_repo, torch_dtype=torch.float32, token=hf_token)
+    lm_head_w, lm_head_b = extract_lm_head(base_model)
+    embed_w = extract_embed(base_model)
+    del base_model
+
+    dlm_model = build_dlm_model(dlm_repo, lm_head_w, lm_head_b, embed_w)
+    dlm_qeff = QEFFAutoModelForCausalLM(dlm_model, qaic_config={"dflash_dlm": True})
+    qpc = dlm_qeff.compile(
+        prefill_seq_len=block_size,
+        ctx_len=ctx_len,
+        num_cores=num_cores,
+        num_devices=num_devices,
+        mxfp6_matmul=True,
+        mxint8_kv_cache=True,
+        mos=1,
+        prefill_only=True,
+    )
+    qpc = str(qpc)
+    logger.info(f"[compile_qwen3vl_dlm] qpc={qpc}")
+    return qpc
+
+
 def load_and_process_dataset(data_name: str):
     # Math datasets
     if data_name == "gsm8k":
@@ -577,3 +710,32 @@ def reformat_jsonl_by_category(questions: list) -> list:
         category = q.get("category", "")
         q["turns"][0] = format_prompt(q["turns"][0], category)
     return questions
+
+
+# ===== QPC VALIDATION (shared by the vision benchmark scripts) =====
+
+
+def qpc_num_devices(qpc_dir):
+    for cand in (
+        os.path.join(qpc_dir, "qconfig.json"),
+        os.path.join(os.path.dirname(qpc_dir), "qconfig.json"),
+    ):
+        if os.path.exists(cand):
+            try:
+                cfg = json.load(open(cand))
+                return int(cfg["qpc_config"]["compiler_config"]["mdp_ts_num_devices"])
+            except Exception:
+                return None
+    return None
+
+
+def qpc_ctx_len(qpc_dir):
+    spec_path = os.path.join(os.path.dirname(qpc_dir), "specializations.json")
+    if os.path.exists(spec_path):
+        try:
+            specs = json.load(open(spec_path))["specializations"]
+            vals = {int(s["symbols"]["ctx_len"]) for s in specs if "ctx_len" in s.get("symbols", {})}
+            return min(vals) if vals else None
+        except Exception:
+            return None
+    return None

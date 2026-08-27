@@ -81,7 +81,7 @@ def _create_mask(
 
 
 #  Can be replaced with llama/modeling_llama.py::QEffLlamaRotaryEmbedding but keeping it following transformers ideology
-class QEffQwen3RotaryEmbedding(Qwen3RotaryEmbedding):
+class QEffDFlashRotaryEmbedding(Qwen3RotaryEmbedding):
     """
     Copied from LlamaForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py
     The only differences are:
@@ -245,7 +245,7 @@ def eager_attention_forward(
     return attn_output, attn_weights
 
 
-class QEffQwen3Attention(Qwen3Attention):
+class QEffDFlashAttention(Qwen3Attention):
     """
     Copied from Qwen3Attention: https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3/modeling_qwen3.py
     The only differences are:
@@ -253,7 +253,7 @@ class QEffQwen3Attention(Qwen3Attention):
     """
 
     def __qeff_init__(self):
-        self.rotary_emb = QEffQwen3RotaryEmbedding(config=self.config)
+        self.rotary_emb = QEffDFlashRotaryEmbedding(config=self.config)
         self.dflash_dlm = True
 
     def forward(
@@ -330,7 +330,7 @@ class QEffQwen3Attention(Qwen3Attention):
         return attn_output, attn_weights
 
 
-class QEffQwen3DecoderLayer(Qwen3DecoderLayer):
+class QEffDFlashDecoderLayer(Qwen3DecoderLayer):
     """
     Copied from Qwen3ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3/modeling_qwen3.py
     The only differences are:
@@ -397,7 +397,7 @@ class QEffQwen3DecoderLayer(Qwen3DecoderLayer):
         return hidden_states
 
 
-class QEffQwen3Model(Qwen3Model):
+class QEffDFlashModel(Qwen3Model):
     """
     Copied from Qwen3Model: https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3/modeling_qwen3.py
     The only differences are:
@@ -493,7 +493,7 @@ class QEffQwen3Model(Qwen3Model):
         )
 
 
-class QEffQwen3ForCausalLM(Qwen3ForCausalLM):
+class QEffDFlashForCausalLM(Qwen3ForCausalLM):
     """
     Copied from Qwen3ForCausalLM: https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3/modeling_qwen3.py
     The only differences are:

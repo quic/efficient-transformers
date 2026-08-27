@@ -39,6 +39,7 @@ from QEfficient.blocking.attention_blocking import (
 )
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.spd.dflash import compute_dflash_target_hidden_states
 from QEfficient.utils import constants
 from QEfficient.utils._utils import IOInfo, get_padding_shape_from_config
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
@@ -642,21 +643,14 @@ class QEffQwen3VLTextModel(Qwen3VLTextModel):
         if return_legacy_cache:
             past_key_values = past_key_values.to_legacy_cache()
 
+        target_hidden = None
         if self.target_layer_ids:
-            target_hidden = torch.cat(target_hidden_list, dim=-1)
-            target_hidden_fc = self.fc(target_hidden)
-            target_hidden_final = self.hidden_norm(target_hidden_fc)
-            return BaseModelOutputWithPast(
-                last_hidden_state=hidden_states,
-                past_key_values=past_key_values if use_cache else None,
-                hidden_states=target_hidden_final,
-                attentions=all_self_attns,
-            )
+            target_hidden = compute_dflash_target_hidden_states(target_hidden_list, self.fc, self.hidden_norm)
 
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
-            hidden_states=all_hidden_states,
+            hidden_states=target_hidden if target_hidden is not None else all_hidden_states,
             attentions=all_self_attns,
         )
 
