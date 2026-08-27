@@ -945,7 +945,7 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         sliding_mask = _create_causal_mask(
             position_ids=position_ids,
             target_length=past_key_values.get_max_cache_len(),
-            sliding_window=past_key_values.get_sliding_window_len(),
+            sliding_window=self.config.sliding_window,
         )
 
         hidden_states = inputs_embeds

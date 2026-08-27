@@ -747,8 +747,8 @@ class TestQEffGPTOSSDynamicCacheCorrectness:
         cache.update(k_sliding, v_sliding, layer_idx=0, cache_kwargs={"position_ids": _pids(4)})
         cache.update(k_full, v_full, layer_idx=1, cache_kwargs={"position_ids": _pids(16)})
 
-        assert cache.sliding_window_len == 4
-        assert cache.max_cache_len == 16
+        assert cache.get_sliding_window_len() == 4
+        assert cache.get_max_cache_len() == 16
         assert cache.layers[0].cache_len == 4
         assert cache.layers[1].cache_len == 16
 

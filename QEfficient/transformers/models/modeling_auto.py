@@ -3448,6 +3448,22 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     _onnx_transforms = []
 
+    def _override_gptoss_prefill_chunking(
+        self,
+        prefill_only: Optional[bool],
+        enable_chunking: Optional[bool],
+    ) -> Optional[bool]:
+        if (
+            prefill_only is True
+            and enable_chunking is False
+            and getattr(self.model.config, "model_type", None) == "gpt_oss"
+        ):
+            logger.warning(
+                "For gpt_oss, chunking is always enabled for prefill-only mode; overriding enable_chunking=True."
+            )
+            return True
+        return enable_chunking
+
     def prefill(
         self,
         enable: Optional[bool] = True,
@@ -3812,6 +3828,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "Use the default non-prefill export path for standard CausalLM decode graphs."
             )
         reject_legacy_moe_prefill_packed_chunk_size(kwargs)
+        enable_chunking = self._override_gptoss_prefill_chunking(prefill_only, kwargs.get("enable_chunking", False))
+        kwargs["enable_chunking"] = enable_chunking
         qaic_config = kwargs.pop("qaic_config", getattr(self.model, "qaic_config", None))
 
         if (
@@ -3839,7 +3857,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             )
         ########################################
 
-        enable_chunking = kwargs.get("enable_chunking", False)
         ####### HANDLE DA PREFILL And REVERT PREFILL Transform ################
         # TODO: move this code inside self.transform in modeling_qeff.py
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
@@ -4386,6 +4403,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         """
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
+        enable_chunking = self._override_gptoss_prefill_chunking(prefill_only, enable_chunking)
         if layerwise:
             return self._run_layerwise(
                 final_compile=True,

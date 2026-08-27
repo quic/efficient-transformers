@@ -35,10 +35,10 @@ PROMPT = "hello"
 PREFILL_SEQ_LEN = 64
 PREFILL_CTX_LEN = 192
 DECODE_CTX_LEN = 128
+DECODE_STEPS = 8
 MOE_PREFILL_PACKED_CHUNK_SIZE = 32
 EXPECTED_MOE_PREFILL_NUM_PACKED_CHUNKS = PREFILL_SEQ_LEN // MOE_PREFILL_PACKED_CHUNK_SIZE
 NUM_CORES = 2
-NUM_LAYERS = 2
 
 
 def _moe_qaic_config() -> dict:
@@ -107,7 +107,7 @@ def assert_subfunction_names_match_decoder_class(onnx_path: Path, qeff_model: QE
 def _load_gpt_oss_hf_and_tokenizer():
     try:
         tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
-        config = AutoConfig.from_pretrained(MODEL_ID, num_hidden_layers=NUM_LAYERS, trust_remote_code=True)
+        config = AutoConfig.from_pretrained(MODEL_ID, trust_remote_code=True)
         model_hf = AutoModelForCausalLM.from_pretrained(MODEL_ID, config=config, **MODEL_KWARGS)
     except Exception as exc:
         skip_on_model_fetch_error(exc, MODEL_ID)
@@ -235,6 +235,32 @@ def _decode_inputs_from_prefill_outputs(
     return decode_inputs
 
 
+def _run_decode_steps(
+    qpc_path: str,
+    decode_inputs: dict[str, np.ndarray],
+    config,
+    decode_steps: int,
+) -> np.ndarray:
+    decode_session = QAICInferenceSession(qpc_path)
+    decode_session.set_buffers({"logits": np.zeros((1, 1, config.vocab_size), dtype=np.float32)})
+
+    qaic_tokens = []
+    for _ in range(decode_steps):
+        decode_outputs = decode_session.run(_filter_session_inputs(decode_session, decode_inputs))
+        next_token = int(decode_outputs["logits"].argmax(-1).reshape(-1)[0])
+        qaic_tokens.append(next_token)
+
+        decode_inputs = {
+            "input_ids": np.asarray([[next_token]], dtype=np.int64),
+            "position_ids": decode_inputs["position_ids"] + 1,
+        }
+        for layer_idx in range(config.num_hidden_layers):
+            decode_inputs[f"past_key.{layer_idx}"] = decode_outputs[f"past_key.{layer_idx}_RetainedState"]
+            decode_inputs[f"past_value.{layer_idx}"] = decode_outputs[f"past_value.{layer_idx}_RetainedState"]
+
+    return np.asarray(qaic_tokens)
+
+
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 def test_gpt_oss_prefill_chunked_expert_parallel_subfunction_hf_qaic_token_parity(tmp_export_dir, monkeypatch):
@@ -287,7 +313,7 @@ def test_gpt_oss_prefill_chunked_expert_parallel_subfunction_hf_qaic_token_parit
 def test_gpt_oss_decode_retain_full_kv_subfunction_hf_qaic_token_parity(tmp_export_dir):
     model_hf, tokenizer = _load_gpt_oss_hf_and_tokenizer()
     _assert_single_token_prompt(tokenizer)
-    api_runner = _api_runner(model_hf, tokenizer, prompt_len=1, ctx_len=DECODE_CTX_LEN)
+    api_runner = _api_runner(model_hf, tokenizer, prompt_len=1, ctx_len=DECODE_STEPS + 1)
     hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
     assert hf_tokens is not None, "HF PT inference returned None"
 
@@ -336,14 +362,16 @@ def test_gpt_oss_decode_retain_full_kv_subfunction_hf_qaic_token_parity(tmp_expo
         gen_len=1,
     )
 
-    decode_session = QAICInferenceSession(qpc_path)
-    decode_session.set_buffers({"logits": np.zeros((1, 1, model_hf.config.vocab_size), dtype=np.float32)})
     decode_inputs = _decode_inputs_from_prefill_outputs(prefill_outputs, prefill_inputs, model_hf.config)
-    decode_outputs = decode_session.run(_filter_session_inputs(decode_session, decode_inputs))
-    qaic_token = decode_outputs["logits"].argmax(-1)
+    qaic_tokens = _run_decode_steps(
+        qpc_path,
+        decode_inputs,
+        model_hf.config,
+        decode_steps=DECODE_STEPS - 1,
+    )
     _assert_token_match(
-        "GPT-OSS decode-only retain-full-KV",
-        np.asarray(hf_tokens).flatten()[1:2],
-        qaic_token,
-        gen_len=1,
+        "GPT-OSS decode-only retain-full-KV multi-token",
+        np.asarray(hf_tokens).flatten()[1:DECODE_STEPS],
+        qaic_tokens,
+        gen_len=DECODE_STEPS - 1,
     )
