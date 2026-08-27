@@ -27,6 +27,12 @@ TEXT_PROMPT = "Describe all the colors seen in the image."
 NUM_KV_BLOCKS = 2
 HEAD_BLOCK_SIZE = 8
 NUM_Q_BLOCKS = 2
+PREFILL_MDP_NUM_LAYERS = 2
+PREFILL_MDP_NUM_DEVICES = 2
+PREFILL_MDP_NUM_PARTITIONS = 2
+PREFILL_EXPERT_PARALLEL_CHUNK_SIZE = 32
+PREFILL_ONLINE_QL_CHUNK = 32
+PREFILL_ONLINE_N_REP_CHUNK = 2
 
 VISION_INPUTS = {
     "pixel_values",
@@ -75,12 +81,12 @@ def _load_hf_model_from_pretrained(config):
     return model
 
 
-def _build_config(dtype: str = "float16"):
+def _build_config(dtype: str = "float16", num_hidden_layers: int = 1):
     config = AutoConfig.from_pretrained(MODEL_NAME, trust_remote_code=True)
     config.dtype = dtype
     config.torch_dtype = getattr(torch, dtype)
     if hasattr(config, "text_config"):
-        config.text_config.num_hidden_layers = 1
+        config.text_config.num_hidden_layers = num_hidden_layers
         config.text_config.dtype = dtype
         config.text_config.torch_dtype = getattr(torch, dtype)
     return config
@@ -376,6 +382,89 @@ def _run_disagg_blocked(
     assert (qaic_tokens == np.repeat(hf_tokens, batch_size, axis=0)).all(), (
         "Tokens don't match for HF Torch fp32 output and disagg blocked QAIC output"
     )
+
+
+def _build_prefill_mdp_qaic_config(blocking_mode: str) -> dict:
+    qaic_config = {
+        "blocking_mode": blocking_mode,
+        "ctx_len": CTX_LEN,
+        "moe_config": {
+            "flavour": "expert_parallel",
+            "expert_parallel_chunk_size": PREFILL_EXPERT_PARALLEL_CHUNK_SIZE,
+        },
+    }
+    if blocking_mode == "prefill_online":
+        qaic_config.update(
+            {
+                "num_kv_blocks": NUM_KV_BLOCKS,
+                "num_q_blocks": -(-PREFILL_SEQ_LEN // PREFILL_ONLINE_QL_CHUNK),
+                "n_rep_chunk": PREFILL_ONLINE_N_REP_CHUNK,
+            }
+        )
+    else:
+        qaic_config.update(
+            {
+                "head_block_size": HEAD_BLOCK_SIZE,
+                "num_kv_blocks": NUM_KV_BLOCKS,
+                "num_q_blocks": NUM_Q_BLOCKS,
+            }
+        )
+    return qaic_config
+
+
+@pytest.mark.dummy_layers
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("blocking_mode", ["prefill_qkv", "prefill_online"])
+def test_qwen3_vl_moe_disagg_prefill_mdp_intersection_compile_only(blocking_mode, manual_cleanup):
+    torch.manual_seed(42)
+
+    hf_model = _load_hf_model_from_pretrained(
+        _build_config(dtype="float32", num_hidden_layers=PREFILL_MDP_NUM_LAYERS)
+    ).to(dtype=torch.float32)
+    hf_model.config.dtype = "float32"
+    hf_model.config.torch_dtype = torch.float32
+    if hasattr(hf_model.config, "text_config"):
+        hf_model.config.text_config.dtype = "float32"
+        hf_model.config.text_config.torch_dtype = torch.float32
+
+    qeff_model = QEFFAutoModelForImageTextToText(
+        hf_model,
+        kv_offload=True,
+        config=hf_model.config,
+        torch_dtype=torch.float32,
+        layerwise=False,
+    )
+
+    try:
+        qpc_paths = qeff_model.compile(
+            batch_size=BATCH_SIZE,
+            prefill_seq_len=PREFILL_SEQ_LEN,
+            ctx_len=CTX_LEN,
+            height=IMAGE_SIZE[1],
+            width=IMAGE_SIZE[0],
+            num_cores=16,
+            num_devices=PREFILL_MDP_NUM_DEVICES,
+            mdp_num_partitions=PREFILL_MDP_NUM_PARTITIONS,
+            mdp_strategy="intersection",
+            retain_full_kv=True,
+            split_model_io=True,
+            mos=1,
+            aic_enable_depth_first=True,
+            prefill_only=True,
+            enable_chunking=True,
+            skip_vision=True,
+            # FIXME: Re-enable subfunctions once MDP intersection handles compiler dump names
+            # emitted for ONNX subfunction graphs.
+            use_onnx_subfunctions=False,
+            layerwise=False,
+            layerwise_window_size=1,
+            qaic_config=_build_prefill_mdp_qaic_config(blocking_mode),
+        )
+        _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")
+        assert qpc_paths.get("lang_prefill_qpc_path"), "Prefill compile did not return lang_prefill_qpc_path"
+    finally:
+        manual_cleanup([path for path in [getattr(qeff_model.lang_model, "onnx_path", None)] if path is not None])
 
 
 @pytest.mark.dummy_layers

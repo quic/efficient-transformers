@@ -113,13 +113,13 @@ def _restore_output_names_exact(model: onnx.ModelProto, output_names: List[str])
 
 
 def generate_mdp_compiler_dump(
-    onnx_path: Path,
     compile_dir: Path,
     mdp_ts_num_devices: int,
     mdp_num_partitions: int,
+    compile_command: List[str],
     specializations: Optional[List[Dict[str, int]]] = None,
     specialization_module_name: Optional[str] = None,
-    compiler_options: Optional[Dict[str, Any]] = None,
+    custom_io: Optional[Dict[str, str]] = None,
 ) -> str:
     """Generate the compiler MDP dump required by the intersection strategy."""
     mdp_compiler_dump_path = str(compile_dir / f"mdp_compiler_dump_{mdp_ts_num_devices}d_{mdp_num_partitions}p.json")
@@ -128,24 +128,28 @@ def generate_mdp_compiler_dump(
         return mdp_compiler_dump_path
 
     dump_path.parent.mkdir(parents=True, exist_ok=True)
-    dump_inputs_dir = compile_dir / "mdp_dump_inputs"
-    dump_inputs_dir.mkdir(parents=True, exist_ok=True)
 
-    dump_command = ["/opt/qti-aic/exec/qaic-compile", f"-m={onnx_path}"]
-    compiler_options = compiler_options or {}
-    user_tiled = compiler_options.get("user_tiled", compiler_options.get("user-tiled", False))
-    if user_tiled:
-        dump_command.append("-user-tiled")
+    dump_command = list(compile_command)
+    dump_inputs_dir = compile_dir / "mdp_dump_inputs"
     if specializations is not None:
+        dump_inputs_dir.mkdir(parents=True, exist_ok=True)
         dump_specializations_json = dump_inputs_dir / "specializations.json"
         create_json(
             str(dump_specializations_json),
             {"specializations": to_named_specializations(specializations, module_name=specialization_module_name)},
         )
         dump_command.append(f"-network-specialization-config={dump_specializations_json}")
+    if custom_io is not None:
+        dump_inputs_dir.mkdir(parents=True, exist_ok=True)
+        dump_custom_io_yaml = dump_inputs_dir / "custom_io.yaml"
+        with open(dump_custom_io_yaml, "w") as fp:
+            for io_name, dtype in custom_io.items():
+                fp.write(f" - IOName: {io_name}\n   Precision: {dtype}\n\n")
+        dump_command.append(f"-custom-IO-list-file={dump_custom_io_yaml}")
     dump_command.append(f"-mdp-dump-partition-config={dump_path}")
 
     logger.info(f"Running compiler for MDP dump: {' '.join(dump_command)}")
+    print(f"Running compiler for MDP dump: {' '.join(dump_command)}")
     try:
         subprocess.run(dump_command, capture_output=True, check=True)
     except subprocess.CalledProcessError as e:
@@ -1172,56 +1176,6 @@ class QEFFBaseModel(ABC):
             + [f"-m={onnx_path}"]
         )
 
-        # MDP partition config selection (highest priority first):
-        #   1. User-provided pre-built MDP JSON (mdp_load_partition_config).
-        #   2. Disaggregated (pipeline-parallel) MDP — generated from ONNX topsort.
-        #      Strategy ONNX (default): full superset from ONNX graph (~19 MB).
-        #      Strategy INTERSECTION: intersect with compiler dump; compact (~1-2 MB),
-        #        requires a prior -mdp-dump-partition-config run.
-        #   3. Template (tensor-slice) MDP — single partition, nodeList absent.
-        mdp_ts_json = None
-
-        if mdp_ts_json_path:
-            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
-            mdp_ts_json = load_json(str(mdp_ts_json_path))
-        elif mdp_num_partitions > 1:
-            # Disaggregated (pipeline-parallel) MDP — delegate to focused helper.
-            num_cores = compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
-            num_layers = getattr(self, "num_layers", None)
-            if getattr(self, "model", None) and getattr(self.model, "language_model", None) and not num_layers:
-                num_layers = getattr(self.model.language_model.config, "num_hidden_layers", None)
-            if num_layers is None:
-                raise AttributeError(
-                    "Model or Language Model does not expose 'num_layers' or 'num_hidden_layers' respectively. Cannot generate disagg MDP partition config."
-                )
-            if mdp_strategy is MdpStrategy.INTERSECTION and mdp_compiler_dump_path is None:
-                mdp_compiler_dump_path = generate_mdp_compiler_dump(
-                    onnx_path=onnx_path,
-                    compile_dir=compile_dir,
-                    mdp_ts_num_devices=mdp_ts_num_devices,
-                    mdp_num_partitions=mdp_num_partitions,
-                    specializations=specializations,
-                    specialization_module_name=specialization_module_name,
-                    compiler_options=compiler_options,
-                )
-            mdp_ts_json_path, mdp_ts_json = generate_disagg_mdp_config(
-                onnx_path=onnx_path,
-                compile_dir=compile_dir,
-                mdp_ts_num_devices=mdp_ts_num_devices,
-                mdp_num_partitions=mdp_num_partitions,
-                mdp_strategy=mdp_strategy,
-                mdp_compiler_dump_path=mdp_compiler_dump_path,
-                num_cores=num_cores,
-                num_layers=num_layers,
-            )
-            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
-        elif mdp_ts_num_devices > 1 and not compiler_options.get("mdp_dump_partition_config", None):
-            # Template (tensor-slice) MDP: single partition, empty nodeList; compiler fills it.
-            # File write and command flag are deferred to after compile_dir is finalised (post-hash).
-            mdp_ts_json = generate_mdp_partition_config(
-                mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
-            )
-
         for key, value in compiler_options.items():
             option = "-" + key.replace("_", "-")
             if isinstance(value, bool):
@@ -1258,6 +1212,62 @@ class QEFFBaseModel(ABC):
         if use_onnx_subfunctions:
             logger.info("Using ONNX subfunctions for compilation.")
             command.append("-sub-functions")
+
+        model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
+        pkv_in_bfloat16 = (custom_io is not None) and any(
+            ("past_" in key or "pixel_values" in key) and "bfloat16" in value for key, value in custom_io.items()
+        )
+        custom_io_for_compiler = custom_io if not (model_in_bfloat16 and pkv_in_bfloat16) else None
+
+        # MDP partition config selection (highest priority first):
+        #   1. User-provided pre-built MDP JSON (mdp_load_partition_config).
+        #   2. Disaggregated (pipeline-parallel) MDP — generated from ONNX topsort.
+        #      Strategy ONNX (default): full superset from ONNX graph (~19 MB).
+        #      Strategy INTERSECTION: intersect with compiler dump; compact (~1-2 MB),
+        #        requires a prior -mdp-dump-partition-config run.
+        #   3. Template (tensor-slice) MDP — single partition, nodeList absent.
+        mdp_ts_json = None
+
+        if mdp_ts_json_path:
+            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
+            mdp_ts_json = load_json(str(mdp_ts_json_path))
+        elif mdp_num_partitions > 1:
+            # Disaggregated (pipeline-parallel) MDP — delegate to focused helper.
+            num_cores = compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
+            num_layers = getattr(self, "num_layers", None)
+            if getattr(self, "model", None) and getattr(self.model, "language_model", None) and not num_layers:
+                num_layers = getattr(self.model.language_model.config, "num_hidden_layers", None)
+            if num_layers is None:
+                raise AttributeError(
+                    "Model or Language Model does not expose 'num_layers' or 'num_hidden_layers' respectively. Cannot generate disagg MDP partition config."
+                )
+            if mdp_strategy is MdpStrategy.INTERSECTION and mdp_compiler_dump_path is None:
+                mdp_compiler_dump_path = generate_mdp_compiler_dump(
+                    compile_dir=compile_dir,
+                    mdp_ts_num_devices=mdp_ts_num_devices,
+                    mdp_num_partitions=mdp_num_partitions,
+                    compile_command=command,
+                    specializations=specializations,
+                    specialization_module_name=specialization_module_name,
+                    custom_io=custom_io_for_compiler,
+                )
+            mdp_ts_json_path, mdp_ts_json = generate_disagg_mdp_config(
+                onnx_path=onnx_path,
+                compile_dir=compile_dir,
+                mdp_ts_num_devices=mdp_ts_num_devices,
+                mdp_num_partitions=mdp_num_partitions,
+                mdp_strategy=mdp_strategy,
+                mdp_compiler_dump_path=mdp_compiler_dump_path,
+                num_cores=num_cores,
+                num_layers=num_layers,
+            )
+            command.append(f"-mdp-load-partition-config={mdp_ts_json_path}")
+        elif mdp_ts_num_devices > 1 and not compiler_options.get("mdp_dump_partition_config", None):
+            # Template (tensor-slice) MDP: single partition, empty nodeList; compiler fills it.
+            # File write and command flag are deferred to after compile_dir is finalised (post-hash).
+            mdp_ts_json = generate_mdp_partition_config(
+                mdp_ts_num_devices, compiler_options.get("aic_num_cores", constants.DEFAULT_AIC_NUM_CORES)
+            )
 
         compile_hash_params = {
             "command": command,
@@ -1298,10 +1308,6 @@ class QEFFBaseModel(ABC):
             command.append(f"-network-specialization-config={specializations_json}")
 
         # Write custom_io.yaml file
-        model_in_bfloat16 = hasattr(self, "config") and (self.config.torch_dtype == torch.bfloat16)
-        pkv_in_bfloat16 = (custom_io is not None) and any(
-            ("past_" in key or "pixel_values" in key) and "bfloat16" in value for key, value in custom_io.items()
-        )
         if custom_io is not None:
             custom_io_yaml = compile_dir / "custom_io.yaml"
             with open(custom_io_yaml, "w") as fp:
@@ -1316,6 +1322,7 @@ class QEFFBaseModel(ABC):
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
+        print(f"Running compiler: {' '.join(command)}")
 
         try:
             subprocess.run(command, capture_output=True, check=True)

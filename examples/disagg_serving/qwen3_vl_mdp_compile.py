@@ -49,6 +49,9 @@ from transformers import AutoConfig
 
 from QEfficient import QEFFAutoModelForImageTextToText
 
+NUM_LAYERS = 2
+VISION_DEPTH = 9
+
 
 def parse_args() -> argparse.Namespace:
     """Return parsed command-line arguments."""
@@ -133,6 +136,9 @@ def main() -> None:
 
     config = AutoConfig.from_pretrained(args.model_id)
     config.dtype = "float16"
+    config.vision_config.depth = VISION_DEPTH
+    config.text_config.num_hidden_layers = NUM_LAYERS
+    config.vision_config.deepstack_visual_indexes = [VISION_DEPTH - 1]
 
     qeff_model = QEFFAutoModelForImageTextToText.from_pretrained(
         args.model_id,

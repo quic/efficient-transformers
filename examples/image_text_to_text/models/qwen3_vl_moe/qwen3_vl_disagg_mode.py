@@ -36,7 +36,8 @@ from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 
 # ── Defaults (from batch_fold / qwen3_vl_disagg_mode.py) ─────────────────────
-MODEL_ID = "Qwen/Qwen3-VL-235B-A22B-Instruct"
+# MODEL_ID = "Qwen/Qwen3-VL-235B-A22B-Instruct"
+MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 PREFILL_SEQ_LEN = 1024
 CTX_LEN = 10240
 NUM_KV_BLOCKS = 4
@@ -46,7 +47,7 @@ PREFILL_N_REP_CHUNK = 4
 EXPERT_PARALLEL_CHUNK_SIZE = 256
 NUM_CORES = 16
 NUM_DEVICES_DECODE = 16
-NUM_DEVICES_PREFILL = 1
+NUM_DEVICES_PREFILL = 2
 GENERATION_LEN = 30
 NUM_LAYERS = 2
 VISION_DEPTH = 9
@@ -190,7 +191,7 @@ def main():
             skip_vision=False,
             split_model_io=True,
             skip_lang=True,
-            use_onnx_subfunctions=True,
+            use_onnx_subfunctions=False,
             layerwise=False,
         )
 
@@ -217,7 +218,7 @@ def main():
         mos=1,
         prefill_only=False,
         skip_vision=True,
-        use_onnx_subfunctions=True,
+        use_onnx_subfunctions=False,
         layerwise=False,
         offload_pt_weights=False,
     )
@@ -263,9 +264,11 @@ def main():
         prefill_only=True,
         enable_chunking=True,
         skip_vision=True,
-        use_onnx_subfunctions=True,
+        use_onnx_subfunctions=False,
         layerwise=False,
         offload_pt_weights=True,
+        mdp_num_partitions=2,
+        mdp_strategy="intersection",
     )
     if args.mode == "batch_fold":
         prefill_compile_kwargs.update(
