@@ -723,10 +723,10 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
                 "position_ids": position_ids,
                 "config": self.config,
                 "is_sliding": self.sliding_window is not None,
-                "sliding_window": past_key_values.sliding_window_len,
+                "sliding_window": past_key_values.get_sliding_window_len(),
             }
             if self.sliding_window is not None:
-                sliding_window_len = past_key_values.sliding_window_len
+                sliding_window_len = past_key_values.get_sliding_window_len()
                 short_read_idx = torch.arange(past_key_values.layers[self.layer_idx].keys.shape[2])
                 read_idx = short_read_idx + torch.where(
                     position_ids.max() > sliding_window_len - 1, position_ids.max() - sliding_window_len + 1, 0

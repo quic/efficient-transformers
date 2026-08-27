@@ -224,14 +224,21 @@ def _decode_inputs_from_prefill_outputs(
     prefill_outputs: dict[str, np.ndarray],
     prefill_inputs: dict[str, np.ndarray],
     config,
+    *,
+    ctx_len: int | None = None,
 ) -> dict[str, np.ndarray]:
     decode_inputs = {
         "input_ids": prefill_outputs["logits"].argmax(-1).reshape(1, 1),
         "position_ids": np.max(prefill_inputs["position_ids"], axis=1, keepdims=True) + 1,
     }
     for layer_idx in range(config.num_hidden_layers):
-        decode_inputs[f"past_key.{layer_idx}"] = prefill_outputs[f"past_key.{layer_idx}_RetainedState"]
-        decode_inputs[f"past_value.{layer_idx}"] = prefill_outputs[f"past_value.{layer_idx}_RetainedState"]
+        past_key = prefill_outputs[f"past_key.{layer_idx}_RetainedState"]
+        past_value = prefill_outputs[f"past_value.{layer_idx}_RetainedState"]
+        if ctx_len is not None:
+            past_key = past_key[:, :, :ctx_len, :]
+            past_value = past_value[:, :, :ctx_len, :]
+        decode_inputs[f"past_key.{layer_idx}"] = past_key
+        decode_inputs[f"past_value.{layer_idx}"] = past_value
     return decode_inputs
 
 
@@ -339,14 +346,15 @@ def test_gpt_oss_decode_retain_full_kv_subfunction_hf_qaic_token_parity(tmp_expo
     assert set(_past_input_ctx_dim_params(onnx_path)) == {"ctx_len"}
     assert qeff_model.hash_params["retain_full_kv"] is True
 
-    prefill_qpc_path = qeff_model.compile(
+    prefill_qeff_model = _load_gpt_oss_qeff_model(model_hf.config)
+    prefill_qpc_path = prefill_qeff_model.compile(
         compile_dir=str(tmp_export_dir / "gpt-oss-decode-seed-prefill"),
         dynamo=False,
         use_onnx_subfunctions=True,
         prefill_only=True,
         enable_chunking=True,
         prefill_seq_len=PREFILL_SEQ_LEN,
-        ctx_len=DECODE_CTX_LEN,
+        ctx_len=PREFILL_CTX_LEN,
         batch_size=BATCH_SIZE,
         num_cores=NUM_CORES,
         qaic_config=_moe_qaic_config(),
@@ -362,7 +370,9 @@ def test_gpt_oss_decode_retain_full_kv_subfunction_hf_qaic_token_parity(tmp_expo
         gen_len=1,
     )
 
-    decode_inputs = _decode_inputs_from_prefill_outputs(prefill_outputs, prefill_inputs, model_hf.config)
+    decode_inputs = _decode_inputs_from_prefill_outputs(
+        prefill_outputs, prefill_inputs, model_hf.config, ctx_len=DECODE_CTX_LEN
+    )
     qaic_tokens = _run_decode_steps(
         qpc_path,
         decode_inputs,
