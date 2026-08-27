@@ -117,10 +117,6 @@ class QEFFBaseModel(ABC):
     :_pytorch_transforms: Pytorch transformations to be applied after initialization.
     :_onnx_transforms: ONNX transformations to be applied after ONNX export.
     """
-
-    _start = 0
-    _end = 0
-    _total_layers = None
     _pytorch_transforms: List[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
 

@@ -1436,7 +1436,7 @@ def test_causal_subfunction_and_proxy_export_smoke_gpt2(tmp_path):
 
 
 def test_subfunction_export_restores_onnx_transforms_on_failure():
-    from QEfficient.base.onnx_transforms import CustomOpTransform, RenameFunctionOutputsTransform
+    from QEfficient.base.onnx_transforms import CustomOpTransform
     from QEfficient.transformers.cache_utils import InvalidIndexProvider
     from QEfficient.utils.export_utils import export_wrapper
 
@@ -1464,7 +1464,6 @@ def test_subfunction_export_restores_onnx_transforms_on_failure():
         qeff_model.export(use_onnx_subfunctions=True)
 
     assert qeff_model._onnx_transforms == []
-    assert RenameFunctionOutputsTransform not in DummyQEff._onnx_transforms
     assert CustomOpTransform not in DummyQEff._onnx_transforms
     assert InvalidIndexProvider.SUBFUNC_ENABLED is False
 
@@ -2270,6 +2269,7 @@ def test_moe_prefill_transform_does_not_require_enable_chunking():
         assert moe_cls not in RevertPrefillKeepAttentionTransform._module_mapping
         assert moe_cls not in RevertPrefillOnlyTransform._module_mapping
         assert MoEFlavour.EXPERT_PARALLEL in moe_cls.supported_moe_flavours
+
 
 @pytest.mark.llm_model
 def test_subfunction_compile_io_names_use_internal_retained_state():
