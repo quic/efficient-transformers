@@ -31,10 +31,10 @@ MODEL_KWARGS = {
     "torch_dtype": torch.float32,
     "trust_remote_code": True,
 }
-PROMPT = "hello"
+PROMPT = ["once upon a time"]
 PREFILL_SEQ_LEN = 64
 PREFILL_CTX_LEN = 192
-DECODE_CTX_LEN = 128
+DECODE_CTX_LEN = PREFILL_CTX_LEN
 DECODE_STEPS = 8
 MOE_PREFILL_PACKED_CHUNK_SIZE = 32
 EXPECTED_MOE_PREFILL_NUM_PACKED_CHUNKS = PREFILL_SEQ_LEN // MOE_PREFILL_PACKED_CHUNK_SIZE
@@ -130,12 +130,16 @@ def _load_gpt_oss_qeff_model(config):
         skip_on_model_fetch_error(exc, MODEL_ID)
 
 
+def _prompt_token_len(tokenizer) -> int:
+    return tokenizer(PROMPT[0], return_tensors="np", padding=True)["input_ids"].shape[1]
+
+
 def _api_runner(model_hf, tokenizer, *, prompt_len: int, ctx_len: int) -> ApiRunner:
     return ApiRunner(
         batch_size=BATCH_SIZE,
         tokenizer=tokenizer,
         config=model_hf.config,
-        prompt=[PROMPT],
+        prompt=PROMPT,
         prompt_len=prompt_len,
         ctx_len=ctx_len,
         full_batch_size=None,
@@ -143,22 +147,16 @@ def _api_runner(model_hf, tokenizer, *, prompt_len: int, ctx_len: int) -> ApiRun
 
 
 def _prefill_inputs(tokenizer) -> tuple[dict[str, np.ndarray], int]:
-    inputs = tokenizer(PROMPT, return_tensors="np", padding=True)
-    prompt_len = inputs["input_ids"].shape[1]
+    prompt_len = _prompt_token_len(tokenizer)
     num_chunks = -(prompt_len // -PREFILL_SEQ_LEN)
     padded_len = num_chunks * PREFILL_SEQ_LEN
     assert num_chunks >= 1
     assert padded_len % PREFILL_SEQ_LEN == 0
 
-    inputs = tokenizer(PROMPT, return_tensors="np", padding="max_length", max_length=padded_len)
+    inputs = tokenizer(PROMPT[0], return_tensors="np", padding="max_length", max_length=padded_len)
     inputs["position_ids"] = np.where(inputs.pop("attention_mask"), np.arange(padded_len), -1)
     inputs.pop("token_type_ids", None)
     return inputs, num_chunks
-
-
-def _assert_single_token_prompt(tokenizer) -> None:
-    prompt_len = tokenizer(PROMPT, return_tensors="np", padding=True)["input_ids"].shape[1]
-    assert prompt_len == 1, f"Decode-only test prompt must tokenize to one token, got {prompt_len}: {PROMPT!r}"
 
 
 def _filter_session_inputs(session, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
@@ -224,21 +222,14 @@ def _decode_inputs_from_prefill_outputs(
     prefill_outputs: dict[str, np.ndarray],
     prefill_inputs: dict[str, np.ndarray],
     config,
-    *,
-    ctx_len: int | None = None,
 ) -> dict[str, np.ndarray]:
     decode_inputs = {
         "input_ids": prefill_outputs["logits"].argmax(-1).reshape(1, 1),
         "position_ids": np.max(prefill_inputs["position_ids"], axis=1, keepdims=True) + 1,
     }
     for layer_idx in range(config.num_hidden_layers):
-        past_key = prefill_outputs[f"past_key.{layer_idx}_RetainedState"]
-        past_value = prefill_outputs[f"past_value.{layer_idx}_RetainedState"]
-        if ctx_len is not None:
-            past_key = past_key[:, :, :ctx_len, :]
-            past_value = past_value[:, :, :ctx_len, :]
-        decode_inputs[f"past_key.{layer_idx}"] = past_key
-        decode_inputs[f"past_value.{layer_idx}"] = past_value
+        decode_inputs[f"past_key.{layer_idx}"] = prefill_outputs[f"past_key.{layer_idx}_RetainedState"]
+        decode_inputs[f"past_value.{layer_idx}"] = prefill_outputs[f"past_value.{layer_idx}_RetainedState"]
     return decode_inputs
 
 
@@ -273,7 +264,8 @@ def _run_decode_steps(
 def test_gpt_oss_prefill_chunked_expert_parallel_subfunction_hf_qaic_token_parity(tmp_export_dir, monkeypatch):
     monkeypatch.setenv("NUM_Q_BLOCKS", "1")
     model_hf, tokenizer = _load_gpt_oss_hf_and_tokenizer()
-    api_runner = _api_runner(model_hf, tokenizer, prompt_len=PREFILL_SEQ_LEN, ctx_len=PREFILL_SEQ_LEN + 1)
+    prompt_len = _prompt_token_len(tokenizer)
+    api_runner = _api_runner(model_hf, tokenizer, prompt_len=prompt_len, ctx_len=prompt_len + 1)
     hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
     assert hf_tokens is not None, "HF PT inference returned None"
 
@@ -319,8 +311,8 @@ def test_gpt_oss_prefill_chunked_expert_parallel_subfunction_hf_qaic_token_parit
 @pytest.mark.llm_model
 def test_gpt_oss_decode_retain_full_kv_subfunction_hf_qaic_token_parity(tmp_export_dir):
     model_hf, tokenizer = _load_gpt_oss_hf_and_tokenizer()
-    _assert_single_token_prompt(tokenizer)
-    api_runner = _api_runner(model_hf, tokenizer, prompt_len=1, ctx_len=DECODE_STEPS + 1)
+    prompt_len = _prompt_token_len(tokenizer)
+    api_runner = _api_runner(model_hf, tokenizer, prompt_len=prompt_len, ctx_len=prompt_len + DECODE_STEPS)
     hf_tokens = api_runner.run_hf_model_on_pytorch(model_hf)
     assert hf_tokens is not None, "HF PT inference returned None"
 
@@ -370,9 +362,7 @@ def test_gpt_oss_decode_retain_full_kv_subfunction_hf_qaic_token_parity(tmp_expo
         gen_len=1,
     )
 
-    decode_inputs = _decode_inputs_from_prefill_outputs(
-        prefill_outputs, prefill_inputs, model_hf.config, ctx_len=DECODE_CTX_LEN
-    )
+    decode_inputs = _decode_inputs_from_prefill_outputs(prefill_outputs, prefill_inputs, model_hf.config)
     qaic_tokens = _run_decode_steps(
         qpc_path,
         decode_inputs,
