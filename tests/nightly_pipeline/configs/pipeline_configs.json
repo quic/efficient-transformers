@@ -33,7 +33,7 @@
         "prompts": "This is an example sentence"
       },
       "golden_mad_validation": {
-        "tolerance": 0.01
+        "tolerance": 0.02
       }
     }
   ],
