@@ -14,7 +14,7 @@ import subprocess
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any
 
 import onnx
 import torch
@@ -67,7 +67,7 @@ _LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR = (
 )
 
 
-def reject_legacy_moe_prefill_packed_chunk_size(kwargs: Optional[dict]) -> None:
+def reject_legacy_moe_prefill_packed_chunk_size(kwargs: dict | None) -> None:
     if kwargs and "moe_prefill_packed_chunk_size" in kwargs:
         raise TypeError(_LEGACY_MOE_PREFILL_PACKED_CHUNK_SIZE_ERROR)
 
@@ -87,7 +87,7 @@ def _rename_graph_value(graph: onnx.GraphProto, old_name: str, new_name: str) ->
             value_info.name = new_name
 
 
-def _restore_retained_state_output_names(model: onnx.ModelProto, output_names: List[str]) -> None:
+def _restore_retained_state_output_names(model: onnx.ModelProto, output_names: list[str]) -> None:
     """Restore retained-state output names when ONNX subfunction transforms rewrite them."""
     for output_idx, expected_name in enumerate(output_names):
         if output_idx >= len(model.graph.output):
@@ -102,7 +102,7 @@ def _restore_retained_state_output_names(model: onnx.ModelProto, output_names: L
             _rename_graph_value(model.graph, current_name, expected_name)
 
 
-def _restore_output_names_exact(model: onnx.ModelProto, output_names: List[str]) -> None:
+def _restore_output_names_exact(model: onnx.ModelProto, output_names: list[str]) -> None:
     """Force graph output names to match ``output_names`` by positional index."""
     for output_idx, expected_name in enumerate(output_names):
         if output_idx >= len(model.graph.output):
@@ -125,14 +125,14 @@ class QEFFBaseModel(ABC):
     _end = 0
     _total_layers = None
     _layerwise_active = False
-    _pytorch_transforms: List[PytorchTransform]
+    _pytorch_transforms: list[PytorchTransform]
     _onnx_transforms = [BaseOnnxTransform]
-    _checkpoint_transforms: List[Type[BaseCheckpointTransform]] = []
+    _checkpoint_transforms: list[type[BaseCheckpointTransform]] = []
 
-    def _transform_names(self) -> List[str]:
+    def _transform_names(self) -> list[str]:
         return [x.__name__ for x in self._pytorch_transforms + self._onnx_transforms]
 
-    def maybe_apply_replicate_kv_transform(self, model_config, num_devices: int, qaic_config: Optional[dict]) -> int:
+    def maybe_apply_replicate_kv_transform(self, model_config, num_devices: int, qaic_config: dict | None) -> int:
         if model_config is None or qaic_config is None or "EncoderWrapper" in self.model.__class__.__name__:
             return 1
 
@@ -168,17 +168,17 @@ class QEFFBaseModel(ABC):
         self.model = model
         self.config = model.config
         self.hash_params = create_model_params(self, **kwargs)
-        self.onnx_path: Optional[str] = None
-        self.qpc_path: Optional[str] = None
-        self.qpc_session: Optional[QAICInferenceSession] = None
-        self.weight_spec_path: Optional[str] = None
+        self.onnx_path: str | None = None
+        self.qpc_path: str | None = None
+        self.qpc_session: QAICInferenceSession | None = None
+        self.weight_spec_path: str | None = None
         self.model_architecture = (
             (arch := getattr(self.model.config, "architectures", None)) and len(arch) > 0 and arch[0]
         ) or None
 
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
-
+        self._weight_free: bool = False
         # Flag for checking if model has been transformed yet
         self.is_transformed: bool = False
 
@@ -298,7 +298,7 @@ class QEFFBaseModel(ABC):
 
     @property
     @abstractmethod
-    def get_model_config(self) -> Dict:
+    def get_model_config(self) -> dict:
         """
         Get the model configuration as a dictionary.
 
@@ -308,10 +308,9 @@ class QEFFBaseModel(ABC):
         Returns:
             Dict: The configuration dictionary of the underlying model
         """
-        pass
 
     @abstractmethod
-    def export(self, export_dir: Optional[str] = None) -> Path:
+    def export(self, export_dir: str | None = None) -> Path:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
 
@@ -366,20 +365,19 @@ class QEFFBaseModel(ABC):
     @export_wrapper
     def _export(
         self,
-        example_inputs: Dict[str, torch.Tensor],
-        output_names: List[str],
-        dynamic_axes: Dict[str, Dict[int, str]],
-        onnx_transform_kwargs: Optional[Dict[str, Any]] = None,
-        export_dir: Optional[str] = None,
+        example_inputs: dict[str, torch.Tensor],
+        output_names: list[str],
+        dynamic_axes: dict[str, dict[int, str]],
+        onnx_transform_kwargs: dict[str, Any] | None = None,
+        export_dir: str | None = None,
         offload_pt_weights: bool = True,
-        prefill_only: Optional[bool] = False,
+        prefill_only: bool | None = False,
         dynamo: bool = False,
-        dynamic_shapes: Optional[Dict[str, Dict[int, Any]]] = None,
-        enable_chunking: Optional[bool] = False,
-        num_cores: Optional[int] = constants.DEFAULT_AIC_NUM_CORES,
-        qaic_config: Optional[dict] = None,
-        prefill_seq_len: Optional[int] = None,
-        use_weight_free_export: bool = False,
+        dynamic_shapes: dict[str, dict[int, Any]] | None = None,
+        enable_chunking: bool | None = False,
+        num_cores: int | None = constants.DEFAULT_AIC_NUM_CORES,
+        qaic_config: dict | None = None,
+        prefill_seq_len: int | None = None,
         **export_kwargs,
     ) -> str:
         """
@@ -424,12 +422,12 @@ class QEFFBaseModel(ABC):
             self.weight_spec_path = str(_weight_spec_path) if _weight_spec_path.is_file() else None
             return onnx_path
 
-        if use_weight_free_export:
+        if self._weight_free:
             dynamo = True
 
         # check if the model is in meta state or weights are offloaded
         # (skip for weight-free export which intentionally uses a meta-device model)
-        if not use_weight_free_export:
+        if not self._weight_free:
             self._model_offloaded_check()
 
         export_dir.mkdir(parents=True, exist_ok=True)
@@ -504,7 +502,7 @@ class QEFFBaseModel(ABC):
             input_names = aligned_input_names
 
         try:
-            if use_weight_free_export:
+            if self._weight_free:
                 from QEfficient.exporter.onnx_exporter import export_via_weightfree
 
                 export_result = export_via_weightfree(
@@ -598,16 +596,15 @@ class QEFFBaseModel(ABC):
 
     def get_onnx_path(
         self,
-        prefill_only: Optional[bool] = False,
-        enable_chunking: Optional[bool] = False,
-        specializations: Optional[List[Dict[str, int]]] = None,
-        offload_pt_weights: Optional[bool] = True,
-        use_onnx_subfunctions: Optional[bool] = False,
-        dynamo: Optional[bool] = False,
-        retain_full_kv: Optional[bool] = False,
-        qaic_config: Optional[dict] = None,
-        kv_cache_prefix: Optional[str] = None,
-        use_weight_free_export: bool = False,
+        prefill_only: bool | None = False,
+        enable_chunking: bool | None = False,
+        specializations: list[dict[str, int]] | None = None,
+        offload_pt_weights: bool | None = True,
+        use_onnx_subfunctions: bool | None = False,
+        dynamo: bool | None = False,
+        retain_full_kv: bool | None = False,
+        qaic_config: dict | None = None,
+        kv_cache_prefix: str | None = None,
         **compiler_options,
     ):
         kwargs = {
@@ -615,7 +612,6 @@ class QEFFBaseModel(ABC):
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "dynamo": dynamo,
             "retain_full_kv": retain_full_kv,
-            "use_weight_free_export": use_weight_free_export,
         }
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
         if layerwise_cache_probe:
@@ -668,18 +664,18 @@ class QEFFBaseModel(ABC):
     @export_wrapper
     def _export_layerwise(
         self,
-        example_inputs: Dict[str, torch.Tensor],
-        output_names: List[str],
-        dynamic_axes: Dict[str, Dict[int, str]],
-        onnx_transform_kwargs: Optional[Dict[str, any]] = None,
-        export_dir: Optional[str] = None,
+        example_inputs: dict[str, torch.Tensor],
+        output_names: list[str],
+        dynamic_axes: dict[str, dict[int, str]],
+        onnx_transform_kwargs: dict[str, any] | None = None,
+        export_dir: str | None = None,
         offload_pt_weights: bool = True,
-        prefill_only: Optional[bool] = False,
-        enable_chunking: Optional[bool] = False,
-        num_cores: Optional[int] = constants.DEFAULT_AIC_NUM_CORES,
-        qaic_config: Optional[dict] = None,
-        prefill_seq_len: Optional[int] = None,
-        kv_cache_prefix: Optional[str] = None,
+        prefill_only: bool | None = False,
+        enable_chunking: bool | None = False,
+        num_cores: int | None = constants.DEFAULT_AIC_NUM_CORES,
+        qaic_config: dict | None = None,
+        prefill_seq_len: int | None = None,
+        kv_cache_prefix: str | None = None,
         **export_kwargs,
     ) -> str:
         cache_probe = export_kwargs.pop("_layerwise_cache_probe", False)
@@ -900,11 +896,11 @@ class QEFFBaseModel(ABC):
 
     def transform(
         self,
-        ctx_len: Optional[int] = None,
-        seq_len: Optional[int] = None,
-        bs: Optional[int] = 1,
+        ctx_len: int | None = None,
+        seq_len: int | None = None,
+        bs: int | None = 1,
         num_devices: int = 1,
-        qaic_config: Optional[dict] = None,
+        qaic_config: dict | None = None,
         **compiler_options,
     ):
         # Apply the transformations that are dependent on compilation parameters
@@ -957,27 +953,26 @@ class QEFFBaseModel(ABC):
     @dump_qconfig
     def _compile(
         self,
-        onnx_path: Optional[str] = None,
-        compile_dir: Optional[str] = None,
+        onnx_path: str | None = None,
+        compile_dir: str | None = None,
         *,
         mxint8_kv_cache: bool = False,
-        specializations: Optional[List[Dict[str, int]]] = None,
-        custom_io: Optional[Dict[str, str]] = None,
+        specializations: list[dict[str, int]] | None = None,
+        custom_io: dict[str, str] | None = None,
         mdp_ts_num_devices: int = 1,
-        mdp_num_partitions: Optional[int] = 1,
-        num_speculative_tokens: Optional[Union[int, List[int]]] = None,
-        enable_qnn: Optional[bool] = False,
-        qnn_config: Optional[str] = None,
+        mdp_num_partitions: int | None = 1,
+        num_speculative_tokens: int | list[int] | None = None,
+        enable_qnn: bool | None = False,
+        qnn_config: str | None = None,
         use_onnx_subfunctions: bool = False,
         dynamo: bool = False,
-        prefill_only: Optional[str] = None,
-        offload_pt_weights: Optional[bool] = True,
-        enable_chunking: Optional[bool] = False,
-        retain_full_kv: Optional[bool] = None,
-        qaic_config: Optional[dict] = None,
-        specialization_module_name: Optional[str] = None,
-        kv_cache_prefix: Optional[str] = None,
-        use_weight_free_export: bool = False,
+        prefill_only: str | None = None,
+        offload_pt_weights: bool | None = True,
+        enable_chunking: bool | None = False,
+        retain_full_kv: bool | None = None,
+        qaic_config: dict | None = None,
+        specialization_module_name: str | None = None,
+        kv_cache_prefix: str | None = None,
         **compiler_options,
     ) -> str:
         """
@@ -1025,7 +1020,7 @@ class QEFFBaseModel(ABC):
             # ONNX because re-exporting is no longer possible. Otherwise export for
             # the current compile mode, e.g. decode vs. disaggregated prefill.
             weights_offloaded = self._is_weights_offloaded or any(param.is_meta for param in self.model.parameters())
-            if self.onnx_path is not None and weights_offloaded:
+            if self.onnx_path is not None and weights_offloaded and not self._weight_free:
                 onnx_path = self.onnx_path
             else:
                 onnx_path = self.get_onnx_path(
@@ -1040,7 +1035,6 @@ class QEFFBaseModel(ABC):
                     qaic_config=qaic_config,
                     _layerwise_cache_probe=layerwise_cache_probe,
                     kv_cache_prefix=kv_cache_prefix,
-                    use_weight_free_export=use_weight_free_export,
                     **compiler_options,
                 )
         if QEFFBaseModel._layerwise_active:

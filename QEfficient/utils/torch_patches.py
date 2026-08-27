@@ -27,6 +27,7 @@ Patches removed (upstreamed to PyTorch):
 """
 
 import inspect
+import os
 from contextlib import contextmanager
 
 import torch
@@ -229,9 +230,7 @@ def _track_scope_attributes_patched(graph, attrs):
     """Ensure scope attributes passed to ONNX are IValue-compatible."""
     safe_attrs = {}
     for key, value in attrs.items():
-        if isinstance(value, (int, float, bool, str, torch.Tensor)) or value is None:
-            safe_attrs[key] = value
-        elif isinstance(value, (list, tuple)) and all(
+        if isinstance(value, (int, float, bool, str, torch.Tensor)) or value is None or isinstance(value, (list, tuple)) and all(
             isinstance(item, (int, float, bool, str, torch.Tensor)) or item is None for item in value
         ):
             safe_attrs[key] = value
@@ -360,7 +359,7 @@ def temporarily_enable_nested_compile_regions(model, target_classes=None):
 
             previous_forward = module.__dict__.get("forward", _MISSING_INSTANCE_ATTR)
             nested_forward = torch.compiler.nested_compile_region(wrapped_forward)
-            setattr(module, "forward", nested_forward.__get__(module, type(module)))
+            module.forward = nested_forward.__get__(module, type(module))
             patched_modules.append((module, previous_forward))
 
         yield
@@ -369,7 +368,7 @@ def temporarily_enable_nested_compile_regions(model, target_classes=None):
             if previous_forward is _MISSING_INSTANCE_ATTR:
                 delattr(module, "forward")
             else:
-                setattr(module, "forward", previous_forward)
+                module.forward = previous_forward
 
 
 @contextmanager
@@ -407,7 +406,7 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
                 continue
 
             previous_forward = module.__dict__.get("forward", _MISSING_INSTANCE_ATTR)
-            setattr(module, "forward", original_forward.__get__(module, type(module)))
+            module.forward = original_forward.__get__(module, type(module))
             patched_modules.append((module, previous_forward))
 
         yield
@@ -416,4 +415,24 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
             if previous_forward is _MISSING_INSTANCE_ATTR:
                 delattr(module, "forward")
             else:
-                setattr(module, "forward", previous_forward)
+                module.forward = previous_forward
+
+
+@contextmanager
+def dynamo_invoke_subgraph_fallback_env():
+    """Temporarily set TORCH_INVOKE_ALLOW_CREATE_FALLBACK=1 for dynamo export.
+
+    torch.onnx.export's dynamo path (dynamo=True) needs this env var set to
+    allow invoke_subgraph placeholders to fall back correctly during tracing.
+    Saves and restores whatever value (or absence) the caller's environment
+    already had, rather than assuming it was previously unset.
+    """
+    prev_value = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
+    os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = "1"
+    try:
+        yield
+    finally:
+        if prev_value is None:
+            os.environ.pop("TORCH_INVOKE_ALLOW_CREATE_FALLBACK", None)
+        else:
+            os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = prev_value

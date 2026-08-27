@@ -8,7 +8,7 @@
 """
 Weight-free export ONNX structure and ORT parity tests.
 
-All tests export with use_weight_free_export=True and use_onnx_subfunctions=True.
+All tests export with weight_free=True (set on the QEff model) and use_onnx_subfunctions=True.
 Each test validates:
   - ONNX graph structure: _RetainedState outputs, subfunctions, naming
   - Weight-free-specific: unique graph input names, no int64 KV cache inputs
@@ -20,8 +20,10 @@ CPU-only. No QAIC hardware required.
 from __future__ import annotations
 
 import pytest
+from transformers import AutoConfig
 
 from QEfficient.exporter.weight_free import resolve_weight_spec_path
+from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import get_num_layers_from_config
 from QEfficient.utils.run_utils import ApiRunner
 
@@ -35,7 +37,6 @@ from ._helpers import (
     assert_retained_state_outputs,
     assert_subfunction_names_match_decoder_class,
     assert_unique_graph_input_names,
-    build_meta_qeff_model,
     exported_onnx_path,
     load_hf_model,
     load_tokenizer,
@@ -52,7 +53,7 @@ from ._helpers import (
     ids=sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS),
 )
 def test_weight_free_export_onnx_structure(model_type, model_id, tmp_export_dir):
-    """Export with use_weight_free_export=True and use_onnx_subfunctions=True, then validate:
+    """Export with weight_free=True and use_onnx_subfunctions=True, then validate:
     - Correct _RetainedState output count (2 x num_layers)
     - Subfunctions renamed to decoder class names
     - No duplicate graph input names (guards position_ids aliasing regression)
@@ -60,21 +61,19 @@ def test_weight_free_export_onnx_structure(model_type, model_id, tmp_export_dir)
 
     CPU-only. No QAIC hardware or weight injection required.
     """
-    if model_type == "gpt_oss":
-        pytest.xfail()
-
     try:
         # Build meta-device model — no weights loaded, only shapes.
         # pretrained_model_name_or_path is carried in the QEff model so the export
         # can write weight_spec.json pointing at the HF cache checkpoint.
-        qeff_model = build_meta_qeff_model(model_id)
+        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+        config.num_hidden_layers = 2
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, config=config, weight_free=True)
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
 
     onnx_path = exported_onnx_path(
         qeff_model.export(
             tmp_export_dir,
-            use_weight_free_export=True,
             use_onnx_subfunctions=True,
             offload_pt_weights=False,
         )
@@ -99,7 +98,7 @@ def test_weight_free_export_onnx_structure(model_type, model_id, tmp_export_dir)
     ids=sorted(WEIGHT_FREE_CAUSAL_LM_MODEL_IDS),
 )
 def test_weight_free_export_ort_parity(model_type, model_id, tmp_export_dir):
-    """Export with use_weight_free_export=True, inject real weights into ORT, then validate
+    """Export with weight_free=True, inject real weights into ORT, then validate
     HF PyTorch == ORT token parity.
 
     Unlike regular ONNX (which embeds weights), weight-free ONNX stores weights externally
@@ -108,9 +107,6 @@ def test_weight_free_export_ort_parity(model_type, model_id, tmp_export_dir):
 
     CPU-only. No QAIC hardware required.
     """
-    if model_type == "gpt_oss":
-        pytest.xfail()
-
     try:
         model_hf = load_hf_model(model_id)
         tokenizer = load_tokenizer(model_id)
@@ -136,14 +132,15 @@ def test_weight_free_export_ort_parity(model_type, model_id, tmp_export_dir):
     # The exported model must have the same layer count as model_hf, or the
     # HF PT and ORT token streams come from architecturally different models.
     try:
-        qeff_model = build_meta_qeff_model(model_id, num_hidden_layers=get_num_layers_from_config(model_hf.config))
+        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+        config.num_hidden_layers = get_num_layers_from_config(model_hf.config)
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, config=config, weight_free=True)
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
 
     onnx_path = exported_onnx_path(
         qeff_model.export(
             tmp_export_dir,
-            use_weight_free_export=True,
             use_onnx_subfunctions=True,
             offload_pt_weights=False,
         )

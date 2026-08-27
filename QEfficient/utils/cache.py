@@ -15,3 +15,7 @@ elif "XDG_CACHE_HOME" in os.environ:
     QEFF_HOME = Path(os.environ["XDG_CACHE_HOME"]) / "qeff_models"
 else:
     QEFF_HOME = Path("~/.cache/qeff_models").expanduser()
+
+QEFF_CHECKPOINT_HOME: Path = None
+if "QEFF_CHECKPOINT_HOME" in os.environ:
+    QEFF_CHECKPOINT_HOME = Path(os.environ["QEFF_CHECKPOINT_HOME"])

@@ -12,10 +12,10 @@ import warnings
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.export import Dim
 
 from QEfficient.base.onnx_transforms import (
@@ -97,9 +97,9 @@ def build_dynamo_export_kwargs(export_kwargs):
 
 
 def convert_dynamic_axes_to_dynamic_shapes(
-    dynamic_axes: Dict[str, Dict[int, str]],
+    dynamic_axes: dict[str, dict[int, str]],
     model_config=None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Convert ONNX dynamic_axes format to torch.export dynamic_shapes format.
 
@@ -128,7 +128,7 @@ def convert_dynamic_axes_to_dynamic_shapes(
     model_type = getattr(model_config, "model_type", None)
     batch_min = 1 if model_type == "gpt_oss" else 2
 
-    dim_registry: Dict[str, Any] = {}
+    dim_registry: dict[str, Any] = {}
 
     def resolve_dim(dim_name: str):
         if dim_name not in dim_registry:
@@ -153,11 +153,11 @@ def convert_dynamic_axes_to_dynamic_shapes(
                 dim_registry[dim_name] = Dim.DYNAMIC
         return dim_registry[dim_name]
 
-    dynamic_shapes: Dict[str, Any] = {}
-    past_keys: Dict[int, Any] = {}
-    past_values: Dict[int, Any] = {}
-    compressed_kv_layers: Dict[int, Any] = {}
-    k_pe_layers: Dict[int, Any] = {}
+    dynamic_shapes: dict[str, Any] = {}
+    past_keys: dict[int, Any] = {}
+    past_values: dict[int, Any] = {}
+    compressed_kv_layers: dict[int, Any] = {}
+    k_pe_layers: dict[int, Any] = {}
 
     for input_name, axes_map in dynamic_axes.items():
         resolved = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
@@ -288,7 +288,7 @@ def export_wrapper(func):
             )
 
         # Extract flags
-        dynamo = kwargs.get("dynamo", False) or kwargs.get("use_weight_free_export", False)
+        dynamo = kwargs.get("dynamo", False)
         if dynamo:
             kwargs["dynamo"] = True
         use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
@@ -348,9 +348,8 @@ def export_wrapper(func):
                 else nullcontext()
             )
             try:
-                with export_context:
-                    with dynamo_patch:
-                        onnx_path = func(self, *args, **kwargs)
+                with export_context, dynamo_patch:
+                    onnx_path = func(self, *args, **kwargs)
             except Exception as export_exc:
                 if use_onnx_subfunctions and dynamo:
                     raise RuntimeError(
@@ -595,7 +594,7 @@ def _cleanup_onnx_subfunctions(qeff_model, state=None):
             qeff_model.hash_params["onnx_subfunction_version"] = state["hash_subfunction_version"]
 
 
-def _save_export_metadata(export_dir: Path, filtered_hash_params: Dict):
+def _save_export_metadata(export_dir: Path, filtered_hash_params: dict):
     """
     Save export metadata to JSON file for reproducibility.
 
