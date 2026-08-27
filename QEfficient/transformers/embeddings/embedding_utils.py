@@ -24,7 +24,9 @@ def mean_pooling(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor)
         torch.Tensor: The mean pooled last hidden states.
     """
     input_mask_expanded = attention_mask.unsqueeze(-1).expand(last_hidden_states.size()).to(last_hidden_states.dtype)
-    return torch.sum(last_hidden_states * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=torch.finfo(last_hidden_states.dtype).min)
+    denom = input_mask_expanded.sum(1)
+    denom = torch.where(denom == 0, torch.ones_like(denom), denom)
+    return torch.sum(last_hidden_states * input_mask_expanded, 1) / denom
 
 
 def average_pool(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
