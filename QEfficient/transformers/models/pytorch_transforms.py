@@ -1622,6 +1622,7 @@ class OptimizedMoEExportConfigTransform(PytorchTransform):
             raise ValueError("moe expert_parallel_chunk_size must be greater than zero")
         compile_seq_len = prefill_seq_len or ONNX_EXPORT_EXAMPLE_SEQ_LEN
         num_packed_chunks = max(1, -(-compile_seq_len // expert_parallel_chunk_size))
+
         transformed = False
         flavour = None
         uses_expert_parallel = False

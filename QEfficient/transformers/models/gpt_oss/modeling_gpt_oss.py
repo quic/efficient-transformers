@@ -37,7 +37,7 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
     past_key_value_update,
 )
-from QEfficient.transformers.cache_utils import QEffGPTOSSDynamicCache
+from QEfficient.transformers.cache_utils import QEffGPTOSSHybridCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.moe import (
     MoEFlavour,
@@ -50,6 +50,17 @@ from QEfficient.transformers.moe import (
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
+
+
+def override_gptoss_prefill_chunking(
+    config, prefill_only: Optional[bool], enable_chunking: Optional[bool]
+) -> Optional[bool]:
+    if prefill_only is True and enable_chunking is False and getattr(config, "model_type", None) == "gpt_oss":
+        logger.warning(
+            "For gpt_oss, chunking is always enabled for prefill-only mode; overriding enable_chunking=True."
+        )
+        return True
+    return enable_chunking
 
 
 class QEffGptOssExperts(GptOssExperts):
@@ -888,7 +899,6 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
 
         if output_attentions:
             outputs += (self_attn_weights,)
-        # not returning present_key_value as it is not used
 
         return outputs
 
@@ -928,7 +938,7 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            past_key_values = QEffGPTOSSDynamicCache.from_legacy_cache(self.config, past_key_values)
+            past_key_values = QEffGPTOSSHybridCache.from_legacy_cache(self.config, past_key_values)
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -1041,7 +1051,7 @@ class QEffGptOssModel(GptOssModel):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            past_key_values = QEffGPTOSSDynamicCache.from_legacy_cache(self.config, past_key_values)
+            past_key_values = QEffGPTOSSHybridCache.from_legacy_cache(self.config, past_key_values)
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)

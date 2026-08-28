@@ -11,7 +11,7 @@ Tests verify:
   - QEffSlidingWindowCache: creation, update (sliding + non-sliding), modular scatter,
     output shape, multi-layer independence, to_legacy_cache round-trip, get_seq_length
   - QEffDynamicLayer.update3D / QEffDynamicCache.update3D: 3D KV shape (GPTBigCode)
-  - QEffGPTOSSDynamicCache: full_cache_update_chunked, sliding_window_update_chunked
+  - QEffGPTOSSHybridCache: full_cache_update_chunked, sliding_window_update_chunked
 
 All tests run on CPU only.
 """
@@ -23,7 +23,7 @@ from transformers import GptOssConfig
 from QEfficient.transformers.cache_utils import (
     QEffDynamicCache,
     QEffDynamicLayer,
-    QEffGPTOSSDynamicCache,
+    QEffGPTOSSHybridCache,
     QEffSlidingWindowCache,
 )
 
@@ -372,18 +372,18 @@ class TestQEffDynamicCache3D:
 
 
 # ---------------------------------------------------------------------------
-# Tests: QEffGPTOSSDynamicCache chunked methods
+# Tests: QEffGPTOSSHybridCache chunked methods
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.cache
-class TestQEffGPTOSSDynamicCacheChunked:
-    """QEffGPTOSSDynamicCache chunked prefill methods must be numerically correct."""
+class TestQEffGPTOSSHybridCacheChunked:
+    """QEffGPTOSSHybridCache chunked prefill methods must be numerically correct."""
 
     def _make_cache_with_layer(self, batch=1, heads=2, ctx_len=16, head_dim=8, sliding_window_len=4):
         """Create a cache with one pre-initialized full-attention layer (layer 1)."""
         cfg = _gptoss_cfg(sliding_window=sliding_window_len)
-        cache = QEffGPTOSSDynamicCache(config=cfg)
+        cache = QEffGPTOSSHybridCache(config=cfg)
         k = torch.zeros(batch, heads, ctx_len, head_dim)
         v = torch.zeros(batch, heads, ctx_len, head_dim)
         cache.append_new_layers(1)
@@ -395,7 +395,7 @@ class TestQEffGPTOSSDynamicCacheChunked:
     def _make_sliding_cache_with_layer(self, batch=1, heads=2, sliding_window_len=4, head_dim=8):
         """Create a cache with one pre-initialized sliding window layer (layer 0)."""
         cfg = _gptoss_cfg(sliding_window=sliding_window_len)
-        cache = QEffGPTOSSDynamicCache(config=cfg)
+        cache = QEffGPTOSSHybridCache(config=cfg)
         k = torch.zeros(batch, heads, sliding_window_len, head_dim)
         v = torch.zeros(batch, heads, sliding_window_len, head_dim)
         cache.append_new_layers(0)

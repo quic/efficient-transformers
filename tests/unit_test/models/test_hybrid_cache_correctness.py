@@ -5,14 +5,14 @@
 #
 # -----------------------------------------------------------------------------
 """
-Priority-2 fix: QEffHybridCache, QEffHybridChunkedCache, QEffGPTOSSDynamicCache
+Priority-2 fix: QEffHybridCache, QEffHybridChunkedCache, QEffGPTOSSHybridCache
 correctness — these classes had ZERO test coverage.
 
 Constructor signatures (verified from source):
   QEffHybridCache(config, batch_size, max_cache_len)
   QEffHybridChunkedCache — constructed via from_legacy_cache(config, past_key_values)
     which calls cls(config, max_batch_size=..., max_cache_len=...)
-  QEffGPTOSSDynamicCache(config) — per-layer cache; layers created via
+  QEffGPTOSSHybridCache(config) — per-layer cache; layers created via
     append_new_layers/from_legacy_cache, tagged is_sliding from config.layer_types
 
 QEffHybridCache.update() required cache_kwargs:
@@ -23,9 +23,9 @@ QEffHybridChunkedCache.update() required cache_kwargs:
   position_ids
   is_sliding comes from self.is_sliding[layer_idx] set by parent HybridChunkedCache
 
-QEffGPTOSSDynamicCache.update() required cache_kwargs:
+QEffGPTOSSHybridCache.update() required cache_kwargs:
   position_ids (is_sliding/sliding_window are derived from the layer itself, not cache_kwargs)
-QEffGPTOSSDynamicCache.write_only() required cache_kwargs:
+QEffGPTOSSHybridCache.write_only() required cache_kwargs:
   position_ids
 
 All tests run on CPU only.
@@ -36,7 +36,7 @@ import torch
 from transformers import Gemma2Config, GptOssConfig, MistralConfig
 
 from QEfficient.transformers.cache_utils import (
-    QEffGPTOSSDynamicCache,
+    QEffGPTOSSHybridCache,
     QEffHybridCache,
     QEffHybridChunkedCache,
 )
@@ -698,20 +698,20 @@ class TestQEffHybridChunkedCacheCorrectness:
 
 
 # ---------------------------------------------------------------------------
-# Tests: QEffGPTOSSDynamicCache / QEffGPTOSSDynamicLayer — correctness
+# Tests: QEffGPTOSSHybridCache / QEffGPTOSSDynamicLayer — correctness
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.cache
-class TestQEffGPTOSSDynamicCacheCorrectness:
+class TestQEffGPTOSSHybridCacheCorrectness:
     """
-    QEffGPTOSSDynamicCache is used by the GPT-OSS disaggregated serving path.
+    QEffGPTOSSHybridCache is used by the GPT-OSS disaggregated serving path.
     Layers are tagged is_sliding from config.layer_types; update()/write_only() only
     need position_ids in cache_kwargs (sliding_window/is_sliding come from the layer).
     """
 
     def _make(self, sw=4):
-        return QEffGPTOSSDynamicCache(config=_gptoss_cfg(sliding_window=sw))
+        return QEffGPTOSSHybridCache(config=_gptoss_cfg(sliding_window=sw))
 
     def test_creation_succeeds(self):
         assert self._make() is not None
@@ -797,7 +797,7 @@ class TestQEffGPTOSSDynamicCacheCorrectness:
         assert torch.isfinite(v_out).all()
 
     def test_len_tracks_updated_layers(self):
-        cache = QEffGPTOSSDynamicCache(config=_gptoss_cfg(num_layers=4, sliding_window=4))
+        cache = QEffGPTOSSHybridCache(config=_gptoss_cfg(num_layers=4, sliding_window=4))
         k, v = _kv(ctx_len=8)
         for i in range(3):
             cache.update(k, v, layer_idx=i, cache_kwargs={"position_ids": _pids(8)})
@@ -813,7 +813,7 @@ class TestQEffGPTOSSDynamicCacheCorrectness:
 
     def test_multi_layer_independence(self):
         """Different layers must not interfere."""
-        cache = QEffGPTOSSDynamicCache(config=_gptoss_cfg(num_layers=4, sliding_window=4))
+        cache = QEffGPTOSSHybridCache(config=_gptoss_cfg(num_layers=4, sliding_window=4))
         for layer_idx in [1, 3]:  # full_attention layers per _gptoss_cfg
             fill = float(layer_idx + 1) * 7.0
             k = torch.full((1, 2, 16, 8), fill)
@@ -829,7 +829,7 @@ class TestQEffGPTOSSDynamicCacheCorrectness:
         k = torch.randn(1, 2, 8, 8)
         v = torch.randn(1, 2, 8, 8)
         past = [(k.clone(), v.clone()) for _ in range(4)]
-        cache = QEffGPTOSSDynamicCache.from_legacy_cache(cfg, past_key_values=past)
+        cache = QEffGPTOSSHybridCache.from_legacy_cache(cfg, past_key_values=past)
         assert len(cache) == 4
 
 
@@ -839,17 +839,17 @@ class TestQEffGPTOSSDynamicCacheCorrectness:
 
 
 @pytest.mark.cache
-class TestQEffGPTOSSDynamicCacheChunkedMethods:
+class TestQEffGPTOSSHybridCacheChunkedMethods:
     """
     Tests for full_cache_update_chunked and sliding_window_update_chunked
-    on QEffGPTOSSDynamicCache.
+    on QEffGPTOSSHybridCache.
 
     Both methods require the layer to already exist (not the first call).
     batch_index=None is used to avoid the ONNX-export-only scatter_position_ids bug.
     """
 
     def _make(self, sw=4):
-        return QEffGPTOSSDynamicCache(config=_gptoss_cfg(sliding_window=sw))
+        return QEffGPTOSSHybridCache(config=_gptoss_cfg(sliding_window=sw))
 
     def _populate_layer(self, cache, layer_idx=1, ctx_len=16):
         """Populate a layer using update() so it exists in cache.layers."""
@@ -983,18 +983,18 @@ class TestFromLegacyCacheClassmethods:
         assert callable(QEffHybridChunkedCache.from_legacy_cache)
 
     def test_qeff_gptoss_dynamic_cache_has_from_legacy_cache(self):
-        """QEffGPTOSSDynamicCache must have a from_legacy_cache classmethod."""
-        assert hasattr(QEffGPTOSSDynamicCache, "from_legacy_cache")
-        assert callable(QEffGPTOSSDynamicCache.from_legacy_cache)
+        """QEffGPTOSSHybridCache must have a from_legacy_cache classmethod."""
+        assert hasattr(QEffGPTOSSHybridCache, "from_legacy_cache")
+        assert callable(QEffGPTOSSHybridCache.from_legacy_cache)
 
     def test_qeff_gptoss_dynamic_cache_from_legacy_cache_creates_instance(self):
-        """QEffGPTOSSDynamicCache.from_legacy_cache must create a valid instance."""
+        """QEffGPTOSSHybridCache.from_legacy_cache must create a valid instance."""
         cfg = _gptoss_cfg(num_layers=4, sliding_window=4)
         k = torch.randn(1, 2, 8, 8)
         v = torch.randn(1, 2, 8, 8)
         past = [(k.clone(), v.clone()) for _ in range(4)]
-        cache = QEffGPTOSSDynamicCache.from_legacy_cache(cfg, past_key_values=past)
-        assert isinstance(cache, QEffGPTOSSDynamicCache)
+        cache = QEffGPTOSSHybridCache.from_legacy_cache(cfg, past_key_values=past)
+        assert isinstance(cache, QEffGPTOSSHybridCache)
         assert len(cache) == 4
 
     def test_qeff_gptoss_dynamic_cache_from_legacy_cache_preserves_shapes(self):
@@ -1003,7 +1003,7 @@ class TestFromLegacyCacheClassmethods:
         k = torch.randn(1, 2, 8, 8)
         v = torch.randn(1, 2, 8, 8)
         past = [(k.clone(), v.clone()) for _ in range(4)]
-        cache = QEffGPTOSSDynamicCache.from_legacy_cache(cfg, past_key_values=past)
+        cache = QEffGPTOSSHybridCache.from_legacy_cache(cfg, past_key_values=past)
         for i in range(4):
             assert cache.layers[i].keys.shape[0] == 1  # batch
             assert cache.layers[i].keys.shape[1] == 2  # heads

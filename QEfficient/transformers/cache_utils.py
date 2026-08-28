@@ -1786,7 +1786,7 @@ class QEffGPTOSSDynamicLayer(QEffDynamicLayer):
         return k_out, v_out
 
 
-class QEffGPTOSSDynamicCache(QEffDynamicCache):
+class QEffGPTOSSHybridCache(QEffDynamicCache):
     def __init__(
         self,
         config=None,
@@ -1837,7 +1837,7 @@ class QEffGPTOSSDynamicCache(QEffDynamicCache):
         cls,
         config,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-    ) -> "QEffGPTOSSDynamicCache":
+    ) -> "QEffGPTOSSHybridCache":
         cache = cls(config=config)
         if past_key_values is not None:
             for layer_idx, (key_states, value_states) in enumerate(past_key_values):
@@ -1850,7 +1850,7 @@ class QEffGPTOSSDynamicCache(QEffDynamicCache):
         return cache
 
     @classmethod
-    def from_cache(cls, config, past_key_values: Cache) -> "QEffGPTOSSDynamicCache":
+    def from_cache(cls, config, past_key_values: Cache) -> "QEffGPTOSSHybridCache":
         cache = cls(config=config)
         for layer_idx, layer in enumerate(getattr(past_key_values, "layers", [])):
             key_states = getattr(layer, "keys", None)
