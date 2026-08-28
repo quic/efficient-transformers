@@ -209,7 +209,7 @@ def past_key_value_update(
             cache_kwargs.update(
                 {
                     "is_sliding": sliding_window is not None,
-                    "sliding_window": past_key_value.sliding_window_len,
+                    "sliding_window": past_key_value.get_sliding_window_len(),
                 }
             )
         if comp_ctx_lengths is not None:
@@ -253,7 +253,12 @@ def generic_blocked_attention_interface(
         cache_kwargs["past_seen_tokens"] = past_seen_tokens
         if prefill_only:
             if sliding_window is not None:
-                cache_kwargs.update({"is_sliding": True, "sliding_window": past_key_value.sliding_window_len})
+                cache_kwargs.update(
+                    {
+                        "is_sliding": sliding_window is not None,
+                        "sliding_window": past_key_value.get_sliding_window_len(),
+                    }
+                )
             past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
         elif past_key_value is not None:
             use_kv_blocked = "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)

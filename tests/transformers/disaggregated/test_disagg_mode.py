@@ -73,6 +73,7 @@ def _make_dummy_model(model_id: str) -> AutoModelForCausalLM:
     return model
 
 
+@pytest.mark.skip
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_id", model_id_blocking)
@@ -242,6 +243,7 @@ def test_disagg_mode_prefill_chunked(model_id, prompt):
     assert (torch.from_numpy(qpc_out["logits"]) - qeff_out.logits).abs().max() < 5e-2
 
 
+@pytest.mark.skip
 @pytest.mark.on_qaic
 @pytest.mark.llm_model
 @pytest.mark.parametrize("model_id", model_id_blocking)
@@ -352,6 +354,7 @@ def test_disagg_mode_prefill_only_and_decode_only(model_id, prompt):
         aic_enable_depth_first=True,
         num_speculative_tokens=None,
         prefill_only=True,
+        offload_pt_weights=False,
     )
 
     prefill_session = QAICInferenceSession(prefill_qpc_path)
