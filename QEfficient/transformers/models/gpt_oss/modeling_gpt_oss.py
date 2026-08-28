@@ -738,7 +738,9 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
             }
             if self.sliding_window is not None:
                 sliding_window_len = past_key_values.get_sliding_window_len()
-                short_read_idx = torch.arange(past_key_values.layers[self.layer_idx].keys.shape[2])
+                short_read_idx = torch.arange(
+                    past_key_values.layers[self.layer_idx].keys.shape[2], device=position_ids.device
+                )
                 read_idx = short_read_idx + torch.where(
                     position_ids.max() > sliding_window_len - 1, position_ids.max() - sliding_window_len + 1, 0
                 )

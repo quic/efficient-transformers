@@ -3682,8 +3682,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         if layerwise and weight_free:
             raise ValueError(
-                "`layerwise=True` and `weight_free=True` are mutually exclusive; "
-                "weight_free replaces layerwise mode."
+                "`layerwise=True` and `weight_free=True` are mutually exclusive; weight_free replaces layerwise mode."
             )
 
         enable_proxy = kwargs.pop("enable_proxy", False)
@@ -3804,9 +3803,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.hash_params["NUM_Q_BLOCKS"] = num_q_blocks
         self.hash_params["NUM_FFN_BLOCKS"] = num_ffn_blocks
         self.hash_params["ENABLE_OPT_SWA"] = os.environ.get("ENABLE_OPT_SWA", "0")
-        return (
-            max(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, min_seq_len)
-        )
+        return max(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, min_seq_len)
 
     def _run_layerwise(self, *, final_compile: bool, layerwise_window_size: int, **forward_kwargs):
         """Drive the layer-wise export/compile loop for CausalLM models."""
