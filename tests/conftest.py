@@ -66,21 +66,9 @@ _QUICKCHECK_META = {
         "Qwen",
         "Subfunction/non-subfunction setup without ONNX export",
     ),
-    "test_qwen_moe_quickcheck_layerwise_mode": (
-        "Qwen MoE",
-        "Layerwise/non-layerwise decoder registration",
-    ),
-    "test_qwen_quickcheck_hf_qeff_ort_default_parity": (
-        "Qwen",
-        "Full logits parity: HF PyTorch vs QEff PyTorch vs ORT (default export)",
-    ),
     "test_qwen_moe_quickcheck_hf_qeff_ort_prefill_only_parity": (
         "Qwen MoE",
         "Full logits parity: HF PyTorch vs QEff PyTorch vs ORT (prefill-only transform)",
-    ),
-    "test_qwen_moe_quickcheck_layerwise_hf_qeff_ort_parity": (
-        "Qwen MoE",
-        "Full logits parity: HF PyTorch vs QEff PyTorch vs ORT (layerwise)",
     ),
     "test_repeat_kv_quickcheck_hf_qeff_ort_parity": (
         "Causal LM",

@@ -128,12 +128,6 @@ class TestONNXTransformsModuleStructure:
         for transform in QEFFAutoModelForCausalLM._onnx_transforms:
             assert issubclass(transform, BaseOnnxTransform), f"{transform} is not a subclass of BaseOnnxTransform"
 
-    def test_rename_function_outputs_transform_importable(self):
-        from QEfficient.base.onnx_transforms import RenameFunctionOutputsTransform
-
-        assert RenameFunctionOutputsTransform is not None
-        assert hasattr(RenameFunctionOutputsTransform, "apply")
-
 
 @pytest.mark.onnx
 @pytest.mark.slow
@@ -365,88 +359,6 @@ class TestFP16ClipTransformFunctional:
             if init.name == "large_weight":
                 values = numpy_helper.to_array(init)
                 assert np.all(values >= fp16_min - 1), f"Negative values must be clipped to >= {fp16_min}"
-
-
-# ---------------------------------------------------------------------------
-# Tests: RenameFunctionOutputsTransform
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.onnx
-@pytest.mark.slow
-class TestRenameFunctionOutputsTransform:
-    """RenameFunctionOutputsTransform must rename KV outputs to RetainedState names."""
-
-    def test_rename_transform_is_importable(self):
-        """RenameFunctionOutputsTransform must be importable."""
-        from QEfficient.base.onnx_transforms import RenameFunctionOutputsTransform
-
-        assert RenameFunctionOutputsTransform is not None
-
-    def test_rename_transform_has_apply_method(self):
-        """RenameFunctionOutputsTransform must have an apply classmethod."""
-        from QEfficient.base.onnx_transforms import RenameFunctionOutputsTransform
-
-        assert hasattr(RenameFunctionOutputsTransform, "apply")
-        assert callable(RenameFunctionOutputsTransform.apply)
-
-    def test_rename_transform_output_count_unchanged(self, tmp_export_dir):
-        """After RenameFunctionOutputsTransform, output count must be unchanged.
-        RenameFunctionOutputsTransform.apply(model) takes only the model."""
-        import onnx
-
-        from QEfficient.base.onnx_transforms import RenameFunctionOutputsTransform
-        from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
-
-        model, cfg = make_tiny_gpt2()
-        qeff_model = QEFFAutoModelForCausalLM(model)
-        onnx_path = qeff_model.export(export_dir=str(tmp_export_dir))
-        onnx_model = onnx.load(str(onnx_path))
-
-        output_count_before = len(onnx_model.graph.output)
-        # RenameFunctionOutputsTransform.apply takes only the model (no path)
-        RenameFunctionOutputsTransform.apply(onnx_model)
-        output_count_after = len(onnx_model.graph.output)
-
-        assert output_count_before == output_count_after, (
-            f"Output count changed: {output_count_before} → {output_count_after}"
-        )
-
-    def test_rename_transform_preserves_kv_prefix_infix(self):
-        """Subfunction rename keeps optional KV prefix infix on retained-state outputs."""
-        import onnx
-        from onnx import helper
-
-        from QEfficient.base.onnx_transforms import RenameFunctionOutputsTransform
-
-        fn_name = "DecoderLayerFn"
-        fn_domain = "qeff.test"
-        fn_out = "past_key.0_vllmKvCache_InternalRetainedState"
-        function = helper.make_function(
-            fn_domain,
-            fn_name,
-            ["x"],
-            [fn_out],
-            [helper.make_node("Identity", ["x"], [fn_out], "id")],
-            [helper.make_opsetid("", 17)],
-        )
-
-        graph = helper.make_graph(
-            [helper.make_node(fn_name, ["input"], ["tmp_out"], name="DecoderLayer_0", domain=fn_domain)],
-            "g",
-            [helper.make_tensor_value_info("input", onnx.TensorProto.FLOAT, [1])],
-            [helper.make_tensor_value_info("tmp_out", onnx.TensorProto.FLOAT, [1])],
-        )
-        model = helper.make_model(
-            graph,
-            opset_imports=[helper.make_opsetid("", 17), helper.make_opsetid(fn_domain, 1)],
-            functions=[function],
-        )
-
-        RenameFunctionOutputsTransform.apply(model, layer_idx=1)
-
-        assert model.graph.output[0].name == "past_key.1_vllmKvCache_RetainedState"
-        assert "_InternalRetainedState" not in model.graph.output[0].name
 
 
 # ---------------------------------------------------------------------------

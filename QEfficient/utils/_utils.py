@@ -790,8 +790,7 @@ class IOInfo:
 def dump_qconfig(func):
     def wrapper(self, *args, **kwargs):
         result = func(self, *args, **kwargs)
-        # Skip qconfig dumping when no QPC was actually produced (e.g. the
-        # layer-wise export short-circuits compile to return an ONNX path).
+        # Skip qconfig dumping when no QPC was actually produced.
         # Without this guard we'd hit a TypeError inside create_and_dump_qconfigs
         # and surface a confusing user-facing message.
         qpc_path = getattr(self, "qpc_path", None)

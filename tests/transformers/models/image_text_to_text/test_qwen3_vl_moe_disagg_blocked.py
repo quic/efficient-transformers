@@ -274,7 +274,6 @@ def _run_disagg_blocked(
         kv_offload=True,
         config=hf_model.config,
         torch_dtype=torch.float32,
-        layerwise=False,
     )
 
     sessions = []
@@ -295,7 +294,6 @@ def _run_disagg_blocked(
             split_model_io=True,
             skip_lang=True,
             use_onnx_subfunctions=True,
-            layerwise=False,
         )
         compiled_onnx_paths["vision"] = _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
 
@@ -318,8 +316,6 @@ def _run_disagg_blocked(
             enable_chunking=True,
             skip_vision=True,
             use_onnx_subfunctions=True,
-            layerwise=False,
-            layerwise_window_size=1,
             qaic_config=effective_prefill_qaic_config,
         )
         compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")
@@ -338,8 +334,6 @@ def _run_disagg_blocked(
             prefill_only=False,
             skip_vision=True,
             use_onnx_subfunctions=True,
-            layerwise=False,
-            layerwise_window_size=1,
             qaic_config=copy.deepcopy(qaic_config),
         )
         compiled_onnx_paths["decode"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "decode")

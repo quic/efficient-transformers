@@ -42,11 +42,6 @@ from QEfficient.blocking.attention_blocking import (
 )
 from QEfficient.transformers.cache_utils import QEffDynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
-from QEfficient.transformers.models._layerwise import (
-    is_last_layer_window,
-    is_layerwise_active,
-    resolve_layer_window,
-)
 from QEfficient.transformers.moe import (
     MoEFlavour,
     MoEProfile,
@@ -432,8 +427,6 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
         )
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
-        if is_layerwise_active():
-            self.layer_idx = self.layer_idx - getattr(QEffQwen3VLMoeTextModel, "_start", 0)
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and (blocking_config.mode != BlockingMode.NONE)
@@ -562,15 +555,11 @@ class QEffQwen3VLMoeTextDecoderLayer(Qwen3VLMoeTextDecoderLayer):
 
 
 class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
-    _start = 0
-    _end = 0
-    _total_layers = None
-
     def __qeff_init__(self):
         self.rotary_emb = QEffQwen3VLMoeTextRotaryEmbedding(config=self.config)
         # Export-only cap to avoid serializing oversized RoPE tables that are
         # unreachable for deployed context lengths (e.g. 4K/8K/16K). This keeps
-        # non-layerwise QPC size aligned with layerwise exports.
+        # QPC size aligned with the deployed export configuration.
         rope_rows = min(int(self.rotary_emb.sin_cached.shape[0]), QWEN3_VL_ROPE_CACHE_EXPORT_CAP)
         self.sin_cached = torch.nn.Parameter(
             (self.rotary_emb.sin_cached[:rope_rows] * self.rotary_emb.attention_scaling).contiguous()
@@ -635,15 +624,7 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
 
-        layer_idx = 0
-        start, end = resolve_layer_window(QEffQwen3VLMoeTextModel, len(self.layers))
-        layer_indices_to_run = kwargs.get("layer_indices_to_run", None)
-
         for layer_idx, decoder_layer in enumerate(self.layers):
-            if layer_idx < start or layer_idx >= end:
-                continue
-            if layer_indices_to_run is not None and layer_idx not in layer_indices_to_run:
-                continue
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -674,10 +655,7 @@ class QEffQwen3VLMoeTextModel(Qwen3VLMoeTextModel):
                     visual_pos_masks,
                     deepstack_visual_embeds[layer_idx],
                 )
-            layer_idx += 1
-
-        if is_last_layer_window(QEffQwen3VLMoeTextModel, len(self.layers)):
-            hidden_states = self.norm(hidden_states)
+        hidden_states = self.norm(hidden_states)
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
@@ -856,17 +834,14 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         comp_ctx_lengths: Optional[List[int]] = None,
     ):
         batch_fold_cb = batch_index is not None and self._uses_batch_folded_attention()
-        layerwise = is_layerwise_active()
-        first_layer_window = not layerwise or QEffQwen3VLMoeTextModel._start == 0
 
         if batch_fold_cb:
             # Folded cache kernels operate on contiguous physical rows; keep the
             # logical-to-physical mapping at the graph boundary.
-            if first_layer_window:
-                if input_ids is not None:
-                    input_ids = _batch_index_scatter(input_ids, batch_index)
-                elif inputs_embeds is not None:
-                    inputs_embeds = _batch_index_scatter(inputs_embeds, batch_index)
+            if input_ids is not None:
+                input_ids = _batch_index_scatter(input_ids, batch_index)
+            elif inputs_embeds is not None:
+                inputs_embeds = _batch_index_scatter(inputs_embeds, batch_index)
             if position_ids is not None:
                 position_ids = _batch_index_scatter(position_ids, batch_index, batch_dim=1)
             cache_batch_index = None
@@ -878,125 +853,43 @@ class QEffQwen3VLDecoderWrapper(nn.Module):
         else:
             inputs_embeds = inputs_embeds
 
-        if not is_layerwise_active():
-            # Default (non-layerwise) path: image merge + full decoder + lm_head in
-            # a single forward, identical to the pre-layerwise behavior/output contract.
-            B, N, C = inputs_embeds.shape
-            selected = input_ids == self.model.config.image_token_id
-            indices1 = selected.to(torch.int64).cumsum(1) - 1
-            indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-            indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-            image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
+        B, N, C = inputs_embeds.shape
+        selected = input_ids == self.model.config.image_token_id
+        indices1 = selected.to(torch.int64).cumsum(1) - 1
+        indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
+        indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
+        image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
 
-            num_features, bs, split_size, C = deepstack_features.shape
-            x = deepstack_features.reshape(num_features, bs * split_size, C)
-            deepstack_features_expanded = x[:, indices1, :]
-            image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-            inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
+        num_features, bs, split_size, C = deepstack_features.shape
+        x = deepstack_features.reshape(num_features, bs * split_size, C)
+        deepstack_features_expanded = x[:, indices1, :]
+        image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
+        inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
 
-            image_mask = selected.clone()
-            visual_pos_masks = None
-            deepstack_visual_embeds = None
-            if image_mask is not None:
-                visual_pos_masks = image_mask
-                deepstack_visual_embeds = deepstack_features_expanded
+        image_mask = selected.clone()
+        visual_pos_masks = None
+        deepstack_visual_embeds = None
+        if image_mask is not None:
+            visual_pos_masks = image_mask
+            deepstack_visual_embeds = deepstack_features_expanded
 
-            outputs = self.language_model(
-                inputs_embeds=inputs_embeds,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=cache_batch_index,
-                use_cache=True,
-                visual_pos_masks=visual_pos_masks,
-                deepstack_visual_embeds=deepstack_visual_embeds,
-            )
-            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-            if batch_fold_cb:
-                hidden_states = _batch_index_gather(hidden_states, batch_index)
-            logits = self.model.lm_head(hidden_states)
-            image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-            return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
-
-        if QEffQwen3VLMoeTextModel._start == 0:
-            B, N, C = inputs_embeds.shape
-            selected = input_ids == self.model.config.image_token_id
-            indices1 = selected.to(torch.int64).cumsum(1) - 1
-            indices1 = torch.where(indices1 != -1, indices1 + image_idx, indices1)
-            indices0 = torch.arange(selected.unsqueeze(0).shape[0]).view(-1, 1)
-            image_features_expanded = vision_embeds.reshape(-1, C).unsqueeze(0)[indices0, indices1]
-
-            num_features, bs, split_size, C = deepstack_features.shape
-            x = deepstack_features.reshape(num_features, bs * split_size, C)
-            deepstack_features_expanded = x[:, indices1, :]
-            image_input_embeds = torch.where(selected.unsqueeze(-1), image_features_expanded, inputs_embeds)
-            inputs_embeds = torch.where(input_ids.shape[1] == torch.tensor(1), inputs_embeds, image_input_embeds)
-
-            image_mask = selected.clone()
-
-            visual_pos_masks = None
-
-            deepstack_visual_embeds = None
-            if image_mask is not None:
-                visual_pos_masks = image_mask
-                QEffQwen3VLDecoderWrapper._vision_mask = visual_pos_masks
-                deepstack_visual_embeds = deepstack_features_expanded
-                QEffQwen3VLDecoderWrapper._deepstack = deepstack_visual_embeds
-
-            outputs = self.language_model(
-                inputs_embeds=inputs_embeds,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=cache_batch_index,
-                use_cache=True,
-                visual_pos_masks=visual_pos_masks,
-                deepstack_visual_embeds=deepstack_visual_embeds,
-            )
-            if outputs.last_hidden_state.shape[1] > 1:
-                hidden_states = outputs.last_hidden_state
-            else:
-                hidden_states = outputs.last_hidden_state[:, -1:, :]
-            logits = hidden_states
-            image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
-            return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
-
-        elif QEffQwen3VLMoeTextModel._end == QEffQwen3VLMoeTextModel._total_layers:
-            outputs = self.language_model(
-                inputs_embeds=inputs_embeds,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=cache_batch_index,
-                use_cache=True,
-                visual_pos_masks=QEffQwen3VLDecoderWrapper._vision_mask,
-                deepstack_visual_embeds=QEffQwen3VLDecoderWrapper._deepstack,
-            )
-            logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
-            hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
-            if batch_fold_cb:
-                hidden_states = _batch_index_gather(hidden_states, batch_index)
-            logits = self.model.lm_head(hidden_states)
-            return logits, outputs.past_key_values
-
-        else:
-            outputs = self.language_model(
-                inputs_embeds=inputs_embeds,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=cache_batch_index,
-                use_cache=True,
-                visual_pos_masks=QEffQwen3VLDecoderWrapper._vision_mask,
-                deepstack_visual_embeds=QEffQwen3VLDecoderWrapper._deepstack,
-            )
-            if outputs.last_hidden_state.shape[1] > 1:
-                hidden_states = outputs.last_hidden_state
-            else:
-                hidden_states = outputs.last_hidden_state[:, -1:, :]
-            logits = hidden_states
-            return logits, outputs.past_key_values
+        outputs = self.language_model(
+            inputs_embeds=inputs_embeds,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            comp_ctx_lengths=comp_ctx_lengths,
+            batch_index=cache_batch_index,
+            use_cache=True,
+            visual_pos_masks=visual_pos_masks,
+            deepstack_visual_embeds=deepstack_visual_embeds,
+        )
+        logit_index = position_ids[0].to(torch.int32).argmax(1, keepdim=True)
+        hidden_states = outputs.last_hidden_state[torch.arange(position_ids[0].shape[0]).view(-1, 1), logit_index]
+        if batch_fold_cb:
+            hidden_states = _batch_index_gather(hidden_states, batch_index)
+        logits = self.model.lm_head(hidden_states)
+        image_idx = (indices1.max() + 1).unsqueeze(0).unsqueeze(0)
+        return logits, vision_embeds, deepstack_features, image_idx, outputs.past_key_values
 
 
 class QEffQwen3VLMoeTextSparseMoeBlock(QEffMoEBlockMixin, Qwen3VLMoeTextSparseMoeBlock):

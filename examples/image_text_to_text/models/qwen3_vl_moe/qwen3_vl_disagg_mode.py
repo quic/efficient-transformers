@@ -165,7 +165,6 @@ def main():
         kv_offload=True,
         config=config,
         dtype=torch.float16,
-        layerwise=False,
     )
     if args.mode == "batch_fold":
         load_kwargs["continuous_batching"] = True
@@ -191,7 +190,6 @@ def main():
             split_model_io=True,
             skip_lang=True,
             use_onnx_subfunctions=True,
-            layerwise=False,
         )
 
     # ── Decode compile ────────────────────────────────────────────────────────
@@ -218,7 +216,6 @@ def main():
         prefill_only=False,
         skip_vision=True,
         use_onnx_subfunctions=True,
-        layerwise=False,
         offload_pt_weights=False,
     )
     if args.mode == "batch_fold":
@@ -264,7 +261,6 @@ def main():
         enable_chunking=True,
         skip_vision=True,
         use_onnx_subfunctions=True,
-        layerwise=False,
         offload_pt_weights=True,
     )
     if args.mode == "batch_fold":

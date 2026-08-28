@@ -142,7 +142,6 @@ def _compile_disagg_qpcs(qeff_model: QEFFAutoModelForImageTextToText, compile_di
         "mos": 1,
         "aic_enable_depth_first": True,
         "use_onnx_subfunctions": True,
-        "layerwise": False,
         **compile_dims,
     }
 
@@ -275,7 +274,6 @@ def test_kimi_k25_disagg_qaic_vs_hf_fp32():
         kv_offload=True,
         config=model.config,
         torch_dtype=torch.float32,
-        layerwise=False,
     )
 
     compile_dims = _get_image_compile_dims(image_height, image_width)

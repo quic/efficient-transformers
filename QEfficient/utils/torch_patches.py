@@ -11,8 +11,6 @@ Patches kept here:
   - TorchScript ONNX exporter (_setup_trace_module_map, _get_module_attributes,
     _jit_pass_onnx_track_scope_attributes): fix attribute-type mismatches in the
     legacy trace-based exporter (dynamo=False path).
-  - Layerwise safe export pass patches: disable expensive ONNX exporter passes
-    for layerwise prefill export (TorchScript path).
   - temporarily_enable_nested_compile_regions / temporarily_disable_nested_compile_regions:
     context managers for dynamo export path subgraph boundary management.
 
@@ -58,7 +56,6 @@ _SAFE_EXPORT_REQUIRED_PASSES = {
     "_jit_pass_constant_propagation",
     "_jit_pass_cse",
     # Keep ONNX constant fold enabled to reduce topology drift between
-    # layerwise prefill exports and regular (non-layerwise) prefill exports.
     "_jit_pass_onnx_constant_fold",
 }
 
@@ -263,27 +260,6 @@ def _disable_safe_export_pass_patches():
         for name, original in _safe_export_original_passes.items():
             setattr(_C, name, original)
         _safe_export_original_passes.clear()
-
-
-@contextmanager
-def layerwise_safe_onnx_export_patches(enabled: bool = True, keep_passes=None):
-    """Temporarily disable expensive ONNX exporter passes for layerwise prefill.
-
-    This is a no-op unless the caller explicitly enables it and the process is
-    inside the layerwise export context. Regular/non-layerwise export therefore
-    keeps the original PyTorch ONNX exporter behavior. DCE stays enabled by
-    default because some exported graphs need it to remove aten/prim nodes before
-    PyTorch serializes ONNX. ``keep_passes`` can retain additional passes.
-    """
-    if not enabled:
-        yield
-        return
-
-    _enable_safe_export_pass_patches(keep_passes=keep_passes)
-    try:
-        yield
-    finally:
-        _disable_safe_export_pass_patches()
 
 
 def apply_torch_patches():

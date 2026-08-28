@@ -265,9 +265,6 @@ def export_wrapper(func):
                 model_config = getattr(self.model, "config", None)
                 kwargs["dynamic_shapes"] = convert_dynamic_axes_to_dynamic_shapes(dynamic_axes, model_config)
 
-        # Cache probe flag (used for layerwise inspection runs)
-        cache_probe = kwargs.pop("_layerwise_cache_probe", False)
-
         # Default context managers and state trackers
         export_context = nullcontext()
         subfunction_state = None
@@ -289,10 +286,6 @@ def export_wrapper(func):
         export_dir = export_dir.with_name(export_dir.name + "-" + export_hash)
         kwargs["export_dir"] = export_dir
         self.export_hash = export_hash
-
-        # Re-inject cache probe flag if needed
-        if cache_probe:
-            kwargs["_layerwise_cache_probe"] = True
 
         try:
             # 4. Execute the actual export
@@ -317,9 +310,8 @@ def export_wrapper(func):
                     ) from export_exc
                 raise
 
-            # 5. Save export metadata (skip when running cache probe)
-            if not cache_probe:
-                _save_export_metadata(export_dir, filtered_hash_params)
+            # 5. Save export metadata
+            _save_export_metadata(export_dir, filtered_hash_params)
 
         finally:
             # 6. Always cleanup subfunctions if they were setup
@@ -369,10 +361,6 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
     bound_args = new_sig.bind(*args, **kwargs)
     bound_args.apply_defaults()
     all_args = bound_args.arguments
-    if func.__name__ == "_export_layerwise":
-        export_kwargs = dict(all_args.get("export_kwargs") or {})
-        export_kwargs["_qeff_layerwise_export"] = True
-        all_args["export_kwargs"] = export_kwargs
 
     # Use the model's current configuration for hashing to ensure any post-load modifications are captured
     # TODO: Replace with get_model_config property of modeling classes and remove the if-else
@@ -482,7 +470,7 @@ def _setup_onnx_subfunctions(qeff_model, args, kwargs, dynamo=False):
         if RenameRepeatedSubgraphTransform not in qeff_model._onnx_transforms:
             qeff_model._onnx_transforms.append(RenameRepeatedSubgraphTransform)
     else:
-        # TorchScript: RenameFunctionOutputsTransform + CustomOpTransform.
+        # TorchScript: retained-state output, custom-op, and semantic node renames.
         if RenameFunctionOutputsTransform not in qeff_model._onnx_transforms:
             qeff_model._onnx_transforms.append(RenameFunctionOutputsTransform)
         if CustomOpTransform not in qeff_model._onnx_transforms:

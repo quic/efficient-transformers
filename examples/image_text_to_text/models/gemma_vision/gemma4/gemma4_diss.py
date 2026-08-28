@@ -43,6 +43,7 @@ remove_fp16clip_transform_if_disabled(qeff_model, ENABLE_FP16_CLIP)
 PREFILL_SEQ_LEN = 256
 CTX_LEN = 4096
 BS = 1
+MOE_PREFILL_PACKED_CHUNK_SIZE = 256
 gemma_vision_dir = Path(__file__).resolve().parent.parent
 # vision_npi_file = str(gemma_vision_dir / "configs" / "fp32_nodes_gemma4_26B_A4B_it_vision_diss.yaml")
 
@@ -78,7 +79,7 @@ prefill_qpc_path = qeff_model.compile(
     node_precision_info=True,
     prefill_only=True,
     enable_chunking=True,
-    qaic_config={"moe_config": {"expert_parallel_chunk_size": 256}},
+    qaic_config={"moe_config": {"expert_parallel_chunk_size": MOE_PREFILL_PACKED_CHUNK_SIZE}},
     use_onnx_subfunctions=True,
     skip_vision=True,
 )
