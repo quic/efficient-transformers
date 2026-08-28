@@ -491,7 +491,6 @@ from QEfficient.transformers.models.mixtral_moe.modeling_mixtral import (
     QEffMixtralModel,
     QEffMixtralSparseMoeBlock,
     QEffMixtralTopKRouter,
-    QEffPrefillChunkedMixtralSparseMoeBlock,
 )
 from QEfficient.transformers.models.mllama.modeling_mllama import (
     QEffMllamaCrossAttentionDecoderLayer,
@@ -939,7 +938,6 @@ class PrefillOnlyTransform(ModuleMappingTransform):
     _module_mapping = {
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyGptOssAttention,
-        QEffMixtralSparseMoeBlock: QEffPrefillChunkedMixtralSparseMoeBlock,
     }
 
 
@@ -948,8 +946,6 @@ class PrefillOnlyChunkedTransform(ModuleMappingTransform):
         # GPT_OSS
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
-        # Mixtral
-        QEffMixtralSparseMoeBlock: QEffPrefillChunkedMixtralSparseMoeBlock,
     }
 
 
@@ -959,8 +955,6 @@ class RevertPrefillKeepAttentionTransform(ModuleMappingTransform):
         QEffGptOssModel: QEffPrefillOnlyGptOssModel,
         QEffPrefillOnlyGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
         QEffGptOssAttention: QEffPrefillOnlyChunkedGptOssAttention,
-        # Mixtral
-        QEffPrefillChunkedMixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
     }
 
 
