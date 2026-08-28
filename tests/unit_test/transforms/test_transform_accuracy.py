@@ -1994,14 +1994,38 @@ class TestSplitOptimizedMoETransform:
         assert transformed
         assert collect_calls == [None]
 
-    def test_split_transforms_noop_for_non_moe_models(self):
+    def test_split_transforms_noop_for_non_moe_models(self, caplog):
         model = nn.Sequential(nn.Linear(4, 4))
+        caplog.set_level(logging.WARNING, logger="QEfficient")
 
         assert not OptimizedMoEMapperTransform.apply(model)[1]
         assert not OptimizedMoEWeightsTransform.apply(model)[1]
         assert not OptimizedMoEExportConfigTransform.apply(model)[1]
         assert not OptimizedMoEExpertParallelWeightsTransform.apply(model)[1]
         assert not OptimizedMoETransform.apply(model)[1]
+        assert "expert_parallel_chunk_size" not in caplog.text
+
+    def test_facade_skips_downstream_transforms_for_non_moe_models(self, monkeypatch, caplog):
+        model = nn.Sequential(nn.Linear(4, 4))
+
+        def fail_apply(*args, **kwargs):
+            raise AssertionError("downstream MoE transforms should not run for non-MoE models")
+
+        monkeypatch.setattr(OptimizedMoEWeightsTransform, "apply", fail_apply)
+        monkeypatch.setattr(OptimizedMoEExportConfigTransform, "apply", fail_apply)
+        monkeypatch.setattr(OptimizedMoEExpertParallelWeightsTransform, "apply", fail_apply)
+        caplog.set_level(logging.WARNING, logger="QEfficient")
+
+        _, transformed = OptimizedMoETransform.apply(
+            model,
+            prefill_only=True,
+            qaic_config={"moe_config": {"expert_parallel_chunk_size": 256}},
+            prefill_seq_len=32,
+            hash_params={},
+        )
+
+        assert not transformed
+        assert "expert_parallel_chunk_size" not in caplog.text
 
     def test_mapper_discovers_structurally_bound_external_moe_modules(self):
         class StructuralMoE(nn.Module):

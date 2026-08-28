@@ -47,6 +47,7 @@ from QEfficient.transformers.modeling_utils import (
     SPECIALIZED_DISAGG_SERVING_MODEL_ARCH,
     _configure_proxy_for_model,
 )
+from QEfficient.transformers.models.gpt_oss.modeling_gpt_oss import override_gptoss_prefill_chunking
 from QEfficient.transformers.models.pytorch_transforms import (
     CustomOpsTransform,
     KVCacheExternalModuleMapperTransform,
@@ -3458,6 +3459,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 "Use the default non-prefill export path for standard CausalLM decode graphs."
             )
         reject_legacy_moe_prefill_packed_chunk_size(kwargs)
+        enable_chunking = override_gptoss_prefill_chunking(
+            self.model.config, prefill_only, kwargs.get("enable_chunking", False)
+        )
+        kwargs["enable_chunking"] = enable_chunking
         qaic_config = kwargs.pop("qaic_config", getattr(self.model, "qaic_config", None))
 
         if (
@@ -3473,7 +3478,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         ## TODO: Remove this deprecated code ###
         ########################################
 
-        enable_chunking = kwargs.get("enable_chunking", False)
         ####### HANDLE DA PREFILL And REVERT PREFILL Transform ################
         # TODO: move this code inside self.transform in modeling_qeff.py
         if self.model.config.model_type in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH:
@@ -3505,9 +3509,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         fbs: int = constants.ONNX_EXPORT_EXAMPLE_FBS
 
         # TODO: Remove this hack ##################
-        if dynamo and not (
-            getattr(self.model.config, "model_type", None) == "gpt_oss" and not self.continuous_batching
-        ):
+        if dynamo:
             # torch.export requires example inputs to satisfy dynamic_shapes min=2; gpt_oss non-CB keeps bs=1.
             bs = max(2, bs)
         ###########################################
@@ -4003,6 +4005,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         """
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
+        enable_chunking = override_gptoss_prefill_chunking(self.model.config, prefill_only, enable_chunking)
         if self.model.qaic_config is not None and self.model.qaic_config.get("mla_absorption", None) is not None:
             mla_absorption = self.model.qaic_config["mla_absorption"]
             cache_compressed = mla_absorption.get("cache_compressed", False)
