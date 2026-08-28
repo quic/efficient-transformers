@@ -842,9 +842,6 @@ class KVCacheTransform(ModuleMappingTransform):
         Mistral3Model: QEffMistral3Model,
         # Mixtral
         MixtralAttention: QEffMixtralAttention,
-        MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
-        MixtralTopKRouter: QEffMixtralTopKRouter,
-        MixtralExperts: QEffMixtralExperts,
         MixtralDecoderLayer: QeffMixtralDecoderLayer,
         MixtralModel: QEffMixtralModel,
         MixtralForCausalLM: QEffMixtralForCausalLM,
@@ -1524,6 +1521,8 @@ class OptimizedMoEMapperTransform(ModuleMappingTransform):
         GraniteMoeTopKGating: QEffGraniteMoeTopKGating,
         # Mixtral
         MixtralSparseMoeBlock: QEffMixtralSparseMoeBlock,
+        MixtralTopKRouter: QEffMixtralTopKRouter,
+        MixtralExperts: QEffMixtralExperts,
     }
 
     @classmethod
