@@ -18,10 +18,7 @@ from QEfficient.exporter.weight_free.weight_spec import load_weight_spec, resolv
 from QEfficient.utils import load_json
 from QEfficient.utils.checkpoint_utils import resolve_checkpoint_dir
 from QEfficient.utils.logging_utils import logger
-
-_last_prep_peak_rss_mb: float | None = None
-_last_prep_duration_seconds: float = 0.0
-_checkpoint_prep_ran: bool = False
+from QEfficient.utils.torch_patches import dynamo_invoke_subgraph_fallback_env
 
 
 def _to_meta(value: Any) -> Any:
@@ -37,23 +34,7 @@ def _to_meta(value: Any) -> Any:
     return value
 
 
-def _resolve_weight_free_target_dtype(model_dtype: torch.dtype | None) -> torch.dtype:
-    """Resolve the export/checkpoint dtype for weight-free export.
-
-    Delegates to _resolve_torch_dtype (modeling_auto.py) so weight-free export
-    downgrades bfloat16 the same way the real-weight from_pretrained path
-    does: to float32 on ai100 (bfloat16 unsupported), left as bfloat16 on
-    ai200 (supported). Deferred import avoids a circular import at module
-    load time (modeling_auto.py imports from this package's sibling module).
-    """
-    from QEfficient.transformers.models.modeling_auto import _resolve_torch_dtype
-
-    kwargs = {"torch_dtype": model_dtype or torch.float32}
-    _resolve_torch_dtype(kwargs)
-    return kwargs["torch_dtype"]
-
-
-def _build_meta_qeff_model(qeff_model):
+def _run_quantizer_for_wf(qeff_model, target_dtype: torch.dtype):
     """Finish preparing a meta-device QEfficient wrapper for weight-free tracing, in place."""
     model_ref = qeff_model.hash_params.get("pretrained_model_name_or_path")
     if not model_ref:
@@ -101,10 +82,8 @@ def _build_meta_qeff_model(qeff_model):
         with init_empty_weights():
             quantizer._process_model_before_weight_loading(qeff_model.model)
     else:
-        target_dtype = _resolve_weight_free_target_dtype(getattr(qeff_model.model.config, "dtype", None))
         qeff_model.model = qeff_model.model.to(dtype=target_dtype)
 
-    qeff_model.model.eval()
     return qeff_model
 
 
@@ -185,7 +164,7 @@ def _prepare_checkpoint_for_weight_free_export(
 
 def export_weight_free_onnx(
     qeff_model,
-    tmp_onnx_path: Path,
+    onnx_path: Path,
     example_inputs: dict[str, torch.Tensor],
     input_names: list[str],
     output_names: list[str],
@@ -199,8 +178,8 @@ def export_weight_free_onnx(
     ----------
     qeff_model
         Loaded QEfficient model wrapper used as the source of config and export options.
-    tmp_onnx_path : Path
-        Temporary ONNX path where the dynamo export is saved.
+    onnx_path : Path
+        Destination path where the dynamo export is saved.
     example_inputs : Dict[str, torch.Tensor]
         Example inputs used to trace the model.
     input_names : List[str]
@@ -219,16 +198,15 @@ def export_weight_free_onnx(
     tuple
         Meta QEfficient model, updated ONNX transform kwargs, and cleanup callback.
     """
-    global _checkpoint_prep_ran, _last_prep_duration_seconds, _last_prep_peak_rss_mb
-
-    meta_qeff_model = _build_meta_qeff_model(qeff_model)
+    target_dtype = qeff_model.model.config.dtype
+    meta_qeff_model = _run_quantizer_for_wf(qeff_model, target_dtype)
 
     # export_wrapper (the @export_wrapper decorator on _export) already ran
     # _setup_onnx_subfunctions on this same object before calling into this
     # function, and already has temporarily_enable_nested_compile_regions active
     # around the whole call chain — meta_qeff_model is qeff_model is self, mutated
     # in place, not a clone. Re-running subfunction setup here would only be
-    # necessary if _build_meta_qeff_model's quantizer rewrite (which runs after
+    # necessary if _run_quantizer_for_wf's quantizer rewrite (which runs after
     # export_wrapper's setup) changed the repeated decoder-block class itself;
     # quantizer rewrites replace layer types inside a decoder block (e.g. MoE
     # experts), not the decoder block class, so the classes export_wrapper already
@@ -238,31 +216,27 @@ def export_weight_free_onnx(
     model_ref = meta_qeff_model.hash_params["pretrained_model_name_or_path"]
 
     meta_qeff_model.model.requires_grad_(False)
-    onnx_program = torch.onnx.export(
-        meta_qeff_model.model,
-        args=(),
-        f=None,
-        kwargs=meta_example_inputs,
-        input_names=input_names,
-        output_names=output_names,
-        dynamic_axes=None,
-        dynamic_shapes=dynamic_shapes,
-        **export_kwargs,
-    )
+    with dynamo_invoke_subgraph_fallback_env():
+        onnx_program = torch.onnx.export(
+            meta_qeff_model.model,
+            args=(),
+            f=None,
+            kwargs=meta_example_inputs,
+            input_names=input_names,
+            output_names=output_names,
+            dynamic_axes=None,
+            dynamic_shapes=dynamic_shapes,
+            **export_kwargs,
+        )
     if onnx_program is None:
         raise RuntimeError("torch.onnx.export returned None for weight-free dynamo export")
 
-    target_dtype = _resolve_weight_free_target_dtype(getattr(qeff_model.model.config, "dtype", None))
-
     prep_start = time.perf_counter()
     prepared_model_ref = _prepare_checkpoint_for_weight_free_export(meta_qeff_model, model_ref, target_dtype)
-
-    _last_prep_duration_seconds = time.perf_counter() - prep_start
-    _last_prep_peak_rss_mb = None
-    _checkpoint_prep_ran = True
+    prep_duration_seconds = time.perf_counter() - prep_start
     logger.info(
         "Weight-free checkpoint preparation completed in %.2fs: %s",
-        _last_prep_duration_seconds,
+        prep_duration_seconds,
         prepared_model_ref,
     )
 
@@ -273,13 +247,10 @@ def export_weight_free_onnx(
         qeff_model=meta_qeff_model,
     )
     _prune_unused_fake_initializers(onnx_program)
-    onnx_program.save(str(tmp_onnx_path))
-    save_weight_spec(resolve_weight_spec_path(tmp_onnx_path), spec)
+    onnx_program.save(str(onnx_path))
+    save_weight_spec(resolve_weight_spec_path(onnx_path), spec)
 
-    def cleanup():
-        """Release ONNX subfunction state created for this export, if any."""
-
-    return meta_qeff_model, onnx_transform_kwargs, cleanup
+    return meta_qeff_model, onnx_transform_kwargs
 
 
 def embed_weight_spec_as_metadata(model, weight_spec_path) -> None:

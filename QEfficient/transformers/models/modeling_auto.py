@@ -1893,7 +1893,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: str | None = None,
-        use_weight_free_export: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1935,9 +1934,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             If True, skips compilation of the language decoder. Default is False.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
-        use_weight_free_export: bool, optional
-            Export the model with checkpoint weights externalized into
-            ``weight_spec.json`` before compiling. This forces the dynamo exporter.
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -3608,7 +3604,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # SpDTransforms to PytorchTransforms.
         if self.is_tlm:
             self.model.qaic_config["return_pdfs"] = True
-
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
 
@@ -3749,12 +3744,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             qaic_config=qaic_config,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             max_seq_len_cached=max_seq_len_cached,
+            weight_free=weight_free,
             **kwargs,
         )
         if layerwise:
             instance._layerwise_outer_meta = True
-        if weight_free:
-            instance._weight_free = True
         return instance
 
     @property
@@ -3871,8 +3865,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         str
             Path to the generated ONNX graph file.
         """
-        weight_free = self._weight_free
-
         if kwargs.pop("decode_only", False):
             raise NotImplementedError(
                 "decode_only=True is not supported by QEFFAutoModelForCausalLM.export(). "
@@ -3884,9 +3876,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         )
         kwargs["enable_chunking"] = enable_chunking
         qaic_config = kwargs.pop("qaic_config", getattr(self.model, "qaic_config", None))
-
-        if weight_free:
-            dynamo = True
+        # Weight-free export always uses the dynamo (torch.export) path.
+        # Must be set here — @export_wrapper reads dynamo from kwargs before _export() body runs.
+        dynamo = dynamo or self._weight_free
         if (
             kwargs.get("retain_full_kv", False)
             and self.model.config.model_type not in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH
@@ -4373,7 +4365,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: str | None = None,
-        use_weight_free_export: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -4422,10 +4413,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             the decode stage. If None, compiles for both stages. Default is None.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
-        use_weight_free_export: bool, optional
-            Export with model weights externalized into ``weight_spec.json``. This
-            mode requires the dynamo exporter and is intended for lower-memory
-            CausalLM export flows.
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -4741,7 +4728,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,
             kv_cache_prefix=kv_cache_prefix,
-            use_weight_free_export=use_weight_free_export,
             **compiler_options,
         )
 

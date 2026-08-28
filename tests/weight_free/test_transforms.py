@@ -361,7 +361,6 @@ def _fake_export(
     export_dir=None,
     dynamo=False,
     dynamic_shapes=None,
-    use_weight_free_export=False,
     **export_kwargs,
 ):
     pass
@@ -370,10 +369,17 @@ def _fake_export(
 class TestWeightFreeExportHash:
     def test_weight_free_export_hash_differs_from_regular_dynamo(self):
         config = SimpleNamespace(to_diff_dict=lambda: {"model_type": "llama"})
-        qeff_model = SimpleNamespace(
+        common_model = SimpleNamespace(
             model=SimpleNamespace(config=config),
             hash_params={"pretrained_model_name_or_path": "tiny"},
             _use_onnx_subfunctions=False,
+            _weight_free=False,
+        )
+        weight_free_model = SimpleNamespace(
+            model=SimpleNamespace(config=config),
+            hash_params={"pretrained_model_name_or_path": "tiny"},
+            _use_onnx_subfunctions=False,
+            _weight_free=True,
         )
         common_kwargs = {
             "example_inputs": {"input_ids": torch.ones(1, 2, dtype=torch.int64)},
@@ -383,21 +389,21 @@ class TestWeightFreeExportHash:
         }
 
         regular_hash, regular_params = _generate_export_hash(
-            qeff_model,
+            common_model,
             (),
-            {**common_kwargs, "use_weight_free_export": False},
+            dict(common_kwargs),
             _fake_export,
         )
         weight_free_hash, weight_free_params = _generate_export_hash(
-            qeff_model,
+            weight_free_model,
             (),
-            {**common_kwargs, "use_weight_free_export": True},
+            dict(common_kwargs),
             _fake_export,
         )
 
         assert regular_hash != weight_free_hash
-        assert not regular_params["use_weight_free_export"]
-        assert weight_free_params["use_weight_free_export"]
+        assert not regular_params["weight_free"]
+        assert weight_free_params["weight_free"]
 
 
 # ---------------------------------------------------------------------------

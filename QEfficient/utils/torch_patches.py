@@ -28,6 +28,7 @@ Patches removed (upstreamed to PyTorch):
 
 import inspect
 import os
+import threading
 from contextlib import contextmanager
 
 import torch
@@ -379,7 +380,7 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
     Replace nested_compile_region-wrapped ``forward`` methods with their original
     underlying functions for the duration of plain dynamo export (flat graph path).
 
-    Used when use_weight_free_export=True and use_onnx_subfunctions=False so that
+    Used during weight-free export with use_onnx_subfunctions=False so that
     @nested_compile_region boundaries on decoder layer forward() methods do not
     create unwanted subgraph splits during tracing.
     """
@@ -420,6 +421,9 @@ def temporarily_disable_nested_compile_regions(model, target_classes=None):
                 setattr(module, "forward", previous_forward)
 
 
+_DYNAMO_ENV_LOCK = threading.RLock()
+
+
 @contextmanager
 def dynamo_invoke_subgraph_fallback_env():
     """Temporarily set TORCH_INVOKE_ALLOW_CREATE_FALLBACK=1 for dynamo export.
@@ -428,13 +432,15 @@ def dynamo_invoke_subgraph_fallback_env():
     allow invoke_subgraph placeholders to fall back correctly during tracing.
     Saves and restores whatever value (or absence) the caller's environment
     already had, rather than assuming it was previously unset.
+    Uses an RLock so concurrent exports don't race on the env var.
     """
-    prev_value = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
-    os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = "1"
-    try:
-        yield
-    finally:
-        if prev_value is None:
-            os.environ.pop("TORCH_INVOKE_ALLOW_CREATE_FALLBACK", None)
-        else:
-            os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = prev_value
+    with _DYNAMO_ENV_LOCK:
+        previous = os.environ.get("TORCH_INVOKE_ALLOW_CREATE_FALLBACK")
+        os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = "1"
+        try:
+            yield
+        finally:
+            if previous is None:
+                os.environ.pop("TORCH_INVOKE_ALLOW_CREATE_FALLBACK", None)
+            else:
+                os.environ["TORCH_INVOKE_ALLOW_CREATE_FALLBACK"] = previous

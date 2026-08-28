@@ -179,7 +179,7 @@ class QEFFBaseModel(ABC):
 
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
-        self._weight_free: bool = False
+        self._weight_free: bool = kwargs.get("weight_free", False)
         # Flag for checking if model has been transformed yet
         self.is_transformed: bool = False
 
@@ -423,14 +423,7 @@ class QEFFBaseModel(ABC):
             self.weight_spec_path = str(_weight_spec_path) if _weight_spec_path.is_file() else None
             return onnx_path
 
-        if self._weight_free:
-            dynamo = True
-
-        # check if the model is in meta state or weights are offloaded
-        # (skip for weight-free export which intentionally uses a meta-device model)
-        if not self._weight_free:
-            self._model_offloaded_check()
-
+        
         export_dir.mkdir(parents=True, exist_ok=True)
 
         def _resolve_pkv_layers(pkv_obj):
@@ -518,7 +511,7 @@ class QEFFBaseModel(ABC):
                 )
             elif dynamo:
                 from QEfficient.exporter.onnx_exporter import export_via_dynamo
-
+                self._model_offloaded_check()
                 export_result = export_via_dynamo(
                     self,
                     onnx_path,
@@ -528,9 +521,10 @@ class QEFFBaseModel(ABC):
                     dynamic_shapes,
                     export_kwargs,
                 )
+                self._offload_model_weights(offload_pt_weights)
             else:
                 from QEfficient.exporter.onnx_exporter import export_via_legacy
-
+                self._model_offloaded_check()
                 export_result = export_via_legacy(
                     self,
                     onnx_path,
@@ -542,7 +536,6 @@ class QEFFBaseModel(ABC):
                 )
             logger.info("PyTorch export successful")
             self.weight_spec_path = str(export_result.weight_spec_path) if export_result.weight_spec_path else None
-            self._offload_model_weights(offload_pt_weights)
             model = onnx.load(export_result.onnx_path, load_external_data=False)
 
             excluded_transforms = set(export_result.excluded_onnx_transforms)
