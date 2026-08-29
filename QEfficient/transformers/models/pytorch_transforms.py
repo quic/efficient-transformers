@@ -1217,7 +1217,6 @@ class VlmNoKVOffloadTransform(ModuleMappingTransform):
         MllamaTextCrossAttention: QEffMllamaTextCrossAttentionSingleQPC,
     }
 
-
 class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
     _match_class_replace_method = {}
     _match_string_replace_method = {
@@ -1232,6 +1231,8 @@ class KVCacheExternalModuleMapperTransform(ExternalModuleMapperTransform):
             "get_qeff_language_decoder": QEffInternVLModel.get_qeff_language_decoder,
         },
         "InternVisionEmbeddings": {"forward": QEffInternVisionEmbeddings.forward},
+        # Mapping for Dream
+        "DreamRMSNorm": {"forward": CustomRMSNormAIC.forward},
         # Mapping for Molmo
         "MolmoForCausalLM": {
             "forward": QEffMolmoModel.forward,
