@@ -119,6 +119,9 @@ class QEffDynamicLayer(CacheLayerMixin):
     def get_max_cache_shape(self) -> int:
         return -1
 
+    def get_max_length(self) -> int:
+        return self.max_cache_len if self.keys is not None else -1
+
     @property
     def max_batch_size(self) -> int:
         return self.keys.shape[0] if self.keys is not None else 0
