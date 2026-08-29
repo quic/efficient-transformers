@@ -104,7 +104,9 @@ class QEffGrok1MultiHeadAttention(nn.Module):
             kv_seq_len = past_key_value.get_seq_length(layer_idx, cache_position)
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        cos = cos[position_ids].unsqueeze(1)
+        sin = sin[position_ids].unsqueeze(1)
+        query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         if past_key_value is not None:
             cache_kwargs = {"batch_index": batch_index, "position_ids": position_ids}
@@ -318,11 +320,8 @@ class QEffGrok1Model(nn.Module):
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
 
-        seq_length_with_past = seq_length
-        past_key_values_length = past_key_values[0][0].shape[2]
-        seq_length_with_past = seq_length_with_past + past_key_values_length
-
         past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
+        past_key_values_length = past_key_values.get_seq_length()
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -394,7 +393,7 @@ class QEffGrok1ModelForCausalLM(nn.Module):
             This method should return the *class object* (not an instance).
             Downstream code can use this to find/build subfunctions for repeated blocks.
         """
-        return {QEffGrok1DecoderLayer}
+        return {self.model.layers[0].__class__}
 
     def forward(
         self,
