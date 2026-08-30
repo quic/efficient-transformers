@@ -857,13 +857,10 @@ class QEffGemma4TextModel(Gemma4TextModel):
 
         hidden_states = inputs_embeds
 
-        position_embeddings = {}
-        for layer_type in self.unique_layer_types:
-            position_embeddings[layer_type] = self.rotary_emb(hidden_states, position_ids, layer_type)
-
         for i, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
             per_layer_input = per_layer_inputs[:, :, i, :] if per_layer_inputs is not None else None
             layer_type = self.config.layer_types[i]
+            position_embeddings = self.rotary_emb(hidden_states, position_ids, layer_type)
             layer_attention_mask = attention_mask
             use_mm_bidirectional_mask = (
                 kwargs.get("mm_token_type_ids") is not None
@@ -895,7 +892,7 @@ class QEffGemma4TextModel(Gemma4TextModel):
             hidden_states = decoder_layer(
                 hidden_states,
                 per_layer_input,
-                position_embeddings=position_embeddings[layer_type],
+                position_embeddings=position_embeddings,
                 attention_mask=layer_attention_mask,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
