@@ -4822,7 +4822,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
     _pytorch_transforms = [CustomOpsTransform, AwqToMatmulNbitsTransform, GPTQToMatmulNbitsTransform, KVCacheTransform]
     _onnx_transforms = []
 
-    def __init__(self, model: nn.Module, **kwargs):
+    def __init__(self, model: nn.Module, continuous_batching: bool = False, **kwargs):
         """
         Initialize a QEFFAutoModelForSpeechSeq2Seq instance.
 
@@ -4844,9 +4844,23 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             raise TypeError(f"Required pytorch module with ForConditionalGeneration, got {model_class_name}")
 
         model.config.use_cache = True
+        if continuous_batching and model.config.model_type != "cohere_asr":
+            raise NotImplementedError("Continuous batching is currently supported only for Cohere ASR speech models")
+        self.continuous_batching = continuous_batching
         super().__init__(model, **kwargs)
         self.num_layers = model.config.num_hidden_layers
         self.hash_params["qeff_auto_class"] = self.__class__.__name__
+
+    @classmethod
+    def from_pretrained(
+        cls, pretrained_model_name_or_path: str, *args, continuous_batching: bool = False, **kwargs
+    ):
+        qeff_model = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        if continuous_batching and qeff_model.model.config.model_type != "cohere_asr":
+            raise NotImplementedError("Continuous batching is currently supported only for Cohere ASR speech models")
+        qeff_model.continuous_batching = continuous_batching
+        qeff_model.hash_params["continuous_batching"] = continuous_batching
+        return qeff_model
 
     @property
     def get_model_config(self) -> dict:
@@ -4880,8 +4894,20 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         str
             Path to the generated ONNX graph file.
         """
-        inputs = self.model.get_dummy_inputs()
-        dynamic_axes = self.model.get_onnx_dynamic_axes()
+        # Forward encoder_ctx_len so get_dummy_inputs traces with the correct window size.
+        # Without this the Reshape nodes in cross-attention get baked with the default
+        # encoder_ctx_len (from config.max_position_embeddings / subsampling_factor),
+        # causing a shape mismatch at qaic-compile when a different encoder_ctx_len is
+        # passed to compile().
+        dummy_input_kwargs = {}
+        if "encoder_ctx_len" in kwargs:
+            dummy_input_kwargs["encoder_ctx_len"] = kwargs["encoder_ctx_len"]
+        if self.continuous_batching:
+            dummy_input_kwargs["continuous_batching"] = True
+            dummy_input_kwargs["full_batch_size"] = kwargs.get("full_batch_size")
+            dummy_input_kwargs["batch_size"] = kwargs.get("batch_size", 1)
+        inputs = self.model.get_dummy_inputs(**dummy_input_kwargs)
+        dynamic_axes = self.model.get_onnx_dynamic_axes(continuous_batching=self.continuous_batching)
         output_names = self.model.get_output_names()
         return self._export(
             inputs,
@@ -4975,11 +5001,14 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             batch_size,
             encoder_ctx_len,
             ctx_len,
+            full_batch_size=full_batch_size if self.continuous_batching else None,
             **compiler_options,
         )
 
-        if full_batch_size:
-            logger.warning("Continuous batching is not yet enabled for AutoModelForSpeechSeq2Seq")
+        if self.continuous_batching and full_batch_size is None:
+            raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
+        if full_batch_size and not self.continuous_batching:
+            raise ValueError("Enable `continuous_batching=True` when passing `full_batch_size`.")
 
         if kv_cache_batch_size:
             logger.warning("Prefix caching is not yet enabled for AutoModelForSpeechSeq2Seq")
@@ -4991,6 +5020,15 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             logger.warning("Speculative decoding is not yet enabled for AutoModelForSpeechSeq2Seq")
 
         output_names = self.model.get_output_names()
+
+        if onnx_path is None and self.continuous_batching:
+            onnx_path = self.export(
+                export_dir=compile_dir,
+                encoder_ctx_len=encoder_ctx_len,
+                batch_size=batch_size,
+                full_batch_size=full_batch_size,
+                use_onnx_subfunctions=use_onnx_subfunctions,
+            )
 
         target_dtype = getattr(self.model.config, "torch_dtype", torch.float32)
         kv_cache_dtype = CUSTOM_IO_DTYPE_MAP[target_dtype]
@@ -5066,22 +5104,62 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             raise TypeError("Please run compile API first!")
 
         self._write_io_dir = os.path.join(os.path.dirname(self.onnx_path), "io_dir") if write_io else None
+        inputs = dict(inputs)
+        decoder_prompt = inputs.pop("decoder_input_ids", None)
 
-        inputs = self.auto_correct_inputs(inputs)
+        input_names = {input_info.name for input_info in self.model.get_inputs_info()}
+        if "feature_lengths" in input_names and "feature_lengths" not in inputs:
+            attention_mask = inputs.get("attention_mask")
+            if attention_mask is None:
+                raise RuntimeError("This model requires the processor attention_mask to derive feature_lengths")
+            inputs["feature_lengths"] = attention_mask.sum(dim=-1, dtype=torch.int64)
+
         if self.qpc_session is None:
             self.qpc_session = QAICInferenceSession(str(self.qpc_path), device_ids)
             self.batch_size = self.qpc_session.bindings[0].dims[0]
 
-        inputs["input_features"] = inputs["input_features"].numpy().astype(np.float16)
+        input_features = inputs.get("input_features")
+        if isinstance(input_features, torch.Tensor) and input_features.ndim == 3:
+            feature_binding = self.qpc_session.bindings[self.qpc_session.binding_index_map["input_features"]]
+            expected_feature_shape = tuple(feature_binding.dims)
+            if (
+                input_features.shape[1] != expected_feature_shape[1]
+                and input_features.shape[2] == expected_feature_shape[1]
+            ):
+                input_features = input_features.transpose(1, 2)
+            if input_features.shape[:2] != expected_feature_shape[:2]:
+                raise RuntimeError(
+                    f"input_features must have batch/mel dimensions {expected_feature_shape[:2]}, "
+                    f"got {tuple(input_features.shape[:2])}"
+                )
+            feature_padding = expected_feature_shape[2] - input_features.shape[2]
+            if feature_padding < 0:
+                raise RuntimeError(
+                    f"input_features length {input_features.shape[2]} exceeds compiled length {expected_feature_shape[2]}"
+                )
+            if feature_padding:
+                input_features = torch.nn.functional.pad(input_features, (0, feature_padding))
+            inputs["input_features"] = input_features
 
-        # add start token id and initial position ids to inputs
-        seq_len = 1
-        inputs["input_ids"] = (
-            torch.ones((self.batch_size, seq_len), dtype=torch.int64) * self.model.config.decoder_start_token_id
-        ).numpy()
-        inputs["position_ids"] = (
-            torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(self.batch_size, 1).numpy()
-        )
+        inputs = self.auto_correct_inputs(inputs)
+        inputs["input_features"] = inputs["input_features"].numpy().astype(np.float16)
+        if "feature_lengths" in inputs:
+            inputs["feature_lengths"] = inputs["feature_lengths"].numpy().astype(np.int64)
+
+        if decoder_prompt is None:
+            decoder_prompt = torch.full(
+                (self.batch_size, 1), self.model.config.decoder_start_token_id, dtype=torch.int64
+            )
+        if isinstance(decoder_prompt, torch.Tensor):
+            decoder_prompt = decoder_prompt.detach().cpu().numpy()
+        decoder_prompt = np.asarray(decoder_prompt, dtype=np.int64)
+        if decoder_prompt.ndim != 2 or decoder_prompt.shape[0] != self.batch_size:
+            raise RuntimeError(
+                f"decoder_input_ids must have shape ({self.batch_size}, prompt_length), got {decoder_prompt.shape}"
+            )
+        prompt_length = decoder_prompt.shape[1]
+        if prompt_length == 0:
+            raise RuntimeError("decoder_input_ids must contain at least one prompt token")
 
         self.qpc_session.skip_buffers(
             [x for x in self.qpc_session.input_names + self.qpc_session.output_names if is_retained_state_name(x)]
@@ -5092,47 +5170,50 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         }
         self.qpc_session.set_buffers(outputs)
 
-        # encoder run
+        # Run the encoder with the first prompt token, then consume any remaining
+        # processor prompt tokens through cached decode before generation starts.
         start = perf_counter()
-        outputs = self.qpc_session.run(inputs)
+        outputs = None
+        for prompt_position in range(prompt_length):
+            inputs["input_ids"] = decoder_prompt[:, prompt_position : prompt_position + 1]
+            inputs["position_ids"] = np.full((self.batch_size, 1), prompt_position, dtype=np.int64)
+            outputs = self.qpc_session.run(inputs)
+            if self._write_io_dir is not None:
+                stage = "prefill" if prompt_position == 0 else f"prompt_{prompt_position}"
+                write_io_files(inputs, outputs, self._write_io_dir, stage, "aic_batch_io", True, False)
+            inputs["input_features"] = np.zeros((self.batch_size, self.model.config.num_mel_bins, 1), dtype=np.float16)
 
-        if self._write_io_dir is not None:
-            write_io_files(inputs, outputs, self._write_io_dir, "prefill", "aic_batch_io", True, False)
-
-        # array to hold generated tokens
-        generated_ids = np.full((self.batch_size, generation_len + 1), self.model.config.eos_token_id)
-        generated_ids[:, 0] = [self.model.config.decoder_start_token_id]
-        logits = outputs["logits"]
-        next_token = logits.argmax(-1)
-        generated_ids[:, 1] = next_token.squeeze(1)
-
-        if streamer:
-            streamer.put(next_token)
-
-        inputs["input_features"] = np.zeros((self.batch_size, self.model.config.num_mel_bins, 1)).astype(np.float16)
-
+        generated_ids = np.full(
+            (self.batch_size, prompt_length + generation_len), self.model.config.eos_token_id, dtype=np.int64
+        )
+        generated_ids[:, :prompt_length] = decoder_prompt
+        finished = np.zeros(self.batch_size, dtype=bool)
         loop_start = perf_counter()
-        for num_tokens in range(generation_len):
+        generated_count = 0
+        for generated_index in range(generation_len):
+            logits = outputs["logits"]
+            next_token = logits.argmax(-1).reshape(self.batch_size).astype(np.int64)
+            next_token = np.where(finished, self.model.config.eos_token_id, next_token)
+            generated_ids[:, prompt_length + generated_index] = next_token
+            generated_count = generated_index + 1
+            finished |= next_token == self.model.config.eos_token_id
+
+            if streamer:
+                streamer.put(next_token[:, None])
+            if finished.all() or generated_count == generation_len:
+                break
+
+            inputs["input_ids"] = np.where(finished, self.model.config.eos_token_id, next_token)[:, None]
+            inputs["position_ids"] = np.full((self.batch_size, 1), prompt_length + generated_index, dtype=np.int64)
             outputs = self.qpc_session.run(inputs)
             if self._write_io_dir is not None:
                 write_io_files(inputs, outputs, self._write_io_dir, "decode", "aic_batch_io", True, False)
                 self._write_io_dir = None
-
-            logits = outputs["logits"]
-            next_token = logits.argmax(-1)
-            generated_ids[:, num_tokens + 1] = next_token.squeeze(1)
-
-            if next_token[0][0] == self.model.config.eos_token_id:
-                break
-
-            inputs["input_ids"] = next_token
-            inputs["position_ids"] += 1
-
-            if streamer:
-                streamer.put(next_token)
         end = perf_counter()
 
-        prefill_time, decode_perf, total_perf, total_time = calculate_latency(num_tokens, loop_start, start, end)
+        prefill_time, decode_perf, total_perf, total_time = calculate_latency(
+            max(generated_count - 1, 0), loop_start, start, end
+        )
 
         return CloudAI100ExecInfoNew(
             batch_size=self.batch_size,
