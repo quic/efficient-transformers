@@ -23,6 +23,7 @@ from QEfficient.base.onnx_transforms import (
     BaseOnnxTransform,
     CustomOpTransform,
     FP16ClipTransform,
+    LocalizeFunctionReduceSumAxesTransform,
     OnnxTransformPipeline,
     PruneFakeInitializersTransform,
     RenameFunctionOutputsTransform,
@@ -925,6 +926,8 @@ class QEFFBaseModel(ABC):
             "layer_idx": idx,
         }
         _onnx_transforms = [SplitTensorsTransform, CustomOpTransform, RenameFunctionOutputsTransform]
+        if export_kwargs.get("use_onnx_subfunctions", False):
+            _onnx_transforms.append(LocalizeFunctionReduceSumAxesTransform)
         onnx_transforms = OnnxTransformPipeline(transforms=_onnx_transforms)
         model, transformed = onnx_transforms.apply(model, **transform_kwargs)
 
