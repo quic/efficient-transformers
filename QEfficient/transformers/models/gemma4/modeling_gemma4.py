@@ -23,8 +23,10 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4TextDecoderLayer,
     Gemma4TextExperts,
     Gemma4TextModel,
+    Gemma4TextRotaryEmbedding,
     Gemma4TextRouter,
     Gemma4VisionAttention,
+    Gemma4VisionRotaryEmbedding,
     apply_rotary_pos_emb,
     eager_attention_forward,
     repeat_kv,
@@ -234,6 +236,62 @@ def eager_attention_forward_text(
     attn_output = attn_output.transpose(1, 2).contiguous()
 
     return attn_output, attn_weights
+
+
+class QEffGemma4TextRotaryEmbedding(Gemma4TextRotaryEmbedding):
+    def __init__(self, config, device=None):
+        super().__init__(config=config, device=device)
+        self._max_seq_len_cached = min(config.max_position_embeddings, constants.GEMMA4_TEXT_MAX_POSITION_EMBEDDINGS)
+        for layer_type in self.layer_types:
+            self._set_cos_sin_cache(layer_type=layer_type, seq_len=self._max_seq_len_cached, device=device)
+
+    def _set_cos_sin_cache(self, layer_type: str, seq_len: int, device=None):
+        inv_freq = getattr(self, f"{layer_type}_inv_freq")
+        attention_scaling = getattr(self, f"{layer_type}_attention_scaling")
+        dev = device if device is not None else inv_freq.device
+        t = torch.arange(seq_len, device=dev, dtype=torch.int64).float()
+        freqs = torch.outer(t, inv_freq.float().to(dev))
+        emb = torch.cat((freqs, freqs), dim=-1)
+
+        cos = emb.cos() * attention_scaling
+        sin = emb.sin() * attention_scaling
+        self.register_buffer(f"{layer_type}_cos_cached", cos, persistent=False)
+        self.register_buffer(f"{layer_type}_sin_cached", sin, persistent=False)
+
+    def forward(self, x, position_ids, layer_type=None):
+        cos_cached = getattr(self, f"{layer_type}_cos_cached")
+        sin_cached = getattr(self, f"{layer_type}_sin_cached")
+        cos = cos_cached[position_ids].to(dtype=x.dtype)
+        sin = sin_cached[position_ids].to(dtype=x.dtype)
+        return cos, sin
+
+
+class QEffGemma4VisionRotaryEmbedding(Gemma4VisionRotaryEmbedding):
+    def __init__(self, config, device=None):
+        super().__init__(config=config, device=device)
+        self._max_seq_len_cached = min(config.max_position_embeddings, constants.GEMMA4_VISION_MAX_POSITION_EMBEDDINGS)
+        self._set_cos_sin_cache(seq_len=self._max_seq_len_cached, device=device)
+
+    def _set_cos_sin_cache(self, seq_len: int, device=None):
+        dev = device if device is not None else self.inv_freq.device
+        t = torch.arange(seq_len, device=dev, dtype=torch.int64).float()
+        freqs = torch.outer(t, self.inv_freq.float().to(dev))
+        emb = torch.cat((freqs, freqs), dim=-1)
+
+        cos = emb.cos() * self.attention_scaling
+        sin = emb.sin() * self.attention_scaling
+        self.register_buffer("cos_cached", cos, persistent=False)
+        self.register_buffer("sin_cached", sin, persistent=False)
+
+    def forward(self, x, position_ids):
+        all_cos, all_sin = [], []
+        for i in range(2):
+            dim_position_ids = position_ids[:, :, i]
+            all_cos.append(self.cos_cached[dim_position_ids])
+            all_sin.append(self.sin_cached[dim_position_ids])
+        cos = torch.cat(all_cos, dim=-1).to(dtype=x.dtype)
+        sin = torch.cat(all_sin, dim=-1).to(dtype=x.dtype)
+        return cos, sin
 
 
 class QEffGemma4TextRouter(Gemma4TextRouter):
@@ -816,6 +874,13 @@ class QEffGemma4TextDecoderLayer(Gemma4TextDecoderLayer):
 
 
 class QEffGemma4TextModel(Gemma4TextModel):
+    def __qeff_init__(self):
+        # Rebuild rotary_emb with the static per-layer_type cos/sin cache
+        # (see QEffGemma4TextRotaryEmbedding docstring for rationale). Mirrors
+        # the QEffLlamaModel/QEffMistralModel.__qeff_init__ pattern already
+        # used elsewhere in this codebase.
+        self.rotary_emb = QEffGemma4TextRotaryEmbedding(config=self.config)
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -1337,6 +1402,10 @@ class QEffGemma4EncoderWrapper(nn.Module):
             self.model.config,
             "mm_tokens_per_image",
             getattr(self.model.config.vision_config, "default_output_length", 280),
+        )
+
+        self.model.model.vision_tower.encoder.rotary_emb = QEffGemma4VisionRotaryEmbedding(
+            config=self.model.model.vision_tower.encoder.config
         )
 
     def get_submodules_for_export(self) -> Type[nn.Module]:
