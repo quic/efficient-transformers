@@ -127,3 +127,32 @@ def ctx_gather_cb_3d(data: torch.Tensor, batch_index: torch.Tensor, ctx_indices:
     return select_interface(CtxGatherFuncCB3D.apply, torch.ops.qefficient.ctx_gather_cb_3d)(
         data, batch_index, ctx_indices
     )
+
+
+# ---------------------------------------------------------------------------
+# Interface functions for FP8 dequantize ops
+# ---------------------------------------------------------------------------
+
+
+def fp8_dequantize_per_tensor(weight: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    from QEfficient.customop.fp8_dequantize import FP8DequantizePerTensorFunc
+
+    return select_interface(FP8DequantizePerTensorFunc.apply, torch.ops.qefficient.fp8_dequantize_per_tensor)(
+        weight, scale
+    )
+
+
+def fp8_dequantize_per_axis(weight: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    from QEfficient.customop.fp8_dequantize import FP8DequantizePerAxisFunc
+
+    return select_interface(FP8DequantizePerAxisFunc.apply, torch.ops.qefficient.fp8_dequantize_per_axis)(weight, scale)
+
+
+def fp8_dequantize_blocked(
+    weight: torch.Tensor, scale: torch.Tensor, row_block_size: int, col_block_size: int
+) -> torch.Tensor:
+    from QEfficient.customop.fp8_dequantize import FP8DequantizeBlockedFunc
+
+    return select_interface(FP8DequantizeBlockedFunc.apply, torch.ops.qefficient.fp8_dequantize_blocked)(
+        weight, scale, row_block_size, col_block_size
+    )

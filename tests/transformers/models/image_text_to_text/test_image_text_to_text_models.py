@@ -9,7 +9,6 @@ import copy
 import json
 import os
 from io import BytesIO
-from typing import List, Optional
 
 import pytest
 import requests
@@ -26,6 +25,7 @@ from transformers import (
 from urllib3.util.retry import Retry
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
+from QEfficient.transformers.quantizers.auto import replace_transformers_quantizers
 from QEfficient.utils._utils import create_json
 from QEfficient.utils.constants import QnnConstants
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
@@ -63,21 +63,22 @@ NEW_GENERATION_TOKENS = 10
 def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
     model_name: str,
     manual_cleanup: callable,
-    num_hidden_layers: Optional[int] = -1,
-    kv_offload: Optional[bool] = False,
-    num_devices: Optional[int] = 1,
-    enable_qnn: Optional[bool] = False,
-    qnn_config: Optional[str] = None,
-    config: Optional[AutoConfig] = None,
-    qaic_config: Optional[dict] = None,
-    test_kv_replicate: Optional[bool] = None,
-    torch_dtype: Optional[torch.dtype] = torch.float32,
-    compare_results: Optional[bool] = False,
+    num_hidden_layers: int | None = -1,
+    kv_offload: bool | None = False,
+    num_devices: int | None = 1,
+    enable_qnn: bool | None = False,
+    qnn_config: str | None = None,
+    config: AutoConfig | None = None,
+    qaic_config: dict | None = None,
+    test_kv_replicate: bool | None = None,
+    torch_dtype: torch.dtype | None = torch.float32,
+    compare_results: bool | None = False,
     compile_only: bool = False,
-    mdp_num_partitions: Optional[int] = None,
-    mdp_strategy: Optional[str] = None,
+    mdp_num_partitions: int | None = None,
+    mdp_strategy: str | None = None,
     use_onnx_subfunctions: bool = False,
 ):
+    replace_transformers_quantizers()
     prompt_len = model_config_dict[model_name]["prompt_len"]
     ctx_len = model_config_dict[model_name]["ctx_len"]
     img_size = model_config_dict[model_name].get("img_size")
@@ -203,7 +204,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
             questions.append(question)
 
         pixel_values = torch.cat(pixel_values, dim=0)
-        messages: List[List[str]] = []
+        messages: list[list[str]] = []
         roles = ("<|im_start|>user\n", "<|im_start|>assistant\n")
         prompt = processor(pixel_values, questions, messages, roles, num_patches_list=num_patches_list)
         inputs = tokenizer(prompt, return_tensors="pt")
