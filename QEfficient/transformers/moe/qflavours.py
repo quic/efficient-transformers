@@ -12,9 +12,9 @@ from dataclasses import dataclass
 
 import torch
 
-from QEfficient.customop.ctx_scatter_gather import (
-    CtxGatherFunc3DGeneralized,
-    CtxScatterFunc3DGeneralized,
+from QEfficient.customop import (
+    ctx_gather_3d_generalized,
+    ctx_scatter_3d_generalized,
 )
 from QEfficient.customop.quantization_ops import CastToUInt4Func, DequantizeLinearFunc
 from QEfficient.transformers.moe.flavours import build_matched_idx_from_cumsum
@@ -149,7 +149,7 @@ def _cumsum_scatter_gather_update_quantized_expert(
 
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
-        x_chunk = CtxGatherFunc3DGeneralized.apply(x_expanded, chunk_matched_idx)
+        x_chunk = ctx_gather_3d_generalized(x_expanded, chunk_matched_idx)
 
         gate_proj_dq = _dequantize_projection(gate_qweight, gate_scales, gate_qzeros, group_size)
         up_proj_dq = _dequantize_projection(up_qweight, up_scales, up_qzeros, group_size)
@@ -160,8 +160,8 @@ def _cumsum_scatter_gather_update_quantized_expert(
         hidden = act_fn(gate_out) * up_out
         down_out = torch.bmm(hidden, down_proj_dq.transpose(1, 2).to(x_chunk.dtype))
 
-        rw_chunk = CtxGatherFunc3DGeneralized.apply(routing_weight, chunk_matched_idx)
-        old_expert_out = CtxGatherFunc3DGeneralized.apply(expert_out, chunk_matched_idx)
+        rw_chunk = ctx_gather_3d_generalized(routing_weight, chunk_matched_idx)
+        old_expert_out = ctx_gather_3d_generalized(expert_out, chunk_matched_idx)
         valid_rows_delta = valid_rows - packed_start
         chunk_valid_rows = torch.where(
             valid_rows_delta < 0,
@@ -181,7 +181,7 @@ def _cumsum_scatter_gather_update_quantized_expert(
             * rw_chunk
         )
         updated_chunk = old_expert_out + current_expert_out
-        expert_out = CtxScatterFunc3DGeneralized.apply(expert_out, chunk_matched_idx, updated_chunk)
+        expert_out = ctx_scatter_3d_generalized(expert_out, chunk_matched_idx, updated_chunk)
 
     return expert_out
 

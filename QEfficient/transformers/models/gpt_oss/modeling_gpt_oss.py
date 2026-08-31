@@ -37,7 +37,7 @@ from QEfficient.blocking.attention_blocking import (
     generic_blocked_attention_interface,
     past_key_value_update,
 )
-from QEfficient.transformers.cache_utils import QEffHybridCacheForGPTOSS
+from QEfficient.transformers.cache_utils import QEffGPTOSSHybridCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.transformers.moe import (
     MoEFlavour,
@@ -50,6 +50,17 @@ from QEfficient.transformers.moe import (
 )
 from QEfficient.utils.constants import MIN_MASKED_ATTENTION_VALUE
 from QEfficient.utils.logging_utils import logger
+
+
+def override_gptoss_prefill_chunking(
+    config, prefill_only: Optional[bool], enable_chunking: Optional[bool]
+) -> Optional[bool]:
+    if prefill_only is True and enable_chunking is False and getattr(config, "model_type", None) == "gpt_oss":
+        logger.warning(
+            "For gpt_oss, chunking is always enabled for prefill-only mode; overriding enable_chunking=True."
+        )
+        return True
+    return enable_chunking
 
 
 class QEffGptOssExperts(GptOssExperts):
@@ -596,6 +607,19 @@ def opt_eager_attention_forward_blocked(
     return output, output
 
 
+def _prepare_gpt_oss_sliding_chunked_attention_mask(
+    sliding_mask: torch.Tensor,
+    position_ids: torch.LongTensor,
+    sliding_window: int,
+) -> torch.Tensor:
+    ctx_len = position_ids.shape[1] + sliding_window
+    ctx_indices = torch.arange(ctx_len, device=position_ids.device)
+    first_pos_idx = position_ids[0][0]
+    add_idx = torch.where(first_pos_idx >= sliding_window, first_pos_idx - sliding_window, 0)
+    ctx_indices += add_idx
+    return sliding_mask[:, :, :, ctx_indices]
+
+
 class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
@@ -609,7 +633,6 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        sliding_mask=None,
         cos_cached: Optional[torch.Tensor] = None,
         sin_cached: Optional[torch.Tensor] = None,
         **kwargs: Unpack[TransformersKwargs],
@@ -645,20 +668,6 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
                     key_states, value_states, self.layer_idx, cache_kwargs
                 )
 
-        if self.sliding_window is not None:
-            attention_mask = sliding_mask
-            # positive_pos_ids = torch.where(position_ids<0, 0, position_ids)
-            ctx_len = position_ids.shape[1] + self.sliding_window
-            ctx_indices = torch.arange(ctx_len)
-            first_pos_idx = position_ids[0][0]
-            add_idx = torch.where(first_pos_idx >= self.sliding_window, first_pos_idx - self.sliding_window, 0)
-            # start_idx = torch.where(first_pos_idx>=self.sliding_window, first_pos_idx-self.sliding_window, 0)
-            # end_idx = torch.where(first_pos_idx >= self.sliding_window, first_pos_idx+position_ids.shape[1], position_ids.shape[1]+self.sliding_window)
-            ctx_indices += add_idx
-            attention_mask = attention_mask[:, :, :, ctx_indices]
-        else:
-            attention_mask = attention_mask
-
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = blocking_config is not None and blocking_config.mode.is_prefill and (self.sliding_window is None)
 
@@ -666,6 +675,7 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
             attention_interface = generic_blocked_attention_interface
         else:
             attention_interface: Callable = eager_attention_forward
+
         attn_output, attn_weights = attention_interface(
             self,
             query_states,
@@ -703,7 +713,6 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        sliding_mask=None,
         cos_cached: Optional[torch.Tensor] = None,
         sin_cached: Optional[torch.Tensor] = None,
         **kwargs: Unpack[TransformersKwargs],
@@ -725,11 +734,11 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
                 "position_ids": position_ids,
                 "config": self.config,
                 "is_sliding": self.sliding_window is not None,
-                "sliding_window": past_key_values.sliding_window_len,
+                "sliding_window": past_key_values.get_sliding_window_len(),
             }
             if self.sliding_window is not None:
-                sliding_window_len = past_key_values.sliding_window_len
-                short_read_idx = torch.arange(past_key_values.key_cache[self.layer_idx].shape[2])
+                sliding_window_len = past_key_values.get_sliding_window_len()
+                short_read_idx = torch.arange(past_key_values.layers[self.layer_idx].keys.shape[2])
                 read_idx = short_read_idx + torch.where(
                     position_ids.max() > sliding_window_len - 1, position_ids.max() - sliding_window_len + 1, 0
                 )
@@ -739,12 +748,8 @@ class QEffPrefillOnlyGptOssAttention(GptOssAttention):
                 v_cache = value_states[:, :, read_idx, :]
             else:
                 k_cache, v_cache = key_states, value_states
-            _, _ = past_key_values.write_only(k_cache, v_cache, self.layer_idx, cache_kwargs)
 
-        if self.sliding_window is not None:
-            attention_mask = sliding_mask
-        else:
-            attention_mask = attention_mask
+            _, _ = past_key_values.write_only(k_cache, v_cache, self.layer_idx, cache_kwargs)
 
         if os.environ.get("ENABLE_OPT_SWA", "0") == "1":
             attention_interface: Callable = opt_eager_attention_forward_blocked
@@ -781,7 +786,6 @@ class QEffGptOssAttention(GptOssAttention):
         comp_ctx_lengths: Optional[torch.LongTensor] = None,
         batch_index: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        sliding_mask=None,
         cos_cached: Optional[torch.Tensor] = None,
         sin_cached: Optional[torch.Tensor] = None,
         **kwargs: Unpack[TransformersKwargs],
@@ -794,9 +798,6 @@ class QEffGptOssAttention(GptOssAttention):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         past_seen_tokens = past_key_values.get_seq_length(self.layer_idx) if past_key_values is not None else 0
         query_states, key_states = qeff_apply_rotary_pos_emb(query_states, key_states, cos_cached, sin_cached)
-
-        if self.sliding_window is not None:
-            attention_mask = sliding_mask
 
         blocking_config = getattr(self, "attn_blocking_config", AttentionBlockingConfig())
         use_blocking = (
@@ -815,7 +816,7 @@ class QEffGptOssAttention(GptOssAttention):
                 layer_idx=self.layer_idx,
                 past_key_value=past_key_values,
                 blocking_config=blocking_config,
-                comp_ctx_length=comp_ctx_lengths,
+                comp_ctx_lengths=comp_ctx_lengths,
                 batch_index=batch_index,
                 position_ids=position_ids,
                 past_seen_tokens=past_seen_tokens,
@@ -865,7 +866,6 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
-        sliding_mask=None,
         sin_cached=None,
         cos_cached=None,
         **kwargs: Unpack[TransformersKwargs],
@@ -883,7 +883,6 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
-            sliding_mask=sliding_mask,
             sin_cached=sin_cached,
             cos_cached=cos_cached,
             **kwargs,
@@ -900,9 +899,6 @@ class QEffGptOssDecoderLayer(GptOssDecoderLayer):
 
         if output_attentions:
             outputs += (self_attn_weights,)
-
-        if use_cache:
-            outputs += (present_key_value,)
 
         return outputs
 
@@ -942,7 +938,7 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            past_key_values = QEffHybridCacheForGPTOSS.from_legacy_cache(self.config, past_key_values)
+            past_key_values = QEffGPTOSSHybridCache.from_legacy_cache(self.config, past_key_values)
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -955,13 +951,13 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        # target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.max_cache_len)
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.get_max_cache_len())
         sliding_mask = _create_causal_mask(
             position_ids=position_ids,
-            target_length=past_key_values.max_cache_len,
+            target_length=past_key_values.get_max_cache_len(),
             sliding_window=self.config.sliding_window,
         )
+
         hidden_states = inputs_embeds
 
         # decoder layers
@@ -969,21 +965,33 @@ class QEffPrefillOnlyGptOssModel(GptOssModel):
         all_self_attns = () if output_attentions else None
         sin = self.sin_cached[position_ids].unsqueeze(1)
         cos = self.cos_cached[position_ids].unsqueeze(1)
+        layer_sliding_mask = sliding_mask
+        if isinstance(self.layers[0].self_attn, QEffPrefillOnlyChunkedGptOssAttention):
+            layer_sliding_mask = _prepare_gpt_oss_sliding_chunked_attention_mask(
+                sliding_mask=sliding_mask,
+                position_ids=position_ids,
+                sliding_window=self.config.sliding_window,
+            )
 
         for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
+            self_attn = decoder_layer.self_attn
+            if self_attn.sliding_window is None:
+                layer_attention_mask = causal_mask
+            else:
+                layer_attention_mask = layer_sliding_mask
+
             layer_outputs = decoder_layer(
                 hidden_states,
-                attention_mask=causal_mask,
+                attention_mask=layer_attention_mask,
                 position_ids=position_ids,
                 past_key_value=past_key_values,
                 batch_index=batch_index,
                 use_cache=use_cache,
                 output_attentions=output_attentions,
                 cache_position=cache_position,
-                sliding_mask=sliding_mask,
                 sin_cached=sin,
                 cos_cached=cos,
                 **kwargs,
@@ -1043,7 +1051,7 @@ class QEffGptOssModel(GptOssModel):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            past_key_values = QEffHybridCacheForGPTOSS.from_legacy_cache(self.config, past_key_values)
+            past_key_values = QEffGPTOSSHybridCache.from_legacy_cache(self.config, past_key_values)
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -1056,12 +1064,11 @@ class QEffGptOssModel(GptOssModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        # target_length = attention_mask.shape[-1] if isinstance(attention_mask, torch.Tensor) else past_seen_tokens
-        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.max_cache_len)
+        causal_mask = _create_causal_mask(position_ids=position_ids, target_length=past_key_values.get_max_cache_len())
         sliding_mask = _create_causal_mask(
             position_ids=position_ids,
-            target_length=past_key_values.sliding_window_len,
-            sliding_window=past_key_values.sliding_window_len,
+            target_length=past_key_values.get_sliding_window_len(),
+            sliding_window=past_key_values.get_sliding_window_len(),
         )
 
         hidden_states = inputs_embeds
@@ -1076,9 +1083,15 @@ class QEffGptOssModel(GptOssModel):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
+            self_attn = decoder_layer.self_attn
+            if self_attn.sliding_window is None:
+                layer_attention_mask = causal_mask
+            else:
+                layer_attention_mask = sliding_mask
+
             layer_outputs = decoder_layer(
                 hidden_states,
-                attention_mask=causal_mask,
+                attention_mask=layer_attention_mask,
                 position_ids=position_ids,
                 past_key_value=past_key_values,
                 comp_ctx_lengths=comp_ctx_lengths,
@@ -1086,7 +1099,6 @@ class QEffGptOssModel(GptOssModel):
                 use_cache=use_cache,
                 output_attentions=output_attentions,
                 cache_position=cache_position,
-                sliding_mask=sliding_mask,
                 sin_cached=sin,
                 cos_cached=cos,
                 **kwargs,
