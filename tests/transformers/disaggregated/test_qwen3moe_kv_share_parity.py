@@ -109,7 +109,7 @@ def _compile_sessions(
         ctx_len=CTX_LEN,
         full_batch_size=FULL_BATCH_SIZE,
         num_cores=NUM_CORES,
-        moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": MOE_PREFILL_PACKED_CHUNK_SIZE}},
         num_devices=prefill_num_devices,
         mdp_num_partitions=stages,
         split_retained_state_io=True,
