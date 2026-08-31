@@ -11,6 +11,8 @@ import warnings
 from pathlib import Path
 from time import perf_counter
 
+from typing import Callable, Dict, List, Optional, Tuple, Type, Union
+
 import numpy as np
 import onnx
 import torch
@@ -259,7 +261,7 @@ def _add_retained_state_custom_io(
     custom_io[compiler_output_name] = dtype
 
 
-def _filter_custom_io_for_onnx(custom_io: dict, onnx_path: str | Path | None) -> dict:
+def _filter_custom_io_for_onnx(custom_io: dict, onnx_path: Optional[Union[str, Path]]) -> dict:
     """Keep custom-IO entries that exist in the ONNX graph.
 
     Layerwise stitched graphs may prefix I/O names (for example ``layer_0/``)
@@ -277,7 +279,7 @@ def _filter_custom_io_for_onnx(custom_io: dict, onnx_path: str | Path | None) ->
     io_names = {value.name for value in list(model.graph.input) + list(model.graph.output)}
     basename_to_name = {name.rsplit("/", 1)[-1]: name for name in io_names}
 
-    def resolve_name(name: str) -> str | None:
+    def resolve_name(name: str) -> Optional[str]:
         candidates = [name]
         if name.endswith("_InternalRetainedState"):
             candidates.append(name[: -len("_InternalRetainedState")] + "_RetainedState")
@@ -554,7 +556,7 @@ class QEFFAutoModel(QEFFTransformersBase):
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: str | None = None, **kwargs) -> str:
+    def export(self, export_dir: Optional[str] = None, **kwargs) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -596,10 +598,10 @@ class QEFFAutoModel(QEFFTransformersBase):
 
     def compile(
         self,
-        onnx_path: str | None = None,
-        compile_dir: str | None = None,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
         *,
-        seq_len: int | list[int] = 32,
+        seq_len: Union[int, List[int]] = 32,
         batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
@@ -689,11 +691,11 @@ class QEFFAutoModel(QEFFTransformersBase):
     def generate(
         self,
         inputs: torch.Tensor,
-        device_ids: list[int] = None,
+        device_ids: List[int] = None,
         runtime_ai100: bool = True,
         write_io: bool = False,
-        dtype: torch.dtype | None = torch.float32,
-    ) -> torch.Tensor | np.ndarray:
+        dtype: Optional[torch.dtype] = torch.float32,
+    ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generate output by executing the compiled QPC on Cloud AI 100 hardware or using PyTorch runtime.
 
@@ -731,8 +733,8 @@ class QEFFAutoModel(QEFFTransformersBase):
     def cloud_ai_100_feature_generate(
         self,
         inputs: torch.Tensor,
-        device_ids: list[int] = None,
-        dtype: torch.dtype | None = torch.float32,
+        device_ids: List[int] = None,
+        dtype: Optional[torch.dtype] = torch.float32,
     ) -> np.ndarray:
         """
         Generate features for a batch of inputs using the Cloud AI 100 hardware runtime.
@@ -805,7 +807,7 @@ class QEFFAutoModel(QEFFTransformersBase):
 
         return outputs
 
-    def pytorch_feature_generate(self, model, inputs: torch.Tensor | np.ndarray) -> list[torch.Tensor]:
+    def pytorch_feature_generate(self, model, inputs: Union[torch.Tensor, np.ndarray]) -> List[torch.Tensor]:
         """
         Generate features from a batch of inputs using the PyTorch model.
 
@@ -925,7 +927,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: str | None = None, **kwargs) -> str:
+    def export(self, export_dir: Optional[str] = None, **kwargs) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -967,10 +969,10 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
 
     def compile(
         self,
-        onnx_path: str | None = None,
-        compile_dir: str | None = None,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
         *,
-        seq_len: int | list[int] = 32,
+        seq_len: Union[int, List[int]] = 32,
         batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = 16,
@@ -1039,7 +1041,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
     def generate(
         self,
         inputs: torch.Tensor,
-        device_ids: list[int] = None,
+        device_ids: List[int] = None,
     ) -> dict:
         """
         Generate classification output using the Cloud AI 100 hardware runtime.
@@ -1244,7 +1246,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
     ]
     _onnx_transforms = []
 
-    def __init__(self, model, qaic_config: dict | None = None, **kwargs):
+    def __init__(self, model, qaic_config: Optional[dict] = None, **kwargs):
         """
         Initializes the language decoder component for multimodal models.
 
@@ -1271,9 +1273,9 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
 
     def __update_prefill_transform(
         self,
-        enable: bool | None = True,
-        enable_chunking: bool | None = False,
-        retain_full_kv: bool | None = False,
+        enable: Optional[bool] = True,
+        enable_chunking: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = False,
     ):
         if enable:
             if enable_chunking:
@@ -1294,10 +1296,10 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         dynamic_axes,
         export_dir=None,
         offload_pt_weights=True,
-        prefill_seq_len: int | None = None,
+        prefill_seq_len: Optional[int] = None,
         prefill_only: bool = False,
         enable_chunking: bool = False,
-        kv_cache_prefix: str | None = None,
+        kv_cache_prefix: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -1447,7 +1449,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self,
         model: nn.Module,
         continuous_batching: bool = False,
-        qaic_config: dict | None = None,
+        qaic_config: Optional[dict] = None,
         **kwargs,
     ):
         """
@@ -1487,7 +1489,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         self.lang_model.model, _ = SamplerTransform.apply(self.lang_model.model, qaic_config, **kwargs)
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: str, qaic_config: dict | None = None, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: str, qaic_config: Optional[dict] = None, **kwargs):
         """
         Load a QEfficient multimodal model for dual QPC from a pretrained HuggingFace model or local path.
 
@@ -1548,9 +1550,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
     def __update_prefill_transform(
         self,
-        enable: bool | None = True,
-        enable_chunking: bool | None = False,
-        retain_full_kv: bool | None = False,
+        enable: Optional[bool] = True,
+        enable_chunking: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = False,
     ):
         if enable:
             self.model, tf = PrefillOnlyExternalModuleMapperTransform.apply(self.model)
@@ -1568,18 +1570,18 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
     def export(
         self,
-        export_dir: str | None = None,
+        export_dir: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
-        skip_vision: bool | None = False,
-        skip_lang: bool | None = False,
-        prefill_seq_len: int | None = None,
+        skip_vision: Optional[bool] = False,
+        skip_lang: Optional[bool] = False,
+        prefill_seq_len: Optional[int] = None,
         prefill_only: bool = False,
         enable_chunking: bool = False,
         num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
-        kv_cache_prefix: str | None = None,
-        offload_pt_weights: bool | None = None,
+        kv_cache_prefix: Optional[str] = None,
+        offload_pt_weights: Optional[bool] = None,
         **kwargs,
     ) -> str:
         """
@@ -1714,11 +1716,11 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
     def transform(
         self,
-        ctx_len: int | None = None,
-        seq_len: int | None = None,
-        bs: int | None = 1,
+        ctx_len: Optional[int] = None,
+        seq_len: Optional[int] = None,
+        bs: Optional[int] = 1,
         num_devices: int = 1,
-        qaic_config: dict | None = None,
+        qaic_config: Optional[dict] = None,
         **compiler_options,
     ):
         self.vision_model.transform(
@@ -1867,32 +1869,32 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
     def compile(
         self,
-        img_size: int | None = None,
-        vision_onnx_path: str | None = None,
-        lang_onnx_path: str | None = None,
-        compile_dir: str | None = None,
+        img_size: Optional[int] = None,
+        vision_onnx_path: Optional[str] = None,
+        lang_onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
         *,
-        prefill_seq_len: int | None = None,
-        comp_ctx_lengths_prefill: list[int] | None = None,
-        comp_ctx_lengths_decode: list[int] | None = None,
-        ctx_len: int | None = None,
+        prefill_seq_len: Optional[int] = None,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
+        ctx_len: Optional[int] = None,
         batch_size: int = 1,
-        full_batch_size: int | None = None,
-        kv_cache_batch_size: int | None = None,
+        full_batch_size: Optional[int] = None,
+        kv_cache_batch_size: Optional[int] = None,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
-        skip_vision: bool | None = False,
-        skip_lang: bool | None = False,
+        skip_vision: Optional[bool] = False,
+        skip_lang: Optional[bool] = False,
         use_onnx_subfunctions: bool = False,
         prefill_only=None,
-        offload_pt_weights: bool | None = None,
+        offload_pt_weights: Optional[bool] = None,
         enable_chunking=False,
-        qaic_config: dict | None = None,
+        qaic_config: Optional[dict] = None,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
-        kv_cache_prefix: str | None = None,
+        kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ) -> str:
         """
@@ -2214,21 +2216,21 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
     def generate(
         self,
-        inputs: torch.Tensor | None = None,
+        inputs: Optional[torch.Tensor] = None,
         tokenizer: PreTrainedTokenizerFast | PreTrainedTokenizer = None,
-        processor: AutoImageProcessor | None = None,
-        images: list[str] = None,
-        prompts: list[str] = None,
-        streamer: TextStreamer | None = None,
-        device_ids: list[int] = None,
+        processor: Optional[AutoImageProcessor] = None,
+        images: List[str] = None,
+        prompts: List[str] = None,
+        streamer: Optional[TextStreamer] = None,
+        device_ids: List[int] = None,
         runtime_ai100: bool = True,
-        generation_len: int | None = None,
-        image_height: int | None = None,
-        image_width: int | None = None,
-        multi_specs: bool | None = None,
-        num_frames: int | None = None,
+        generation_len: Optional[int] = None,
+        image_height: Optional[int] = None,
+        image_width: Optional[int] = None,
+        multi_specs: Optional[bool] = None,
+        num_frames: Optional[int] = None,
         **kwargs,
-    ) -> torch.Tensor | np.ndarray:
+    ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generates output by executing the compiled QPC(s) on Cloud AI 100 Hardware cards.
 
@@ -2313,9 +2315,9 @@ class _QEffAutoModelForImageTextToTextDualQPC:
 
     def kv_offload_generate(
         self,
-        inputs: list[str] = None,
-        streamer: TextStreamer | None = None,
-        device_ids: list[int] = None,
+        inputs: List[str] = None,
+        streamer: Optional[TextStreamer] = None,
+        device_ids: List[int] = None,
         generation_len: int = None,
     ):
         """
@@ -2658,7 +2660,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
     def __init__(
         self,
         model: nn.Module,
-        qaic_config: dict | None = None,
+        qaic_config: Optional[dict] = None,
         **kwargs,
     ):
         """
@@ -2711,7 +2713,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
     def from_pretrained(
         cls,
         pretrained_model_name_or_path,
-        qaic_config: dict | None = None,
+        qaic_config: Optional[dict] = None,
         *args,
         **kwargs,
     ):
@@ -2764,9 +2766,9 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
     def __update_prefill_transform(
         self,
-        enable: bool | None = True,
-        enable_chunking: bool | None = False,
-        retain_full_kv: bool | None = False,
+        enable: Optional[bool] = True,
+        enable_chunking: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = False,
     ):
         if enable:
             if enable_chunking:
@@ -2782,12 +2784,12 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
     def export(
         self,
-        export_dir: str | None = None,
+        export_dir: Optional[str] = None,
         use_onnx_subfunctions: bool = False,
-        prefill_seq_len: int | None = None,
+        prefill_seq_len: Optional[int] = None,
         prefill_only: bool = False,
         enable_chunking: bool = False,
-        kv_cache_prefix: str | None = None,
+        kv_cache_prefix: Optional[str] = None,
         **kwargs,
     ) -> str:
         """
@@ -2833,25 +2835,25 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
 
     def compile(
         self,
-        onnx_path: str | None = None,
-        img_size: int | None = None,
-        compile_dir: str | None = None,
+        onnx_path: Optional[str] = None,
+        img_size: Optional[int] = None,
+        compile_dir: Optional[str] = None,
         *,
-        prefill_seq_len: int | None = None,
-        ctx_len: int | None = None,
-        comp_ctx_lengths_prefill: list[int] | None = None,
-        comp_ctx_lengths_decode: list[int] | None = None,
+        prefill_seq_len: Optional[int] = None,
+        ctx_len: Optional[int] = None,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
         batch_size: int = 1,
-        full_batch_size: int | None = None,
-        kv_cache_batch_size: int | None = None,
+        full_batch_size: Optional[int] = None,
+        kv_cache_batch_size: Optional[int] = None,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
-        num_speculative_tokens: int | None = None,
+        num_speculative_tokens: Optional[int] = None,
         use_onnx_subfunctions: bool = False,
-        qaic_config: dict | None = None,
-        kv_cache_prefix: str | None = None,
+        qaic_config: Optional[dict] = None,
+        kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ) -> str:
         """
@@ -2994,12 +2996,12 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
     def generate(
         self,
         inputs: torch.Tensor,
-        streamer: TextStreamer | None = None,
-        device_ids: list[int] = None,
+        streamer: Optional[TextStreamer] = None,
+        device_ids: List[int] = None,
         runtime_ai100: bool = True,
-        generation_len: int | None = None,
+        generation_len: Optional[int] = None,
         write_io: bool = False,
-    ) -> torch.Tensor | np.ndarray:
+    ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generates output by executing the compiled single QPC on Cloud AI 100 Hardware cards.
 
@@ -3041,10 +3043,10 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
     def cloud_ai_100_generate(
         self,
         inputs: torch.Tensor,
-        device_ids: list[int],
+        device_ids: List[int],
         enable_debug_logs: bool = False,
         generation_len: int = None,
-        streamer: TextStreamer | None = None,
+        streamer: Optional[TextStreamer] = None,
     ) -> np.ndarray:
         """
         Performs generation for multimodal models using a single QPC on Cloud AI 100 hardware.
@@ -3310,9 +3312,9 @@ class QEFFAutoModelForImageTextToText:
     def __new__(
         self,
         model: nn.Module,
-        kv_offload: bool | None = True,
+        kv_offload: Optional[bool] = True,
         continuous_batching: bool = False,
-        qaic_config: dict | None = None,
+        qaic_config: Optional[dict] = None,
         **kwargs,
     ):
         """
@@ -3346,9 +3348,9 @@ class QEFFAutoModelForImageTextToText:
     def from_pretrained(
         cls,
         pretrained_model_name_or_path: str,
-        kv_offload: bool | None = None,
+        kv_offload: Optional[bool] = None,
         continuous_batching: bool = False,
-        qaic_config: dict | None = None,
+        qaic_config: Optional[dict] = None,
         layerwise: bool = False,
         **kwargs,
     ):
@@ -3482,9 +3484,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     def prefill(
         self,
-        enable: bool | None = True,
-        enable_chunking: bool | None = False,
-        retain_full_kv: bool | None = False,
+        enable: Optional[bool] = True,
+        enable_chunking: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = False,
     ):
         if enable:
             self.model, tf = PrefillOnlyExternalModuleMapperTransform.apply(self.model)
@@ -3502,9 +3504,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     def __update_prefill_transform(
         self,
-        enable: bool | None = True,
-        enable_chunking: bool | None = False,
-        retain_full_kv: bool | None = False,
+        enable: Optional[bool] = True,
+        enable_chunking: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = False,
     ):
         if enable:
             self.model, tf = PrefillOnlyExternalModuleMapperTransform.apply(self.model)
@@ -3524,8 +3526,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self,
         model: nn.Module,
         continuous_batching: bool = False,
-        qaic_config: dict | None = None,
-        max_seq_len_cached: int | None = None,
+        qaic_config: Optional[dict] = None,
+        max_seq_len_cached: Optional[int] = None,
         **kwargs,
     ):
         """
@@ -3613,8 +3615,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         cls,
         pretrained_model_name_or_path,
         continuous_batching: bool = False,
-        qaic_config: dict | None = None,
-        max_seq_len_cached: int | None = None,
+        qaic_config: Optional[dict] = None,
+        max_seq_len_cached: Optional[int] = None,
         layerwise: bool = False,
         weight_free: bool = False,
         *args,
@@ -3763,7 +3765,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         """
         return self.model.config.__dict__
 
-    def handle_gpt_oss_env_variable_legacy_burden(self, prefill_seq_len: int | None = None) -> int:
+    def handle_gpt_oss_env_variable_legacy_burden(self, prefill_seq_len: Optional[int] = None) -> int:
         num_q_blocks = (
             self.hash_params["blocking_kwargs"].num_q_blocks if self.hash_params.get("blocking_kwargs", None) else None
         )
@@ -3834,13 +3836,13 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     def export(
         self,
-        export_dir: str | None = None,
-        prefill_only: bool | None = False,
-        prefill_seq_len: int | None = None,
+        export_dir: Optional[str] = None,
+        prefill_only: Optional[bool] = False,
+        prefill_seq_len: Optional[int] = None,
         num_cores: int = constants.DEFAULT_AIC_NUM_CORES,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
-        kv_cache_prefix: str | None = None,
+        kv_cache_prefix: Optional[str] = None,
         dynamo: bool = False,
         **kwargs,
     ) -> str:
@@ -4216,10 +4218,10 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self,
         prefill_seq_len: int = 32,
         ctx_len: int = 128,
-        comp_ctx_lengths: int | None = None,
+        comp_ctx_lengths: Optional[int] = None,
         batch_size: int = 1,
-        kv_cache_batch_size: int | None = None,
-        full_batch_size: int | None = None,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
         **kwargs,
     ):
         """
@@ -4281,11 +4283,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self,
         prefill_seq_len: int = 32,
         ctx_len: int = 128,
-        comp_ctx_lengths: int | None = None,
+        comp_ctx_lengths: Optional[int] = None,
         batch_size: int = 1,
-        kv_cache_batch_size: int | None = None,
-        full_batch_size: int | None = None,
-        num_speculative_tokens: int | None = None,
+        kv_cache_batch_size: Optional[int] = None,
+        full_batch_size: Optional[int] = None,
+        num_speculative_tokens: Optional[int] = None,
         **kwargs,
     ):
         """
@@ -4342,29 +4344,29 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
     def compile(
         self,
-        onnx_path: str | None = None,
-        compile_dir: str | None = None,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
         *,
         prefill_seq_len: int = 32,
         ctx_len: int = 128,
-        comp_ctx_lengths_prefill: list[int] | None = None,
-        comp_ctx_lengths_decode: list[int] | None = None,
+        comp_ctx_lengths_prefill: Optional[List[int]] = None,
+        comp_ctx_lengths_decode: Optional[List[int]] = None,
         batch_size: int = 1,
-        full_batch_size: int | None = None,
-        kv_cache_batch_size: int | None = None,
+        full_batch_size: Optional[int] = None,
+        kv_cache_batch_size: Optional[int] = None,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
-        num_speculative_tokens: int | list[int] | None = None,
-        prefill_only: bool | None = None,
+        num_speculative_tokens: Optional[Union[int, List[int]]] = None,
+        prefill_only: Optional[bool] = None,
         use_onnx_subfunctions: bool = False,
-        offload_pt_weights: bool | None = True,
-        enable_chunking: bool | None = False,
-        retain_full_kv: bool | None = None,
+        offload_pt_weights: Optional[bool] = True,
+        enable_chunking: Optional[bool] = False,
+        retain_full_kv: Optional[bool] = None,
         layerwise: bool = False,
         layerwise_window_size: int = 1,
-        kv_cache_prefix: str | None = None,
+        kv_cache_prefix: Optional[str] = None,
         **compiler_options,
     ) -> str:
         """
@@ -4401,7 +4403,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             Use MXFP6 compression for weights. Default is False.
         mxint8_kv_cache : bool, optional
             Use MXINT8 compression for KV cache. Default is False.
-        num_speculative_tokens : int or list[int], optional
+        num_speculative_tokens : int or List[int], optional
             Proposal length(s) for Speculative Decoding Target Language Model.
             A plain int K is treated as ``[K]`` (backward compatible).
             Each value K generates a decode specialization with seq_len=K+1 and
@@ -4737,8 +4739,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     def generate(
         self,
         tokenizer: PreTrainedTokenizerFast | PreTrainedTokenizer,
-        prompts: list[str],
-        device_id: list[int] = None,
+        prompts: List[str],
+        device_id: List[int] = None,
         runtime_ai100: bool = True,
         **kwargs,
     ):
@@ -4799,7 +4801,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         else:
             raise NotImplementedError("Only AI_100 runtime is supported right now via generate API")
 
-    def check_and_get_num_speculative_tokens(self, num_speculative_tokens: int | None, prefill_seq_len: int):
+    def check_and_get_num_speculative_tokens(self, num_speculative_tokens: Optional[int], prefill_seq_len: int):
         """
         Validates and retrieves the number of speculative tokens for TLM models.
 
@@ -4927,7 +4929,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         """
         return self.model.config.__dict__
 
-    def export(self, export_dir: str | None = None, **kwargs) -> str:
+    def export(self, export_dir: Optional[str] = None, **kwargs) -> str:
         """
         Export the model to ONNX format using ``torch.onnx.export``.
 
@@ -4960,20 +4962,20 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
 
     def compile(
         self,
-        onnx_path: str | None = None,
-        compile_dir: str | None = None,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
         *,
-        prefill_seq_len: int | None = 1,
-        encoder_ctx_len: int | None = None,
+        prefill_seq_len: Optional[int] = 1,
+        encoder_ctx_len: Optional[int] = None,
         ctx_len: int = 150,
-        full_batch_size: int | None = None,
-        kv_cache_batch_size: int | None = None,
+        full_batch_size: Optional[int] = None,
+        kv_cache_batch_size: Optional[int] = None,
         batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
         mxfp6_matmul: bool = False,
         mxint8_kv_cache: bool = False,
-        num_speculative_tokens: int | None = None,
+        num_speculative_tokens: Optional[int] = None,
         use_onnx_subfunctions: bool = False,
         **compiler_options,
     ) -> str:
@@ -5092,10 +5094,10 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
         self,
         inputs: torch.Tensor,
         generation_len: int,
-        streamer: TextStreamer | None = None,
-        device_ids: list[int] = None,
+        streamer: Optional[TextStreamer] = None,
+        device_ids: List[int] = None,
         write_io: bool = False,
-    ) -> torch.Tensor | np.ndarray:
+    ) -> Union[torch.Tensor, np.ndarray]:
         """
         Generate output until ``<|endoftext|>`` token or `generation_len` is reached,
         by executing the compiled QPC on Cloud AI 100 hardware.
@@ -5317,7 +5319,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
     def get_model_config(self) -> dict:
         return self.model.config.__dict__
 
-    def export(self, export_dir: str | None = None, **kwargs) -> str:
+    def export(self, export_dir: Optional[str] = None, **kwargs) -> str:
         """
         Exports the model to ``ONNX`` format using ``torch.onnx.export``.
 
@@ -5350,10 +5352,10 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
 
     def compile(
         self,
-        onnx_path: str | None = None,
-        compile_dir: str | None = None,
+        onnx_path: Optional[str] = None,
+        compile_dir: Optional[str] = None,
         *,
-        seq_len: int | list[int] = 480000,
+        seq_len: Union[int, List[int]] = 480000,
         batch_size: int = 1,
         num_devices: int = 1,
         num_cores: int = 16,  # FIXME: Make this mandatory arg
@@ -5417,10 +5419,10 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         self,
         processor,
         inputs: torch.Tensor,
-        device_ids: list[int] = None,
+        device_ids: List[int] = None,
         runtime_ai100: bool = True,
         write_io: bool = False,
-    ) -> torch.Tensor | np.ndarray:
+    ) -> Union[torch.Tensor, np.ndarray]:
         """
         This method generates output by executing PyTorch runtime or the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
         ``Mandatory`` Args:
@@ -5448,7 +5450,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         self,
         processor,
         inputs: torch.Tensor,
-        device_ids: list[int] = None,
+        device_ids: List[int] = None,
     ) -> np.ndarray:
         """
         Generates features with list of prompts using AI 100 runtime.
@@ -5486,7 +5488,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
         transcriptions = processor.batch_decode(torch.tensor(predicted_ids))
         return transcriptions
 
-    def pytorch_feature_generate(self, processor, model, inputs: torch.Tensor | np.ndarray) -> list[torch.Tensor]:
+    def pytorch_feature_generate(self, processor, model, inputs: Union[torch.Tensor, np.ndarray]) -> List[torch.Tensor]:
         """
         Generates features from a list of text prompts using a PyTorch model.
 
