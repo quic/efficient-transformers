@@ -534,6 +534,7 @@ class QEffQwen3_5MoeAttention(Qwen3_5MoeAttention):
                 batch_index=batch_index,
                 position_ids=position_ids[0],
                 past_seen_tokens=past_seen_tokens,
+                prefill_only=blocking_config.mode.is_prefill,
             )
         else:
             if past_key_values is not None:
