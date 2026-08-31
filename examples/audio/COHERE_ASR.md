@@ -8,20 +8,25 @@ compiling again.
 
 - A Cloud AI 100 host with the Qualcomm AI SDK installed and `qaic-compile` on
   `PATH`.
-- A QEfficient Python environment.
+- A QEfficient release that includes Cohere ASR support.
 - An accessible AI 100 device. The examples below use device `0`.
 - Access to `CohereLabs/cohere-transcribe-03-2026` on Hugging Face.
 
-Clone the fork containing Cohere ASR support and activate the QEff environment:
+Install QEfficient using the standard repository setup:
 
 ```bash
-git clone <efficient-transformers-fork-url>
+git clone https://github.com/quic/efficient-transformers.git
 cd efficient-transformers
-git checkout feature/add-cohere_asr
 
-source <qeff-venv>/bin/activate
-export QEFF_HOME="$PWD/.qeff_cohere"
+python3.12 -m venv qeff_env
+source qeff_env/bin/activate
+pip install -U pip
+pip install -e .
 ```
+
+For an SDK-provided QEff environment, use the activation command supplied by
+your Cloud AI SDK installation instead. `QEFF_HOME` is optional: when it is
+unset, QEfficient uses its standard cache location.
 
 ## Compile and transcribe
 
