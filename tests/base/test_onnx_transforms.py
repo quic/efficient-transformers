@@ -7,9 +7,11 @@
 
 import numpy as np
 import onnx
+import pytest
 
 from QEfficient.base.onnx_transforms import (
     FP16ClipTransform,
+    LocalizeFunctionReduceSumAxesTransform,
     OnnxTransformPipeline,
     RenameWsubNodesTransform,
     SplitTensorsTransform,
@@ -112,6 +114,206 @@ def test_rename_wsub_nodes_transform():
         role.replace(".", "/") + "/" + op_type for role, op_type in weighted_ops
     ]
     assert not RenameWsubNodesTransform.apply(model)
+
+
+def _make_constant_node(output_name, values, dtype=np.int64):
+    tensor = onnx.numpy_helper.from_array(np.asarray(values, dtype=dtype), name=output_name)
+    return onnx.helper.make_node("Constant", inputs=[], outputs=[output_name], value=tensor)
+
+
+def _make_reduce_sum_function(function_name="QKNorm"):
+    reduce_node = onnx.helper.make_node("ReduceSum", ["x", "axes"], ["y"], keepdims=1)
+    return onnx.helper.make_function(
+        "qeff.test",
+        function_name,
+        ["x", "axes"],
+        ["y"],
+        [reduce_node],
+        [onnx.helper.make_opsetid("", 17)],
+    )
+
+
+def _reduced_shape(axes_value):
+    shape = [2, 3, 4, 5]
+    for axis in axes_value:
+        shape[axis] = 1
+    return shape
+
+
+def _make_reduce_sum_function_model(axes_values, function_name="QKNorm"):
+    constants = []
+    calls = []
+    inputs = []
+    outputs = []
+    for idx, axes_value in enumerate(axes_values):
+        x_name = f"x{idx}"
+        axes_name = f"axes{idx}"
+        y_name = f"y{idx}"
+        constants.append(_make_constant_node(axes_name, axes_value))
+        calls.append(onnx.helper.make_node(function_name, [x_name, axes_name], [y_name], domain="qeff.test"))
+        inputs.append(onnx.helper.make_tensor_value_info(x_name, onnx.TensorProto.FLOAT, [2, 3, 4, 5]))
+        outputs.append(onnx.helper.make_tensor_value_info(y_name, onnx.TensorProto.FLOAT, _reduced_shape(axes_value)))
+
+    graph = onnx.helper.make_graph(constants + calls, "g", inputs, outputs)
+    model = onnx.helper.make_model(
+        graph,
+        opset_imports=[onnx.helper.make_opsetid("", 17), onnx.helper.make_opsetid("qeff.test", 1)],
+        functions=[_make_reduce_sum_function(function_name)],
+    )
+    model.ir_version = 10
+    onnx.checker.check_model(model)
+    return model
+
+
+def _reduce_sum_axes_input(function):
+    reduce_sum = next(node for node in function.node if node.op_type == "ReduceSum")
+    return reduce_sum.input[1]
+
+
+def _constant_value_by_output(nodes, output_name):
+    for node in nodes:
+        if node.op_type != "Constant" or list(node.output) != [output_name]:
+            continue
+        value_attr = next(attr for attr in node.attribute if attr.name == "value")
+        return onnx.numpy_helper.to_array(value_attr.t)
+    raise AssertionError(f"Constant node producing {output_name!r} not found")
+
+
+class TestLocalizeFunctionReduceSumAxesTransform:
+    @pytest.mark.parametrize("axes", [[-1], [2], [2, 3]])
+    def test_localizes_constant_reduce_sum_axes(self, axes):
+        model = _make_reduce_sum_function_model([axes])
+
+        transformed = LocalizeFunctionReduceSumAxesTransform.apply(model)
+
+        assert transformed
+        function = model.functions[0]
+        call_node = next(node for node in model.graph.node if node.op_type == "QKNorm")
+        local_axes_name = _reduce_sum_axes_input(function)
+
+        assert list(function.input) == ["x"]
+        assert list(call_node.input) == ["x0"]
+        np.testing.assert_array_equal(_constant_value_by_output(function.node, local_axes_name), np.asarray(axes))
+        onnx.checker.check_model(model)
+
+    def test_noop_for_dynamic_reduce_sum_axes(self):
+        function = _make_reduce_sum_function()
+        graph = onnx.helper.make_graph(
+            [onnx.helper.make_node("QKNorm", ["x", "axes"], ["y"], domain="qeff.test")],
+            "g",
+            [
+                onnx.helper.make_tensor_value_info("x", onnx.TensorProto.FLOAT, [2, 3, 4]),
+                onnx.helper.make_tensor_value_info("axes", onnx.TensorProto.INT64, [1]),
+            ],
+            [onnx.helper.make_tensor_value_info("y", onnx.TensorProto.FLOAT, [2, 3, 4])],
+        )
+        model = onnx.helper.make_model(
+            graph,
+            opset_imports=[onnx.helper.make_opsetid("", 17), onnx.helper.make_opsetid("qeff.test", 1)],
+            functions=[function],
+        )
+        model.ir_version = 10
+
+        transformed = LocalizeFunctionReduceSumAxesTransform.apply(model)
+
+        assert not transformed
+        assert list(model.functions[0].input) == ["x", "axes"]
+        assert list(model.graph.node[0].input) == ["x", "axes"]
+        onnx.checker.check_model(model)
+
+    def test_noop_for_different_call_site_constants(self):
+        model = _make_reduce_sum_function_model([[-1], [2]])
+
+        transformed = LocalizeFunctionReduceSumAxesTransform.apply(model)
+
+        assert not transformed
+        assert list(model.functions[0].input) == ["x", "axes"]
+        assert [list(node.input) for node in model.graph.node if node.op_type == "QKNorm"] == [
+            ["x0", "axes0"],
+            ["x1", "axes1"],
+        ]
+        onnx.checker.check_model(model)
+
+    def test_noop_for_already_local_constant_axes(self):
+        local_axes = _make_constant_node("axes_local", [-1])
+        reduce_node = onnx.helper.make_node("ReduceSum", ["x", "axes_local"], ["y"], keepdims=1)
+        function = onnx.helper.make_function(
+            "qeff.test",
+            "QKNorm",
+            ["x"],
+            ["y"],
+            [local_axes, reduce_node],
+            [onnx.helper.make_opsetid("", 17)],
+        )
+        graph = onnx.helper.make_graph(
+            [onnx.helper.make_node("QKNorm", ["x"], ["y"], domain="qeff.test")],
+            "g",
+            [onnx.helper.make_tensor_value_info("x", onnx.TensorProto.FLOAT, [2, 3, 4])],
+            [onnx.helper.make_tensor_value_info("y", onnx.TensorProto.FLOAT, [2, 3, 4])],
+        )
+        model = onnx.helper.make_model(
+            graph,
+            opset_imports=[onnx.helper.make_opsetid("", 17), onnx.helper.make_opsetid("qeff.test", 1)],
+            functions=[function],
+        )
+        model.ir_version = 10
+
+        transformed = LocalizeFunctionReduceSumAxesTransform.apply(model)
+
+        assert not transformed
+        assert list(model.functions[0].input) == ["x"]
+        assert _reduce_sum_axes_input(model.functions[0]) == "axes_local"
+        onnx.checker.check_model(model)
+
+    def test_noop_for_non_reduce_sum_constant_function_input(self):
+        function = onnx.helper.make_function(
+            "qeff.test",
+            "AddBias",
+            ["x", "bias"],
+            ["y"],
+            [onnx.helper.make_node("Add", ["x", "bias"], ["y"])],
+            [onnx.helper.make_opsetid("", 17)],
+        )
+        graph = onnx.helper.make_graph(
+            [
+                _make_constant_node("bias", [1.0], dtype=np.float32),
+                onnx.helper.make_node("AddBias", ["x", "bias"], ["y"], domain="qeff.test"),
+            ],
+            "g",
+            [onnx.helper.make_tensor_value_info("x", onnx.TensorProto.FLOAT, [1])],
+            [onnx.helper.make_tensor_value_info("y", onnx.TensorProto.FLOAT, [1])],
+        )
+        model = onnx.helper.make_model(
+            graph,
+            opset_imports=[onnx.helper.make_opsetid("", 17), onnx.helper.make_opsetid("qeff.test", 1)],
+            functions=[function],
+        )
+        model.ir_version = 10
+
+        transformed = LocalizeFunctionReduceSumAxesTransform.apply(model)
+
+        assert not transformed
+        assert list(model.functions[0].input) == ["x", "bias"]
+        assert list(model.graph.node[1].input) == ["x", "bias"]
+        onnx.checker.check_model(model)
+
+    def test_localized_model_matches_ort_output_when_available(self):
+        ort = pytest.importorskip("onnxruntime")
+        model = _make_reduce_sum_function_model([[-1]])
+        reference = onnx.ModelProto()
+        reference.CopyFrom(model)
+
+        transformed = LocalizeFunctionReduceSumAxesTransform.apply(model)
+
+        assert transformed
+        session_options = ort.SessionOptions()
+        session_options.log_severity_level = 3
+        reference_session = ort.InferenceSession(reference.SerializeToString(), session_options)
+        transformed_session = ort.InferenceSession(model.SerializeToString(), session_options)
+        x = np.random.randn(2, 3, 4, 5).astype(np.float32)
+        expected = reference_session.run(None, {"x0": x})[0]
+        actual = transformed_session.run(None, {"x0": x})[0]
+        np.testing.assert_allclose(actual, expected, rtol=1e-4, atol=1e-5)
 
 
 def test_split_tensors_transform(tmp_path):

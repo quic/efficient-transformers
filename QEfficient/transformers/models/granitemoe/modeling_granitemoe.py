@@ -553,7 +553,7 @@ class QEffGraniteMoeMoE(QEffMoEBlockMixin, GraniteMoeMoE):
 
     def route(self, x: torch.Tensor):
         topk_gates, expert_mask, router_logits, _ = self.router(x)
-        routing_weights = torch.einsum("bke,bk->be", expert_mask.permute(2, 1, 0).to(topk_gates.dtype), topk_gates)
+        routing_weights = (expert_mask.permute(2, 1, 0).to(topk_gates.dtype) * topk_gates.unsqueeze(-1)).sum(dim=1)
         return routing_weights.to(x.dtype), router_logits
 
 
