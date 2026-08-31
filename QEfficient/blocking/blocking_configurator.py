@@ -322,8 +322,9 @@ def build_transformer_blocking_config(
     effective_mode = _resolve_effective_blocking_mode(attention_cfg, blocking_mode or "hqkv")
     paged_attention = "paged" in str(blocking_mode or "").lower()
 
-    if paged_attention and effective_mode not in ["kv", "qkv", "hqkv", "bhqkv"]:
-        raise ValueError(f"Paged attention is only allowed for kv, qkv, hqkv, bhqkv modes, got {effective_mode}")
+    # PagedAttention reads the cache block-wise, so it is only valid alongside KV blocking.
+    if paged_attention and "kv" not in effective_mode:
+        raise ValueError(f"Paged attention is only valid alongside KV blocking, got mode {effective_mode}")
 
     requested = blocking_mode or "hqkv"
     if effective_mode != requested:
