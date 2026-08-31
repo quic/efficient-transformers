@@ -8,6 +8,8 @@
 import copy
 import json
 import os
+import random
+from io import BytesIO
 from typing import Optional
 
 import onnx
@@ -41,6 +43,24 @@ with open(CONFIG_PATH, "r") as f:
 
 test_mm_models = [model_config["model_name"] for model_config in multimodal_models]
 model_config_dict = {model["model_name"]: model for model in multimodal_models}
+
+
+def _make_test_image(img_url):
+    """Load the configured image, or use deterministic pixels when the external URL is unavailable.
+
+    The same returned image is used for both HF and QAIC paths, so the fallback keeps parity checks
+    reproducible while avoiding failures from transient HTTP errors or non-image responses.
+    """
+    try:
+        response = requests.get(img_url, timeout=30)
+        response.raise_for_status()
+        return Image.open(BytesIO(response.content)).convert("RGB")
+    except Exception as exc:
+        print(f"Failed to load test image from {img_url}; using deterministic generated image. Error: {exc}")
+        width, height = 536, 354
+        rng = random.Random(42)
+        pixels = bytes(rng.randrange(256) for _ in range(width * height * 3))
+        return Image.frombytes("RGB", (width, height), pixels)
 
 
 def has_decoder_layer_function(onnx_path, expected_function_tokens):
@@ -124,7 +144,7 @@ def check_image_text_to_text_subfunction_core(
     }
 
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-    image = Image.open(requests.get(img_url, stream=True).raw)
+    image = _make_test_image(img_url)
     if model_name == "mistralai/Mistral-Small-3.1-24B-Instruct-2503":
         image = image.resize((1540, 1540))
     conversation = [
