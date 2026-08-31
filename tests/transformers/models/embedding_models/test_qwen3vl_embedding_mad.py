@@ -7,17 +7,18 @@
 
 import inspect
 import json
+from pathlib import Path
 from typing import Any, Dict, List
 
 import pytest
 import torch
 import torch.nn.functional as F
+from PIL import Image
 from transformers import AutoConfig, AutoProcessor
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForImageTextToText
 from QEfficient.transformers.models.qwen3_vl._embedding_utils import (
     DEFAULT_MAD_MAX,
-    EXAMPLE_DOCUMENTS,
     EXAMPLE_QUERIES,
     QEffQwen3VLEmbedder,
     configure_embedding_model_config,
@@ -26,6 +27,8 @@ from QEfficient.transformers.models.qwen3_vl._embedding_utils import (
 from QEfficient.utils.test_utils import load_vlm_model
 
 CONFIG_PATH = "tests/configs/image_text_model_configs.json"
+TEST_IMAGE_PATH = Path(__file__).resolve().parents[4] / "docs" / "image" / "girl_laughing.png"
+TEST_IMAGE_SIZE = (536, 354)
 
 with open(CONFIG_PATH, "r") as f:
     config_data = json.load(f)
@@ -129,7 +132,9 @@ def test_qwen3_vl_embedding_cpu_vs_ai100_mad_parity(model_name):
         model=qeff_model,
     )
 
-    model_inputs = EXAMPLE_QUERIES + EXAMPLE_DOCUMENTS
+    with Image.open(TEST_IMAGE_PATH) as image:
+        test_image = image.convert("RGB").resize(TEST_IMAGE_SIZE)
+    model_inputs = EXAMPLE_QUERIES + [{"image": test_image}]
     compile_specs = embedder.get_compile_specs(
         inputs=model_inputs,
         ctx_len=model_cfg["ctx_len"],
