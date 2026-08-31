@@ -278,19 +278,6 @@ def generic_blocked_attention_interface(
                     position_ids=position_ids,
                     sliding_window=sliding_window,
                 )
-            past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
-        else:
-            key, value, attention_mask, cache_kwargs = past_key_value_update(
-                module=module,
-                key=key,
-                value=value,
-                attention_mask=attention_mask,
-                past_key_value=past_key_value,
-                comp_ctx_lengths=comp_ctx_lengths,
-                batch_index=batch_index,
-                position_ids=position_ids,
-                sliding_window=sliding_window,
-            )
 
     attn_output, attn_weights = strategy(
         # common

@@ -309,6 +309,7 @@ class QEFFBaseModel(ABC):
         Returns:
             Dict: The configuration dictionary of the underlying model
         """
+        pass
 
     @abstractmethod
     def export(self, export_dir: Optional[str] = None) -> Path:
@@ -423,7 +424,6 @@ class QEFFBaseModel(ABC):
             self.weight_spec_path = str(_weight_spec_path) if _weight_spec_path.is_file() else None
             return onnx_path
 
-        
         export_dir.mkdir(parents=True, exist_ok=True)
 
         def _resolve_pkv_layers(pkv_obj):
@@ -511,6 +511,7 @@ class QEFFBaseModel(ABC):
                 )
             elif dynamo:
                 from QEfficient.exporter.onnx_exporter import export_via_dynamo
+
                 self._model_offloaded_check()
                 export_result = export_via_dynamo(
                     self,
@@ -524,6 +525,7 @@ class QEFFBaseModel(ABC):
                 self._offload_model_weights(offload_pt_weights)
             else:
                 from QEfficient.exporter.onnx_exporter import export_via_legacy
+
                 self._model_offloaded_check()
                 export_result = export_via_legacy(
                     self,

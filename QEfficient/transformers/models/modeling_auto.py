@@ -10,8 +10,7 @@ import os
 import warnings
 from pathlib import Path
 from time import perf_counter
-
-from typing import Callable, Dict, List, Optional, Tuple, Type, Union
+from typing import List, Optional, Union
 
 import numpy as np
 import onnx
@@ -1269,7 +1268,7 @@ class QEffCausalLMForTextImageToTextModel(QEFFBaseModel):
         if qaic_config:
             if mla_absorption := qaic_config.get("mla_absorption", None):
                 self.hash_params["mla_absorption"] = mla_absorption
-                self.model.language_model.mla_absorption = mla_absorption
+                setattr(self.model.language_model, "mla_absorption", mla_absorption)
 
     def __update_prefill_transform(
         self,
@@ -2217,7 +2216,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
     def generate(
         self,
         inputs: Optional[torch.Tensor] = None,
-        tokenizer: PreTrainedTokenizerFast | PreTrainedTokenizer = None,
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer] = None,
         processor: Optional[AutoImageProcessor] = None,
         images: List[str] = None,
         prompts: List[str] = None,
@@ -3578,7 +3577,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # Set use_cache=True to get KV values as output during ONNX export
         model.config.use_cache = True
 
-        model.config.max_seq_len_cached = max_seq_len_cached
+        setattr(model.config, "max_seq_len_cached", max_seq_len_cached)
         super().__init__(model, qaic_config=qaic_config, **kwargs)
         self.num_layers = model.config.num_hidden_layers
         self.continuous_batching = continuous_batching
@@ -3593,7 +3592,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             self.ccl_enabled = qaic_config.get("ccl_enabled", False)
             if mla_absorption := qaic_config.get("mla_absorption", None):
                 self.hash_params["mla_absorption"] = mla_absorption
-                self.model.mla_absorption = mla_absorption
+                setattr(self.model, "mla_absorption", mla_absorption)
         self.comp_ctx_lengths_prefill, self.comp_ctx_lengths_decode = None, None
         self.hash_params["max_seq_len_cached"] = max_seq_len_cached
 
@@ -3606,6 +3605,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         # SpDTransforms to PytorchTransforms.
         if self.is_tlm:
             self.model.qaic_config["return_pdfs"] = True
+
     def __repr__(self) -> str:
         return self.__class__.__name__ + "\n" + self.model.__repr__()
 
@@ -3799,7 +3799,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         self.hash_params["NUM_Q_BLOCKS"] = num_q_blocks
         self.hash_params["NUM_FFN_BLOCKS"] = num_ffn_blocks
         self.hash_params["ENABLE_OPT_SWA"] = os.environ.get("ENABLE_OPT_SWA", "0")
-        return max(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, min_seq_len)
+        return (
+            min_seq_len
+            if min_seq_len > constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+            else constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
+        )
 
     def _run_layerwise(self, *, final_compile: bool, layerwise_window_size: int, **forward_kwargs):
         """Drive the layer-wise export/compile loop for CausalLM models."""
@@ -4403,7 +4407,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             Use MXFP6 compression for weights. Default is False.
         mxint8_kv_cache : bool, optional
             Use MXINT8 compression for KV cache. Default is False.
-        num_speculative_tokens : int or List[int], optional
+        num_speculative_tokens : int or list[int], optional
             Proposal length(s) for Speculative Decoding Target Language Model.
             A plain int K is treated as ``[K]`` (backward compatible).
             Each value K generates a decode specialization with seq_len=K+1 and
@@ -4590,7 +4594,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             if self.comp_ctx_lengths_prefill is not None or self.comp_ctx_lengths_decode is not None:
                 ccl_lengths = self.comp_ctx_lengths_decode if prefill_seq_len == 1 else self.comp_ctx_lengths_prefill
                 # Adding elements from self.comp_ctx_lengths_prefill to prefill_specialization
-                for i in range(len(ccl_lengths)):
+                for i in range(0, len(ccl_lengths)):
                     specializations.append(
                         self.build_prefill_specialization(
                             prefill_seq_len=prefill_seq_len,
@@ -4644,7 +4648,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
             elif self.comp_ctx_lengths_decode is not None:
                 # CCL loop (non-TLM)
-                for i in range(len(self.comp_ctx_lengths_decode)):
+                for i in range(0, len(self.comp_ctx_lengths_decode)):
                     decode_spec = self.build_decode_specialization(
                         prefill_seq_len=prefill_seq_len,
                         ctx_len=ctx_len,
@@ -4738,7 +4742,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
     # FIXME: Update this method to match with transformers AutoModelForCausalLM.generate
     def generate(
         self,
-        tokenizer: PreTrainedTokenizerFast | PreTrainedTokenizer,
+        tokenizer: Union[PreTrainedTokenizerFast, PreTrainedTokenizer],
         prompts: List[str],
         device_id: List[int] = None,
         runtime_ai100: bool = True,

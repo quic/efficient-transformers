@@ -303,7 +303,7 @@ class QEffMistralModel(MistralModel):
             inputs_embeds = self.embed_tokens(input_ids)
 
         return_legacy_cache = False
-        if use_cache and not isinstance(past_key_values, Cache) :
+        if use_cache and not isinstance(past_key_values, Cache):
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
             return_legacy_cache = True
 

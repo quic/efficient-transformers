@@ -20,7 +20,8 @@ similar override hooks are in place.
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Type, Union
+from typing import Any, Dict, Optional, Tuple, Type
+
 import torch
 
 from QEfficient.base.onnx_transforms import PruneFakeInitializersTransform

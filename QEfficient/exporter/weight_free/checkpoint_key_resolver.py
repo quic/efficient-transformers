@@ -6,6 +6,7 @@
 # ----------------------------------------------------------------------------
 
 from pathlib import Path
+from typing import Dict, List, Optional
 
 import onnx_ir as ir
 from torch import nn
@@ -47,7 +48,7 @@ def _collect_tied_weights(model: nn.Module) -> list[TiedWeightAlias]:
     return [TiedWeightAlias(alias=alias, canonical=canonical) for alias, canonical in tied_mapping.items()]
 
 
-def _moe_weight_aliases(name: str) -> list[str]:
+def _moe_weight_aliases(name: str) -> List[str]:
     """Return equivalent checkpoint aliases for shared MoEWeights parameters."""
     aliases = []
     canonical = name
@@ -64,7 +65,7 @@ def _moe_weight_aliases(name: str) -> list[str]:
     return aliases
 
 
-def _find_first_checkpoint_key(candidates: list[str], checkpoint_index: dict[str, str]) -> str | None:
+def _find_first_checkpoint_key(candidates: List[str], checkpoint_index: Dict[str, str]) -> Optional[str]:
     """Return the first candidate found in the checkpoint index."""
     seen = set()
     for candidate in candidates:
@@ -84,9 +85,9 @@ def _find_first_checkpoint_key(candidates: list[str], checkpoint_index: dict[str
 
 def find_checkpoint_key(
     onnx_name: str,
-    checkpoint_index: dict[str, str],
+    checkpoint_index: Dict[str, str],
     backbone: nn.Module,
-) -> str | None:
+) -> Optional[str]:
     """Resolve an ONNX initializer name to its safetensors checkpoint key.
 
     Most weights match directly. The fallback rules cover wrapper prefixes,
@@ -175,7 +176,7 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
         for checkpoint_file in checkpoint_files
     ]
     backbone = qeff_model.model.base_model if isinstance(qeff_model.model, PooledModel) else qeff_model.model
-    promoted_inputs: list[WeightSpecInput] = []
+    promoted_inputs: List[WeightSpecInput] = []
 
     for name, init_value in list(model_ir.graph.initializers.items()):
         if name not in model_names:
