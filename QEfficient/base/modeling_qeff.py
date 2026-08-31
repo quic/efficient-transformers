@@ -122,7 +122,9 @@ def generate_mdp_compiler_dump(
     custom_io: Optional[Dict[str, str]] = None,
 ) -> str:
     """Generate the compiler MDP dump required by the intersection strategy."""
-    mdp_compiler_dump_path = str(compile_dir / f"mdp_compiler_dump_{mdp_ts_num_devices}d_{mdp_num_partitions}p.json")
+    mdp_compiler_dump_path = str(
+        compile_dir / f"tmp_mdp_compiler_dump_{mdp_ts_num_devices}d_{mdp_num_partitions}p.json"
+    )
     dump_path = Path(mdp_compiler_dump_path)
     if dump_path.exists():
         return mdp_compiler_dump_path
@@ -149,7 +151,6 @@ def generate_mdp_compiler_dump(
     dump_command.append(f"-mdp-dump-partition-config={dump_path}")
 
     logger.info(f"Running compiler for MDP dump: {' '.join(dump_command)}")
-    print(f"Running compiler for MDP dump: {' '.join(dump_command)}")
     try:
         subprocess.run(dump_command, capture_output=True, check=True)
     except subprocess.CalledProcessError as e:
@@ -1322,7 +1323,6 @@ class QEFFBaseModel(ABC):
 
         command.append(f"-aic-binary-dir={qpc_path}")
         logger.info(f"Running compiler: {' '.join(command)}")
-        print(f"Running compiler: {' '.join(command)}")
 
         try:
             subprocess.run(command, capture_output=True, check=True)

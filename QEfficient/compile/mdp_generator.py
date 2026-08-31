@@ -426,6 +426,7 @@ def generate_disagg_mdp_intersection_config(
         num_layers=num_layers,
         num_cores=num_cores,
     )
+    create_json(str(dump_path.parent / f"tmp_mdp_onnx_generated_{num_devices}d_{num_partitions}p.json"), qeff_mdp)
 
     logger.info(f"Loading compiler dump for intersection: {dump_path}")
     with open(dump_path) as fh:

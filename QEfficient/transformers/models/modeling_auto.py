@@ -2074,6 +2074,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if needs_vision_export or needs_lang_export:
             with export_from_compile():
                 self.export(
+                    export_dir=compile_dir,
                     use_onnx_subfunctions=use_onnx_subfunctions,
                     skip_vision=skip_vision,
                     skip_lang=skip_lang,

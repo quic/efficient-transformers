@@ -710,7 +710,7 @@ class TestMdpCompileIntegration:
         assert str(compile_dir / "qpc-") in final_custom_io_flags[0]
         assert final_custom_io_flags[0].endswith("/custom_io.yaml")
 
-        assert f"-mdp-dump-partition-config={compile_dir / 'mdp_compiler_dump_4d_2p.json'}" in dump_command_str
+        assert f"-mdp-dump-partition-config={compile_dir / 'tmp_mdp_compiler_dump_4d_2p.json'}" in dump_command_str
         assert "-mdp-load-partition-config=" not in dump_command_str
         assert "-aic-binary-dir=" not in dump_command_str
         assert "-mdp-dump-partition-config=" not in final_command_str

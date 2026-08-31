@@ -92,6 +92,47 @@ def _build_config(dtype: str = "float16", num_hidden_layers: int = 1):
     return config
 
 
+def _compile_vision_qpc(compile_dir: Path) -> Path:
+    pytest.importorskip("qwen_vl_utils")
+    torch.manual_seed(42)
+
+    hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32")).to(dtype=torch.float32)
+    hf_model.config.dtype = "float32"
+    hf_model.config.torch_dtype = torch.float32
+    if hasattr(hf_model.config, "text_config"):
+        hf_model.config.text_config.dtype = "float32"
+        hf_model.config.text_config.torch_dtype = torch.float32
+
+    qeff_model = QEFFAutoModelForImageTextToText(
+        hf_model,
+        kv_offload=True,
+        config=hf_model.config,
+        torch_dtype=torch.float32,
+        layerwise=False,
+    )
+    image = Image.new("RGB", IMAGE_SIZE, color=(127, 127, 127))
+    qpc_paths = qeff_model.compile(
+        compile_dir=str(compile_dir),
+        batch_size=BATCH_SIZE,
+        prefill_seq_len=PREFILL_SEQ_LEN,
+        ctx_len=CTX_LEN,
+        height=image.height,
+        width=image.width,
+        num_cores=16,
+        num_devices=1,
+        mos=1,
+        aic_enable_depth_first=True,
+        skip_vision=False,
+        split_model_io=True,
+        skip_lang=True,
+        use_onnx_subfunctions=True,
+        layerwise=False,
+    )
+    vision_qpc_path = qpc_paths.get("vision_qpc_path")
+    assert vision_qpc_path, "Vision compile did not return vision_qpc_path"
+    return vision_qpc_path
+
+
 def _prepare_messages(image: Image.Image, batch_size: int = BATCH_SIZE) -> list:
     return [
         [
@@ -182,6 +223,9 @@ def _run_disagg_qaic_generation(
     vision_inputs.update(
         {name: vision_inputs[name].astype("float16") for name in VISION_FP16_INPUTS if name in vision_inputs}
     )
+    # Activate one QPC stage at a time; keeping vision, prefill, and decode active
+    # together can exhaust NSP resources on shared QAIC test machines.
+    vision_session.activate()
     vision_outputs = vision_session.run(vision_inputs)
     vision_session.deactivate()
 
@@ -198,6 +242,7 @@ def _run_disagg_qaic_generation(
             lang_inputs[output_name] = vision_outputs[output_name]
 
     prefill_session.set_buffers(vision_outputs)
+    prefill_session.activate()
     chunk_inputs = lang_inputs.copy()
     outputs = None
     for chunk_idx in range(num_chunks):
@@ -227,6 +272,7 @@ def _run_disagg_qaic_generation(
 
     generated_ids = [first_token]
 
+    decode_session.activate()
     decode_outputs = decode_session.run(decode_inputs)
     generated_ids.append(_get_next_token_ids(decode_outputs["logits"]))
 
@@ -253,11 +299,17 @@ def _run_disagg_qaic_generation(
             }
         )
 
+    decode_session.deactivate()
     return np.stack(generated_ids, axis=1)
 
 
 def _run_disagg_blocked(
-    manual_cleanup, qaic_config: dict, prefill_qaic_config: dict | None = None, batch_size: int = BATCH_SIZE
+    manual_cleanup,
+    qaic_config: dict,
+    prefill_qaic_config: dict | None = None,
+    batch_size: int = BATCH_SIZE,
+    compile_dir: Path | None = None,
+    vision_qpc_path: Path | None = None,
 ) -> None:
     pytest.importorskip("qwen_vl_utils")
     torch.manual_seed(42)
@@ -287,28 +339,33 @@ def _run_disagg_blocked(
     compiled_onnx_paths = {}
     try:
         qaic_config["ctx_len"] = CTX_LEN
-        vision_qpc_path = qeff_model.compile(
-            batch_size=BATCH_SIZE,
-            prefill_seq_len=PREFILL_SEQ_LEN,
-            ctx_len=CTX_LEN,
-            height=image.height,
-            width=image.width,
-            num_cores=16,
-            num_devices=1,
-            mos=1,
-            aic_enable_depth_first=True,
-            skip_vision=False,
-            split_model_io=True,
-            skip_lang=True,
-            use_onnx_subfunctions=True,
-            layerwise=False,
-        )
-        compiled_onnx_paths["vision"] = _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
+        if vision_qpc_path is None:
+            vision_qpc_path = qeff_model.compile(
+                compile_dir=str(compile_dir / "vision") if compile_dir is not None else None,
+                batch_size=BATCH_SIZE,
+                prefill_seq_len=PREFILL_SEQ_LEN,
+                ctx_len=CTX_LEN,
+                height=image.height,
+                width=image.width,
+                num_cores=16,
+                num_devices=1,
+                mos=1,
+                aic_enable_depth_first=True,
+                skip_vision=False,
+                split_model_io=True,
+                skip_lang=True,
+                use_onnx_subfunctions=True,
+                layerwise=False,
+            )
+            compiled_onnx_paths["vision"] = _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
+        else:
+            vision_qpc_path = {"vision_qpc_path": vision_qpc_path}
 
         effective_prefill_qaic_config = copy.deepcopy(
             prefill_qaic_config if prefill_qaic_config is not None else qaic_config
         )
         prefill_qpc_path = qeff_model.compile(
+            compile_dir=str(compile_dir / "prefill") if compile_dir is not None else None,
             batch_size=BATCH_SIZE,
             prefill_seq_len=PREFILL_SEQ_LEN,
             ctx_len=CTX_LEN,
@@ -331,6 +388,7 @@ def _run_disagg_blocked(
         compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")
 
         decode_qpc_path = qeff_model.compile(
+            compile_dir=str(compile_dir / "decode") if compile_dir is not None else None,
             batch_size=batch_size,
             prefill_seq_len=1,
             ctx_len=CTX_LEN,
@@ -352,10 +410,12 @@ def _run_disagg_blocked(
         _assert_distinct_onnx_paths(compiled_onnx_paths)
         print(f"Disagg blocked ONNX paths: {compiled_onnx_paths}")
 
-        vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"))
-        prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"))
-        decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"))
-        sessions.extend([vision_session, prefill_session, decode_session])
+        vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"), activate=False)
+        sessions.append(vision_session)
+        prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"), activate=False)
+        sessions.append(prefill_session)
+        decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"), activate=False)
+        sessions.append(decode_session)
 
         qaic_tokens = _run_disagg_qaic_generation(
             qeff_model=qeff_model,
@@ -416,7 +476,7 @@ def _build_prefill_mdp_qaic_config(blocking_mode: str) -> dict:
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 @pytest.mark.parametrize("blocking_mode", ["prefill_qkv", "prefill_online"])
-def test_qwen3_vl_moe_disagg_prefill_mdp_intersection_compile_only(blocking_mode, manual_cleanup):
+def test_qwen3_vl_moe_disagg_prefill_mdp_intersection_compile_only(blocking_mode, manual_cleanup, tmp_path):
     torch.manual_seed(42)
 
     hf_model = _load_hf_model_from_pretrained(
@@ -438,6 +498,7 @@ def test_qwen3_vl_moe_disagg_prefill_mdp_intersection_compile_only(blocking_mode
 
     try:
         qpc_paths = qeff_model.compile(
+            compile_dir=str(tmp_path / f"prefill_mdp_{blocking_mode}"),
             batch_size=BATCH_SIZE,
             prefill_seq_len=PREFILL_SEQ_LEN,
             ctx_len=CTX_LEN,
@@ -470,42 +531,48 @@ def test_qwen3_vl_moe_disagg_prefill_mdp_intersection_compile_only(blocking_mode
 @pytest.mark.dummy_layers
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
-@pytest.mark.parametrize("blocking_mode", ["q", "kv", "qkv", "hqkv"])
-def test_qwen3_vl_moe_disagg_blocked_qaic_vs_hf_fp32(blocking_mode, manual_cleanup):
-    prefill_qaic_config = {
-        "blocking_mode": blocking_mode,
-        "head_block_size": HEAD_BLOCK_SIZE,
-        "num_kv_blocks": NUM_KV_BLOCKS,
-        "num_q_blocks": NUM_Q_BLOCKS,
-    }
-    # in disagg mode, q blocking compiles fail with prefill_seq_len like we need for decode qpc
-    decode_blocking_mode = blocking_mode.replace("q", "")
-    if decode_blocking_mode:
-        decode_qaic_config = {
-            "blocking_mode": decode_blocking_mode,
+def test_qwen3_vl_moe_disagg_blocked_qaic_vs_hf_fp32(manual_cleanup, tmp_path):
+    # Keep runtime blocking modes in one test item. Under xdist, parametrized runtime
+    # cases can activate several QPCs concurrently and exhaust QAIC NSP resources.
+    # Vision is independent of language-side blocking, so compile it once and reuse it
+    # across all runtime blocking modes in this test item.
+    vision_qpc_path = _compile_vision_qpc(tmp_path / "vision")
+
+    for blocking_mode in ["q", "kv", "qkv", "hqkv"]:
+        prefill_qaic_config = {
+            "blocking_mode": blocking_mode,
             "head_block_size": HEAD_BLOCK_SIZE,
             "num_kv_blocks": NUM_KV_BLOCKS,
+            "num_q_blocks": NUM_Q_BLOCKS,
         }
-    else:
-        decode_qaic_config = {}
-    _run_disagg_blocked(manual_cleanup, decode_qaic_config, prefill_qaic_config=prefill_qaic_config)
+        # In disagg mode, q blocking compiles fail with prefill_seq_len like we need for decode qpc.
+        decode_blocking_mode = blocking_mode.replace("q", "")
+        if decode_blocking_mode:
+            decode_qaic_config = {
+                "blocking_mode": decode_blocking_mode,
+                "head_block_size": HEAD_BLOCK_SIZE,
+                "num_kv_blocks": NUM_KV_BLOCKS,
+            }
+        else:
+            decode_qaic_config = {}
+        _run_disagg_blocked(
+            manual_cleanup,
+            decode_qaic_config,
+            prefill_qaic_config=prefill_qaic_config,
+            compile_dir=tmp_path / blocking_mode,
+            vision_qpc_path=vision_qpc_path,
+        )
 
+    _run_disagg_blocked(
+        manual_cleanup,
+        {
+            "blocking_mode": "kv_headpar",
+            "num_kv_blocks": NUM_KV_BLOCKS,
+        },
+        compile_dir=tmp_path / "headpar",
+        vision_qpc_path=vision_qpc_path,
+    )
 
-@pytest.mark.dummy_layers
-@pytest.mark.on_qaic
-@pytest.mark.multimodal
-def test_qwen3_vl_moe_disagg_headpar_blocked_qaic_vs_hf_fp32(manual_cleanup):
-    qaic_config = {
-        "blocking_mode": "kv_headpar",
-        "num_kv_blocks": NUM_KV_BLOCKS,
-    }
-    _run_disagg_blocked(manual_cleanup, qaic_config)
-
-
-@pytest.mark.dummy_layers
-@pytest.mark.on_qaic
-@pytest.mark.multimodal
-def test_qwen3_vl_moe_disagg_batch_fold_blocked_qaic_vs_hf_fp32(manual_cleanup):
     PREFILL_QL_CHUNK = 32
     PREFILL_BLOCK_CHUNKS = -(-PREFILL_SEQ_LEN // PREFILL_QL_CHUNK)
     PREFILL_N_REP_CHUNK = 2
@@ -520,4 +587,11 @@ def test_qwen3_vl_moe_disagg_batch_fold_blocked_qaic_vs_hf_fp32(manual_cleanup):
         "num_q_blocks": PREFILL_BLOCK_CHUNKS,
         "n_rep_chunk": PREFILL_N_REP_CHUNK,
     }
-    _run_disagg_blocked(manual_cleanup, decode_qaic_config, prefill_qaic_config=prefill_qaic_config, batch_size=2)
+    _run_disagg_blocked(
+        manual_cleanup,
+        decode_qaic_config,
+        prefill_qaic_config=prefill_qaic_config,
+        batch_size=2,
+        compile_dir=tmp_path / "batch_fold",
+        vision_qpc_path=vision_qpc_path,
+    )
