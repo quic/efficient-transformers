@@ -518,6 +518,18 @@ class QEffDynamicLayer(CacheLayerMixin):
             slot_id = cache_kwargs.get("slot_id")
             batch, num_kv_heads, seq_len, dh = key_states.shape
             num_kv_blocks, num_kv_heads, block_size, dh = self.keys.shape
+            if seq_len > block_size:
+                raise NotImplementedError(
+                    f"write_only_paged_attention only supports writing within a single KV block per call "
+                    f"(seq_len={seq_len} > block_size={block_size}). Prefill/decode chunks larger than "
+                    f"block_size must be split by the caller before writing to a paged KV cache."
+                )
+            if int((slot_id + seq_len).max()) > block_size:
+                raise NotImplementedError(
+                    f"write_only_paged_attention write would cross a KV block boundary "
+                    f"(slot_id + seq_len > block_size={block_size}). Writes must stay within a single "
+                    f"physical block; split the write across blocks before calling this method."
+                )
             block_index = position_ids.max(1).values // block_size  # Assuming only 1 block is written at max
             invalid_scatter_index = torch.iinfo(torch.int32).max
             ctx_indices = torch.arange(seq_len) + slot_id.unsqueeze(-1)
