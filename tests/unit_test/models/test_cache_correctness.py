@@ -481,3 +481,87 @@ class TestCacheScatterGatherNumericalCorrectness:
         assert k_out[0, 0, 0, 0].item() == pytest.approx(0.0, abs=1e-5)
         assert k_out[0, 0, 1, 0].item() == pytest.approx(1.0, abs=1e-5)
         assert k_out[0, 0, 2, 0].item() == pytest.approx(2.0, abs=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Tests: write_only_paged_attention must reject writes larger than one block
+# ---------------------------------------------------------------------------
+
+
+def make_paged_cache(num_phys_blocks=16, heads=1, block_size=4, head_dim=2):
+    layer = QEffDynamicLayer()
+    layer.keys = torch.zeros(num_phys_blocks, heads, block_size, head_dim)
+    layer.values = torch.zeros(num_phys_blocks, heads, block_size, head_dim)
+    layer.is_initialized = True
+    return layer
+
+
+@pytest.mark.cache
+class TestPagedAttentionSingleBlockWriteLimit:
+    """write_only_paged_attention assumes a write never spans more than one
+    physical block; PL > kv_block_size must raise, not silently mis-scatter."""
+
+    def test_write_within_block_size_succeeds(self):
+        layer = make_paged_cache(num_phys_blocks=4, heads=1, block_size=4, head_dim=2)
+        k = torch.ones(1, 1, 4, 2)
+        v = torch.ones(1, 1, 4, 2)
+        layer.write_only_paged_attention(
+            k,
+            v,
+            cache_kwargs={
+                "position_ids": torch.arange(4).unsqueeze(0),
+                "block_table": torch.tensor([[0]]),
+                "slot_id": torch.tensor([0]),
+            },
+        )
+        assert torch.allclose(layer.keys[0], k[0])
+
+    def test_write_exceeding_block_size_raises_not_implemented(self):
+        layer = make_paged_cache(num_phys_blocks=4, heads=1, block_size=4, head_dim=2)
+        k = torch.ones(1, 1, 5, 2)  # seq_len=5 > block_size=4
+        v = torch.ones(1, 1, 5, 2)
+        with pytest.raises(NotImplementedError):
+            layer.write_only_paged_attention(
+                k,
+                v,
+                cache_kwargs={
+                    "position_ids": torch.arange(5).unsqueeze(0),
+                    "block_table": torch.tensor([[0]]),
+                    "slot_id": torch.tensor([0]),
+                },
+            )
+
+    def test_slot_id_plus_seq_len_crossing_block_boundary_raises_not_implemented(self):
+        """seq_len alone fits within block_size, but slot_id offset pushes the
+        write past the block boundary -- Anuj's PR #1209 test-coverage ask:
+        'slot_id + seq_len > kv_block_size should be covered'."""
+        layer = make_paged_cache(num_phys_blocks=4, heads=1, block_size=4, head_dim=2)
+        k = torch.ones(1, 1, 2, 2)  # seq_len=2, fits within block_size=4 on its own
+        v = torch.ones(1, 1, 2, 2)
+        with pytest.raises(NotImplementedError):
+            layer.write_only_paged_attention(
+                k,
+                v,
+                cache_kwargs={
+                    "position_ids": torch.tensor([[3, 4]]),
+                    "block_table": torch.tensor([[0]]),
+                    "slot_id": torch.tensor([3]),  # 3 + 2 = 5 > block_size=4
+                },
+            )
+
+    def test_slot_id_plus_seq_len_exactly_at_boundary_succeeds(self):
+        """slot_id + seq_len == block_size is the boundary case and must be allowed."""
+        layer = make_paged_cache(num_phys_blocks=4, heads=1, block_size=4, head_dim=2)
+        k = torch.ones(1, 1, 2, 2)
+        v = torch.ones(1, 1, 2, 2)
+        layer.write_only_paged_attention(
+            k,
+            v,
+            cache_kwargs={
+                "position_ids": torch.tensor([[2, 3]]),
+                "block_table": torch.tensor([[0]]),
+                "slot_id": torch.tensor([2]),  # 2 + 2 = 4 == block_size
+            },
+        )
+        assert torch.allclose(layer.keys[0, 0, 2:4], k[0, 0])
+
