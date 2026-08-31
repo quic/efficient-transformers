@@ -1005,7 +1005,9 @@ def _compile_kv_share_lang(
         "offload_pt_weights": False,
     }
     if moe_prefill_packed_chunk_size is not None:
-        prefill_compile_kwargs["moe_prefill_packed_chunk_size"] = moe_prefill_packed_chunk_size
+        prefill_compile_kwargs["qaic_config"] = {
+            "moe_config": {"expert_parallel_chunk_size": moe_prefill_packed_chunk_size}
+        }
     prefill_qpc_path = qeff_model.compile(**prefill_compile_kwargs)
     onnx_paths["kv_share_prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "kv_share prefill")
     return prefill_qpc_path.get("lang_prefill_qpc_path"), decode_qpc_path.get("lang_decode_qpc_path"), onnx_paths
