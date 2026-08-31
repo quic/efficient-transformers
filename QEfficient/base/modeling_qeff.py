@@ -11,6 +11,7 @@ import logging
 import os
 import shutil
 import subprocess
+import time
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -178,7 +179,7 @@ class QEFFBaseModel(ABC):
 
         # Flag for checking if weights are offloaded
         self._is_weights_offloaded: bool = False
-
+        self._weight_free: bool = kwargs.get("weight_free", False)
         # Flag for checking if model has been transformed yet
         self.is_transformed: bool = False
 
@@ -298,7 +299,7 @@ class QEFFBaseModel(ABC):
 
     @property
     @abstractmethod
-    def get_model_config(self) -> Dict:
+    def get_model_config(self) -> dict:
         """
         Get the model configuration as a dictionary.
 
@@ -379,7 +380,6 @@ class QEFFBaseModel(ABC):
         num_cores: Optional[int] = constants.DEFAULT_AIC_NUM_CORES,
         qaic_config: Optional[dict] = None,
         prefill_seq_len: Optional[int] = None,
-        use_weight_free_export: bool = False,
         **export_kwargs,
     ) -> str:
         """
@@ -423,14 +423,6 @@ class QEFFBaseModel(ABC):
             self.onnx_path = onnx_path
             self.weight_spec_path = str(_weight_spec_path) if _weight_spec_path.is_file() else None
             return onnx_path
-
-        if use_weight_free_export:
-            dynamo = True
-
-        # check if the model is in meta state or weights are offloaded
-        # (skip for weight-free export which intentionally uses a meta-device model)
-        if not use_weight_free_export:
-            self._model_offloaded_check()
 
         export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -504,7 +496,7 @@ class QEFFBaseModel(ABC):
             input_names = aligned_input_names
 
         try:
-            if use_weight_free_export:
+            if self._weight_free:
                 from QEfficient.exporter.onnx_exporter import export_via_weightfree
 
                 export_result = export_via_weightfree(
@@ -520,6 +512,7 @@ class QEFFBaseModel(ABC):
             elif dynamo:
                 from QEfficient.exporter.onnx_exporter import export_via_dynamo
 
+                self._model_offloaded_check()
                 export_result = export_via_dynamo(
                     self,
                     onnx_path,
@@ -529,9 +522,11 @@ class QEFFBaseModel(ABC):
                     dynamic_shapes,
                     export_kwargs,
                 )
+                self._offload_model_weights(offload_pt_weights)
             else:
                 from QEfficient.exporter.onnx_exporter import export_via_legacy
 
+                self._model_offloaded_check()
                 export_result = export_via_legacy(
                     self,
                     onnx_path,
@@ -543,7 +538,6 @@ class QEFFBaseModel(ABC):
                 )
             logger.info("PyTorch export successful")
             self.weight_spec_path = str(export_result.weight_spec_path) if export_result.weight_spec_path else None
-            self._offload_model_weights(offload_pt_weights)
             model = onnx.load(export_result.onnx_path, load_external_data=False)
 
             excluded_transforms = set(export_result.excluded_onnx_transforms)
@@ -607,7 +601,6 @@ class QEFFBaseModel(ABC):
         retain_full_kv: Optional[bool] = False,
         qaic_config: Optional[dict] = None,
         kv_cache_prefix: Optional[str] = None,
-        use_weight_free_export: bool = False,
         **compiler_options,
     ):
         kwargs = {
@@ -615,7 +608,6 @@ class QEFFBaseModel(ABC):
             "use_onnx_subfunctions": use_onnx_subfunctions,
             "dynamo": dynamo,
             "retain_full_kv": retain_full_kv,
-            "use_weight_free_export": use_weight_free_export,
         }
         layerwise_cache_probe = compiler_options.pop("_layerwise_cache_probe", False)
         if layerwise_cache_probe:
@@ -671,7 +663,7 @@ class QEFFBaseModel(ABC):
         example_inputs: Dict[str, torch.Tensor],
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
-        onnx_transform_kwargs: Optional[Dict[str, any]] = None,
+        onnx_transform_kwargs: Optional[Dict[str, Any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,
@@ -844,8 +836,6 @@ class QEFFBaseModel(ABC):
                     input_names.append(param)
         dynamic_axes = {k: v for k, v in dynamic_axes.items() if k in input_names}
 
-        import time
-
         layerwise_dir = export_dir / "onnx_layerwise_tmp"
         start_time = time.time()
 
@@ -977,7 +967,6 @@ class QEFFBaseModel(ABC):
         qaic_config: Optional[dict] = None,
         specialization_module_name: Optional[str] = None,
         kv_cache_prefix: Optional[str] = None,
-        use_weight_free_export: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1025,7 +1014,7 @@ class QEFFBaseModel(ABC):
             # ONNX because re-exporting is no longer possible. Otherwise export for
             # the current compile mode, e.g. decode vs. disaggregated prefill.
             weights_offloaded = self._is_weights_offloaded or any(param.is_meta for param in self.model.parameters())
-            if self.onnx_path is not None and weights_offloaded:
+            if self.onnx_path is not None and weights_offloaded and not self._weight_free:
                 onnx_path = self.onnx_path
             else:
                 onnx_path = self.get_onnx_path(
@@ -1040,7 +1029,6 @@ class QEFFBaseModel(ABC):
                     qaic_config=qaic_config,
                     _layerwise_cache_probe=layerwise_cache_probe,
                     kv_cache_prefix=kv_cache_prefix,
-                    use_weight_free_export=use_weight_free_export,
                     **compiler_options,
                 )
         if QEFFBaseModel._layerwise_active:

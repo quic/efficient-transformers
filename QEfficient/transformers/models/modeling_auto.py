@@ -15,7 +15,7 @@ from typing import List, Optional, Union
 import numpy as np
 import onnx
 import torch
-import torch.nn as nn
+from torch import nn
 from transformers import (
     AutoImageProcessor,
     AutoModel,
@@ -195,7 +195,17 @@ def _build_meta_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
     architectures, and module structure are all real), but every parameter
     and buffer is a meta tensor — zero RAM. The layer-wise driver later
     rebuilds a real per-window model when ``compile()``/``export()`` runs.
+
+    Uses accelerate's ``init_empty_weights()`` rather than a raw
+    ``torch.device("meta")`` context: some models (e.g. Gemma's embed_scale)
+    compute non-persistent buffers from a plain Python constant inside
+    ``__init__`` via ``register_buffer(..., persistent=False)``. A bare
+    ``torch.device("meta")`` context turns even those constant-valued buffers
+    into empty meta tensors with no data, which later fails to serialize to
+    ONNX. ``init_empty_weights()`` only intercepts parameter/persistent-buffer
+    allocation, so such computed buffers still get their real values.
     """
+    from accelerate import init_empty_weights
     from transformers import AutoConfig
 
     config = kwargs.get("config", None)
@@ -205,8 +215,15 @@ def _build_meta_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
         }
         config = AutoConfig.from_pretrained(pretrained_model_name_or_path, **config_kwargs)
     torch_dtype = kwargs.get("torch_dtype", torch.float32)
-    with torch.device("meta"):
-        model = hf_auto_class.from_config(config, torch_dtype=torch_dtype)
+    attn_implementation = kwargs.get("attn_implementation", "eager")
+    # from_config's torch_dtype kwarg only governs newly-created parameters; internal
+    # buffers computed during __init__ (e.g. rotary sin/cos caches) are derived from
+    # config.dtype/torch_dtype directly, so those must be updated too or they end up
+    # in the checkpoint's original dtype while parameters use torch_dtype instead.
+    config.dtype = torch_dtype
+    config.torch_dtype = torch_dtype
+    with init_empty_weights():
+        model = hf_auto_class.from_config(config, torch_dtype=torch_dtype, attn_implementation=attn_implementation)
     return model
 
 
@@ -1877,7 +1894,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
-        use_weight_free_export: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -1919,9 +1935,6 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             If True, skips compilation of the language decoder. Default is False.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
-        use_weight_free_export: bool, optional
-            Export the model with checkpoint weights externalized into
-            ``weight_spec.json`` before compiling. This forces the dynamo exporter.
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -3605,6 +3618,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         qaic_config: Optional[dict] = None,
         max_seq_len_cached: Optional[int] = None,
         layerwise: bool = False,
+        weight_free: bool = False,
         *args,
         **kwargs,
     ):
@@ -3636,6 +3650,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
               The values provided in ``top_ks`` tensor must be less than this maximum limit.
             - **include_guided_decoding** (bool): If True, enables guided token-level filtering
               during decoding. Only works when include_sampler=True.
+        weight_free : bool, optional
+            If True, builds the model on the meta device instead of loading real
+            checkpoint weights — no weights are materialized into RAM. This is
+            the single place to enable weight-free export; ``export()``/``compile()``
+            automatically route through the weight-free path afterward, with no
+            further flag needed. The real checkpoint weights are supplied at
+            export time via ``pretrained_model_name_or_path``. Mutually exclusive
+            with ``layerwise=True``. Default is False.
+
+            The prepared/converted checkpoint produced during weight-free export
+            (dtype conversion, MoE expert restacking, etc.) is saved under the
+            ``QEFF_CHECKPOINT_HOME`` environment variable if set, otherwise next
+            to the source checkpoint under the Hugging Face cache.
 
         *args :
             Positional arguments passed directly to `cls._hf_auto_class.from_pretrained`.
@@ -3650,6 +3677,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         QEFFAutoModelForCausalLM
             An instance initialized with the pretrained weights.
         """
+        if layerwise and weight_free:
+            raise ValueError(
+                "`layerwise=True` and `weight_free=True` are mutually exclusive; weight_free replaces layerwise mode."
+            )
+
         enable_proxy = kwargs.pop("enable_proxy", False)
         if kwargs.pop("full_batch_size", None):
             continuous_batching = True
@@ -3677,7 +3709,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if layerwise:
             warnings.warn(
                 "layerwise export is deprecated and will be removed in a future release. "
-                "Use weight-free export (use_weight_free_export=True) instead, which provides "
+                "Use weight-free export (weight_free=True) instead, which provides "
                 "the same memory benefit without the complexity of per-window re-export.",
                 DeprecationWarning,
                 stacklevel=2,
@@ -3686,6 +3718,11 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             # caller still gets a typed wrapper, but no checkpoint weights are
             # pulled into RAM. compile()/export() rebuilds a real per-window
             # model internally via the layer-wise driver.
+            model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
+        elif weight_free:
+            # Weight-free mode: build the model on the meta device so no
+            # checkpoint weights are ever materialized here. The real weights
+            # are supplied later at export time via pretrained_model_name_or_path.
             model = _build_meta_model(cls._hf_auto_class, pretrained_model_name_or_path, kwargs)
         else:
             model = cls._hf_auto_class.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
@@ -3709,6 +3746,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             qaic_config=qaic_config,
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             max_seq_len_cached=max_seq_len_cached,
+            weight_free=weight_free,
             **kwargs,
         )
         if layerwise:
@@ -3810,7 +3848,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
         dynamo: bool = False,
-        use_weight_free_export: bool = False,
         **kwargs,
     ) -> str:
         """
@@ -3829,10 +3866,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         dynamo: bool, optional
             whether to enable dynamo during export.
-        use_weight_free_export: bool, optional
-            Export with model weights externalized into ``weight_spec.json``. This
-            mode requires the dynamo exporter and is intended for lower-memory
-            CausalLM export flows.
         Returns
         -------
         str
@@ -3849,9 +3882,9 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         )
         kwargs["enable_chunking"] = enable_chunking
         qaic_config = kwargs.pop("qaic_config", getattr(self.model, "qaic_config", None))
-
-        if use_weight_free_export:
-            dynamo = True
+        # Weight-free export always uses the dynamo (torch.export) path.
+        # Must be set here — @export_wrapper reads dynamo from kwargs before _export() body runs.
+        dynamo = dynamo or self._weight_free
         if (
             kwargs.get("retain_full_kv", False)
             and self.model.config.model_type not in SPECIALIZED_DISAGG_SERVING_MODEL_ARCH
@@ -4183,7 +4216,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 dynamo=dynamo,
                 offload_pt_weights=kwargs.get("offload_pt_weights", True),
                 prefill_only=prefill_only,
-                use_weight_free_export=use_weight_free_export,
             )
 
     def build_prefill_specialization(
@@ -4339,7 +4371,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         layerwise: bool = False,
         layerwise_window_size: int = 1,
         kv_cache_prefix: Optional[str] = None,
-        use_weight_free_export: bool = False,
         **compiler_options,
     ) -> str:
         """
@@ -4388,10 +4419,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             the decode stage. If None, compiles for both stages. Default is None.
         use_onnx_subfunctions: bool, optional
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
-        use_weight_free_export: bool, optional
-            Export with model weights externalized into ``weight_spec.json``. This
-            mode requires the dynamo exporter and is intended for lower-memory
-            CausalLM export flows.
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
 
@@ -4434,7 +4461,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if layerwise:
             warnings.warn(
                 "layerwise export is deprecated and will be removed in a future release. "
-                "Use weight-free export (use_weight_free_export=True) instead.",
+                "Use weight-free export (weight_free=True) instead.",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -4461,7 +4488,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
                 enable_chunking=enable_chunking,
                 retain_full_kv=retain_full_kv,
                 kv_cache_prefix=kv_cache_prefix,
-                use_weight_free_export=use_weight_free_export,
                 **compiler_options,
             )
         if self.model.qaic_config is not None and self.model.qaic_config.get("mla_absorption", None) is not None:
@@ -4708,7 +4734,6 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             enable_chunking=enable_chunking,
             retain_full_kv=retain_full_kv,
             kv_cache_prefix=kv_cache_prefix,
-            use_weight_free_export=use_weight_free_export,
             **compiler_options,
         )
 

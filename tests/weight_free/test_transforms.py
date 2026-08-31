@@ -311,7 +311,10 @@ class TestWeightFreeCheckpointTransforms:
             == "model.layers.2.block_sparse_moe.experts.down_proj_t"
         )
 
-    def test_promotes_tied_weight_alias_initializers(self, tmp_path, monkeypatch):
+    def test_promotes_embed_tokens_for_tied_model(self, tmp_path, monkeypatch):
+        """When tie_word_embeddings=True, torch.export deduplicates tied weights —
+        only model.embed_tokens.weight appears as an ONNX initializer, never
+        lm_head.weight. Verify the canonical name is promoted correctly."""
         src = tmp_path / "src"
         src.mkdir()
         tied_weight = torch.arange(12, dtype=torch.float32).reshape(4, 3)
@@ -320,20 +323,15 @@ class TestWeightFreeCheckpointTransforms:
         class TiedModel(torch.nn.Module):
             def __init__(self):
                 super().__init__()
-                self.config = SimpleNamespace(tie_word_embeddings=True)
                 self.model = torch.nn.Module()
                 self.model.embed_tokens = torch.nn.Embedding(4, 3)
                 self.lm_head = torch.nn.Linear(3, 4, bias=False)
                 self.lm_head.weight = self.model.embed_tokens.weight
 
-            def get_input_embeddings(self):
-                return self.model.embed_tokens
-
-            def get_output_embeddings(self):
-                return self.lm_head
-
         initializer = SimpleNamespace(shape=tied_weight.shape, dtype=ir.DataType.FLOAT)
-        graph = SimpleNamespace(initializers={"lm_head.weight": initializer}, inputs=[])
+        # Realistic: torch.export deduplicates tied weights — only the canonical
+        # name (model.embed_tokens.weight) appears as an ONNX initializer.
+        graph = SimpleNamespace(initializers={"model.embed_tokens.weight": initializer}, inputs=[])
         onnx_program = SimpleNamespace(model=SimpleNamespace(graph=graph))
         monkeypatch.setattr(
             checkpoint_key_resolver.ir,
@@ -348,9 +346,9 @@ class TestWeightFreeCheckpointTransforms:
             qeff_model=SimpleNamespace(model=TiedModel()),
         )
 
-        assert "lm_head.weight" not in graph.initializers
-        assert [value.name for value in graph.inputs] == ["lm_head.weight"]
-        assert spec.inputs[0].name == "lm_head.weight"
+        assert "model.embed_tokens.weight" not in graph.initializers
+        assert [v.name for v in graph.inputs] == ["model.embed_tokens.weight"]
+        assert spec.inputs[0].name == "model.embed_tokens.weight"
         assert spec.inputs[0].location.key == "model.embed_tokens.weight"
 
 
@@ -363,7 +361,6 @@ def _fake_export(
     export_dir=None,
     dynamo=False,
     dynamic_shapes=None,
-    use_weight_free_export=False,
     **export_kwargs,
 ):
     pass
@@ -372,10 +369,17 @@ def _fake_export(
 class TestWeightFreeExportHash:
     def test_weight_free_export_hash_differs_from_regular_dynamo(self):
         config = SimpleNamespace(to_diff_dict=lambda: {"model_type": "llama"})
-        qeff_model = SimpleNamespace(
+        common_model = SimpleNamespace(
             model=SimpleNamespace(config=config),
             hash_params={"pretrained_model_name_or_path": "tiny"},
             _use_onnx_subfunctions=False,
+            _weight_free=False,
+        )
+        weight_free_model = SimpleNamespace(
+            model=SimpleNamespace(config=config),
+            hash_params={"pretrained_model_name_or_path": "tiny"},
+            _use_onnx_subfunctions=False,
+            _weight_free=True,
         )
         common_kwargs = {
             "example_inputs": {"input_ids": torch.ones(1, 2, dtype=torch.int64)},
@@ -385,21 +389,21 @@ class TestWeightFreeExportHash:
         }
 
         regular_hash, regular_params = _generate_export_hash(
-            qeff_model,
+            common_model,
             (),
-            {**common_kwargs, "use_weight_free_export": False},
+            dict(common_kwargs),
             _fake_export,
         )
         weight_free_hash, weight_free_params = _generate_export_hash(
-            qeff_model,
+            weight_free_model,
             (),
-            {**common_kwargs, "use_weight_free_export": True},
+            dict(common_kwargs),
             _fake_export,
         )
 
         assert regular_hash != weight_free_hash
-        assert not regular_params["use_weight_free_export"]
-        assert weight_free_params["use_weight_free_export"]
+        assert not regular_params["weight_free"]
+        assert weight_free_params["weight_free"]
 
 
 # ---------------------------------------------------------------------------

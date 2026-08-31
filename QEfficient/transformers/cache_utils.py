@@ -1553,7 +1553,7 @@ class QEffGPTOSSDynamicLayer(QEffDynamicLayer):
 
         if self.is_sliding:
             # prefill only mode we slice the passed key states to sliding window len and need to adjust kv_position_ids accordingly
-            kv_position_ids = torch.arange(ctx_len, dtype=torch.int64).reshape(1, -1)
+            kv_position_ids = torch.arange(ctx_len, dtype=torch.int64, device=position_ids.device).reshape(1, -1)
         else:
             kv_position_ids = position_ids
 
@@ -1702,7 +1702,7 @@ class QEffGPTOSSDynamicLayer(QEffDynamicLayer):
 
         # Original Gather
         ctx_len = cache_kwargs.get("CCL", self.keys.shape[2])
-        ctx_indices = torch.arange(ctx_len, dtype=position_ids.dtype)[None, None, ...]
+        ctx_indices = torch.arange(ctx_len, dtype=position_ids.dtype, device=position_ids.device)[None, None, ...]
         gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1).to(position_ids.dtype)
         invalid_mask = ctx_indices > gather_limit
         invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()

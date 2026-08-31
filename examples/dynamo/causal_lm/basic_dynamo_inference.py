@@ -13,26 +13,10 @@ Requires PyTorch >= 2.13. Install dependencies before running:
 
 import argparse
 
-import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 
 from QEfficient import QEFFAutoModelForCausalLM
 from QEfficient.utils import constants
-
-
-def load_qeff_model(model_name: str, num_hidden_layers: int, use_weight_free_export: bool, enable_proxy: bool):
-    config = AutoConfig.from_pretrained(model_name)
-    if num_hidden_layers > 0:
-        config.num_hidden_layers = num_hidden_layers
-
-    if not use_weight_free_export:
-        return QEFFAutoModelForCausalLM.from_pretrained(model_name, config=config, enable_proxy=enable_proxy)
-
-    config.dtype = torch.float16
-    config.torch_dtype = torch.float16
-    with torch.device("meta"):
-        hf_model = AutoModelForCausalLM.from_config(config, attn_implementation="eager")
-    return QEFFAutoModelForCausalLM(hf_model, pretrained_model_name_or_path=model_name, enable_proxy=enable_proxy)
 
 
 def main():
@@ -40,7 +24,7 @@ def main():
         description="Dynamo-based export and inference for Causal LM models on Cloud AI 100.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--model-name", type=str, default="Qwen/Qwen2-1.5B-Instruct", help="HuggingFace model ID")
+    parser.add_argument("--model-name", type=str, default="tiny-random/gpt-oss-mxfp4", help="HuggingFace model ID")
     parser.add_argument("--num-hidden-layers", type=int, default=-1, help="Override number of hidden layers")
     parser.add_argument("--prompt", type=str, default="My name is", help="Input prompt for generation")
     parser.add_argument("--prefill-seq-len", type=int, default=32, help="Prefill sequence length")
@@ -51,7 +35,7 @@ def main():
         "--aic-hw-version", type=str, default=constants.DEFAULT_AIC_HW_VERSION, help="AIC hardware version"
     )
     parser.add_argument(
-        "--use-weight-free-export",
+        "--weight-free",
         action="store_true",
         help="Build the model on meta tensors and load weights at compile time",
     )
@@ -70,7 +54,15 @@ def main():
 
     # Load tokenizer and model
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = load_qeff_model(args.model_name, args.num_hidden_layers, args.use_weight_free_export, args.enable_proxy)
+    config = AutoConfig.from_pretrained(args.model_name)
+    if args.num_hidden_layers > 0:
+        config.num_hidden_layers = args.num_hidden_layers
+    model = QEFFAutoModelForCausalLM.from_pretrained(
+        args.model_name,
+        config=config,
+        weight_free=args.weight_free,
+        enable_proxy=args.enable_proxy,
+    )
 
     # Export (via torch.export / dynamo) + compile to QPC
     qpc_path = model.compile(
@@ -80,7 +72,6 @@ def main():
         aic_hw_version=args.aic_hw_version,
         num_devices=(1 if args.device_group is None else len(args.device_group)),
         dynamo=True,
-        use_weight_free_export=args.use_weight_free_export,
         use_onnx_subfunctions=True,
     )
     print(f"Model compiled to: {qpc_path}")

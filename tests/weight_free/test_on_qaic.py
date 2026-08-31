@@ -9,8 +9,8 @@
 Weight-free on-QAIC tests.
 
 All tests require QAIC hardware (marked @pytest.mark.on_qaic).
-All tests run with use_weight_free_export=True (which forces dynamo=True
-internally) and use_onnx_subfunctions=True.
+All tests run with weight_free=True (set on the QEff model, which forces
+dynamo=True internally) and use_onnx_subfunctions=True.
 
 Covers:
   - Generate smoke test (weight-free export -> compile -> generate on QAIC)
@@ -23,17 +23,16 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from transformers import AutoConfig
 
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
 from QEfficient.utils import get_num_layers_from_config
-from QEfficient.utils.device_utils import get_available_device_id
 
 from ._helpers import (
     BATCH_SIZE,
     CTX_LEN,
     PROMPT_LEN,
     WEIGHT_FREE_CAUSAL_LM_MODEL_IDS,
-    build_meta_qeff_model,
     exported_onnx_path,
     load_hf_model,
     load_tokenizer,
@@ -52,18 +51,16 @@ from ._helpers import (
 )
 def test_weight_free_generate_fp16(model_type, model_id, tmp_export_dir):
     """End-to-end weight-free export -> compile -> generate on real QAIC hardware."""
-    if model_type == "gpt_oss":
-        pytest.xfail()
-
     try:
-        qeff_model = build_meta_qeff_model(model_id)
+        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+        config.num_hidden_layers = 2
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, config=config, weight_free=True)
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
 
     onnx_path = exported_onnx_path(
         qeff_model.export(
             tmp_export_dir / "wf_gen_export",
-            use_weight_free_export=True,
             use_onnx_subfunctions=True,
             offload_pt_weights=False,
         )
@@ -76,13 +73,11 @@ def test_weight_free_generate_fp16(model_type, model_id, tmp_export_dir):
         num_cores=16,
         batch_size=BATCH_SIZE,
         use_onnx_subfunctions=True,
-        use_weight_free_export=True,
     )
     tokenizer = load_tokenizer(model_id)
     output = qeff_model.generate(
         tokenizer=tokenizer,
         prompts=["hello world"],
-        device_id=get_available_device_id(),
     )
     assert output is not None
     assert output.generated_texts is not None
@@ -100,9 +95,6 @@ def test_weight_free_generate_fp16(model_type, model_id, tmp_export_dir):
 def test_weight_free_hw_hf_parity(model_type, model_id, tmp_export_dir):
     """HF PT tokens == weight-free QAIC FP16 tokens (exact equality)."""
     from QEfficient.utils.run_utils import ApiRunner
-
-    if model_type == "gpt_oss":
-        pytest.xfail()
 
     try:
         tokenizer = load_tokenizer(model_id)
@@ -123,14 +115,15 @@ def test_weight_free_hw_hf_parity(model_type, model_id, tmp_export_dir):
     assert hf_tokens is not None, "HF PT inference returned None"
 
     try:
-        qeff_model = build_meta_qeff_model(model_id, num_hidden_layers=get_num_layers_from_config(model_hf.config))
+        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+        config.num_hidden_layers = get_num_layers_from_config(model_hf.config)
+        qeff_model = QEFFAutoModelForCausalLM.from_pretrained(model_id, config=config, weight_free=True)
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
 
     onnx_path = exported_onnx_path(
         qeff_model.export(
             tmp_export_dir / "wf_hw_parity_export",
-            use_weight_free_export=True,
             use_onnx_subfunctions=True,
             offload_pt_weights=False,
         )
@@ -143,12 +136,10 @@ def test_weight_free_hw_hf_parity(model_type, model_id, tmp_export_dir):
         num_cores=16,
         batch_size=BATCH_SIZE,
         use_onnx_subfunctions=True,
-        use_weight_free_export=True,
     )
     qaic_output = qeff_model.generate(
         tokenizer=tokenizer,
         prompts=["hello world"],
-        device_id=get_available_device_id(),
     )
 
     assert qaic_output is not None, "QAIC generate returned None"
@@ -171,9 +162,6 @@ def test_weight_free_hw_hf_parity(model_type, model_id, tmp_export_dir):
 )
 def test_weight_free_vs_legacy_qaic_parity(model_type, model_id, tmp_export_dir):
     """Weight-free-compiled and legacy dynamo-compiled QPCs produce identical tokens on QAIC."""
-    if model_type == "gpt_oss":
-        pytest.xfail()
-
     try:
         tokenizer = load_tokenizer(model_id)
         model_hf = load_hf_model(model_id)
@@ -202,22 +190,20 @@ def test_weight_free_vs_legacy_qaic_parity(model_type, model_id, tmp_export_dir)
     legacy_output = qeff_legacy.generate(
         tokenizer=tokenizer,
         prompts=["hello world"],
-        device_id=get_available_device_id(),
     )
     assert legacy_output is not None, "Legacy QAIC generate returned None"
 
     # Weight-free leg — meta-device model, matching layer count.
     try:
-        qeff_weight_free = build_meta_qeff_model(
-            model_id, num_hidden_layers=get_num_layers_from_config(model_hf.config)
-        )
+        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+        config.num_hidden_layers = get_num_layers_from_config(model_hf.config)
+        qeff_weight_free = QEFFAutoModelForCausalLM.from_pretrained(model_id, config=config, weight_free=True)
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
 
     weight_free_onnx_path = exported_onnx_path(
         qeff_weight_free.export(
             tmp_export_dir / "wf_vs_legacy_export",
-            use_weight_free_export=True,
             use_onnx_subfunctions=True,
             offload_pt_weights=False,
         )
@@ -230,12 +216,10 @@ def test_weight_free_vs_legacy_qaic_parity(model_type, model_id, tmp_export_dir)
         num_cores=16,
         batch_size=BATCH_SIZE,
         use_onnx_subfunctions=True,
-        use_weight_free_export=True,
     )
     weight_free_output = qeff_weight_free.generate(
         tokenizer=tokenizer,
         prompts=["hello world"],
-        device_id=get_available_device_id(),
     )
     assert weight_free_output is not None, "Weight-free QAIC generate returned None"
 

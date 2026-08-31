@@ -288,7 +288,7 @@ def export_wrapper(func):
             )
 
         # Extract flags
-        dynamo = kwargs.get("dynamo", False) or kwargs.get("use_weight_free_export", False)
+        dynamo = kwargs.get("dynamo", False)
         if dynamo:
             kwargs["dynamo"] = True
         use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
@@ -435,7 +435,7 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
             "use_onnx_subfunctions": getattr(qeff_model, "_use_onnx_subfunctions", False),
             "onnx_transform_version": 1,
             "dynamo": all_args.get("dynamo", False),
-            "use_weight_free_export": all_args.get("use_weight_free_export", False),
+            "weight_free": getattr(qeff_model, "_weight_free", False),
         }
     )
     if getattr(qeff_model, "_use_onnx_subfunctions", False):
