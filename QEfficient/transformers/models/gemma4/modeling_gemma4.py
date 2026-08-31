@@ -635,9 +635,11 @@ class QEffGemma4TextModel(Gemma4TextModel):
 
         hidden_states = inputs_embeds
 
-        position_embeddings = {}
-        for layer_type in self.unique_layer_types:
-            position_embeddings[layer_type] = self.rotary_emb(hidden_states, position_ids, layer_type)
+        assert self.unique_layer_types == {"full_attention", "sliding_attention"}, (
+            "Gemma4TextModel only supports full and sliding attention layers"
+        )
+        full_attn_position_embeddings = self.rotary_emb(hidden_states, position_ids, "full_attention")
+        sliding_attn_position_embeddings = self.rotary_emb(hidden_states, position_ids, "sliding_attention")
 
         for i, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
             per_layer_input = per_layer_inputs[:, :, i, :] if per_layer_inputs is not None else None
@@ -673,7 +675,9 @@ class QEffGemma4TextModel(Gemma4TextModel):
             hidden_states = decoder_layer(
                 hidden_states,
                 per_layer_input,
-                position_embeddings=position_embeddings[layer_type],
+                position_embeddings=full_attn_position_embeddings
+                if layer_type == "full_attention"
+                else sliding_attn_position_embeddings,
                 attention_mask=layer_attention_mask,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
