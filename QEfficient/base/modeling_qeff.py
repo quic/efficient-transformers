@@ -166,7 +166,7 @@ def generate_mdp_compiler_dump(
             )
         )
     if not dump_path.exists():
-        raise FileNotFoundError(f"MDP compiler dump was not created at {dump_path} after qaic-compile completed.")
+        raise FileNotFoundError(f"MDP compiler dump generation did not create the expected output file - {dump_path} ")
     return mdp_compiler_dump_path
 
 
@@ -1114,6 +1114,13 @@ class QEFFBaseModel(ABC):
         mdp_ts_json_path = compiler_options.pop("mdp_load_partition_config", None)
         mdp_strategy = MdpStrategy(compiler_options.pop("mdp_strategy", MdpStrategy.ONNX))
         mdp_compiler_dump_path = compiler_options.pop("mdp_compiler_dump_path", None)
+        if mdp_compiler_dump_path is not None:
+            logger.warning(
+                "mdp_compiler_dump_path is deprecated and no longer used. "
+                "QEfficient now generates the compiler dump automatically when mdp_strategy='intersection'; "
+                "ignoring the provided value."
+            )
+            mdp_compiler_dump_path = None
 
         if onnx_path is None:
             # If weights were offloaded after export, compiling must use the existing
@@ -1225,7 +1232,7 @@ class QEFFBaseModel(ABC):
         #   2. Disaggregated (pipeline-parallel) MDP — generated from ONNX topsort.
         #      Strategy ONNX (default): full superset from ONNX graph (~19 MB).
         #      Strategy INTERSECTION: intersect with compiler dump; compact (~1-2 MB),
-        #        requires a prior -mdp-dump-partition-config run.
+        #        generating the temporary compiler dump automatically.
         #   3. Template (tensor-slice) MDP — single partition, nodeList absent.
         mdp_ts_json = None
 

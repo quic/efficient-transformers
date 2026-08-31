@@ -101,15 +101,6 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--mdp_compiler_dump_path",
-        default=None,
-        help=(
-            "Optional path to a pre-existing compiler dump produced by "
-            "'qaic-compile -mdp-dump-partition-config'. When omitted with "
-            "--mdp_strategy intersection, the compile flow generates one."
-        ),
-    )
-    parser.add_argument(
         "--expert_parallel",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -168,8 +159,7 @@ def main() -> None:
         mos=args.mos,
         mdp_ts_num_devices=args.mdp_ts_num_devices,  # total devices spread across all pipeline stages
         mdp_num_partitions=args.mdp_num_partitions,  # number of pipeline-parallel stages (partitions)
-        mdp_strategy=args.mdp_strategy,  # "intersection" auto-generates dump unless path is provided
-        mdp_compiler_dump_path=args.mdp_compiler_dump_path,
+        mdp_strategy=args.mdp_strategy,  # "intersection" auto-generates the compiler dump
         qaic_config=qaic_config,
         mxfp6_matmul=True,
         mxint8_kv_cache=True,

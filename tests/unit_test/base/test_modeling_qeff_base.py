@@ -632,6 +632,32 @@ class TestMdpCompileIntegration:
             f"Expected mdp_strategy='onnx' in qconfig compiler_config, got {compiler_cfg.get('mdp_strategy')}"
         )
 
+    def test_user_mdp_compiler_dump_path_is_deprecated(self, compile_workspace):
+        """User-provided compiler dumps are deprecated and ignored in favor of auto-generation."""
+        _, onnx_path, compile_dir = compile_workspace
+        model_hf, _ = make_tiny_gpt2()
+        qeff = QEFFAutoModelForCausalLM(model_hf)
+        user_dump_path = compile_dir / "compiler_dump.json"
+
+        with (
+            patch("QEfficient.base.modeling_qeff.logger.warning") as warning_mock,
+            patch("QEfficient.base.modeling_qeff.subprocess.run", side_effect=_fake_subprocess_run) as run_mock,
+        ):
+            qeff._compile(
+                onnx_path=str(onnx_path),
+                compile_dir=str(compile_dir),
+                mdp_ts_num_devices=4,
+                mdp_num_partitions=2,
+                mdp_strategy="intersection",
+                mdp_compiler_dump_path=str(user_dump_path),
+            )
+
+        command_strs = [" ".join(str(arg) for arg in call.args[0]) for call in run_mock.call_args_list]
+        warning_mock.assert_called_once()
+        assert "mdp_compiler_dump_path is deprecated and no longer used" in warning_mock.call_args.args[0]
+        assert str(user_dump_path) not in " ".join(command_strs)
+        assert any("tmp_mdp_compiler_dump_4d_2p.json" in command_str for command_str in command_strs)
+
     def test_intersection_mdp_dump_reuses_compile_command(self, compile_workspace):
         """Auto-generated compiler dumps are derived from the final compiler-facing command."""
         _, onnx_path, compile_dir = compile_workspace
