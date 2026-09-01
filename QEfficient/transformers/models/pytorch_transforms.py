@@ -21,6 +21,15 @@ from transformers.models.codegen.modeling_codegen import (
 from transformers.models.deberta_v2.modeling_deberta_v2 import (
     DisentangledSelfAttention,
 )
+from transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
+    DiffusionGemmaEncoderTextAttention,
+    DiffusionGemmaEncoderTextLayer,
+    DiffusionGemmaEncoderTextModel,
+    DiffusionGemmaForBlockDiffusion,
+    DiffusionGemmaRMSNorm,
+    DiffusionGemmaTextExperts,
+    DiffusionGemmaTextRouter,
+)
 from transformers.models.falcon.modeling_falcon import (
     FalconAttention,
     FalconDecoderLayer,
@@ -100,7 +109,7 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeForCausalLM,
     GraniteMoeModel,
     GraniteMoeMoE,
-    GraniteMoeRMSNorm,
+    GraniteMoeParallelExperts,
     GraniteMoeRotaryEmbedding,
 )
 
@@ -210,15 +219,7 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLVisionAttention,
     Qwen2_5_VLVisionBlock,
 )
-from transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
-        DiffusionGemmaEncoderTextAttention,
-        DiffusionGemmaEncoderTextLayer,
-        DiffusionGemmaEncoderTextModel,
-        DiffusionGemmaForBlockDiffusion,
-        DiffusionGemmaRMSNorm,
-        DiffusionGemmaTextExperts,
-        DiffusionGemmaTextRouter,
-    )
+
 try:
     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2RMSNorm as Qwen2_5RMSNorm
 except ImportError:
@@ -353,11 +354,14 @@ from QEfficient.transformers.models.deepseek_v3.modeling_deepseek import (
     QEffDeepseekV3Model,
     QEffDeepseekV3MoE,
 )
-from QEfficient.transformers.models.dflash_draft.modeling_dflash_draft import (
-    QEffDFlashAttention,
-    QEffDFlashDecoderLayer,
-    QEffDFlashForCausalLM,
-    QEffDFlashModel,
+from QEfficient.transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
+    QEffDiffusionGemmaEncoderTextAttention,
+    QEffDiffusionGemmaEncoderTextLayer,
+    QEffDiffusionGemmaEncoderTextModel,
+    QEffDiffusionGemmaForBlockDiffusion,
+    QEffDiffusionGemmaRMSNorm,
+    QEffDiffusionGemmaTextExperts,
+    QEffDiffusionGemmaTextRouter,
 )
 from QEfficient.transformers.models.falcon.modeling_falcon import (
     QEffFalconAttention,
@@ -668,16 +672,6 @@ from QEfficient.transformers.moe import (
     pack_moe_weights_for_expert_parallel,
     unpack_moe_weights_from_expert_parallel,
 )
-
-from QEfficient.transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
-        QEffDiffusionGemmaRMSNorm,
-        QEffDiffusionGemmaEncoderTextAttention,
-        QEffDiffusionGemmaEncoderTextLayer,
-        QEffDiffusionGemmaEncoderTextModel,
-        QEffDiffusionGemmaForBlockDiffusion,
-        QEffDiffusionGemmaTextExperts,
-        QEffDiffusionGemmaTextRouter,
-    )
 from QEfficient.transformers.post_processing import build_and_attach_mlp, model_type_registry
 from QEfficient.transformers.sampler.sampler import sampler_forward
 from QEfficient.transformers.spd.spd_transform_forward import tlm_forward

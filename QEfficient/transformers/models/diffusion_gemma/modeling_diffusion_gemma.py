@@ -13,9 +13,6 @@ import torch.nn as nn
 from transformers.cache_utils import Cache
 from transformers.modeling_outputs import BaseModelOutputWithPast
 from transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
-    DiffusionGemmaDecoderModel,
-    DiffusionGemmaDecoderTextAttention,
-    DiffusionGemmaDecoderTextLayer,
     DiffusionGemmaEncoderTextAttention,
     DiffusionGemmaEncoderTextLayer,
     DiffusionGemmaEncoderTextModel,
@@ -31,14 +28,6 @@ from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
 from QEfficient.utils import constants
 
-# Legacy no-gather cache workaround imports:
-# from QEfficient.customop.ctx_scatter_gather import CtxScatterFunc
-# from QEfficient.transformers.cache_utils import QEffGemma4DynamicLayer
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-MIN_MASKED_ATTENTION_VALUE = -1e9  # finite under FP16; never -inf inside torch.where
 _FP16_CLAMP_MIN = -65504.0
 _FP16_CLAMP_MAX = 65504.0
 
@@ -57,21 +46,6 @@ def _repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_kv_heads, n_rep, -1, head_dim)
     return hidden_states.reshape(batch, num_kv_heads * n_rep, -1, head_dim)
 
-
-# def _build_encoder_kv_valid_mask(
-#     position_ids: torch.Tensor,
-#     cache_shape_anchor: torch.Tensor,
-# ) -> torch.Tensor:
-#     valid_positions = position_ids >= 0
-#     last_position = torch.where(
-#         valid_positions,
-#         position_ids,
-#         torch.full_like(position_ids, -1),
-#     ).max(dim=1, keepdim=True).values
-#     cache_indices = torch.cumsum(torch.ones_like(cache_shape_anchor, dtype=torch.int64), dim=1) - 1
-#     return cache_indices <= last_position
-
-
 def _clamp_to_fp16_range(t: torch.Tensor) -> torch.Tensor:
     if not _is_onnx_export():
         return t
@@ -89,6 +63,7 @@ def _saturating_residual_add(residual: torch.Tensor, hidden_states: torch.Tensor
     if not _is_onnx_export():
         return residual + hidden_states
     return (residual.float() + hidden_states.float()).clamp(_FP16_CLAMP_MIN, _FP16_CLAMP_MAX).to(hidden_states.dtype)
+
 
 class QEffDiffusionGemmaRMSNorm(DiffusionGemmaRMSNorm):
     """Export-safe RMSNorm.
@@ -181,57 +156,6 @@ class QEffDiffusionGemmaTextExperts(DiffusionGemmaTextExperts):
         combine_weights = expert_weights.to(experts_out.dtype).unsqueeze(-1)  # [tokens, num_experts, 1]
         return torch.bmm(weighted_experts, combine_weights).squeeze(-1)
 
-
-# ---------------------------------------------------------------------------
-# Helpers for building QEff-safe attention masks
-# ---------------------------------------------------------------------------
-
-
-def _build_diffusion_encoder_additive_mask(
-    position_ids: torch.Tensor,
-    target_length: int,
-    dtype: torch.dtype,
-    sliding_window: Optional[int] = None,
-    mm_token_type_ids: Optional[torch.Tensor] = None,
-) -> torch.Tensor:
-    """
-    Export-safe additive attention mask for the encoder.
-
-    When mm_token_type_ids is provided and the sequence is not a single decode
-    step, builds a bidirectional mask for image-token groups (mirrors Gemma4's
-    _build_bidirectional_vision_attention_mask logic).
-
-    Mask value: HF uses ``torch.finfo(dtype).min`` so softmax of masked positions is
-    exactly 0; we match that on CPU eager (HF==QEffPT parity). For ONNX export / QPC we
-    use ``-1e4`` instead, because ``finfo.min`` overflows fp16 and causes attention NaNs
-    on hardware.
-    """
-    mask_value = -1e4 if _is_onnx_export() else torch.finfo(dtype).min
-    base_mask = _create_causal_mask(
-        position_ids=position_ids,
-        target_length=target_length,
-        sliding_window=sliding_window,
-    )
-    if mm_token_type_ids is None or position_ids.shape[1] == 1:
-        return base_mask.to(dtype=dtype) * mask_value
-
-    # Build bidirectional attention within each contiguous image-token block
-    is_vision = (mm_token_type_ids == 1) | (mm_token_type_ids == 2)
-    is_prev_vision = torch.roll(is_vision, shifts=1, dims=-1)
-    is_prev_vision[..., 0] = False
-    new_vision_starts = is_vision & ~is_prev_vision
-    vision_group_ids = torch.cumsum(new_vision_starts.to(torch.int64), dim=1) - 1
-    vision_group_ids = torch.where(is_vision, vision_group_ids, torch.full_like(vision_group_ids, -1))
-
-    kv_indices = torch.arange(target_length, device=vision_group_ids.device, dtype=torch.int64).view(1, -1)
-    seq_len_limit = torch.full_like(kv_indices, vision_group_ids.shape[1] - 1)
-    safe_kv_indices = torch.minimum(kv_indices, seq_len_limit)
-    kv_group_ids = torch.gather(vision_group_ids, 1, safe_kv_indices.expand(vision_group_ids.shape[0], -1))
-    kv_group_ids = torch.where(kv_indices < vision_group_ids.shape[1], kv_group_ids, torch.full_like(kv_group_ids, -1))
-
-    same_group = (vision_group_ids.unsqueeze(-1) == kv_group_ids.unsqueeze(1)) & (vision_group_ids.unsqueeze(-1) >= 0)
-    attention_mask = base_mask & ~same_group.unsqueeze(1)
-    return attention_mask.to(dtype=dtype) * mask_value
 
 class QEffDiffusionGemmaEncoderTextAttention(DiffusionGemmaEncoderTextAttention):
     """Shared encoder/decoder attention over physical retained KV buffers."""
@@ -401,99 +325,6 @@ class QEffDiffusionGemmaEncoderTextModel(DiffusionGemmaEncoderTextModel):
         sin = sin_table[pos_clamped]
         return cos, sin
 
-    def forward(
-        self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        mm_token_type_ids: Optional[torch.Tensor] = None,
-        use_cache: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        **kwargs,
-    ) -> BaseModelOutputWithPast:
-        use_cache = use_cache if use_cache is not None else self.config.use_cache
-
-        if (input_ids is None) ^ (inputs_embeds is not None):
-            raise ValueError("Specify exactly one of input_ids or inputs_embeds")
-
-        if input_ids is not None:
-            inputs_embeds = self.embed_tokens(input_ids)
-
-        # convert legacy cache to QEffGemma4DynamicCache at model entry
-        if use_cache and isinstance(past_key_values, Cache) and not isinstance(past_key_values, QEffGemma4DynamicCache):
-            past_key_values = QEffGemma4DynamicCache.from_cache(self.config, past_key_values)
-        elif use_cache and not isinstance(past_key_values, Cache):
-            past_key_values = QEffGemma4DynamicCache.from_legacy_cache(self.config, past_key_values)
-        elif use_cache and past_key_values is None:
-            past_key_values = QEffGemma4DynamicCache(config=self.config)
-
-        if position_ids is None:
-            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-            position_ids = (
-                torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
-            ).unsqueeze(0)
-
-        hidden_states = inputs_embeds
-
-        # Precompute RoPE once per layer-type. For full_attention, use a precomputed
-        # Gather-from-table instead of the runtime MatMul(inv_freq, position_ids): the
-        # full_attention inv_freq has 192/256 trailing zeros (partial_rotary_factor=0.25),
-        # which mxfp6-quantize to tiny nonzeros → wrong angles at large positions. Storing
-        # exact cos/sin as a buffer avoids this.
-        position_embeddings = {}
-        for layer_type in self.unique_layer_types:
-            if layer_type == "full_attention" and _is_onnx_export():
-                position_embeddings[layer_type] = self._precomputed_rope_gather(
-                    position_ids, layer_type, hidden_states.dtype
-                )
-            else:
-                position_embeddings[layer_type] = self.rotary_emb(hidden_states, position_ids, layer_type)
-
-        for i, encoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
-            layer_type = self.config.layer_types[i]
-            is_sliding = layer_type == "sliding_attention"
-            sliding_window = self.config.sliding_window if is_sliding else None
-
-            # Compute target_length from cached KV
-            if past_key_values is not None and len(past_key_values.layers) > i:
-                layer_keys = past_key_values.layers[i].keys
-                if layer_keys is not None and layer_keys.numel() > 0:
-                    target_length = layer_keys.shape[-2]
-                else:
-                    target_length = (
-                        min(self.config.sliding_window, self.config.max_position_embeddings)
-                        if is_sliding
-                        else inputs_embeds.shape[1]
-                    )
-            else:
-                target_length = (
-                    min(self.config.sliding_window, self.config.max_position_embeddings)
-                    if is_sliding
-                    else inputs_embeds.shape[1]
-                )
-
-            layer_attention_mask = _build_diffusion_encoder_additive_mask(
-                position_ids=position_ids,
-                target_length=target_length,
-                dtype=hidden_states.dtype,
-                sliding_window=sliding_window,
-                mm_token_type_ids=mm_token_type_ids if inputs_embeds.shape[1] != 1 else None,
-            )
-
-            hidden_states = encoder_layer(
-                hidden_states,
-                position_embeddings=position_embeddings[layer_type],
-                attention_mask=layer_attention_mask,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                **kwargs,
-            )
-
-        hidden_states = self.norm(hidden_states)
-        next_cache = past_key_values.to_legacy_cache() if use_cache else None
-        return BaseModelOutputWithPast(last_hidden_state=hidden_states, past_key_values=next_cache)
 
 class QEffDiffusionGemmaVisionEncoderWrapper(nn.Module):
     """
@@ -890,7 +721,7 @@ class QEffDiffusionGemmaForBlockDiffusion(DiffusionGemmaForBlockDiffusion):
     def get_qeff_encoder_prefill(self) -> QEffDiffusionGemmaEncoderPrefillWrapper:
         """Disaggregated dual-QPC: standalone encoder-prefill QPC."""
         return QEffDiffusionGemmaEncoderPrefillWrapper(self)
-    
+
     def get_submodules_for_export(self) -> Type[nn.Module]:
         return {QEffDiffusionGemmaEncoderTextLayer}
 

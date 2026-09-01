@@ -3134,6 +3134,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             A dictionary specifying the dynamic axes for inputs.
         """
         return self.model.get_onnx_dynamic_axes()
+
     def generate(
         self,
         inputs: Optional[torch.Tensor] = None,
@@ -3179,7 +3180,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             return write_single_qpc_vlm_runner_bundle(model=self, processor=processor, images=images, prompts=prompts)
         if not runtime_ai100:
             raise NotImplementedError("PyTorch execution is not supported yet for this model!")
-        
+
         # if _is_diffusion_gemma_arch(self.model.config):
         #     return self.diffusion_gemma_generate_singleqpc(
         #         inputs=inputs,

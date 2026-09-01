@@ -24,12 +24,13 @@ from transformers import AutoModelForImageTextToText, AutoProcessor
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.base.modeling_qeff import QEFFBaseModel
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+
 # from QEfficient.transformers.diffusion_gemma_utils import DiffusionGemmaRuntimeResult
 from QEfficient.transformers.models.modeling_auto import QEffCausalLMForTextImageToTextModel
 
-
 FP32_ACCUM_OPS = {"CustomRMSNorm", "Clip", "Softmax", "Add", "Sub", "Mul", "Div", "Tanh", "Pow", "ReduceMean"}
 MOE_NODE_NAME_PARTS = ("/router/", "/experts/", ".router.", ".experts.")
+
 
 @dataclass
 class DiffusionGemmaRuntimeResult:
@@ -37,6 +38,7 @@ class DiffusionGemmaRuntimeResult:
     tokens_per_forward: np.ndarray
     decode_forward_passes: np.ndarray
     total_time: float
+
 
 @dataclass
 class DiffusionGemmaSingleQPCRuntimeResult(DiffusionGemmaRuntimeResult):
@@ -128,16 +130,16 @@ class DiffusionGemmaSingleQPCGenerator:
             if binding.name == name:
                 return binding.dims
         return None
-    
+
     def _cache_length(self, layer_type: str) -> int:
-          mask_name = f"{layer_type}_mask"
-          dims = self._binding_dims(mask_name)
-          if dims is None:
-              raise ValueError(f"The QPC is missing `{mask_name}`.")
-          cache_length = int(dims[-1]) - self.prefill_seq_len
-          if cache_length <= 0:
-              raise ValueError(f"Invalid `{mask_name}` shape: {list(dims)}.")
-          return cache_length
+        mask_name = f"{layer_type}_mask"
+        dims = self._binding_dims(mask_name)
+        if dims is None:
+            raise ValueError(f"The QPC is missing `{mask_name}`.")
+        cache_length = int(dims[-1]) - self.prefill_seq_len
+        if cache_length <= 0:
+            raise ValueError(f"Invalid `{mask_name}` shape: {list(dims)}.")
+        return cache_length
 
     @staticmethod
     def _project_slot_positions(slot_positions, cache_position_ids, *, sliding: bool):
@@ -195,9 +197,7 @@ class DiffusionGemmaSingleQPCGenerator:
         chunk = self._prompt_chunks[chunk_index]
         block_length = chunk["input_ids"].shape[1]
         padding = self.prefill_seq_len - block_length
-        self.input_ids = np.pad(
-            chunk["input_ids"], ((0, 0), (0, padding)), constant_values=self._prompt_pad_token_id
-        )
+        self.input_ids = np.pad(chunk["input_ids"], ((0, 0), (0, padding)), constant_values=self._prompt_pad_token_id)
         self.position_ids = np.pad(chunk["position_ids"], ((0, 0), (0, padding)), constant_values=-1)
         self.mm_token_type_ids = np.pad(chunk["mm_token_type_ids"], ((0, 0), (0, padding)))
         vision_dims = self._binding_dims("vision_embeds")
@@ -213,7 +213,9 @@ class DiffusionGemmaSingleQPCGenerator:
         if input_ids.ndim != 2 or input_ids.shape[0] != 1:
             raise ValueError("`input_ids` must have shape [1, sequence_length].")
         attention_mask = inputs.get("attention_mask")
-        sequence_length = int(_to_numpy(attention_mask, np.int64)[0].sum()) if attention_mask is not None else input_ids.shape[1]
+        sequence_length = (
+            int(_to_numpy(attention_mask, np.int64)[0].sum()) if attention_mask is not None else input_ids.shape[1]
+        )
         if sequence_length <= 0:
             raise ValueError("The prompt must contain at least one token.")
 
@@ -249,8 +251,8 @@ class DiffusionGemmaSingleQPCGenerator:
         return sequence_length
 
     def _build_additive_mask(self, *, cache_length: int, sliding: bool, cache_position_ids, is_encode: bool):
+        # breakpoint()
         block_length = self.prefill_seq_len
-        # mask = np.full((1, 1, block_length, cache_length), self._MASK_VALUE, dtype=np.float32)
         mask = np.full((1, 1, block_length, cache_length + block_length), self._MASK_VALUE, dtype=np.float32)
         current_positions = self.position_ids[0]
         cache_positions = cache_position_ids[0]
@@ -296,9 +298,11 @@ class DiffusionGemmaSingleQPCGenerator:
                     mask[0, 0, query_index, physical_indices] = 0.0
         else:
             mask[:, :, :, cache_length:] = 0.0
+        # breakpoint()
         return mask
 
     def _shared_feed(self, *, cache_position_ids, is_encode, self_conditioning_logits, use_self_conditioning):
+        # breakpoint()
         cache_position_ids = np.asarray(cache_position_ids, dtype=np.int64)
         return {
             "input_ids": self.input_ids,
@@ -449,9 +453,7 @@ class DiffusionGemmaSingleQPCGenerator:
     def _commit_canvas(self, tokens: np.ndarray, debug_callback=None):
         commit_length = int(tokens.shape[1])
         if commit_length > self.prefill_seq_len:
-            raise ValueError(
-                f"Commit length {commit_length} exceeds compiled block length {self.prefill_seq_len}."
-            )
+            raise ValueError(f"Commit length {commit_length} exceeds compiled block length {self.prefill_seq_len}.")
         if self._active_canvas_position_ids is None:
             raise RuntimeError("No active canvas positions are available to commit.")
         commit_position_ids = self._active_canvas_position_ids[:, :commit_length]
@@ -484,7 +486,6 @@ class DiffusionGemmaSingleQPCGenerator:
                 "cache_position_ids": self.position_ids.copy(),
             },
         )
-
 
     def generate(
         self,
@@ -528,7 +529,8 @@ class DiffusionGemmaSingleQPCGenerator:
             total_steps = 0
             total_canvas_time = 0.0
             num_blocks = int(math.ceil(target_new_tokens / self.canvas_length))
-
+            print(f'Total number of blocks is {num_blocks}')
+            # breakpoint()
             for block_index in range(num_blocks):
                 emitted_tokens = sum(tokens.shape[1] for tokens in generated)
                 remaining_tokens = target_new_tokens - emitted_tokens
@@ -559,9 +561,7 @@ class DiffusionGemmaSingleQPCGenerator:
                 if block_index + 1 < num_blocks and canvas_tokens.shape[1] > 0:
                     self._commit_canvas(canvas_tokens, debug_callback=debug_callback)
 
-            generated_ids = (
-                np.concatenate(generated, axis=1) if generated else np.zeros((1, 0), dtype=np.int64)
-            )
+            generated_ids = np.concatenate(generated, axis=1) if generated else np.zeros((1, 0), dtype=np.int64)
             valid_tokens = np.array([generated_ids.shape[1]], dtype=np.float32)
             decode_forward_passes = np.array([total_steps], dtype=np.int64)
             tokens_per_forward = valid_tokens / np.maximum(decode_forward_passes.astype(np.float32), 1.0)
@@ -596,7 +596,7 @@ def diffusion_gemma_generate_single_qpc_chunked(
     if pad_token_id is None:
         pad_token_id = 0
 
-    session = QAICInferenceSession(str(qpc_path), device_ids =None)
+    session = QAICInferenceSession(str(qpc_path), device_ids=None)
     generator = DiffusionGemmaSingleQPCGenerator(
         model_config=qeff_model.model.config,
         session=session,
@@ -632,8 +632,12 @@ def _write_unified_accum_npi(onnx_path):
         node_name = node.name.lower()
         return any(part in node_name for part in MOE_NODE_NAME_PARTS)
 
+    def is_excluded_npi_node(node):
+        return "/lm_head/MatMul" in node.name
+        # return "/self_attn/Softmax" in node.name or "/lm_head/MatMul" in node.name
+
     for node in graph.node:
-        if is_moe_node(node):
+        if is_moe_node(node) or is_excluded_npi_node(node):
             continue
         if node.op_type in FP32_ACCUM_OPS:
             keep_nodes.append(node)
@@ -647,7 +651,7 @@ def _write_unified_accum_npi(onnx_path):
             return
         seen_names.add(tensor_name)
         node = producers.get(tensor_name)
-        if node is None or is_moe_node(node):
+        if node is None or is_moe_node(node) or is_excluded_npi_node(node):
             return
         keep_nodes.append(node)
         for input_name in node.input:
@@ -673,7 +677,7 @@ def _write_unified_accum_npi(onnx_path):
     tensors = []
     seen_tensors = set()
     for node in keep_nodes:
-        if is_moe_node(node):
+        if is_moe_node(node) or is_excluded_npi_node(node):
             continue
         for output_name in node.output:
             if not output_name or output_name in seen_tensors or output_name in excluded_outputs:
@@ -727,8 +731,12 @@ def compile_unified_qpc(
     custom_io = {"vision_embeds": "float16"}
     for layer_index in range(qeff_model.config.text_config.num_hidden_layers):
         for kv_name in ("key", "value"):
-            custom_io[f"past_{kv_name}.{layer_index}"] = "float16"
-            custom_io[f"past_{kv_name}.{layer_index}_RetainedState"] = "float16"
+            custom_io[f"past_{kv_name}.{layer_index}"] = "mxint8"
+            custom_io[f"past_{kv_name}.{layer_index}_RetainedState"] = "mxint8"
+
+            # custom_io[f"past_{kv_name}.{layer_index}"] = "float16"
+            # custom_io[f"past_{kv_name}.{layer_index}_RetainedState"] = "float16"
+            
 
     qpc_path = unified._compile(
         onnx_path=unified.onnx_path,
@@ -740,7 +748,8 @@ def compile_unified_qpc(
         aic_num_cores=num_cores,
         custom_io=custom_io,
         retained_state=True,
-        aic_enable_depth_first=True,
+        # aic_enable_depth_first=True,
+        user_tiled=True,
         node_precision_info=_write_unified_accum_npi(unified.onnx_path),
     )
     print(f"  unified QPC: {qpc_path} ({time.time() - start:.0f}s)")
@@ -761,9 +770,9 @@ def _vision_embeds_cpu(model_id: str, text_model, vision_inputs):
         image_position_ids = vision_inputs["image_position_ids"]
         padding_positions = (image_position_ids == -1).all(dim=-1)
         hidden_states = encoder.vision_tower.patch_embedder(pixel_values, image_position_ids, padding_positions)
-        attention_mask = padding_positions.unsqueeze(1).unsqueeze(2).to(hidden_states.dtype) * torch.finfo(
-            hidden_states.dtype
-        ).min
+        attention_mask = (
+            padding_positions.unsqueeze(1).unsqueeze(2).to(hidden_states.dtype) * torch.finfo(hidden_states.dtype).min
+        )
         attention_mask = attention_mask.expand(-1, 1, hidden_states.shape[1], -1)
         position_embeddings = encoder.vision_tower.encoder.rotary_emb(hidden_states, image_position_ids)
         for layer in encoder.vision_tower.encoder.layers[: encoder.vision_tower.encoder.config.num_hidden_layers]:
