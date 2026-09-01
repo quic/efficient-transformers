@@ -244,7 +244,9 @@ def generic_blocked_attention_interface(
     **kwargs,
 ):
     prefill_only = prefill_only or blocking_config.mode.is_prefill
-    strategy = _STRATEGIES[BlockingMode.get_final_mode(blocking_config, is_mla=is_mla, mla_kwargs=mla_kwargs)]
+    strategy = _STRATEGIES[
+        BlockingMode.get_final_mode(blocking_config, prefill_only=prefill_only, is_mla=is_mla, mla_kwargs=mla_kwargs)
+    ]
 
     cache_kwargs = {"position_ids": position_ids, "batch_index": batch_index}
 
