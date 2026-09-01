@@ -395,3 +395,48 @@ class TestBlockingWrapperFallbackAndParity:
         assert torch.equal(original_token, transformed_token), (
             "Original and transformed model outputs diverged for same CPU input"
         )
+
+    @pytest.mark.parametrize(
+        "blocking_cfg",
+        [
+            AttentionBlockingConfig(mode=BlockingMode.NONE),
+            AttentionBlockingConfig(mode=BlockingMode.KV, num_kv_blocks=2),
+            AttentionBlockingConfig(mode=BlockingMode.QKV, num_kv_blocks=2, num_q_blocks=2),
+            AttentionBlockingConfig(mode=BlockingMode.HQKV, num_kv_blocks=2, num_q_blocks=2, head_block_size=1),
+        ],
+        ids=["mode_none", "mode_kv", "mode_qkv", "mode_hqkv"],
+    )
+    def test_cpu_logits_allclose_original_vs_blocked(self, blocking_cfg):
+        """Blocked attention (kv/qkv/hqkv, paged_attention=False) must reproduce the
+        unblocked model's logits to numerical precision, not just the same argmax
+        token - splitting attention into blocks with running-softmax accumulation
+        is a reformulation of the same computation, so it should match tightly.
+        Also covers "non-paged generation unchanged when num_kv_blocks is absent"
+        via the mode_none case, which never sets num_kv_blocks.
+
+        QEffLlamaForCausalLM.forward always gathers only the last token's hidden
+        state (via position_ids.argmax) before the lm_head projection, so it never
+        returns per-position logits for the full prompt - compare the last position
+        only, but with allclose instead of just argmax to make this a real numeric
+        tightening over test_cpu_parity_original_vs_transformed_with_same_input."""
+        from QEfficient.transformers.models.pytorch_transforms import BlockingAttentionTransform, KVCacheTransform
+
+        torch.manual_seed(7)
+        base = make_tiny_llama()
+        original = deepcopy(base).eval()
+        transformed = deepcopy(base).eval()
+        transformed, _ = KVCacheTransform.apply(transformed)
+        transformed, applied = BlockingAttentionTransform.apply(transformed, blocking_cfg)
+        assert applied
+
+        input_ids = torch.randint(0, VOCAB_SIZE, (1, 8))
+        qeff_inputs = _make_qeff_inputs(input_ids, transformed.config)
+
+        with torch.no_grad():
+            original_logits = original(input_ids=input_ids).logits[:, -1, :]
+            transformed_logits = transformed(**qeff_inputs).logits[:, -1, :]
+
+        assert torch.allclose(original_logits, transformed_logits, atol=1e-4, rtol=1e-4), (
+            f"Logits diverged beyond tolerance for blocking_cfg.mode={blocking_cfg.mode} "
+            f"(max abs diff={(original_logits - transformed_logits).abs().max().item()})"
+        )
