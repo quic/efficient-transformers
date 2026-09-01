@@ -6,6 +6,7 @@
 # -----------------------------------------------------------------------------
 
 import os
+from functools import partial
 from typing import List, Optional, Type
 
 import torch
@@ -18,7 +19,6 @@ from transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
     DiffusionGemmaEncoderTextModel,
     DiffusionGemmaForBlockDiffusion,
     DiffusionGemmaRMSNorm,
-    DiffusionGemmaTextExperts,
     DiffusionGemmaTextRouter,
     apply_rotary_pos_emb,
 )
@@ -26,6 +26,15 @@ from transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
 from QEfficient.customop.rms_norm import CustomRMSNormFunc
 from QEfficient.transformers.cache_utils import QEffGemma4DynamicCache
 from QEfficient.transformers.modeling_attn_mask_utils import _create_causal_mask
+from QEfficient.transformers.moe import (
+    MoEFlavour,
+    MoEProfile,
+    MoEWeights,
+    QEffMoEBlockMixin,
+    build_canonical_expert_weights,
+    delete_module_attrs,
+    silu_glu_mlp,
+)
 from QEfficient.utils import constants
 
 _FP16_CLAMP_MIN = -65504.0
@@ -125,37 +134,61 @@ class QEffDiffusionGemmaTextRouter(DiffusionGemmaTextRouter):
         return router_probabilities, top_k_weights, top_k_index
 
 
-# ---------------------------------------------------------------------------
-# Experts — batched BMM (same structure as QEffGemma4TextExperts)
-# ---------------------------------------------------------------------------
+class QEffDiffusionGemmaTextMoeBlock(QEffMoEBlockMixin, nn.Module):
+    """QEff MoE execution wrapper for DiffusionGemma encoder layers."""
 
+    supported_moe_flavours = (
+        MoEFlavour.SIMPLE_LOOP,
+        MoEFlavour.DECODE_BMM,
+        MoEFlavour.EXPERT_PARALLEL,
+    )
+    supports_moe_decode_bmm = True
 
-class QEffDiffusionGemmaTextExperts(DiffusionGemmaTextExperts):
-    def forward(
+    def __init__(
         self,
-        hidden_states: torch.Tensor,
-        top_k_index: torch.Tensor,
-        top_k_weights: torch.Tensor,
-    ) -> torch.Tensor:
-        gate_up_proj_t = self.gate_up_proj.transpose(1, 2)
-        gate_up_out = torch.matmul(hidden_states, gate_up_proj_t).permute(1, 0, 2)
-        gate, up = gate_up_out.chunk(2, dim=-1)
-        activated = self.act_fn(gate) * up
+        router: nn.Module,
+        experts: nn.Module,
+        pre_feedforward_layernorm: nn.Module,
+        post_feedforward_layernorm: nn.Module,
+    ) -> None:
+        super().__init__()
+        self.router = router
+        self.experts = experts
+        self.pre_feedforward_layernorm = pre_feedforward_layernorm
+        self.post_feedforward_layernorm = post_feedforward_layernorm
 
-        down_proj_t = self.down_proj.transpose(1, 2)
-        experts_out = torch.matmul(activated.permute(1, 0, 2), down_proj_t).permute(1, 0, 2)
-        # Avoid scatter_add_ which traces to ScatterElements(reduction='add') in ONNX
-        # and compiles incorrectly on AI 100 (large per-layer cosine error compounding
-        # over 30 layers). Use broadcast equality + weighted sum instead (no scatter).
-        # top_k_index: [tokens, top_k], top_k_weights: [tokens, top_k]
-        # one_hot[t,k,e] = (top_k_index[t,k] == e)
-        expert_ids = torch.arange(self.num_experts, device=top_k_index.device, dtype=top_k_index.dtype)
-        one_hot = (top_k_index.unsqueeze(-1) == expert_ids.view(1, 1, -1)).to(top_k_weights.dtype)
-        # expert_weights[t, e] = sum_k(one_hot[t,k,e] * top_k_weights[t,k])
-        expert_weights = torch.einsum("tke,tk->te", one_hot, top_k_weights)
-        weighted_experts = experts_out.transpose(1, 2)  # [tokens, hidden, num_experts]
-        combine_weights = expert_weights.to(experts_out.dtype).unsqueeze(-1)  # [tokens, num_experts, 1]
-        return torch.bmm(weighted_experts, combine_weights).squeeze(-1)
+    def transform_weights(self) -> MoEWeights:
+        if getattr(self, "weights_transformed", False):
+            return self.moe_weights
+        self.moe_weights = build_canonical_expert_weights(
+            gate_up=self.experts.gate_up_proj,
+            down=self.experts.down_proj,
+            fused=True,
+            fused_split_dim=1,
+            transpose_gate_up=True,
+            transpose_down=True,
+            clone=True,
+        )
+        delete_module_attrs(self.experts, "gate_up_proj", "down_proj")
+        self.weights_transformed = True
+        return self.moe_weights
+
+    @property
+    def moe_profile(self) -> MoEProfile:
+        return MoEProfile(expert_mlp=partial(silu_glu_mlp, act_fn=self.experts.act_fn))
+
+    def route(self, x: torch.Tensor):
+        router_probabilities, top_k_weights, top_k_index = self.router(x)
+        return (top_k_index, top_k_weights.to(x.dtype)), router_probabilities
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        batch_size, sequence_length, hidden_size = hidden_states.shape
+        x = hidden_states.reshape(batch_size * sequence_length, hidden_size)
+        routing, _ = self.route(x)
+        x = self.pre_feedforward_layernorm(x)
+        out = self.execute_moe_flavour(x, routing)
+        out = out.reshape(batch_size, sequence_length, hidden_size)
+        return self.post_feedforward_layernorm(out)
 
 
 class QEffDiffusionGemmaEncoderTextAttention(DiffusionGemmaEncoderTextAttention):
@@ -244,6 +277,15 @@ class QEffDiffusionGemmaEncoderTextAttention(DiffusionGemmaEncoderTextAttention)
 
 
 class QEffDiffusionGemmaEncoderTextLayer(DiffusionGemmaEncoderTextLayer):
+    def __qeff_init__(self):
+        if hasattr(self, "moe_block"):
+            return
+        router = self._modules.pop("router")
+        experts = self._modules.pop("experts")
+        pre_norm = self._modules.pop("pre_feedforward_layernorm_2")
+        post_norm = self._modules.pop("post_feedforward_layernorm_2")
+        self.moe_block = QEffDiffusionGemmaTextMoeBlock(router, experts, pre_norm, post_norm)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -279,12 +321,7 @@ class QEffDiffusionGemmaEncoderTextLayer(DiffusionGemmaEncoderTextLayer):
         hidden_states = self.mlp(hidden_states)
         hidden_states_1 = self.post_feedforward_layernorm_1(hidden_states)
 
-        hidden_states_flat = residual.reshape(-1, residual.shape[-1])
-        _, top_k_weights, top_k_index = self.router(hidden_states_flat)
-        hidden_states_2 = self.pre_feedforward_layernorm_2(hidden_states_flat)
-        hidden_states_2 = self.experts(hidden_states_2, top_k_index, top_k_weights)
-        hidden_states_2 = hidden_states_2.reshape(residual.shape)
-        hidden_states_2 = self.post_feedforward_layernorm_2(hidden_states_2)
+        hidden_states_2 = self.moe_block(residual)
 
         hidden_states = _saturating_residual_add(hidden_states_1, hidden_states_2)
         hidden_states = self.post_feedforward_layernorm(hidden_states)
@@ -489,6 +526,7 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
     def get_dummy_inputs(self, **kwargs):
         encoder = QEffDiffusionGemmaEncoderPrefillWrapper(self.model)
         encoder_inputs = encoder.get_dummy_inputs()
+        
         batch_size, block_length = encoder_inputs["input_ids"].shape
         text_config = self.text_config
         full_kv_length = encoder_inputs["past_key_values"][
@@ -497,6 +535,7 @@ class QEffDiffusionGemmaUnifiedWrapper(nn.Module):
         sliding_kv_length = encoder_inputs["past_key_values"][
             next(index for index, layer_type in enumerate(text_config.layer_types) if layer_type == "sliding_attention")
         ][0].shape[-2]
+        # breakpoint()
         return {
             **encoder_inputs,
             "cache_position_ids": encoder_inputs["position_ids"].clone(),
@@ -673,7 +712,7 @@ class QEffDiffusionGemmaEncoderPrefillWrapper(nn.Module):
         bs = constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE
         mm_tokens_per_image = self.model._get_mm_tokens_per_image()
         text_cfg = self.config.text_config
-        seq_len = max(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, mm_tokens_per_image + 32)
+        seq_len = 32#max(constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, mm_tokens_per_image + 32)
 
         input_ids = torch.zeros((bs, seq_len), dtype=torch.int64)
         mm_token_type_ids = torch.zeros((bs, seq_len), dtype=torch.int64)

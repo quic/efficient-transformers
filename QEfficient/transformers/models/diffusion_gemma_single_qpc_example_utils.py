@@ -29,7 +29,7 @@ from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.modeling_auto import QEffCausalLMForTextImageToTextModel
 
 FP32_ACCUM_OPS = {"CustomRMSNorm", "Clip", "Softmax", "Add", "Sub", "Mul", "Div", "Tanh", "Pow", "ReduceMean"}
-MOE_NODE_NAME_PARTS = ("/router/", "/experts/", ".router.", ".experts.")
+MOE_NODE_NAME_PARTS = ("/router/", "/experts/", "/moe_block/", ".router.", ".experts.", ".moe_block.")
 
 
 @dataclass
@@ -91,6 +91,7 @@ class UnifiedQPC(QEffCausalLMForTextImageToTextModel):
         return self.model.model.config.__dict__
 
     def export(self, inputs, output_names, dynamic_axes, **kwargs):
+        # breakpoint()
         return self._export(inputs, output_names=output_names, dynamic_axes=dynamic_axes)
 
 
