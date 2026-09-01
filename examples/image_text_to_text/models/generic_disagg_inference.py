@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -----------------------------------------------------------------------------
+
 """Generic image-text-to-text disaggregated example.
 
 This script exports, compiles, and runs a vision-language model as three QPCs:
@@ -5,9 +12,8 @@ This script exports, compiles, and runs a vision-language model as three QPCs:
 2. language prefill QPC
 3. language decode QPC
 
-It is intended as a small-layer smoke-test style example for existing and new
-QEFFAutoModelForImageTextToText model families. Model-specific examples may still
-be useful for production-tuned arguments.
+It can also exercise combined-QPC example flows such as continuous batching,
+multi-specialization, and attention blocking.
 """
 
 import argparse
@@ -34,12 +40,26 @@ from transformers import AutoConfig, AutoProcessor
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.generation.cloud_infer import QAICInferenceSession
+from QEfficient.generation.vlm_generation import VisionLanguageGeneration
 
-DEFAULT_MODEL_NAME = "tiny-random/qwen3-vl-moe"
+DEFAULT_PROMPT = "Describe this image."
 DEFAULT_IMAGE_URL = "https://picsum.photos/id/237/536/354"
 DEFAULT_QWEN_IMAGE_WIDTH = 536
 DEFAULT_QWEN_IMAGE_HEIGHT = 354
 DEFAULT_IMG_SIZE = 336
+DEFAULT_CONTINUOUS_BATCHING_PROMPTS = [
+    "Can you describe the image in detail?",
+    "What are the objects in the image?",
+    "What is the main subject of the image?",
+    "What colors are predominant in the image?",
+]
+DEFAULT_MULTISPEC_HEIGHTS = [240, 354, 1024]
+DEFAULT_MULTISPEC_WIDTHS = [360, 536, 1024]
+DEFAULT_MULTISPEC_NUM_FRAMES = [3, 2, 1]
+DEFAULT_MULTISPEC_MM_PROCESSOR_KWARGS = {
+    "min_pixels": 4 * 32 * 32,
+    "max_pixels": 16384 * 32 * 32,
+}
 QWEN_MODEL_TYPES = {
     "qwen2_5_vl",
     "qwen3_vl",
@@ -67,10 +87,40 @@ SEQUENCE_INPUT_NAMES = {
 }
 
 
+class _GenericVisionLanguageGeneration(VisionLanguageGeneration):
+    def _set_output_buffers(self, batch_size: int = 1, sequence_length: int = 1):
+        if self.include_sampler:
+            return super()._set_output_buffers(batch_size, sequence_length)
+
+        logits_dtype = np.float32
+        logits_binding_idx = self._session.binding_index_map.get("logits")
+        if logits_binding_idx is not None:
+            logits_dtype = self._session.aic_to_np_dtype_mapping[
+                self._session.bindings[logits_binding_idx].type
+            ]
+        logits_out_placeholder = np.zeros(
+            (batch_size, sequence_length, self._vocab_size), dtype=logits_dtype
+        )
+        self._session.set_buffers({"logits": logits_out_placeholder})
+
+
 def _parse_int_list(value: str) -> list[int]:
     if not value:
         return []
     return [int(item.strip()) for item in value.split(",") if item.strip()]
+
+
+def _parse_str_list(value: str) -> list[str]:
+    if not value:
+        return []
+    value = value.strip()
+    if value.startswith("["):
+        parsed_value = json.loads(value)
+        if not isinstance(parsed_value, list) or not all(isinstance(item, str) for item in parsed_value):
+            raise argparse.ArgumentTypeError("Expected a JSON string list.")
+        return parsed_value
+    separator = "|" if "|" in value else ","
+    return [item.strip() for item in value.split(separator) if item.strip()]
 
 
 def _parse_int_or_list(value: str) -> int | list[int]:
@@ -91,12 +141,24 @@ def _parse_json_object(value: str | None) -> dict[str, Any] | None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Export, compile, and run a VLM as vision, prefill, and decode QPCs.")
-    parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME, help="Hugging Face model id or local model path.")
+    parser.add_argument("--model-name", required=True, help="Hugging Face model id or local model path.")
     parser.add_argument("--cache-dir", default=os.getenv("HF_HUB_CACHE"), help="Hugging Face cache directory.")
     parser.add_argument("--hf-token", default=os.getenv("HF_TOKEN"), help="Hugging Face token for gated models.")
-    parser.add_argument("--prompt", default="Describe this image.", help="Prompt to pair with the image.")
+    parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="Prompt to pair with the image.")
+    parser.add_argument(
+        "--prompts",
+        type=_parse_str_list,
+        default=None,
+        help="Prompts for continuous batching. Accepts JSON, comma-separated, or pipe-separated values.",
+    )
     parser.add_argument("--system-prompt", default=None, help="Optional system prompt for chat-template models.")
     parser.add_argument("--image-url", default=DEFAULT_IMAGE_URL, help="HTTP(S) URL or local path for the image.")
+    parser.add_argument(
+        "--image-urls",
+        type=_parse_str_list,
+        default=None,
+        help="Image URLs/paths for continuous batching. Accepts JSON, comma-separated, or pipe-separated values.",
+    )
     parser.add_argument(
         "--processor-mode",
         choices=("auto", "qwen", "chat-template", "legacy", "molmo", "internvl", "kimi"),
@@ -127,6 +189,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--attn-implementation", default="eager")
     parser.add_argument("--compile-dir", type=Path, default=None)
     parser.add_argument("--vision-qpc-path", type=Path, default=None, help="Use a precompiled vision QPC.")
+    parser.add_argument("--lang-qpc-path", type=Path, default=None, help="Use a precompiled combined language QPC.")
     parser.add_argument("--prefill-qpc-path", type=Path, default=None, help="Use a precompiled language prefill QPC.")
     parser.add_argument("--decode-qpc-path", type=Path, default=None, help="Use a precompiled language decode QPC.")
     parser.add_argument(
@@ -155,6 +218,13 @@ def parse_args() -> argparse.Namespace:
         "--resize-image", action="store_true", help="Resize input image to the compile dimensions when possible."
     )
     parser.add_argument("--num-frames", type=_parse_int_or_list, default=None)
+    parser.add_argument("--runtime-num-frames", type=int, default=None)
+    parser.add_argument(
+        "--multi-specialization",
+        "--multi-specs",
+        action="store_true",
+        help="Compile multiple image/frame specializations and run with multi_specs=True.",
+    )
     parser.add_argument("--max-num-tiles", type=int, default=None)
     parser.add_argument("--max-num-images", type=int, default=None)
     parser.add_argument("--num-patches", type=int, default=None)
@@ -167,12 +237,37 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-cores", type=int, default=16)
     parser.add_argument("--vision-num-devices", type=int, default=1)
     parser.add_argument("--lang-num-devices", type=int, default=1)
+    parser.add_argument(
+        "--device-ids", type=_parse_int_list, default=None, help="Runtime device IDs for combined QPCs."
+    )
+    parser.add_argument("--continuous-batching", action="store_true", help="Run the model in continuous batching mode.")
+    parser.add_argument(
+        "--direct-generation",
+        action="store_true",
+        help="Compile/run combined vision+language QPCs with the model generate API.",
+    )
+    parser.add_argument("--skip-vision", action="store_true", help="Compile/run a text-only language QPC.")
+    parser.add_argument("--full-batch-size", type=int, default=None, help="Full batch size for continuous batching.")
+    parser.add_argument(
+        "--split-model-io",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Split model I/O. Defaults to enabled for disaggregated mode and disabled for continuous batching.",
+    )
     parser.add_argument("--mxfp6-matmul", action="store_true")
     parser.add_argument("--mxint8-kv-cache", action="store_true")
     parser.add_argument("--mos", type=int, default=1)
     parser.add_argument("--aic-enable-depth-first", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--use-onnx-subfunctions", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--use-onnx-subfunctions", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--node-precision-info", default=None)
+    parser.add_argument("--mm-processor-kwargs", type=_parse_json_object, default=None)
+    parser.add_argument("--enable-blocking", "--blocked", action="store_true")
+    parser.add_argument("--blocking-mode", default="hqkv")
+    parser.add_argument("--head-block-size", type=int, default=None)
+    parser.add_argument("--num-kv-blocks", type=int, default=None)
+    parser.add_argument("--num-q-blocks", type=int, default=None)
+    parser.add_argument("--num-batch-blocks", type=int, default=None)
+    parser.add_argument("--skip-kv", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--moe-prefill-packed-chunk-size", type=int, default=None)
     parser.add_argument("--offload-prefill-weights", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--layerwise", action="store_true")
@@ -190,8 +285,33 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--kimi-expert-ids", type=_parse_int_list, default=None)
     parser.add_argument("--data-path-timeout-ms", type=int, default=60_000)
+    parser.add_argument("--vision-device-ids", type=_parse_int_list, default=None)
+    parser.add_argument("--prefill-device-ids", type=_parse_int_list, default=None)
+    parser.add_argument("--decode-device-ids", type=_parse_int_list, default=None)
     parser.add_argument("--stop-on-eos", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
+
+    blocking_options = (
+        args.head_block_size,
+        args.num_kv_blocks,
+        args.num_q_blocks,
+        args.num_batch_blocks,
+        args.skip_kv,
+    )
+    if any(value is not None for value in blocking_options):
+        args.enable_blocking = True
+    if args.multi_specialization:
+        args.direct_generation = True
+        if args.height is None and args.width is None:
+            args.height = DEFAULT_MULTISPEC_HEIGHTS
+            args.width = DEFAULT_MULTISPEC_WIDTHS
+        if args.num_frames is None:
+            args.num_frames = DEFAULT_MULTISPEC_NUM_FRAMES
+        if args.mm_processor_kwargs is None:
+            args.mm_processor_kwargs = DEFAULT_MULTISPEC_MM_PROCESSOR_KWARGS
+        args.resize_image = True
+    if args.skip_vision:
+        args.direct_generation = True
 
     if args.batch_size < 1:
         parser.error("--batch-size must be >= 1.")
@@ -199,11 +319,39 @@ def parse_args() -> argparse.Namespace:
         parser.error("--prefill-seq-len must be >= 1.")
     if args.generation_len < 1:
         parser.error("--generation-len must be >= 1.")
+    if args.continuous_batching and args.direct_generation:
+        parser.error("--continuous-batching cannot be combined with --direct-generation or --multi-specialization.")
+    if args.multi_specialization and args.skip_vision:
+        parser.error("--multi-specialization cannot be combined with --skip-vision.")
+    if args.continuous_batching:
+        if args.full_batch_size is None:
+            args.full_batch_size = 4
+        if args.full_batch_size < 1:
+            parser.error("--full-batch-size must be >= 1.")
+        if args.batch_size != 1:
+            parser.error("--continuous-batching requires --batch-size 1.")
+    if args.runtime_num_frames is not None and args.runtime_num_frames < 1:
+        parser.error("--runtime-num-frames must be >= 1.")
+    if args.multi_specialization:
+        spec_lengths = [
+            len(value)
+            for value in (args.height, args.width, args.num_frames)
+            if isinstance(value, list)
+        ]
+        if spec_lengths and len(set(spec_lengths)) != 1:
+            parser.error("--height, --width, and --num-frames lists must have the same length.")
     if (args.height is None) != (args.width is None):
         parser.error("--height and --width must be provided together.")
     if (args.image_height is None) != (args.image_width is None):
         parser.error("--image-height and --image-width must be provided together.")
-    if args.skip_compile and not (args.vision_qpc_path and args.prefill_qpc_path and args.decode_qpc_path):
+    if args.skip_compile and (args.continuous_batching or args.direct_generation):
+        has_vision_qpc = args.skip_vision or args.vision_qpc_path
+        has_lang_qpc = args.lang_qpc_path or args.prefill_qpc_path
+        if not (has_vision_qpc and has_lang_qpc):
+            parser.error("--skip-compile with combined modes requires --vision-qpc-path and --lang-qpc-path.")
+    if args.skip_compile and not (args.continuous_batching or args.direct_generation) and not (
+        args.vision_qpc_path and args.prefill_qpc_path and args.decode_qpc_path
+    ):
         parser.error("--skip-compile requires --vision-qpc-path, --prefill-qpc-path, and --decode-qpc-path.")
     return args
 
@@ -372,11 +520,21 @@ def _build_config(args: argparse.Namespace):
 
 
 def _effective_qaic_config(args: argparse.Namespace, config: Any) -> dict[str, Any] | None:
-    qaic_config = copy.deepcopy(args.qaic_config)
+    qaic_config = copy.deepcopy(args.qaic_config) or {}
     model_type = _model_type(config, args.model_name)
-    if qaic_config is None and _is_kimi_model(model_type, args.model_name):
-        return {"mla_absorption": {"cache_compressed": True, "absorption": False, "online": False}}
-    return qaic_config
+    if not qaic_config and _is_kimi_model(model_type, args.model_name):
+        qaic_config.update({"mla_absorption": {"cache_compressed": True, "absorption": False, "online": False}})
+    if args.enable_blocking:
+        qaic_config.update({"enable_blocking": True, "blocking_mode": args.blocking_mode})
+        optional_blocking_args = {
+            "head_block_size": args.head_block_size,
+            "num_kv_blocks": args.num_kv_blocks,
+            "num_q_blocks": args.num_q_blocks,
+            "num_batch_blocks": args.num_batch_blocks,
+            "skip_kv": args.skip_kv,
+        }
+        qaic_config.update({name: value for name, value in optional_blocking_args.items() if value is not None})
+    return qaic_config or None
 
 
 def _load_model(args: argparse.Namespace, config: Any):
@@ -404,6 +562,7 @@ def _load_model(args: argparse.Namespace, config: Any):
             torch_dtype=torch.float32 if dtype == "auto" else dtype,
             qaic_config=qaic_config,
             layerwise=args.layerwise,
+            continuous_batching=args.continuous_batching,
         )
         return qeff_model, tokenizer, processor
 
@@ -415,6 +574,7 @@ def _load_model(args: argparse.Namespace, config: Any):
         "ignore_mismatched_sizes": True,
         "qaic_config": qaic_config,
         "layerwise": args.layerwise,
+        "continuous_batching": args.continuous_batching,
     }
     if args.cache_dir:
         model_kwargs["cache_dir"] = args.cache_dir
@@ -446,7 +606,10 @@ def _load_model(args: argparse.Namespace, config: Any):
             hf_kwargs.pop("layerwise", None)
             hf_model = transformers.AutoModelForCausalLM.from_pretrained(args.model_name, **hf_kwargs)
             if dtype != "auto":
-                for cfg in (getattr(hf_model, "config", None), getattr(getattr(hf_model, "model", None), "config", None)):
+                for cfg in (
+                    getattr(hf_model, "config", None),
+                    getattr(getattr(hf_model, "model", None), "config", None),
+                ):
                     if cfg is not None:
                         cfg.torch_dtype = dtype
             qeff_model = QEFFAutoModelForImageTextToText(
@@ -491,9 +654,46 @@ def _load_image(path_or_url: str) -> Image.Image:
     return Image.open(path_or_url).convert("RGB")
 
 
-def _compile_image_size(args: argparse.Namespace, image: Image.Image) -> tuple[int | None, int | None]:
+def _select_runtime_specialization_index(args: argparse.Namespace) -> int:
+    if (
+        args.runtime_num_frames is not None
+        and isinstance(args.num_frames, list)
+        and args.runtime_num_frames in args.num_frames
+    ):
+        return args.num_frames.index(args.runtime_num_frames)
+    return 0
+
+
+def _select_runtime_value(value: Any, args: argparse.Namespace) -> Any:
+    if isinstance(value, list):
+        if not value:
+            return None
+        index = min(_select_runtime_specialization_index(args), len(value) - 1)
+        return value[index]
+    return value
+
+
+def _runtime_num_frames(args: argparse.Namespace) -> int:
+    if args.runtime_num_frames is not None:
+        return args.runtime_num_frames
+    num_frames = _select_runtime_value(args.num_frames, args)
+    return int(num_frames) if num_frames is not None else 1
+
+
+def _compile_image_size(
+    args: argparse.Namespace, image: Image.Image
+) -> tuple[int | list[int] | None, int | list[int] | None]:
     height = args.height if args.height is not None else args.image_height
     width = args.width if args.width is not None else args.image_width
+    if height is None and width is None:
+        return image.height, image.width
+    return height, width
+
+
+def _runtime_image_size(args: argparse.Namespace, image: Image.Image) -> tuple[int | None, int | None]:
+    height, width = _compile_image_size(args, image)
+    height = _select_runtime_value(height, args)
+    width = _select_runtime_value(width, args)
     if height is None and width is None:
         return image.height, image.width
     return height, width
@@ -502,11 +702,11 @@ def _compile_image_size(args: argparse.Namespace, image: Image.Image) -> tuple[i
 def _maybe_resize_image(image: Image.Image, args: argparse.Namespace) -> Image.Image:
     if not args.resize_image:
         return image
-    height, width = _compile_image_size(args, image)
+    height, width = _runtime_image_size(args, image)
     if height is None or width is None:
         img_size = args.img_size or DEFAULT_IMG_SIZE
         return image.resize((img_size, img_size))
-    return image.resize((width, height))
+    return image.resize((int(width), int(height)))
 
 
 def _compile_shape_kwargs(config: Any, args: argparse.Namespace, image: Image.Image) -> dict[str, Any]:
@@ -552,10 +752,14 @@ def _common_compile_kwargs(config: Any, args: argparse.Namespace, image: Image.I
         "num_cores": args.num_cores,
         "mxfp6_matmul": args.mxfp6_matmul,
         "mxint8_kv_cache": args.mxint8_kv_cache,
-        "split_model_io": True,
+        "split_model_io": args.split_model_io if args.split_model_io is not None else not args.continuous_batching,
         "mos": args.mos,
         "aic_enable_depth_first": args.aic_enable_depth_first,
-        "use_onnx_subfunctions": args.use_onnx_subfunctions,
+        "use_onnx_subfunctions": (
+            args.use_onnx_subfunctions
+            if args.use_onnx_subfunctions is not None
+            else not (args.continuous_batching or args.multi_specialization or args.enable_blocking)
+        ),
         "layerwise": args.layerwise,
         "layerwise_window_size": args.layerwise_window_size,
     }
@@ -567,8 +771,12 @@ def _common_compile_kwargs(config: Any, args: argparse.Namespace, image: Image.I
         compile_kwargs["compile_dir"] = str(args.compile_dir)
     if args.node_precision_info is not None:
         compile_kwargs["node_precision_info"] = args.node_precision_info
+    if args.mm_processor_kwargs is not None:
+        compile_kwargs["mm_processor_kwargs"] = args.mm_processor_kwargs
     if args.compiler_options:
         compile_kwargs.update(args.compiler_options)
+    if args.continuous_batching:
+        compile_kwargs["full_batch_size"] = args.full_batch_size
     return compile_kwargs
 
 
@@ -620,6 +828,59 @@ def _compile_disagg_qpcs(qeff_model: Any, config: Any, args: argparse.Namespace,
         prefill_kwargs["moe_prefill_packed_chunk_size"] = args.moe_prefill_packed_chunk_size
     prefill_qpc_path = qeff_model.compile(prefill_seq_len=args.prefill_seq_len, **prefill_kwargs)
     return vision_qpc_path, prefill_qpc_path, decode_qpc_path
+
+
+def _compile_continuous_batching_qpcs(qeff_model: Any, config: Any, args: argparse.Namespace, image: Image.Image):
+    if args.skip_compile:
+        return {
+            "vision_qpc_path": str(args.vision_qpc_path),
+            "lang_qpc_path": str(args.lang_qpc_path or args.prefill_qpc_path),
+        }
+
+    common_kwargs = _common_compile_kwargs(config, args, image)
+    print("Compiling continuous-batching vision/language QPCs...")
+    return qeff_model.compile(
+        prefill_seq_len=args.prefill_seq_len,
+        num_devices=args.lang_num_devices,
+        **common_kwargs,
+    )
+
+
+def _compile_combined_qpcs(qeff_model: Any, config: Any, args: argparse.Namespace, image: Image.Image):
+    if args.skip_compile:
+        qpc_paths = {"lang_qpc_path": str(args.lang_qpc_path or args.prefill_qpc_path)}
+        if not args.skip_vision:
+            qpc_paths["vision_qpc_path"] = str(args.vision_qpc_path)
+        _set_combined_qpc_paths(qeff_model, qpc_paths)
+        return qpc_paths
+
+    common_kwargs = _common_compile_kwargs(config, args, image)
+    print("Compiling combined vision/language QPCs...")
+    qpc_paths = qeff_model.compile(
+        prefill_seq_len=args.prefill_seq_len,
+        skip_vision=args.skip_vision,
+        num_devices=args.lang_num_devices,
+        **common_kwargs,
+    )
+    _set_combined_qpc_paths(qeff_model, qpc_paths)
+    return qpc_paths
+
+
+def _set_combined_qpc_paths(qeff_model: Any, qpc_paths: Any) -> None:
+    if isinstance(qpc_paths, dict):
+        vision_qpc_path = qpc_paths.get("vision_qpc_path")
+        lang_qpc_path = qpc_paths.get("lang_qpc_path") or qpc_paths.get("lang_prefill_qpc_path")
+    elif isinstance(qpc_paths, (list, tuple)):
+        vision_qpc_path = qpc_paths[0] if len(qpc_paths) > 1 else None
+        lang_qpc_path = qpc_paths[-1]
+    else:
+        vision_qpc_path = None
+        lang_qpc_path = qpc_paths
+
+    if vision_qpc_path is not None and hasattr(qeff_model, "vision_model"):
+        qeff_model.vision_model.qpc_path = str(vision_qpc_path)
+    if lang_qpc_path is not None and hasattr(qeff_model, "lang_model"):
+        qeff_model.lang_model.qpc_path = str(lang_qpc_path)
 
 
 def _resolve_qpc_path(qpc_paths: Any, preferred_keys: tuple[str, ...], tuple_index: int) -> str:
@@ -797,6 +1058,150 @@ def _prepare_inputs_for_generation(qeff_model: Any, inputs: dict[str, Any], args
         return inputs
 
 
+def _expand_to_min_length(values: list[str], min_length: int, label: str) -> list[str]:
+    if not values:
+        raise ValueError(f"At least one {label} is required.")
+    if len(values) >= min_length:
+        return values
+    repeats = -(min_length // -len(values))
+    return (values * repeats)[:min_length]
+
+
+def _continuous_batch_items(args: argparse.Namespace) -> tuple[list[str], list[str]]:
+    prompts = args.prompts
+    if prompts is None:
+        prompts = [args.prompt] if args.prompt != DEFAULT_PROMPT else DEFAULT_CONTINUOUS_BATCHING_PROMPTS
+    image_urls = args.image_urls if args.image_urls is not None else [args.image_url]
+
+    prompts = _expand_to_min_length(prompts, args.full_batch_size, "prompt")
+    if len(image_urls) == 1 and len(prompts) > 1:
+        image_urls = image_urls * len(prompts)
+    else:
+        image_urls = _expand_to_min_length(image_urls, args.full_batch_size, "image URL/path")
+    if len(image_urls) != len(prompts):
+        raise ValueError(f"Number of image URLs/paths ({len(image_urls)}) must match prompts ({len(prompts)}).")
+    return image_urls, prompts
+
+
+def _continuous_batch_device_ids(args: argparse.Namespace) -> list[int] | None:
+    return args.device_ids or args.prefill_device_ids or args.decode_device_ids or args.vision_device_ids
+
+
+def _run_continuous_batching_generation(
+    qeff_model: Any,
+    tokenizer: Any,
+    processor: Any,
+    vision_qpc: str,
+    lang_qpc: str,
+    image: Image.Image,
+    args: argparse.Namespace,
+):
+    height, width = _compile_image_size(args, image)
+    if not isinstance(height, int):
+        height = None
+    if not isinstance(width, int):
+        width = None
+
+    generator = _GenericVisionLanguageGeneration(
+        qeff_model=qeff_model,
+        tokenizer=tokenizer,
+        processor=processor,
+        lang_qpc_path=lang_qpc,
+        vision_qpc_path=vision_qpc,
+        device_id=_continuous_batch_device_ids(args),
+        ctx_len=args.ctx_len,
+        full_batch_size=args.full_batch_size,
+        image_height=height,
+        image_width=width,
+    )
+    try:
+        image_urls, prompts = _continuous_batch_items(args)
+        print(f"Running continuous batching for {len(prompts)} prompt(s), full_batch_size={args.full_batch_size}...")
+        return generator.generate(
+            images=image_urls,
+            prompts=prompts,
+            generation_len=args.generation_len,
+            stream=False,
+        )
+    finally:
+        for session_name in ("_session", "_vision_session"):
+            session = getattr(generator, session_name, None)
+            if session is not None and getattr(session, "is_active", False):
+                session.deactivate()
+
+
+def _batch_items(args: argparse.Namespace, batch_size: int) -> tuple[list[str], list[str]]:
+    prompts = args.prompts if args.prompts is not None else [args.prompt]
+    image_urls = args.image_urls if args.image_urls is not None else [args.image_url]
+    prompts = _expand_to_min_length(prompts, batch_size, "prompt")
+    if len(image_urls) == 1 and len(prompts) > 1:
+        image_urls = image_urls * len(prompts)
+    else:
+        image_urls = _expand_to_min_length(image_urls, batch_size, "image URL/path")
+    if len(image_urls) != len(prompts):
+        raise ValueError(f"Number of image URLs/paths ({len(image_urls)}) must match prompts ({len(prompts)}).")
+    return image_urls, prompts
+
+
+def _run_combined_generation(
+    qeff_model: Any,
+    tokenizer: Any,
+    processor: Any,
+    inputs: dict[str, Any] | None,
+    vision_qpc: str | None,
+    lang_qpc: str,
+    image: Image.Image,
+    args: argparse.Namespace,
+):
+    if args.skip_vision:
+        print("Running text-only combined QPC...")
+        return qeff_model.generate(
+            inputs=inputs,
+            device_ids=args.device_ids,
+            generation_len=args.generation_len,
+        )
+
+    height, width = _runtime_image_size(args, image)
+    generator = _GenericVisionLanguageGeneration(
+        qeff_model=qeff_model,
+        tokenizer=tokenizer,
+        processor=processor,
+        lang_qpc_path=lang_qpc,
+        vision_qpc_path=vision_qpc,
+        device_id=args.device_ids,
+        ctx_len=args.ctx_len,
+        image_height=height if isinstance(height, int) else None,
+        image_width=width if isinstance(width, int) else None,
+    )
+    try:
+        if args.multi_specialization:
+            frames = _runtime_num_frames(args)
+            print(f"Running multi-specialization generation with num_frames={frames}...")
+            return generator.generate(
+                images=[],
+                prompts=[],
+                inputs=inputs,
+                generation_len=args.generation_len,
+                multi_specs=True,
+                num_frames=frames,
+                stream=False,
+            )
+
+        image_urls, prompts = _batch_items(args, args.batch_size)
+        print(f"Running combined generation for {len(prompts)} prompt(s)...")
+        return generator.generate(
+            images=image_urls,
+            prompts=prompts,
+            generation_len=args.generation_len,
+            stream=False,
+        )
+    finally:
+        for session_name in ("_session", "_vision_session"):
+            session = getattr(generator, session_name, None)
+            if session is not None and getattr(session, "is_active", False):
+                session.deactivate()
+
+
 def _run_disagg_generation(
     qeff_model: Any,
     tokenizer: Any,
@@ -881,11 +1286,16 @@ def _build_conversation(args: argparse.Namespace, image: Image.Image, model_type
             image_key = "image"
 
     content = []
-    if image_key == "none":
-        content.append({"type": "image"})
+    if args.skip_vision:
+        content.append({"type": "text", "text": args.prompt})
     else:
-        content.append({"type": "image", image_key: args.image_url if image_key == "url" else image})
-    content.append({"type": "text", "text": args.prompt})
+        num_images = _runtime_num_frames(args) if args.multi_specialization else 1
+        for _ in range(num_images):
+            if image_key == "none":
+                content.append({"type": "image"})
+            else:
+                content.append({"type": "image", image_key: args.image_url if image_key == "url" else image})
+        content.append({"type": "text", "text": args.prompt})
 
     conversation = []
     if args.system_prompt:
@@ -1029,6 +1439,47 @@ def main():
     image = _maybe_resize_image(_load_image(args.image_url), args)
     qeff_model, tokenizer, processor = _load_model(args, config)
 
+    if args.direct_generation:
+        qpc_paths = _compile_combined_qpcs(qeff_model, config, args, image)
+        vision_qpc = None if args.skip_vision else _resolve_qpc_path(qpc_paths, ("vision_qpc_path",), 0)
+        lang_qpc = _resolve_qpc_path(qpc_paths, ("lang_qpc_path", "lang_prefill_qpc_path"), 1)
+        if vision_qpc is not None:
+            print(f"Vision QPC path: {vision_qpc}")
+        print(f"Language QPC path: {lang_qpc}")
+
+        if args.compile_only:
+            return
+
+        inputs = None
+        if args.skip_vision or args.multi_specialization:
+            inputs = _prepare_inputs(qeff_model, processor, tokenizer, config, image, args)
+        output = _run_combined_generation(qeff_model, tokenizer, processor, inputs, vision_qpc, lang_qpc, image, args)
+        print(output.generated_ids)
+        if hasattr(output, "generated_texts"):
+            print(output.generated_texts)
+        else:
+            print(tokenizer.batch_decode(output.generated_ids))
+        print(output)
+        return
+
+    if args.continuous_batching:
+        qpc_paths = _compile_continuous_batching_qpcs(qeff_model, config, args, image)
+        vision_qpc = _resolve_qpc_path(qpc_paths, ("vision_qpc_path",), 0)
+        lang_qpc = _resolve_qpc_path(qpc_paths, ("lang_qpc_path", "lang_prefill_qpc_path"), 1)
+        print(f"Vision QPC path: {vision_qpc}")
+        print(f"Language QPC path: {lang_qpc}")
+
+        if args.compile_only:
+            return
+
+        output = _run_continuous_batching_generation(
+            qeff_model, tokenizer, processor, vision_qpc, lang_qpc, image, args
+        )
+        print(output.generated_ids)
+        print(output.generated_texts)
+        print(output)
+        return
+
     vision_qpc_paths, prefill_qpc_paths, decode_qpc_paths = _compile_disagg_qpcs(qeff_model, config, args, image)
     vision_qpc = _resolve_qpc_path(vision_qpc_paths, ("vision_qpc_path",), 0)
     prefill_qpc = _resolve_qpc_path(prefill_qpc_paths, ("lang_prefill_qpc_path", "lang_qpc_path"), 1)
@@ -1044,10 +1495,12 @@ def main():
     sessions = []
     try:
         session_kwargs = {"data_path_timeout_ms": args.data_path_timeout_ms}
-        vision_session = QAICInferenceSession(vision_qpc, **session_kwargs)
-        prefill_session = QAICInferenceSession(prefill_qpc, **session_kwargs)
-        decode_session = QAICInferenceSession(decode_qpc, **session_kwargs)
-        sessions.extend([vision_session, prefill_session, decode_session])
+        vision_session = QAICInferenceSession(vision_qpc, device_ids=args.vision_device_ids, **session_kwargs)
+        sessions.append(vision_session)
+        prefill_session = QAICInferenceSession(prefill_qpc, device_ids=args.prefill_device_ids, **session_kwargs)
+        sessions.append(prefill_session)
+        decode_session = QAICInferenceSession(decode_qpc, device_ids=args.decode_device_ids, **session_kwargs)
+        sessions.append(decode_session)
         generated_ids = _run_disagg_generation(
             qeff_model, tokenizer, inputs, vision_session, prefill_session, decode_session, args
         )
