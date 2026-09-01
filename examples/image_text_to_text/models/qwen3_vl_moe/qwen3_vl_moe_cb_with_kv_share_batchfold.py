@@ -102,6 +102,7 @@ def _prefill_qaic_config(ctx_len: int, num_kv_blocks: int, prefill_seq_len: int)
     cfg["prefill_blocking_mode"] = PREFILL_BLOCKING_MODE
     cfg["prefill_block_chunks"] = -(-prefill_seq_len // PREFILL_QL_CHUNK)  # ceil divide
     cfg["prefill_n_rep_chunk"] = PREFILL_N_REP_CHUNK
+    cfg["moe_config"] = {"expert_parallel_chunk_size": MOE_PREFILL_PACKED_CHUNK_SIZE}
     return cfg
 
 
@@ -196,7 +197,6 @@ def run(
         kv_cache_batch_size=7,
         prefill_seq_len=prefill_seq_len,
         ctx_len=ctx_len,
-        moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
         height=354,
         width=536,
         num_cores=16,
