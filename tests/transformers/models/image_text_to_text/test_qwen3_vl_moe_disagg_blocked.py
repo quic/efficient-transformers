@@ -11,7 +11,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-from PIL import Image
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor
 
 from QEfficient import QEFFAutoModelForImageTextToText
@@ -34,18 +33,6 @@ PREFILL_EXPERT_PARALLEL_CHUNK_SIZE = 32
 PREFILL_ONLINE_QL_CHUNK = 32
 PREFILL_ONLINE_N_REP_CHUNK = 2
 
-VISION_INPUTS = {
-    "pixel_values",
-    "image_grid_thw",
-    "image_masks",
-    "image_input_idx",
-    "valid_idx",
-    "aspect_ratio_ids",
-    "aspect_ratio_mask",
-}
-VISION_FP16_INPUTS = {"pixel_values", "image_masks"}
-VISION_OUTPUTS = ("vision_embeds", "deepstack_features")
-
 
 def _assert_onnx_path(onnx_path, label: str) -> Path:
     assert onnx_path is not None, f"{label} compile did not set an ONNX path"
@@ -58,6 +45,12 @@ def _assert_onnx_path(onnx_path, label: str) -> Path:
 def _assert_distinct_onnx_paths(onnx_paths: dict[str, Path]):
     unique_paths = {str(path) for path in onnx_paths.values()}
     assert len(unique_paths) == len(onnx_paths), f"Expected distinct ONNX paths per compile, got: {onnx_paths}"
+
+
+def _assert_lang_only_compile(qeff_model, qpc_paths: dict, qpc_key: str):
+    assert qpc_paths.get(qpc_key), f"Compile did not return {qpc_key}"
+    assert not qpc_paths.get("vision_qpc_path"), "Vision compile should be skipped"
+    assert getattr(qeff_model.vision_model, "onnx_path", None) is None, "Vision export should be skipped"
 
 
 def _load_hf_model_from_pretrained(config):
@@ -92,68 +85,12 @@ def _build_config(dtype: str = "float16", num_hidden_layers: int = 1):
     return config
 
 
-def _compile_vision_qpc(compile_dir: Path) -> tuple[Path, Path]:
-    pytest.importorskip("qwen_vl_utils")
-    torch.manual_seed(42)
-
-    hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32")).to(dtype=torch.float32)
-    hf_model.config.dtype = "float32"
-    hf_model.config.torch_dtype = torch.float32
-    if hasattr(hf_model.config, "text_config"):
-        hf_model.config.text_config.dtype = "float32"
-        hf_model.config.text_config.torch_dtype = torch.float32
-
-    qeff_model = QEFFAutoModelForImageTextToText(
-        hf_model,
-        kv_offload=True,
-        config=hf_model.config,
-        torch_dtype=torch.float32,
-        layerwise=False,
-    )
-    image = Image.new("RGB", IMAGE_SIZE, color=(127, 127, 127))
-    qpc_paths = qeff_model.compile(
-        compile_dir=str(compile_dir),
-        batch_size=BATCH_SIZE,
-        prefill_seq_len=PREFILL_SEQ_LEN,
-        ctx_len=CTX_LEN,
-        height=image.height,
-        width=image.width,
-        num_cores=16,
-        num_devices=1,
-        mos=1,
-        aic_enable_depth_first=True,
-        skip_vision=False,
-        split_model_io=True,
-        skip_lang=True,
-        use_onnx_subfunctions=True,
-        layerwise=False,
-    )
-    vision_qpc_path = qpc_paths.get("vision_qpc_path")
-    assert vision_qpc_path, "Vision compile did not return vision_qpc_path"
-    return vision_qpc_path, _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
-
-
-def _prepare_messages(image: Image.Image, batch_size: int = BATCH_SIZE) -> list:
-    return [
-        [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "image": image},
-                    {"type": "text", "text": TEXT_PROMPT},
-                ],
-            }
-        ]
-        for _ in range(batch_size)
-    ]
+def _prepare_messages(batch_size: int = BATCH_SIZE) -> list:
+    return [TEXT_PROMPT for _ in range(batch_size)]
 
 
 def _prepare_processor_inputs(processor: AutoProcessor, messages: list) -> dict:
-    process_vision_info = pytest.importorskip("qwen_vl_utils").process_vision_info
-
-    texts = [processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True) for message in messages]
-    image_inputs, video_inputs = process_vision_info(messages)
-    return dict(processor(text=texts, images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt"))
+    return dict(processor(text=messages, padding=True, return_tensors="pt"))
 
 
 def _get_next_token_ids(logits: np.ndarray) -> np.ndarray:
@@ -161,19 +98,53 @@ def _get_next_token_ids(logits: np.ndarray) -> np.ndarray:
     return logits[:, -1, :].argmax(axis=-1).astype(np.int64)
 
 
+def _get_output(source_outputs: dict, output_name: str):
+    if output_name in source_outputs:
+        return source_outputs[output_name]
+    for actual_name, value in source_outputs.items():
+        if actual_name.rsplit("/", 1)[-1] == output_name:
+            return value
+    raise KeyError(output_name)
+
+
 def _update_retained_states(target_inputs: dict, source_outputs: dict, num_hidden_layers: int):
     for layer_idx in range(num_hidden_layers):
-        target_inputs[f"past_key.{layer_idx}"] = source_outputs[f"past_key.{layer_idx}_RetainedState"]
-        target_inputs[f"past_value.{layer_idx}"] = source_outputs[f"past_value.{layer_idx}_RetainedState"]
+        target_inputs[f"past_key.{layer_idx}"] = _get_output(source_outputs, f"past_key.{layer_idx}_RetainedState")
+        target_inputs[f"past_value.{layer_idx}"] = _get_output(source_outputs, f"past_value.{layer_idx}_RetainedState")
+    for input_name, output_name in (
+        ("vision_embeds", "vision_embeds_RetainedState"),
+        ("deepstack_features", "deepstack_features_RetainedState"),
+        ("image_idx", "image_idx_output"),
+    ):
+        try:
+            target_inputs[input_name] = _get_output(source_outputs, output_name)
+        except KeyError:
+            pass
+
+
+def _session_input_names(session: QAICInferenceSession) -> set[str]:
+    input_names = set(session.input_names)
+    input_names.update(name.rsplit("/", 1)[-1] for name in session.input_names)
+    return input_names
+
+
+def _filter_session_inputs(session: QAICInferenceSession, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    filtered_inputs = {}
+    input_names = _session_input_names(session)
+    for name, value in inputs.items():
+        if name not in input_names:
+            continue
+        binding_index = session.binding_index_map.get(name)
+        if binding_index is not None:
+            dtype = session.aic_to_np_dtype_mapping[session.bindings[binding_index].type]
+            value = value.astype(dtype, copy=False)
+        filtered_inputs[name] = value
+    return filtered_inputs
 
 
 def _run_hf_torch_fp32(model, processor: AutoProcessor, messages: list) -> np.ndarray:
     model = model.to(dtype=torch.float32).eval()
     inputs = _prepare_processor_inputs(processor, messages)
-    inputs = {
-        name: value.to(dtype=torch.float32) if torch.is_floating_point(value) else value
-        for name, value in inputs.items()
-    }
 
     with torch.inference_mode():
         outputs = model.generate(**inputs, max_new_tokens=GENERATION_LEN, do_sample=False)
@@ -186,10 +157,8 @@ def _run_disagg_qaic_generation(
     qeff_model: QEFFAutoModelForImageTextToText,
     processor: AutoProcessor,
     common_inputs: dict,
-    vision_session: QAICInferenceSession,
-    prefill_session: QAICInferenceSession,
-    decode_session: QAICInferenceSession,
-    decode_batch_size: int = BATCH_SIZE,
+    prefill_qpc_path: Path,
+    decode_qpc_path: Path,
 ) -> np.ndarray:
     inputs = {
         name: value.clone() if isinstance(value, torch.Tensor) else copy.deepcopy(value)
@@ -211,114 +180,116 @@ def _run_disagg_qaic_generation(
         "constant",
         pad_token_id,
     )
-    inputs["attention_mask"] = torch.nn.functional.pad(
-        inputs["attention_mask"],
-        (0, padded_len - input_ids_length),
-        "constant",
-        0,
-    )
     inputs = {name: np.array(value) for name, value in inputs.items()}
 
-    vision_inputs = {name: value for name, value in inputs.items() if name in VISION_INPUTS}
-    vision_inputs.update(
-        {name: vision_inputs[name].astype("float16") for name in VISION_FP16_INPUTS if name in vision_inputs}
-    )
-    # Activate one QPC stage at a time; keeping vision, prefill, and decode active
-    # together can exhaust NSP resources on shared QAIC test machines.
-    vision_session.activate()
-    vision_outputs = vision_session.run(vision_inputs)
-    vision_session.deactivate()
+    dummy_lang_inputs = qeff_model.model.get_dummy_inputs(
+        kv_offload=True,
+        batch_size=BATCH_SIZE,
+        prefill_seq_len=PREFILL_SEQ_LEN,
+    )["lang"]
+    lang_inputs = {
+        "input_ids": inputs["input_ids"],
+        "position_ids": inputs["position_ids"],
+        "vision_embeds": np.array(dummy_lang_inputs["vision_embeds"]),
+        "deepstack_features": np.array(dummy_lang_inputs["deepstack_features"]),
+        "image_idx": np.array(dummy_lang_inputs["image_idx"]),
+    }
 
-    lang_inputs = {name: value for name, value in inputs.items() if name not in vision_inputs}
-    if "position_ids" in inputs:
-        lang_inputs["position_ids"] = inputs["position_ids"]
-        lang_inputs.pop("attention_mask", None)
-    else:
-        lang_inputs["position_ids"] = np.where(lang_inputs.pop("attention_mask"), np.arange(padded_len), -1)
-
-    lang_inputs["image_idx"] = np.zeros((BATCH_SIZE, 1), dtype=np.int64)
-    for output_name in VISION_OUTPUTS:
-        if output_name in vision_outputs:
-            lang_inputs[output_name] = vision_outputs[output_name]
-
-    prefill_session.set_buffers(vision_outputs)
-    prefill_session.activate()
     chunk_inputs = lang_inputs.copy()
     outputs = None
-    for chunk_idx in range(num_chunks):
-        chunk_inputs["input_ids"] = lang_inputs["input_ids"][
-            :, chunk_idx * PREFILL_SEQ_LEN : (chunk_idx + 1) * PREFILL_SEQ_LEN
-        ]
-        chunk_inputs["position_ids"] = lang_inputs["position_ids"][
-            ..., chunk_idx * PREFILL_SEQ_LEN : (chunk_idx + 1) * PREFILL_SEQ_LEN
-        ]
-        outputs = prefill_session.run(chunk_inputs)
-        _update_retained_states(chunk_inputs, outputs, qeff_model.model.config.text_config.num_hidden_layers)
-        chunk_inputs["image_idx"] = outputs["image_idx_output"]
+    prefill_session = QAICInferenceSession(prefill_qpc_path)
+    try:
+        for chunk_idx in range(num_chunks):
+            chunk_inputs["input_ids"] = lang_inputs["input_ids"][
+                :, chunk_idx * PREFILL_SEQ_LEN : (chunk_idx + 1) * PREFILL_SEQ_LEN
+            ]
+            chunk_inputs["position_ids"] = lang_inputs["position_ids"][
+                ..., chunk_idx * PREFILL_SEQ_LEN : (chunk_idx + 1) * PREFILL_SEQ_LEN
+            ]
+            outputs = prefill_session.run(_filter_session_inputs(prefill_session, chunk_inputs))
+            _update_retained_states(chunk_inputs, outputs, qeff_model.model.config.text_config.num_hidden_layers)
+    finally:
+        prefill_session.deactivate()
 
-    prefill_session.deactivate()
-
-    first_token = _get_next_token_ids(outputs["logits"])  # shape: (BATCH_SIZE,) from BS=1 prefill
+    first_token = _get_next_token_ids(outputs["logits"])
     decode_inputs = {
         "input_ids": first_token.reshape(BATCH_SIZE, 1),
         "position_ids": np.max(lang_inputs["position_ids"], axis=-1, keepdims=True) + 1,
+        "vision_embeds": chunk_inputs["vision_embeds"],
+        "deepstack_features": chunk_inputs["deepstack_features"],
+        "image_idx": chunk_inputs["image_idx"],
     }
     _update_retained_states(decode_inputs, outputs, qeff_model.model.config.text_config.num_hidden_layers)
 
-    # Duplicate prefill outputs along the batch axis to match decode_batch_size
-    if decode_batch_size > 1:
-        decode_inputs = {k: np.repeat(v, decode_batch_size, axis=0) for k, v in decode_inputs.items()}
-        first_token = np.repeat(first_token, decode_batch_size, axis=0)
-
     generated_ids = [first_token]
 
-    decode_session.activate()
-    decode_outputs = decode_session.run(decode_inputs)
-    generated_ids.append(_get_next_token_ids(decode_outputs["logits"]))
-
-    position_ids = np.max(decode_inputs["position_ids"], axis=-1, keepdims=True) + 1
-    loop_decode_inputs = {
-        "input_ids": generated_ids[-1].reshape(decode_batch_size, 1),
-        "position_ids": position_ids,
-    }
-    _update_retained_states(loop_decode_inputs, decode_outputs, qeff_model.model.config.text_config.num_hidden_layers)
-
-    for _ in range(GENERATION_LEN - 2):
-        decode_outputs = decode_session.run(loop_decode_inputs)
+    decode_session = QAICInferenceSession(decode_qpc_path)
+    try:
+        decode_outputs = decode_session.run(_filter_session_inputs(decode_session, decode_inputs))
         generated_ids.append(_get_next_token_ids(decode_outputs["logits"]))
-        position_ids += 1
+
+        position_ids = np.max(decode_inputs["position_ids"], axis=-1, keepdims=True) + 1
+        loop_decode_inputs = {
+            "input_ids": generated_ids[-1].reshape(BATCH_SIZE, 1),
+            "position_ids": position_ids,
+            "vision_embeds": decode_inputs["vision_embeds"],
+            "deepstack_features": decode_inputs["deepstack_features"],
+            "image_idx": decode_inputs["image_idx"],
+        }
         _update_retained_states(
-            loop_decode_inputs,
-            decode_outputs,
-            qeff_model.model.config.text_config.num_hidden_layers,
-        )
-        loop_decode_inputs.update(
-            {
-                "input_ids": generated_ids[-1].reshape(decode_batch_size, 1),
-                "position_ids": position_ids,
-            }
+            loop_decode_inputs, decode_outputs, qeff_model.model.config.text_config.num_hidden_layers
         )
 
-    decode_session.deactivate()
+        for _ in range(GENERATION_LEN - 2):
+            decode_outputs = decode_session.run(_filter_session_inputs(decode_session, loop_decode_inputs))
+            generated_ids.append(_get_next_token_ids(decode_outputs["logits"]))
+            position_ids += 1
+            _update_retained_states(
+                loop_decode_inputs,
+                decode_outputs,
+                qeff_model.model.config.text_config.num_hidden_layers,
+            )
+            loop_decode_inputs.update(
+                {
+                    "input_ids": generated_ids[-1].reshape(BATCH_SIZE, 1),
+                    "position_ids": position_ids,
+                }
+            )
+    finally:
+        decode_session.deactivate()
+
     return np.stack(generated_ids, axis=1)
+
+
+def _build_blocking_qaic_config(blocking_mode: str) -> dict:
+    qaic_config = {"blocking_mode": blocking_mode, "ctx_len": CTX_LEN}
+    if blocking_mode in ("h", "hqkv"):
+        qaic_config["head_block_size"] = HEAD_BLOCK_SIZE
+    if blocking_mode in ("kv", "kv_headpar", "qkv", "hqkv"):
+        qaic_config["num_kv_blocks"] = NUM_KV_BLOCKS
+    if blocking_mode in ("q", "qkv", "hqkv"):
+        qaic_config["num_q_blocks"] = NUM_Q_BLOCKS
+    return qaic_config
+
+
+def _build_decode_qaic_config(prefill_blocking_mode: str) -> dict:
+    decode_blocking_mode = prefill_blocking_mode.replace("q", "")
+    if not decode_blocking_mode:
+        return {"ctx_len": CTX_LEN}
+    return _build_blocking_qaic_config(decode_blocking_mode)
 
 
 def _run_disagg_blocked(
     manual_cleanup,
     qaic_config: dict,
     prefill_qaic_config: dict | None = None,
-    batch_size: int = BATCH_SIZE,
-    compile_dir: Path | None = None,
-    vision_qpc_path: Path | None = None,
 ) -> None:
-    pytest.importorskip("qwen_vl_utils")
     torch.manual_seed(42)
 
     hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32")).to(dtype=torch.float32)
     processor = AutoProcessor.from_pretrained(MODEL_NAME, trust_remote_code=True)
 
-    image = Image.new("RGB", IMAGE_SIZE, color=(127, 127, 127))
-    messages = _prepare_messages(image)
+    messages = _prepare_messages()
     common_inputs = _prepare_processor_inputs(processor, messages)
     hf_tokens = _run_hf_torch_fp32(hf_model, processor, messages)
 
@@ -335,42 +306,18 @@ def _run_disagg_blocked(
         layerwise=False,
     )
 
-    sessions = []
     compiled_onnx_paths = {}
     try:
         qaic_config["ctx_len"] = CTX_LEN
-        if vision_qpc_path is None:
-            vision_qpc_path = qeff_model.compile(
-                compile_dir=str(compile_dir / "vision") if compile_dir is not None else None,
-                batch_size=BATCH_SIZE,
-                prefill_seq_len=PREFILL_SEQ_LEN,
-                ctx_len=CTX_LEN,
-                height=image.height,
-                width=image.width,
-                num_cores=16,
-                num_devices=1,
-                mos=1,
-                aic_enable_depth_first=True,
-                skip_vision=False,
-                split_model_io=True,
-                skip_lang=True,
-                use_onnx_subfunctions=True,
-                layerwise=False,
-            )
-            compiled_onnx_paths["vision"] = _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
-        else:
-            vision_qpc_path = {"vision_qpc_path": vision_qpc_path}
-
         effective_prefill_qaic_config = copy.deepcopy(
             prefill_qaic_config if prefill_qaic_config is not None else qaic_config
         )
         prefill_qpc_path = qeff_model.compile(
-            compile_dir=str(compile_dir / "prefill") if compile_dir is not None else None,
             batch_size=BATCH_SIZE,
             prefill_seq_len=PREFILL_SEQ_LEN,
             ctx_len=CTX_LEN,
-            height=image.height,
-            width=image.width,
+            height=IMAGE_SIZE[1],
+            width=IMAGE_SIZE[0],
             num_cores=16,
             num_devices=1,
             retain_full_kv=True,
@@ -386,14 +333,14 @@ def _run_disagg_blocked(
             qaic_config=effective_prefill_qaic_config,
         )
         compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")
+        _assert_lang_only_compile(qeff_model, prefill_qpc_path, "lang_prefill_qpc_path")
 
         decode_qpc_path = qeff_model.compile(
-            compile_dir=str(compile_dir / "decode") if compile_dir is not None else None,
-            batch_size=batch_size,
+            batch_size=BATCH_SIZE,
             prefill_seq_len=1,
             ctx_len=CTX_LEN,
-            height=image.height,
-            width=image.width,
+            height=IMAGE_SIZE[1],
+            width=IMAGE_SIZE[0],
             num_cores=16,
             num_devices=1,
             split_model_io=True,
@@ -407,39 +354,25 @@ def _run_disagg_blocked(
             qaic_config=copy.deepcopy(qaic_config),
         )
         compiled_onnx_paths["decode"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "decode")
+        _assert_lang_only_compile(qeff_model, decode_qpc_path, "lang_decode_qpc_path")
         _assert_distinct_onnx_paths(compiled_onnx_paths)
-        print(f"Disagg blocked ONNX paths: {compiled_onnx_paths}")
-
-        vision_session = QAICInferenceSession(vision_qpc_path.get("vision_qpc_path"), activate=False)
-        sessions.append(vision_session)
-        prefill_session = QAICInferenceSession(prefill_qpc_path.get("lang_prefill_qpc_path"), activate=False)
-        sessions.append(prefill_session)
-        decode_session = QAICInferenceSession(decode_qpc_path.get("lang_decode_qpc_path"), activate=False)
-        sessions.append(decode_session)
+        print(f"Disagg blocked lang-only ONNX paths: {compiled_onnx_paths}")
 
         qaic_tokens = _run_disagg_qaic_generation(
             qeff_model=qeff_model,
             processor=processor,
             common_inputs=common_inputs,
-            vision_session=vision_session,
-            prefill_session=prefill_session,
-            decode_session=decode_session,
-            decode_batch_size=batch_size,
+            prefill_qpc_path=prefill_qpc_path.get("lang_prefill_qpc_path"),
+            decode_qpc_path=decode_qpc_path.get("lang_decode_qpc_path"),
         )
     finally:
-        for session in sessions:
-            session.deactivate()
-        cleanup_paths = list(compiled_onnx_paths.values()) or [
-            getattr(qeff_model.vision_model, "onnx_path", None),
-            getattr(qeff_model.lang_model, "onnx_path", None),
-        ]
-        manual_cleanup([path for path in cleanup_paths if path is not None])
+        manual_cleanup(list(compiled_onnx_paths.values()))
 
-    assert qaic_tokens.shape == (batch_size, GENERATION_LEN)
-    assert hf_tokens.shape == (1, GENERATION_LEN)
+    assert qaic_tokens.shape == (BATCH_SIZE, GENERATION_LEN)
+    assert hf_tokens.shape == (BATCH_SIZE, GENERATION_LEN)
     assert np.issubdtype(qaic_tokens.dtype, np.integer)
     assert np.issubdtype(hf_tokens.dtype, np.integer)
-    assert (qaic_tokens == np.repeat(hf_tokens, batch_size, axis=0)).all(), (
+    assert (qaic_tokens == hf_tokens).all(), (
         "Tokens don't match for HF Torch fp32 output and disagg blocked QAIC output"
     )
 
@@ -472,23 +405,17 @@ def _build_prefill_mdp_qaic_config(blocking_mode: str) -> dict:
     return qaic_config
 
 
-@pytest.mark.dummy_layers
-@pytest.mark.on_qaic
-@pytest.mark.multimodal
-@pytest.mark.parametrize("blocking_mode", ["prefill_qkv", "prefill_online"])
-def test_qwen3_vl_moe_disagg_prefill_mdp_intersection_compile_only(blocking_mode, manual_cleanup, tmp_path):
-    torch.manual_seed(42)
-
-    hf_model = _load_hf_model_from_pretrained(
-        _build_config(dtype="float32", num_hidden_layers=PREFILL_MDP_NUM_LAYERS)
-    ).to(dtype=torch.float32)
+def _load_qeff_model(num_hidden_layers: int = 1):
+    hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32", num_hidden_layers=num_hidden_layers)).to(
+        dtype=torch.float32
+    )
     hf_model.config.dtype = "float32"
     hf_model.config.torch_dtype = torch.float32
     if hasattr(hf_model.config, "text_config"):
         hf_model.config.text_config.dtype = "float32"
         hf_model.config.text_config.torch_dtype = torch.float32
 
-    qeff_model = QEFFAutoModelForImageTextToText(
+    return QEFFAutoModelForImageTextToText(
         hf_model,
         kv_offload=True,
         config=hf_model.config,
@@ -496,9 +423,30 @@ def test_qwen3_vl_moe_disagg_prefill_mdp_intersection_compile_only(blocking_mode
         layerwise=False,
     )
 
+
+@pytest.mark.dummy_layers
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("blocking_mode", ["h", "q", "kv", "qkv"])
+def test_qwen3_vl_moe_disagg_blocked_qaic_vs_hf_fp32(blocking_mode, manual_cleanup):
+    _run_disagg_blocked(
+        manual_cleanup,
+        _build_decode_qaic_config(blocking_mode),
+        prefill_qaic_config=_build_blocking_qaic_config(blocking_mode),
+    )
+
+
+@pytest.mark.dummy_layers
+@pytest.mark.on_qaic
+@pytest.mark.multimodal
+@pytest.mark.parametrize("blocking_mode", ["prefill_qkv", "prefill_online"])
+def test_qwen3_vl_moe_disagg_prefill_mdp_intersection_compile_only(blocking_mode, manual_cleanup):
+    torch.manual_seed(42)
+    qeff_model = _load_qeff_model(num_hidden_layers=PREFILL_MDP_NUM_LAYERS)
+    compiled_onnx_paths = {}
+
     try:
         qpc_paths = qeff_model.compile(
-            compile_dir=str(tmp_path / f"prefill_mdp_{blocking_mode}"),
             batch_size=BATCH_SIZE,
             prefill_seq_len=PREFILL_SEQ_LEN,
             ctx_len=CTX_LEN,
@@ -522,78 +470,7 @@ def test_qwen3_vl_moe_disagg_prefill_mdp_intersection_compile_only(blocking_mode
             layerwise_window_size=1,
             qaic_config=_build_prefill_mdp_qaic_config(blocking_mode),
         )
-        _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")
-        assert qpc_paths.get("lang_prefill_qpc_path"), "Prefill compile did not return lang_prefill_qpc_path"
+        compiled_onnx_paths["prefill"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "prefill")
+        _assert_lang_only_compile(qeff_model, qpc_paths, "lang_prefill_qpc_path")
     finally:
-        manual_cleanup([path for path in [getattr(qeff_model.lang_model, "onnx_path", None)] if path is not None])
-
-
-@pytest.mark.dummy_layers
-@pytest.mark.on_qaic
-@pytest.mark.multimodal
-def test_qwen3_vl_moe_disagg_blocked_qaic_vs_hf_fp32(manual_cleanup, tmp_path):
-    # Compile the vision encoder once. Vision is independent of language-side
-    # blocking, and recompiling it from each xdist item can race on the shared
-    # QEFF_HOME export/QPC cache.
-    vision_qpc_path, vision_onnx_path = _compile_vision_qpc(tmp_path / "vision")
-
-    try:
-        for blocking_mode in ["q", "kv", "qkv", "hqkv"]:
-            prefill_qaic_config = {
-                "blocking_mode": blocking_mode,
-                "head_block_size": HEAD_BLOCK_SIZE,
-                "num_kv_blocks": NUM_KV_BLOCKS,
-                "num_q_blocks": NUM_Q_BLOCKS,
-            }
-            # In disagg mode, q blocking compiles fail with prefill_seq_len like we need for decode qpc.
-            decode_blocking_mode = blocking_mode.replace("q", "")
-            if decode_blocking_mode:
-                decode_qaic_config = {
-                    "blocking_mode": decode_blocking_mode,
-                    "head_block_size": HEAD_BLOCK_SIZE,
-                    "num_kv_blocks": NUM_KV_BLOCKS,
-                }
-            else:
-                decode_qaic_config = {}
-            _run_disagg_blocked(
-                manual_cleanup,
-                decode_qaic_config,
-                prefill_qaic_config=prefill_qaic_config,
-                compile_dir=tmp_path / blocking_mode,
-                vision_qpc_path=vision_qpc_path,
-            )
-
-        _run_disagg_blocked(
-            manual_cleanup,
-            {
-                "blocking_mode": "kv_headpar",
-                "num_kv_blocks": NUM_KV_BLOCKS,
-            },
-            compile_dir=tmp_path / "headpar",
-            vision_qpc_path=vision_qpc_path,
-        )
-
-        PREFILL_QL_CHUNK = 32
-        PREFILL_BLOCK_CHUNKS = -(-PREFILL_SEQ_LEN // PREFILL_QL_CHUNK)
-        PREFILL_N_REP_CHUNK = 2
-
-        decode_qaic_config = {
-            "blocking_mode": "kv_batch_fold",
-            "num_kv_blocks": NUM_KV_BLOCKS,
-        }
-        prefill_qaic_config = {
-            "blocking_mode": "prefill_online",
-            "num_kv_blocks": NUM_KV_BLOCKS,
-            "num_q_blocks": PREFILL_BLOCK_CHUNKS,
-            "n_rep_chunk": PREFILL_N_REP_CHUNK,
-        }
-        _run_disagg_blocked(
-            manual_cleanup,
-            decode_qaic_config,
-            prefill_qaic_config=prefill_qaic_config,
-            batch_size=2,
-            compile_dir=tmp_path / "batch_fold",
-            vision_qpc_path=vision_qpc_path,
-        )
-    finally:
-        manual_cleanup([vision_onnx_path])
+        manual_cleanup(list(compiled_onnx_paths.values()))
