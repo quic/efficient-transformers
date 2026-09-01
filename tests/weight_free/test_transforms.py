@@ -402,8 +402,8 @@ class TestWeightFreeExportHash:
         )
 
         assert regular_hash != weight_free_hash
-        assert not regular_params["weight_free"]
-        assert weight_free_params["weight_free"]
+        assert "weight_free" not in regular_params
+        assert weight_free_params["weight_free"] is True
 
 
 # ---------------------------------------------------------------------------

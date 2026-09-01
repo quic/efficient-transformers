@@ -435,9 +435,10 @@ def _generate_export_hash(qeff_model, args, kwargs, func):
             "use_onnx_subfunctions": getattr(qeff_model, "_use_onnx_subfunctions", False),
             "onnx_transform_version": 1,
             "dynamo": all_args.get("dynamo", False),
-            "weight_free": getattr(qeff_model, "_weight_free", False),
         }
     )
+    if getattr(qeff_model, "_weight_free", False):
+        copy_of_hash_params["weight_free"] = True
     if getattr(qeff_model, "_use_onnx_subfunctions", False):
         copy_of_hash_params["onnx_subfunction_version"] = 3
     # Generate hash from relevant parameters
