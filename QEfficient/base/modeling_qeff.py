@@ -37,6 +37,7 @@ from QEfficient.compile.mdp_generator import (
     generate_mdp_partition_config,
 )
 from QEfficient.compile.qnn_compiler import compile as qnn_compile
+from QEfficient.exporter.weight_free.export import embed_weight_spec_as_metadata, link_prepared_checkpoint_dir
 from QEfficient.generation.cloud_infer import QAICInferenceSession
 from QEfficient.transformers.models.pytorch_transforms import (
     BlockingAttentionTransform,
@@ -299,7 +300,7 @@ class QEFFBaseModel(ABC):
 
     @property
     @abstractmethod
-    def get_model_config(self) -> dict:
+    def get_model_config(self) -> Dict:
         """
         Get the model configuration as a dictionary.
 
@@ -373,13 +374,8 @@ class QEFFBaseModel(ABC):
         onnx_transform_kwargs: Optional[Dict[str, Any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
-        prefill_only: Optional[bool] = False,
         dynamo: bool = False,
         dynamic_shapes: Optional[Dict[str, Dict[int, Any]]] = None,
-        enable_chunking: Optional[bool] = False,
-        num_cores: Optional[int] = constants.DEFAULT_AIC_NUM_CORES,
-        qaic_config: Optional[dict] = None,
-        prefill_seq_len: Optional[int] = None,
         **export_kwargs,
     ) -> str:
         """
@@ -401,7 +397,6 @@ class QEFFBaseModel(ABC):
             :offload_pt_weights (bool): If True, offload PyTorch model weights to meta device
             after successful export to reduce memory usage. Set to False if you need to
             keep weights for further operations. Defaults to True.
-            :prefill_only (bool): If True, export only the prefill (context) graph without decode. Defaults to False.
             :dynamo (bool): If True, export via torch.export (dynamo path) instead of the legacy torch.onnx.export TorchScript path. Defaults to False.
             :dynamic_shapes (dict): Dynamic shape constraints passed to torch.export when dynamo=True. Keys are input names; values are per-dimension constraint dicts. Ignored when dynamo=False.
             Note:
@@ -536,6 +531,7 @@ class QEFFBaseModel(ABC):
                     dynamic_axes,
                     export_kwargs,
                 )
+                self._offload_model_weights(offload_pt_weights)
             logger.info("PyTorch export successful")
             self.weight_spec_path = str(export_result.weight_spec_path) if export_result.weight_spec_path else None
             model = onnx.load(export_result.onnx_path, load_external_data=False)
@@ -569,8 +565,8 @@ class QEFFBaseModel(ABC):
             model.metadata_props.append(
                 onnx.StringStringEntryProto(key="qeff_transforms", value=",".join(transform_names))
             )
-            for hook in export_result.post_transform_hooks:
-                hook(model)
+            if self._weight_free and export_result.weight_spec_path:
+                embed_weight_spec_as_metadata(model, export_result.weight_spec_path)
             logger.info("ONNX transforms applied")
 
             onnx_path_tmp = onnx_path.with_suffix(onnx_path.suffix + ".tmp")
@@ -580,8 +576,8 @@ class QEFFBaseModel(ABC):
             gc.collect()
             logger.info("Transformed ONNX saved")
 
-            for hook in export_result.post_export_hooks:
-                hook()
+            if self._weight_free and export_result.weight_spec_path:
+                link_prepared_checkpoint_dir(onnx_path, export_result.weight_spec_path)
 
         except Exception as e:
             logger.error(f"ONNX export or transforms failed: {e}")
@@ -663,7 +659,7 @@ class QEFFBaseModel(ABC):
         example_inputs: Dict[str, torch.Tensor],
         output_names: List[str],
         dynamic_axes: Dict[str, Dict[int, str]],
-        onnx_transform_kwargs: Optional[Dict[str, Any]] = None,
+        onnx_transform_kwargs: Optional[Dict[str, any]] = None,
         export_dir: Optional[str] = None,
         offload_pt_weights: bool = True,
         prefill_only: Optional[bool] = False,

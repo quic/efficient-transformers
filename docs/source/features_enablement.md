@@ -53,18 +53,17 @@ weights in memory during ONNX export is not practical:
 ```Python
 from QEfficient import QEFFAutoModelForCausalLM
 
-model = QEFFAutoModelForCausalLM.from_pretrained("Qwen/Qwen2-1.5B-Instruct")
+model = QEFFAutoModelForCausalLM.from_pretrained("Qwen/Qwen2-1.5B-Instruct", weight_free=True)
 qpc_path = model.compile(
     prefill_seq_len=128,
     ctx_len=128,
     num_cores=16,
     dynamo=True,
     use_onnx_subfunctions=True,
-    use_weight_free_export=True,
 )
 ```
 
-`use_weight_free_export=True` forces the dynamo export path. When constructing a
+`weight_free=True` forces the dynamo export path. When constructing a
 QEfficient wrapper manually from a meta-device model, pass
 `pretrained_model_name_or_path` so the exporter can resolve the checkpoint files
 referenced by `weight_spec.json`.

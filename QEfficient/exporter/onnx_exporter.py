@@ -17,7 +17,6 @@ refactor cleanly. It will be moved here once _build_weight_free_model() and
 similar override hooks are in place.
 """
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Type
@@ -35,8 +34,6 @@ class ExportResult:
     onnx_transform_kwargs: Dict[str, Any] = field(default_factory=dict)
     excluded_onnx_transforms: Tuple[Type[Any], ...] = ()
     weight_spec_path: Optional[Path] = None
-    post_transform_hooks: Tuple[Callable[[Any], None], ...] = ()
-    post_export_hooks: Tuple[Callable[[], None], ...] = ()
 
 
 def export_via_legacy(
@@ -135,32 +132,10 @@ def export_via_weightfree(
         export_kwargs=wf_export_kwargs,
         onnx_transform_kwargs=onnx_transform_kwargs or {},
     )
-
-    final_weight_spec = onnx_path.with_name("weight_spec.json")
-    weight_spec_path = final_weight_spec if final_weight_spec.exists() else None
-
-    post_transform_hooks = ()
-    post_export_hooks = ()
-    if weight_spec_path is not None:
-
-        def _embed_weight_spec(model, spec_path=weight_spec_path):
-            from QEfficient.exporter.weight_free.export import embed_weight_spec_as_metadata
-
-            embed_weight_spec_as_metadata(model, spec_path)
-
-        def _link_prepared_checkpoint(onnx_file=onnx_path, spec_path=weight_spec_path):
-            from QEfficient.exporter.weight_free.export import link_prepared_checkpoint_dir
-
-            link_prepared_checkpoint_dir(onnx_file, spec_path)
-
-        post_transform_hooks = (_embed_weight_spec,)
-        post_export_hooks = (_link_prepared_checkpoint,)
-
+    weight_spec_path = onnx_path.with_name("weight_spec.json")
     return ExportResult(
         onnx_path=onnx_path,
         onnx_transform_kwargs=updated_onnx_transform_kwargs or {},
         excluded_onnx_transforms=(SplitTensorsTransform,),
         weight_spec_path=weight_spec_path,
-        post_transform_hooks=post_transform_hooks,
-        post_export_hooks=post_export_hooks,
     )

@@ -40,11 +40,6 @@ def main():
         help="Build the model on meta tensors and load weights at compile time",
     )
     parser.add_argument(
-        "--enable-proxy",
-        action="store_true",
-        help="Use proxy modules (QeffProxyEmbedding/QeffProxyLinear) in place of real weights during export",
-    )
-    parser.add_argument(
         "--device-group",
         type=lambda device_ids: [int(x) for x in device_ids.strip("[]").split(",")],
         default=None,
@@ -61,7 +56,6 @@ def main():
         args.model_name,
         config=config,
         weight_free=args.weight_free,
-        enable_proxy=args.enable_proxy,
     )
 
     # Export (via torch.export / dynamo) + compile to QPC
