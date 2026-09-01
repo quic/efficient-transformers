@@ -252,14 +252,15 @@ def generic_blocked_attention_interface(
     if not is_mla:
         cache_kwargs["past_seen_tokens"] = past_seen_tokens
         if prefill_only:
-            if sliding_window is not None:
-                cache_kwargs.update(
-                    {
-                        "is_sliding": sliding_window is not None,
-                        "sliding_window": past_key_value.get_sliding_window_len(),
-                    }
-                )
-            past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
+            if past_key_value is not None and not kwargs.get("skip_kv_write", False):
+                if sliding_window is not None:
+                    cache_kwargs.update(
+                        {
+                            "is_sliding": sliding_window is not None,
+                            "sliding_window": past_key_value.get_sliding_window_len(),
+                        }
+                    )
+                past_key_value.write_only(key, value, module.layer_idx, cache_kwargs)
         elif past_key_value is not None:
             use_kv_blocked = "kv" in blocking_config.mode and supports_blocked_kv(past_key_value)
             if blocking_config.mode == BlockingMode.KV_BATCH_FOLD:
@@ -304,8 +305,8 @@ def generic_blocked_attention_interface(
         ctx_len=blocking_config.ctx_len,
         kv_block_unroll=blocking_config.kv_block_unroll,
         skip_kv=blocking_config.skip_kv or False,
-        # prefill-specific
-        n_rep_chunk=blocking_config.n_rep_chunk,
+        # prefill-specific — omit when None so function default (1) applies
+        **({"n_rep_chunk": blocking_config.n_rep_chunk} if blocking_config.n_rep_chunk is not None else {}),
         # MLA-specific
         **(mla_kwargs or {}),
         **kwargs,

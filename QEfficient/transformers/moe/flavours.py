@@ -89,9 +89,7 @@ def build_matched_idx_from_cumsum(T2Ei: torch.Tensor) -> torch.Tensor:
     valid_prefix = torch.cumsum(T2Ei.to(torch.int32), dim=1)
     valid_dest = valid_prefix - 1
     scatter_pos = torch.where(T2Ei, valid_dest, int32_max_scalar)
-    # NOTE: expand_as(...) instead of torch.full_like(...) is the compiler-preferred
-    # workaround for ConstantOfShape(INT32_MAX); both produce identical traced Ctx ops.
-    matched_idx = int32_max_scalar.expand_as(token_idx)
+    matched_idx = torch.full_like(token_idx, int32_max)
     matched_idx = ctx_scatter_3d_int(
         matched_idx.unsqueeze(-1),
         scatter_pos,
@@ -114,8 +112,15 @@ def cumsum_scatter_gather_update_expert_blocked(
     b_u: Optional[torch.Tensor] = None,
     b_d: Optional[torch.Tensor] = None,
     num_packed_chunks: int = 1,
+    expert_intermediate_block_size: Optional[int] = None,
 ) -> torch.Tensor:
-    """Run one local expert slot over statically traced packed chunks."""
+    """Run one local expert slot over statically traced packed chunks.
+
+    When ``expert_intermediate_block_size`` is set the intermediate dimension I
+    is tiled in slices of that size, reducing peak VTCM from ``[N, chunk, I]``
+    to ``[N, chunk, expert_intermediate_block_size]`` — matching the microbench
+    ``--ffn-weight-block-size`` behaviour.
+    """
     batch_size, seq_len = T2Ei.shape
     num_packed_chunks = max(1, int(num_packed_chunks))
     assert seq_len % num_packed_chunks == 0, (
@@ -136,17 +141,37 @@ def cumsum_scatter_gather_update_expert_blocked(
         chunk_matched_idx = matched_idx[:, packed_start:packed_stop]
 
         x_chunk = ctx_gather_3d_generalized(x_expanded, chunk_matched_idx)
-        down_chunk = expert_mlp(x_chunk, W_g, W_u, W_d, b_g, b_u, b_d)
+
+        if expert_intermediate_block_size is None:
+            down_chunk = expert_mlp(x_chunk, W_g, W_u, W_d, b_g, b_u, b_d)
+        else:
+            inter_size = W_d.shape[1]
+            N, chunk, H = x_chunk.shape[0], x_chunk.shape[1], W_d.shape[2]
+            down_chunk = x_chunk.new_zeros((N, chunk, H))
+            for i_start in range(0, inter_size, expert_intermediate_block_size):
+                i_end = min(i_start + expert_intermediate_block_size, inter_size)
+                b_g_s = b_g[..., i_start:i_end] if b_g is not None else None
+                b_u_s = b_u[..., i_start:i_end] if b_u is not None else None
+                down_chunk = down_chunk + expert_mlp(
+                    x_chunk,
+                    W_g[..., i_start:i_end],
+                    W_u[..., i_start:i_end],
+                    W_d[:, i_start:i_end, :],
+                    b_g_s,
+                    b_u_s,
+                    None,
+                )
+            if b_d is not None:
+                down_chunk = down_chunk + b_d.unsqueeze(-2)
 
         rw_chunk = ctx_gather_3d_generalized(routing_weight, chunk_matched_idx)
         down_chunk = down_chunk * rw_chunk
         expert_out_chunk = ctx_gather_3d_generalized(expert_out, chunk_matched_idx)
         updated_chunk = expert_out_chunk + down_chunk
 
-        chunk_valid_rows = torch.clamp(
-            valid_rows - packed_start,
-            min=torch.zeros_like(valid_rows),
-            max=torch.full_like(valid_rows, chunk_rows),
+        chunk_valid_rows = torch.minimum(
+            torch.maximum(valid_rows - packed_start, torch.zeros_like(valid_rows)),
+            torch.full_like(valid_rows, chunk_rows),
         )
         updated_chunk = torch.where(
             (row_range < chunk_valid_rows).unsqueeze(-1), updated_chunk, torch.zeros_like(updated_chunk)
@@ -168,6 +193,7 @@ def moe_expert_parallel(
     experts_per_soc: Optional[int] = None,
     tree_reduce: bool = False,
     num_packed_chunks: int = 1,
+    expert_intermediate_block_size: Optional[int] = None,
 ) -> torch.Tensor:
     """Prefill expert-parallel flavour with branch-style expert reshaping."""
     T, H = x.shape
@@ -217,6 +243,7 @@ def moe_expert_parallel(
             b_u=b_u[:, slot] if b_u is not None else None,
             b_d=b_d[:, slot] if b_d is not None else None,
             num_packed_chunks=num_packed_chunks,
+            expert_intermediate_block_size=expert_intermediate_block_size,
         )
 
     if experts_per_soc is not None:

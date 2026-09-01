@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # -----------------------------------------------------------------------------
-import math
 import os
 from functools import partial
 from typing import Callable, Optional, Type, Union
@@ -88,186 +87,18 @@ class QEffGptOssExperts(GptOssExperts):
         return self.moe_weights
 
 
-class _QEffGptOssLegacyBlockedMixin:
-    def forward(self, hidden: torch.Tensor):
-        if os.environ.get("NUM_FFN_BLOCKS", None) is not None:
-            return self.blocked_ffn_forward(hidden)
-        return super().forward(hidden)
-
-    def blocked_ffn_forward(self, hidden: torch.Tensor):
-        if not getattr(self, "weights_transformed", False):
-            raise RuntimeError(f"{type(self).__name__} weights are not transformed; run OptimizedMoEWeightsTransform")
-        B, S, H = hidden.shape
-        T = B * S
-        hidden = hidden.view(T, H)
-        weights = self.moe_weights
-
-        # Router computation
-        router_logits = F.linear(hidden, self.router.weight, self.router.bias)
-
-        # Top-k selection
-        top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)  # both [T, K]
-        top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
-
-        masked_logits = torch.zeros_like(router_logits)
-        masked_logits.scatter_(1, top_i, top_w)
-
-        # Routing weights for each expert [T, E]
-        routing_weights = masked_logits
-
-        # ────────────────── allocate the output tensor ─────
-        expert_out = hidden.new_zeros((T, H))  # accumulation buffer
-        target_blocks = int(os.environ.get("NUM_FFN_BLOCKS", 1))
-        block_positions = []
-        for j in range(target_blocks):
-            block_positions.append(j * (T // target_blocks))
-        # ───────────────────────── Expert computation loop ─────────────────────────────
-        for e in range(self.experts.num_experts):
-            routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
-
-            W_g, W_u = weights.gate[e], weights.up[e]  # [H, I], [H, I]
-            b_g, b_u = weights.gate_bias[e], weights.up_bias[e]  # [I], [I]
-            W_d = weights.down[e]  # [I, H]
-            b_d = weights.down_bias[e]  # [H]
-
-            block_count = 0
-            outs = []
-            for block_idx in range(target_blocks):
-                block_count += 1
-                qi = block_positions[block_idx]
-
-                # Calculate block size (last block should be handled with remainder)
-                if block_idx == target_blocks - 1:
-                    real_q_len = T - qi
-                else:
-                    real_q_len = block_positions[block_idx + 1] - qi
-
-                tgb = hidden[qi : qi + real_q_len, :]
-                # Gate and Up projections
-                # Gate and Up projections
-                gate = (tgb @ W_g) + b_g  # [T, I]
-                up = (tgb @ W_u) + b_u  # [T, I]
-
-                # Apply GptOss activation with clamping
-                gate = gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
-                up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
-
-                # GLU activation
-                glu = gate * torch.sigmoid(gate * self.experts.alpha)
-                intermediate = (up + 1) * glu  # [T, I]
-
-                # Down projection
-                down_out_block = (intermediate @ W_d) + b_d  # [T, H]
-
-                outs.append(down_out_block)
-
-            down_out = torch.cat(outs, dim=0)
-
-            # Apply routing weights and accumulate
-            expert_out += down_out * routing_weight
-
-        # original shape [B, S, H]
-        return expert_out.view(B, S, H), router_logits
-
-    def blocked_ffn_forward_block_weights(self, hidden: torch.Tensor):
-        if not getattr(self, "weights_transformed", False):
-            raise RuntimeError(f"{type(self).__name__} weights are not transformed; run OptimizedMoEWeightsTransform")
-        B, S, H = hidden.shape
-        T = B * S
-        hidden = hidden.view(T, H)
-        weights = self.moe_weights
-
-        # Router computation
-        router_logits = F.linear(hidden, self.router.weight, self.router.bias)
-
-        # Top-k selection
-        top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)  # both [T, K]
-        top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
-
-        masked_logits = torch.zeros_like(router_logits)
-        masked_logits.scatter_(1, top_i, top_w)
-
-        # Routing weights for each expert [T, E]
-        routing_weights = masked_logits
-
-        # ────────────────── allocate the output tensor ─────
-        expert_out = hidden.new_zeros((T, H))  # accumulation buffer
-        target_blocks = int(os.environ.get("NUM_BLOCKS", 1))
-        block_positions = []
-        for j in range(target_blocks):
-            block_positions.append(j * (T // target_blocks))
-        # ───────────────────────── Expert computation loop ─────────────────────────────
-        for e in range(self.experts.num_experts):
-            routing_weight = routing_weights[:, e].unsqueeze(-1)  # [T, 1]
-
-            W_g, W_u = weights.gate[e], weights.up[e]  # [H, I], [H, I]
-            b_g, b_u = weights.gate_bias[e], weights.up_bias[e]  # [I], [I]
-            W_d = weights.down[e]  # [I, H]
-            b_d = weights.down_bias[e]  # [H]
-
-            block_count = 0
-            outs = []
-            for block_idx in range(target_blocks):
-                block_count += 1
-                qi = block_positions[block_idx]
-
-                # Calculate block size (last block should be handled with remainder)
-                if block_idx == target_blocks - 1:
-                    real_q_len = T - qi
-                else:
-                    real_q_len = block_positions[block_idx + 1] - qi
-
-                tgb = hidden[qi : qi + real_q_len, :]
-                # Gate and Up projections
-
-                wg_col_shape = W_g.shape[1]
-                wg_num_blocks = math.ceil(wg_col_shape / 128)
-                last_block_size = wg_col_shape % 128 if wg_col_shape % 128 != 0 else 128
-
-                intermediates = []
-                for i in range(wg_num_blocks):
-                    if i == wg_num_blocks - 1:
-                        cur_gate = (tgb @ W_g[:, -last_block_size:]) + b_g[-last_block_size:]
-                        cur_up = (tgb @ W_u[:, -last_block_size:]) + b_u[-last_block_size:]
-                    else:
-                        cur_gate = (tgb @ W_g[:, i * 128 : (i + 1) * 128]) + b_g[i * 128 : (i + 1) * 128]
-                        cur_up = (tgb @ W_u[:, i * 128 : (i + 1) * 128]) + b_u[i * 128 : (i + 1) * 128]
-
-                    cur_gate = cur_gate.clamp(min=torch.finfo(torch.float16).min, max=self.experts.limit)
-                    cur_up = cur_up.clamp(min=-self.experts.limit, max=self.experts.limit)
-                    cur_glu = cur_gate * torch.sigmoid(cur_gate * self.experts.alpha)
-                    cur_intermediate = (cur_up + 1) * cur_glu
-                    intermediates.append(cur_intermediate)
-
-                intermediate = torch.cat(intermediates, dim=-1)
-
-                downs = []
-                for i in range(wg_num_blocks):
-                    if i == wg_num_blocks - 1:
-                        downs.append((intermediate @ W_d[:, -last_block_size:]) + b_d[-last_block_size:])
-                    else:
-                        downs.append((intermediate @ W_d[:, i * 128 : (i + 1) * 128]) + b_d[i * 128 : (i + 1) * 128])
-
-                down_out_block = torch.cat(downs, dim=1)
-                outs.append(down_out_block)
-
-            down_out = torch.cat(outs, dim=0)
-
-            # Apply routing weights and accumulate
-            masked_down = torch.where(routing_weight > 0, down_out * routing_weight, torch.zeros_like(expert_out))
-            expert_out += masked_down
-
-        # original shape [B, S, H]
-        return expert_out.view(B, S, H), router_logits
-
-
-class QEffGptOssMLP(_QEffGptOssLegacyBlockedMixin, QEffMoEBlockMixin, GptOssMLP):
+class QEffGptOssMLP(QEffMoEBlockMixin, GptOssMLP):
     _moe_return_router_logits = True
     supported_moe_flavours = (
         MoEFlavour.SIMPLE_LOOP,
         MoEFlavour.DECODE_BMM,
         MoEFlavour.EXPERT_PARALLEL,
     )
+
+    def __qeff_init__(self):
+        super().__qeff_init__()
+        self.top_k = getattr(self.router, "top_k", None)
+        self.num_experts = getattr(self.experts, "num_experts", None)
 
     def transform_weights(self) -> MoEWeights:
         if getattr(self, "weights_transformed", False):
@@ -289,160 +120,6 @@ class QEffGptOssMLP(_QEffGptOssLegacyBlockedMixin, QEffMoEBlockMixin, GptOssMLP)
         top_w, top_i = torch.topk(router_logits, self.router.top_k, dim=-1)
         top_w = F.softmax(top_w, dim=1, dtype=top_w.dtype)
         return (top_i, top_w), router_logits
-
-    # ------------------- Gather based, weights as activation approach ---------------
-    def forward_weights_as_activation(self, hidden_states):
-        if not getattr(self, "weights_transformed", False):
-            raise RuntimeError(f"{type(self).__name__} weights are not transformed; run OptimizedMoEWeightsTransform")
-        bs, seq_len, _ = hidden_states.shape
-        hidden_states = hidden_states.view(bs * seq_len, self.experts.hidden_size)
-        weights = self.moe_weights
-
-        # Router computation
-        router_logits = F.linear(hidden_states, self.router.weight, self.router.bias)
-        router_top_value, router_indices = torch.topk(router_logits, self.router.top_k, dim=-1)
-        router_top_value = torch.nn.functional.softmax(router_top_value, dim=1, dtype=router_top_value.dtype)
-
-        # GATHER - collect weights for selected experts
-        gate_proj = weights.gate[router_indices.flatten()]
-        up_proj = weights.up[router_indices.flatten()]
-        gate_proj_bias = weights.gate_bias[router_indices.flatten()]
-        up_proj_bias = weights.up_bias[router_indices.flatten()]
-        down_proj = weights.down[router_indices.flatten()]
-        down_proj_bias = weights.down_bias[router_indices.flatten()]
-
-        # Apply Chosen Experts (without routing weights first)
-        # expert_in = hidden_states.repeat_interleave(self.router.top_k, dim=0)
-        # expert_in = expert_in.view(-1, 1, self.experts.hidden_size)
-        # Reshape for bmm: (bs*seq_len*top_k, 1, hidden_size)
-        expert_in = (
-            hidden_states.unsqueeze(1)
-            .expand(-1, self.router.top_k, -1)
-            .contiguous()
-            .view(-1, 1, self.experts.hidden_size)
-        )
-
-        gate = torch.bmm(expert_in, gate_proj) + gate_proj_bias.unsqueeze(1)
-        up = torch.bmm(expert_in, up_proj) + up_proj_bias.unsqueeze(1)
-
-        # Apply activation with clamping
-        gate = gate.clamp(min=None, max=self.experts.limit)
-        up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
-        glu = gate * torch.sigmoid(gate * self.experts.alpha)
-        gated_output = (up + 1) * glu
-
-        experts_out = torch.bmm(gated_output, down_proj) + down_proj_bias.unsqueeze(1)
-        experts_out = experts_out.view(bs * seq_len, self.router.top_k, self.experts.hidden_size)
-
-        # Apply routing weights AFTER expert computation (This is before on Llama4)
-        experts_out = experts_out * router_top_value.unsqueeze(-1)
-        experts_out = torch.einsum("bnd->bd", experts_out)
-
-        return experts_out, router_logits
-
-    def forward(self, hidden_states):
-        if os.environ.get("NUM_FFN_BLOCKS", None) is not None:
-            return self.blocked_ffn_forward(hidden_states)
-        return QEffMoEBlockMixin.forward(self, hidden_states)
-
-    def optimized_moe_forward(self, hidden_states: torch.Tensor):
-        if not getattr(self, "weights_transformed", False):
-            raise RuntimeError(f"{type(self).__name__} weights are not transformed; run OptimizedMoEWeightsTransform")
-        B, S, H = hidden_states.shape
-        T = B * S
-        hidden_states = hidden_states.view(T, H)
-        weights = self.moe_weights
-
-        # Router computation
-        router_logits = F.linear(hidden_states, self.router.weight, self.router.bias)
-
-        # Top-k selection
-        top_w, selected_experts = torch.topk(router_logits, self.router.top_k, dim=-1)  # both [T, K]
-        top_w = torch.nn.functional.softmax(top_w, dim=1, dtype=top_w.dtype)
-
-        # Creating experts mask and routing weights masked
-        awesome_experts_mask_1 = (
-            torch.nn.functional.one_hot(selected_experts[:, 0], num_classes=self.experts.num_experts)
-            .bool()
-            .T.unsqueeze(-1)
-        )
-        awesome_experts_mask_2 = (
-            torch.nn.functional.one_hot(selected_experts[:, 1], num_classes=self.experts.num_experts)
-            .bool()
-            .T.unsqueeze(-1)
-        )
-        awesome_experts_mask_3 = (
-            torch.nn.functional.one_hot(selected_experts[:, 2], num_classes=self.experts.num_experts)
-            .bool()
-            .T.unsqueeze(-1)
-        )
-        awesome_experts_mask_4 = (
-            torch.nn.functional.one_hot(selected_experts[:, 3], num_classes=self.experts.num_experts)
-            .bool()
-            .T.unsqueeze(-1)
-        )
-
-        gateupout1 = torch.zeros(hidden_states.shape[0], self.experts.intermediate_size)  # T, hs
-        gateupout2 = torch.zeros(hidden_states.shape[0], self.experts.intermediate_size)  # T, hs
-        gateupout3 = torch.zeros(hidden_states.shape[0], self.experts.intermediate_size)  # T, hs
-        gateupout4 = torch.zeros(hidden_states.shape[0], self.experts.intermediate_size)  # T, hs
-
-        # ───────────────────────── Expert computation loop ─────────────────────────────
-        for e in range(self.experts.num_experts):
-            W_g, W_u = weights.gate[e], weights.up[e]  # [H, I], [H, I]
-            b_g, b_u = weights.gate_bias[e], weights.up_bias[e]  # [I], [I]
-
-            # Gate and Up projections
-            gate = (hidden_states @ W_g) + b_g  # [T, I]
-            up = (hidden_states @ W_u) + b_u  # [T, I]
-
-            # Apply GptOss activation with clamping
-            gate = gate.clamp(min=None, max=self.experts.limit)
-            up = up.clamp(min=-self.experts.limit, max=self.experts.limit)
-
-            # GLU activation
-            glu = gate * torch.sigmoid(gate * self.experts.alpha)
-            intermediate = (up + 1) * glu  # [T, I]
-
-            gateupout1 += torch.where(awesome_experts_mask_1[e], intermediate, torch.zeros_like(gateupout1))
-            gateupout2 += torch.where(awesome_experts_mask_2[e], intermediate, torch.zeros_like(gateupout2))
-            gateupout3 += torch.where(awesome_experts_mask_3[e], intermediate, torch.zeros_like(gateupout3))
-            gateupout4 += torch.where(awesome_experts_mask_4[e], intermediate, torch.zeros_like(gateupout4))
-
-        concat_down = torch.zeros((self.router.top_k, T, H))
-        concat_mask = torch.cat(
-            (
-                awesome_experts_mask_1.unsqueeze(0),
-                awesome_experts_mask_2.unsqueeze(0),
-                awesome_experts_mask_3.unsqueeze(0),
-                awesome_experts_mask_4.unsqueeze(0),
-            ),
-            dim=0,
-        )
-
-        concat_gateout = torch.cat(
-            (gateupout1.unsqueeze(0), gateupout2.unsqueeze(0), gateupout3.unsqueeze(0), gateupout4.unsqueeze(0)), dim=0
-        )
-
-        for e in range(self.experts.num_experts):
-            W_d = weights.down[e]  # [I, H]
-            b_d = weights.down_bias[e]  # [H]
-
-            # Down projection
-            down_out = (concat_gateout @ W_d) + b_d  # [T, H]
-
-            concat_down += torch.where(concat_mask[:, e, :], down_out, torch.zeros_like(concat_down))
-
-        downout1, downout2, downout3, downout4 = concat_down[0], concat_down[1], concat_down[2], concat_down[3]
-        hidden_states = (
-            downout1 * top_w[:, 0].unsqueeze(-1)
-            + downout2 * top_w[:, 1].unsqueeze(-1)
-            + downout3 * top_w[:, 2].unsqueeze(-1)
-            + downout4 * top_w[:, 3].unsqueeze(-1)
-        ).reshape(B, S, H)
-
-        # original shape [B, S, H]
-        return hidden_states, router_logits
 
 
 #  Can be replaced with llama/modeling_llama.py::QEffLlamaRotaryEmbedding but keeping it following transformers ideology
@@ -692,6 +369,9 @@ class QEffPrefillOnlyChunkedGptOssAttention(GptOssAttention):
             past_key_value=past_key_values,
             batch_index=batch_index,
             prefill_only=True,
+            # KV cache already written above via sliding_window_update_chunked /
+            # full_cache_update_chunked; skip the duplicate write inside the interface.
+            skip_kv_write=True,
             **kwargs,
         )
 

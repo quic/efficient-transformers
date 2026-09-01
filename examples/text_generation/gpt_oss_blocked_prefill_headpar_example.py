@@ -94,7 +94,13 @@ def parse_args():
         "--moe-prefill-packed-chunk-size",
         type=int,
         default=256,
-        help="MoE prefill packed chunk size (passed to compiler for MoE models)",
+        help="MoE prefill expert-parallel chunk size (expert_parallel_chunk_size in moe_config).",
+    )
+    parser.add_argument(
+        "--moe-intermediate-block-size",
+        type=int,
+        default=None,
+        help="MoE I-dim block size to reduce VTCM pressure (expert_intermediate_block_size in moe_config). None = no blocking.",
     )
     return parser.parse_args()
 
@@ -208,6 +214,11 @@ def main():
         "num_kv_blocks": 2,
         "num_q_blocks": 2,
         "ctx_len": args.ctx_len,
+        "moe_config": {
+            "expert_parallel_chunk_size": args.moe_prefill_packed_chunk_size,
+            **({"expert_intermediate_block_size": args.moe_intermediate_block_size}
+               if args.moe_intermediate_block_size is not None else {}),
+        },
     }
 
     compile_kwargs = dict(
@@ -242,7 +253,6 @@ def main():
         prefill_only=True,
         enable_chunking=True,
         user_tiled=True,
-        moe_prefill_packed_chunk_size=args.moe_prefill_packed_chunk_size,
         **compile_kwargs,
     )
     print(f"  -> {prefill_qpc_path}")
@@ -265,7 +275,6 @@ def main():
             prefill_only=True,
             enable_chunking=True,
             aic_enable_depth_first=True,
-            moe_prefill_packed_chunk_size=args.moe_prefill_packed_chunk_size,
             **compile_kwargs,
         )
         print(f"  -> decode:  {baseline_decode_qpc}")
