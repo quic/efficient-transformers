@@ -65,21 +65,42 @@ def _moe_weight_aliases(name: str) -> List[str]:
     return aliases
 
 
+def _vlm_wrapper_aliases(name: str) -> List[str]:
+    """Return checkpoint aliases introduced by VLM component wrapper nesting."""
+    aliases = []
+    if name.startswith("model.model."):
+        aliases.append("model." + name[len("model.model.") :])
+    if name.startswith("model.vision_model."):
+        aliases.append("model.visual." + name[len("model.vision_model.") :])
+    if name.startswith("vision_model."):
+        aliases.append("model.visual." + name[len("vision_model.") :])
+    if name.startswith("visual."):
+        aliases.append("model.visual." + name[len("visual.") :])
+    if name.startswith("language_model."):
+        aliases.append("model.language_model." + name[len("language_model.") :])
+    if name.startswith("model.lm_head."):
+        aliases.append("lm_head." + name[len("model.lm_head.") :])
+    if name.startswith("lm_head."):
+        aliases.append("model.lm_head." + name[len("lm_head.") :])
+    return aliases
+
+
 def _find_first_checkpoint_key(candidates: List[str], checkpoint_index: Dict[str, str]) -> Optional[str]:
     """Return the first candidate found in the checkpoint index."""
     seen = set()
     for candidate in candidates:
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        if candidate in checkpoint_index:
-            return candidate
-        for alias in _moe_weight_aliases(candidate):
+        for alias in [candidate, *_vlm_wrapper_aliases(candidate)]:
             if alias in seen:
                 continue
             seen.add(alias)
             if alias in checkpoint_index:
                 return alias
+            for moe_alias in _moe_weight_aliases(alias):
+                if moe_alias in seen:
+                    continue
+                seen.add(moe_alias)
+                if moe_alias in checkpoint_index:
+                    return moe_alias
     return None
 
 
@@ -157,14 +178,7 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
         Specification mapping promoted ONNX inputs to checkpoint tensor locations.
     """
     model_ir = onnx_program.model
-    model_names = {name for name, _ in qeff_model.model.named_parameters()}
-    model_names.update({name for name, _ in qeff_model.model.named_buffers()})
     tied_weight_map = {entry.alias: entry.canonical for entry in _collect_tied_weights(qeff_model.model)}
-    # named_parameters()/named_buffers() dedup tied tensors by identity, so a tied alias
-    # (e.g. lm_head.weight when tie_word_embeddings=True) is absent from model_names even
-    # though torch.export still emits a distinct ONNX initializer for it. Add tied aliases
-    # explicitly so they aren't skipped below and reach the tied_weight_map redirect.
-    model_names.update(tied_weight_map.keys())
     checkpoint_files = resolve_checkpoint_files(model_ref)
     root = checkpoint_root(model_ref, checkpoint_files)
     checkpoint_index = load_checkpoint_index(checkpoint_files)
@@ -179,9 +193,6 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
     promoted_inputs: List[WeightSpecInput] = []
 
     for name, init_value in list(model_ir.graph.initializers.items()):
-        if name not in model_names:
-            continue
-
         onnx_name = tied_weight_map.get(name, name)
         checkpoint_key = find_checkpoint_key(onnx_name, checkpoint_index, backbone)
         if checkpoint_key is None:

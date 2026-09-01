@@ -62,16 +62,14 @@ def reorder_inputs_by_signature(model, example_inputs, dynamic_shapes=None):
     """
     sig_keys = list(inspect.signature(model.forward).parameters.keys())
     sig_key_set = set(sig_keys)
-    ordered_inputs, ordered_shapes = {}, {}
+    ordered_inputs = {}
     for k in sig_keys:
         if k in example_inputs:
             ordered_inputs[k] = example_inputs[k]
-        if dynamic_shapes is not None and k in dynamic_shapes:
-            ordered_shapes[k] = dynamic_shapes[k]
     reordered_inputs = {**ordered_inputs, **{k: v for k, v in example_inputs.items() if k not in sig_key_set}}
     if dynamic_shapes is not None:
-        reordered_shapes = {**ordered_shapes, **{k: v for k, v in dynamic_shapes.items() if k not in sig_key_set}}
-        return reordered_inputs, reordered_shapes
+        dynamic_shapes = {k: dynamic_shapes.get(k) for k in reordered_inputs}
+        return reordered_inputs, dynamic_shapes
     return reordered_inputs, None
 
 
@@ -124,21 +122,34 @@ def convert_dynamic_axes_to_dynamic_shapes(
         torch.export dynamic_shapes dict with Dim objects, suitable for
         torch.onnx.export(dynamic_shapes=...).
     """
-    max_seq_len = getattr(model_config, "max_position_embeddings", 1024)
+    text_config = getattr(model_config, "text_config", None)
+    effective_config = text_config if text_config is not None else model_config
+    max_seq_len = getattr(effective_config, "max_position_embeddings", 1024)
     model_type = getattr(model_config, "model_type", None)
-    batch_min = 1 if model_type == "gpt_oss" else 2
+    is_vlm = hasattr(model_config, "vision_config")
+    batch_min = 1 if model_type == "gpt_oss" or is_vlm else 2
+    batch_max = 2 if model_type == "qwen3_vl_moe" else DYNAMO_DIM_MAX_BATCH_SIZE
+    seq_min = 1 if is_vlm else 2
+    vlm_dim_max = max(max_seq_len, 65536)
+    static_vlm_feature_layers = None
+    if is_vlm:
+        deepstack_visual_indexes = getattr(model_config.vision_config, "deepstack_visual_indexes", None)
+        if deepstack_visual_indexes is not None:
+            static_vlm_feature_layers = len(deepstack_visual_indexes)
 
     dim_registry: Dict[str, Any] = {}
 
     def resolve_dim(dim_name: str):
         if dim_name not in dim_registry:
             if dim_name == "batch_size":
-                dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=DYNAMO_DIM_MAX_BATCH_SIZE)
+                dim_registry[dim_name] = Dim("batch_size", min=batch_min, max=batch_max)
+            elif dim_name == "vision_batch_size":
+                dim_registry[dim_name] = Dim("vision_batch_size", min=batch_min, max=batch_max)
             elif dim_name == "full_batch_size":
                 # CB pool capacity; different min prevents torch.export collapsing it with batch_size.
                 dim_registry[dim_name] = Dim("full_batch_size", min=batch_min + 1, max=DYNAMO_DIM_MAX_BATCH_SIZE)
             elif "seq_len" in dim_name:
-                dim_registry[dim_name] = Dim("seq_len", min=2, max=max_seq_len)
+                dim_registry[dim_name] = Dim("seq_len", min=seq_min, max=max_seq_len)
             elif "comp_ctx_lengths" in dim_name:
                 dim_registry[dim_name] = Dim("comp_ctx_lengths", min=DYNAMO_DIM_MIN_COMP_CTX_LENGTHS, max=max_seq_len)
             elif "ctx_len" in dim_name:
@@ -149,6 +160,19 @@ def convert_dynamic_axes_to_dynamic_shapes(
                     min=2,
                     max=getattr(model_config, "sliding_window", max_seq_len),
                 )
+            elif dim_name in {
+                "grid_height",
+                "grid_width",
+                "grid_h",
+                "grid_w",
+                "time",
+                "vision_size",
+                "num_feature_layers",
+            }:
+                if dim_name == "num_feature_layers" and static_vlm_feature_layers is not None:
+                    dim_registry[dim_name] = static_vlm_feature_layers
+                else:
+                    dim_registry[dim_name] = Dim(dim_name, min=1, max=vlm_dim_max)
             else:
                 dim_registry[dim_name] = Dim.DYNAMIC
         return dim_registry[dim_name]
@@ -160,7 +184,12 @@ def convert_dynamic_axes_to_dynamic_shapes(
     k_pe_layers: Dict[int, Any] = {}
 
     for input_name, axes_map in dynamic_axes.items():
-        resolved = {axis_idx: resolve_dim(dim_name) for axis_idx, dim_name in axes_map.items()}
+        resolved = {}
+        for axis_idx, dim_name in axes_map.items():
+            dim = resolve_dim(dim_name)
+            if isinstance(dim, int):
+                continue
+            resolved[axis_idx] = dim
         if input_name.startswith("past_key."):
             past_keys[int(input_name.split(".")[1])] = resolved
         elif input_name.startswith("past_value."):
@@ -305,8 +334,8 @@ def export_wrapper(func):
             # Resolve dynamic_shapes from dynamic_axes before the hash so the hash captures
             # the actual shape constraints.
             dynamic_axes = kwargs.get("dynamic_axes")
-            if dynamic_axes is not None:
-                model_config = getattr(self.model, "config", None)
+            if dynamic_axes is not None and "dynamic_shapes" not in kwargs:
+                model_config = getattr(self.model, "config", None) or getattr(self, "config", None)
                 kwargs["dynamic_shapes"] = convert_dynamic_axes_to_dynamic_shapes(dynamic_axes, model_config)
 
         # Cache probe flag (used for layerwise inspection runs)

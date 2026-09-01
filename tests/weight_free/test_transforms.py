@@ -311,6 +311,29 @@ class TestWeightFreeCheckpointTransforms:
             == "model.layers.2.block_sparse_moe.experts.down_proj_t"
         )
 
+    def test_resolver_accepts_vlm_wrapper_prefix_aliases(self):
+        checkpoint_index = {
+            "model.visual.blocks.0.attn.qkv.weight": "model.safetensors",
+            "model.language_model.layers.0.mlp.moe_weights.gate": "model.safetensors",
+            "lm_head.weight": "model.safetensors",
+        }
+        backbone = MagicMock()
+        backbone.base_model_prefix = "model"
+
+        assert (
+            find_checkpoint_key("model.vision_model.blocks.0.attn.qkv.weight", checkpoint_index, backbone)
+            == "model.visual.blocks.0.attn.qkv.weight"
+        )
+        assert (
+            find_checkpoint_key(
+                "model.model.language_model.layers.0.mlp.experts.moe_weights.gate",
+                checkpoint_index,
+                backbone,
+            )
+            == "model.language_model.layers.0.mlp.moe_weights.gate"
+        )
+        assert find_checkpoint_key("model.lm_head.weight", checkpoint_index, backbone) == "lm_head.weight"
+
     def test_promotes_embed_tokens_for_tied_model(self, tmp_path, monkeypatch):
         """When tie_word_embeddings=True, torch.export deduplicates tied weights —
         only model.embed_tokens.weight appears as an ONNX initializer, never
@@ -350,6 +373,40 @@ class TestWeightFreeCheckpointTransforms:
         assert [v.name for v in graph.inputs] == ["model.embed_tokens.weight"]
         assert spec.inputs[0].name == "model.embed_tokens.weight"
         assert spec.inputs[0].location.key == "model.embed_tokens.weight"
+
+    def test_promotes_vlm_wrapper_alias_not_in_component_named_parameters(self, tmp_path, monkeypatch):
+        """VLM component ONNX names can use wrapper aliases absent from named_parameters()."""
+        src = tmp_path / "src"
+        src.mkdir()
+        weight = torch.arange(4, dtype=torch.float32).reshape(2, 2)
+        _write_safetensors_checkpoint(src, {"model.visual.weight": weight})
+
+        class VisionComponent(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.model = torch.nn.Module()
+                self.model.visual = torch.nn.Linear(2, 2, bias=False)
+
+        initializer = SimpleNamespace(shape=weight.shape, dtype=ir.DataType.FLOAT)
+        graph = SimpleNamespace(initializers={"model.vision_model.weight": initializer}, inputs=[])
+        onnx_program = SimpleNamespace(model=SimpleNamespace(graph=graph))
+        monkeypatch.setattr(
+            checkpoint_key_resolver.ir,
+            "Value",
+            lambda name, shape, type: SimpleNamespace(name=name, shape=shape, type=type),
+        )
+
+        spec = checkpoint_key_resolver.promote_initializers_and_build_spec(
+            onnx_program=onnx_program,
+            model_ref=str(src),
+            model_name="tiny-vlm",
+            qeff_model=SimpleNamespace(model=VisionComponent()),
+        )
+
+        assert "model.vision_model.weight" not in graph.initializers
+        assert [v.name for v in graph.inputs] == ["model.vision_model.weight"]
+        assert spec.inputs[0].name == "model.vision_model.weight"
+        assert spec.inputs[0].location.key == "model.visual.weight"
 
 
 def _fake_export(
