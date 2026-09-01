@@ -130,6 +130,9 @@ class CheckpointTransformPipeline:
     returns True is executed and the pipeline stops. Each transform produces a
     complete prepared checkpoint — there is no chaining between transforms.
 
+    TODO(follow-up): Rename this selector and choose applicable transforms from
+    model/config metadata instead of checkpoint-key regex matching.
+
     Example::
 
         pipeline = CheckpointTransformPipeline([
@@ -156,6 +159,7 @@ class CheckpointTransformPipeline:
         source_dir = src
         has_safetensors = bool(list(src.glob("*.safetensors"))) or (src / "model.safetensors.index.json").exists()
         if not has_safetensors and list(src.glob("*.bin")):
+            # TODO(follow-up): Avoid the extra full-weight rewrite for .bin checkpoints in this preparation flow.
             source_dir = out.with_name(out.name + "-source-safetensors")
             convert_bin_to_safetensors(src, source_dir)
 

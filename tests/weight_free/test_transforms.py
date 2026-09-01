@@ -314,6 +314,114 @@ class TestWeightFreeCheckpointTransforms:
             == "model.layers.2.block_sparse_moe.experts.down_proj_t"
         )
 
+    def test_resolver_rejects_ambiguous_moe_weight_aliases(self):
+        checkpoint_index = {
+            "model.layers.0.mlp.experts.moe_weights.gate": "model.safetensors",
+            "model.layers.0.mlp.moe_weights.gate": "model.safetensors",
+        }
+        backbone = MagicMock()
+        backbone.base_model_prefix = "model"
+
+        with pytest.raises(ValueError, match="Ambiguous checkpoint key"):
+            find_checkpoint_key("model.layers.0.mlp.experts.moe_weights.gate", checkpoint_index, backbone)
+
+    def test_resolver_rejects_ambiguous_prefix_fallbacks(self):
+        checkpoint_index = {
+            "base_model.model.embed_tokens.weight": "model.safetensors",
+            "model.embed_tokens.weight": "model.safetensors",
+        }
+        backbone = MagicMock()
+        backbone.base_model_prefix = "model"
+
+        with pytest.raises(ValueError, match="Ambiguous checkpoint key"):
+            find_checkpoint_key("base_model.model.embed_tokens.weight", checkpoint_index, backbone)
+
+    @pytest.mark.parametrize(
+        "state_kind,state_name",
+        [
+            ("parameter", "weight"),
+            ("buffer", "running_scale"),
+        ],
+    )
+    def test_promote_initializers_rejects_unresolved_model_state(self, tmp_path, monkeypatch, state_kind, state_name):
+        src = tmp_path / "src"
+        src.mkdir()
+        _write_safetensors_checkpoint(src, {"other.weight": torch.ones(2, dtype=torch.float32)})
+
+        class MissingStateModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                if state_kind == "parameter":
+                    self.register_parameter(state_name, torch.nn.Parameter(torch.ones(2)))
+                else:
+                    self.register_buffer(state_name, torch.ones(2))
+
+        initializer = SimpleNamespace(shape=(2,), dtype=ir.DataType.FLOAT)
+        graph = SimpleNamespace(initializers={state_name: initializer}, inputs=[])
+        onnx_program = SimpleNamespace(model=SimpleNamespace(graph=graph))
+        monkeypatch.setattr(
+            checkpoint_key_resolver.ir,
+            "Value",
+            lambda name, shape, type: SimpleNamespace(name=name, shape=shape, type=type),
+        )
+
+        with pytest.raises(ValueError, match=f"Could not resolve model initializer '{state_name}'"):
+            checkpoint_key_resolver.promote_initializers_and_build_spec(
+                onnx_program=onnx_program,
+                model_ref=str(src),
+                model_name="tiny-missing-state",
+                qeff_model=SimpleNamespace(model=MissingStateModel()),
+            )
+
+    @pytest.mark.parametrize(
+        "state_kind,state_name",
+        [
+            ("buffer", "rotary_emb.inv_freq"),
+            ("buffer", "transformer.h.0.attn.embed_positions"),
+            ("buffer", "model.embed_tokens.embed_scale"),
+            ("parameter", "model.sin_cached"),
+            ("parameter", "model.cos_cached"),
+        ],
+    )
+    def test_promote_initializers_keeps_computed_state_embedded(self, tmp_path, monkeypatch, state_kind, state_name):
+        src = tmp_path / "src"
+        src.mkdir()
+        _write_safetensors_checkpoint(src, {"other.weight": torch.ones(2, dtype=torch.float32)})
+
+        class ComputedStateModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                parent = self
+                parts = state_name.split(".")
+                for part in parts[:-1]:
+                    child = torch.nn.Module()
+                    setattr(parent, part, child)
+                    parent = child
+                if state_kind == "parameter":
+                    parent.register_parameter(parts[-1], torch.nn.Parameter(torch.ones(2)))
+                else:
+                    parent.register_buffer(parts[-1], torch.ones(2))
+
+        initializer = SimpleNamespace(shape=(2,), dtype=ir.DataType.FLOAT)
+        graph = SimpleNamespace(initializers={state_name: initializer}, inputs=[])
+        onnx_program = SimpleNamespace(model=SimpleNamespace(graph=graph))
+        monkeypatch.setattr(
+            checkpoint_key_resolver.ir,
+            "Value",
+            lambda name, shape, type: SimpleNamespace(name=name, shape=shape, type=type),
+        )
+
+        spec = checkpoint_key_resolver.promote_initializers_and_build_spec(
+            onnx_program=onnx_program,
+            model_ref=str(src),
+            model_name="tiny-computed-state",
+            qeff_model=SimpleNamespace(model=ComputedStateModel()),
+        )
+
+        assert state_name in graph.initializers
+        assert graph.inputs == []
+        assert spec.inputs == []
+
     def test_promotes_embed_tokens_for_tied_model(self, tmp_path, monkeypatch):
         """When tie_word_embeddings=True, torch.export deduplicates tied weights —
         only model.embed_tokens.weight appears as an ONNX initializer, never

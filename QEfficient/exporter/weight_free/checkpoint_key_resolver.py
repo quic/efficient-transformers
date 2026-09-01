@@ -31,7 +31,14 @@ _MOE_WEIGHT_LEGACY_SUFFIXES = {
 }
 
 
-_COMPUTED_INITIALIZER_NAMES = {"cos_cached", "sin_cached", "inv_freq", "original_inv_freq"}
+_COMPUTED_INITIALIZER_NAMES = {
+    "cos_cached",
+    "sin_cached",
+    "inv_freq",
+    "original_inv_freq",
+    "embed_positions",
+    "embed_scale",
+}
 
 
 def _collect_tied_weights(model: nn.Module) -> list[TiedWeightAlias]:
@@ -93,7 +100,7 @@ def _find_checkpoint_key(candidates: List[str], checkpoint_index: Dict[str, str]
 
 
 def _is_computed_initializer(name: str) -> bool:
-    """Return True for generated tensors that are not stored in HF checkpoints."""
+    """Return True for generated constants that are not stored in HF checkpoints."""
     return name.rsplit(".", 1)[-1] in _COMPUTED_INITIALIZER_NAMES
 
 
