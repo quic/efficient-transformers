@@ -470,6 +470,20 @@ class TestGetCompilationDims:
         bs, cl, fbs, num_kv_blocks = get_compilation_dims(path)
         assert isinstance(bs, int) and isinstance(cl, int)
 
+    def test_strict_three_value_unpack_raises(self, tmp_path):
+        # get_compilation_dims always returns a 4-tuple. A caller written against
+        # the old 3-value contract must use extended unpacking (see test below);
+        # a strict 3-target unpack raises ValueError. Pinned here so a future
+        # change to the return arity doesn't silently break either calling style.
+        path = self._write_spec(tmp_path, {"specializations": [{"batch_size": "4", "ctx_len": "128"}]})
+        with pytest.raises(ValueError):
+            bs, cl, fbs = get_compilation_dims(path)
+
+    def test_legacy_caller_with_extended_unpack_still_works(self, tmp_path):
+        path = self._write_spec(tmp_path, {"specializations": [{"batch_size": "4", "ctx_len": "128"}]})
+        bs, cl, fbs, *_ = get_compilation_dims(path)
+        assert bs == 4 and cl == 128 and fbs is None
+
 
 # ---------------------------------------------------------------------------
 # Tests: QEffTextGenerationBase construction (mocked session)
