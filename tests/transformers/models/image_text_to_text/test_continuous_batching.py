@@ -8,21 +8,16 @@
 import copy
 import json
 import os
-from io import BytesIO
 from typing import Optional
 
 import pytest
-import requests
 import torch
-from PIL import Image
-from requests.adapters import HTTPAdapter
 from transformers import (
     AutoConfig,
     AutoProcessor,
     AutoTokenizer,
     GenerationConfig,
 )
-from urllib3.util.retry import Retry
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils.run_utils import ApiRunnerInternVL, ApiRunnerMolmo, ApiRunnerVlm
@@ -35,8 +30,7 @@ from QEfficient.utils.test_utils import (
 )
 from tests.two_phase import is_compile_warm_phase, model_export_compile_lock, resolve_two_phase_cleanup
 
-_session = requests.Session()
-_session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=1)))
+from ._image_utils import load_test_image
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
 with open(CONFIG_PATH, "r") as f:
@@ -180,8 +174,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         image_height = 448
         image_width = 448
         for img_url in image_urls:
-            img = _session.get(img_url, stream=True)
-            image = Image.open(BytesIO(img.content)).convert("RGB")
+            image = load_test_image(img_url)
             image = image.resize((image_height, image_width))
             images.append(image)
         generation_config = dict(max_new_tokens=max_gen_len, do_sample=False)
@@ -209,8 +202,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         image_height = 536
         image_width = 354
         for img_url in image_urls:
-            img = _session.get(img_url, stream=True)
-            image = Image.open(BytesIO(img.content)).convert("RGB")
+            image = load_test_image(img_url)
             image = image.resize((image_height, image_width))
             images.append(image)
         api_runner = ApiRunnerMolmo(
@@ -239,7 +231,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100_CB(
         image_height = None
         image_width = None
         for img_url in image_urls:
-            image = Image.open(_session.get(img_url, stream=True).raw)
+            image = load_test_image(img_url)
             if model_name == "tiny-random/mistral-3":
                 image_height = 1540
                 image_width = 1540

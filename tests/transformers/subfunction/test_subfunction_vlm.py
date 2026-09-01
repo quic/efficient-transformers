@@ -12,9 +12,7 @@ from typing import Optional
 
 import onnx
 import pytest
-import requests
 import torch
-from PIL import Image
 from transformers import (
     AutoConfig,
     AutoProcessor,
@@ -29,6 +27,7 @@ from QEfficient.utils.test_utils import (
     load_vlm_model_from_config,
     set_num_layers_vlm,
 )
+from tests.transformers.models.image_text_to_text._image_utils import load_test_image
 from tests.two_phase import model_export_compile_lock, resolve_two_phase_cleanup
 
 NEW_GENERATION_TOKENS = 10
@@ -151,7 +150,7 @@ def check_image_text_to_text_subfunction_core(
     }
 
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-    image = Image.open(requests.get(img_url, stream=True).raw)
+    image = load_test_image(img_url)
     if model_name == "tiny-random/mistral-3":
         image = image.resize((1540, 1540))
     conversation = [

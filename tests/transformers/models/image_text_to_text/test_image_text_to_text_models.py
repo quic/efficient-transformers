@@ -8,14 +8,10 @@
 import copy
 import json
 import os
-from io import BytesIO
 from typing import List, Optional
 
 import pytest
-import requests
 import torch
-from PIL import Image
-from requests.adapters import HTTPAdapter
 from transformers import (
     AutoConfig,
     AutoProcessor,
@@ -23,7 +19,6 @@ from transformers import (
     GenerationConfig,
     TextStreamer,
 )
-from urllib3.util.retry import Retry
 
 from QEfficient import QEFFAutoModelForCausalLM, QEFFAutoModelForImageTextToText
 from QEfficient.utils._utils import create_json
@@ -40,9 +35,8 @@ from tests.two_phase import is_compile_warm_phase, model_export_compile_lock, re
 
 from ..check_model_results import dump_and_compare_results
 from ..golden_utils import config_to_dict_fingerprint, resolve_hf_golden, vlm_golden_variant_key
-
-_session = requests.Session()
-_session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=1)))
+from . import _image_utils
+from ._image_utils import load_test_image
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../../configs/image_text_model_configs.json")
 with open(CONFIG_PATH, "r") as f:
@@ -54,6 +48,20 @@ test_mm_moe_models = [model["model_name"] for model in multimodal_models if "moe
 test_mm_blocking_models = [model["model_name"] for model in multimodal_models if model.get("supports_blocking")]
 
 NEW_GENERATION_TOKENS = 10
+
+
+@pytest.mark.multimodal
+@pytest.mark.parametrize("image_url", _image_utils.LOCAL_TEST_IMAGE_URLS)
+def test_multimodal_image_snapshots_are_local(image_url, monkeypatch):
+    def fail_on_network_request(*args, **kwargs):
+        pytest.fail(f"Unexpected network request for local test image {image_url}")
+
+    monkeypatch.setattr(_image_utils._SESSION, "get", fail_on_network_request)
+
+    image = load_test_image(image_url)
+
+    assert image.mode == "RGB"
+    assert image.size == (536, 354)
 
 
 def _xfail_if_known_parity_issue(model_name):
@@ -252,8 +260,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
         num_patches_list = []
         questions = []
         for i in range(len(prompt)):
-            img = _session.get(img_url_list[i], stream=True)
-            image = Image.open(BytesIO(img.content)).convert("RGB")
+            image = load_test_image(img_url_list[i])
             image = image.resize((448, 448))
             pixel_value = processor.load_image(image, max_num=12)
             num_patches_list.append(pixel_value.shape[0])
@@ -295,8 +302,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     elif model_name in ModelConfig.MOLMO_MODELS:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-        img = _session.get(img_url, stream=True)
-        image = Image.open(BytesIO(img.content)).convert("RGB")
+        image = load_test_image(img_url)
         image = image.resize((536, 354))
         inputs = processor.process(images=[image], text=query)
         inputs = {k: v.unsqueeze(0) for k, v in inputs.items()}
@@ -332,7 +338,7 @@ def check_image_text_to_text_pytorch_vs_kv_vs_ort_vs_ai100(
 
     else:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, padding=True)
-        image = Image.open(_session.get(img_url, stream=True).raw)
+        image = load_test_image(img_url)
         if model_name == "tiny-random/mistral-3":
             image = image.resize((1540, 1540))
         conversation = [
