@@ -529,7 +529,7 @@ class DiffusionGemmaSingleQPCGenerator:
             total_steps = 0
             total_canvas_time = 0.0
             num_blocks = int(math.ceil(target_new_tokens / self.canvas_length))
-            print(f'Total number of blocks is {num_blocks}')
+            print(f"Total number of blocks is {num_blocks}")
             # breakpoint()
             for block_index in range(num_blocks):
                 emitted_tokens = sum(tokens.shape[1] for tokens in generated)
@@ -736,7 +736,6 @@ def compile_unified_qpc(
 
             # custom_io[f"past_{kv_name}.{layer_index}"] = "float16"
             # custom_io[f"past_{kv_name}.{layer_index}_RetainedState"] = "float16"
-            
 
     qpc_path = unified._compile(
         onnx_path=unified.onnx_path,
