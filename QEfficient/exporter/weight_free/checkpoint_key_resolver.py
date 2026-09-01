@@ -6,7 +6,6 @@
 # ----------------------------------------------------------------------------
 
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import onnx_ir as ir
 from torch import nn
@@ -58,7 +57,7 @@ def _collect_tied_weights(model: nn.Module) -> list[TiedWeightAlias]:
     return [TiedWeightAlias(alias=alias, canonical=canonical) for alias, canonical in tied_mapping.items()]
 
 
-def _moe_weight_aliases(name: str) -> List[str]:
+def _moe_weight_aliases(name: str) -> list[str]:
     """Return equivalent checkpoint aliases for shared MoEWeights parameters."""
     aliases = []
     canonical = name
@@ -75,22 +74,43 @@ def _moe_weight_aliases(name: str) -> List[str]:
     return aliases
 
 
-def _find_checkpoint_key(candidates: List[str], checkpoint_index: Dict[str, str], onnx_name: str) -> Optional[str]:
+def _vlm_wrapper_aliases(name: str) -> list[str]:
+    """Return checkpoint aliases introduced by VLM component wrapper nesting."""
+    aliases = []
+    if name.startswith("model.model."):
+        aliases.append("model." + name[len("model.model.") :])
+    if name.startswith("model.vision_model."):
+        aliases.append("model.visual." + name[len("model.vision_model.") :])
+    if name.startswith("vision_model."):
+        aliases.append("model.visual." + name[len("vision_model.") :])
+    if name.startswith("visual."):
+        aliases.append("model.visual." + name[len("visual.") :])
+    if name.startswith("language_model."):
+        aliases.append("model.language_model." + name[len("language_model.") :])
+    if name.startswith("model.lm_head."):
+        aliases.append("lm_head." + name[len("model.lm_head.") :])
+    if name.startswith("lm_head."):
+        aliases.append("model.lm_head." + name[len("lm_head.") :])
+    return aliases
+
+
+def _find_checkpoint_key(candidates: list[str], checkpoint_index: dict[str, str], onnx_name: str) -> str | None:
     """Return the unique matching checkpoint key, or fail on ambiguous matches."""
     seen = set()
     matches = []
     for candidate in candidates:
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        if candidate in checkpoint_index:
-            matches.append(candidate)
-        for alias in _moe_weight_aliases(candidate):
+        for alias in [candidate, *_vlm_wrapper_aliases(candidate)]:
             if alias in seen:
                 continue
             seen.add(alias)
             if alias in checkpoint_index:
                 matches.append(alias)
+            for moe_alias in _moe_weight_aliases(alias):
+                if moe_alias in seen:
+                    continue
+                seen.add(moe_alias)
+                if moe_alias in checkpoint_index:
+                    matches.append(moe_alias)
     if len(matches) > 1:
         raise ValueError(
             f"Ambiguous checkpoint key for ONNX initializer '{onnx_name}': matched {matches}. "
@@ -106,9 +126,9 @@ def _is_computed_initializer(name: str) -> bool:
 
 def find_checkpoint_key(
     onnx_name: str,
-    checkpoint_index: Dict[str, str],
+    checkpoint_index: dict[str, str],
     backbone: nn.Module,
-) -> Optional[str]:
+) -> str | None:
     """Resolve an ONNX initializer name to its safetensors checkpoint key.
 
     Most weights match directly. The fallback rules cover wrapper prefixes,
@@ -179,15 +199,14 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
         for checkpoint_file in checkpoint_files
     ]
     backbone = qeff_model.model.base_model if isinstance(qeff_model.model, PooledModel) else qeff_model.model
-    promoted_inputs: List[WeightSpecInput] = []
+    promoted_inputs: list[WeightSpecInput] = []
 
     for name, init_value in list(model_ir.graph.initializers.items()):
-        if name not in model_names:
-            continue
-
         onnx_name = tied_weight_map.get(name, name)
         checkpoint_key = find_checkpoint_key(onnx_name, checkpoint_index, backbone)
         if checkpoint_key is None:
+            if name not in model_names:
+                continue
             if _is_computed_initializer(onnx_name):
                 continue
             raise ValueError(
