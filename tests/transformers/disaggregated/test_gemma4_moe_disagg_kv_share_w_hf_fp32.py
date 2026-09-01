@@ -30,7 +30,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageText
 from QEfficient import QEFFAutoModelForImageTextToText
 from QEfficient.base.onnx_transforms import FP16ClipTransform
 from QEfficient.generation.cloud_infer import QAICInferenceSession
-from tests.transformers.disaggregated._disagg_dma_config import disagg_dma_config
+from tests.transformers.disaggregated._disagg_dma_config import disagg_dma_configs
 from tests.transformers.disaggregated._disagg_ort_test_utils import (
     assert_three_way_tokens_match as _assert_three_way_tokens_match,
 )
@@ -824,11 +824,12 @@ def test_gemma4_moe_disagg_kv_share_qaic_vs_ort_vs_hf_fp32(manual_cleanup, night
 
 @pytest.mark.on_qaic
 @pytest.mark.disagg_dma
-def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
+@pytest.mark.parametrize("dma_config", disagg_dma_configs("gemma4_moe_tiny"))
+def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup, dma_config):
     torch.manual_seed(42)
 
-    dma_config = disagg_dma_config("gemma4_moe_tiny")
     model_id = dma_config["model_id"]
+    use_onnx_subfunctions = dma_config.get("use_onnx_subfunctions", True)
 
     hf_model = _load_hf_model_from_pretrained(_build_config(dtype="float32", model_name=model_id), model_name=model_id)
     processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
@@ -862,7 +863,9 @@ def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
     try:
         vision_qpc_path = None
         if not SKIP_VISION:
-            vision_qpc_path = _compile_vision(qeff_model, num_devices=dma_config["vision_num_devices"])
+            vision_qpc_path = _compile_vision(
+                qeff_model, num_devices=dma_config["vision_num_devices"], use_onnx_subfunctions=use_onnx_subfunctions
+            )
             compiled_onnx_paths["vision"] = _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
 
         prefill_qpc_path, decode_qpc_path, lang_onnx_paths = _compile_kv_share_lang(
@@ -871,6 +874,7 @@ def test_gemma4_moe_disagg_kv_share_qaic_vs_hf_fp32(manual_cleanup):
             prefill_num_devices=dma_config["prefill_num_devices"],
             decode_num_devices=dma_config["decode_num_devices"],
             mdp_num_partitions=dma_config["stages"],
+            use_onnx_subfunctions=use_onnx_subfunctions,
         )
         compiled_onnx_paths.update(lang_onnx_paths)
         print(f"Disagg ONNX paths: {compiled_onnx_paths}")
@@ -940,7 +944,7 @@ def _build_qeff_model(hf_model) -> QEFFAutoModelForImageTextToText:
     return qeff_model
 
 
-def _compile_vision(qeff_model, num_devices: int = 1) -> str:
+def _compile_vision(qeff_model, num_devices: int = 1, use_onnx_subfunctions: bool = True) -> str:
     vision_qpc_path = qeff_model.compile(
         batch_size=BATCH_SIZE,
         prefill_seq_len=PREFILL_SEQ_LEN,
@@ -952,7 +956,7 @@ def _compile_vision(qeff_model, num_devices: int = 1) -> str:
         skip_vision=False,
         split_model_io=True,
         skip_lang=True,
-        use_onnx_subfunctions=True,
+        use_onnx_subfunctions=use_onnx_subfunctions,
         offload_pt_weights=False,
     )
     return vision_qpc_path.get("vision_qpc_path")
@@ -964,6 +968,7 @@ def _compile_kv_share_lang(
     prefill_num_devices: int = PREFILL_NUM_DEVICES,
     decode_num_devices: int = DECODE_NUM_DEVICES,
     mdp_num_partitions: int = PREFILL_MDP_PARTITIONS,
+    use_onnx_subfunctions: bool = True,
 ) -> tuple[str, str, dict]:
     onnx_paths = {}
     decode_qpc_path = qeff_model.compile(
@@ -980,7 +985,7 @@ def _compile_kv_share_lang(
         aic_enable_depth_first=True,
         prefill_only=False,
         skip_vision=True,
-        use_onnx_subfunctions=True,
+        use_onnx_subfunctions=use_onnx_subfunctions,
         offload_pt_weights=False,
     )
     onnx_paths["kv_share_decode"] = _assert_onnx_path(qeff_model.lang_model.onnx_path, "kv_share decode")
@@ -1001,7 +1006,7 @@ def _compile_kv_share_lang(
         "prefill_only": True,
         "enable_chunking": True,
         "skip_vision": True,
-        "use_onnx_subfunctions": True,
+        "use_onnx_subfunctions": use_onnx_subfunctions,
         "offload_pt_weights": False,
     }
     if moe_prefill_packed_chunk_size is not None:

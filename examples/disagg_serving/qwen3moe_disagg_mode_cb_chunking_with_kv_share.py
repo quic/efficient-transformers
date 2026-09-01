@@ -70,7 +70,7 @@ def _compile_sessions(
         ctx_len=ctx_len,
         full_batch_size=full_batch_size,
         num_cores=NUM_CORES,
-        moe_prefill_packed_chunk_size=MOE_PREFILL_PACKED_CHUNK_SIZE,
+        qaic_config={"moe_config": {"expert_parallel_chunk_size": MOE_PREFILL_PACKED_CHUNK_SIZE}},
         mxfp6_matmul=True,
         mxint8_kv_cache=True,
         num_devices=prefill_num_devices,
