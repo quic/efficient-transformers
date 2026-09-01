@@ -452,7 +452,6 @@ class QEffQwen3VLMoeTextAttention(Qwen3VLMoeTextAttention):
                 batch_index=batch_index,
                 position_ids=position_ids[0],
                 past_seen_tokens=past_seen_tokens,
-                prefill_only=blocking_config.mode.is_prefill,
             )
         else:
             key_states, value_states, attention_mask, _ = past_key_value_update(
