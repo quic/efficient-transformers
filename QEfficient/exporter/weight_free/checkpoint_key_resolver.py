@@ -31,6 +31,9 @@ _MOE_WEIGHT_LEGACY_SUFFIXES = {
 }
 
 
+_COMPUTED_INITIALIZER_NAMES = {"cos_cached", "sin_cached", "inv_freq", "original_inv_freq"}
+
+
 def _collect_tied_weights(model: nn.Module) -> list[TiedWeightAlias]:
     """Return aliases for tied weights, keyed by the model's own tied-weights contract.
 
@@ -65,22 +68,33 @@ def _moe_weight_aliases(name: str) -> List[str]:
     return aliases
 
 
-def _find_first_checkpoint_key(candidates: List[str], checkpoint_index: Dict[str, str]) -> Optional[str]:
-    """Return the first candidate found in the checkpoint index."""
+def _find_checkpoint_key(candidates: List[str], checkpoint_index: Dict[str, str], onnx_name: str) -> Optional[str]:
+    """Return the unique matching checkpoint key, or fail on ambiguous matches."""
     seen = set()
+    matches = []
     for candidate in candidates:
         if candidate in seen:
             continue
         seen.add(candidate)
         if candidate in checkpoint_index:
-            return candidate
+            matches.append(candidate)
         for alias in _moe_weight_aliases(candidate):
             if alias in seen:
                 continue
             seen.add(alias)
             if alias in checkpoint_index:
-                return alias
-    return None
+                matches.append(alias)
+    if len(matches) > 1:
+        raise ValueError(
+            f"Ambiguous checkpoint key for ONNX initializer '{onnx_name}': matched {matches}. "
+            "Checkpoint transforms must produce unambiguous keys."
+        )
+    return matches[0] if matches else None
+
+
+def _is_computed_initializer(name: str) -> bool:
+    """Return True for generated tensors that are not stored in HF checkpoints."""
+    return name.rsplit(".", 1)[-1] in _COMPUTED_INITIALIZER_NAMES
 
 
 def find_checkpoint_key(
@@ -94,47 +108,27 @@ def find_checkpoint_key(
     task-head/base-model checkpoint differences, and known HF/QEff MoE naming
     differences without putting those details in the export orchestration path.
     """
-    match = _find_first_checkpoint_key([onnx_name], checkpoint_index)
-    if match is not None:
-        return match
-
+    candidates = [onnx_name]
     stripped = onnx_name.removeprefix("base_model.")
-    match = _find_first_checkpoint_key([stripped], checkpoint_index)
-    if match is not None:
-        return match
+    candidates.append(stripped)
 
     prefix = getattr(backbone, "base_model_prefix", "")
     if prefix:
-        prefixed = f"{prefix}.{stripped}"
-        match = _find_first_checkpoint_key([prefixed], checkpoint_index)
-        if match is not None:
-            return match
+        candidates.append(f"{prefix}.{stripped}")
 
     if prefix and stripped.startswith(f"{prefix}."):
-        without_prefix = stripped[len(f"{prefix}.") :]
-        match = _find_first_checkpoint_key([without_prefix], checkpoint_index)
-        if match is not None:
-            return match
+        candidates.append(stripped[len(f"{prefix}.") :])
 
     if ".mlp." in stripped:
-        candidate = stripped.replace(".mlp.", ".block_sparse_moe.")
-        match = _find_first_checkpoint_key([candidate], checkpoint_index)
-        if match is not None:
-            return match
+        candidates.append(stripped.replace(".mlp.", ".block_sparse_moe."))
 
     if stripped.endswith(".mlp.gate.weight"):
-        candidate = stripped[: -len(".gate.weight")] + ".router.weight"
-        match = _find_first_checkpoint_key([candidate], checkpoint_index)
-        if match is not None:
-            return match
+        candidates.append(stripped[: -len(".gate.weight")] + ".router.weight")
 
     if stripped.endswith(".mlp.router.weight"):
-        candidate = stripped[: -len(".router.weight")] + ".gate.weight"
-        match = _find_first_checkpoint_key([candidate], checkpoint_index)
-        if match is not None:
-            return match
+        candidates.append(stripped[: -len(".router.weight")] + ".gate.weight")
 
-    return None
+    return _find_checkpoint_key(candidates, checkpoint_index, onnx_name)
 
 
 def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name: str, qeff_model) -> WeightSpec:
@@ -157,8 +151,9 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
         Specification mapping promoted ONNX inputs to checkpoint tensor locations.
     """
     model_ir = onnx_program.model
-    model_names = {name for name, _ in qeff_model.model.named_parameters()}
-    model_names.update({name for name, _ in qeff_model.model.named_buffers()})
+    parameter_names = {name for name, _ in qeff_model.model.named_parameters()}
+    buffer_names = {name for name, _ in qeff_model.model.named_buffers()}
+    model_names = parameter_names | buffer_names
     tied_weight_map = {entry.alias: entry.canonical for entry in _collect_tied_weights(qeff_model.model)}
     # named_parameters()/named_buffers() dedup tied tensors by identity, so a tied alias
     # (e.g. lm_head.weight when tie_word_embeddings=True) is absent from model_names even
@@ -185,8 +180,13 @@ def promote_initializers_and_build_spec(onnx_program, model_ref: str, model_name
         onnx_name = tied_weight_map.get(name, name)
         checkpoint_key = find_checkpoint_key(onnx_name, checkpoint_index, backbone)
         if checkpoint_key is None:
-            # Computed buffers such as rotary caches are left embedded in ONNX.
-            continue
+            if _is_computed_initializer(onnx_name):
+                continue
+            raise ValueError(
+                f"Could not resolve model initializer '{name}' to a safetensors checkpoint key "
+                f"(resolved name: '{onnx_name}', model: '{model_ref}'). "
+                "Only explicitly classified computed initializers may remain embedded in the ONNX model."
+            )
 
         checkpoint_file = checkpoint_index[checkpoint_key]
         model_ir.graph.inputs.append(

@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import onnx
 import torch
 from accelerate import init_empty_weights
 
@@ -104,21 +105,6 @@ def _prune_unused_fake_initializers(onnx_program) -> None:
         raw_value = getattr(const_value, "raw", None)
         if isinstance(raw_value, FakeTensor) and name not in used_names:
             del initializers[name]
-
-
-def _upsert_metadata_prop(model, key: str, value: str) -> None:
-    """Insert or update a metadata_props entry on an ONNX model.
-
-    Used to embed weight_spec.json into the ONNX so the QAIC compiler
-    can locate external weight files without a separate sidecar lookup.
-    """
-    import onnx
-
-    for entry in model.metadata_props:
-        if entry.key == key:
-            entry.value = value
-            return
-    model.metadata_props.append(onnx.StringStringEntryProto(key=key, value=value))
 
 
 def _prepare_checkpoint_for_weight_free_export(
@@ -257,11 +243,11 @@ def embed_weight_spec_as_metadata(model, weight_spec_path) -> None:
     """Embed weight_spec.json into the ONNX model as com.qti.aisw.extdata metadata.
 
     The QAIC compiler reads this key to locate and load external checkpoint weights
-    at compile time. Separating this from the private _upsert_metadata_prop keeps
-    the base exporter free of knowledge about the QAIC-specific metadata key.
+    at compile time.
     """
+
     weight_spec_json = json.dumps(load_json(Path(weight_spec_path)), separators=(",", ":"), sort_keys=True)
-    _upsert_metadata_prop(model, "com.qti.aisw.extdata", weight_spec_json)
+    model.metadata_props.append(onnx.StringStringEntryProto(key="com.qti.aisw.extdata", value=weight_spec_json))
 
 
 def link_prepared_checkpoint_dir(onnx_path: Path, weight_spec_path: Path) -> None:
