@@ -334,6 +334,7 @@ def cloud_ai_100_exec_kv(
     return_pdfs: bool = False,
     include_guided_decoding: bool = False,
     sampling_params: Optional[Dict[str, Any]] = None,
+    execution_batch_size: Optional[int] = None,
 ):
     """
     This method generates output until ``eos`` or ``generation_len`` by executing the compiled ``qpc`` on ``Cloud AI 100`` Hardware cards.
@@ -355,6 +356,8 @@ def cloud_ai_100_exec_kv(
         :automation (bool): If true, it prints input, output, and performance stats. ``Defaults to False``.
         :iteration (int): Number of iterations to run the inference. ``Defaults to 1``.
         :prompt_to_lora_id_mapping (List[int]): Mapping to associate prompts with their respective LoRA adapter.
+        :execution_batch_size (int, optional): Live decode batch for continuous-batching QPCs compiled
+        with dynamic batching. Must match one of the compiled decode batch sizes.
         :include_sampler (bool, default=False): Enable/Disable sampling of next tokens.
         :return_pdfs (bool, default=False): Return probability distributions along with sampled
         next tokens. For Speculative Decoding Target Language Model,
@@ -381,12 +384,9 @@ def cloud_ai_100_exec_kv(
 
     """
     batch_size, ctx_len, full_batch_size = get_compilation_dims(qpc_path)
+    if full_batch_size is None and execution_batch_size is not None:
+        raise ValueError("execution_batch_size is only supported for continuous-batching (dynamic-batching) QPCs.")
     prompt: List[str] = get_input_prompts(prompt, prompts_txt_file_path)
-    prompt = fix_prompts(prompt, batch_size, full_batch_size)
-    if prompt_to_lora_id_mapping is not None:
-        prompt_to_lora_id_mapping = fix_prompt_to_lora_id_mapping(
-            prompt_to_lora_id_mapping, batch_size, full_batch_size
-        )
     generate_text = TextGeneration(
         tokenizer=tokenizer,
         qpc_path=qpc_path,
@@ -403,6 +403,15 @@ def cloud_ai_100_exec_kv(
         include_guided_decoding=include_guided_decoding,
         sampling_params=sampling_params,
     )
+    if full_batch_size is not None:
+        resolved_execution_batch_size = generate_text._resolve_execution_batch_size(execution_batch_size)
+    else:
+        resolved_execution_batch_size = None
+    prompt = fix_prompts(prompt, batch_size, resolved_execution_batch_size)
+    if prompt_to_lora_id_mapping is not None:
+        prompt_to_lora_id_mapping = fix_prompt_to_lora_id_mapping(
+            prompt_to_lora_id_mapping, batch_size, resolved_execution_batch_size
+        )
 
     for _ in range(0, int(iteration)):
         if full_batch_size is None:
@@ -425,7 +434,10 @@ def cloud_ai_100_exec_kv(
             )
         else:
             exec_info = generate_text.generate(
-                prompt=prompt, generation_len=generation_len, prompt_to_lora_id_mapping=prompt_to_lora_id_mapping
+                prompt=prompt,
+                generation_len=generation_len,
+                prompt_to_lora_id_mapping=prompt_to_lora_id_mapping,
+                execution_batch_size=resolved_execution_batch_size,
             )
 
         print_latency_stats_kv(prompt, exec_info=exec_info, automation=automation)

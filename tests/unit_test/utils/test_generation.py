@@ -1072,6 +1072,88 @@ class TestDynamicBatchRuntime:
             gen._resolve_execution_batch_size(8)
 
 
+class TestDynamicBatchPublicRuntime:
+    def test_cloud_exec_uses_resolved_dynamic_execution_batch_for_prompt_padding(self):
+        from QEfficient.generation import text_generation_inference as tgi
+
+        exec_info = CloudAI100ExecInfo(
+            batch_size=2,
+            generated_texts=["a", "b"],
+            generated_ids=np.array([[1], [2]]),
+            perf_metrics=PerfMetrics(0.0, 0.0, 0.0, 0.0),
+        )
+        text_generation = MagicMock()
+        text_generation._resolve_execution_batch_size.return_value = 2
+        text_generation.generate.return_value = exec_info
+
+        with (
+            patch.object(tgi, "get_compilation_dims", return_value=(1, CTX_LEN, 4)),
+            patch.object(tgi, "TextGeneration", return_value=text_generation),
+            patch.object(tgi, "print_latency_stats_kv"),
+        ):
+            result = tgi.cloud_ai_100_exec_kv(
+                tokenizer=object(),
+                qpc_path="/fake/path/model.qpc",
+                prompt=["one"],
+                generation_len=4,
+                execution_batch_size=2,
+            )
+
+        assert result is exec_info
+        text_generation._resolve_execution_batch_size.assert_called_once_with(2)
+        text_generation.generate.assert_called_once()
+        _, kwargs = text_generation.generate.call_args
+        assert kwargs["prompt"] == ["one", "one"]
+        assert kwargs["execution_batch_size"] == 2
+
+    def test_cloud_exec_default_uses_largest_compiled_dynamic_batch_for_prompt_padding(self):
+        from QEfficient.generation import text_generation_inference as tgi
+
+        exec_info = CloudAI100ExecInfo(
+            batch_size=2,
+            generated_texts=["a", "b"],
+            generated_ids=np.array([[1], [2]]),
+            perf_metrics=PerfMetrics(0.0, 0.0, 0.0, 0.0),
+        )
+        text_generation = MagicMock()
+        text_generation._resolve_execution_batch_size.return_value = 2
+        text_generation.generate.return_value = exec_info
+
+        with (
+            patch.object(tgi, "get_compilation_dims", return_value=(1, CTX_LEN, 4)),
+            patch.object(tgi, "TextGeneration", return_value=text_generation),
+            patch.object(tgi, "print_latency_stats_kv"),
+        ):
+            tgi.cloud_ai_100_exec_kv(
+                tokenizer=object(),
+                qpc_path="/fake/path/model.qpc",
+                prompt=["one"],
+                generation_len=4,
+            )
+
+        text_generation._resolve_execution_batch_size.assert_called_once_with(None)
+        _, kwargs = text_generation.generate.call_args
+        assert kwargs["prompt"] == ["one", "one"]
+        assert kwargs["execution_batch_size"] == 2
+
+    def test_cloud_exec_rejects_execution_batch_size_for_non_cb_qpc(self):
+        from QEfficient.generation import text_generation_inference as tgi
+
+        with (
+            patch.object(tgi, "get_compilation_dims", return_value=(1, CTX_LEN, None)),
+            patch.object(tgi, "TextGeneration", return_value=MagicMock()) as text_generation_cls,
+        ):
+            with pytest.raises(ValueError, match="continuous-batching"):
+                tgi.cloud_ai_100_exec_kv(
+                    tokenizer=object(),
+                    qpc_path="/fake/path/model.qpc",
+                    prompt=["one"],
+                    generation_len=4,
+                    execution_batch_size=1,
+                )
+        text_generation_cls.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Tests: _fetch_next_token_id
 # ---------------------------------------------------------------------------

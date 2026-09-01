@@ -20,6 +20,9 @@ Tests verify:
 All tests run on CPU only, using tiny in-memory models.
 """
 
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 import torch
 from transformers import GPT2Config, GPT2LMHeadModel
@@ -260,6 +263,27 @@ class TestQEFFAutoModelForCausalLMSpecializations:
         # Input axis follows the live batch; retained KV batch stays pinned at B_max.
         assert result["batch_size"] == 2
         assert result["full_batch_size"] == 4
+
+
+@pytest.mark.cpu_only
+class TestQEFFAutoModelForCausalLMGenerate:
+    def test_generate_forwards_execution_batch_size_to_cloud_runtime(self):
+        from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+
+        qeff = QEFFAutoModelForCausalLM(make_tiny_gpt2())
+        qeff.onnx_path = Path("/tmp/qeff/model.onnx")
+        qeff.qpc_path = Path("/tmp/qeff/qpc")
+
+        with patch("QEfficient.cloud_ai_100_exec_kv", return_value=object()) as cloud_exec:
+            qeff.generate(
+                tokenizer=object(),
+                prompts=["one", "two"],
+                generation_len=4,
+                execution_batch_size=2,
+            )
+
+        cloud_exec.assert_called_once()
+        assert cloud_exec.call_args.kwargs["execution_batch_size"] == 2
 
 
 # ---------------------------------------------------------------------------

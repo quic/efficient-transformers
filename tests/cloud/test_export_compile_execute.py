@@ -27,6 +27,7 @@ def test_execute_calls_tokenizer_and_runtime(mocker):
         cache_dir="/tmp/cache",
         hf_token="token",
         full_batch_size=3,
+        execution_batch_size=2,
     )
 
     load_hf_tokenizer.assert_called_once_with(
@@ -41,4 +42,5 @@ def test_execute_calls_tokenizer_and_runtime(mocker):
         prompt=["My name is"],
         prompts_txt_file_path="examples/sample_prompts/prompts.txt",
         generation_len=20,
+        execution_batch_size=2,
     )
