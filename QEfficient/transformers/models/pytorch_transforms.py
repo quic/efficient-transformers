@@ -27,7 +27,6 @@ from transformers.models.diffusion_gemma.modeling_diffusion_gemma import (
     DiffusionGemmaEncoderTextModel,
     DiffusionGemmaForBlockDiffusion,
     DiffusionGemmaRMSNorm,
-    DiffusionGemmaTextExperts,
     DiffusionGemmaTextRouter,
 )
 from transformers.models.falcon.modeling_falcon import (
@@ -360,7 +359,6 @@ from QEfficient.transformers.models.diffusion_gemma.modeling_diffusion_gemma imp
     QEffDiffusionGemmaEncoderTextModel,
     QEffDiffusionGemmaForBlockDiffusion,
     QEffDiffusionGemmaRMSNorm,
-    QEffDiffusionGemmaTextExperts,
     QEffDiffusionGemmaTextRouter,
 )
 from QEfficient.transformers.models.falcon.modeling_falcon import (
@@ -961,8 +959,6 @@ class KVCacheTransform(ModuleMappingTransform):
         DiffusionGemmaEncoderTextLayer: QEffDiffusionGemmaEncoderTextLayer,
         DiffusionGemmaEncoderTextModel: QEffDiffusionGemmaEncoderTextModel,
         DiffusionGemmaForBlockDiffusion: QEffDiffusionGemmaForBlockDiffusion,
-        DiffusionGemmaTextExperts: QEffDiffusionGemmaTextExperts,
-        DiffusionGemmaTextRouter: QEffDiffusionGemmaTextRouter,
     }
 
     @classmethod
@@ -1702,6 +1698,8 @@ class OptimizedMoEMapperTransform(ModuleMappingTransform):
         Qwen3_5MoeTopKRouter: QEffQwen3_5MoeTopKRouter,
         # Gemma4
         Gemma4TextRouter: QEffGemma4TextRouter,
+        # DiffusionGemma
+        DiffusionGemmaTextRouter: QEffDiffusionGemmaTextRouter,
         # GPT-OSS
         GptOssMLP: QEffGptOssMLP,
         GptOssExperts: QEffGptOssExperts,
