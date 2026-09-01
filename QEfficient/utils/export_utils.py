@@ -35,6 +35,7 @@ from QEfficient.utils.constants import (
 )
 from QEfficient.utils.hash_utils import create_export_hash
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.runtime_requirements import validate_dynamo_export_requirements
 from QEfficient.utils.torch_patches import (
     apply_torch_patches,
     temporarily_enable_nested_compile_regions,
@@ -294,14 +295,7 @@ def export_wrapper(func):
         use_onnx_subfunctions = kwargs.pop("use_onnx_subfunctions", False)
 
         if dynamo:
-            torch_version = torch.__version__
-            major, minor = (int(x) for x in torch_version.split("+")[0].split(".")[:2])
-            if (major, minor) < (2, 13):
-                raise AssertionError(
-                    f"dynamo=True requires PyTorch >= 2.13, but found {torch_version}. "
-                    "Please install the required dependencies:\n"
-                    "  pip install -r examples/dynamo/causal_lm/requirements.txt"
-                )
+            validate_dynamo_export_requirements("dynamo=True")
             # Resolve dynamic_shapes from dynamic_axes before the hash so the hash captures
             # the actual shape constraints.
             dynamic_axes = kwargs.get("dynamic_axes")

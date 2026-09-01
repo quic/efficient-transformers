@@ -93,6 +93,7 @@ from QEfficient.utils import (
 from QEfficient.utils.check_ccl_specializations import process_ccl_specializations
 from QEfficient.utils.export_utils import export_from_compile
 from QEfficient.utils.logging_utils import logger
+from QEfficient.utils.runtime_requirements import validate_dynamo_export_requirements
 from QEfficient.utils.sampler_utils import get_sampling_inputs_and_outputs
 
 CUSTOM_IO_DTYPE_MAP = {
@@ -3681,6 +3682,8 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             raise ValueError(
                 "`layerwise=True` and `weight_free=True` are mutually exclusive; weight_free replaces layerwise mode."
             )
+        if weight_free:
+            validate_dynamo_export_requirements("weight_free=True")
 
         enable_proxy = kwargs.pop("enable_proxy", False)
         if kwargs.pop("full_batch_size", None):

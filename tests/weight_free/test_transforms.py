@@ -23,6 +23,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import onnx_ir as ir
+import pytest
 import torch
 from onnx import TensorProto, helper
 from safetensors import safe_open
@@ -45,7 +46,9 @@ from QEfficient.exporter.weight_free.checkpoint_transforms import (
 )
 from QEfficient.transformers.models.llama.modeling_llama import QEffLlamaDecoderLayer
 from QEfficient.transformers.models.modeling_auto import QEFFAutoModelForCausalLM
+from QEfficient.utils import runtime_requirements
 from QEfficient.utils.export_utils import _generate_export_hash
+from QEfficient.utils.runtime_requirements import validate_runtime_requirements
 from QEfficient.utils.torch_patches import temporarily_enable_nested_compile_regions
 
 # ---------------------------------------------------------------------------
@@ -404,6 +407,103 @@ class TestWeightFreeExportHash:
         assert regular_hash != weight_free_hash
         assert "weight_free" not in regular_params
         assert weight_free_params["weight_free"] is True
+
+
+class TestRuntimeRequirements:
+    def test_validate_runtime_requirements_accepts_matching_requirements(self, monkeypatch):
+        requirements = {"torch": "==2.13.0", "accelerate": "==1.9.0"}
+        versions = {"torch": "2.13.0+cpu", "accelerate": "1.9.0"}
+
+        monkeypatch.setattr(runtime_requirements.metadata, "version", lambda name: versions[name])
+
+        validate_runtime_requirements(
+            requirements,
+            feature_name="weight_free=True",
+            install_command="pip install -r requirements.txt",
+        )
+
+    def test_validate_runtime_requirements_reports_all_mismatches(self, monkeypatch):
+        requirements = {"accelerate": "==1.9.0", "missing-package": "==1.0"}
+
+        def version(name):
+            if name == "missing-package":
+                raise runtime_requirements.metadata.PackageNotFoundError
+            return "1.14.0"
+
+        monkeypatch.setattr(runtime_requirements.metadata, "version", version)
+
+        with pytest.raises(AssertionError) as exc_info:
+            validate_runtime_requirements(
+                requirements,
+                feature_name="dynamo=True",
+                install_command="pip install -r requirements.txt",
+            )
+
+        message = str(exc_info.value)
+        assert "dynamo=True requires the Dynamo export environment" in message
+        assert "Mismatched packages:" in message
+        assert "Install or repair the environment with:" in message
+        assert "accelerate: installed 1.14.0, expected ==1.9.0" in message
+        assert "missing-package: not installed, expected ==1.0" in message
+
+    def test_weight_free_from_pretrained_validates_requirements_before_model_build(self, monkeypatch):
+        calls = []
+
+        def validate(feature_name):
+            calls.append(feature_name)
+            raise AssertionError("bad weight-free environment")
+
+        monkeypatch.setattr(
+            "QEfficient.transformers.models.modeling_auto.validate_dynamo_export_requirements",
+            validate,
+        )
+        monkeypatch.setattr(
+            "QEfficient.transformers.models.modeling_auto._build_meta_model",
+            lambda *args, **kwargs: pytest.fail("_build_meta_model should not be called"),
+        )
+
+        with pytest.raises(AssertionError, match="bad weight-free environment"):
+            QEFFAutoModelForCausalLM.from_pretrained("dummy-model", weight_free=True)
+
+        assert calls == ["weight_free=True"]
+
+    def test_export_wrapper_validates_dynamo_requirements_before_export(self, monkeypatch, tmp_path):
+        from QEfficient.utils.export_utils import export_wrapper
+
+        calls = []
+
+        def validate(feature_name):
+            calls.append(feature_name)
+            raise AssertionError("bad dynamo environment")
+
+        monkeypatch.setattr("QEfficient.utils.export_utils.validate_dynamo_export_requirements", validate)
+
+        class DummyQEff:
+            @export_wrapper
+            def export(
+                self,
+                example_inputs,
+                output_names,
+                dynamic_axes,
+                export_dir=None,
+                dynamo=False,
+                dynamic_shapes=None,
+            ):
+                pytest.fail("export should not run")
+
+        with (
+            pytest.warns(DeprecationWarning, match="Direct \\.export\\(\\) is deprecated"),
+            pytest.raises(AssertionError, match="bad dynamo environment"),
+        ):
+            DummyQEff().export(
+                example_inputs={},
+                output_names=[],
+                dynamic_axes={},
+                export_dir=tmp_path,
+                dynamo=True,
+            )
+
+        assert calls == ["dynamo=True"]
 
 
 # ---------------------------------------------------------------------------
