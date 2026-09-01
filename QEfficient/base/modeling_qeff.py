@@ -122,8 +122,20 @@ def generate_mdp_compiler_dump(
     custom_io: Optional[Dict[str, str]] = None,
 ) -> str:
     """Generate the compiler MDP dump required by the intersection strategy."""
+    # The compiler dump is generated before the final QPC compile hash directory exists.
+    # Keep these intermediate files under their own input-keyed directory so changed
+    # compile options, specializations, or custom IO cannot reuse a stale dump.
+    dump_hash_params = {
+        "compile_command": compile_command,
+        "specializations": specializations,
+        "specialization_module_name": specialization_module_name,
+        "custom_io": custom_io,
+        "mdp_ts_num_devices": mdp_ts_num_devices,
+        "mdp_num_partitions": mdp_num_partitions,
+    }
+    mdp_dump_dir = compile_dir / f"mdp_{hash_dict_params(dump_hash_params)}"
     mdp_compiler_dump_path = str(
-        compile_dir / f"tmp_mdp_compiler_dump_{mdp_ts_num_devices}d_{mdp_num_partitions}p.json"
+        mdp_dump_dir / f"tmp_mdp_compiler_dump_{mdp_ts_num_devices}d_{mdp_num_partitions}p.json"
     )
     dump_path = Path(mdp_compiler_dump_path)
     if dump_path.exists():
@@ -132,18 +144,17 @@ def generate_mdp_compiler_dump(
     dump_path.parent.mkdir(parents=True, exist_ok=True)
 
     dump_command = list(compile_command)
-    dump_inputs_dir = compile_dir / "mdp_dump_inputs"
     if specializations is not None:
-        dump_inputs_dir.mkdir(parents=True, exist_ok=True)
-        dump_specializations_json = dump_inputs_dir / "specializations.json"
+        mdp_dump_dir.mkdir(parents=True, exist_ok=True)
+        dump_specializations_json = mdp_dump_dir / "specializations.json"
         create_json(
             str(dump_specializations_json),
             {"specializations": to_named_specializations(specializations, module_name=specialization_module_name)},
         )
         dump_command.append(f"-network-specialization-config={dump_specializations_json}")
     if custom_io is not None:
-        dump_inputs_dir.mkdir(parents=True, exist_ok=True)
-        dump_custom_io_yaml = dump_inputs_dir / "custom_io.yaml"
+        mdp_dump_dir.mkdir(parents=True, exist_ok=True)
+        dump_custom_io_yaml = mdp_dump_dir / "custom_io.yaml"
         with open(dump_custom_io_yaml, "w") as fp:
             for io_name, dtype in custom_io.items():
                 fp.write(f" - IOName: {io_name}\n   Precision: {dtype}\n\n")
@@ -1259,9 +1270,12 @@ class QEFFBaseModel(ABC):
                     specialization_module_name=specialization_module_name,
                     custom_io=custom_io_for_compiler,
                 )
+            mdp_config_dir = (
+                Path(mdp_compiler_dump_path).parent if mdp_strategy is MdpStrategy.INTERSECTION else compile_dir
+            )
             mdp_ts_json_path, mdp_ts_json = generate_disagg_mdp_config(
                 onnx_path=onnx_path,
-                compile_dir=compile_dir,
+                compile_dir=mdp_config_dir,
                 mdp_ts_num_devices=mdp_ts_num_devices,
                 mdp_num_partitions=mdp_num_partitions,
                 mdp_strategy=mdp_strategy,
