@@ -92,7 +92,7 @@ def _build_config(dtype: str = "float16", num_hidden_layers: int = 1):
     return config
 
 
-def _compile_vision_qpc(compile_dir: Path) -> Path:
+def _compile_vision_qpc(compile_dir: Path) -> tuple[Path, Path]:
     pytest.importorskip("qwen_vl_utils")
     torch.manual_seed(42)
 
@@ -130,7 +130,7 @@ def _compile_vision_qpc(compile_dir: Path) -> Path:
     )
     vision_qpc_path = qpc_paths.get("vision_qpc_path")
     assert vision_qpc_path, "Vision compile did not return vision_qpc_path"
-    return vision_qpc_path
+    return vision_qpc_path, _assert_onnx_path(qeff_model.vision_model.onnx_path, "vision")
 
 
 def _prepare_messages(image: Image.Image, batch_size: int = BATCH_SIZE) -> list:
@@ -532,66 +532,68 @@ def test_qwen3_vl_moe_disagg_prefill_mdp_intersection_compile_only(blocking_mode
 @pytest.mark.on_qaic
 @pytest.mark.multimodal
 def test_qwen3_vl_moe_disagg_blocked_qaic_vs_hf_fp32(manual_cleanup, tmp_path):
-    # Keep runtime blocking modes in one test item. Under xdist, parametrized runtime
-    # cases can activate several QPCs concurrently and exhaust QAIC NSP resources.
-    # Vision is independent of language-side blocking, so compile it once and reuse it
-    # across all runtime blocking modes in this test item.
-    vision_qpc_path = _compile_vision_qpc(tmp_path / "vision")
+    # Compile the vision encoder once. Vision is independent of language-side
+    # blocking, and recompiling it from each xdist item can race on the shared
+    # QEFF_HOME export/QPC cache.
+    vision_qpc_path, vision_onnx_path = _compile_vision_qpc(tmp_path / "vision")
 
-    for blocking_mode in ["q", "kv", "qkv", "hqkv"]:
-        prefill_qaic_config = {
-            "blocking_mode": blocking_mode,
-            "head_block_size": HEAD_BLOCK_SIZE,
-            "num_kv_blocks": NUM_KV_BLOCKS,
-            "num_q_blocks": NUM_Q_BLOCKS,
-        }
-        # In disagg mode, q blocking compiles fail with prefill_seq_len like we need for decode qpc.
-        decode_blocking_mode = blocking_mode.replace("q", "")
-        if decode_blocking_mode:
-            decode_qaic_config = {
-                "blocking_mode": decode_blocking_mode,
+    try:
+        for blocking_mode in ["q", "kv", "qkv", "hqkv"]:
+            prefill_qaic_config = {
+                "blocking_mode": blocking_mode,
                 "head_block_size": HEAD_BLOCK_SIZE,
                 "num_kv_blocks": NUM_KV_BLOCKS,
+                "num_q_blocks": NUM_Q_BLOCKS,
             }
-        else:
-            decode_qaic_config = {}
+            # In disagg mode, q blocking compiles fail with prefill_seq_len like we need for decode qpc.
+            decode_blocking_mode = blocking_mode.replace("q", "")
+            if decode_blocking_mode:
+                decode_qaic_config = {
+                    "blocking_mode": decode_blocking_mode,
+                    "head_block_size": HEAD_BLOCK_SIZE,
+                    "num_kv_blocks": NUM_KV_BLOCKS,
+                }
+            else:
+                decode_qaic_config = {}
+            _run_disagg_blocked(
+                manual_cleanup,
+                decode_qaic_config,
+                prefill_qaic_config=prefill_qaic_config,
+                compile_dir=tmp_path / blocking_mode,
+                vision_qpc_path=vision_qpc_path,
+            )
+
+        _run_disagg_blocked(
+            manual_cleanup,
+            {
+                "blocking_mode": "kv_headpar",
+                "num_kv_blocks": NUM_KV_BLOCKS,
+            },
+            compile_dir=tmp_path / "headpar",
+            vision_qpc_path=vision_qpc_path,
+        )
+
+        PREFILL_QL_CHUNK = 32
+        PREFILL_BLOCK_CHUNKS = -(-PREFILL_SEQ_LEN // PREFILL_QL_CHUNK)
+        PREFILL_N_REP_CHUNK = 2
+
+        decode_qaic_config = {
+            "blocking_mode": "kv_batch_fold",
+            "num_kv_blocks": NUM_KV_BLOCKS,
+        }
+        prefill_qaic_config = {
+            "blocking_mode": "prefill_online",
+            "num_kv_blocks": NUM_KV_BLOCKS,
+            "num_q_blocks": PREFILL_BLOCK_CHUNKS,
+            "n_rep_chunk": PREFILL_N_REP_CHUNK,
+        }
         _run_disagg_blocked(
             manual_cleanup,
             decode_qaic_config,
             prefill_qaic_config=prefill_qaic_config,
-            compile_dir=tmp_path / blocking_mode,
+            batch_size=2,
+            compile_dir=tmp_path / "batch_fold",
             vision_qpc_path=vision_qpc_path,
         )
-
-    _run_disagg_blocked(
-        manual_cleanup,
-        {
-            "blocking_mode": "kv_headpar",
-            "num_kv_blocks": NUM_KV_BLOCKS,
-        },
-        compile_dir=tmp_path / "headpar",
-        vision_qpc_path=vision_qpc_path,
-    )
-
-    PREFILL_QL_CHUNK = 32
-    PREFILL_BLOCK_CHUNKS = -(-PREFILL_SEQ_LEN // PREFILL_QL_CHUNK)
-    PREFILL_N_REP_CHUNK = 2
-
-    decode_qaic_config = {
-        "blocking_mode": "kv_batch_fold",
-        "num_kv_blocks": NUM_KV_BLOCKS,
-    }
-    prefill_qaic_config = {
-        "blocking_mode": "prefill_online",
-        "num_kv_blocks": NUM_KV_BLOCKS,
-        "num_q_blocks": PREFILL_BLOCK_CHUNKS,
-        "n_rep_chunk": PREFILL_N_REP_CHUNK,
-    }
-    _run_disagg_blocked(
-        manual_cleanup,
-        decode_qaic_config,
-        prefill_qaic_config=prefill_qaic_config,
-        batch_size=2,
-        compile_dir=tmp_path / "batch_fold",
-        vision_qpc_path=vision_qpc_path,
-    )
+    finally:
+        manual_cleanup([vision_onnx_path])
