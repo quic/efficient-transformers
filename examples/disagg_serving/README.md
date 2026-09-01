@@ -20,10 +20,11 @@ Pass the options below to `qeff_model.compile()` together with `prefill_only=Tru
 
 | Option | Type | Description |
 |---|---|---|
-| `mdp_ts_num_devices` | `int` | Total number of devices used across all pipeline stages. Each stage receives `mdp_ts_num_devices // mdp_num_partitions` devices. |
+| `num_devices` | `int` | Total number of devices used across all pipeline stages. |
 | `mdp_num_partitions` | `int` | Number of pipeline-parallel partitions. Values > 1 cause QEfficient to generate an MDP partition config. |
 | `mdp_strategy` | `str` | Partitioning strategy: `"onnx"` derives cuts directly from the ONNX graph; `"intersection"` first generates a compiler dump, then intersects compiler node names with ONNX-derived partition cuts. |
 
+`mdp_ts_num_devices` is an internal `_compile()` argument. If passed to the public auto-model `compile()` API, it is ignored with a warning; use `num_devices` instead. Tensor-slice devices per MDP partition are calculated internally as `num_devices // mdp_num_partitions`.
 `mdp_compiler_dump_path` is deprecated and ignored if passed. QEfficient now generates the compiler dump automatically for `mdp_strategy="intersection"`.
 
 See [`qwen3_vl_mdp_compile.py`](qwen3_vl_mdp_compile.py) for a standalone compile-only script that validates MDP compilation for `Qwen/Qwen3-VL-30B-A3B-Instruct` using these options.
@@ -32,7 +33,7 @@ See [`qwen3_vl_mdp_compile.py`](qwen3_vl_mdp_compile.py) for a standalone compil
 ```python
 qeff_model.compile(
     prefill_only=True,
-    mdp_ts_num_devices=4,
+    num_devices=4,
     mdp_num_partitions=2,
     mdp_strategy="onnx",
 )
@@ -42,7 +43,7 @@ qeff_model.compile(
 ```python
 qeff_model.compile(
     prefill_only=True,
-    mdp_ts_num_devices=4,
+    num_devices=4,
     mdp_num_partitions=2,
     mdp_strategy="intersection",
 )

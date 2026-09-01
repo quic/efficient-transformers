@@ -147,6 +147,19 @@ def _resolve_torch_dtype(kwargs: dict) -> None:
         kwargs["dtype"] = kwargs["torch_dtype"]
 
 
+def _ignore_public_mdp_ts_num_devices(compiler_options: dict) -> None:
+    if "mdp_ts_num_devices" not in compiler_options:
+        return
+
+    compiler_options.pop("mdp_ts_num_devices", None)
+    logger.warning(
+        "`mdp_ts_num_devices` passed to compile() is ignored. "
+        "Tensor-slice devices per MDP partition are calculated internally as "
+        "`num_devices // mdp_num_partitions`; "
+        "pass `num_devices` and `mdp_num_partitions` instead."
+    )
+
+
 def _build_layerwise_vision_export_model(hf_auto_class, pretrained_model_name_or_path, kwargs):
     """Load a VLM with vision weights and only the first language window.
 
@@ -988,6 +1001,7 @@ class QEFFAutoModelForSequenceClassification(QEFFTransformersBase):
         str
             Path to the compiled QPC package.
         """
+        _ignore_public_mdp_ts_num_devices(compiler_options)
         if isinstance(seq_len, list) and len(seq_len) >= 15:
             warnings.warn("Recommended: `seq_len` should contain fewer than 15 items.")
 
@@ -1896,7 +1910,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         kv_cache_batch_size : int, optional
             Not supported for this model; must be None.
         num_devices : int, optional
-            Number of devices to compile for. Default is 1.
+            Total number of devices to compile for. Default is 1.
         num_cores : int, optional
             Number of cores to use for compilation.
         mxfp6_matmul : bool, optional
@@ -1913,6 +1927,8 @@ class _QEffAutoModelForImageTextToTextDualQPC:
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
+            Use ``mdp_num_partitions`` to select the number of pipeline-parallel
+            MDP partitions.
 
         Returns
         -------
@@ -1929,6 +1945,7 @@ class _QEffAutoModelForImageTextToTextDualQPC:
         if skip_lang and skip_vision:
             raise ValueError("Expected at least one of 'skip_lang' or 'skip_vision' to be False")
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
+        _ignore_public_mdp_ts_num_devices(compiler_options)
 
         if layerwise:
             if skip_lang and not skip_vision:
@@ -2855,7 +2872,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         kv_cache_batch_size : int, optional
             Not supported for this model; must be None.
         num_devices : int, optional
-            Number of devices to compile for. Default is 1.
+            Total number of devices to compile for. Default is 1.
         num_cores : int, optional
             Number of cores to use for compilation.
         mxfp6_matmul : bool, optional
@@ -2868,6 +2885,8 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
             whether to enable ONNX subfunctions during export. Exporting PyTorch model to ONNX with modules as subfunctions helps to reduce export/compile time. Defaults to False
         **compiler_options : dict
             Additional compiler options for QAIC or QNN compilers.
+            Use ``mdp_num_partitions`` to select the number of pipeline-parallel
+            MDP partitions.
 
         Returns
         -------
@@ -2879,6 +2898,7 @@ class _QEFFAutoModelForImageTextToTextSingleQPC(QEFFTransformersBase, Multimodal
         ValueError
             If `full_batch_size`, `kv_cache_batch_size`, or `num_speculative_tokens` are not None.
         """
+        _ignore_public_mdp_ts_num_devices(compiler_options)
         if any(param is not None for param in [full_batch_size, kv_cache_batch_size, num_speculative_tokens]):
             raise ValueError(
                 f"Expected 'full_batch_size', 'kv_cache_batch_size', 'num_speculative_tokens' to be None but got: "
@@ -4390,6 +4410,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         """
         reject_legacy_moe_prefill_packed_chunk_size(compiler_options)
+        _ignore_public_mdp_ts_num_devices(compiler_options)
         enable_chunking = override_gptoss_prefill_chunking(self.model.config, prefill_only, enable_chunking)
         if layerwise:
             return self._run_layerwise(
@@ -4971,6 +4992,7 @@ class QEFFAutoModelForSpeechSeq2Seq(QEFFTransformersBase, MultimodalUtilityMixin
             Path to the compiled QPC package.
 
         """
+        _ignore_public_mdp_ts_num_devices(compiler_options)
         specializations, compiler_options = self.model.get_specializations(
             batch_size,
             encoder_ctx_len,
@@ -5327,6 +5349,7 @@ class QEFFAutoModelForCTC(QEFFTransformersBase):
             :str: Path of the compiled ``qpc`` package.
         """
 
+        _ignore_public_mdp_ts_num_devices(compiler_options)
         _seq_lens = seq_len if isinstance(seq_len, list) else [seq_len]
         specializations = [
             {"_graph_name": "CTC" if len(_seq_lens) == 1 else f"CTC_{i}", "batch_size": batch_size, "seq_len": sl}

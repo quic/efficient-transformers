@@ -17,7 +17,7 @@ hardware configuration before integrating the QPC into a serving stack.
 The script exports and compiles the language-prefill partition of
 Qwen/Qwen3-VL-30B-A3B-Instruct for disaggregated serving.  It uses:
 
-  - ``mdp_ts_num_devices``  -- total number of AIC-100 devices across all
+  - ``num_devices``         -- total number of AIC-100 devices across all
                                pipeline stages (default: 4).
   - ``mdp_num_partitions``  -- number of pipeline-parallel stages the model is
                                split into for prefill (default: 2).
@@ -75,13 +75,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mos", type=int, default=1, help="Memory-over-subscription factor.")
 
     parser.add_argument(
-        "--mdp_ts_num_devices",
+        "--num_devices",
         type=int,
         default=4,
-        help=(
-            "Total AIC-100 devices used across all pipeline stages. "
-            "Each stage receives mdp_ts_num_devices // mdp_num_partitions devices."
-        ),
+        help="Total AIC-100 devices used across all pipeline stages.",
     )
     parser.add_argument(
         "--mdp_num_partitions",
@@ -155,9 +152,9 @@ def main() -> None:
         ctx_len=args.ctx_len,
         height=args.height,
         width=args.width,
+        num_devices=args.num_devices,  # total devices spread across all pipeline stages
         num_cores=args.num_cores,
         mos=args.mos,
-        mdp_ts_num_devices=args.mdp_ts_num_devices,  # total devices spread across all pipeline stages
         mdp_num_partitions=args.mdp_num_partitions,  # number of pipeline-parallel stages (partitions)
         mdp_strategy=args.mdp_strategy,  # "intersection" auto-generates the compiler dump
         qaic_config=qaic_config,
