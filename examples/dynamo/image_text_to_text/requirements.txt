@@ -1,0 +1,7 @@
+# PyTorch >= 2.13 is required for dynamo export (dynamo=True).
+# Install with: pip install -r examples/dynamo/image_text_to_text/requirements.txt
+
+-r ../causal_lm/requirements.txt
+
+# Qwen VLM preprocessing utilities.
+qwen-vl-utils>=0.0.14
